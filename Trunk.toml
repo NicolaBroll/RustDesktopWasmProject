@@ -1,0 +1,5 @@
+[build]
+
+[watch]
+# Evita rebuild/reload in loop: il browser di Playwright MCP scrive log in .playwright-mcp/
+ignore = [".playwright-mcp", ".claude", ".devcontainer"]

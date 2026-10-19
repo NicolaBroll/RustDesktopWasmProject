@@ -4,8 +4,8 @@ WASM_TARGET := wasm32-unknown-unknown
 PORT        ?= 8080
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run build release web-serve web-build web-release web-preview \
-        check fmt fmt-check clippy test ci clean
+.PHONY: help setup run cli build release web-serve web-build web-release web-preview \
+        check fmt fmt-check clippy test layers ci clean
 
 help: ## Mostra questo elenco
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -16,16 +16,19 @@ setup: ## Installa target wasm e trunk
 	rustup component add clippy rustfmt
 	command -v trunk >/dev/null || cargo install --locked trunk
 
-# --- Desktop ---------------------------------------------------------------
+# --- Desktop e CLI ---------------------------------------------------------
 
 run: ## Avvia l'app desktop (debug)
-	cargo run
+	cargo run -p project
 
-build: ## Build desktop (debug)
-	cargo build
+cli: ## Esegue la CLI (es. make cli ARGS="commands")
+	cargo run -q -p project-cli -- $(or $(ARGS),--help)
 
-release: ## Build desktop ottimizzata -> target/release/
-	cargo build --release
+build: ## Build di tutto il workspace (debug)
+	cargo build --workspace
+
+release: ## Build ottimizzata desktop, CLI e sito web
+	cargo xtask release
 
 # --- Web (wasm) ------------------------------------------------------------
 
@@ -44,8 +47,8 @@ web-preview: web-release ## Serve la build di release su http://localhost:PORT (
 # --- Qualità ---------------------------------------------------------------
 
 check: ## cargo check per desktop e wasm
-	cargo check
-	cargo check --target $(WASM_TARGET)
+	cargo check --workspace
+	cargo check -p project-ui -p project-web --target $(WASM_TARGET)
 
 fmt: ## Formatta il codice
 	cargo fmt --all
@@ -54,13 +57,17 @@ fmt-check: ## Verifica la formattazione senza modificare
 	cargo fmt --all -- --check
 
 clippy: ## Lint per desktop e wasm (warning = errore)
-	cargo clippy -- -D warnings
-	cargo clippy --target $(WASM_TARGET) -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy -p project-ui -p project-web --target $(WASM_TARGET) -- -D warnings
 
 test: ## Esegue i test
-	cargo test
+	cargo test --workspace
 
-ci: fmt-check clippy test web-build ## Tutti i controlli, come in CI
+layers: ## Verifica il layering tra i crate
+	cargo xtask layers
+
+ci: ## Tutti i controlli, come in CI (cargo xtask ci)
+	cargo xtask ci
 
 clean: ## Rimuove target/ e dist/
 	cargo clean

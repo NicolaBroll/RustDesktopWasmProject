@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+description = "Automazione del progetto: ci, layers, release"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cargo_metadata.workspace = true
+
+[lints]
+workspace = true

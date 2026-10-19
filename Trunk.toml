@@ -1,5 +1,8 @@
 [build]
+# La pagina e il crate web stanno in apps/project-web; l'output resta in dist/.
+target = "apps/project-web/index.html"
+dist = "dist"
 
 [watch]
 # Evita rebuild/reload in loop: il browser di Playwright MCP scrive log in .playwright-mcp/
-ignore = [".playwright-mcp", ".claude", ".devcontainer"]
+ignore = [".playwright-mcp", ".claude", ".devcontainer", "xtask", "apps/project-cli", "crates/mcp"]

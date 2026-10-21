@@ -18,7 +18,7 @@ Regole valide per tutti gli step:
 ## Fase 0 — Preparazione
 
 ### S00 — CI sul branch principale
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** il workflow `.github/workflows/ci.yml` ascolta i push su `main`, ma il branch
   principale del repo è `master`. Farlo partire sui push a `master`.
 - **Fatto quando:** il trigger `push` di `ci.yml` indica `master`.

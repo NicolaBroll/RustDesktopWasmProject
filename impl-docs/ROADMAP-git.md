@@ -10,8 +10,10 @@ Regole valide per tutti gli step:
 - Nuove dipendenze nel `[workspace.dependencies]` del `Cargo.toml` radice, verificando la
   versione corrente.
 - Aggiornare la casella dello step in questo file quando è finito.
-- Gli step che scrivono nel repo dell'utente (da S16 in poi) passano da `safety-reviewer` prima
+- Gli step che scrivono nel repo dell'utente (da S18 in poi) passano da `safety-reviewer` prima
   della consegna.
+- Consegna di ogni step: pull request verso `master` e, con la CI verde, squash merge. Lo step
+  successivo riparte dal `master` aggiornato.
 
 ## Fase 0 — Preparazione
 

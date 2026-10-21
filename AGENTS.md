@@ -23,6 +23,14 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
 - Gli id dei comandi sono stabili: non rinominarli.
 - L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
 
+## Client git (in sviluppo)
+
+Il progetto sta diventando un client git grafico: architettura in
+[impl-docs/ARCHITETTURA-git.md](impl-docs/ARCHITETTURA-git.md), step in
+[impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md). Ogni step indica l'agente da usare
+(`.claude/agents/`): `git-domain`, `git-engine`, `egui-ui`, `git-scenarios`; gli step che
+scrivono nel repo dell'utente passano anche da `safety-reviewer`.
+
 ## Prima di consegnare
 
 ```sh

@@ -26,7 +26,7 @@ Regole valide per tutti gli step:
 ## Fase 1 — Leggere un repo
 
 ### S01 — Tipi git nel dominio
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** aggiungere in `crates/domain` un modulo `git` con `Oid` (parsing ed esadecimale,
   `Display`, `serde` come stringa), `Signature`, `Commit`, `RefKind`, `RefInfo`, `Upstream`,
   `Head`. L'esempio "lista di voci" resta com'è.

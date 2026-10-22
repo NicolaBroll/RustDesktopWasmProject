@@ -1,7 +1,8 @@
 //! Stato della lista dei commit: pagine di `repo.log` caricate durante lo scorrimento e
-//! selezione da mouse e tastiera. Solo dati, senza egui: si prova con test unitari.
+//! selezione da mouse e tastiera, corsie del grafo. Solo dati, senza egui: si prova con test
+//! unitari.
 
-use project_domain::{Commit, Oid};
+use project_domain::{Commit, GraphLayout, Oid, layout_graph};
 
 /// Commit chiesti a ogni pagina di `repo.log`.
 pub const PAGE: usize = 500;
@@ -22,6 +23,10 @@ pub struct PageRequest {
 #[derive(Debug, Default)]
 pub struct CommitList {
     commits: Vec<Commit>,
+    /// Corsie del grafo di tutti i commit caricati, una riga per commit. Si ricalcolano quando
+    /// arriva una pagina, non a ogni frame: una corsia può dipendere da commit di pagine
+    /// diverse.
+    graph: GraphLayout,
     has_more: bool,
     /// La pagina chiesta e non ancora arrivata.
     loading: Option<PageRequest>,
@@ -35,6 +40,11 @@ pub struct CommitList {
 impl CommitList {
     pub fn commits(&self) -> &[Commit] {
         &self.commits
+    }
+
+    /// Le corsie del grafo: `graph().rows[i]` è la riga di `commits()[i]`.
+    pub fn graph(&self) -> &GraphLayout {
+        &self.graph
     }
 
     /// Vero se dopo l'ultimo commit caricato ce ne sono altri.
@@ -99,6 +109,7 @@ impl CommitList {
         } else {
             self.commits.extend(commits);
         }
+        self.graph = layout_graph(&self.commits);
         self.has_more = has_more;
         true
     }
@@ -231,6 +242,46 @@ mod tests {
         let ids: Vec<Oid> = list.commits().iter().map(|c| c.id).collect();
         assert_eq!(ids, (0..total).map(|n| commit(n).id).collect::<Vec<_>>());
         assert_eq!(list.next_page(total), None);
+    }
+
+    #[test]
+    fn graph_spans_every_loaded_page() {
+        // Una storia lineare con un branch che si apre nella prima pagina e si chiude con un
+        // merge nella seconda: la corsia del branch deve attraversare il confine tra le pagine.
+        let total = PAGE + 100;
+        let merge = PAGE + 10;
+        let mut history: Vec<Commit> = (0..total)
+            .map(|n| {
+                let mut c = commit(n);
+                // Commit n ha come genitore n + 1 (la lista va dal più recente).
+                if n + 1 < total {
+                    c.parents.push(commit(n + 1).id);
+                }
+                if n == 5 {
+                    // Il merge in cima porta dentro il branch che parte da `merge`.
+                    c.parents.push(commit(total + 1).id);
+                }
+                c
+            })
+            .collect();
+        let mut side = commit(total + 1);
+        side.parents.push(commit(merge).id);
+        history.insert(6, side);
+
+        let mut list = CommitList::default();
+        let first = list.reset();
+        assert!(list.receive(first, history[..PAGE].to_vec(), true));
+        assert_eq!(list.graph().rows.len(), PAGE);
+        let second = list.next_page(PAGE).unwrap();
+        assert!(list.receive(second, history[PAGE..].to_vec(), false));
+
+        assert_eq!(list.graph(), &layout_graph(&history));
+        assert_eq!(list.graph().rows.len(), list.commits().len());
+        assert_eq!(list.graph().width, 2);
+        // Il branch converge nella corsia 0 sul commit `merge` (riga `merge + 1`, spostata dal
+        // commit del branch), nella seconda pagina: il tratto sta nella riga prima.
+        let before = &list.graph().rows[merge];
+        assert!(before.segments.iter().any(|s| s.from == 1 && s.to == 0));
     }
 
     #[test]

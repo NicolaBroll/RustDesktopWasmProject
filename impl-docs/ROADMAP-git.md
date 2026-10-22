@@ -126,7 +126,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test passano; CI verde.
 
 ### S14 — Disegno del grafo
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** disegnare corsie e archi accanto alla lista dei commit, con un colore per corsia
   e le etichette dei ref sulla riga del commit.
 - **Fatto quando:** screenshot web del repo di esempio con merge visibile; CI verde.

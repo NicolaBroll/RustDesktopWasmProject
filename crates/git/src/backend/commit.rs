@@ -13,13 +13,20 @@
 //! stdout e stderr si leggono insieme mentre stdin si scrive da un altro thread, quindi un
 //! hook che stampa molto non blocca git. Non c'è un timeout: una pinentry grafica di gpg (o la
 //! conferma di una chiave ssh) aspetta legittimamente l'utente; senza terminale né pinentry
-//! grafica gpg fallisce subito (stdin di git è una pipe, `GIT_TERMINAL_PROMPT=0`).
+//! grafica gpg fallisce subito (stdin di git è una pipe, `GIT_TERMINAL_PROMPT=0`). Possono
+//! invece aspettare: un hook che lascia processi in background con stdout/stderr aperti (il
+//! comando finisce quando li chiudono); una firma ssh con passphrase senza agent o un hook che
+//! legge `/dev/tty`, sul terminale di controllo se c'è (CLI o MCP avviati da un terminale).
+//!
+//! Dopo un commit riuscito ogni problema è [`EngineError::PostCommit`], con il commit creato
+//! (se HEAD è ancora quello) e il backup: il commit non va ripetuto.
 
 use super::CliBackend;
 use crate::command::{failure, stderr_text};
 use project_domain::{Commit, LOG_ARGS, Oid, parse_log};
 use project_engine::{
-    CommitOutcome, CommitRequest, EngineError, check_amend_published, check_commit_state,
+    CommitOutcome, CommitRequest, EngineError, amend_impact, check_amend_published,
+    check_commit_state,
 };
 use std::ffi::OsStr;
 
@@ -41,10 +48,14 @@ impl CliBackend {
         let branch = self.head_ref_name()?;
 
         let mut backup = None;
+        let mut also_on = Vec::new();
         if request.amend
             && let Some(old) = previous
         {
-            check_amend_published(request, &self.remotes_containing(&old)?)?;
+            let (published, diverging) =
+                amend_impact(&self.refs_containing(&old)?, branch.as_deref());
+            check_amend_published(request, &published)?;
+            also_on = diverging;
             // Il commit riscritto resta nel reflog, ma il reflog scade: un ref lo tiene.
             let reflog = format!("project: backup di {old} prima di commit.create con amend");
             backup = Some(self.create_backup_ref("amend", &old.to_string(), &reflog)?);
@@ -71,28 +82,78 @@ impl CliBackend {
             &env,
         )?;
         if !out.status.success() {
-            // Niente committato: il backup del commit riscritto non serve (HEAD è ancora lì).
-            if let (Some(name), Some(old)) = (&backup, previous)
-                && self.resolve("HEAD")? == Some(old)
-            {
-                let old = old.to_string();
+            let mut err = commit_failure(&args, &out);
+            if let (Some(name), Some(old)) = (&backup, previous) {
+                if self.resolve("HEAD")? == Some(old) {
+                    // Niente committato e HEAD è ancora il commit letto prima: il backup non
+                    // serve. `update-ref -d <ref> <vecchio>` toglie il ref solo se punta ancora
+                    // a quel commit (resta solo l'istante fra la lettura di HEAD e questo, in
+                    // cui un altro processo potrebbe spostare HEAD: il backup sparirebbe ma il
+                    // commit sarebbe ancora nel reflog).
+                    let old = old.to_string();
+                    let _ = self
+                        .git
+                        .output(Some(&self.workdir), &["update-ref", "-d", name, &old]);
+                } else if let EngineError::Git { stderr, .. } = &mut err {
+                    // HEAD è cambiato (un hook o un altro processo): il backup resta.
+                    stderr.push_str(&format!(
+                        "\n\nHEAD non è più {old}: il commit da riscrivere è salvato in `{name}`"
+                    ));
+                }
+            }
+            return Err(err);
+        }
+
+        // Da qui il commit è fatto: ogni errore è `PostCommit`, con il commit e il backup.
+        let post = |commit: Option<Oid>, reason: String| EngineError::PostCommit {
+            commit,
+            backup: backup.clone(),
+            reason,
+        };
+        let head = self
+            .resolve("HEAD")
+            .map_err(|e| post(None, format!("HEAD non si rilegge ({e})")))?
+            .ok_or_else(|| post(None, "HEAD non punta a un commit".to_owned()))?;
+        if request.amend && Some(head) == previous {
+            // Stesso albero, messaggio, autore e date (es. due `amend` uguali nello stesso
+            // secondo): git ha riscritto il commit identico. Niente è cambiato, il backup punta
+            // allo stesso commit e si toglie.
+            if let Some(name) = &backup {
+                let old = head.to_string();
                 let _ = self
                     .git
                     .output(Some(&self.workdir), &["update-ref", "-d", name, &old]);
             }
-            return Err(commit_failure(&args, &out));
+            let commit = self
+                .read_commit(&head)
+                .map_err(|e| post(Some(head), format!("il commit non si legge ({e})")))?;
+            return Ok(CommitOutcome {
+                commit,
+                previous,
+                branch,
+                backup: None,
+                also_on,
+            });
         }
-
-        let head = self.resolve("HEAD")?.ok_or_else(|| EngineError::Git {
-            command: "commit".to_owned(),
-            stderr: "dopo il commit HEAD non punta a un commit".to_owned(),
-        })?;
-        let commit = self.read_commit(&head)?;
-        // HEAD deve essere il commit appena creato sopra quello letto prima: se un altro
-        // processo (o un hook `post-commit`) lo ha spostato, lo si dice invece di restituire
-        // valori prima/dopo sbagliati.
+        // Se HEAD non è il commit creato, quel commit non si conosce: `commit` resta `None` e
+        // il motivo nomina l'HEAD attuale.
+        self.check_moved_from(branch.as_deref(), head, previous)
+            .map_err(|reason| post(None, reason))?;
+        let commit = self
+            .read_commit(&head)
+            .map_err(|e| post(Some(head), format!("il commit non si legge ({e})")))?;
+        // Controllo in più sui genitori (vale anche senza reflog).
         let expected_parents = match (request.amend, previous) {
-            (true, Some(old)) => self.read_commit(&old)?.parents,
+            (true, Some(old)) => {
+                self.read_commit(&old)
+                    .map_err(|e| {
+                        post(
+                            Some(head),
+                            format!("il commit riscritto non si legge ({e})"),
+                        )
+                    })?
+                    .parents
+            }
             (_, previous) => previous.into_iter().collect(),
         };
         let parents_match = if request.amend {
@@ -102,21 +163,44 @@ impl CliBackend {
             commit.parents.first() == expected_parents.first()
         };
         if Some(head) == previous || !parents_match {
-            return Err(EngineError::Git {
-                command: "commit".to_owned(),
-                stderr: format!(
-                    "il commit è stato creato, ma HEAD ({head}) non è il commit atteso sopra {}: \
-                     un altro processo git o un hook lo ha spostato. Controllare il log",
-                    previous.map_or_else(|| "nessun commit".to_owned(), |p| p.to_string())
-                ),
-            });
+            return Err(post(None, moved_text(previous, head)));
         }
         Ok(CommitOutcome {
             commit,
             previous,
             branch,
             backup,
+            also_on,
         })
+    }
+
+    /// Dopo il commit: l'ultima voce del reflog del ref aggiornato (`branch`, o HEAD se
+    /// staccata) deve portare da `previous` a `head`. Così si scopre anche un altro processo che
+    /// ha spostato HEAD fra la lettura di `previous` e `git commit` (git avrebbe riscritto quel
+    /// commit, non quello letto e salvato nel backup). Il valore vecchio è `<ref>@{1}`, il nuovo
+    /// `<ref>@{0}`; senza un valore precedente (primo commit) `@{1}` non si risolve.
+    ///
+    /// Limite: senza reflog (`core.logAllRefUpdates=false` e nessun file di log per il ref)
+    /// non si può verificare e resta solo il controllo sui genitori.
+    fn check_moved_from(
+        &self,
+        branch: Option<&str>,
+        head: Oid,
+        previous: Option<Oid>,
+    ) -> Result<(), String> {
+        let name = branch.unwrap_or("HEAD");
+        let at = |n: u8| {
+            self.resolve(&format!("{name}@{{{n}}}"))
+                .map_err(|e| format!("il reflog di `{name}` non si legge ({e})"))
+        };
+        let Some(newest) = at(0)? else {
+            // Nessun reflog: niente da verificare.
+            return Ok(());
+        };
+        if newest != head || at(1)? != previous {
+            return Err(moved_text(previous, head));
+        }
+        Ok(())
     }
 
     /// Il nome completo del ref a cui punta HEAD (es. `refs/heads/main`), `None` se HEAD è
@@ -136,16 +220,18 @@ impl CliBackend {
         }
     }
 
-    /// I branch remoti (`refs/remotes/`, senza i ref simbolici come `origin/HEAD`) da cui il
-    /// commit `id` è raggiungibile.
-    fn remotes_containing(&self, id: &Oid) -> Result<Vec<String>, EngineError> {
+    /// I branch locali, i branch remoti e i tag (senza i ref simbolici come `origin/HEAD`) da
+    /// cui il commit `id` è raggiungibile, nomi completi.
+    fn refs_containing(&self, id: &Oid) -> Result<Vec<String>, EngineError> {
         let id = id.to_string();
         let args = [
             "for-each-ref",
             "--format=%(refname)%00%(symref)",
             "--contains",
             &id,
+            "refs/heads/",
             "refs/remotes/",
+            "refs/tags/",
         ];
         let out = self.run(&args)?;
         Ok(out
@@ -175,6 +261,15 @@ impl CliBackend {
                 stderr: format!("nessun commit letto per `{hex}`"),
             })
     }
+}
+
+/// Il motivo di [`EngineError::PostCommit`] quando HEAD non è il commit atteso.
+fn moved_text(previous: Option<Oid>, head: Oid) -> String {
+    format!(
+        "HEAD ({head}) non è il commit appena creato sopra {}: un altro processo git o un hook \
+         (es. `post-commit`) ha spostato HEAD prima o dopo il commit",
+        previous.map_or_else(|| "nessun commit".to_owned(), |p| p.to_string())
+    )
 }
 
 /// L'errore di un `git commit` non riuscito: indice bloccato → [`EngineError::IndexLocked`];

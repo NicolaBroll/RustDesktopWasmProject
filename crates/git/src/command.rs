@@ -37,6 +37,12 @@ fn inherited_config_vars(vars: impl Iterator<Item = OsString>) -> Vec<OsString> 
     .collect()
 }
 
+/// Date di autore e committer ereditate (es. un'app avviata da un hook git o da uno script che
+/// le imposta): darebbero a ogni commit, e ai commit di backup, la data di allora invece di
+/// quella attuale. Si tolgono sempre. Nome ed email (`GIT_AUTHOR_NAME`, `GIT_COMMITTER_EMAIL`,
+/// ...) invece restano, come per git da terminale: sono l'identità scelta dall'utente.
+const DATE_ENV: &[&str] = &["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"];
+
 /// Variabili che cambiano il significato dei pathspec (glob, maiuscole, letterali): i percorsi
 /// passati a git devono valere per quello che sono. Si tolgono sempre; dove servono percorsi
 /// letterali si passa `--literal-pathspecs`.
@@ -83,7 +89,12 @@ impl Git {
             .stderr(Stdio::piped())
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C");
-        for key in REPO_ENV.iter().chain(PATHSPEC_ENV).chain(CONFIG_ENV) {
+        for key in REPO_ENV
+            .iter()
+            .chain(PATHSPEC_ENV)
+            .chain(CONFIG_ENV)
+            .chain(DATE_ENV)
+        {
             cmd.env_remove(key);
         }
         for key in inherited_config_vars(std::env::vars_os().map(|(k, _)| k)) {
@@ -293,7 +304,12 @@ mod tests {
         assert_eq!(value("GIT_CONFIG_NOSYSTEM"), Some(Some("1".as_ref())));
         // Ereditate da un hook git farebbero leggere un altro repo: tolte.
         // Così come quelle che cambiano il significato dei pathspec.
-        for key in REPO_ENV.iter().chain(PATHSPEC_ENV).chain(CONFIG_ENV) {
+        for key in REPO_ENV
+            .iter()
+            .chain(PATHSPEC_ENV)
+            .chain(CONFIG_ENV)
+            .chain(DATE_ENV)
+        {
             assert_eq!(value(key), Some(None), "{key}");
         }
     }

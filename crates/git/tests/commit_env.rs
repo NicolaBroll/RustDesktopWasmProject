@@ -1,6 +1,7 @@
 //! `commit.create` con un ambiente ostile ereditato (es. l'app avviata da un hook git o da un
 //! terminale con variabili git impostate): il commit va nel repo aperto, con il suo indice,
-//! senza la configurazione iniettata e senza editor. Un file a parte perché cambia l'ambiente
+//! senza la configurazione iniettata, senza editor e con la data attuale (non quella delle
+//! variabili `GIT_*_DATE` ereditate). Un file a parte perché cambia l'ambiente
 //! del processo, che i test di un file condividono.
 
 mod common;
@@ -21,7 +22,10 @@ fn inherited_environment_does_not_change_the_commit() {
 
     let other_git = other.path().join(".git");
     let other_index = other_git.join("index");
-    let vars: [(&str, &std::ffi::OsStr); 6] = [
+    let vars: [(&str, &std::ffi::OsStr); 8] = [
+        // Date ereditate (es. da un hook): non devono finire nel commit.
+        ("GIT_AUTHOR_DATE", "1000000000 +0000".as_ref()),
+        ("GIT_COMMITTER_DATE", "1000000000 +0000".as_ref()),
         ("GIT_DIR", other_git.as_os_str()),
         ("GIT_INDEX_FILE", other_index.as_os_str()),
         ("GIT_EDITOR", "false".as_ref()),
@@ -54,4 +58,6 @@ fn inherited_environment_does_not_change_the_commit() {
     );
     assert_eq!(repo.git(&["log", "-1", "--format=%B"]), "nel repo giusto");
     assert_eq!(other.rev("HEAD"), other_head);
+    assert_ne!(out.commit.author.time, 1_000_000_000);
+    assert_ne!(out.commit.committer.time, 1_000_000_000);
 }

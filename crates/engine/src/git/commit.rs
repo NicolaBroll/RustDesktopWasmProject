@@ -90,8 +90,41 @@ pub struct CommitOutcome {
     /// Il branch spostato, nome completo (es. `refs/heads/main`); `None` con HEAD staccata.
     pub branch: Option<String>,
     /// Solo con `amend`: il ref di backup (`refs/project/backup/amend-...`) che punta al commit
-    /// riscritto, salvato prima di scrivere.
+    /// riscritto, salvato prima di scrivere. `None` anche se l'`amend` ha prodotto lo stesso
+    /// commit (`commit.id == previous`: niente è cambiato e il backup è stato tolto).
     pub backup: Option<String>,
+    /// Solo con `amend`: gli altri branch locali e i tag (nomi completi) che contengono il
+    /// commit riscritto e che quindi, dopo l'`amend`, restano sulla storia vecchia (divergono
+    /// da HEAD). Vuoto se nessuno. Campo aggiunto dopo la prima versione: chi lo legge da un
+    /// JSON più vecchio lo trova vuoto.
+    #[serde(default)]
+    pub also_on: Vec<String>,
+}
+
+/// Come si dividono i ref che contengono il commit da riscrivere con `amend` (`containing`,
+/// nomi completi da `refs/heads/`, `refs/remotes/`, `refs/tags/`; `branch` è quello corrente):
+/// `(pubblicati, anche_su)`.
+///
+/// - Pubblicati (chiedono `"confirm": true`, [`check_amend_published`]): i branch remoti e i
+///   tag. Un tag resterebbe sul commit vecchio. Un push senza ref di tracciamento (push per
+///   URL, o ref remoti cancellati) non si vede: il commit risulta non pubblicato.
+/// - Anche su (`also_on` del risultato): gli altri branch locali e i tag, che dopo l'`amend`
+///   divergono da HEAD.
+pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>, Vec<String>) {
+    let published = containing
+        .iter()
+        .filter(|n| n.starts_with("refs/remotes/") || n.starts_with("refs/tags/"))
+        .cloned()
+        .collect();
+    let also_on = containing
+        .iter()
+        .filter(|n| {
+            (n.starts_with("refs/heads/") && Some(n.as_str()) != branch)
+                || n.starts_with("refs/tags/")
+        })
+        .cloned()
+        .collect();
+    (published, also_on)
 }
 
 /// I controlli sullo stato prima di un commit, uguali per tutti i backend. `has_head` dice se
@@ -160,10 +193,10 @@ pub fn check_commit_state(status: &Status, has_head: bool, amend: bool) -> Resul
     Ok(())
 }
 
-/// Con `amend` di un commit già pubblicato (`published`: i branch remoti da cui è raggiungibile)
-/// serve `"confirm": true`: chi ha già scaricato il commit si troverebbe una storia diversa e il
-/// push successivo andrebbe forzato. Senza conferma, [`EngineError::ConfirmRequired`] con i
-/// branch remoti.
+/// Con `amend` di un commit già pubblicato (`published`: i branch remoti e i tag da cui è
+/// raggiungibile, vedi [`amend_impact`]) serve `"confirm": true`: chi ha già scaricato il commit
+/// si troverebbe una storia diversa, il push successivo andrebbe forzato e un tag resterebbe sul
+/// commit vecchio. Senza conferma, [`EngineError::ConfirmRequired`] con i ref.
 pub fn check_amend_published(
     request: &CommitRequest,
     published: &[String],
@@ -175,9 +208,10 @@ pub fn check_amend_published(
     Err(EngineError::ConfirmRequired {
         command: COMMAND,
         reason: format!(
-            "`amend` riscriverebbe un commit già pubblicato (raggiungibile da {}): chi lo ha \
-             già scaricato vedrebbe una storia diversa e il push andrebbe forzato. Il commit \
-             riscritto resterebbe in un ref di backup",
+            "`amend` riscriverebbe un commit già pubblicato o con un tag (raggiungibile da \
+             {}): chi lo ha già scaricato vedrebbe una storia diversa, il push andrebbe forzato \
+             e i tag resterebbero sul commit vecchio. Il commit riscritto resterebbe in un ref \
+             di backup",
             names.join(", ")
         ),
     })
@@ -328,6 +362,27 @@ mod tests {
         let err = check_commit_state(&status_with(entries, Some(Operation::Merge)), true, false)
             .unwrap_err();
         assert!(err.to_string().contains("`c.txt`"), "{err}");
+    }
+
+    #[test]
+    fn amend_impact_splits_published_and_diverging_refs() {
+        let refs: Vec<String> = [
+            "refs/heads/altro",
+            "refs/heads/main",
+            "refs/remotes/origin/main",
+            "refs/tags/v1",
+        ]
+        .map(str::to_owned)
+        .into();
+        let (published, also_on) = amend_impact(&refs, Some("refs/heads/main"));
+        assert_eq!(published, ["refs/remotes/origin/main", "refs/tags/v1"]);
+        assert_eq!(also_on, ["refs/heads/altro", "refs/tags/v1"]);
+        // Con HEAD staccata anche `main` diverge.
+        let (_, also_on) = amend_impact(&refs, None);
+        assert_eq!(
+            also_on,
+            ["refs/heads/altro", "refs/heads/main", "refs/tags/v1"]
+        );
     }
 
     #[test]

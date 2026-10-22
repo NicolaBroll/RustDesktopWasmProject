@@ -355,16 +355,24 @@ fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
 /// commit già pubblicato.
 ///
 /// Risultato: `{"commit": Commit, "previous": string | null, "branch": string | null, "backup":
-/// string | null, "status": Status}`: il commit creato (come in `repo.log`), HEAD prima
+/// string | null, "also_on": [string], "status": Status}`: il commit creato (come in `repo.log`), HEAD prima
 /// (`null` per il primo commit), il branch spostato con il nome completo (`null` con HEAD
-/// staccata), il ref di backup del commit riscritto (solo con `amend`) e il nuovo stato.
+/// staccata), il ref di backup del commit riscritto (solo con `amend`), gli altri branch e tag
+/// che restano sul commit riscritto (solo con `amend`) e il nuovo stato. Un errore dopo un
+/// commit riuscito è [`EngineError::PostCommit`].
 fn commit_create(s: &mut Session, p: Value) -> Out {
     let request: CommitRequest = parse_params("commit.create", p)?;
     request.check_message()?;
     let repo = s.repo_mut()?;
     let outcome = repo.commit(&request)?;
+    // Il commit è fatto: un errore da qui in poi non deve sembrare un commit fallito.
+    let status = repo.status().map_err(|e| EngineError::PostCommit {
+        commit: Some(outcome.commit.id),
+        backup: outcome.backup.clone(),
+        reason: format!("lo stato non si rilegge ({e})"),
+    })?;
     let mut out = to_json(outcome);
-    out["status"] = to_json(repo.status()?);
+    out["status"] = to_json(status);
     Ok(out)
 }
 

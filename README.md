@@ -61,10 +61,13 @@ mettono in stage solo interi.
 un editor). Messaggio vuoto, niente in stage, file in conflitto, rebase/cherry-pick/revert in
 corso: errore e niente cambia; durante un merge il commit è il commit di merge. Con `"amend":
 true` riscrive l'ultimo commit (stesso autore e genitori) e salva il commit riscritto in un ref
-`refs/project/backup/amend-...`; se quel commit è già su un branch remoto serve anche
-`"confirm": true`. Un hook che rifiuta o una firma che non riesce danno un errore con tutto il
-loro output. Risultato: `{"commit", "previous", "branch", "backup", "status"}` (il commit come in
-`repo.log`, HEAD prima, il branch spostato, il backup o `null`, il nuovo stato).
+`refs/project/backup/amend-...`; se quel commit è già su un branch remoto o ha un tag serve
+anche `"confirm": true`, e gli altri branch e tag che lo contengono sono elencati in `also_on`.
+Un hook che rifiuta o una firma che non riesce danno un errore con tutto il
+loro output; un problema dopo un commit riuscito (es. un hook `post-commit` che sposta HEAD) dà
+un errore che dice di non ripetere il commit e nomina il backup. Risultato: `{"commit",
+"previous", "branch", "backup", "also_on", "status"}` (il commit come in `repo.log`, HEAD prima,
+il branch spostato, il backup o `null`, i ref rimasti sul commit riscritto, il nuovo stato).
 
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
 `writes: true` per i comandi che modificano il repository. All'avvio apre il

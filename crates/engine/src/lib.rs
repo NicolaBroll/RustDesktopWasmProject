@@ -14,16 +14,16 @@ pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
     BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, GitBackend, LinePatch, LineSelection,
-    LogQuery, MemoryBackend, MemoryOpener, RepoOpener, StagedVersion, apply_patch, backup_message,
-    check_amend_published, check_commit_state, cleanup_message, file_digest, line_patch,
-    path_matches, split_message, versions_at_risk, versions_at_risk_hidden,
+    LogQuery, MemoryBackend, MemoryOpener, RepoOpener, StagedVersion, amend_impact, apply_patch,
+    backup_message, check_amend_published, check_commit_state, cleanup_message, file_digest,
+    line_patch, path_matches, split_message, versions_at_risk, versions_at_risk_hidden,
 };
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
 pub use session::Session;
 
 use project_core::CoreError;
-use project_domain::DomainError;
+use project_domain::{DomainError, Oid};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -92,6 +92,16 @@ pub enum EngineError {
         command: &'static str,
         reason: String,
     },
+    /// Il commit è **riuscito**, ma dopo qualcosa non torna: HEAD spostato da un hook
+    /// `post-commit` o da un altro processo, `previous` non verificabile, stato non rileggibile.
+    /// Non va ripetuto: `commit` è il commit creato (se noto), `backup` il ref del commit
+    /// riscritto da `amend` (se c'è), che resta.
+    #[error("{}", post_commit_text(.commit, .backup, .reason))]
+    PostCommit {
+        commit: Option<Oid>,
+        backup: Option<String>,
+        reason: String,
+    },
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]
@@ -144,6 +154,20 @@ impl EngineError {
                 .to_owned(),
         }
     }
+}
+
+fn post_commit_text(commit: &Option<Oid>, backup: &Option<String>, reason: &str) -> String {
+    let mut text = match commit {
+        Some(id) => format!("il commit {id} è stato creato, ma {reason}"),
+        None => format!("il commit è stato creato, ma {reason}"),
+    };
+    if let Some(backup) = backup {
+        text.push_str(&format!(
+            "; il commit riscritto da `amend` è salvato in `{backup}`"
+        ));
+    }
+    text.push_str(": non ripetere il commit, rileggere stato e log");
+    text
 }
 
 fn list(paths: &[impl std::fmt::Display]) -> String {

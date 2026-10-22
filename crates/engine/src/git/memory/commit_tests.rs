@@ -187,9 +187,40 @@ fn amend_of_a_published_commit_needs_confirm() {
         .unwrap();
     assert_eq!(out.previous, Some(sample_head()));
     assert!(out.backup.is_some());
+    assert!(out.also_on.is_empty());
     // Un commit nuovo non chiede conferma, anche se HEAD è pubblicato.
     let mut repo = snapshot;
     repo.commit(&CommitRequest::new("nuovo")).unwrap();
+}
+
+#[test]
+fn amend_with_a_tag_needs_confirm_and_reports_diverging_refs() {
+    let mut repo = MemoryBackend::sample();
+    let head = sample_head();
+    repo.set_branch("altro", head);
+    let out = repo
+        .commit(&CommitRequest::new("riscrivo").amend())
+        .unwrap();
+    assert_eq!(out.also_on, ["refs/heads/altro"]);
+
+    let mut repo = MemoryBackend::sample();
+    repo.set_tag("v2", head, None);
+    let err = repo
+        .commit(&CommitRequest::new("riscrivo").amend())
+        .unwrap_err();
+    assert!(err.to_string().contains("refs/tags/v2"), "{err}");
+    let out = repo
+        .commit(&CommitRequest::new("riscrivo").amend().confirmed())
+        .unwrap();
+    assert_eq!(out.also_on, ["refs/tags/v2"]);
+    // Un commit nuovo non riscrive niente: `also_on` vuoto.
+    repo.stage(&[p("note.txt")]).unwrap();
+    assert!(
+        repo.commit(&CommitRequest::new("nuovo"))
+            .unwrap()
+            .also_on
+            .is_empty()
+    );
 }
 
 #[test]

@@ -21,8 +21,8 @@ pub use backup::{
     versions_at_risk_hidden,
 };
 pub use commit::{
-    CommitOutcome, CommitRequest, check_amend_published, check_commit_state, cleanup_message,
-    split_message,
+    CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
+    cleanup_message, split_message,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{MemoryBackend, MemoryOpener};
@@ -137,7 +137,8 @@ pub trait GitBackend: Send {
     ///
     /// Prima di scrivere: [`CommitRequest::check_message`], [`check_commit_state`] (conflitti,
     /// operazioni in corso, niente da committare, `amend` senza commit o durante un merge) e,
-    /// con `amend`, [`check_amend_published`] sui branch remoti che contengono HEAD. Con
+    /// con `amend`, [`check_amend_published`] sui branch remoti e i tag che contengono HEAD
+    /// ([`amend_impact`]; gli altri branch e tag che lo contengono vanno in `also_on`). Con
     /// `amend` il commit riscritto è salvato in un ref di backup
     /// (`refs/project/backup/amend-...`, nel risultato) prima di scrivere; se il backup non
     /// riesce non si committa. Il `CliBackend` esegue `git commit` con hook e firma secondo la

@@ -287,6 +287,130 @@ fn amend_of_a_published_commit_needs_confirm() {
 }
 
 #[test]
+fn amend_with_a_tag_needs_confirm_and_reports_diverging_refs() {
+    let repo = Repo::new();
+    repo.commit_file("a.txt", "a\n", "primo");
+    let old = repo.commit_file("b.txt", "b\n", "secondo");
+    repo.branch("altro");
+    let mut backend = repo.open();
+    // Un altro branch sul commit: niente conferma, ma resta indietro e lo si dice.
+    let out = backend
+        .commit(&CommitRequest::new("secondo corretto").amend())
+        .unwrap();
+    assert_eq!(out.also_on, ["refs/heads/altro"]);
+    assert_eq!(repo.rev("altro"), old);
+
+    // Un tag sul commit: resterebbe sul commit vecchio, serve la conferma.
+    repo.tag("v1", "HEAD");
+    let head = repo.git(&["rev-parse", "HEAD"]);
+    let before = index(&repo);
+    let err = backend
+        .commit(&CommitRequest::new("terzo tentativo").amend())
+        .unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+    assert!(err.to_string().contains("refs/tags/v1"), "{err}");
+    assert_unchanged(&repo, &head, &before);
+    let out = backend
+        .commit(&CommitRequest::new("terzo tentativo").amend().confirmed())
+        .unwrap();
+    assert_eq!(out.also_on, ["refs/tags/v1"]);
+    // Un commit nuovo non riscrive niente.
+    repo.write("c.txt", "c\n");
+    repo.stage(&["c.txt"]);
+    let out = backend.commit(&CommitRequest::new("nuovo")).unwrap();
+    assert!(out.also_on.is_empty());
+}
+
+#[test]
+fn amend_that_produces_the_same_commit_changes_nothing() {
+    let repo = Repo::new();
+    repo.commit_file("a.txt", "a\n", "primo");
+    repo.commit_file("b.txt", "b\n", "secondo");
+    // Date fisse impostate apposta (le variabili ereditate invece si tolgono): due `amend`
+    // uguali danno lo stesso commit, come due `amend` nello stesso secondo.
+    let opener = Repo::opener()
+        .env("GIT_AUTHOR_DATE", "1700000000 +0200")
+        .env("GIT_COMMITTER_DATE", "1700000000 +0200");
+    let mut backend = opener.open_cli(repo.path_str()).unwrap();
+    let first = backend
+        .commit(&CommitRequest::new("uguale").amend())
+        .unwrap();
+    let backups = repo.git(&["for-each-ref", "refs/project/"]);
+    let out = backend
+        .commit(&CommitRequest::new("uguale").amend())
+        .unwrap();
+    assert_eq!(out.commit.id, first.commit.id);
+    assert_eq!(out.previous, Some(first.commit.id));
+    // Niente è cambiato: nessun backup nuovo (puntava allo stesso commit).
+    assert_eq!(out.backup, None);
+    assert_eq!(repo.git(&["for-each-ref", "refs/project/"]), backups);
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_commit_that_moved_head_keeps_the_backup() {
+    let repo = Repo::new();
+    let first = repo.commit_file("a.txt", "a\n", "primo");
+    let second = repo.commit_file("b.txt", "b\n", "secondo");
+    // L'hook sposta HEAD e poi rifiuta il commit.
+    hook(&repo, "pre-commit", "git reset -q --soft HEAD~1\nexit 1");
+    let mut backend = repo.open();
+    let err = backend
+        .commit(&CommitRequest::new("x").amend())
+        .unwrap_err();
+    assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    assert_eq!(repo.rev("HEAD"), first);
+    let backup = repo.git(&["for-each-ref", "--format=%(refname)", "refs/project/"]);
+    assert!(backup.starts_with("refs/project/backup/amend-"), "{backup}");
+    assert_eq!(repo.rev(&backup), second);
+    assert!(err.to_string().contains(&backup), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn error_after_a_successful_amend_names_the_backup() {
+    let repo = Repo::new();
+    let first = repo.commit_file("a.txt", "a\n", "primo");
+    let second = repo.commit_file("b.txt", "b\n", "secondo");
+    // Il commit riesce, poi un `post-commit` sposta HEAD.
+    hook(&repo, "post-commit", "git reset -q --hard HEAD~1");
+    let mut backend = repo.open();
+    let err = backend
+        .commit(&CommitRequest::new("riscritto").amend())
+        .unwrap_err();
+    let EngineError::PostCommit { commit, backup, .. } = &err else {
+        panic!("{err}");
+    };
+    // HEAD non è il commit creato: non lo si spaccia per quello.
+    assert_eq!(*commit, None);
+    let backup = backup.clone().unwrap();
+    assert_eq!(repo.rev(&backup), second);
+    assert!(err.to_string().contains(&backup), "{err}");
+    assert!(err.to_string().contains("non ripetere"), "{err}");
+    assert_eq!(repo.rev("HEAD"), first);
+
+    // Lo stesso tramite il comando: l'errore è `PostCommit`, non un commit fallito.
+    repo.git(&["reset", "-q", "--hard", &second.to_string()]);
+    let registry = Registry::builtin();
+    let mut session = Session::new(Arc::new(Repo::opener()));
+    registry
+        .run(
+            "repo.open",
+            &mut session,
+            json!({ "path": repo.path_str() }),
+        )
+        .unwrap();
+    let err = registry
+        .run(
+            "commit.create",
+            &mut session,
+            json!({ "message": "ancora", "amend": true }),
+        )
+        .unwrap_err();
+    assert!(matches!(err, EngineError::PostCommit { .. }), "{err}");
+}
+
+#[test]
 fn amend_of_a_merge_keeps_both_parents() {
     let h = repo_with_history();
     let mut backend = h.repo.open();

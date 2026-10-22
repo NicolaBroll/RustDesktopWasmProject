@@ -8,10 +8,10 @@
 //! non dipende dall'orologio del sistema.
 
 use super::write::{TreeEntry, ZERO, entry_order, file_type, tracked_info};
-use super::{HEADS, HeadRef, MemoryBackend, REMOTES, content_oid};
+use super::{HEADS, HeadRef, MemoryBackend, REMOTES, TAGS, content_oid};
 use crate::EngineError;
 use crate::git::{
-    BACKUP_PREFIX, CommitOutcome, CommitRequest, GitBackend, check_amend_published,
+    BACKUP_PREFIX, CommitOutcome, CommitRequest, GitBackend, amend_impact, check_amend_published,
     check_commit_state, cleanup_message, split_message,
 };
 use project_domain::{
@@ -43,9 +43,17 @@ impl MemoryBackend {
                     .to_owned(),
             ));
         }
+        let current_branch = match &self.head {
+            HeadRef::Branch(name) => Some(format!("{HEADS}{name}")),
+            HeadRef::Detached(_) => None,
+        };
+        let mut also_on = Vec::new();
         let old = match previous {
             Some(id) if request.amend => {
-                check_amend_published(request, &self.remotes_containing(id))?;
+                let (published, diverging) =
+                    amend_impact(&self.refs_containing(id), current_branch.as_deref());
+                check_amend_published(request, &published)?;
+                also_on = diverging;
                 Some(
                     self.commits
                         .get(&id)
@@ -137,15 +145,18 @@ impl MemoryBackend {
             previous,
             branch,
             backup,
+            also_on,
         })
     }
 
-    /// I branch remoti da cui il commit `id` è raggiungibile (nomi completi).
-    fn remotes_containing(&self, id: Oid) -> Vec<String> {
+    /// I branch locali, i branch remoti e i tag da cui il commit `id` è raggiungibile (nomi
+    /// completi), come `git for-each-ref --contains`.
+    fn refs_containing(&self, id: Oid) -> Vec<String> {
         self.refs
             .iter()
             .filter(|(name, entry)| {
-                name.starts_with(REMOTES) && self.reachable(entry.target).contains(&id)
+                [HEADS, REMOTES, TAGS].iter().any(|p| name.starts_with(p))
+                    && self.reachable(entry.target).contains(&id)
             })
             .map(|(name, _)| name.clone())
             .collect()

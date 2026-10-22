@@ -103,6 +103,15 @@ fn diff_reads_do_not_touch_the_index() {
         "rinominato.txt",
         "contenuto abbastanza lungo da riconoscere\n",
     );
+    // Data nel passato: senza, il file risulterebbe "racily clean" (più recente dell'indice) e
+    // git non riscriverebbe l'indice comunque; il test passerebbe solo per caso.
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(repo.path().join("rinominato.txt"))
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
     let backend = repo.open();
     backend.diff(&worktree(None)).unwrap();
     backend.diff(&index(None)).unwrap();

@@ -35,7 +35,16 @@ risultato a quel file (le rinomine restano tali) ed è una stringa, o un array d
 non UTF-8. Non c'è un limite di dimensione: per i commit grandi conviene chiedere un file alla
 volta.
 
-Il server MCP espone `list_commands`, `execute_command` e `open_repo`. All'avvio apre il
+Scritture (segnate `[modifica]` da `commands`): `index.stage {"paths"}` mette in stage i file
+(modifiche, file nuovi, cancellazioni; per una rinomina i due percorsi) e `index.unstage {"paths"}`
+li toglie dallo stage senza toccare il worktree. `paths` è una lista non vuota di percorsi esatti
+(stringhe o array di byte), presi alla lettera; una cartella comprende i file che contiene. Un file
+ignorato da `.gitignore` non viene mai forzato: errore, e niente cambia. Mettere in stage un file
+in conflitto lo risolve; toglierlo dallo stage è rifiutato. Entrambi restituiscono il nuovo stato,
+come `repo.status`.
+
+Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
+`writes: true` per i comandi che modificano il repository. All'avvio apre il
 repository di `--root` (default: cartella corrente), se c'è. Tutti i percorsi sono confinati in
 `--root`, anche la ricerca dei repository (git non risale sopra la radice); un repository si
 apre solo con `open_repo`, non con `repo.open`.

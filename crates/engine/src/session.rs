@@ -47,6 +47,15 @@ impl Session {
             .map(|repo| repo.backend.as_ref())
             .ok_or(EngineError::NoRepo)
     }
+
+    /// Il repo aperto, per i comandi che lo modificano; [`EngineError::NoRepo`] se non ce n'è
+    /// uno.
+    pub fn repo_mut(&mut self) -> Result<&mut dyn GitBackend, EngineError> {
+        match self.repo.as_mut() {
+            Some(repo) => Ok(repo.backend.as_mut()),
+            None => Err(EngineError::NoRepo),
+        }
+    }
 }
 
 impl fmt::Debug for Session {

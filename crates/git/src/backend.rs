@@ -8,6 +8,7 @@ use project_domain::{
     parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener};
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
@@ -224,15 +225,23 @@ impl CliBackend {
 
     /// `git diff` con `compare` (cosa confrontare, già con `--end-of-options` se servono
     /// revisioni) e `extra` (opzioni), limitato a `paths`, presi alla lettera: niente glob né
-    /// pathspec magici (`--literal-pathspecs`). Una lettura: non aggiorna l'indice
-    /// (`--no-optional-locks`).
+    /// pathspec magici (`--literal-pathspecs`). Una lettura: non aggiorna l'indice. Per
+    /// `git diff` non basta `--no-optional-locks`: con un file cambiato solo nei dati di
+    /// `stat` (es. riscritto uguale) riscrive l'indice per aggiornarli; lo impedisce
+    /// `diff.autoRefreshIndex=false`, e il file resta comunque fuori dal diff.
     fn run_diff(
         &self,
         extra: &[&str],
         compare: &[&str],
         paths: &[&RepoPath],
     ) -> Result<Vec<u8>, EngineError> {
-        let mut args = vec!["--no-optional-locks", "--literal-pathspecs", "diff"];
+        let mut args = vec![
+            "--no-optional-locks",
+            "-c",
+            "diff.autoRefreshIndex=false",
+            "--literal-pathspecs",
+            "diff",
+        ];
         args.extend_from_slice(extra);
         args.extend_from_slice(compare);
         args.push("--");
@@ -267,6 +276,62 @@ impl CliBackend {
             }
         }
         Ok(paths)
+    }
+
+    /// I file la cui cancellazione è in stage (in HEAD, non nell'indice), senza rinomine.
+    fn staged_deletions(&self) -> Result<BTreeSet<RepoPath>, EngineError> {
+        // Su un branch senza commit il confronto è con l'albero vuoto: nessuna cancellazione.
+        let args = [
+            "--no-optional-locks",
+            "diff",
+            "--cached",
+            "--no-renames",
+            "--no-relative",
+            "--name-only",
+            "-z",
+            "--diff-filter=D",
+            "--",
+        ];
+        Ok(nul_separated(&self.run(&args)?).collect())
+    }
+
+    /// I file in conflitto (con stadi 1–3 nell'indice), da `git ls-files --unmerged`.
+    fn unmerged_paths(&self) -> Result<BTreeSet<RepoPath>, EngineError> {
+        // Un record `<modo> <id> <stadio>\t<percorso>` per stadio.
+        let out = self.run(&["ls-files", "-z", "--unmerged", "--"])?;
+        nul_separated(&out)
+            .map(|record| {
+                let bytes = record.as_bytes();
+                match bytes.iter().position(|&b| b == b'\t') {
+                    Some(tab) => Ok(RepoPath::from_bytes(&bytes[tab + 1..])),
+                    None => Err(failure_text(&["ls-files"], bytes)),
+                }
+            })
+            .collect()
+    }
+
+    /// Esegue `git <args>` con `paths` letti da stdin (`--pathspec-from-file=-
+    /// --pathspec-file-nul`, presi alla lettera da `--literal-pathspecs`): nessun limite di
+    /// lunghezza della riga di comando e nessun percorso che git possa leggere come opzione.
+    fn output_with_paths(
+        &self,
+        args: &[&str],
+        paths: &[RepoPath],
+    ) -> Result<std::process::Output, EngineError> {
+        debug_assert!(
+            !paths.is_empty(),
+            "senza percorsi git lavorerebbe su tutto il repo"
+        );
+        let mut full = vec!["--literal-pathspecs"];
+        full.extend_from_slice(args);
+        full.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+        let mut input = Vec::new();
+        for path in paths {
+            input.extend_from_slice(path.as_bytes());
+            input.push(0);
+        }
+        self.git
+            .output_with_input(Some(&self.workdir), &full, &input)
     }
 
     /// Operazione in corso, dai file che git lascia nella sua cartella (come `git status`).
@@ -420,5 +485,145 @@ impl GitBackend for CliBackend {
         diff.files
             .retain(|f| f.new_path == *path || f.old_path == *path);
         Ok(diff)
+    }
+
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+        if paths.is_empty() {
+            // `git add` senza percorsi non aggiunge niente, ma meglio non chiederlo affatto.
+            return Ok(());
+        }
+        // Un file la cui cancellazione è già in stage non è più né nell'indice né nel
+        // worktree: `git add` lo rifiuterebbe ("did not match any files"). Non c'è niente da
+        // fare: si salta (succede chiedendo di nuovo i due percorsi di una rinomina in stage).
+        let deleted = self.staged_deletions()?;
+        let paths: Vec<RepoPath> = paths
+            .iter()
+            .filter(|p| {
+                !(deleted.contains(*p)
+                    && std::fs::symlink_metadata(self.workdir.join(os_from_bytes(p.as_bytes())))
+                        .is_err())
+            })
+            .cloned()
+            .collect();
+        if paths.is_empty() {
+            return Ok(());
+        }
+        // `--no-ignore-errors`: un file illeggibile ferma tutto (la config `add.ignoreErrors`
+        // farebbe continuare con gli altri).
+        let add = ["add", "--no-ignore-errors"];
+        // Prima a vuoto: con un file ignorato `git add` aggiunge gli altri e poi fallisce,
+        // con un percorso inesistente fallisce prima di aggiungere. La prova a vuoto fa gli
+        // stessi controlli senza toccare l'indice, così o va tutto o non cambia niente.
+        let dry = [&add[..], &["--dry-run"]].concat();
+        let out = self.output_with_paths(&dry, &paths)?;
+        if !out.status.success() {
+            let stderr = stderr_text(&out);
+            return Err(match ignored_paths(&stderr) {
+                Some(ignored) => EngineError::ignored(&ignored),
+                None => failure(&dry, &out),
+            });
+        }
+        let out = self.output_with_paths(&add, &paths)?;
+        if !out.status.success() {
+            return Err(failure(&add, &out));
+        }
+        Ok(())
+    }
+
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        // `restore --staged` su un file in conflitto toglierebbe senza dire niente gli stadi
+        // del conflitto (le versioni base, nostra e loro).
+        let conflicts: Vec<RepoPath> = self
+            .unmerged_paths()?
+            .into_iter()
+            .filter(|u| paths.iter().any(|p| under(u, p)))
+            .collect();
+        if !conflicts.is_empty() {
+            return Err(EngineError::unmerged(&conflicts));
+        }
+        // L'indice torna come in HEAD; senza commit come l'albero vuoto, cioè i file tornano
+        // non tracciati (`restore` senza `--source` fallirebbe: HEAD non si risolve).
+        // `--no-overlay` (già il default di `restore`): i file che in HEAD non ci sono escono
+        // dall'indice. Senza `--worktree` il worktree non si tocca.
+        let source = match self.resolve("HEAD")? {
+            Some(head) => head.to_string(),
+            None => EMPTY_TREE.to_owned(),
+        };
+        let source = format!("--source={source}");
+        let args = ["restore", "--staged", "--no-overlay", &source];
+        let out = self.output_with_paths(&args, paths)?;
+        if !out.status.success() {
+            return Err(failure(&args, &out));
+        }
+        Ok(())
+    }
+}
+
+/// I percorsi separati da NUL nell'output di git (`-z`), senza il NUL finale.
+fn nul_separated(out: &[u8]) -> impl Iterator<Item = RepoPath> + '_ {
+    out.split(|&b| b == 0)
+        .filter(|p| !p.is_empty())
+        .map(RepoPath::from_bytes)
+}
+
+/// Vero se `path` è `wanted` o un file sotto la cartella `wanted` (come un pathspec letterale).
+fn under(path: &RepoPath, wanted: &RepoPath) -> bool {
+    let (path, wanted) = (path.as_bytes(), wanted.as_bytes());
+    path == wanted || (path.starts_with(wanted) && path.get(wanted.len()) == Some(&b'/'))
+}
+
+/// I percorsi elencati da `git add` quando rifiuta dei file ignorati (con `LC_ALL=C`):
+///
+/// ```text
+/// The following paths are ignored by one of your .gitignore files:
+/// <percorso>
+/// hint: Use -f if you really want to add them.
+/// ```
+///
+/// `None` se stderr non contiene quel messaggio.
+fn ignored_paths(stderr: &str) -> Option<Vec<String>> {
+    const HEADER: &str = "The following paths are ignored by one of your .gitignore files:";
+    let start = stderr.find(HEADER)? + HEADER.len();
+    let paths: Vec<String> = stderr[start..]
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .take_while(|l| !l.starts_with("hint:") && !l.starts_with("fatal:"))
+        .map(str::to_owned)
+        .collect();
+    Some(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignored_paths_from_git_add() {
+        let stderr = "The following paths are ignored by one of your .gitignore files:\n\
+                      debug.log\n\
+                      dir/x.log\n\
+                      hint: Use -f if you really want to add them.\n\
+                      hint: Turn this message off by running";
+        assert_eq!(
+            ignored_paths(stderr),
+            Some(vec!["debug.log".to_owned(), "dir/x.log".to_owned()])
+        );
+        assert_eq!(
+            ignored_paths("fatal: pathspec 'x' did not match any files"),
+            None
+        );
+    }
+
+    #[test]
+    fn under_matches_files_and_folders() {
+        let p = |s: &str| RepoPath::from(s);
+        assert!(under(&p("a/b.txt"), &p("a")));
+        assert!(under(&p("a"), &p("a")));
+        assert!(!under(&p("ab/c"), &p("a")));
+        assert!(!under(&p("a"), &p("a/b")));
     }
 }

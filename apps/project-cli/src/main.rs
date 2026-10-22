@@ -48,7 +48,11 @@ fn main() -> anyhow::Result<()> {
         Command::Commands { search } => {
             let registry = Registry::builtin();
             for spec in registry.search(search.as_deref().unwrap_or_default()) {
-                println!("{:<20} {:<34} {}", spec.id, spec.title, spec.params_help);
+                let writes = if spec.writes { "  [modifica]" } else { "" };
+                println!(
+                    "{:<20} {:<34} {}{writes}",
+                    spec.id, spec.title, spec.params_help
+                );
             }
             Ok(())
         }

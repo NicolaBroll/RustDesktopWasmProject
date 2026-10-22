@@ -3,6 +3,7 @@
 
 use project_engine::EngineError;
 use std::ffi::{OsStr, OsString};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -92,6 +93,37 @@ impl Git {
         })
     }
 
+    /// Come [`Git::output`], ma scrive `input` su stdin di git (es. i percorsi per
+    /// `--pathspec-from-file=-`, o un messaggio di commit). stdin viene scritto da un thread a
+    /// parte, così un output grande non blocca git mentre aspetta di leggere.
+    pub(crate) fn output_with_input(
+        &self,
+        dir: Option<&Path>,
+        args: &[&str],
+        input: &[u8],
+    ) -> Result<Output, EngineError> {
+        let not_found = |e: std::io::Error| {
+            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+        };
+        let mut child = self
+            .command(dir, args, &[])
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(not_found)?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .expect("stdin è stato chiesto con `Stdio::piped`");
+        std::thread::scope(|scope| {
+            // Se git termina prima di leggere tutto (es. per un errore) la scrittura fallisce:
+            // conta il codice di uscita di git, non l'errore di scrittura.
+            scope.spawn(move || {
+                let _ = stdin.write_all(input);
+            });
+            child.wait_with_output().map_err(not_found)
+        })
+    }
+
     /// Esegue git e restituisce stdout; un codice di uscita diverso da zero dà
     /// [`EngineError::Git`] con il testo di stderr.
     pub(crate) fn run(&self, dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, EngineError> {
@@ -114,9 +146,13 @@ impl Git {
     }
 }
 
-/// [`EngineError::Git`] per un comando non riuscito, con il sottocomando e stderr.
+/// [`EngineError::Git`] per un comando non riuscito, con il sottocomando e stderr; se git non ha
+/// potuto prendere il lock dell'indice, [`EngineError::IndexLocked`].
 pub(crate) fn failure(args: &[&str], output: &Output) -> EngineError {
     let mut stderr = stderr_text(output);
+    if let Some(lock) = locked_index(&stderr) {
+        return EngineError::IndexLocked { lock };
+    }
     if stderr.is_empty() {
         stderr = format!("terminato con {}", output.status);
     }
@@ -126,18 +162,35 @@ pub(crate) fn failure(args: &[&str], output: &Output) -> EngineError {
     }
 }
 
+/// Il file di lock nel messaggio di git `fatal: Unable to create '<lock>': File exists.` (con
+/// `LC_ALL=C` il testo è sempre questo), se è il lock dell'indice.
+fn locked_index(stderr: &str) -> Option<String> {
+    const START: &str = "Unable to create '";
+    const END: &str = "': File exists.";
+    let start = stderr.find(START)? + START.len();
+    let len = stderr[start..].find(END)?;
+    let lock = &stderr[start..start + len];
+    lock.ends_with("index.lock").then(|| lock.to_owned())
+}
+
 /// stderr senza spazi iniziali e finali (convertito con `from_utf8_lossy`).
 pub(crate) fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_owned()
 }
 
 /// Il primo argomento che non è un'opzione globale, es. `status` in
-/// `--no-optional-locks status ...`.
+/// `--no-optional-locks status ...` o in `-c diff.x=y status ...`.
 fn subcommand<'a>(args: &[&'a str]) -> &'a str {
-    args.iter()
-        .copied()
-        .find(|arg| !arg.starts_with('-'))
-        .unwrap_or("")
+    let mut args = args.iter().copied();
+    while let Some(arg) = args.next() {
+        if arg == "-c" {
+            // Il valore di `-c` non è il sottocomando.
+            args.next();
+        } else if !arg.starts_with('-') {
+            return arg;
+        }
+    }
+    ""
 }
 
 /// Un percorso stampato da git su una riga (es. `rev-parse --show-toplevel`), senza l'a capo
@@ -172,6 +225,7 @@ mod tests {
             "status"
         );
         assert_eq!(subcommand(&["log", "-z"]), "log");
+        assert_eq!(subcommand(&["-c", "a.b=c", "--x", "diff", "--"]), "diff");
         assert_eq!(subcommand(&["--version"]), "");
     }
 
@@ -209,6 +263,30 @@ mod tests {
         for key in REPO_ENV.iter().chain(PATHSPEC_ENV) {
             assert_eq!(value(key), Some(None), "{key}");
         }
+    }
+
+    #[test]
+    fn index_lock_is_recognized() {
+        let stderr = "fatal: Unable to create '/r/.git/index.lock': File exists.\n\nAnother git \
+                      process seems to be running in this repository";
+        assert_eq!(locked_index(stderr).as_deref(), Some("/r/.git/index.lock"));
+        let other = "fatal: Unable to create '/r/.git/refs/heads/main.lock': File exists.";
+        assert_eq!(locked_index(other), None);
+        assert_eq!(
+            locked_index("fatal: pathspec 'x' did not match any files"),
+            None
+        );
+    }
+
+    #[test]
+    fn input_goes_to_stdin() {
+        let git = Git::new("git");
+        let out = git
+            .output_with_input(None, &["hash-object", "--stdin"], b"ciao\n")
+            .unwrap();
+        // `printf 'ciao\n' | git hash-object --stdin`
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"887ae9333d92a1d72400c210546e28baa1050e44\n");
     }
 
     #[test]

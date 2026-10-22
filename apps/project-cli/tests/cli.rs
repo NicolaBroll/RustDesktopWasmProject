@@ -155,6 +155,47 @@ fn run_diff_commands() {
 }
 
 #[test]
+fn run_stage_and_unstage() {
+    let repo = temp_repo(1);
+    std::fs::write(repo.path().join("a.txt"), "cambiato\n").unwrap();
+    std::fs::write(repo.path().join("b.txt"), "nuovo\n").unwrap();
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"index.stage={"paths":["a.txt","b.txt"]}"#])
+        .args(["--cmd", r#"index.unstage={"paths":["a.txt"]}"#])
+        .args(["--cmd", "diff.index"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    // Ogni scrittura restituisce il nuovo stato.
+    let entries = &lines[0]["entries"];
+    assert_eq!(entries[0]["path"], "a.txt");
+    assert_eq!(entries[0]["index"], "Modified");
+    assert_eq!(entries[1]["path"], "b.txt");
+    assert_eq!(entries[1]["index"], "Added");
+    let entries = &lines[1]["entries"];
+    assert_eq!(entries[0]["index"], "Unmodified");
+    assert_eq!(entries[0]["worktree"], "Modified");
+    let files = lines[2]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["new_path"], "b.txt");
+    // Il worktree non cambia.
+    let a = std::fs::read_to_string(repo.path().join("a.txt")).unwrap();
+    assert_eq!(a, "cambiato\n");
+
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"index.stage={"paths":[]}"#])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "una lista vuota non vuol dire tutto"
+    );
+}
+
+#[test]
 fn repo_option_goes_before_or_after_the_subcommand() {
     let repo = temp_repo(1);
     let output = cli()
@@ -208,12 +249,21 @@ fn commands_lists_the_catalog() {
             "diff.commit",
             "diff.index",
             "diff.worktree",
+            "index.stage",
+            "index.unstage",
             "repo.log",
             "repo.open",
             "repo.refs",
             "repo.status"
         ]
     );
+    // I comandi che modificano il repo sono segnati.
+    let marked: Vec<&str> = text
+        .lines()
+        .filter(|l| l.ends_with("[modifica]"))
+        .map(|l| l.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(marked, ["index.stage", "index.unstage"]);
 
     let output = cli()
         .args(["commands", "--search", "cronologia"])

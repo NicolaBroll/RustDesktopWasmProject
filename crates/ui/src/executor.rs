@@ -210,6 +210,7 @@ mod tests {
             id,
             title: "prova",
             params_help: "{}",
+            writes: false,
         };
         registry.register(spec("test.slow"), slow);
         registry.register(spec("test.panic"), panics);

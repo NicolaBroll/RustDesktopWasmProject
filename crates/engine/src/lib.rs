@@ -48,8 +48,51 @@ pub enum EngineError {
         command: String,
         stderr: String,
     },
+    /// L'indice è bloccato da un altro processo git: il file `lock` (di solito
+    /// `.git/index.lock`) esiste. Non si riprova e non si cancella il lock: se nessun git è in
+    /// esecuzione è rimasto da un crash e va tolto a mano.
+    #[error(
+        "l'indice è bloccato: `{lock}` esiste. Un altro processo git sta lavorando sul repository; \
+         riprovare quando ha finito. Se nessun git è in esecuzione il file è rimasto da un crash \
+         e va rimosso a mano"
+    )]
+    IndexLocked { lock: String },
+    /// L'operazione è rifiutata nello stato attuale del repo (es. stage di un file ignorato,
+    /// unstage di un file in conflitto); niente è stato modificato.
+    #[error("operazione rifiutata: {0}")]
+    NotAllowed(String),
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]
     Domain(#[from] DomainError),
+}
+
+impl EngineError {
+    /// [`EngineError::NotAllowed`] per lo stage di file ignorati chiesti per nome: niente è
+    /// stato messo in stage.
+    pub fn ignored(paths: &[impl std::fmt::Display]) -> Self {
+        EngineError::NotAllowed(format!(
+            "file ignorati da .gitignore (o da un altro file di esclusione), niente messo in \
+             stage: {}",
+            list(paths)
+        ))
+    }
+
+    /// [`EngineError::NotAllowed`] per l'unstage di file in conflitto: niente è stato tolto
+    /// dallo stage.
+    pub fn unmerged(paths: &[impl std::fmt::Display]) -> Self {
+        EngineError::NotAllowed(format!(
+            "file in conflitto, niente tolto dallo stage (si perderebbero le versioni del \
+             conflitto; per risolverlo va messo in stage): {}",
+            list(paths)
+        ))
+    }
+}
+
+fn list(paths: &[impl std::fmt::Display]) -> String {
+    paths
+        .iter()
+        .map(|p| format!("`{p}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

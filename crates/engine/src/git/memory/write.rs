@@ -1,0 +1,467 @@
+//! Scritture del [`MemoryBackend`]: stage e unstage sulle voci dello stato.
+//!
+//! L'indice non è tenuto a parte: è descritto dalle voci dello stato ([`StatusEntry`]), che
+//! hanno per ogni file modi e id in HEAD e nell'indice, come `git status --porcelain=v2`.
+//! Stage e unstage aggiornano quelle voci, i blob e i file del worktree, così `repo.status`,
+//! `diff.index` e `diff.worktree` vedono subito il nuovo stato. Ogni operazione lavora su una
+//! copia e la applica solo se tutti i percorsi sono validi: un errore non cambia niente.
+
+use super::{MemoryBackend, content_oid};
+use crate::EngineError;
+use project_domain::{
+    Change, ChangedFile, EntryKind, Oid, RepoPath, StatusEntry, TrackedInfo, UnmergedInfo,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Modo e id di un file in un albero.
+type TreeEntry = (u32, Oid);
+
+const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
+
+/// Vero se `path` è `wanted` o un file sotto la cartella `wanted` (come un pathspec letterale).
+fn matches(path: &RepoPath, wanted: &RepoPath) -> bool {
+    let (path, wanted) = (path.as_bytes(), wanted.as_bytes());
+    path == wanted || (path.starts_with(wanted) && path.get(wanted.len()) == Some(&b'/'))
+}
+
+/// Il tipo di oggetto di un modo (file, link, sottomodulo), senza i permessi.
+fn file_type(mode: u32) -> u32 {
+    mode & 0o170000
+}
+
+/// Ordine delle voci di `git status --porcelain=v2`: file tracciati e in conflitto per
+/// percorso, poi i non tracciati, poi gli ignorati.
+fn entry_order(entry: &StatusEntry) -> (u8, &RepoPath) {
+    let group = match entry.kind {
+        EntryKind::Untracked => 1,
+        EntryKind::Ignored => 2,
+        _ => 0,
+    };
+    (group, &entry.path)
+}
+
+fn tracked_info(entry: &StatusEntry) -> Option<&TrackedInfo> {
+    match &entry.kind {
+        EntryKind::Ordinary(info)
+        | EntryKind::Renamed { info, .. }
+        | EntryKind::Copied { info, .. } => Some(info),
+        _ => None,
+    }
+}
+
+fn untracked(path: RepoPath) -> StatusEntry {
+    StatusEntry {
+        path,
+        index: Change::Untracked,
+        worktree: Change::Untracked,
+        kind: EntryKind::Untracked,
+    }
+}
+
+impl MemoryBackend {
+    /// L'albero del commit `id`: i file cambiati lungo la catena dei primi genitori, applicati
+    /// dalla radice (ogni commit ha i file cambiati rispetto al primo genitore).
+    fn tree_at(&self, id: Oid) -> BTreeMap<RepoPath, TreeEntry> {
+        let mut chain = Vec::new();
+        let mut next = Some(id);
+        while let Some(id) = next {
+            let Some(commit) = self.commits.get(&id) else {
+                break;
+            };
+            chain.push(id);
+            next = commit.parents.first().copied();
+        }
+        let mut tree = BTreeMap::new();
+        for id in chain.iter().rev() {
+            for file in self.changes.get(id).into_iter().flatten() {
+                apply_change(&mut tree, file);
+            }
+        }
+        tree
+    }
+
+    fn head_tree(&self) -> BTreeMap<RepoPath, TreeEntry> {
+        self.head_target()
+            .map(|id| self.tree_at(id))
+            .unwrap_or_default()
+    }
+
+    /// Vero se i blob `a` e `b` hanno lo stesso contenuto (stesso id o contenuti noti uguali).
+    fn same_blob(&self, a: Oid, b: Oid) -> bool {
+        a == b || matches!((self.blobs.get(&a), self.blobs.get(&b)), (Some(x), Some(y)) if x == y)
+    }
+
+    /// Vero se il file `path` del worktree ha il contenuto del blob `oid` (falso se uno dei due
+    /// non è noto).
+    fn worktree_is(&self, path: &RepoPath, oid: Oid) -> bool {
+        matches!(
+            (self.worktree.get(path), self.blobs.get(&oid)),
+            (Some(w), Some(b)) if w == b
+        )
+    }
+
+    /// Salva `content` come blob e ne restituisce l'id.
+    fn store_blob(&mut self, content: Vec<u8>) -> Oid {
+        let id = content_oid(&content);
+        self.blobs.insert(id, content);
+        id
+    }
+
+    /// Id nell'indice del file `path` del worktree messo in stage.
+    fn stage_content(&mut self, path: &RepoPath) -> Oid {
+        match self.worktree.get(path).cloned() {
+            Some(content) => self.store_blob(content),
+            // Contenuto sconosciuto: un id fisso, il diff lo mostrerà come binario.
+            None => MemoryBackend::fake_oid(u64::MAX),
+        }
+    }
+
+    /// Prima di cambiare l'indice di un file non modificato nel worktree, ne copia il
+    /// contenuto dall'indice al worktree: dopo, il worktree deve restare com'era.
+    fn keep_worktree(&mut self, entry: &StatusEntry, index_mode: u32, index_oid: Oid) {
+        if entry.worktree == Change::Unmodified
+            && index_mode != 0
+            && !self.worktree.contains_key(&entry.path)
+            && let Some(content) = self.blobs.get(&index_oid).cloned()
+        {
+            self.worktree.insert(entry.path.clone(), content);
+        }
+    }
+
+    /// Le voci che corrispondono a `wanted`, o un errore come quello di git se `wanted` non è
+    /// né fra le voci né in HEAD. `in_head` dice se c'è almeno un file di HEAD sotto `wanted`.
+    fn hits(
+        entries: &[StatusEntry],
+        head: &BTreeMap<RepoPath, TreeEntry>,
+        wanted: &RepoPath,
+        not_found: impl FnOnce() -> EngineError,
+    ) -> Result<Vec<usize>, EngineError> {
+        let hits: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches(&e.path, wanted))
+            .map(|(i, _)| i)
+            .collect();
+        let in_head = head.keys().any(|p| matches(p, wanted));
+        if hits.is_empty() && !in_head {
+            return Err(not_found());
+        }
+        Ok(hits)
+    }
+
+    /// [`GitBackend::stage`](crate::GitBackend::stage) sulle voci dello stato.
+    pub(super) fn stage_paths(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+        let head = self.head_tree();
+        let mut selected = BTreeSet::new();
+        let mut ignored = Vec::new();
+        for wanted in paths {
+            let hits = Self::hits(&self.entries, &head, wanted, || EngineError::Git {
+                command: "add".to_owned(),
+                stderr: format!("fatal: pathspec '{wanted}' did not match any files"),
+            })?;
+            for i in hits {
+                let entry = &self.entries[i];
+                match entry.kind {
+                    // Un file ignorato si rifiuta solo se chiesto per nome; dentro una
+                    // cartella si salta, come fa git.
+                    EntryKind::Ignored if entry.path == *wanted => ignored.push(wanted.clone()),
+                    EntryKind::Ignored => {}
+                    _ => {
+                        selected.insert(i);
+                    }
+                }
+            }
+        }
+        if !ignored.is_empty() {
+            return Err(EngineError::ignored(&ignored));
+        }
+
+        let entries = std::mem::take(&mut self.entries);
+        let mut next = Vec::with_capacity(entries.len());
+        for (i, entry) in entries.into_iter().enumerate() {
+            if selected.contains(&i) {
+                next.extend(self.stage_entry(entry));
+            } else {
+                next.push(entry);
+            }
+        }
+        next.sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
+        self.entries = next;
+        Ok(())
+    }
+
+    /// La voce dopo lo stage del file; `None` se il file non è più cambiato.
+    fn stage_entry(&mut self, mut entry: StatusEntry) -> Option<StatusEntry> {
+        match &entry.kind {
+            EntryKind::Untracked => {
+                let oid = self.stage_content(&entry.path);
+                let info = TrackedInfo {
+                    submodule: None,
+                    mode_head: 0,
+                    mode_index: FILE_MODE,
+                    mode_worktree: FILE_MODE,
+                    oid_head: ZERO,
+                    oid_index: oid,
+                };
+                Some(StatusEntry {
+                    index: Change::Added,
+                    worktree: Change::Unmodified,
+                    kind: EntryKind::Ordinary(info),
+                    path: entry.path,
+                })
+            }
+            EntryKind::Unmerged(u) => {
+                let u = u.clone();
+                self.resolve_conflict(entry.path, &u)
+            }
+            EntryKind::Ignored => Some(entry),
+            EntryKind::Ordinary(_) | EntryKind::Renamed { .. } | EntryKind::Copied { .. } => {
+                let mut info = tracked_info(&entry).cloned()?;
+                match entry.worktree {
+                    Change::Unmodified => return Some(entry),
+                    Change::Deleted => {
+                        info.mode_index = 0;
+                        info.oid_index = ZERO;
+                    }
+                    _ => {
+                        info.oid_index = self.stage_content(&entry.path);
+                        info.mode_index = info.mode_worktree;
+                    }
+                }
+                entry.worktree = Change::Unmodified;
+                self.finish(entry, info)
+            }
+        }
+    }
+
+    /// Un file in conflitto messo in stage: risolto con il contenuto del worktree e
+    /// confrontato con «nostro» (HEAD).
+    fn resolve_conflict(&mut self, path: RepoPath, u: &UnmergedInfo) -> Option<StatusEntry> {
+        let (mode_index, oid_index) = if u.mode_worktree == 0 {
+            (0, ZERO)
+        } else {
+            (u.mode_worktree, self.stage_content(&path))
+        };
+        let info = TrackedInfo {
+            submodule: u.submodule,
+            mode_head: u.mode_ours,
+            mode_index,
+            mode_worktree: u.mode_worktree,
+            oid_head: u.oid_ours,
+            oid_index,
+        };
+        let entry = StatusEntry {
+            path,
+            index: Change::Unmodified,
+            worktree: Change::Unmodified,
+            kind: EntryKind::Ordinary(info.clone()),
+        };
+        self.finish(entry, info)
+    }
+
+    /// Aggiorna la voce con i nuovi dati dell'indice e ricalcola il cambiamento in stage;
+    /// `None` se il file non è più cambiato né in stage né fuori.
+    fn finish(&self, mut entry: StatusEntry, info: TrackedInfo) -> Option<StatusEntry> {
+        let index = if info.mode_index == 0 {
+            if info.mode_head == 0 {
+                // Aggiunto e poi cancellato: per git non c'è più.
+                return None;
+            }
+            Change::Deleted
+        } else if info.mode_head == 0 {
+            Change::Added
+        } else if file_type(info.mode_head) != file_type(info.mode_index) {
+            Change::TypeChanged
+        } else if info.mode_head == info.mode_index && self.same_blob(info.oid_head, info.oid_index)
+        {
+            Change::Unmodified
+        } else {
+            Change::Modified
+        };
+        if index == Change::Unmodified && entry.worktree == Change::Unmodified {
+            return None;
+        }
+        entry.kind = match entry.kind {
+            EntryKind::Renamed {
+                original, score, ..
+            } if index != Change::Unmodified => {
+                entry.index = Change::Renamed;
+                EntryKind::Renamed {
+                    info,
+                    original,
+                    score,
+                }
+            }
+            EntryKind::Copied {
+                original, score, ..
+            } if index != Change::Unmodified => {
+                entry.index = Change::Copied;
+                EntryKind::Copied {
+                    info,
+                    original,
+                    score,
+                }
+            }
+            _ => {
+                entry.index = index;
+                EntryKind::Ordinary(info)
+            }
+        };
+        Some(entry)
+    }
+
+    /// [`GitBackend::unstage`](crate::GitBackend::unstage) sulle voci dello stato. Il
+    /// worktree non cambia (se serve, il contenuto di un file non modificato viene copiato
+    /// dall'indice al worktree, che per il `MemoryBackend` è solo una mappa).
+    pub(super) fn unstage_paths(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+        let head = self.head_tree();
+        // Una rinomina o copia toccata da uno dei percorsi diventa due voci (cancellazione del
+        // vecchio e aggiunta del nuovo), così ognuno dei due si toglie dallo stage da solo.
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            match &entry.kind {
+                EntryKind::Renamed { original, .. } | EntryKind::Copied { original, .. }
+                    if paths
+                        .iter()
+                        .any(|p| matches(&entry.path, p) || matches(original, p)) =>
+                {
+                    entries.extend(split(entry));
+                }
+                _ => entries.push(entry.clone()),
+            }
+        }
+
+        let mut selected = BTreeSet::new();
+        let mut conflicts = Vec::new();
+        for wanted in paths {
+            let hits = Self::hits(&entries, &head, wanted, || EngineError::Git {
+                command: "restore".to_owned(),
+                stderr: format!(
+                    "error: pathspec '{wanted}' did not match any file(s) known to git"
+                ),
+            })?;
+            let mut known = head.keys().any(|p| matches(p, wanted));
+            for i in hits {
+                match entries[i].kind {
+                    EntryKind::Unmerged(_) => {
+                        conflicts.push(entries[i].path.clone());
+                        known = true;
+                    }
+                    EntryKind::Untracked | EntryKind::Ignored => {}
+                    _ => {
+                        selected.insert(i);
+                        known = true;
+                    }
+                }
+            }
+            if !known {
+                return Err(EngineError::Git {
+                    command: "restore".to_owned(),
+                    stderr: format!(
+                        "error: pathspec '{wanted}' did not match any file(s) known to git"
+                    ),
+                });
+            }
+        }
+        if !conflicts.is_empty() {
+            return Err(EngineError::unmerged(&conflicts));
+        }
+
+        let mut next = Vec::with_capacity(entries.len());
+        for (i, entry) in entries.into_iter().enumerate() {
+            if selected.contains(&i) {
+                next.extend(self.unstage_entry(entry));
+            } else {
+                next.push(entry);
+            }
+        }
+        next.sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
+        self.entries = next;
+        Ok(())
+    }
+
+    /// La voce dopo l'unstage del file (un file tracciato, non in conflitto).
+    fn unstage_entry(&mut self, mut entry: StatusEntry) -> Option<StatusEntry> {
+        let mut info = tracked_info(&entry).cloned()?;
+        if !entry.index.is_change() {
+            return Some(entry);
+        }
+        self.keep_worktree(&entry, info.mode_index, info.oid_index);
+        let absent = entry.worktree == Change::Deleted || info.mode_worktree == 0;
+        if info.mode_head == 0 {
+            // Non era in HEAD: torna non tracciato, se nel worktree c'è ancora.
+            return (!absent).then(|| untracked(entry.path));
+        }
+        info.mode_index = info.mode_head;
+        info.oid_index = info.oid_head;
+        entry.worktree = if absent {
+            info.mode_worktree = 0;
+            Change::Deleted
+        } else if info.mode_worktree == info.mode_head
+            && self.worktree_is(&entry.path, info.oid_head)
+        {
+            Change::Unmodified
+        } else if file_type(info.mode_worktree) != file_type(info.mode_head) {
+            Change::TypeChanged
+        } else {
+            Change::Modified
+        };
+        entry.kind = EntryKind::Ordinary(info.clone());
+        self.finish(entry, info)
+    }
+}
+
+const FILE_MODE: u32 = 0o100644;
+
+/// Una rinomina (o copia) in stage come due voci: il vecchio percorso cancellato in stage (solo
+/// per la rinomina) e il nuovo aggiunto.
+fn split(entry: &StatusEntry) -> Vec<StatusEntry> {
+    let (info, original, renamed) = match &entry.kind {
+        EntryKind::Renamed { info, original, .. } => (info, original, true),
+        EntryKind::Copied { info, original, .. } => (info, original, false),
+        _ => return vec![entry.clone()],
+    };
+    let mut out = Vec::with_capacity(2);
+    if renamed {
+        out.push(StatusEntry {
+            path: original.clone(),
+            index: Change::Deleted,
+            worktree: Change::Unmodified,
+            kind: EntryKind::Ordinary(TrackedInfo {
+                submodule: info.submodule,
+                mode_head: info.mode_head,
+                mode_index: 0,
+                mode_worktree: 0,
+                oid_head: info.oid_head,
+                oid_index: ZERO,
+            }),
+        });
+    }
+    out.push(StatusEntry {
+        path: entry.path.clone(),
+        index: Change::Added,
+        worktree: entry.worktree,
+        kind: EntryKind::Ordinary(TrackedInfo {
+            mode_head: 0,
+            oid_head: ZERO,
+            ..info.clone()
+        }),
+    });
+    out
+}
+
+/// Applica a un albero un file cambiato da un commit.
+fn apply_change(tree: &mut BTreeMap<RepoPath, TreeEntry>, file: &ChangedFile) {
+    if file.change == Change::Renamed {
+        tree.remove(file.old_path());
+    }
+    if file.new_mode == 0 {
+        tree.remove(&file.path);
+    } else {
+        tree.insert(file.path.clone(), (file.new_mode, file.new_oid));
+    }
+}
+
+#[cfg(test)]
+#[path = "write_tests.rs"]
+mod tests;

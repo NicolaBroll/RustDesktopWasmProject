@@ -19,7 +19,7 @@ use crate::EngineError;
 use project_domain::{Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// Un repository aperto, in sola lettura (le scritture arrivano con gli step successivi).
+/// Un repository aperto: letture e, uno step alla volta, scritture (stage e unstage per ora).
 ///
 /// `Send` perché la sessione può spostarlo su un thread di lavoro per i comandi lenti (§6).
 pub trait GitBackend: Send {
@@ -59,6 +59,36 @@ pub trait GitBackend: Send {
     /// [`GitBackend::show_commit`]). Per [`DiffSpec::Commit`] una `rev` che non si risolve in
     /// un commit dà [`EngineError::UnknownRev`].
     fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
+
+    // --- Scritture: cambiano il repo. Prendono `&mut self` perché il `MemoryBackend` tiene lo
+    // stato in sé; una lettura fatta dopo vede sempre il nuovo stato.
+
+    /// Mette in stage i file `paths` com'erano nel worktree (`git add`): modifiche, file nuovi
+    /// non tracciati e cancellazioni. Per una rinomina fatta nel worktree si passano i due
+    /// percorsi (la cancellazione del vecchio e il nuovo file). Non tocca il worktree.
+    ///
+    /// - I percorsi sono presi alla lettera (niente glob né pathspec magici); un percorso che
+    ///   è una cartella comprende i file che contiene, come in git (i file ignorati al suo
+    ///   interno sono saltati).
+    /// - Un file ignorato da `.gitignore` e non tracciato, chiesto per nome, dà
+    ///   [`EngineError::NotAllowed`] e **niente** viene messo in stage (non si forza mai).
+    /// - Un percorso che non esiste né nel worktree né nell'indice né in HEAD dà errore e
+    ///   niente cambia; uno la cui cancellazione è già in stage non fa niente.
+    /// - Un file in conflitto messo in stage è **risolto** con il contenuto del worktree (come
+    ///   `git add`): gli stadi del conflitto spariscono dall'indice.
+    /// - `paths` vuoto non fa niente (non vuol dire "tutto").
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError>;
+
+    /// Toglie dallo stage i file `paths`: l'indice torna come in HEAD per quei percorsi (un
+    /// file aggiunto torna non tracciato), come `git restore --staged`. Su un branch senza
+    /// commit l'indice torna vuoto per quei percorsi. **Non tocca mai il worktree.**
+    ///
+    /// - Percorsi alla lettera, cartelle comprese, come in [`GitBackend::stage`].
+    /// - Un file in conflitto dà [`EngineError::NotAllowed`]: togliere dall'indice gli stadi
+    ///   del conflitto ne perderebbe le versioni; si risolve con [`GitBackend::stage`].
+    /// - Un percorso sconosciuto a git (né in HEAD né nell'indice) dà errore e niente cambia.
+    /// - `paths` vuoto non fa niente.
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

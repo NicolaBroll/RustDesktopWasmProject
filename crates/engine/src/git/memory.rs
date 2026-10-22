@@ -1,5 +1,7 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
+mod write;
+
 use super::line_diff;
 use super::{DiffSpec, GitBackend, LogQuery, RepoOpener};
 use crate::EngineError;
@@ -590,6 +592,14 @@ impl GitBackend for MemoryBackend {
             files.retain(|f| f.new_path == *path || f.old_path == *path);
         }
         Ok(Diff { files })
+    }
+
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+        self.stage_paths(paths)
+    }
+
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+        self.unstage_paths(paths)
     }
 }
 

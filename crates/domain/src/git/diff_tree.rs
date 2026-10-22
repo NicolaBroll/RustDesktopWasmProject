@@ -120,7 +120,7 @@ pub fn parse_diff_tree(input: &[u8]) -> Result<Vec<ChangedFile>, DomainError> {
             Some(p) => Ok(RepoPath::from(p)),
             None => Err(err(format!("manca {what}"))),
         };
-        let raw = parse_header(header).map_err(&err)?;
+        let raw = parse_header(header).map_err(err)?;
         let first = next_path("il percorso")?;
         let (path, original) = if matches!(raw.change, Change::Renamed | Change::Copied) {
             (next_path("il percorso di destinazione")?, Some(first))

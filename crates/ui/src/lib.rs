@@ -14,6 +14,7 @@ mod commit;
 mod details;
 mod diff;
 mod diff_view;
+mod discard;
 mod executor;
 mod format;
 mod graph;
@@ -28,6 +29,7 @@ use commit::{CommitBox, CommitResult, Gate};
 use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
+use discard::{DiscardBox, History, Received, UndoOp, UndoResult};
 use graph::RefLabel;
 use lines::{LineWrite, Pick};
 use list::{CommitList, PageRequest};
@@ -76,6 +78,15 @@ enum Action {
     CancelWrite,
     /// Nasconde l'errore dell'ultima scrittura.
     DismissWriteError,
+    /// Scarta le modifiche fuori stage dei file indicati (mai vuoti): prima il motore controlla
+    /// e chiede la conferma, che si apre in un dialogo.
+    Discard(Vec<RepoPath>),
+    /// Conferma lo scarto in attesa: reinvia con `"confirm": true`.
+    ConfirmDiscard,
+    /// Chiude il dialogo dello scarto senza scartare niente.
+    CancelDiscard,
+    /// Annulla l'ultima operazione del diario, o rifà l'ultima annullata.
+    Undo(UndoOp),
     /// Clic su una riga del diff (indice in `DiffDoc::rows`): la seleziona o la deseleziona;
     /// con Maiusc seleziona l'intervallo dall'ultima cliccata.
     SelectLine {
@@ -138,6 +149,12 @@ enum Request {
     /// `commit.show` di HEAD per proporre il suo messaggio con amend, quando HEAD non è tra
     /// i commit caricati.
     HeadMessage(u64),
+    /// `worktree.discard`, senza o con `confirm` (la fase è in [`DiscardBox`]).
+    Discard(u64),
+    /// `edit.undo`/`edit.redo`.
+    Undo(u64),
+    /// `edit.history`: lo stato dei pulsanti Annulla e Ripeti.
+    History(u64),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -167,6 +184,10 @@ struct RepoView {
     diff: DiffState,
     /// La casella del messaggio di commit: bozza, commit in corso, conferma, errore.
     commit: CommitBox,
+    /// Lo scarto delle modifiche: controllo, conferma, invio.
+    discard: DiscardBox,
+    /// Cosa farebbero Annulla e Ripeti.
+    history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
     /// riga delle modifiche è sparita).
     select_after_load: Option<Oid>,
@@ -190,6 +211,8 @@ impl RepoView {
             details: DetailsState::default(),
             diff: DiffState::default(),
             commit: CommitBox::default(),
+            discard: DiscardBox::default(),
+            history: History::default(),
             select_after_load: None,
         };
         view.update_labels();
@@ -209,14 +232,17 @@ impl RepoView {
         if self.stage.is_empty() {
             self.worktree_selected = false;
             self.confirm = None;
+            self.discard.cancel();
         }
         self.update_labels();
     }
 
-    /// Vero se è aperta una conferma (stage di conflitti o amend pubblicato): finché c'è, niente
-    /// scritture e i tasti vanno solo a lei.
+    /// Vero se è aperta una conferma (stage di conflitti, amend pubblicato, scarto): finché
+    /// c'è, niente scritture e i tasti vanno solo a lei.
     fn modal_open(&self) -> bool {
-        self.confirm.is_some() || self.commit.confirm().is_some()
+        self.confirm.is_some()
+            || self.commit.confirm().is_some()
+            || self.discard.confirm().is_some()
     }
 
     /// L'ultimo commit (HEAD), se è tra quelli caricati.
@@ -423,6 +449,55 @@ impl App {
                 if let Some(repo) = &mut self.repo {
                     repo.write_error = None;
                 }
+            }
+            Action::Discard(paths) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = discard::describe(&paths);
+                if let Some(params) = repo.discard.start(paths) {
+                    repo.write_error = None;
+                    repo.write_label = Some(format!("Controllo per {}", lowercase_first(&label)));
+                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                }
+            }
+            Action::ConfirmDiscard => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let label = repo.discard.confirm().map(|d| discard::describe(&d.paths));
+                if let Some(params) = repo.discard.confirmed() {
+                    repo.write_label = label;
+                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                }
+            }
+            Action::CancelDiscard => {
+                if let Some(repo) = &mut self.repo {
+                    repo.discard.cancel();
+                }
+            }
+            Action::Undo(op) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some()
+                    || repo.modal_open()
+                    || !op.available(&repo.history)
+                {
+                    return;
+                }
+                repo.write_error = None;
+                repo.write_label = Some(op.hint(&repo.history));
+                self.submit(op.command(), json!({}), Request::Undo(generation));
             }
             Action::SelectLine { row, shift } => {
                 if let Some((_, doc, selection)) = self.selectable_diff() {
@@ -716,6 +791,7 @@ impl App {
         let generation = self.generation;
         self.submit("repo.refs", json!({}), Request::Refs(generation));
         self.submit("repo.status", json!({}), Request::Status(generation));
+        self.submit("edit.history", json!({}), Request::History(generation));
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
@@ -793,6 +869,14 @@ impl App {
                 self.receive_commit(generation, done);
                 continue;
             }
+            if let Request::Discard(generation) = request {
+                self.receive_discard(generation, done);
+                continue;
+            }
+            if let Request::Undo(generation) = request {
+                self.receive_undo(generation, done);
+                continue;
+            }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -856,6 +940,8 @@ impl App {
                 // Il nuovo commit in cima (con amend il vecchio sparisce) e le etichette dei
                 // ref spostate.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
+                // Il commit è nel diario: Annulla ora lo propone.
+                self.submit("edit.history", json!({}), Request::History(generation));
                 if let Some(repo) = self.current(generation) {
                     let first = repo.list.reset();
                     self.request_page(first);
@@ -879,6 +965,86 @@ impl App {
                     self.error = format!("Commit non riuscito: {e}");
                 }
                 self.notice.clear();
+            }
+        }
+    }
+
+    /// Risposta di `worktree.discard`: il controllo apre il dialogo di conferma, lo scarto
+    /// fatto porta il nuovo stato e i pulsanti Annulla/Ripeti; un rifiuto va nell'area di stage.
+    fn receive_discard(&mut self, generation: u64, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .discard
+            .receive(done.result, done.error_kind, done.error_detail)
+        {
+            Received::Confirm => {}
+            Received::Done(result) => {
+                repo.history = result.history.clone();
+                let notice = result.notice();
+                match result.status {
+                    Some(status) => {
+                        repo.set_status(status);
+                        self.error.clear();
+                        self.follow_diff();
+                    }
+                    None => {
+                        let reason = result.status_error.unwrap_or_default();
+                        self.error =
+                            format!("Modifiche scartate, ma lo stato non si rilegge: {reason}");
+                        self.submit("repo.status", json!({}), Request::Status(generation));
+                    }
+                }
+                self.notice = notice;
+            }
+            Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                repo.write_error = Some(message.clone());
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                }
+            }
+        }
+    }
+
+    /// Risposta di `edit.undo`/`edit.redo`: il diario aggiornato, poi si rilegge tutto (un
+    /// undo può spostare branch o rimettere file).
+    fn receive_undo(&mut self, generation: u64, done: Done) {
+        let result = done.result.and_then(|value| {
+            serde_json::from_value::<UndoResult>(value)
+                .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+        });
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        let label = repo
+            .write_label
+            .take()
+            .unwrap_or_else(|| done.command.clone());
+        match result {
+            Ok(result) => {
+                repo.history = result.history.clone();
+                if let Some(status) = result.status.clone() {
+                    repo.set_status(status);
+                }
+                self.notice = result.notice();
+                self.error = result
+                    .status_error
+                    .map(|e| format!("Fatto, ma lo stato non si rilegge: {e}"))
+                    .unwrap_or_default();
+                self.follow_diff();
+                self.load();
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", done.command);
+                self.error = format!("{label} non riuscito: {e}");
+                self.notice.clear();
+                // Il diario si rilegge: una voce potrebbe non essere più annullabile.
+                self.submit("edit.history", json!({}), Request::History(generation));
             }
         }
     }
@@ -929,8 +1095,18 @@ impl App {
                     repo.commit.draft.propose(&details.commit);
                 }
             }
+            Request::History(generation) => {
+                if let Some(repo) = self.current(generation) {
+                    repo.history = serde_json::from_value(value)?;
+                }
+            }
             // Gestiti a parte in `receive`.
-            Request::Show(..) | Request::Diff(..) | Request::Write(..) | Request::Commit(..) => {}
+            Request::Show(..)
+            | Request::Diff(..)
+            | Request::Write(..)
+            | Request::Commit(..)
+            | Request::Discard(..)
+            | Request::Undo(..) => {}
         }
         Ok(())
     }
@@ -953,7 +1129,7 @@ impl eframe::App for App {
             .unwrap_or_default();
 
         egui::Panel::top("barra").show(ui, |ui| {
-            view::top_bar(ui, self.repo.as_ref(), can_pick, &mut actions);
+            view::top_bar(ui, self.repo.as_ref(), can_pick, writing, &mut actions);
         });
         egui::Panel::bottom("stato").show(ui, |ui| {
             let write = self.repo.as_ref().and_then(|r| r.write_label.as_deref());
@@ -995,6 +1171,9 @@ impl eframe::App for App {
                     });
                 if let Some(write) = &repo.confirm {
                     view::confirm_write(&ctx, write, &mut actions);
+                }
+                if let Some(pending) = repo.discard.confirm() {
+                    view::confirm_discard(&ctx, pending, &mut actions);
                 }
                 if let Some(confirm) = repo.commit.confirm() {
                     let branch = match &repo.head {
@@ -1044,5 +1223,14 @@ fn side_source(side: Side) -> DiffSource {
     match side {
         Side::Staged => DiffSource::Index,
         Side::Unstaged => DiffSource::Worktree,
+    }
+}
+
+/// `testo` con la prima lettera minuscola, per metterlo dentro una frase.
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
     }
 }

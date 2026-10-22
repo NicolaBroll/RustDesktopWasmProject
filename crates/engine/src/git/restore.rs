@@ -23,6 +23,22 @@ pub enum HeadState {
     Detached(Oid),
 }
 
+impl HeadState {
+    /// HEAD letta da [`GitBackend::head`](crate::GitBackend::head): il branch con il nome
+    /// completo (`refs/heads/<nome>`), o staccata.
+    pub fn from_head(head: &project_domain::Head) -> Self {
+        match head {
+            project_domain::Head::Branch { name, .. } if name.starts_with("refs/") => {
+                HeadState::Branch(name.clone())
+            }
+            project_domain::Head::Branch { name, .. } => {
+                HeadState::Branch(format!("refs/heads/{name}"))
+            }
+            project_domain::Head::Detached(oid) => HeadState::Detached(*oid),
+        }
+    }
+}
+
 impl std::fmt::Display for HeadState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

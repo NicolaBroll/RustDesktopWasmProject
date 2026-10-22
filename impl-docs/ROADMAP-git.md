@@ -188,7 +188,7 @@ Regole valide per tutti gli step:
   se il ref è stato spostato da fuori; revisione di `safety-reviewer`; CI verde.
 
 ### S23 — Scartare modifiche con backup
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `worktree.discard` con `confirm`, backup `git stash create` e ref di backup
   (§7), annullabile con `edit.undo`; conferma nella UI.
 - **Fatto quando:** test: scarta, poi undo ripristina il file identico; senza `confirm` non

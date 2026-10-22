@@ -2,8 +2,8 @@
 
 use crate::commands::parse_params;
 use crate::{
-    CommandSpec, CommitRequest, DiffSpec, EngineError, Journal, JournalEntry, LineSelection,
-    LogQuery, Registry, RestoreOutcome, Session, file_digest,
+    CommandSpec, CommitRequest, DiffSpec, EngineError, HeadState, Journal, JournalEntry,
+    LineSelection, LogQuery, Registry, RestoreOutcome, Session, discard_plan, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -95,6 +95,12 @@ impl Registry {
             r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend di un commit pubblicato)}"#,
             commit_create,
         );
+        add(
+            "worktree.discard",
+            "Scarta le modifiche non in stage",
+            r#"{"paths": [percorso, ...], "confirm": true}"#,
+            worktree_discard,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -116,6 +122,7 @@ const WRITES: &[&str] = &[
     "index.unstage",
     "index.stage_lines",
     "index.unstage_lines",
+    "worktree.discard",
 ];
 
 type Out = Result<Value, EngineError>;
@@ -276,6 +283,11 @@ struct PathsParams {
 /// "tutto", ed è meglio che non si possa chiedere per sbaglio.
 fn check_paths(id: &'static str, p: Value) -> Result<Vec<RepoPath>, EngineError> {
     let PathsParams { paths } = parse_params(id, p)?;
+    check_path_list(id, paths)
+}
+
+/// Come [`check_paths`], per una lista già letta.
+fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPath>, EngineError> {
     if paths.is_empty() {
         return Err(EngineError::InvalidParams {
             id,
@@ -387,6 +399,67 @@ fn commit_create(s: &mut Session, p: Value) -> Out {
     })?;
     let mut out = to_json(outcome);
     out["status"] = to_json(status);
+    Ok(out)
+}
+
+/// Parametri di `worktree.discard`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscardParams {
+    paths: Vec<RepoPath>,
+    #[serde(default)]
+    confirm: bool,
+}
+
+/// Scarta le modifiche non in stage dei file `paths` (file o cartelle): il worktree torna
+/// come l'indice, l'indice non si tocca (vedi
+/// [`GitBackend::discard`](crate::GitBackend::discard) e [`discard_plan`]: i non tracciati non
+/// si toccano mai). Serve `"confirm": true`: senza, [`EngineError::ConfirmRequired`] con i file
+/// che si perderebbero e niente cambia (i rifiuti di [`discard_plan`] vengono prima). Prima di
+/// scrivere il worktree si salva con `git stash create` in `refs/project/backup/discard-...`;
+/// l'operazione va nel diario e `edit.undo` rimette i file com'erano.
+///
+/// Risultato: `{"files": [{"path", "change", "mode", "oid"}], "backup": string, "stash":
+/// string, "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`; lo
+/// stato è `null` (con `status_error`) se non si rilegge: lo scarto è comunque fatto.
+fn worktree_discard(s: &mut Session, p: Value) -> Out {
+    const ID: &str = "worktree.discard";
+    let DiscardParams { paths, confirm } = parse_params(ID, p)?;
+    let paths = check_path_list(ID, paths)?;
+    let (repo, journal) = s.repo_and_journal()?;
+    let status = repo.status()?;
+    let files = discard_plan(&status, &paths)?;
+    if !confirm {
+        let names: Vec<String> = files.iter().map(|f| format!("`{}`", f.path)).collect();
+        return Err(EngineError::ConfirmRequired {
+            command: ID,
+            reason: format!(
+                "le modifiche non in stage di {} file andrebbero perse ({}): il worktree \
+                 tornerebbe come l'indice. Prima si salverebbe un backup in \
+                 `refs/project/backup/discard-...`, e `edit.undo` le rimetterebbe",
+                files.len(),
+                names.join(", ")
+            ),
+        });
+    }
+    // Il backend rilegge lo stato e rifiuta se i file non sono più questi.
+    let outcome = repo.discard(&paths, &files)?;
+    // I file sono scartati: la voce va nel diario anche se poi lo stato non si rilegge.
+    journal.record(JournalEntry::discard(
+        &outcome,
+        HeadState::from_head(&status.head),
+    ));
+    let mut out = journal_state(journal);
+    out["files"] = to_json(&outcome.files);
+    out["backup"] = Value::String(outcome.backup);
+    out["stash"] = Value::String(outcome.stash.to_string());
+    match repo.status() {
+        Ok(status) => out["status"] = to_json(status),
+        Err(e) => {
+            out["status"] = Value::Null;
+            out["status_error"] = Value::String(e.to_string());
+        }
+    }
     Ok(out)
 }
 
@@ -521,7 +594,8 @@ mod tests {
                 "repo.log",
                 "repo.open",
                 "repo.refs",
-                "repo.status"
+                "repo.status",
+                "worktree.discard"
             ]
         );
         let ids: Vec<_> = r.search("CRONOLOGIA").map(|c| c.id).collect();
@@ -536,7 +610,8 @@ mod tests {
                 "index.stage",
                 "index.stage_lines",
                 "index.unstage",
-                "index.unstage_lines"
+                "index.unstage_lines",
+                "worktree.discard"
             ]
         );
     }
@@ -575,12 +650,13 @@ mod tests {
             "index.stage_lines",
             "index.unstage_lines",
             "commit.create",
+            "worktree.discard",
         ] {
             let params = if matches!(id, "commit.show" | "diff.commit") {
                 json!({ "id": "HEAD" })
             } else if id.ends_with("_lines") {
                 json!({ "path": "README.md", "lines": [{ "new": 1 }], "digest": "x" })
-            } else if id.starts_with("index.") {
+            } else if id.starts_with("index.") || id == "worktree.discard" {
                 json!({ "paths": ["README.md"] })
             } else if id == "commit.create" {
                 json!({ "message": "x" })
@@ -1103,6 +1179,89 @@ mod tests {
     }
 
     #[test]
+    fn discard_needs_confirm_and_undo_restores_the_files() {
+        let (r, mut s) = opened();
+        let sample = MemoryBackend::sample();
+        let before = r.run("repo.status", &mut s, json!({})).unwrap();
+        let diff_before = r.run("diff.worktree", &mut s, json!({})).unwrap();
+
+        // Senza `confirm`: niente cambia, l'errore dice cosa si perderebbe.
+        for params in [
+            json!({ "paths": ["src", "README.md"] }),
+            json!({ "paths": ["src", "README.md"], "confirm": false }),
+        ] {
+            let err = r.run("worktree.discard", &mut s, params).unwrap_err();
+            let EngineError::ConfirmRequired { command, reason } = &err else {
+                panic!("{err}");
+            };
+            assert_eq!(*command, "worktree.discard");
+            assert!(reason.contains("`README.md`, `src/lib.rs`"), "{reason}");
+            assert!(err.to_string().contains("\"confirm\": true"), "{err}");
+        }
+        assert_eq!(r.run("repo.status", &mut s, json!({})).unwrap(), before);
+        assert_eq!(
+            r.run("edit.history", &mut s, json!({})).unwrap()["done"],
+            json!([])
+        );
+        // Un rifiuto viene prima della conferma.
+        let err = r
+            .run("worktree.discard", &mut s, json!({ "paths": ["note.txt"] }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+
+        let out = r
+            .run(
+                "worktree.discard",
+                &mut s,
+                json!({ "paths": ["src", "README.md"], "confirm": true }),
+            )
+            .unwrap();
+        assert_eq!(out["backup"], "refs/project/backup/discard-1");
+        assert_eq!(out["files"][0]["path"], "README.md");
+        assert_eq!(out["files"][0]["change"], "Modified");
+        assert_eq!(out["files"][1]["path"], "src/lib.rs");
+        assert_eq!(out["stash"].as_str().unwrap().len(), 40);
+        assert_eq!(out["can_undo"], true);
+        assert_eq!(
+            out["next_undo"],
+            "Scarta le modifiche di 2 file («README.md», «src/lib.rs»)"
+        );
+        assert_eq!(
+            out["status"],
+            r.run("repo.status", &mut s, json!({})).unwrap()
+        );
+        let diff = r.run("diff.worktree", &mut s, json!({})).unwrap();
+        assert_eq!(diff["files"], json!([]));
+        // Il diff in stage non cambia.
+        assert_eq!(
+            r.run("diff.index", &mut s, json!({})).unwrap(),
+            to_json_diff(&sample, DiffSpec::Index { path: None })
+        );
+
+        let history = r.run("edit.history", &mut s, json!({})).unwrap();
+        let entry = &history["done"][0];
+        assert_eq!(entry["command"], "worktree.discard");
+        assert_eq!(entry["refs"], json!([]));
+        assert_eq!(entry["backup"], "refs/project/backup/discard-1");
+        assert_eq!(entry["worktree"]["stash"], out["stash"]);
+        assert_eq!(entry["worktree"]["files"], out["files"]);
+
+        let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
+        assert_eq!(undo["undone"]["command"], "worktree.discard");
+        assert_eq!(undo["status"], before);
+        assert_eq!(
+            r.run("diff.worktree", &mut s, json!({})).unwrap(),
+            diff_before
+        );
+        let redo = r.run("edit.redo", &mut s, json!({})).unwrap();
+        assert_eq!(redo["status"], out["status"]);
+    }
+
+    fn to_json_diff(repo: &MemoryBackend, spec: DiffSpec) -> Value {
+        diff_with_digests(&repo.diff(&spec).unwrap())
+    }
+
+    #[test]
     fn undo_of_an_amend() {
         let (r, mut s) = opened();
         let out = r
@@ -1202,6 +1361,21 @@ mod tests {
             (
                 "commit.create",
                 json!({ "message": "x", "no_verify": true }),
+            ),
+            ("worktree.discard", json!({})),
+            ("worktree.discard", json!({ "confirm": true })),
+            ("worktree.discard", json!({ "paths": [], "confirm": true })),
+            (
+                "worktree.discard",
+                json!({ "paths": ["README.md"], "confirm": "sì" }),
+            ),
+            (
+                "worktree.discard",
+                json!({ "paths": ["README.md"], "confirm": true, "untracked": true }),
+            ),
+            (
+                "worktree.discard",
+                json!({ "path": "README.md", "confirm": true }),
             ),
         ] {
             let err = r.run(id, &mut s, params).unwrap_err();

@@ -125,6 +125,17 @@ impl Git {
         })
     }
 
+    /// Come [`Git::output`], con argomenti che non sono UTF-8 (es. `--path=<percorso>`).
+    pub(crate) fn output_os(
+        &self,
+        dir: Option<&Path>,
+        args: &[&OsStr],
+    ) -> Result<Output, EngineError> {
+        self.command(dir, &[], args).output().map_err(|e| {
+            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+        })
+    }
+
     /// Come [`Git::output`], ma scrive `input` su stdin di git (es. i percorsi per
     /// `--pathspec-from-file=-`, o un messaggio di commit). stdin viene scritto da un thread a
     /// parte, così un output grande non blocca git mentre aspetta di leggere.

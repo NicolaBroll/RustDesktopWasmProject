@@ -6,6 +6,7 @@
 
 mod backup;
 mod commit;
+mod discard;
 mod line_diff;
 mod lines;
 mod memory;
@@ -25,8 +26,12 @@ pub use commit::{
     CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
     cleanup_message, split_message,
 };
+pub use discard::{
+    DiscardOutcome, DiscardedFile, WorktreeBackup, WorktreeRestore, check_same_plan,
+    discard_description, discard_plan,
+};
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
-pub use memory::{MemoryBackend, MemoryOpener};
+pub use memory::{MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
 
@@ -170,6 +175,40 @@ pub trait GitBackend: Send {
     /// scoperto dopo una transazione riuscita (HEAD cambiata da un altro processo proprio in
     /// quell'istante) va in [`RestoreOutcome::warnings`].
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
+
+    /// Scarta le modifiche non in stage dei file `paths` (`worktree.discard`, §7): il worktree
+    /// torna come l'indice, come `git restore --worktree`. **L'indice non si tocca.**
+    ///
+    /// I file sono quelli di [`discard_plan`] sullo stato letto ora (vedi lì i rifiuti: non
+    /// tracciati chiesti per nome, sottomoduli, conflitti, `intent-to-add`, branch senza
+    /// commit, niente da scartare); i non tracciati dentro una cartella non si toccano. Prima di
+    /// scrivere il worktree si salva con `git stash create` in un ref nuovo
+    /// `refs/project/backup/discard-...` (nel risultato, con il commit e i file); se il backup
+    /// non riesce, o non contiene il contenuto attuale di tutti i file, niente si scarta.
+    /// `paths` vuoto non fa niente (errore: niente da scartare).
+    ///
+    /// `expected` è il piano mostrato a chi ha confermato ([`discard_plan`] su uno stato letto
+    /// prima): se il piano calcolato ora è diverso (un file in più o in meno, un'altra
+    /// modifica, un'altra versione in stage), [`EngineError::NotAllowed`] e niente cambia.
+    fn discard(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[DiscardedFile],
+    ) -> Result<DiscardOutcome, EngineError>;
+
+    /// Annulla (`request.redo == false`) o rifà uno scarto (`edit.undo`/`edit.redo` di una voce
+    /// di `worktree.discard`). L'indice non si tocca.
+    ///
+    /// Undo: ogni file deve avere ancora nell'indice la voce registrata
+    /// ([`WorktreeRestore::index_conflicts`]) e il worktree uguale all'indice (come l'ha lasciato
+    /// lo scarto); poi torna com'era nel commit `request.stash` (un file che lì non c'è, perché
+    /// era eliminato, si cancella). Redo: stessa voce dell'indice e worktree uguale a
+    /// `request.stash` (come l'ha lasciato l'undo); poi torna alla versione in stage. Se un file
+    /// è cambiato, [`EngineError::UndoConflict`] e niente cambia.
+    fn restore_worktree(
+        &mut self,
+        request: &WorktreeRestore,
+    ) -> Result<RestoreOutcome, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

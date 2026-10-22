@@ -68,6 +68,8 @@ cargo run -p project-cli -- --repo . run --cmd 'index.stage_lines={"path":"READM
 # commit di quello che è in stage; amend di un commit già pubblicato vuole anche "confirm":true
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo\n\nCorpo"}'
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo corretto","amend":true}'
+# scarta le modifiche non in stage (worktree come l'indice): vuole "confirm":true, salva un backup
+cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

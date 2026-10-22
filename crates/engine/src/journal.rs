@@ -25,6 +25,10 @@
 //!   `branch.rename` invece si annullano con un altro checkout ([`GitBackend::checkout`]: mai
 //!   forzato, rifiutato se sovrascriverebbe modifiche) e un'altra rinomina
 //!   ([`GitBackend::rename_branch`]), che aggiornano anche worktree, reflog e configurazione.
+//! - **`remote.pull` entra nel diario** quando sposta il branch ([`JournalEntry::pull`]): per il
+//!   branch attivo undo e redo passano da [`GitBackend::reset_branch`] (come `git reset --keep`:
+//!   aggiornano indice e worktree, rifiutano se un file da ripristinare ha modifiche locali), per
+//!   un altro branch spostano solo il ref. Il fetch e il push no.
 //! - **Stage e unstage non entrano nel diario**: non spostano ref. Il loro recupero è il backup
 //!   dell'indice (§7). Nemmeno una nuova voce del genere svuota il redo.
 //! - **Undo di un commit = `git reset --soft`.** Si sposta solo il ref: indice e worktree non si
@@ -263,6 +267,54 @@ impl JournalEntry {
         )
     }
 
+    /// La voce di un `remote.pull` riuscito che ha spostato il branch `branch` (nome completo)
+    /// da `before` ad `after`; `head` è HEAD (uguale prima e dopo: il branch stesso se era il
+    /// branch attivo), `strategy` `fast_forward`/`merge`/`rebase`, `upstream` il branch remoto
+    /// (nome breve), `backup` il ref del branch prima del pull. Undo e redo del branch attivo
+    /// passano da [`GitBackend::reset_branch`] (aggiornano anche indice e worktree, come
+    /// `git reset --keep`); di un altro branch da [`GitBackend::restore_refs`].
+    pub fn pull(
+        branch: &str,
+        before: Oid,
+        after: Oid,
+        head: HeadState,
+        strategy: &str,
+        upstream: &str,
+        backup: String,
+    ) -> Self {
+        let how = match strategy {
+            "fast_forward" => "fast-forward".to_owned(),
+            "rebase" => format!("rebase su {upstream}"),
+            _ => format!("merge di {upstream}"),
+        };
+        Self::branch_entry(
+            "remote.pull",
+            format!(
+                "Pull di `{}` ({how}: da {} a {})",
+                branch_short(branch),
+                short(&before),
+                short(&after)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: branch.to_owned(),
+                before: Some(before),
+                after: Some(after),
+            }],
+            Some(backup),
+        )
+    }
+
+    /// Vero se la voce sposta il branch di HEAD con indice e worktree (un pull del branch
+    /// attivo): undo e redo usano [`GitBackend::reset_branch`].
+    fn moves_worktree(&self) -> bool {
+        self.command == "remote.pull"
+            && matches!(&self.head.after, HeadState::Branch(b) if self.refs.len() == 1 && self.refs[0].name == *b)
+    }
+
     fn branch_entry(
         command: &str,
         description: String,
@@ -359,6 +411,10 @@ impl JournalEntry {
                     ));
                 }
                 Ok(outcome)
+            }
+            "remote.pull" if self.moves_worktree() => {
+                Self::check_unchanged(repo, &request, "sposterebbe il branch")?;
+                repo.reset_branch(&request)
             }
             _ => repo.restore_refs(&request),
         }

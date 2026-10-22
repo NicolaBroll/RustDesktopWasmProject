@@ -172,7 +172,7 @@ impl CliBackend {
     }
 
     /// [`EngineError::UndoConflict`] se HEAD o un ref non hanno il valore atteso.
-    fn check_expected(&self, request: &RefRestore) -> Result<(), EngineError> {
+    pub(super) fn check_expected(&self, request: &RefRestore) -> Result<(), EngineError> {
         let head = self.head_state()?;
         let conflicts = request.conflicts(&head, |name| self.ref_value(name))?;
         if conflicts.is_empty() {
@@ -192,7 +192,7 @@ impl CliBackend {
     /// `refs/heads/master -> refs/heads/main`): `for-each-ref` li mostra con il valore del
     /// ref a cui puntano *prima* della transazione, e dopo non terrebbero niente. Il ref a cui
     /// puntano compare comunque da solo, se non si sposta.
-    fn protect(&self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
+    pub(super) fn protect(&self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
         let targets = request.targets();
         let moved: BTreeSet<&str> = request.refs.iter().map(|r| r.name.as_str()).collect();
         let mut candidates = Vec::new();
@@ -245,7 +245,7 @@ impl CliBackend {
 
     /// Vero se il commit `a` è raggiungibile da `b` (o è `b`). Senza i replace object
     /// (`--no-replace-objects`): conta la storia vera, quella che vede il gc.
-    fn is_ancestor(&self, a: &Oid, b: &Oid) -> Result<bool, EngineError> {
+    pub(super) fn is_ancestor(&self, a: &Oid, b: &Oid) -> Result<bool, EngineError> {
         let (a, b) = (a.to_string(), b.to_string());
         let args = [
             "--no-replace-objects",

@@ -6,11 +6,12 @@ use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
 use crate::details::Shown;
 use crate::diff::{DiffSource, DiffTarget};
 use crate::discard::{self, Discard, UndoOp};
-use crate::fetch::{self, Failure, Running};
+use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
+use crate::sync::{self, Window};
 use crate::{Action, Job, ListViewport, RepoView};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
@@ -50,14 +51,28 @@ fn ahead_behind(upstream: &Upstream) -> String {
     }
 }
 
-/// `writing`: c'è una scrittura in corso, Annulla, Ripeti, Aggiorna e Fetch aspettano.
-/// `fetching`: il fetch in corso con il suo ultimo avanzamento.
+/// L'operazione di rete in corso (fetch, pull o push), per la barra.
+pub(crate) struct Network {
+    /// Cosa si sta facendo, es. `Pull di «main»`.
+    pub what: String,
+    /// Vero dopo "Interrompi", finché il comando non risponde.
+    pub cancelling: bool,
+    /// L'ultimo avanzamento ricevuto.
+    pub progress: Option<Progress>,
+    /// Cosa succede interrompendo.
+    pub stop_hint: &'static str,
+    /// L'azione di "Interrompi".
+    pub cancel: Action,
+}
+
+/// `writing`: c'è una scrittura in corso, Annulla, Ripeti, Aggiorna, Fetch, Pull e Push
+/// aspettano. `network`: il fetch, pull o push in corso con il suo ultimo avanzamento.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
     writing: bool,
-    fetching: Option<(&Running, Option<Progress>)>,
+    network: Option<Network>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
@@ -75,9 +90,13 @@ pub(crate) fn top_bar(
             actions.push(Action::Refresh);
         }
         ui.separator();
-        match fetching {
-            Some((running, progress)) => fetch_progress(ui, running, progress.as_ref(), actions),
-            None => fetch_buttons(ui, repo, !writing && !repo.modal_open(), actions),
+        match network {
+            Some(network) => network_progress(ui, network, actions),
+            None => {
+                let enabled = !writing && !repo.modal_open();
+                fetch_buttons(ui, repo, enabled, actions);
+                sync_buttons(ui, repo, enabled, actions);
+            }
         }
         ui.separator();
         for op in [UndoOp::Undo, UndoOp::Redo] {
@@ -146,14 +165,79 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
     }
 }
 
-/// Il fetch in corso: fase, barra (se git dà la percentuale) e "Interrompi".
-fn fetch_progress(
-    ui: &mut Ui,
-    running: &Running,
-    progress: Option<&Progress>,
-    actions: &mut Vec<Action>,
-) {
+/// I pulsanti "Pull" e "Push" del branch attivo. Mai un push forzato da qui: il force si
+/// propone solo nella finestra di un push rifiutato.
+fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
+    let branch = match &repo.head {
+        Head::Branch {
+            name,
+            target: Some(_),
+        } => Some(name.as_str()),
+        _ => None,
+    };
+    let upstream = repo
+        .status
+        .as_ref()
+        .and_then(|s| s.upstream.as_ref())
+        .map(|u| u.name.as_str());
+    let (pull_hint, push_hint) = match (branch, upstream) {
+        (None, _) => (
+            "HEAD è staccata (o il branch non ha commit): passare a un branch".to_owned(),
+            "HEAD è staccata (o il branch non ha commit): passare a un branch".to_owned(),
+        ),
+        (Some(b), Some(up)) => (
+            format!(
+                "Scarica {up} e lo integra in «{b}»: fast-forward se può, altrimenti merge o \
+                 rebase secondo pull.rebase (senza configurazione: merge). Con modifiche locali \
+                 il merge non parte. «Annulla» riporta il branch dov'era"
+            ),
+            format!(
+                "Pubblica «{b}» su {up}. Mai forzato: se il remoto ha commit che non hai il push \
+                 è rifiutato e si propone il Pull. Un push non si annulla"
+            ),
+        ),
+        (Some(b), None) => (
+            format!(
+                "«{b}» non ha un upstream: il pull spiega come impostarlo (oppure fare Push, che \
+                 lo imposta)"
+            ),
+            format!(
+                "Primo push di «{b}»: lo pubblica su origin (o sull'unico remoto) con lo stesso \
+                 nome e imposta l'upstream. Un push non si annulla"
+            ),
+        ),
+    };
+    let enabled = enabled && branch.is_some();
+    let pull = ui
+        .add_enabled(enabled, egui::Button::new("Pull"))
+        .on_hover_text(&pull_hint);
+    let pull = if branch.is_some() {
+        pull.on_disabled_hover_text(WAIT)
+    } else {
+        pull.on_disabled_hover_text(&pull_hint)
+    };
+    if pull.clicked() {
+        actions.push(Action::Pull(None, None));
+    }
+    let push = ui
+        .add_enabled(enabled, egui::Button::new("Push"))
+        .on_hover_text(&push_hint);
+    let push = if branch.is_some() {
+        push.on_disabled_hover_text(WAIT)
+    } else {
+        push.on_disabled_hover_text(&push_hint)
+    };
+    if push.clicked() {
+        actions.push(Action::Push(None));
+    }
+}
+
+/// Il fetch, pull o push in corso: cosa, fase, barra (se git dà la percentuale) e
+/// "Interrompi".
+fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
     ui.spinner();
+    ui.strong(&network.what);
+    let progress = network.progress.as_ref();
     let (text, fraction) = match progress {
         Some(p) => fetch::describe(p),
         None => ("Connessione al remoto…".to_owned(), None),
@@ -170,46 +254,322 @@ fn fetch_progress(
         );
     }
     let stop = ui
-        .add_enabled(!running.cancelling, egui::Button::new("Interrompi"))
-        .on_hover_text(
-            "Ferma il fetch: i branch remoti già aggiornati restano, i branch locali e i file \
-             non sono toccati",
-        )
+        .add_enabled(!network.cancelling, egui::Button::new("Interrompi"))
+        .on_hover_text(network.stop_hint)
         .on_disabled_hover_text("Interruzione in corso…");
     if stop.clicked() {
-        actions.push(Action::CancelFetch);
+        actions.push(network.cancel);
     }
 }
 
-/// La finestra di un fetch non riuscito: cosa è successo, cosa fare, il testo di git. Non
-/// blocca il resto della finestra.
-pub(crate) fn fetch_failure(ctx: &egui::Context, failure: &Failure, actions: &mut Vec<Action>) {
+/// Il testo di git in una finestra, se c'è.
+fn git_text(ui: &mut Ui, git: Option<&str>) {
+    if let Some(git) = git.filter(|g| !g.trim().is_empty()) {
+        ui.add_space(6.0);
+        ui.label("Messaggio di git:");
+        egui::ScrollArea::vertical()
+            .id_salt("testo-git")
+            .max_height(140.0)
+            .show(ui, |ui| {
+                ui.add(egui::Label::new(RichText::new(git.trim_end()).monospace()).wrap());
+            });
+    }
+}
+
+/// La finestra di un'operazione non riuscita: cosa è successo, cosa fare, il testo di git. Non
+/// blocca il resto della finestra; `dismiss` la chiude.
+pub(crate) fn failure_window(
+    ctx: &egui::Context,
+    id: &str,
+    failure: &Failure,
+    dismiss: Action,
+    actions: &mut Vec<Action>,
+) {
     let mut open = true;
     egui::Window::new(&failure.title)
-        .id(egui::Id::unique("errore-fetch"))
+        .id(egui::Id::unique(id))
         .collapsible(false)
         .resizable(false)
         .default_width(420.0)
         .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
         .open(&mut open)
         .show(ctx, |ui| {
-            ui.label(&failure.explanation);
-            if let Some(git) = failure.git.as_deref().filter(|g| !g.trim().is_empty()) {
-                ui.add_space(6.0);
-                ui.label("Messaggio di git:");
-                egui::ScrollArea::vertical()
-                    .max_height(140.0)
-                    .show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(git.trim_end()).monospace()).wrap());
-                    });
-            }
+            ui.add(egui::Label::new(&failure.explanation).wrap());
+            git_text(ui, failure.git.as_deref());
             ui.add_space(6.0);
             if ui.button("Chiudi").clicked() {
-                actions.push(Action::DismissFetchError);
+                actions.push(dismiss.clone());
             }
         });
     if !open {
-        actions.push(Action::DismissFetchError);
+        actions.push(dismiss);
+    }
+}
+
+/// La finestra di pull e push: errore, conflitto, rifiuto o conferma del force. `writing`:
+/// c'è una scrittura in corso; `can_write`: nessuna scrittura né dialogo, i pulsanti che
+/// riprovano sono attivi.
+pub(crate) fn sync_window(
+    ctx: &egui::Context,
+    window: &Window,
+    writing: bool,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    match window {
+        Window::Failure(failure) => {
+            failure_window(ctx, "errore-sync", failure, Action::DismissSync, actions);
+        }
+        Window::Conflict(conflict) => conflict_window(ctx, conflict, can_write, actions),
+        Window::Rejected(rejected) => rejected_window(ctx, rejected, can_write, actions),
+        Window::ConfirmForce(confirm) => confirm_force(ctx, confirm, writing, actions),
+    }
+}
+
+/// Altezza massima dell'elenco dei file in conflitto; oltre si scorre.
+const CONFLICT_LIST_HEIGHT: f32 = 160.0;
+
+/// Pull fermo in conflitto: il motore ha già annullato merge o rebase.
+fn conflict_window(
+    ctx: &egui::Context,
+    conflict: &sync::Conflict,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    let mut open = true;
+    let operation = conflict.operation.to_string();
+    egui::Window::new("Pull annullato: conflitti")
+        .id(egui::Id::unique("conflitto-pull"))
+        .collapsible(false)
+        .resizable(false)
+        .default_width(460.0)
+        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(format!(
+                    "Il {operation} con l'upstream si è fermato in conflitto ed è stato \
+                     annullato: il repo è com'era prima del pull (branch, indice e file non sono \
+                     cambiati). Il fetch invece è fatto: il branch remoto mostra i commit \
+                     arrivati."
+                ))
+                .wrap(),
+            );
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(format!(
+                    "La risoluzione dei conflitti dall'app arriverà più avanti. Per ora si può \
+                     provare il pull con {} (a volte i conflitti cambiano), oppure continuare a \
+                     lavorare e committare sul branch e integrare dopo; o risolvere da \
+                     terminale.",
+                    conflict.other().name()
+                ))
+                .wrap(),
+            );
+            ui.add_space(6.0);
+            let n = conflict.files.len();
+            ui.strong(match n {
+                0 => "Git non ha indicato i file.".to_owned(),
+                1 => "File in conflitto:".to_owned(),
+                n => format!("{n} file in conflitto:"),
+            });
+            let row = ui.text_style_height(&egui::TextStyle::Monospace);
+            egui::ScrollArea::vertical()
+                .id_salt("conflitto-file")
+                .max_height(CONFLICT_LIST_HEIGHT)
+                .auto_shrink([false, true])
+                .show_rows(ui, row, n, |ui, range| {
+                    for path in &conflict.files[range] {
+                        ui.monospace(path);
+                    }
+                });
+            ui.add_space(6.0);
+            ui.collapsing("Messaggio del motore", |ui| {
+                ui.add(egui::Label::new(RichText::new(&conflict.message).monospace()).wrap());
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let other = conflict.other();
+                let button = ui
+                    .add_enabled(
+                        can_write,
+                        egui::Button::new(format!("Pull con {}", other.name())),
+                    )
+                    .on_hover_text(format!(
+                        "Riprova il pull con {} invece di {operation}, solo per questa volta \
+                         (la configurazione non cambia)",
+                        other.name()
+                    ))
+                    .on_disabled_hover_text(WAIT);
+                if button.clicked() {
+                    actions.push(Action::Pull(conflict.branch.clone(), Some(other)));
+                }
+                if ui.button("Chiudi").clicked() {
+                    actions.push(Action::DismissSync);
+                }
+            });
+        });
+    if !open {
+        actions.push(Action::DismissSync);
+    }
+}
+
+/// Push rifiutato: cosa è successo e cosa fare. Non fast-forward: "Pull" e, come seconda
+/// scelta, "Forza (con lease)…"; lease scaduto: "Fetch".
+fn rejected_window(
+    ctx: &egui::Context,
+    rejected: &sync::Rejected,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    let mut open = true;
+    egui::Window::new("Push rifiutato")
+        .id(egui::Id::unique("push-rifiutato"))
+        .collapsible(false)
+        .resizable(false)
+        .default_width(440.0)
+        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            if let Some(branch) = &rejected.branch {
+                ui.strong(format!("Branch: «{branch}»"));
+                ui.add_space(4.0);
+            }
+            ui.add(egui::Label::new(&rejected.explanation).wrap());
+            git_text(ui, rejected.git.as_deref());
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if rejected.non_fast_forward() {
+                    let pull = ui
+                        .add_enabled(can_write, egui::Button::new("Pull"))
+                        .on_hover_text(
+                            "Scarica e integra i commit del remoto, poi si potrà ripetere il push",
+                        )
+                        .on_disabled_hover_text(WAIT);
+                    if pull.clicked() {
+                        actions.push(Action::Pull(rejected.branch.clone(), None));
+                    }
+                }
+                if rejected.stale() {
+                    let fetch = ui
+                        .add_enabled(can_write, egui::Button::new("Fetch"))
+                        .on_hover_text("Scarica i commit arrivati sul remoto per controllarli")
+                        .on_disabled_hover_text(WAIT);
+                    if fetch.clicked() {
+                        actions.push(Action::DismissSync);
+                        actions.push(Action::Fetch(None));
+                    }
+                }
+                if ui.button("Chiudi").clicked() {
+                    actions.push(Action::DismissSync);
+                }
+                if rejected.non_fast_forward() {
+                    ui.separator();
+                    let force = ui
+                        .add_enabled(
+                            can_write,
+                            egui::Button::new(
+                                RichText::new("Forza (con lease)…")
+                                    .color(ui.visuals().error_fg_color),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text(
+                            "Sovrascrive il branch sul remoto con il tuo (force-with-lease: \
+                             rifiutato se il remoto si è spostato dall'ultimo fetch). Se il \
+                             remoto perderebbe commit chiede conferma e li elenca",
+                        )
+                        .on_disabled_hover_text(WAIT);
+                    if force.clicked() {
+                        actions.push(Action::ForcePush);
+                    }
+                }
+            });
+        });
+    if !open {
+        actions.push(Action::DismissSync);
+    }
+}
+
+/// Conferma del push forzato: il remoto perderebbe commit che il branch non ha.
+fn confirm_force(
+    ctx: &egui::Context,
+    confirm: &sync::ConfirmForce,
+    writing: bool,
+    actions: &mut Vec<Action>,
+) {
+    let modal = egui::Modal::new(egui::Id::unique("conferma-force")).show(ctx, |ui| {
+        ui.set_max_width(480.0);
+        ui.heading(
+            RichText::new(match &confirm.branch {
+                Some(b) => format!("Push forzato di «{b}»: sovrascrivere il branch sul remoto?"),
+                None => "Sovrascrivere il branch sul remoto?".to_owned(),
+            })
+            .color(ui.visuals().error_fg_color),
+        );
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                "Il push forzato sostituisce il branch sul remoto con il tuo: i commit qui sotto \
+                 spariscono dal remoto, anche per chi li ha già scaricati o ci sta lavorando. Un \
+                 push non si annulla da qui.",
+            )
+            .wrap(),
+        );
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(
+                "Prima del push il branch remoto com'era si salva in un backup \
+                 (refs/project/backup/push-…), da cui si può ripubblicare a mano. Con il lease, \
+                 se nel frattempo il remoto si è spostato il push è rifiutato.",
+            )
+            .wrap(),
+        );
+        if confirm.changed {
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Il branch remoto è cambiato da quando hai visto questa conferma: \
+                         niente è stato pubblicato. Controlla di nuovo i commit qui sotto.",
+                    )
+                    .strong()
+                    .color(ui.visuals().warn_fg_color),
+                )
+                .wrap(),
+            );
+        }
+        ui.add_space(6.0);
+        ui.strong("Cosa si perde sul remoto:");
+        egui::ScrollArea::vertical()
+            .id_salt("force-motivo")
+            .max_height(160.0)
+            .show(ui, |ui| {
+                ui.add(egui::Label::new(RichText::new(&confirm.reason).monospace()).wrap());
+            });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let button = egui::Button::new(
+                RichText::new("Forza il push").color(ui.visuals().strong_text_color()),
+            )
+            .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let response = ui
+                .add_enabled(!writing && confirm.can_confirm(), button)
+                .on_disabled_hover_text(if confirm.can_confirm() {
+                    WAIT
+                } else {
+                    "Il branch remoto locale non c'è più: chiudere, fare Fetch e riprovare"
+                });
+            if response.clicked() {
+                actions.push(Action::ConfirmForcePush);
+            }
+            if ui.button("Non forzare").clicked() {
+                actions.push(Action::DismissSync);
+            }
+        });
+    });
+    if modal.should_close() {
+        actions.push(Action::DismissSync);
     }
 }
 
@@ -395,6 +755,55 @@ fn ref_menu(
         .on_disabled_hover_text(WAIT);
     if button.clicked() {
         actions.push(Action::RenameBranch(name.to_owned()));
+        ui.close();
+    }
+    ui.separator();
+    let pull_hint = match (&info.upstream, is_head) {
+        (None, _) => {
+            format!("«{name}» non ha un upstream: fare prima Push, che lo imposta al primo push")
+        }
+        (Some(up), true) => format!(
+            "Scarica {} e lo integra: fast-forward, merge o rebase secondo la configurazione",
+            up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+        ),
+        (Some(up), false) => format!(
+            "Scarica {} e porta avanti «{name}» senza passarci (solo fast-forward: se è \
+             divergente bisogna passarci)",
+            up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+        ),
+    };
+    let label = if is_head {
+        "Pull"
+    } else {
+        "Pull (fast-forward)"
+    };
+    let button = ui
+        .add_enabled(
+            can_write && info.upstream.is_some(),
+            egui::Button::new(label),
+        )
+        .on_hover_text(&pull_hint)
+        .on_disabled_hover_text(if info.upstream.is_some() {
+            WAIT
+        } else {
+            &pull_hint
+        });
+    if button.clicked() {
+        actions.push(Action::Pull(Some(name.to_owned()), None));
+        ui.close();
+    }
+    let button = ui
+        .add_enabled(can_write, egui::Button::new("Push"))
+        .on_hover_text(match &info.upstream {
+            Some(up) => format!(
+                "Pubblica «{name}» su {}. Mai forzato",
+                up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+            ),
+            None => format!("Primo push di «{name}»: lo pubblica e imposta l'upstream"),
+        })
+        .on_disabled_hover_text(WAIT);
+    if button.clicked() {
+        actions.push(Action::Push(Some(name.to_owned())));
         ui.close();
     }
     ui.separator();

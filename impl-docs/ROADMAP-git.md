@@ -219,7 +219,7 @@ Regole valide per tutti gli step:
   backup esclusi, HEAD staccata, pagine contigue) e sul `MemoryBackend`; CI verde.
 
 ### S26 — Pull e push
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `remote.pull` (strategia secondo la configurazione: merge o rebase) e
   `remote.push` (impostazione dell'upstream al primo push; `--force-with-lease` solo con
   `confirm`).

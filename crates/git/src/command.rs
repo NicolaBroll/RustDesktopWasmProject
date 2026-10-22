@@ -138,6 +138,22 @@ impl Git {
         })
     }
 
+    /// Come [`Git::output_os`], con in più le variabili `env` solo per questa esecuzione.
+    pub(crate) fn output_os_env(
+        &self,
+        dir: Option<&Path>,
+        args: &[&OsStr],
+        env: &[(&str, &OsStr)],
+    ) -> Result<Output, EngineError> {
+        let mut cmd = self.command(dir, &[], args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        cmd.output().map_err(|e| {
+            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+        })
+    }
+
     /// Come [`Git::output`], ma scrive `input` su stdin di git (es. i percorsi per
     /// `--pathspec-from-file=-`, o un messaggio di commit). stdin viene scritto da un thread a
     /// parte, così un output grande non blocca git mentre aspetta di leggere.
@@ -217,6 +233,8 @@ pub(crate) struct Streamed {
     pub(crate) status: ExitStatus,
     /// Vero se il processo è stato fermato perché annullato.
     pub(crate) cancelled: bool,
+    /// stdout, se chiesto (`capture_stdout`), altrimenti vuoto.
+    pub(crate) stdout: Vec<u8>,
 }
 
 /// Dopo l'uscita di git, quanto aspettare che stderr si chiuda: un processo figlio rimasto in
@@ -239,10 +257,15 @@ impl Git {
     /// Se `cancelled()` diventa vero il comando si ferma: SIGTERM al gruppo di processi (git,
     /// ssh, `git-remote-http`, `index-pack`: git toglie i propri file `.lock` quando lo
     /// riceve), dopo [`TERM_GRACE`] SIGKILL; su altri sistemi `kill`.
+    ///
+    /// Con `capture_stdout` stdout si legge (da un altro thread) e torna in
+    /// [`Streamed::stdout`] (es. `git push --porcelain`); dopo l'uscita di git si aspetta al più
+    /// [`PIPE_GRACE`] che si chiuda. Altrimenti si scarta.
     pub(crate) fn run_streaming(
         &self,
         dir: &Path,
         args: &[&str],
+        capture_stdout: bool,
         mut on_segment: impl FnMut(Segment),
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Streamed, EngineError> {
@@ -250,13 +273,24 @@ impl Git {
             EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
         };
         let mut cmd = self.command(Some(dir), args, &[]);
-        cmd.stdout(Stdio::null());
+        if !capture_stdout {
+            cmd.stdout(Stdio::null());
+        }
         detach_from_terminal(&mut cmd);
         let mut child = cmd.spawn().map_err(not_found)?;
         let stderr = child
             .stderr
             .take()
             .expect("stderr è stato chiesto con `Stdio::piped`");
+        let stdout_receiver = child.stdout.take().map(|mut out| {
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = out.read_to_end(&mut buf);
+                let _ = sender.send(buf);
+            });
+            receiver
+        });
         let (sender, receiver) = mpsc::channel();
         // Il thread finisce quando stderr si chiude; se un processo rimasto in background lo
         // tiene aperto, resta bloccato senza che il comando lo aspetti.
@@ -298,9 +332,13 @@ impl Git {
             Some((status, _)) => status,
             None => child.wait().map_err(not_found)?,
         };
+        let stdout = stdout_receiver
+            .and_then(|r| r.recv_timeout(PIPE_GRACE).ok())
+            .unwrap_or_default();
         Ok(Streamed {
             status,
             cancelled: terminated.is_some(),
+            stdout,
         })
     }
 }
@@ -593,6 +631,7 @@ mod tests {
             .run_streaming(
                 Path::new("."),
                 &["hash-object", "--stdin", "--no-such-option"],
+                false,
                 |s| lines.push(s.text),
                 &|| false,
             )
@@ -603,6 +642,16 @@ mod tests {
             lines.iter().any(|l| l.contains("no-such-option")),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn streaming_can_capture_stdout() {
+        let git = Git::new("git");
+        let out = git
+            .run_streaming(Path::new("."), &["--version"], true, |_| {}, &|| false)
+            .unwrap();
+        assert!(out.status.success());
+        assert!(out.stdout.starts_with(b"git version "), "{:?}", out.stdout);
     }
 
     #[test]

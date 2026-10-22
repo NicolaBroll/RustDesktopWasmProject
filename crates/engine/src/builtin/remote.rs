@@ -25,7 +25,7 @@ struct FetchParams {
 /// Un ref cambiato dal fetch: `before`/`after` `null` = il ref non c'era / non c'è più (un
 /// branch remoto tolto da `fetch.prune` configurato).
 #[derive(Debug, Serialize)]
-struct RefUpdate {
+pub(super) struct RefUpdate {
     name: String,
     before: Option<Oid>,
     after: Option<Oid>,
@@ -41,7 +41,7 @@ fn values(refs: &[RefInfo]) -> BTreeMap<&str, (Oid, Option<Oid>)> {
 
 /// I ref diversi fra `before` e `after`, in ordine di nome. Il valore riportato è il commit (per
 /// un tag annotato, quello puntato).
-fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
+pub(super) fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
     let (old, new) = (values(before), values(after));
     let mut names: Vec<&str> = old.keys().chain(new.keys()).copied().collect();
     names.sort_unstable();
@@ -60,7 +60,7 @@ fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
 /// Avviso per un ref fuori da `refs/remotes/` e `refs/tags/` spostato dal fetch: succede solo
 /// con un refspec configurato apposta (es. un mirror verso `refs/heads/`). Il valore di prima
 /// resta nel reflog di quel ref.
-fn unexpected(update: &RefUpdate) -> Option<String> {
+pub(super) fn unexpected(update: &RefUpdate) -> Option<String> {
     let expected =
         update.name.starts_with("refs/remotes/") || update.name.starts_with("refs/tags/");
     if expected {

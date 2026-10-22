@@ -9,6 +9,7 @@
 //! Il repo in memoria non ha worktree aggiuntivi né configurazione: l'upstream segue la
 //! rinomina e sparisce con l'eliminazione, come la sezione `branch.<nome>` in git.
 
+use super::write::TreeEntry;
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES};
 use crate::EngineError;
 use crate::git::{
@@ -16,7 +17,7 @@ use crate::git::{
     check_no_operation, short,
 };
 use project_domain::{EntryKind, Oid, RepoPath};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl MemoryBackend {
     /// Errore se `full` non si può creare: esiste già, o esiste un ref che lo contiene o che
@@ -37,7 +38,7 @@ impl MemoryBackend {
     }
 
     /// Il valore del branch `full`, che deve essere `expected`.
-    fn check_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
+    pub(super) fn check_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
         match self.refs.get(full) {
             Some(entry) if entry.target == *expected => Ok(()),
             Some(entry) => Err(EngineError::NotAllowed(format!(
@@ -112,8 +113,30 @@ impl MemoryBackend {
                 (HeadRef::Detached(*oid), *oid, oid.to_string())
             }
         };
-        let old_tree = self.head_tree();
         let new_tree = self.tree_at(oid);
+        let (differing, files) = self.switch_plan(&new_tree);
+        if !files.is_empty() {
+            return Err(EngineError::CheckoutConflict {
+                target: label,
+                files,
+                stderr: String::new(),
+            });
+        }
+        let index = self.switch_index(&differing, &new_tree);
+        self.head = head;
+        self.rebase_entries(&index);
+        Ok(RestoreOutcome::default())
+    }
+
+    /// Per portare HEAD (indice e worktree) all'albero `new_tree`: i file diversi fra HEAD e
+    /// `new_tree`, e i file con modifiche locali che lo impedirebbero (una modifica qualsiasi,
+    /// in stage o no, a un file diverso; un non tracciato o ignorato che è un file, una
+    /// cartella di un file o un file al posto di una cartella di `new_tree`).
+    pub(super) fn switch_plan(
+        &self,
+        new_tree: &BTreeMap<RepoPath, TreeEntry>,
+    ) -> (BTreeSet<RepoPath>, Vec<String>) {
+        let old_tree = self.head_tree();
         let differing: BTreeSet<RepoPath> = old_tree
             .keys()
             .chain(new_tree.keys())
@@ -148,15 +171,19 @@ impl MemoryBackend {
                 files.push(entry.path.to_string());
             }
         }
-        if !files.is_empty() {
-            return Err(EngineError::CheckoutConflict {
-                target: label,
-                files,
-                stderr: String::new(),
-            });
-        }
+        (differing, files)
+    }
+
+    /// L'indice dopo il passaggio a `new_tree` (i file `differing` presi da lì, gli altri
+    /// com'erano), e il worktree di quei file torna pulito. Da chiamare dopo [`Self::switch_plan`]
+    /// senza file in conflitto, poi spostare HEAD e chiamare `rebase_entries` con l'indice.
+    pub(super) fn switch_index(
+        &mut self,
+        differing: &BTreeSet<RepoPath>,
+        new_tree: &BTreeMap<RepoPath, TreeEntry>,
+    ) -> BTreeMap<RepoPath, TreeEntry> {
         let mut index = self.index_tree();
-        for path in &differing {
+        for path in differing {
             match new_tree.get(path) {
                 Some(entry) => {
                     index.insert(path.clone(), *entry);
@@ -167,9 +194,7 @@ impl MemoryBackend {
             }
             self.worktree.remove(path);
         }
-        self.head = head;
-        self.rebase_entries(&index);
-        Ok(RestoreOutcome::default())
+        index
     }
 
     pub(super) fn delete_local_branch(

@@ -270,6 +270,7 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
                 name.escape_debug(),
                 crate::git::short(&target),
             ),
+            expected: None,
         });
     }
     let deleted = repo.delete_branch(&name, &target)?;
@@ -654,7 +655,10 @@ mod tests {
         let err = r
             .run("branch.delete", &mut s, json!({ "name": "solo" }))
             .unwrap_err();
-        let EngineError::ConfirmRequired { command, reason } = &err else {
+        let EngineError::ConfirmRequired {
+            command, reason, ..
+        } = &err
+        else {
             panic!("{err}");
         };
         assert_eq!(*command, "branch.delete");

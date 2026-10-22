@@ -1,6 +1,8 @@
 //! Catalogo dei comandi predefiniti.
 
 mod branch;
+mod pull;
+mod push;
 mod remote;
 
 use crate::commands::parse_params;
@@ -134,6 +136,18 @@ impl Registry {
             r#"{"remote"?: string (remoto configurato; upstream, origin o l'unico), "branch"?: string (solo quel branch)}"#,
             remote::remote_fetch,
         );
+        add(
+            "remote.pull",
+            "Scarica e integra l'upstream (pull)",
+            r#"{"remote"?: string (quello dell'upstream), "branch"?: string (branch locale; HEAD), "strategy"?: "merge" | "rebase" | "ff_only" (al posto della configurazione)}"#,
+            pull::remote_pull,
+        );
+        add(
+            "remote.push",
+            "Pubblica il branch sul remoto (push)",
+            r#"{"remote"?: string (upstream, origin o l'unico), "branch"?: string (branch locale; HEAD), "force"?: bool (force-with-lease), "confirm"?: bool (force che toglie commit dal remoto)}"#,
+            push::remote_push,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -160,6 +174,8 @@ const WRITES: &[&str] = &[
     "index.stage_lines",
     "index.unstage_lines",
     "remote.fetch",
+    "remote.pull",
+    "remote.push",
     "worktree.discard",
 ];
 
@@ -478,6 +494,7 @@ fn worktree_discard(s: &mut Session, p: Value) -> Out {
                 files.len(),
                 names.join(", ")
             ),
+            expected: None,
         });
     }
     // Il backend rilegge lo stato e rifiuta se i file non sono più questi.
@@ -634,6 +651,8 @@ mod tests {
                 "index.unstage",
                 "index.unstage_lines",
                 "remote.fetch",
+                "remote.pull",
+                "remote.push",
                 "repo.log",
                 "repo.open",
                 "repo.refs",
@@ -659,6 +678,8 @@ mod tests {
                 "index.unstage",
                 "index.unstage_lines",
                 "remote.fetch",
+                "remote.pull",
+                "remote.push",
                 "worktree.discard"
             ]
         );
@@ -1264,7 +1285,10 @@ mod tests {
             json!({ "paths": ["src", "README.md"], "confirm": false }),
         ] {
             let err = r.run("worktree.discard", &mut s, params).unwrap_err();
-            let EngineError::ConfirmRequired { command, reason } = &err else {
+            let EngineError::ConfirmRequired {
+                command, reason, ..
+            } = &err
+            else {
                 panic!("{err}");
             };
             assert_eq!(*command, "worktree.discard");

@@ -26,12 +26,12 @@ pub enum FetchFailure {
 /// Un remoto del [`MemoryBackend`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct MemoryRemote {
-    url: String,
+    pub(super) url: String,
     /// Nome breve del branch sul remoto → commit.
-    branches: BTreeMap<String, Oid>,
+    pub(super) branches: BTreeMap<String, Oid>,
     /// I commit del remoto (anche quelli che il repo ha già).
-    commits: BTreeMap<Oid, Commit>,
-    failure: Option<FetchFailure>,
+    pub(super) commits: BTreeMap<Oid, Commit>,
+    pub(super) failure: Option<FetchFailure>,
 }
 
 impl MemoryBackend {
@@ -55,6 +55,12 @@ impl MemoryBackend {
             .insert(branch.to_owned(), target);
     }
 
+    /// Il commit del branch `branch` sul remoto `remote` (come lo vede il remoto, non il branch
+    /// remoto locale), se c'è.
+    pub fn branch_on_remote(&self, remote: &str, branch: &str) -> Option<Oid> {
+        self.remotes.get(remote)?.branches.get(branch).copied()
+    }
+
     /// Toglie il branch `branch` dal remoto `remote`.
     pub fn remove_branch_on_remote(&mut self, remote: &str, branch: &str) {
         self.remote_mut(remote).branches.remove(branch);
@@ -66,7 +72,7 @@ impl MemoryBackend {
         self.remote_mut(remote).commits.insert(commit.id, commit);
     }
 
-    /// I fetch da `remote` falliscono con `failure` (`None`: tornano a riuscire).
+    /// I fetch e i push da `remote` falliscono con `failure` (`None`: tornano a riuscire).
     pub fn fail_fetch(&mut self, remote: &str, failure: Option<FetchFailure>) {
         self.remote_mut(remote).failure = failure;
     }

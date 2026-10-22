@@ -17,29 +17,12 @@ impl Root {
         Ok(Self(dir))
     }
 
-    /// Percorso di un file esistente, dentro la radice dopo aver risolto i link.
+    /// Percorso di un file o di una cartella esistente, dentro la radice dopo aver risolto i
+    /// link. `.` è la radice stessa.
     pub fn existing(&self, path: &str) -> Result<PathBuf, String> {
         let full = self.join(path)?;
         let canonical = full.canonicalize().map_err(|e| format!("{path}: {e}"))?;
         self.check(path, canonical)
-    }
-
-    /// Percorso dove scrivere: la cartella deve esistere ed essere nella radice;
-    /// se il file esiste già (magari come link) vale la regola di `existing`.
-    pub fn writable(&self, path: &str) -> Result<PathBuf, String> {
-        let full = self.join(path)?;
-        if full.exists() {
-            return self.existing(path);
-        }
-        let name = full
-            .file_name()
-            .ok_or_else(|| format!("{path}: manca il nome del file"))?;
-        let parent = full
-            .parent()
-            .unwrap_or(&self.0)
-            .canonicalize()
-            .map_err(|e| format!("{path}: {e}"))?;
-        self.check(path, parent.join(name))
     }
 
     fn join(&self, path: &str) -> Result<PathBuf, String> {

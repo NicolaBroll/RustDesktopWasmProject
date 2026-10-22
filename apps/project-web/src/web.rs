@@ -1,5 +1,5 @@
 use eframe::wasm_bindgen::{JsCast as _, JsValue, closure::Closure};
-use project_engine::{Capabilities, Picked, Platform};
+use project_engine::{Capabilities, MemoryOpener, Picked, Platform};
 use std::sync::Arc;
 use wasm_bindgen_futures::JsFuture;
 
@@ -17,7 +17,15 @@ pub fn start() {
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|cc| Ok(Box::new(project_ui::App::new(cc, Arc::new(WebPlatform))))),
+                Box::new(|cc| {
+                    // Il browser non vede i repo locali: repo di esempio in memoria.
+                    let opener = Arc::new(MemoryOpener::sample());
+                    Ok(Box::new(project_ui::App::new(
+                        cc,
+                        Arc::new(WebPlatform),
+                        opener,
+                    )))
+                }),
             )
             .await;
         if let Err(e) = result {

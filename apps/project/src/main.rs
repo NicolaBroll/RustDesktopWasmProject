@@ -3,12 +3,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // niente console su Windows in release
 
 use project_engine::{Capabilities, Picked, Platform};
+use project_git::CliOpener;
 use std::sync::Arc;
 
 fn main() -> eframe::Result {
     env_logger::init();
 
     let platform = Arc::new(NativePlatform);
+    let opener = Arc::new(CliOpener::new());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
@@ -18,7 +20,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Project",
         options,
-        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform)))),
+        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform, opener)))),
     )
 }
 

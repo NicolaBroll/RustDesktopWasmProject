@@ -9,9 +9,13 @@ publish.workspace = true
 [dependencies]
 project-engine.workspace = true
 project-mcp.workspace = true
+project-git.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

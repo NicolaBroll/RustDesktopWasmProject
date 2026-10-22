@@ -1,97 +1,79 @@
-use project_domain::Document;
+use crate::{EngineError, GitBackend, RepoOpener};
+use std::fmt;
 use std::sync::Arc;
 
-/// Documento corrente più cronologia per undo/redo.
+/// La sessione di lavoro su un repository: l'opener iniettato dall'app e il repo aperto.
 ///
-/// Gli snapshot sono `Arc<Document>`: salvarne uno costa un incremento del
-/// contatore; la copia vera avviene solo alla prima scrittura (`Arc::make_mut`).
-#[derive(Debug, Clone, Default)]
+/// I comandi del [`Registry`](crate::Registry) la ricevono come `&mut Session`; `repo.open`
+/// apre un repo con l'opener, gli altri comandi leggono quello aperto.
 pub struct Session {
-    current: Arc<Document>,
-    undo: Vec<Arc<Document>>,
-    redo: Vec<Arc<Document>>,
+    opener: Arc<dyn RepoOpener>,
+    repo: Option<OpenRepo>,
+}
+
+struct OpenRepo {
+    /// Il percorso come è stato passato a `repo.open`.
+    path: String,
+    backend: Box<dyn GitBackend>,
 }
 
 impl Session {
-    pub fn new(doc: Document) -> Self {
-        Self {
-            current: Arc::new(doc),
-            undo: Vec::new(),
-            redo: Vec::new(),
-        }
+    /// Sessione senza repo aperto. Desktop e CLI passano `CliOpener` di `project-git`, la
+    /// versione web e i test un [`MemoryOpener`](crate::MemoryOpener).
+    pub fn new(opener: Arc<dyn RepoOpener>) -> Self {
+        Self { opener, repo: None }
     }
 
-    pub fn document(&self) -> &Document {
-        &self.current
+    /// Apre il repo al percorso `path` e sostituisce quello aperto. Se l'apertura fallisce il
+    /// repo aperto prima resta com'è.
+    pub fn open(&mut self, path: &str) -> Result<(), EngineError> {
+        let backend = self.opener.open(path)?;
+        self.repo = Some(OpenRepo {
+            path: path.to_owned(),
+            backend,
+        });
+        Ok(())
     }
 
-    /// Ogni modifica passa da qui. Se `f` fallisce lo stato e la cronologia
-    /// restano invariati.
-    pub fn edit<R, E>(&mut self, f: impl FnOnce(&mut Document) -> Result<R, E>) -> Result<R, E> {
-        self.undo.push(Arc::clone(&self.current));
-        match f(Arc::make_mut(&mut self.current)) {
-            Ok(r) => {
-                self.redo.clear();
-                Ok(r)
-            }
-            Err(e) => {
-                self.current = self.undo.pop().expect("snapshot appena salvato");
-                Err(e)
-            }
-        }
+    /// Il percorso del repo aperto, `None` se non ce n'è uno.
+    pub fn path(&self) -> Option<&str> {
+        self.repo.as_ref().map(|repo| repo.path.as_str())
     }
 
-    /// Sostituisce l'intero documento (nuovo, apertura); annullabile.
-    pub fn replace(&mut self, doc: Document) {
-        self.undo
-            .push(std::mem::replace(&mut self.current, Arc::new(doc)));
-        self.redo.clear();
+    /// Il repo aperto; [`EngineError::NoRepo`] se non ce n'è uno.
+    pub fn repo(&self) -> Result<&dyn GitBackend, EngineError> {
+        self.repo
+            .as_ref()
+            .map(|repo| repo.backend.as_ref())
+            .ok_or(EngineError::NoRepo)
     }
+}
 
-    pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
-    }
-
-    pub fn undo(&mut self) -> bool {
-        match self.undo.pop() {
-            Some(prev) => {
-                self.redo.push(std::mem::replace(&mut self.current, prev));
-                true
-            }
-            None => false,
-        }
-    }
-
-    pub fn redo(&mut self) -> bool {
-        match self.redo.pop() {
-            Some(next) => {
-                self.undo.push(std::mem::replace(&mut self.current, next));
-                true
-            }
-            None => false,
-        }
+impl fmt::Debug for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session")
+            .field("path", &self.path())
+            .finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_domain::DomainError;
+    use crate::MemoryOpener;
 
     #[test]
-    fn failed_edit_leaves_history_untouched() {
-        let mut s = Session::default();
-        s.edit(|d| d.add_item("a")).unwrap();
-        assert!(s.undo());
-        assert!(s.can_redo());
-        let before = s.document().clone();
-        assert_eq!(s.edit(|d| d.add_item("")), Err(DomainError::EmptyText));
-        assert_eq!(s.document(), &before);
-        assert!(s.can_redo(), "un errore non deve cancellare il redo");
-        assert!(!s.can_undo());
+    fn opens_a_repo_and_keeps_it_on_failure() {
+        let mut s = Session::new(Arc::new(MemoryOpener::sample()));
+        assert_eq!(s.path(), None);
+        assert!(matches!(s.repo(), Err(EngineError::NoRepo)));
+
+        s.open(MemoryOpener::SAMPLE_PATH).unwrap();
+        assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
+        assert!(s.repo().unwrap().head().unwrap().target().is_some());
+
+        let err = s.open("altrove").unwrap_err();
+        assert!(matches!(err, EngineError::RepoNotFound { .. }), "{err}");
+        assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
     }
 }

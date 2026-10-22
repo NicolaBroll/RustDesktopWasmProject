@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 project-engine.workspace = true
 project-ui.workspace = true
+project-git.workspace = true
 eframe.workspace = true
 egui.workspace = true
 env_logger.workspace = true

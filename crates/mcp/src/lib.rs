@@ -2,16 +2,18 @@
 //!
 //! Trasporto: JSON-RPC 2.0, un messaggio per riga su stdin/stdout; nessuna
 //! porta di rete. Ogni percorso è risolto dentro la radice data a
-//! [`Server::new`] e rifiutato se ne esce (anche tramite link simbolici).
+//! [`Server::new`] e rifiutato se ne esce (anche tramite link simbolici): i repository si
+//! aprono solo con il tool `open_repo`, non con `repo.open` tramite `execute_command`.
 
 mod paths;
 
 use paths::Root;
-use project_engine::{Document, Registry, Session};
+use project_engine::{Registry, RepoOpener, Session};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -27,9 +29,10 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(root: &Path) -> io::Result<Self> {
+    /// Server confinato in `root`, che apre i repository con `opener`.
+    pub fn new(root: &Path, opener: Arc<dyn RepoOpener>) -> io::Result<Self> {
         Ok(Self {
-            session: Session::default(),
+            session: Session::new(opener),
             registry: Registry::builtin(),
             root: Root::new(root)?,
         })
@@ -100,8 +103,7 @@ impl Server {
         let result = match name {
             "list_commands" => self.list_commands(args),
             "execute_command" => self.execute_command(args),
-            "open_document" => self.open_document(args),
-            "save_document" => self.save_document(args),
+            "open_repo" => self.open_repo(args),
             other => Err(format!("tool sconosciuto: {other}")),
         };
         match result {
@@ -129,32 +131,24 @@ impl Server {
             params: Value,
         }
         let Args { id, params } = parse_args(args)?;
+        // `repo.open` accetta qualunque percorso: da qui si passa per `open_repo`.
+        if id == "repo.open" {
+            return Err("per aprire un repository usa il tool `open_repo`".to_owned());
+        }
         self.registry
             .run(&id, &mut self.session, params)
             .map_err(|e| e.to_string())
     }
 
-    fn open_document(&mut self, args: Value) -> Result<Value, String> {
+    fn open_repo(&mut self, args: Value) -> Result<Value, String> {
         let PathArg { path } = parse_args(args)?;
         let path = self.root.existing(&path)?;
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let content = String::from_utf8(bytes).map_err(|_| "il file non è UTF-8".to_owned())?;
+        let path = path
+            .to_str()
+            .ok_or_else(|| format!("{}: percorso non UTF-8", path.display()))?;
         self.registry
-            .run(
-                "document.load",
-                &mut self.session,
-                json!({ "content": content }),
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(json!({ "opened": path }))
-    }
-
-    fn save_document(&mut self, args: Value) -> Result<Value, String> {
-        let PathArg { path } = parse_args(args)?;
-        let path = self.root.writable(&path)?;
-        let bytes = Document::to_bytes(self.session.document());
-        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(json!({ "saved": path }))
+            .run("repo.open", &mut self.session, json!({ "path": path }))
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -178,7 +172,7 @@ fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> 
 fn tools() -> Value {
     let path_schema = json!({
         "type": "object",
-        "properties": { "path": { "type": "string", "description": "Percorso relativo alla radice" } },
+        "properties": { "path": { "type": "string", "description": "Cartella relativa alla radice" } },
         "required": ["path"],
     });
     json!([
@@ -203,13 +197,8 @@ fn tools() -> Value {
             },
         },
         {
-            "name": "open_document",
-            "description": "Apre un documento dalla radice consentita.",
-            "inputSchema": path_schema,
-        },
-        {
-            "name": "save_document",
-            "description": "Salva il documento corrente nella radice consentita.",
+            "name": "open_repo",
+            "description": "Apre il repository git nella cartella indicata (`.` per la radice); i comandi `repo.*` lavorano poi su questo repo.",
             "inputSchema": path_schema,
         },
     ])
@@ -234,12 +223,22 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use project_engine::{MemoryBackend, MemoryOpener};
 
     fn temp_root(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("project-mcp-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        dir.canonicalize().unwrap()
+    }
+
+    /// Server su `root` con il repo di esempio registrato nella sottocartella `repo`.
+    fn server(root: &Path) -> Server {
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let mut opener = MemoryOpener::new();
+        opener.insert(repo.to_str().unwrap(), MemoryBackend::sample());
+        Server::new(root, Arc::new(opener)).unwrap()
     }
 
     fn call(server: &mut Server, name: &str, arguments: Value) -> Value {
@@ -255,7 +254,7 @@ mod tests {
     #[test]
     fn serve_over_lines() {
         let root = temp_root("serve");
-        let mut server = Server::new(&root).unwrap();
+        let mut server = server(&root);
         let input = concat!(
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#,
             "\n",
@@ -274,37 +273,54 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 3, "la notifica non ha risposta");
         assert_eq!(lines[0]["result"]["protocolVersion"], "2025-03-26");
-        assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 3);
         assert_eq!(lines[2]["error"]["code"], PARSE_ERROR);
     }
 
     #[test]
-    fn execute_save_open() {
-        let root = temp_root("io");
-        let mut server = Server::new(&root).unwrap();
+    fn open_repo_then_execute() {
+        let root = temp_root("open");
+        let mut server = server(&root);
+        let r = call(&mut server, "execute_command", json!({"id": "repo.status"}));
+        assert_eq!(r["isError"], true, "nessun repo aperto");
+
+        let r = call(&mut server, "open_repo", json!({"path": "repo"}));
+        assert_eq!(r["isError"], false, "{r}");
         let r = call(
             &mut server,
             "execute_command",
-            json!({"id": "item.add", "params": {"text": "x"}}),
+            json!({"id": "repo.log", "params": {"limit": 2}}),
         );
-        assert_eq!(r["isError"], false);
-        let r = call(&mut server, "save_document", json!({"path": "doc.json"}));
         assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let log: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(log["commits"].as_array().unwrap().len(), 2);
+    }
 
-        let mut other = Server::new(&root).unwrap();
-        let r = call(&mut other, "open_document", json!({"path": "doc.json"}));
-        assert_eq!(r["isError"], false, "{r}");
-        assert_eq!(other.session.document(), server.session.document());
+    #[test]
+    fn repo_open_is_only_reachable_through_open_repo() {
+        let root = temp_root("bypass");
+        let mut server = server(&root);
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "repo.open", "params": {"path": "/"}}),
+        );
+        assert_eq!(r["isError"], true);
+        assert!(
+            r["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("open_repo")
+        );
     }
 
     #[test]
     fn paths_outside_root_are_rejected() {
         let root = temp_root("escape");
-        let mut server = Server::new(&root).unwrap();
-        for path in ["../fuori.json", "/etc/passwd", "sub/../../x.json"] {
-            let r = call(&mut server, "save_document", json!({ "path": path }));
-            assert_eq!(r["isError"], true, "{path}");
-            let r = call(&mut server, "open_document", json!({ "path": path }));
+        let mut server = server(&root);
+        for path in ["..", "/etc", "repo/../..", "non-esiste"] {
+            let r = call(&mut server, "open_repo", json!({ "path": path }));
             assert_eq!(r["isError"], true, "{path}");
         }
     }
@@ -312,7 +328,7 @@ mod tests {
     #[test]
     fn unknown_tool_is_tool_error() {
         let root = temp_root("unknown");
-        let mut server = Server::new(&root).unwrap();
+        let mut server = server(&root);
         assert_eq!(call(&mut server, "nope", json!({}))["isError"], true);
         let r = call(&mut server, "execute_command", json!({"id": "nope"}));
         assert_eq!(r["isError"], true);

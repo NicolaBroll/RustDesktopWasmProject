@@ -2134,6 +2134,7 @@ dependencies = [
  "env_logger",
  "log",
  "project-engine",
+ "project-git",
  "project-ui",
  "rfd",
 ]
@@ -2145,8 +2146,10 @@ dependencies = [
  "anyhow",
  "clap",
  "project-engine",
+ "project-git",
  "project-mcp",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2203,9 +2206,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
- "log",
  "project-engine",
- "serde_json",
 ]
 
 [[package]]

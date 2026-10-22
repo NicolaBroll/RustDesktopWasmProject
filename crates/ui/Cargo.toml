@@ -10,8 +10,6 @@ publish.workspace = true
 project-engine.workspace = true
 eframe.workspace = true
 egui.workspace = true
-log.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

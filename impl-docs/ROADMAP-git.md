@@ -78,7 +78,7 @@ Regole valide per tutti gli step:
   CI verde.
 
 ### S08 — Sessione del repo e comandi di lettura
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** `Session` contiene il backend aperto e il `RepoOpener` iniettato. Comandi
   `repo.open`, `repo.status`, `repo.refs`, `repo.log` (paginato). Rimuovere l'esempio "lista di
   voci" (`Document`, `item.*`, `document.*`): è un cambio voluto del catalogo, da annotare nel

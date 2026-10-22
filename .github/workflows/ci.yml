@@ -3,7 +3,10 @@ name: ci
 on:
   push:
     branches: [master]
+  # Le pull request verso dev (una per step) per ora non passano dalla CI: la build si verifica
+  # in locale con `cargo xtask ci`.
   pull_request:
+    branches: [master]
 
 jobs:
   ci:

@@ -11,6 +11,7 @@ fn levels() -> HashMap<&'static str, u8> {
         ("project-engine", 5),
         ("project-ui", 6),
         ("project-mcp", 6),
+        ("project-git", 6),
         ("project", 7),
         ("project-cli", 7),
         ("project-web", 7),

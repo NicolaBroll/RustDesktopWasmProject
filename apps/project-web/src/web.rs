@@ -1,5 +1,5 @@
 use eframe::wasm_bindgen::{JsCast as _, JsValue, closure::Closure};
-use project_engine::{Capabilities, Picked, Platform};
+use project_engine::{Capabilities, MemoryOpener, Picked, Platform};
 use std::sync::Arc;
 use wasm_bindgen_futures::JsFuture;
 
@@ -17,7 +17,17 @@ pub fn start() {
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|cc| Ok(Box::new(project_ui::App::new(cc, Arc::new(WebPlatform))))),
+                Box::new(|cc| {
+                    // Il browser non vede i repo locali: repo di esempio in memoria.
+                    let opener = Arc::new(MemoryOpener::sample());
+                    let repo = Some(MemoryOpener::SAMPLE_PATH.to_owned());
+                    Ok(Box::new(project_ui::App::new(
+                        cc,
+                        Arc::new(WebPlatform),
+                        opener,
+                        repo,
+                    )))
+                }),
             )
             .await;
         if let Err(e) = result {
@@ -46,6 +56,16 @@ impl Platform for WebPlatform {
         if let Err(e) = pick_file(on_done) {
             log::error!("apertura file: {e:?}");
         }
+    }
+
+    /// Il browser non vede le cartelle locali: si usa il repo di esempio.
+    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+        on_done(None);
+    }
+
+    /// Il browser non ha thread: il job gira subito (il `MemoryBackend` è istantaneo).
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+        job();
     }
 
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {

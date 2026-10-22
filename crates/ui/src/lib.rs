@@ -1,305 +1,356 @@
 //! L6 — interfaccia egui condivisa da desktop e web.
 //!
-//! Regola: i callback grafici non modificano il documento direttamente,
-//! producono un'[`Action`] che passa da [`Registry::run`].
+//! Regola: i callback grafici non modificano il repository direttamente, producono
+//! un'[`Action`]; i comandi passano dall'[`Executor`], che li esegue con
+//! [`Registry::run`](project_engine::Registry::run) fuori dal thread della UI.
+//!
+//! Layout (`impl-docs/ARCHITETTURA-git.md` §8): barra in alto, ref a sinistra, commit al
+//! centro, dettagli del commit selezionato a destra.
 
-use egui::{Key, KeyboardShortcut, Modifiers};
-use project_engine::{Document, Picked, Platform, Registry, Session};
+mod executor;
+mod format;
+mod list;
+mod view;
+
+pub use executor::{Done, Executor, Job, Ticket, Wake};
+
+use list::{CommitList, PageRequest};
+use project_domain::{Commit, Head, Oid, RefInfo, Status};
+use project_engine::{Platform, Registry, RepoOpener, Session};
+use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-const DOCUMENT_KEY: &str = "document";
-
-const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
-const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
-const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
-const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
-const REDO: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
-const REDO_ALT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
-
 /// Ciò che l'utente ha chiesto durante il frame.
+#[derive(Debug, Clone)]
 enum Action {
-    Run(&'static str, Value),
+    /// Dialogo per scegliere la cartella del repo.
+    PickFolder,
+    Open(String),
+    /// Rilegge ref, stato e log del repo aperto.
+    Refresh,
+    /// Seleziona il commit alla riga indicata della lista.
+    Select(usize),
+    /// Seleziona il commit puntato da un ref, se è nella lista.
+    SelectCommit(Oid),
+    /// Sposta la selezione di tante righe (tastiera).
+    Move(isize),
+    /// Seleziona il primo commit (`true`) o l'ultimo caricato (`false`).
+    Edge(bool),
+    /// La lista mostra le righe fino a questa (esclusa): se serve chiede la pagina seguente.
+    Visible(usize),
+}
+
+/// A cosa serve un comando mandato all'executor. Le letture portano la generazione del repo
+/// aperto: se nel frattempo se n'è aperto un altro il risultato si scarta.
+#[derive(Debug, Clone, Copy)]
+enum Request {
     Open,
-    Save,
-    Quit,
+    Refs(u64),
+    Status(u64),
+    Log(u64, PageRequest),
+}
+
+/// Il repo mostrato e i dati letti finora.
+struct RepoView {
+    path: String,
+    head: Head,
+    refs: Vec<RefInfo>,
+    status: Option<Status>,
+    list: CommitList,
+}
+
+impl RepoView {
+    fn new(path: String, head: Head) -> Self {
+        Self {
+            path,
+            head,
+            refs: Vec::new(),
+            status: None,
+            list: CommitList::default(),
+        }
+    }
+}
+
+/// Dove era la lista dei commit nell'ultimo frame: serve per portare in vista la selezione e
+/// per sapere quante righe salta Pagina giù.
+#[derive(Debug, Default)]
+struct ListViewport {
+    /// Righe disegnate, anche solo in parte.
+    rows: std::ops::Range<usize>,
+    height: f32,
+}
+
+#[derive(Deserialize)]
+struct Opened {
+    path: String,
+    head: Head,
+}
+
+#[derive(Deserialize)]
+struct LogPage {
+    commits: Vec<Commit>,
+    has_more: bool,
 }
 
 pub struct App {
-    session: Session,
-    registry: Registry,
+    executor: Executor,
     platform: Arc<dyn Platform>,
-    /// File scelto dall'utente; arriva in modo asincrono sul web.
-    picked: Arc<Mutex<Option<Picked>>>,
-    title_buffer: String,
-    new_item: String,
-    status: String,
+    /// Cartella scelta nel dialogo; sul desktop arriva subito, in generale da un callback.
+    picked: Arc<Mutex<Option<String>>>,
+    pending: HashMap<Ticket, Request>,
+    /// Cresce a ogni repo aperto.
+    generation: u64,
+    repo: Option<RepoView>,
+    viewport: ListViewport,
+    error: String,
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, platform: Arc<dyn Platform>) -> Self {
-        let document: Document = cc
-            .storage
-            .and_then(|storage| eframe::get_value(storage, DOCUMENT_KEY))
-            .unwrap_or_default();
-        Self {
-            title_buffer: document.title().to_owned(),
-            session: Session::new(document),
-            registry: Registry::builtin(),
+    /// `opener` apre i repository: `CliOpener` sul desktop, `MemoryOpener` sul web. Se c'è,
+    /// `repo` si apre subito, in background.
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        platform: Arc<dyn Platform>,
+        opener: Arc<dyn RepoOpener>,
+        repo: Option<String>,
+    ) -> Self {
+        let ctx = cc.egui_ctx.clone();
+        let wake: Wake = Arc::new(move || ctx.request_repaint());
+        let mut app = Self {
+            executor: Executor::new(
+                Session::new(opener),
+                Registry::builtin(),
+                Arc::clone(&platform),
+                wake,
+            ),
             platform,
             picked: Arc::default(),
-            new_item: String::new(),
-            status: String::new(),
+            pending: HashMap::new(),
+            generation: 0,
+            repo: None,
+            viewport: ListViewport::default(),
+            error: String::new(),
+        };
+        if let Some(path) = repo {
+            app.apply(&cc.egui_ctx, Action::Open(path));
         }
+        app
     }
 
-    fn run(&mut self, id: &str, params: Value) -> Option<Value> {
-        match self.registry.run(id, &mut self.session, params) {
-            Ok(out) => Some(out),
-            Err(e) => {
-                log::warn!("{id}: {e}");
-                self.status = e.to_string();
-                None
-            }
-        }
+    fn submit(&mut self, command: &str, params: Value, request: Request) {
+        let ticket = self.executor.submit(command, params);
+        self.pending.insert(ticket, request);
     }
 
     fn apply(&mut self, ctx: &egui::Context, action: Action) {
         match action {
-            Action::Run(id, params) => {
-                if self.run(id, params).is_some() {
-                    self.status.clear();
-                }
-            }
-            Action::Open => {
+            Action::PickFolder => {
                 let picked = Arc::clone(&self.picked);
                 let ctx = ctx.clone();
-                self.platform.pick_file(Box::new(move |file| {
-                    if let Some(file) = file {
-                        *picked.lock().expect("mutex avvelenato") = Some(file);
+                self.platform.pick_folder(Box::new(move |folder| {
+                    if let Some(folder) = folder {
+                        *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some(folder);
                         ctx.request_repaint();
                     }
                 }));
             }
-            Action::Save => {
-                if let Some(out) = self.run("document.export", json!({})) {
-                    let content = out["content"].as_str().unwrap_or_default();
-                    let name = format!("{}.json", file_stem(self.session.document().title()));
-                    self.platform.save_file(&name, content.as_bytes().to_vec());
-                    self.status = format!("Salvato come {name}");
+            Action::Open(path) => self.submit("repo.open", json!({ "path": path }), Request::Open),
+            Action::Refresh => self.load(),
+            Action::Select(index) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.list.select(index);
                 }
             }
-            Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-        }
-    }
-
-    fn receive_picked_file(&mut self) {
-        let Some(file) = self.picked.lock().expect("mutex avvelenato").take() else {
-            return;
-        };
-        match String::from_utf8(file.bytes) {
-            Ok(content) => {
-                if self
-                    .run("document.load", json!({ "content": content }))
-                    .is_some()
+            Action::SelectCommit(id) => {
+                if let Some(repo) = &mut self.repo
+                    && !repo.list.select_id(id)
                 {
-                    self.status = format!("Aperto {}", file.name);
+                    self.error = format!("il commit {} non è tra quelli caricati", id.short());
                 }
             }
-            Err(_) => self.status = format!("{}: il file non è testo UTF-8", file.name),
+            Action::Move(delta) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.list.move_selection(delta);
+                }
+            }
+            Action::Edge(first) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.list.select_edge(first);
+                }
+            }
+            Action::Visible(end) => {
+                if let Some(request) = self.repo.as_mut().and_then(|r| r.list.next_page(end)) {
+                    self.request_page(request);
+                }
+            }
         }
     }
 
-    fn shortcuts(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        ctx.input_mut(|i| {
-            if i.consume_shortcut(&NEW) {
-                actions.push(Action::Run("document.new", json!({})));
-            }
-            if i.consume_shortcut(&OPEN) {
-                actions.push(Action::Open);
-            }
-            if i.consume_shortcut(&SAVE) {
-                actions.push(Action::Save);
-            }
-        });
-        // Mentre si scrive in un campo, Ctrl+Z appartiene al campo di testo.
-        if ctx.egui_wants_keyboard_input() {
+    fn request_page(&mut self, page: PageRequest) {
+        let params = json!({ "skip": page.skip, "limit": page.limit });
+        self.submit("repo.log", params, Request::Log(self.generation, page));
+    }
+
+    /// Azioni dei tasti della lista: frecce, Pagina su/giù, Inizio/Fine. Solo se nessun campo
+    /// di testo sta ricevendo la tastiera.
+    fn keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        if self.repo.is_none() || ctx.egui_wants_keyboard_input() {
             return;
         }
-        ctx.input_mut(|i| {
-            // Ctrl+Shift+Z va controllato prima di Ctrl+Z.
-            if i.consume_shortcut(&REDO) || i.consume_shortcut(&REDO_ALT) {
-                actions.push(Action::Run("edit.redo", json!({})));
-            } else if i.consume_shortcut(&UNDO) {
-                actions.push(Action::Run("edit.undo", json!({})));
+        let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
+            .unwrap_or(isize::MAX);
+        ctx.input(|i| {
+            let keys = [
+                (egui::Key::ArrowDown, Action::Move(1)),
+                (egui::Key::ArrowUp, Action::Move(-1)),
+                (egui::Key::PageDown, Action::Move(page)),
+                (egui::Key::PageUp, Action::Move(-page)),
+                (egui::Key::Home, Action::Edge(true)),
+                (egui::Key::End, Action::Edge(false)),
+            ];
+            for (key, action) in keys {
+                for _ in 0..i.num_presses(key) {
+                    actions.push(action.clone());
+                }
             }
         });
     }
 
-    fn menu_bar(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let caps = self.platform.capabilities();
-        let shortcut = |s: &KeyboardShortcut| ui.ctx().format_shortcut(s);
-        let (new, open, save, undo, redo) = (
-            shortcut(&NEW),
-            shortcut(&OPEN),
-            shortcut(&SAVE),
-            shortcut(&UNDO),
-            shortcut(&REDO),
-        );
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui
-                    .add(egui::Button::new("Nuovo").shortcut_text(new))
-                    .clicked()
-                {
-                    actions.push(Action::Run("document.new", json!({})));
-                }
-                if ui
-                    .add(egui::Button::new("Apri…").shortcut_text(open))
-                    .clicked()
-                {
-                    actions.push(Action::Open);
-                }
-                if ui
-                    .add(egui::Button::new("Salva…").shortcut_text(save))
-                    .clicked()
-                {
-                    actions.push(Action::Save);
-                }
-                if caps.window_control {
-                    ui.separator();
-                    if ui.button("Esci").clicked() {
-                        actions.push(Action::Quit);
-                    }
-                }
-            });
-            ui.menu_button("Modifica", |ui| {
-                let undo_btn = egui::Button::new("Annulla").shortcut_text(undo);
-                if ui.add_enabled(self.session.can_undo(), undo_btn).clicked() {
-                    actions.push(Action::Run("edit.undo", json!({})));
-                }
-                let redo_btn = egui::Button::new("Ripeti").shortcut_text(redo);
-                if ui.add_enabled(self.session.can_redo(), redo_btn).clicked() {
-                    actions.push(Action::Run("edit.redo", json!({})));
-                }
-            });
-        });
-    }
-
-    fn document_view(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let doc = self.session.document();
-
-        let title = ui.add(
-            egui::TextEdit::singleline(&mut self.title_buffer)
-                .font(egui::TextStyle::Heading)
-                .desired_width(f32::INFINITY),
-        );
-        if title.lost_focus() && self.title_buffer != doc.title() {
-            actions.push(Action::Run(
-                "document.set_title",
-                json!({ "title": self.title_buffer }),
-            ));
-        } else if !title.has_focus() {
-            // Riallinea dopo undo, apertura, nuovo documento…
-            doc.title().clone_into(&mut self.title_buffer);
+    /// Chiede ref, stato e log del repo aperto.
+    fn load(&mut self) {
+        if self.repo.is_none() {
+            return;
         }
-        ui.separator();
+        let generation = self.generation;
+        self.submit("repo.refs", json!({}), Request::Refs(generation));
+        self.submit("repo.status", json!({}), Request::Status(generation));
+        if let Some(repo) = &mut self.repo {
+            let first = repo.list.reset();
+            self.request_page(first);
+        }
+    }
 
-        ui.horizontal(|ui| {
-            let input =
-                ui.add(egui::TextEdit::singleline(&mut self.new_item).hint_text("Nuova voce"));
-            let enter = input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-            if ui.button("Aggiungi").clicked() || enter {
-                actions.push(Action::Run(
-                    "item.add",
-                    json!({ "text": std::mem::take(&mut self.new_item) }),
-                ));
-                input.request_focus();
+    fn receive(&mut self, ctx: &egui::Context) {
+        let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(folder) = folder {
+            self.apply(ctx, Action::Open(folder));
+        }
+        for done in self.executor.poll() {
+            let Some(request) = self.pending.remove(&done.ticket) else {
+                continue;
+            };
+            // Una pagina non arrivata si potrà chiedere di nuovo.
+            if done.result.is_err()
+                && let Request::Log(generation, page) = request
+                && let Some(repo) = self.current(generation)
+            {
+                repo.list.failed(page);
             }
-        });
-        ui.add_space(4.0);
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if doc.items().is_empty() {
-                ui.weak("Nessuna voce.");
-            }
-            for (index, item) in doc.items().iter().enumerate() {
-                ui.horizontal(|ui| {
-                    let mut done = item.done;
-                    let text = egui::RichText::new(&item.text);
-                    let text = if done {
-                        text.strikethrough().weak()
+            match done.result {
+                Ok(value) => {
+                    if let Err(e) = self.store(request, value) {
+                        log::error!("{}: risultato inatteso: {e}", done.command);
+                        self.error = format!("{}: risultato inatteso: {e}", done.command);
                     } else {
-                        text
-                    };
-                    if ui.checkbox(&mut done, text).changed() {
-                        actions.push(Action::Run("item.toggle", json!({ "index": index })));
+                        self.error.clear();
                     }
-                    if ui.small_button("✖").on_hover_text("Elimina").clicked() {
-                        actions.push(Action::Run("item.remove", json!({ "index": index })));
-                    }
-                });
+                }
+                Err(e) => {
+                    log::warn!("{}: {e}", done.command);
+                    self.error = e;
+                }
             }
-        });
+        }
+    }
+
+    /// Il repo mostrato, se è ancora quello della generazione `generation`.
+    fn current(&mut self, generation: u64) -> Option<&mut RepoView> {
+        self.repo.as_mut().filter(|_| generation == self.generation)
+    }
+
+    /// Mette il risultato di `request` nella vista.
+    fn store(&mut self, request: Request, value: Value) -> Result<(), serde_json::Error> {
+        match request {
+            Request::Open => {
+                let Opened { path, head } = serde_json::from_value(value)?;
+                self.generation += 1;
+                self.repo = Some(RepoView::new(path, head));
+                self.load();
+            }
+            Request::Refs(generation) => {
+                if let Some(repo) = self.current(generation) {
+                    repo.refs = serde_json::from_value(value)?;
+                }
+            }
+            Request::Status(generation) => {
+                if let Some(repo) = self.current(generation) {
+                    let status: Status = serde_json::from_value(value)?;
+                    repo.head = status.head.clone();
+                    repo.status = Some(status);
+                }
+            }
+            Request::Log(generation, page) => {
+                if let Some(repo) = self.current(generation) {
+                    let LogPage { commits, has_more } = serde_json::from_value(value)?;
+                    repo.list.receive(page, commits, has_more);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
 impl eframe::App for App {
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, DOCUMENT_KEY, self.session.document());
-    }
-
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.receive_picked_file();
-
-        let mut actions = Vec::new();
-        self.shortcuts(ui.ctx(), &mut actions);
-
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &mut actions));
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(&self.status);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::warn_if_debug_build(ui);
-                });
-            });
-        });
-        egui::CentralPanel::default().show(ui, |ui| self.document_view(ui, &mut actions));
-
         let ctx = ui.ctx().clone();
+        self.receive(&ctx);
+        let mut actions = Vec::new();
+        self.keyboard(&ctx, &mut actions);
+        let can_pick = self.platform.capabilities().open_folder;
+
+        egui::Panel::top("barra").show(ui, |ui| {
+            view::top_bar(ui, self.repo.as_ref(), can_pick, &mut actions);
+        });
+        egui::Panel::bottom("stato").show(ui, |ui| {
+            view::status_bar(ui, self.executor.running(), &self.error);
+        });
+        // I pannelli laterali non superano un terzo della finestra: il contenuto va a capo.
+        let side_max = (ui.available_width() / 3.0).max(200.0);
+        match &self.repo {
+            Some(repo) => {
+                egui::Panel::left("ref")
+                    .resizable(true)
+                    .default_size(220.0)
+                    .min_size(140.0)
+                    .max_size(side_max)
+                    .show(ui, |ui| view::refs_panel(ui, repo, &mut actions));
+                egui::Panel::right("dettagli")
+                    .resizable(true)
+                    .default_size(320.0)
+                    .min_size(200.0)
+                    .max_size(side_max)
+                    .show(ui, |ui| {
+                        view::details_panel(ui, repo.list.selected_commit())
+                    });
+                let viewport = &mut self.viewport;
+                egui::CentralPanel::default()
+                    .show(ui, |ui| view::commit_list(ui, repo, viewport, &mut actions));
+            }
+            None => {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    view::welcome(ui, can_pick, self.executor.is_busy(), &mut actions);
+                });
+            }
+        }
+
+        // La lista ha portato in vista la riga chiesta: non serve più.
+        if let Some(repo) = &mut self.repo {
+            repo.list.take_scroll_to();
+        }
         for action in actions {
             self.apply(&ctx, action);
         }
-    }
-}
-
-/// Nome file sicuro ricavato dal titolo.
-fn file_stem(title: &str) -> String {
-    let stem: String = title
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if stem.trim_matches('_').is_empty() {
-        "documento".to_owned()
-    } else {
-        stem
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::file_stem;
-
-    #[test]
-    fn file_stem_is_safe() {
-        assert_eq!(file_stem("Lista spesa/2"), "Lista_spesa_2");
-        assert_eq!(file_stem("../.."), "documento");
     }
 }

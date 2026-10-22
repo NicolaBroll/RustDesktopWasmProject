@@ -1,10 +1,12 @@
 //! Catalogo dei comandi predefiniti.
 
 use crate::commands::parse_params;
-use crate::{CommandSpec, EngineError, Registry, Session};
-use project_domain::Document;
+use crate::{CommandSpec, EngineError, LogQuery, Registry, Session};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// Commit restituiti da `repo.log` quando `limit` manca.
+pub const DEFAULT_LOG_LIMIT: usize = 200;
 
 impl Registry {
     /// Registro con tutti i comandi predefiniti.
@@ -20,46 +22,20 @@ impl Registry {
                 handler,
             )
         };
-        add("document.get", "Leggi il documento", "{}", document_get);
         add(
-            "document.new",
-            "Nuovo documento",
-            r#"{"title"?: string}"#,
-            document_new,
+            "repo.open",
+            "Apri repository",
+            r#"{"path": string}"#,
+            repo_open,
         );
+        add("repo.status", "Stato del repository", "{}", repo_status);
+        add("repo.refs", "Branch, tag e stash", "{}", repo_refs);
         add(
-            "document.load",
-            "Apri documento da testo",
-            r#"{"content": string}"#,
-            document_load,
+            "repo.log",
+            "Cronologia dei commit",
+            r#"{"skip"?: number, "limit"?: number (200), "rev"?: string}"#,
+            repo_log,
         );
-        add(
-            "document.export",
-            "Esporta il documento come testo",
-            "{}",
-            document_export,
-        );
-        add(
-            "document.set_title",
-            "Rinomina il documento",
-            r#"{"title": string}"#,
-            set_title,
-        );
-        add("item.add", "Aggiungi voce", r#"{"text": string}"#, item_add);
-        add(
-            "item.toggle",
-            "Segna/rimuovi spunta",
-            r#"{"index": number}"#,
-            item_toggle,
-        );
-        add(
-            "item.remove",
-            "Elimina voce",
-            r#"{"index": number}"#,
-            item_remove,
-        );
-        add("edit.undo", "Annulla", "{}", undo);
-        add("edit.redo", "Ripeti", "{}", redo);
         r
     }
 }
@@ -72,186 +48,194 @@ struct NoParams {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Title {
-    title: String,
+struct PathParam {
+    path: String,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OptTitle {
-    title: Option<String>,
+fn to_json(value: impl serde::Serialize) -> Value {
+    serde_json::to_value(value).expect("i tipi del dominio sono serializzabili")
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Content {
-    content: String,
+/// `{"path", "head"}` del repo appena aperto.
+fn repo_open(s: &mut Session, p: Value) -> Out {
+    let PathParam { path } = parse_params("repo.open", p)?;
+    s.open(&path)?;
+    let head = s.repo()?.head()?;
+    Ok(json!({ "path": path, "head": to_json(head) }))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Text {
-    text: String,
+/// Lo [`Status`](project_domain::Status) del repo aperto.
+fn repo_status(s: &mut Session, p: Value) -> Out {
+    let NoParams {} = parse_params("repo.status", p)?;
+    Ok(to_json(s.repo()?.status()?))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Index {
-    index: usize,
+/// I [`RefInfo`](project_domain::RefInfo) del repo aperto, in ordine di nome.
+fn repo_refs(s: &mut Session, p: Value) -> Out {
+    let NoParams {} = parse_params("repo.refs", p)?;
+    Ok(to_json(s.repo()?.refs()?))
 }
 
-fn document_get(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("document.get", p)?;
-    Ok(serde_json::to_value(s.document()).expect("Document è serializzabile"))
-}
-
-fn document_new(s: &mut Session, p: Value) -> Out {
-    let OptTitle { title } = parse_params("document.new", p)?;
-    let mut doc = Document::default();
-    if let Some(title) = title {
-        doc.set_title(&title)?;
-    }
-    s.replace(doc);
-    Ok(json!({}))
-}
-
-fn document_load(s: &mut Session, p: Value) -> Out {
-    let Content { content } = parse_params("document.load", p)?;
-    let doc = Document::from_bytes(content.as_bytes())?;
-    s.replace(doc);
-    Ok(json!({}))
-}
-
-fn document_export(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("document.export", p)?;
-    let content = String::from_utf8(s.document().to_bytes()).expect("JSON è UTF-8");
-    Ok(json!({ "content": content }))
-}
-
-fn set_title(s: &mut Session, p: Value) -> Out {
-    let Title { title } = parse_params("document.set_title", p)?;
-    s.edit(|d| d.set_title(&title))?;
-    Ok(json!({}))
-}
-
-fn item_add(s: &mut Session, p: Value) -> Out {
-    let Text { text } = parse_params("item.add", p)?;
-    let index = s.edit(|d| d.add_item(&text))?;
-    Ok(json!({ "index": index }))
-}
-
-fn item_toggle(s: &mut Session, p: Value) -> Out {
-    let Index { index } = parse_params("item.toggle", p)?;
-    let done = s.edit(|d| d.toggle_item(index))?;
-    Ok(json!({ "done": done }))
-}
-
-fn item_remove(s: &mut Session, p: Value) -> Out {
-    let Index { index } = parse_params("item.remove", p)?;
-    let removed = s.edit(|d| d.remove_item(index))?;
-    Ok(json!({ "removed": removed }))
-}
-
-fn undo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.undo", p)?;
-    Ok(json!({ "changed": s.undo() }))
-}
-
-fn redo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.redo", p)?;
-    Ok(json!({ "changed": s.redo() }))
+/// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
+/// l'ultimo commit restituito ce ne sono altri (la pagina seguente parte da `skip + limit`).
+fn repo_log(s: &mut Session, p: Value) -> Out {
+    let query: LogQuery = parse_params("repo.log", p)?;
+    let limit = query.limit.unwrap_or(DEFAULT_LOG_LIMIT);
+    // Un commit in più per sapere se la pagina è l'ultima.
+    let probe = LogQuery {
+        limit: Some(limit.saturating_add(1)),
+        ..query
+    };
+    let mut commits = s.repo()?.log(&probe)?;
+    let has_more = commits.len() > limit;
+    commits.truncate(limit);
+    Ok(json!({ "commits": to_json(commits), "has_more": has_more }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
+    use crate::{GitBackend, MemoryBackend, MemoryOpener};
+    use project_domain::{Commit, RefInfo, Status};
+    use std::sync::Arc;
+
+    fn session() -> Session {
+        Session::new(Arc::new(MemoryOpener::sample()))
+    }
+
+    fn opened() -> (Registry, Session) {
+        let r = Registry::builtin();
+        let mut s = session();
+        r.run(
+            "repo.open",
+            &mut s,
+            json!({ "path": MemoryOpener::SAMPLE_PATH }),
+        )
+        .unwrap();
+        (r, s)
+    }
+
+    fn log_page(r: &Registry, s: &mut Session, params: Value) -> (Vec<Commit>, bool) {
+        let out = r.run("repo.log", s, params).unwrap();
+        let commits = serde_json::from_value(out["commits"].clone()).unwrap();
+        (commits, out["has_more"].as_bool().unwrap())
+    }
 
     #[test]
-    fn export_load_round_trip() {
+    fn catalog() {
         let r = Registry::builtin();
-        let mut s = Session::default();
-        r.run("item.add", &mut s, json!({"text": "uno"})).unwrap();
-        let exported = r.run("document.export", &mut s, Value::Null).unwrap();
+        let ids: Vec<_> = r.list().map(|c| c.id).collect();
+        assert_eq!(ids, ["repo.log", "repo.open", "repo.refs", "repo.status"]);
+        let ids: Vec<_> = r.search("CRONOLOGIA").map(|c| c.id).collect();
+        assert_eq!(ids, ["repo.log"]);
+    }
 
-        let mut other = Session::default();
-        r.run("document.load", &mut other, exported).unwrap();
-        assert_eq!(other.document(), s.document());
+    #[test]
+    fn open_returns_path_and_head() {
+        let r = Registry::builtin();
+        let mut s = session();
+        let out = r
+            .run(
+                "repo.open",
+                &mut s,
+                json!({ "path": MemoryOpener::SAMPLE_PATH }),
+            )
+            .unwrap();
+        assert_eq!(out["path"], MemoryOpener::SAMPLE_PATH);
+        let head = MemoryBackend::sample().head().unwrap();
+        assert_eq!(out["head"], to_json(head));
+        assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
+    }
+
+    #[test]
+    fn reads_need_an_open_repo() {
+        let r = Registry::builtin();
+        let mut s = session();
+        for id in ["repo.status", "repo.refs", "repo.log"] {
+            let err = r.run(id, &mut s, json!({})).unwrap_err();
+            assert!(matches!(err, EngineError::NoRepo), "{id}: {err}");
+        }
+    }
+
+    #[test]
+    fn status_and_refs_match_the_backend() {
+        let (r, mut s) = opened();
+        let sample = MemoryBackend::sample();
+
+        let status: Status =
+            serde_json::from_value(r.run("repo.status", &mut s, Value::Null).unwrap()).unwrap();
+        assert_eq!(status, sample.status().unwrap());
+
+        let refs: Vec<RefInfo> =
+            serde_json::from_value(r.run("repo.refs", &mut s, json!({})).unwrap()).unwrap();
+        assert_eq!(refs, sample.refs().unwrap());
+    }
+
+    #[test]
+    fn log_pages_cover_the_whole_history() {
+        let (r, mut s) = opened();
+        let all = MemoryBackend::sample().log(&LogQuery::all()).unwrap();
+        assert!(all.len() > 3, "il repo di esempio ha una dozzina di commit");
+
+        let (default, more) = log_page(&r, &mut s, json!({}));
+        assert_eq!((default.as_slice(), more), (all.as_slice(), false));
+
+        let mut pages = Vec::new();
+        let mut skip = 0;
+        loop {
+            let (page, more) = log_page(&r, &mut s, json!({ "skip": skip, "limit": 3 }));
+            assert!(page.len() <= 3);
+            skip += page.len();
+            pages.extend(page);
+            if !more {
+                break;
+            }
+        }
+        assert_eq!(pages, all);
+
+        let (exact, more) = log_page(&r, &mut s, json!({ "limit": all.len() }));
+        assert_eq!((exact.len(), more), (all.len(), false));
+        let (empty, more) = log_page(&r, &mut s, json!({ "limit": 0 }));
+        assert_eq!((empty.len(), more), (0, true));
+    }
+
+    #[test]
+    fn log_from_rev() {
+        let (r, mut s) = opened();
+        let first = MemoryBackend::sample().log(&LogQuery::all()).unwrap()[1].id;
+        let (page, _) = log_page(&r, &mut s, json!({ "rev": first.to_string(), "limit": 1 }));
+        assert_eq!(page[0].id, first);
+
+        let err = r
+            .run("repo.log", &mut s, json!({ "rev": "nessuno" }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
     }
 
     #[test]
     fn errors() {
-        let r = Registry::builtin();
-        let mut s = Session::default();
+        let (r, mut s) = opened();
         assert!(matches!(
             r.run("nope", &mut s, json!({})),
             Err(EngineError::UnknownCommand(_))
         ));
-        assert!(matches!(
-            r.run("item.add", &mut s, json!({"txt": "x"})),
-            Err(EngineError::InvalidParams { id: "item.add", .. })
-        ));
-        assert!(matches!(
-            r.run("item.remove", &mut s, json!({"index": 0})),
-            Err(EngineError::Domain(_))
-        ));
-    }
-
-    #[test]
-    fn search_matches_id_and_title() {
-        let r = Registry::builtin();
-        let ids: Vec<_> = r.search("ANNULLA").map(|c| c.id).collect();
-        assert_eq!(ids, ["edit.undo"]);
-        assert!(r.search("item.").count() >= 3);
-    }
-
-    #[derive(Debug, Clone)]
-    enum Op {
-        Add(String),
-        Toggle(usize),
-        Remove(usize),
-        Title(String),
-    }
-
-    fn op() -> impl Strategy<Value = Op> {
-        prop_oneof![
-            "[a-z ]{0,6}".prop_map(Op::Add),
-            (0usize..8).prop_map(Op::Toggle),
-            (0usize..8).prop_map(Op::Remove),
-            "[a-z ]{0,6}".prop_map(Op::Title),
-        ]
-    }
-
-    proptest! {
-        /// Annullare tutte le modifiche riuscite riporta allo stato iniziale;
-        /// ripeterle tutte riporta allo stato finale.
-        #[test]
-        fn undo_redo_are_inverse(ops in proptest::collection::vec(op(), 0..40)) {
-            let r = Registry::builtin();
-            let mut s = Session::default();
-            let initial = s.document().clone();
-            let mut applied = 0;
-            for op in ops {
-                let (id, params) = match op {
-                    Op::Add(text) => ("item.add", json!({ "text": text })),
-                    Op::Toggle(index) => ("item.toggle", json!({ "index": index })),
-                    Op::Remove(index) => ("item.remove", json!({ "index": index })),
-                    Op::Title(title) => ("document.set_title", json!({ "title": title })),
-                };
-                if r.run(id, &mut s, params).is_ok() {
-                    applied += 1;
-                }
-            }
-            let fin = s.document().clone();
-            for _ in 0..applied {
-                prop_assert!(s.undo());
-            }
-            prop_assert!(!s.undo());
-            prop_assert_eq!(s.document(), &initial);
-            for _ in 0..applied {
-                prop_assert!(s.redo());
-            }
-            prop_assert_eq!(s.document(), &fin);
+        for (id, params) in [
+            ("repo.open", json!({})),
+            ("repo.open", json!({ "path": "x", "altro": 1 })),
+            ("repo.status", json!({ "x": 1 })),
+            ("repo.log", json!({ "limit": -1 })),
+            ("repo.log", json!({ "page": 2 })),
+        ] {
+            let err = r.run(id, &mut s, params).unwrap_err();
+            assert!(
+                matches!(err, EngineError::InvalidParams { .. }),
+                "{id}: {err}"
+            );
         }
+        let err = r
+            .run("repo.open", &mut s, json!({ "path": "altrove" }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::RepoNotFound { .. }), "{err}");
+        assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
     }
 }

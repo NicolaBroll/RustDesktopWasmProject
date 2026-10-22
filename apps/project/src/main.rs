@@ -3,22 +3,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // niente console su Windows in release
 
 use project_engine::{Capabilities, Picked, Platform};
+use project_git::CliOpener;
 use std::sync::Arc;
 
 fn main() -> eframe::Result {
     env_logger::init();
 
     let platform = Arc::new(NativePlatform);
+    let opener = Arc::new(CliOpener::new());
+    // `project <percorso>` apre subito un repository.
+    let repo = std::env::args().nth(1);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
-            .with_min_inner_size([300.0, 200.0]),
+            .with_inner_size([1200.0, 760.0])
+            .with_min_inner_size([640.0, 400.0]),
         ..Default::default()
     };
     eframe::run_native(
         "Project",
         options,
-        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform)))),
+        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform, opener, repo)))),
     )
 }
 
@@ -30,6 +34,7 @@ impl Platform for NativePlatform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             window_control: true,
+            open_folder: true,
             ..Default::default()
         }
     }
@@ -51,6 +56,27 @@ impl Platform for NativePlatform {
                 }
             });
         on_done(picked);
+    }
+
+    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+        let folder = rfd::FileDialog::new().pick_folder().and_then(|path| {
+            let path = path.into_os_string().into_string();
+            if let Err(path) = &path {
+                log::error!("{}: il percorso non è UTF-8", path.to_string_lossy());
+            }
+            path.ok()
+        });
+        on_done(folder);
+    }
+
+    /// Un thread per job: i comandi lenti sono pochi e brevi (fetch, push, log grandi).
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+        if let Err(e) = std::thread::Builder::new()
+            .name("project-job".to_owned())
+            .spawn(job)
+        {
+            log::error!("impossibile avviare un thread: {e}");
+        }
     }
 
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {

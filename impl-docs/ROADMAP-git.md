@@ -12,8 +12,10 @@ Regole valide per tutti gli step:
 - Aggiornare la casella dello step in questo file quando è finito.
 - Gli step che scrivono nel repo dell'utente (da S18 in poi) passano da `safety-reviewer` prima
   della consegna.
-- Consegna di ogni step: pull request verso `master` e, con la CI verde, squash merge. Lo step
-  successivo riparte dal `master` aggiornato.
+- Consegna di ogni step: `cargo xtask ci` verde in locale, pull request verso `dev` e squash
+  merge. La CI di GitHub per ora gira solo sulle pull request verso `master`, non su quelle verso
+  `dev`. Lo step successivo riparte dal `dev` aggiornato; `dev` andrà in `master` con una pull
+  request.
 
 ## Fase 0 — Preparazione
 
@@ -33,34 +35,34 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test su parsing di `Oid` validi e non validi e round-trip JSON; CI verde.
 
 ### S02 — Parser del log
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** funzione pura `parse_log(&[u8]) -> Result<Vec<Commit>, DomainError>` per il
   formato `-z` a campi fissi descritto in §3, più la costante con la stringa `--format`.
 - **Fatto quando:** test con output catturato da un repo vero (commit di merge, commit radice,
   corpo vuoto, corpo su più righe, autore non UTF-8); CI verde.
 
 ### S03 — Parser dello stato
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** `Status`, `StatusEntry`, `Operation` e `parse_status(&[u8])` per
   `git status --porcelain=v2 -z --branch --untracked-files=all`.
 - **Fatto quando:** test su file modificati, in stage, rinominati, non tracciati, in conflitto,
   HEAD staccata, branch senza upstream, ahead/behind; CI verde.
 
 ### S04 — Parser dei ref
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** formato di `git for-each-ref` (costante) e `parse_refs(&[u8])` per branch locali,
   remoti, tag e stash, con upstream e ahead/behind.
 - **Fatto quando:** test con output catturato; CI verde.
 
 ### S05 — Trait del backend e `MemoryBackend`
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** in `crates/engine` i trait `GitBackend` (sola lettura: `head`, `refs`, `log`,
   `status`) e `RepoOpener`, più `MemoryBackend` con un costruttore di repo di esempio (una
   dozzina di commit con due branch e un merge).
 - **Fatto quando:** test che leggono il repo di esempio dal `MemoryBackend`; CI verde.
 
 ### S06 — Crate `project-git` con `CliBackend` in lettura
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** nuovo crate `crates/git` (`project-git`, L6, dichiarato in
   `xtask/src/layers.rs`) con `CliBackend` e `CliOpener` che implementano i trait di S05 eseguendo
   `git` secondo le regole di §5 e usando i parser di S02–S04. Controllo della versione minima.
@@ -68,7 +70,7 @@ Regole valide per tutti gli step:
   `cargo xtask layers` passa; CI verde.
 
 ### S07 — Helper per gli scenari di test
-- [ ] **Agente:** `git-scenarios`
+- [x] **Agente:** `git-scenarios`
 - **Obiettivo:** in `crates/git/tests/common/` un helper che crea repo temporanei in ambiente
   deterministico (§9) con funzioni tipo `commit_file`, `branch`, `merge`, `conflict`. Riscrivere
   i test di S06 con l'helper.
@@ -76,7 +78,7 @@ Regole valide per tutti gli step:
   CI verde.
 
 ### S08 — Sessione del repo e comandi di lettura
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** `Session` contiene il backend aperto e il `RepoOpener` iniettato. Comandi
   `repo.open`, `repo.status`, `repo.refs`, `repo.log` (paginato). Rimuovere l'esempio "lista di
   voci" (`Document`, `item.*`, `document.*`): è un cambio voluto del catalogo, da annotare nel
@@ -86,7 +88,7 @@ Regole valide per tutti gli step:
   catalogo; CI verde.
 
 ### S09 — CLI e MCP sul repo
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** `project-cli --repo <percorso> run --cmd repo.status` e `eval` usano
   `CliOpener`; `mcp --root <dir>` apre il repo nella radice e confina i percorsi lì.
   Sostituire `open_document`/`save_document` con `open_repo`. Aggiornare README e `AGENTS.md`.
@@ -95,7 +97,7 @@ Regole valide per tutti gli step:
 ## Fase 2 — Vedere
 
 ### S10 — Lavoro in background
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** `Platform::spawn` (§6) con implementazione a thread sul desktop ed esecuzione
   immediata sul web. Nella UI, un esecutore che manda comandi alla sessione condivisa e riceve i
   risultati da un canale, con stato "in corso" visibile.
@@ -103,7 +105,7 @@ Regole valide per tutti gli step:
   CI verde.
 
 ### S11 — Layout principale
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** barra in alto, colonna sinistra con i ref, lista dei commit al centro (senza
   grafo), pannello dettagli a destra (§8). Desktop: apertura di un repo con il dialogo cartelle.
   Web: `MemoryBackend` con il repo di esempio.
@@ -111,7 +113,7 @@ Regole valide per tutti gli step:
   web con Playwright; CI verde.
 
 ### S12 — Lista dei commit virtualizzata
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** `ScrollArea::show_rows` con caricamento a pagine di `repo.log` durante lo
   scorrimento; selezione con mouse e tastiera.
 - **Fatto quando:** un repo con almeno 50.000 commit scorre fluido (verifica a mano, annotata nel

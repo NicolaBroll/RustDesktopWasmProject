@@ -338,3 +338,38 @@ fn status_reports_cherry_pick_and_bisect() {
     repo.git(&["bisect", "reset"]);
     assert_eq!(backend.status().unwrap().operation, None);
 }
+
+#[test]
+fn confine_to_stops_the_search_at_the_root() {
+    let outer = Repo::new();
+    outer.commit_file("a.txt", "a\n", "fuori dalla radice");
+    let root = outer.path().join("radice");
+    std::fs::create_dir_all(root.join("cartella")).unwrap();
+    let root = root.canonicalize().unwrap();
+    let plain = root.join("cartella");
+
+    // Senza confine git risale fino al repo che contiene la radice.
+    let free = Repo::opener().open_cli(plain.to_str().unwrap()).unwrap();
+    assert_eq!(
+        free.workdir().canonicalize().unwrap(),
+        outer.path().canonicalize().unwrap()
+    );
+
+    let confined = Repo::opener().confine_to(&root);
+    for dir in [&root, &plain] {
+        let err = confined.open(dir.to_str().unwrap()).err().unwrap();
+        assert!(matches!(err, EngineError::RepoNotFound { .. }), "{err}");
+    }
+
+    // Un repo dentro la radice si apre.
+    let inner = root.join("interno");
+    let status = std::process::Command::new("git")
+        .args(["-c", "init.defaultBranch=main", "init", "--quiet"])
+        .arg(&inner)
+        .envs(common::GIT_ENV.iter().copied())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let backend = confined.open_cli(inner.to_str().unwrap()).unwrap();
+    assert_eq!(backend.workdir().canonicalize().unwrap(), inner);
+}

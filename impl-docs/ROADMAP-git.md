@@ -88,7 +88,7 @@ Regole valide per tutti gli step:
   catalogo; CI verde.
 
 ### S09 — CLI e MCP sul repo
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** `project-cli --repo <percorso> run --cmd repo.status` e `eval` usano
   `CliOpener`; `mcp --root <dir>` apre il repo nella radice e confina i percorsi lì.
   Sostituire `open_document`/`save_document` con `open_repo`. Aggiornare README e `AGENTS.md`.

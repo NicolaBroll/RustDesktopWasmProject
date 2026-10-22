@@ -11,6 +11,9 @@ use std::sync::Arc;
 #[derive(Parser)]
 #[command(version, about = "Riga di comando di Project")]
 struct Cli {
+    /// Repository da aprire prima di `run` ed `eval` (come `repo.open`).
+    #[arg(long, global = true, value_name = "PERCORSO")]
+    repo: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -24,7 +27,6 @@ enum Command {
         search: Option<String>,
     },
     /// Esegue una sequenza di comandi e stampa i risultati (JSON, uno per riga).
-    /// Il repo si apre con `repo.open={"path":"..."}`.
     Run {
         /// Comando come `id` oppure `id=<json>`; ripetibile.
         #[arg(long = "cmd", required = true)]
@@ -32,16 +34,17 @@ enum Command {
     },
     /// Legge comandi `id=<json>` da stdin, uno per riga, e stampa i risultati.
     Eval,
-    /// Avvia il server MCP su stdin/stdout.
+    /// Avvia il server MCP su stdin/stdout, con il repository della radice già aperto.
     Mcp {
-        /// Cartella a cui sono confinati tutti i percorsi.
+        /// Cartella a cui sono confinati tutti i percorsi, anche la ricerca dei repository.
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
 }
 
 fn main() -> anyhow::Result<()> {
-    match Cli::parse().command {
+    let Cli { repo, command } = Cli::parse();
+    match command {
         Command::Commands { search } => {
             let registry = Registry::builtin();
             for spec in registry.search(search.as_deref().unwrap_or_default()) {
@@ -51,7 +54,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Run { commands } => {
             let registry = Registry::builtin();
-            let mut session = session();
+            let mut session = session(repo.as_deref())?;
             for text in &commands {
                 let result = execute(&registry, &mut session, text)?;
                 println!("{result}");
@@ -60,7 +63,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Eval => {
             let registry = Registry::builtin();
-            let mut session = session();
+            let mut session = session(repo.as_deref())?;
             let mut stdout = io::stdout().lock();
             for line in io::stdin().lock().lines() {
                 let line = line?;
@@ -77,8 +80,20 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Mcp { root } => {
-            let mut server = project_mcp::Server::new(&root, Arc::new(CliOpener::new()))
+            if repo.is_some() {
+                anyhow::bail!("`mcp` non usa `--repo`: apre il repository di `--root`");
+            }
+            let root = root
+                .canonicalize()
                 .with_context(|| format!("radice {}", root.display()))?;
+            let opener = CliOpener::new().confine_to(&root);
+            let mut server = project_mcp::Server::new(&root, Arc::new(opener))
+                .with_context(|| format!("radice {}", root.display()))?;
+            // Senza repo nella radice il server parte lo stesso: si può usare `open_repo`.
+            match server.open_root() {
+                Ok(_) => eprintln!("repository aperto: {}", root.display()),
+                Err(e) => eprintln!("nessun repository aperto: {e}"),
+            }
             server.serve(io::stdin().lock(), io::stdout().lock())?;
             Ok(())
         }
@@ -96,7 +111,13 @@ fn execute(
         .with_context(|| format!("comando `{id}`"))
 }
 
-/// Sessione senza repo aperto, che apre i repo con il `git` di sistema.
-fn session() -> Session {
-    Session::new(Arc::new(CliOpener::new()))
+/// Sessione che apre i repo con il `git` di sistema, con `repo` già aperto se c'è.
+fn session(repo: Option<&str>) -> anyhow::Result<Session> {
+    let mut session = Session::new(Arc::new(CliOpener::new()));
+    if let Some(path) = repo {
+        session
+            .open(path)
+            .with_context(|| format!("--repo {path}"))?;
+    }
+    Ok(session)
 }

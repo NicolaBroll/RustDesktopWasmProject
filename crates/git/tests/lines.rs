@@ -641,3 +641,61 @@ fn contesto_zero_nella_configurazione() {
         numbered(20, &[]).replace("riga 3\n", "riga 3\nPRIMA\n")
     );
 }
+
+/// Le lettere di `git ls-files -v` per `path` (`H` normale, `S` skip-worktree, `h`
+/// assume-unchanged).
+fn tag(repo: &Repo, path: &str) -> String {
+    repo.git(&["ls-files", "-v", "--", path])[..1].to_owned()
+}
+
+/// `update-index --index-info` e `restore --staged` ricreano la voce: i flag
+/// `--skip-worktree` e `--assume-unchanged` vanno rimessi. Un file fuori dal cono di uno
+/// sparse checkout (skip-worktree, assente dal worktree) con una modifica in stage non deve
+/// sembrare eliminato dopo l'unstage di righe o del file.
+#[test]
+fn skip_worktree_e_assume_unchanged_restano() {
+    let repo = Repo::new();
+    repo.commit_file("d/f", "a\nb\nc\n", "base");
+    repo.commit_file("u.txt", "a\nb\nc\n", "base u");
+    repo.write("d/f", "a\nB\nc\nd\n");
+    repo.write("u.txt", "a\nB\nc\nd\n");
+    repo.stage(&["d/f", "u.txt"]);
+    repo.git(&["update-index", "--skip-worktree", "d/f"]);
+    repo.git(&["update-index", "--assume-unchanged", "u.txt"]);
+    std::fs::remove_file(repo.path().join("d/f")).unwrap();
+    assert_eq!(
+        (tag(&repo, "d/f"), tag(&repo, "u.txt")),
+        ("S".into(), "h".into())
+    );
+    assert_eq!(letters(&repo, "d/f"), ('M', '.'));
+
+    // Unstage di una riga: le versioni in stage non sono visibili nel worktree, backup.
+    assert!(unstage(&repo, "d/f", &[('+', "d")]).is_some());
+    assert!(unstage(&repo, "u.txt", &[('+', "d")]).is_some());
+    assert_eq!(index_str(&repo, "d/f").unwrap(), "a\nB\nc\n");
+    assert_eq!(index_str(&repo, "u.txt").unwrap(), "a\nB\nc\n");
+    assert_eq!(
+        (tag(&repo, "d/f"), tag(&repo, "u.txt")),
+        ("S".into(), "h".into())
+    );
+    assert_eq!(letters(&repo, "d/f"), ('M', '.'), "non sembra eliminato");
+
+    // Anche `index.unstage` (S18, `restore --staged`).
+    let mut backend = repo.open();
+    backend
+        .unstage(&[RepoPath::from("d"), RepoPath::from("u.txt")])
+        .unwrap();
+    assert_eq!(index_str(&repo, "d/f").unwrap(), "a\nb\nc\n");
+    assert_eq!(
+        (tag(&repo, "d/f"), tag(&repo, "u.txt")),
+        ("S".into(), "h".into())
+    );
+    let status = repo.open().status().unwrap();
+    assert!(
+        !status
+            .entries
+            .iter()
+            .any(|e| e.path == RepoPath::from("d/f")),
+        "{status:?}"
+    );
+}

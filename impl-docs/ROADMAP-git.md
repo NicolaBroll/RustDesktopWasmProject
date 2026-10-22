@@ -167,8 +167,10 @@ Regole valide per tutti gli step:
 
 ### S20 — Stage per hunk e per riga
 - [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `index.stage_lines`, `index.unstage_lines` con `git apply --cached --recount`;
-  selezione di hunk e righe nella vista del diff.
+- **Obiettivo:** `index.stage_lines`, `index.unstage_lines`: patch del costruttore applicata
+  da un applicatore rigoroso nel motore (ogni hunk solo alla sua posizione) e scritta con
+  `hash-object --no-filters` / `update-index --index-info`; selezione di hunk e righe nella
+  vista del diff.
 - **Fatto quando:** test di integrazione su file con più hunk; revisione di `safety-reviewer`;
   CI verde.
 

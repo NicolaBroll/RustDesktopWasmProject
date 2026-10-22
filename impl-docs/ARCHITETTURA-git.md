@@ -135,8 +135,9 @@ contesto e righe tolte byte per byte, hunk senza contesto ammessi solo all'inizi
 del file) sul blob dell'indice da cui il diff è stato calcolato, e lo scrive (§7). `APPLY_ARGS`
 resta per i test che verificano le patch con git (`crates/git/tests/patch.rs`).
 
-- **Direzioni.** `git apply --cached` confronta il preimage della patch (contesto e righe `-`)
-  con l'indice. La patch è sempre costruita *in avanti* rispetto all'indice, così le due
+- **Direzioni.** `git apply --cached` (con cui i test del costruttore verificano le patch; i
+  comandi usano l'applicatore rigoroso, che si comporta allo stesso modo ma solo alla posizione
+  scritta) confronta il preimage della patch (contesto e righe `-`) con l'indice. La patch è sempre costruita *in avanti* rispetto all'indice, così le due
   direzioni si applicano allo stesso modo, **senza `--reverse`**.
   `stage` lavora sul diff di `diff.worktree`, il cui lato vecchio è l'indice: aggiunte
   selezionate `+`, aggiunte non selezionate tolte, rimosse selezionate `-`, rimosse non
@@ -157,7 +158,9 @@ resta per i test che verificano le patch con git (`crates/git/tests/patch.rs`).
 - **Fine file senza a capo**: una riga senza a capo che nel risultato non è più l'ultima prende
   l'a capo (se era nel preimage diventa `-riga` + `\ No newline` e `+riga`).
 - **File nuovo**: patch `new file mode` con le sole righe scelte. Nel diff worktree compare solo
-  con `git add -N` (`git apply --cached` accetta di creare un file `intent-to-add`); un file non
+  con `git add -N` (nei test del costruttore `git apply --cached` accetta di creare un file
+  `intent-to-add`; i comandi scrivono la voce con `update-index --index-info`, che sostituisce
+  il segnaposto con una voce normale); un file non
   tracciato non è nel diff e va messo in stage intero. Nell'unstage è il caso di un file
   eliminato in stage: torna nell'indice con le righe scelte.
 - **File eliminato** (dal worktree nello stage, file nuovo in stage nell'unstage): tutte le righe
@@ -354,12 +357,17 @@ il nuovo per l'unstage; un `intent-to-add` deve esserci, con il blob vuoto, un f
 stage no); legge quel blob (`cat-file blob <id>`; file assente o `intent-to-add`: niente) e
 calcola il contenuto nuovo con l'applicatore rigoroso, che non scrive niente (una patch che non
 si applica non lascia nemmeno un backup); se esiste `index.lock` dà subito `IndexLocked` senza
-fare il backup; salva il backup; ricontrolla l'indice come sopra; scrive il contenuto con
-`hash-object -w --stdin --no-filters` (è già nella forma dell'indice: niente filtri `clean` né
-conversioni di fine riga) e la voce con `update-index -z --index-info` (modo dell'indice, o
-quello della patch per un file nuovo o `intent-to-add`, che diventa una voce normale; modo `0`
-toglie la voce se il file esce dall'indice); infine rilegge la voce e controlla che sia quella
-scritta (se un altro git l'ha cambiata subito dopo, errore che rimanda al backup). Perché è
+fare il backup; salva il contenuto come blob con `hash-object -w --stdin --no-filters` (è già
+nella forma dell'indice: niente filtri `clean` né conversioni di fine riga; scrive solo nel
+database degli oggetti); salva il backup; ricontrolla l'indice come sopra; scrive la voce con
+`update-index -z --index-info` (modo dell'indice, o quello della patch per un file nuovo o
+`intent-to-add`, che diventa una voce normale; modo `0` toglie la voce se il file esce
+dall'indice); rimette i flag `--skip-worktree`/`--assume-unchanged` che la voce aveva (vedi
+sotto); infine rilegge la voce e controlla che sia quella scritta (se un altro git l'ha cambiata
+subito dopo, errore che rimanda al backup). Fra il ricontrollo e la scrittura resta solo
+`update-index`: con la CLI di git non c'è un vero compare-and-swap sull'indice (git prende il
+lock solo dentro `update-index`), quindi l'istante fra il ricontrollo e quel lock resta scoperto,
+come per stage e unstage. Perché è
 sicuro: la voce dell'indice è proprio il lato del diff da cui vengono i numeri di riga (stesso
 id), il contesto è fisso (`--unified=3`), il digest garantisce che il diff è quello visto e
 l'applicatore non cerca mai il preimage altrove. Il worktree non si legge né si scrive mai; la
@@ -367,7 +375,21 @@ configurazione che potrebbe cambiare il risultato non entra in gioco (`diff.cont
 neutralizzato in `DIFF_ARGS`; `apply.*` e `core.whitespace` non servono più, perché non si usa
 `git apply`). Un file `intent-to-add` (`.A`) ha in `git status` modo e id zero ma nell'indice una
 voce con il blob vuoto (nel formato del repo): il ricontrollo dell'indice lo accetta solo con
-quell'id (vale anche per `index.stage`).
+quell'id (vale anche per `index.stage`). Oggi `Oid` e i parser supportano solo SHA-1 e un repo
+SHA-256 non si apre: l'id SHA-256 del blob vuoto (come quello dell'albero vuoto) c'è solo per
+non dare per scontato il formato, e non viene usato.
+
+**Flag `--skip-worktree` e `--assume-unchanged`.** `update-index --index-info` e `restore
+--staged` ricreano la voce dell'indice e ne perdono i flag (verificato: `S d/f` diventa
+`H d/f`). In uno sparse checkout un file fuori dal cono con una modifica in stage passerebbe da
+`M ` a `MD`, e un `git add -A` o `commit -a` successivo metterebbe in stage una cancellazione mai
+fatta. Dopo la scrittura `index.stage_lines`, `index.unstage_lines` e `index.unstage` rimettono i
+flag (`update-index --skip-worktree` / `--assume-unchanged`, percorsi su stdin) alle voci toccate
+che li avevano nella lettura iniziale (`ls-files -v`: `S`/`s` skip-worktree, minuscola
+assume-unchanged) e che sono ancora nell'indice; se non riesce, errore che lo dice (la voce
+scritta è comunque corretta). `index.stage` (`git add`) non ne ha bisogno: conserva
+`--assume-unchanged` e rifiuta i file `--skip-worktree` (fuori dallo sparse checkout) con un
+errore, senza scrivere niente.
 
 Se un passo fallisce l'indice non si tocca e il comando restituisce l'errore. Il risultato del
 comando riporta il ref (`"backup"`), la UI lo mostra nella barra di stato; il contenuto si

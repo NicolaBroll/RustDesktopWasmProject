@@ -165,7 +165,8 @@ fn empty_tree(format: &[u8]) -> Option<&'static str> {
 }
 
 /// Id del blob vuoto nel formato degli oggetti `format`: è l'id della voce di un file
-/// `intent-to-add` (`git add -N`) nell'indice.
+/// `intent-to-add` (`git add -N`) nell'indice. Oggi `Oid` è solo SHA-1 e un repo SHA-256 non
+/// si apre: il ramo sha256 non serve ancora, c'è per non dare per scontato il formato.
 fn empty_blob(format: &[u8]) -> Option<&'static str> {
     match format {
         b"sha1" => Some("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"),
@@ -718,24 +719,25 @@ impl CliBackend {
         self.run(&["cat-file", "blob", &oid.to_string()])
     }
 
-    /// Scrive nell'indice la voce di `path`: `Some((modo, contenuto))` la crea o la sostituisce
-    /// (il contenuto diventa un blob con `hash-object -w --no-filters`, già nella forma
-    /// dell'indice), `None` la toglie. `update-index -z --index-info`, percorso su stdin.
-    /// Restituisce la voce scritta (modo e id), per il controllo finale.
+    /// Salva `content` come blob (`hash-object -w --stdin --no-filters`: è già nella forma
+    /// dell'indice, niente filtri `clean` né conversioni di fine riga) e ne restituisce l'id.
+    /// Scrive solo nel database degli oggetti, non nell'indice.
+    fn hash_blob(&self, content: &[u8]) -> Result<Oid, EngineError> {
+        let args = ["hash-object", "-w", "--stdin", "--no-filters"];
+        let out = self.run_input(&args, content, &[])?;
+        Ok(Oid::from_hex(out.trim_ascii_end())?)
+    }
+
+    /// Scrive nell'indice la voce di `path`: `Some((modo, id))` la crea o la sostituisce,
+    /// `None` la toglie (`update-index -z --index-info`, percorso su stdin). È l'unico passo
+    /// che scrive l'indice. `--index-info` crea una voce nuova: i flag `--skip-worktree` e
+    /// `--assume-unchanged` della vecchia si perdono e li rimette [`Self::restore_flags`].
     fn write_index_entry(
         &self,
         path: &RepoPath,
-        content: Option<(u32, &[u8])>,
-    ) -> Result<Option<(u32, Oid)>, EngineError> {
-        let written = match content {
-            Some((mode, bytes)) => {
-                let args = ["hash-object", "-w", "--stdin", "--no-filters"];
-                let out = self.run_input(&args, bytes, &[])?;
-                Some((mode, Oid::from_hex(out.trim_ascii_end())?))
-            }
-            None => None,
-        };
-        let mut info = match &written {
+        entry: Option<(u32, Oid)>,
+    ) -> Result<(), EngineError> {
+        let mut info = match &entry {
             Some((mode, oid)) => format!("{mode:o} {oid}\t").into_bytes(),
             // Modo 0: `update-index --index-info` toglie la voce.
             None => format!("0 {}\t", Oid::from_bytes([0; Oid::LEN])).into_bytes(),
@@ -743,7 +745,67 @@ impl CliBackend {
         info.extend_from_slice(path.as_bytes());
         info.push(0);
         self.run_input(&["update-index", "-z", "--index-info"], &info, &[])?;
-        Ok(written)
+        Ok(())
+    }
+
+    /// Dopo una scrittura che ricrea le voci dell'indice (`update-index --index-info`,
+    /// `restore --staged`), rimette i flag `--skip-worktree` e `--assume-unchanged` che le voci
+    /// di `paths` avevano in `before` (lettere di `ls-files -v`: `S`/`s` skip-worktree,
+    /// minuscola assume-unchanged) e che ora non hanno più. Senza, un file fuori dal cono di
+    /// uno sparse checkout sembrerebbe eliminato dal worktree, e un `git add -A` o `commit -a`
+    /// successivo metterebbe in stage una cancellazione mai fatta. Le voci che non sono più
+    /// nell'indice si saltano. Se non riesce, errore: le voci scritte sono comunque corrette.
+    fn restore_flags(&self, before: &IndexListing, paths: &[RepoPath]) -> Result<(), EngineError> {
+        let wanted = |listing: &IndexListing| -> Vec<(RepoPath, bool, bool)> {
+            listing
+                .iter()
+                .filter(|(p, _)| paths.iter().any(|w| path_matches(p, w)))
+                .map(|(p, e)| {
+                    (
+                        p.clone(),
+                        e.tag.eq_ignore_ascii_case(&b'S'),
+                        e.tag.is_ascii_lowercase(),
+                    )
+                })
+                .collect()
+        };
+        let flagged: Vec<_> = wanted(before)
+            .into_iter()
+            .filter(|(_, s, a)| *s || *a)
+            .collect();
+        if flagged.is_empty() {
+            return Ok(());
+        }
+        let now = self.index_listing()?;
+        let mut skip = Vec::new();
+        let mut assume = Vec::new();
+        for (path, s, a) in flagged {
+            let Some(e) = now.get(&path) else { continue };
+            if s && !e.tag.eq_ignore_ascii_case(&b'S') {
+                skip.extend_from_slice(path.as_bytes());
+                skip.push(0);
+            }
+            if a && !e.tag.is_ascii_lowercase() {
+                assume.extend_from_slice(path.as_bytes());
+                assume.push(0);
+            }
+        }
+        for (flag, list) in [("--skip-worktree", skip), ("--assume-unchanged", assume)] {
+            if list.is_empty() {
+                continue;
+            }
+            let args = ["update-index", flag, "-z", "--stdin"];
+            self.run_input(&args, &list, &[])
+                .map_err(|e| EngineError::Git {
+                    command: "update-index".to_owned(),
+                    stderr: format!(
+                        "l'indice è stato scritto correttamente, ma non si è riusciti a rimettere \
+                     `{flag}` sui file che lo avevano (rimetterlo a mano con `git update-index \
+                     {flag} <percorso>`): {e}"
+                    ),
+                })?;
+        }
+        Ok(())
     }
 
     /// `git <args>` con `input` su stdin e le variabili `env`; stdout, o l'errore di git.
@@ -1019,6 +1081,8 @@ impl GitBackend for CliBackend {
         if !out.status.success() {
             return Err(failure(&args, &out));
         }
+        // `restore --staged` ricrea le voci senza `--skip-worktree`/`--assume-unchanged`.
+        self.restore_flags(&index, paths)?;
         Ok(backup)
     }
 
@@ -1062,10 +1126,19 @@ impl GitBackend for CliBackend {
         };
 
         self.check_index_unlocked()?;
+        // Il blob si salva prima del backup e del ricontrollo: fra il ricontrollo e la
+        // scrittura resta solo `update-index`. Con la CLI di git non c'è un vero
+        // compare-and-swap sull'indice: rimane l'istante fra quel ricontrollo e il lock che
+        // prende `update-index`.
+        let written = match &content {
+            Some(c) => Some((mode, self.hash_blob(c)?)),
+            None => None,
+        };
         let touched = prepared.touched(selection);
         let backup = self.backup(operation, &status, &index, &touched)?;
         self.check_index_unchanged(&status, &index, &touched)?;
-        let written = self.write_index_entry(&target, content.as_deref().map(|c| (mode, c)))?;
+        self.write_index_entry(&target, written)?;
+        self.restore_flags(&index, std::slice::from_ref(&target))?;
 
         // La voce nell'indice è quella scritta (un altro git potrebbe averla cambiata subito
         // dopo: in quel caso lo si dice, il backup resta).

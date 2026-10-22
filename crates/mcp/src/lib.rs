@@ -38,6 +38,11 @@ impl Server {
         })
     }
 
+    /// Apre il repository nella radice, come `open_repo` con `.`.
+    pub fn open_root(&mut self) -> Result<Value, String> {
+        self.open_repo(json!({ "path": "." }))
+    }
+
     /// Legge richieste da `input` fino a EOF e scrive le risposte su `output`.
     pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> io::Result<()> {
         for line in input.lines() {
@@ -295,6 +300,25 @@ mod tests {
         let text = r["content"][0]["text"].as_str().unwrap();
         let log: Value = serde_json::from_str(text).unwrap();
         assert_eq!(log["commits"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn open_root_uses_the_root_folder() {
+        let root = temp_root("root");
+        let mut opener = MemoryOpener::new();
+        opener.insert(root.to_str().unwrap(), MemoryBackend::sample());
+        let mut server = Server::new(&root, Arc::new(opener)).unwrap();
+        let opened = server.open_root().unwrap();
+        assert_eq!(opened["path"], root.to_str().unwrap());
+        let r = call(&mut server, "execute_command", json!({"id": "repo.refs"}));
+        assert_eq!(r["isError"], false, "{r}");
+
+        let mut empty = server_without_repos(&root);
+        assert!(empty.open_root().is_err());
+    }
+
+    fn server_without_repos(root: &Path) -> Server {
+        Server::new(root, Arc::new(MemoryOpener::new())).unwrap()
     }
 
     #[test]

@@ -44,6 +44,17 @@ impl CliOpener {
         self
     }
 
+    /// Non cerca repository sopra `root`: aprendo una cartella dentro `root` che non è un repo,
+    /// git non risale fino a un repo che contiene `root` (`GIT_CEILING_DIRECTORIES`). Un repo
+    /// in `root` o sotto si apre come sempre. Serve al server MCP per restare nella radice; `root` va dato assoluto e senza link
+    /// simbolici (`canonicalize`).
+    pub fn confine_to(self, root: &Path) -> Self {
+        match root.parent() {
+            Some(parent) => self.env("GIT_CEILING_DIRECTORIES", parent),
+            None => self,
+        }
+    }
+
     /// La versione del git configurato. [`EngineError::GitNotFound`] se non si avvia.
     pub fn git_version(&self) -> Result<GitVersion, EngineError> {
         let out = self.git.run(None, &["--version"])?;

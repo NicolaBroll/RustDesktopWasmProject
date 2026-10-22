@@ -8,6 +8,7 @@
 //!   (l'utente ha aperto un altro file, o ha chiuso la vista) si scarta.
 
 use crate::format::change_name;
+use crate::lines::LineSelection;
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
 
 /// Da dove viene il diff di un file.
@@ -66,6 +67,8 @@ struct Open {
     seq: u64,
     target: DiffTarget,
     answer: Option<Result<DiffDoc, String>>,
+    /// Righe selezionate del documento caricato; si azzera a ogni nuova risposta.
+    selection: LineSelection,
 }
 
 #[derive(Debug, Default)]
@@ -90,6 +93,7 @@ impl DiffState {
             seq,
             target,
             answer: None,
+            selection: LineSelection::default(),
         });
         Some(seq)
     }
@@ -108,6 +112,7 @@ impl DiffState {
         let open = self.open.as_mut()?;
         open.seq = self.next;
         open.answer = None;
+        open.selection.clear();
         self.next += 1;
         Some(open.seq)
     }
@@ -131,7 +136,31 @@ impl DiffState {
             return false;
         }
         open.answer = Some(result.map(|diff| DiffDoc::new(diff, &open.target.path)));
+        open.selection.clear();
         true
+    }
+
+    /// Le righe selezionate del diff aperto (vuote se non ce n'è uno).
+    pub fn selection(&self) -> Option<&LineSelection> {
+        self.open.as_ref().map(|o| &o.selection)
+    }
+
+    /// Il diff caricato con la sua selezione, da modificare.
+    pub fn loaded_mut(&mut self) -> Option<(&DiffTarget, &DiffDoc, &mut LineSelection)> {
+        let open = self.open.as_mut()?;
+        match &open.answer {
+            Some(Ok(doc)) => Some((&open.target, doc, &mut open.selection)),
+            _ => None,
+        }
+    }
+
+    /// Il diff caricato con la sua selezione.
+    pub fn loaded(&self) -> Option<(&DiffTarget, &DiffDoc, &LineSelection)> {
+        let open = self.open.as_ref()?;
+        match &open.answer {
+            Some(Ok(doc)) => Some((&open.target, doc, &open.selection)),
+            _ => None,
+        }
     }
 
     pub fn pane(&self) -> Pane<'_> {
@@ -652,6 +681,35 @@ mod tests {
         assert!(!state.receive(first, Ok(Diff { files: Vec::new() })));
         assert!(state.receive(second, Ok(Diff { files: Vec::new() })));
         assert!(matches!(state.pane(), Pane::Loaded(..)));
+    }
+
+    #[test]
+    fn a_new_answer_clears_the_line_selection() {
+        let mut state = DiffState::default();
+        assert!(state.loaded().is_none());
+        let seq = state.open(target(1, "a.rs")).unwrap();
+        assert!(
+            state.loaded_mut().is_none(),
+            "niente da selezionare mentre carica"
+        );
+        let one = || diff(vec![file(Change::Modified, "a.rs", "a.rs", vec![hunk()])]);
+        assert!(state.receive(seq, Ok(one())));
+        let (_, doc, selection) = state.loaded_mut().unwrap();
+        let doc = doc.clone();
+        selection.click(&doc, 3, false);
+        assert_eq!(state.selection().map(LineSelection::len), Some(1));
+        let again = state.reload().unwrap();
+        assert!(
+            state.selection().unwrap().is_empty(),
+            "ricarica: selezione azzerata"
+        );
+        assert!(state.receive(again, Ok(one())));
+        let (_, doc, selection) = state.loaded_mut().unwrap();
+        let doc = doc.clone();
+        selection.click(&doc, 3, false);
+        // Un altro file: selezione nuova.
+        state.open(target(1, "b.rs")).unwrap();
+        assert!(state.selection().unwrap().is_empty());
     }
 
     #[test]

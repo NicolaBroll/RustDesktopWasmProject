@@ -5,7 +5,7 @@
 //! canale. La UI legge i risultati con [`Executor::poll`] a ogni frame e non tocca mai il lock
 //! della sessione, così non si blocca mentre un comando lento lo tiene.
 
-use project_engine::{Platform, Registry, Session};
+use project_engine::{EngineError, Platform, Registry, Session};
 use serde_json::Value;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -31,6 +31,36 @@ pub struct Done {
     pub command: String,
     /// Il risultato del comando, o il messaggio d'errore.
     pub result: Result<Value, String>,
+    /// Il tipo dell'errore, se il comando è fallito: la UI reagisce in modo diverso, ad
+    /// esempio rilegge il diff dopo [`ErrorKind::StaleDiff`].
+    pub error_kind: Option<ErrorKind>,
+}
+
+/// Il tipo di un errore del motore, per le reazioni della UI che non dipendono dal testo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// [`EngineError::StaleDiff`]: il diff visto non è più quello attuale.
+    StaleDiff,
+    /// [`EngineError::NotAllowed`]: operazione rifiutata nello stato attuale del repo.
+    NotAllowed,
+    /// [`EngineError::InvalidParams`].
+    InvalidParams,
+    /// [`EngineError::IndexLocked`].
+    IndexLocked,
+    /// Tutti gli altri errori.
+    Other,
+}
+
+impl ErrorKind {
+    pub fn of(error: &EngineError) -> Self {
+        match error {
+            EngineError::StaleDiff { .. } => ErrorKind::StaleDiff,
+            EngineError::NotAllowed(_) => ErrorKind::NotAllowed,
+            EngineError::InvalidParams { .. } => ErrorKind::InvalidParams,
+            EngineError::IndexLocked { .. } => ErrorKind::IndexLocked,
+            _ => ErrorKind::Other,
+        }
+    }
 }
 
 /// Chiamata quando arriva un risultato, da qualunque thread: nella UI chiede un nuovo frame.
@@ -95,7 +125,7 @@ impl Executor {
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run(&reply.command, &mut session, params)
-                .map_err(|e| e.to_string());
+                .map_err(|e| (ErrorKind::of(&e), e.to_string()));
             drop(session);
             reply.send(result);
         }));
@@ -139,17 +169,19 @@ struct Reply {
 }
 
 impl Reply {
-    fn send(mut self, result: Result<Value, String>) {
+    fn send(mut self, result: Result<Value, (ErrorKind, String)>) {
         self.deliver(result);
     }
 
-    fn deliver(&mut self, result: Result<Value, String>) {
+    fn deliver(&mut self, result: Result<Value, (ErrorKind, String)>) {
         self.sent = true;
+        let error_kind = result.as_ref().err().map(|(kind, _)| *kind);
         // Se la UI è già chiusa nessuno aspetta il risultato.
         let _ = self.sender.send(Done {
             ticket: self.ticket,
             command: self.command.clone(),
-            result,
+            result: result.map_err(|(_, message)| message),
+            error_kind,
         });
         (self.wake)();
     }
@@ -158,9 +190,9 @@ impl Reply {
 impl Drop for Reply {
     fn drop(&mut self) {
         if !self.sent {
-            self.deliver(Err(format!(
-                "`{}` è terminato senza risultato",
-                self.command
+            self.deliver(Err((
+                ErrorKind::Other,
+                format!("`{}` è terminato senza risultato", self.command),
             )));
         }
     }
@@ -306,7 +338,21 @@ mod tests {
         let done = ex.poll();
         assert_eq!(done.len(), 1);
         assert!(done[0].result.as_ref().unwrap_err().contains("repo.open"));
+        assert_eq!(done[0].error_kind, Some(ErrorKind::Other));
         assert!(!ex.is_busy());
+    }
+
+    #[test]
+    fn errors_carry_their_kind() {
+        let (mut ex, _) = executor(TestPlatform::Inline);
+        ex.submit("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH }));
+        assert_eq!(ex.poll()[0].error_kind, None);
+        ex.submit("index.stage", json!({ "paths": [] }));
+        assert_eq!(ex.poll()[0].error_kind, Some(ErrorKind::InvalidParams));
+        let stale =
+            json!({ "path": "src/lib.rs", "lines": [{ "new": 1 }], "digest": "0".repeat(32) });
+        ex.submit("index.stage_lines", stale);
+        assert_eq!(ex.poll()[0].error_kind, Some(ErrorKind::StaleDiff));
     }
 
     #[test]

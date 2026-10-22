@@ -15,15 +15,18 @@ mod diff_view;
 mod executor;
 mod format;
 mod graph;
+mod lines;
 mod list;
 mod stage;
 mod view;
 
-pub use executor::{Done, Executor, Job, Ticket, Wake};
+pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
 use details::DetailsState;
+use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
 use graph::RefLabel;
+use lines::{LineWrite, Pick};
 use list::{CommitList, PageRequest};
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
@@ -70,9 +73,31 @@ enum Action {
     CancelWrite,
     /// Nasconde l'errore dell'ultima scrittura.
     DismissWriteError,
+    /// Clic su una riga del diff (indice in `DiffDoc::rows`): la seleziona o la deseleziona;
+    /// con Maiusc seleziona l'intervallo dall'ultima cliccata.
+    SelectLine {
+        row: usize,
+        shift: bool,
+    },
+    /// Trascinamento sulle righe del diff.
+    DragLines(Drag),
+    /// Deseleziona tutte le righe del diff.
+    ClearLines,
+    /// Stage (diff worktree) o unstage (diff indice) dell'hunk con questo indice.
+    WriteHunk(usize),
+    /// Stage o unstage delle righe selezionate.
+    WriteSelectedLines,
 }
 
-/// Risultato di `index.stage`/`index.unstage`: il nuovo stato e il ref del backup dell'indice,
+/// Un passo del trascinamento sulle righe del diff.
+#[derive(Debug, Clone, Copy)]
+enum Drag {
+    Start(usize),
+    Over(usize),
+    End,
+}
+
+/// Risultato di `index.stage`/`index.unstage` (e delle versioni per righe): il nuovo stato e il ref del backup dell'indice,
 /// se prima di scrivere ne è stato salvato uno.
 #[derive(serde::Deserialize)]
 struct WriteResult {
@@ -84,8 +109,9 @@ struct WriteResult {
 /// aperto: se nel frattempo se n'è aperto un altro il risultato si scarta.
 #[derive(Debug, Clone, Copy)]
 enum Request {
-    /// `index.stage`/`index.unstage`: il risultato è il nuovo stato.
-    Write(u64, StageOp),
+    /// `index.stage`/`index.unstage`/`index.stage_lines`/`index.unstage_lines`: il risultato
+    /// è il nuovo stato.
+    Write(u64),
     Open,
     Refs(u64),
     Status(u64),
@@ -350,6 +376,45 @@ impl App {
                     repo.write_error = None;
                 }
             }
+            Action::SelectLine { row, shift } => {
+                if let Some((_, doc, selection)) = self.selectable_diff() {
+                    selection.click(doc, row, shift);
+                }
+            }
+            Action::DragLines(step) => {
+                if let Some((_, doc, selection)) = self.selectable_diff() {
+                    match step {
+                        Drag::Start(row) => selection.drag_start(doc, row),
+                        Drag::Over(row) => selection.drag_over(doc, row),
+                        Drag::End => selection.drag_end(),
+                    }
+                }
+            }
+            Action::ClearLines => {
+                if let Some((_, _, selection)) =
+                    self.repo.as_mut().and_then(|r| r.diff.loaded_mut())
+                {
+                    selection.clear();
+                }
+            }
+            Action::WriteHunk(h) => {
+                let write = self.repo.as_ref().and_then(|r| {
+                    let (target, doc, _) = r.diff.loaded()?;
+                    lines::plan(doc, target, Pick::Hunk(h))
+                });
+                if let Some(write) = write {
+                    self.send_line_write(write);
+                }
+            }
+            Action::WriteSelectedLines => {
+                let write = self.repo.as_ref().and_then(|r| {
+                    let (target, doc, selection) = r.diff.loaded()?;
+                    lines::plan(doc, target, Pick::Selected(selection))
+                });
+                if let Some(write) = write {
+                    self.send_line_write(write);
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -404,11 +469,35 @@ impl App {
         repo.write_error = None;
         repo.write_label = Some(write.op.describe(&write.paths));
         let params = json!({ "paths": write.paths });
-        self.submit(
-            write.op.command(),
-            params,
-            Request::Write(generation, write.op),
-        );
+        self.submit(write.op.command(), params, Request::Write(generation));
+    }
+
+    /// Manda lo stage o l'unstage di righe, come [`App::send_write`]: mai due scritture
+    /// insieme, né con una conferma aperta.
+    fn send_line_write(&mut self, write: LineWrite) {
+        if self.executor.writing().is_some() || write.lines.is_empty() {
+            return;
+        }
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if repo.confirm.is_some() {
+            return;
+        }
+        repo.write_error = None;
+        repo.write_label = Some(write.label.clone());
+        self.submit(write.command(), write.params(), Request::Write(generation));
+    }
+
+    /// Il diff caricato con la sua selezione, se permette la selezione parziale.
+    fn selectable_diff(&mut self) -> Option<(&DiffTarget, &DiffDoc, &mut lines::LineSelection)> {
+        let (target, doc, selection) = self.repo.as_mut()?.diff.loaded_mut()?;
+        matches!(
+            lines::partial(doc, target.source),
+            lines::Partial::Available(_)
+        )
+        .then_some((target, doc, selection))
     }
 
     /// Dopo un nuovo stato, il diff aperto di worktree o indice si richiede; se il file è
@@ -489,7 +578,12 @@ impl App {
         }
         if repo.diff.target().is_some() {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                actions.push(Action::CloseDiff);
+                // Prima si deseleziona, poi si chiude.
+                if repo.diff.selection().is_some_and(|s| !s.is_empty()) {
+                    actions.push(Action::ClearLines);
+                } else {
+                    actions.push(Action::CloseDiff);
+                }
             }
             return;
         }
@@ -547,7 +641,7 @@ impl App {
                 continue;
             }
             // Le scritture: il nuovo stato, oppure l'errore nell'area di stage.
-            if let Request::Write(generation, op) = request {
+            if let Request::Write(generation) = request {
                 let result = done.result.and_then(|value| {
                     serde_json::from_value::<WriteResult>(value)
                         .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
@@ -558,7 +652,7 @@ impl App {
                 let label = repo
                     .write_label
                     .take()
-                    .unwrap_or_else(|| op.command().to_owned());
+                    .unwrap_or_else(|| done.command.clone());
                 match result {
                     Ok(WriteResult { status, backup }) => {
                         repo.set_status(status);
@@ -572,10 +666,23 @@ impl App {
                     }
                     Err(e) => {
                         log::warn!("{}: {e}", done.command);
-                        let message = format!("{label} non riuscito: {e}");
+                        let stale = done.error_kind == Some(ErrorKind::StaleDiff);
+                        let message = if stale {
+                            format!("{label} non riuscito: {}", lines::STALE_MESSAGE)
+                        } else {
+                            format!("{label} non riuscito: {e}")
+                        };
                         repo.write_error = Some(message.clone());
+                        // Il diff visto non è più quello attuale: si rileggono stato e diff
+                        // (il diff segue lo stato) e la selezione si azzera.
+                        if stale && let Some((_, _, selection)) = repo.diff.loaded_mut() {
+                            selection.clear();
+                        }
                         self.error = message;
                         self.notice.clear();
+                        if stale {
+                            self.submit("repo.status", json!({}), Request::Status(generation));
+                        }
                     }
                 }
                 continue;
@@ -712,7 +819,13 @@ impl eframe::App for App {
                 let viewport = &mut self.viewport;
                 egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
                     Pane::Closed => view::commit_list(ui, repo, viewport, &mut actions),
-                    pane => diff_view::diff_panel(ui, pane, &mut actions),
+                    pane => {
+                        let lines = diff_view::LinesUi {
+                            selection: repo.diff.selection(),
+                            can_write: !writing && repo.confirm.is_none(),
+                        };
+                        diff_view::diff_panel(ui, pane, lines, &mut actions);
+                    }
                 });
             }
             None => {

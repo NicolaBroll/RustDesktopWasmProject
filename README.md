@@ -56,6 +56,16 @@ quando il diff è stato letto il comando fallisce senza scrivere niente (va rile
 Risultato e backup come `index.stage`. File binari, sottomoduli, link simbolici e conflitti si
 mettono in stage solo interi.
 
+`commit.create {"message", "amend"?, "confirm"?}` crea un commit con quello che è in stage
+(`git commit -F -`: messaggio via stdin, hook e firma secondo la configurazione dell'utente, mai
+un editor). Messaggio vuoto, niente in stage, file in conflitto, rebase/cherry-pick/revert in
+corso: errore e niente cambia; durante un merge il commit è il commit di merge. Con `"amend":
+true` riscrive l'ultimo commit (stesso autore e genitori) e salva il commit riscritto in un ref
+`refs/project/backup/amend-...`; se quel commit è già su un branch remoto serve anche
+`"confirm": true`. Un hook che rifiuta o una firma che non riesce danno un errore con tutto il
+loro output. Risultato: `{"commit", "previous", "branch", "backup", "status"}` (il commit come in
+`repo.log`, HEAD prima, il branch spostato, il backup o `null`, il nuovo stato).
+
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
 `writes: true` per i comandi che modificano il repository. All'avvio apre il
 repository di `--root` (default: cartella corrente), se c'è. Tutti i percorsi sono confinati in

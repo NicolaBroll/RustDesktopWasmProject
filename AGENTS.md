@@ -26,7 +26,8 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
   UI, CLI e MCP. Se può far perdere dati chiede `"confirm": true` e salva un backup; se riscrive
   l'unica copia di qualcosa senza che git chieda conferma (stage/unstage) salva da solo un backup
   e non scrive se il backup fallisce (§1 e §7
-  dell'architettura git).
+  dell'architettura git). Chi riscrive un commit (`commit.create` con `amend`) salva sempre un
+  ref di backup del commit riscritto e chiede `confirm` se quel commit è già pubblicato.
 - L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
 
 ## Branch
@@ -61,6 +62,9 @@ cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit=
 cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["README.md"]}' --cmd 'index.unstage={"paths":["README.md"]}'
 # righe: numeri e `digest` dal diff del file, poi
 cargo run -p project-cli -- --repo . run --cmd 'index.stage_lines={"path":"README.md","lines":[{"new":3}],"digest":"<da diff.worktree>"}'
+# commit di quello che è in stage; amend di un commit già pubblicato vuole anche "confirm":true
+cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo\n\nCorpo"}'
+cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo corretto","amend":true}'
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval
 cargo run -p project-cli -- mcp --root .   # tool: list_commands, execute_command, open_repo
 ```

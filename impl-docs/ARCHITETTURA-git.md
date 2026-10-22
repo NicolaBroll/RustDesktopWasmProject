@@ -199,7 +199,10 @@ pub trait GitBackend: Send {
     fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
     // Stage/unstage di righe (`LineSelection`: path, lines, digest, direction).
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError>;
-    // poi commit, checkout, ...
+    // Commit (`CommitRequest`: message, amend, confirm; `CommitOutcome`: commit, previous,
+    // branch, backup).
+    fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError>;
+    // poi checkout, ...
 }
 
 pub trait RepoOpener: Send + Sync {
@@ -245,7 +248,7 @@ obbligatorio perché chi sceglie le righe ha comunque appena letto il diff da cu
 numeri. Non è un hash crittografico: protegge da un file cambiato, non da chi costruisce apposta
 due diff con lo stesso digest.
 | `worktree.discard` | `{"paths", "confirm"}` | con backup (§7) |
-| `commit.create` | `{"message", "amend"?}` | |
+| `commit.create` | `{"message", "amend"?, "confirm"?}` | `git commit -F -` (§5). Controlli comuni ai backend (`check_commit_state`, `CommitRequest::check_message`, `check_amend_published`), sempre prima di scrivere: messaggio vuoto o di soli spazi (o con NUL) → `InvalidParams`; file in conflitto → `NotAllowed`; rebase, cherry-pick o revert in corso → `NotAllowed` (un commit da qui li concluderebbe o cambierebbe in modo poco visibile: un cherry-pick prenderebbe l'autore originale); niente in stage (indice uguale a HEAD, file `intent-to-add` esclusi) senza `amend` e senza merge → `NothingToCommit`, mai un commit vuoto. Merge in corso: il commit è il commit di merge (genitori HEAD e `MERGE_HEAD`), anche senza modifiche. Bisect: nessun controllo. Primo commit di un branch e HEAD staccata funzionano (con HEAD staccata si sposta solo HEAD). Identità mancante: l'errore di git, nessun default. `amend`: stessi genitori e autore, albero dall'indice, messaggio nuovo (anche solo il messaggio); rifiutato senza commit, durante un merge e se renderebbe vuoto il commit (errore di git); un merge si riscrive tenendo i due genitori. Se il commit riscritto è raggiungibile da un branch remoto (`for-each-ref --contains <HEAD> refs/remotes/`, senza i ref simbolici) serve `"confirm": true`, altrimenti `ConfirmRequired` che elenca i branch; un commit non pubblicato si riscrive senza conferma (è nel reflog e nel backup). Prima di scrivere, con `amend`, un ref di backup sul commit riscritto (§7). Risultato: `{"commit": Commit, "previous": oid \| null, "branch": string \| null, "backup": string \| null, "status": Status}`: il commit come in `repo.log`, HEAD prima, il branch spostato con il nome completo (`refs/heads/main`; `null` con HEAD staccata), il ref di backup (solo `amend`) e il nuovo stato |
 | `branch.create` / `branch.checkout` / `branch.delete` | `{"name", ...}` | `delete` di un branch non unito chiede `confirm` |
 | `remote.fetch` / `remote.pull` / `remote.push` | `{"remote"?, "branch"?}` | lenti: vedi §6 |
 | `edit.undo` / `edit.redo` | `{}` | sul diario delle operazioni |
@@ -265,7 +268,32 @@ Regole per ogni chiamata a git:
 - Ambiente: `GIT_TERMINAL_PROMPT=0` (git non deve mai aspettare input da un terminale che non
   c'è), `LC_ALL=C` per i messaggi di errore da riconoscere. Il resto dell'ambiente si eredita
   (SSH agent, credential helper).
-- Messaggi di commit via stdin (`git commit -F -`), mai come argomento.
+- Messaggi di commit via stdin (`git commit -F -`), mai come argomento. `commit.create` esegue
+  `git -c i18n.commitEncoding=UTF-8 commit --no-edit -F - [--amend]` con `GIT_EDITOR=:`:
+  - hook (`pre-commit`, `prepare-commit-msg`, `commit-msg`, `post-commit`, `post-rewrite`) e
+    firma (`commit.gpgSign`, `gpg.format`, `user.signingKey`) seguono la configurazione: mai
+    `--no-verify`, `--no-gpg-sign`, `--allow-empty` o `--allow-empty-message`;
+  - nessun editor (`--no-edit` e `GIT_EDITOR=:`, il valore con cui git non ne avvia): così
+    `core.editor`, `commit.verbose`, `commit.template` (con `-F` comunque ignorato) e
+    `commit.status` non possono aprire un editor che aspetterebbe un terminale;
+  - la pulizia del messaggio è quella di `commit.cleanup`; senza configurazione, con `-F` git
+    usa `whitespace` (le righe `#` restano: `#123 corregge` è un messaggio valido). Se la
+    pulizia lo rende vuoto (es. `strip` e solo commenti) git rifiuta: `InvalidParams`;
+  - il messaggio arriva da JSON ed è UTF-8: `i18n.commitEncoding=UTF-8` evita che una
+    configurazione diversa lo etichetti con un'altra codifica;
+  - un hook che rifiuta o una firma che non riesce: `EngineError::Git` con stderr e stdout di
+    git (git manda su stderr anche l'output degli hook), nessun commit, indice invariato
+    (tranne quello che l'hook stesso ha cambiato: un `pre-commit` che fa `git add` cambia
+    l'indice, e se riesce quello che viene committato, come con `git commit`). Indice
+    bloccato: `IndexLocked`;
+  - hook e firma possono essere lenti: il comando resta sincrono (§6), stdout e stderr si
+    leggono insieme e stdin si scrive da un altro thread, quindi un hook che stampa molto non
+    blocca. Nessun timeout: una pinentry grafica di gpg o la conferma di una chiave ssh
+    aspettano legittimamente l'utente; senza terminale né pinentry grafica gpg fallisce subito.
+    Se l'app è avviata da un terminale, una pinentry testuale può usare quel terminale;
+  - dopo il commit il backend rilegge HEAD e controlla che sia un commit nuovo sopra il
+    `previous` letto prima (con `amend`: con gli stessi genitori); se un altro processo o un
+    hook `post-commit` lo ha spostato, errore che lo dice (il commit resta).
 - Le liste di percorsi delle scritture vanno via stdin (`--pathspec-from-file=-
   --pathspec-file-nul`, con `--literal-pathspecs`): nessun limite della riga di comando e nessun
   percorso letto come opzione. Una lista vuota non arriva mai a git (per molti comandi vorrebbe
@@ -397,6 +425,20 @@ recupera con `git show <ref>:<percorso>`. Lo stage di un file in conflitto non f
 tiene le versioni del conflitto nell'estensione REUC dell'indice (`git checkout -m` rifà il
 conflitto), e l'unstage di un conflitto è rifiutato. Il `MemoryBackend` registra i backup in
 memoria (`MemoryBackend::backups`).
+
+### Backup del commit riscritto (`amend`)
+
+`commit.create` con `amend` sostituisce HEAD con un commit nuovo: il vecchio resta solo nel
+reflog, che scade. Prima di eseguire `git commit --amend` il backend crea
+`refs/project/backup/amend-<secondi>-<nanosecondi>` sul commit riscritto (`update-ref <ref>
+<id> ""`, solo se non esiste, come per l'indice) e lo restituisce in `"backup"`; se il ref non
+si crea non si committa. Se poi `git commit` fallisce e HEAD è ancora il commit letto prima, il
+ref si toglie (`update-ref -d <ref> <id>`): non c'è niente da recuperare. Un commit nuovo non
+salva backup: il commit precedente è il suo genitore. Il `MemoryBackend` registra i backup in
+`MemoryBackend::commit_backups`.
+
+Per il diario (S22) `commit.create` restituisce già i valori prima e dopo del ref spostato:
+`branch` (o `null` con HEAD staccata), `previous` e `commit.id`.
 
 L'undo non copre le operazioni sui remoti: un push non si annulla da qui.
 

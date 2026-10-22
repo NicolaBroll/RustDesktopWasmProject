@@ -198,6 +198,61 @@ fn run_stage_and_unstage() {
 }
 
 #[test]
+fn run_commit_create() {
+    let repo = temp_repo(1);
+    std::fs::write(repo.path().join("b.txt"), "nuovo\n").unwrap();
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"index.stage={"paths":["b.txt"]}"#])
+        .args([
+            "--cmd",
+            r#"commit.create={"message":"Aggiungi b\n\nCon corpo."}"#,
+        ])
+        .args(["--cmd", r#"repo.log={"limit":1}"#])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    let out = &lines[1];
+    assert_eq!(out["commit"]["summary"], "Aggiungi b");
+    assert_eq!(out["commit"]["body"], "Con corpo.");
+    assert_eq!(out["branch"], "refs/heads/main");
+    assert_eq!(out["backup"], Value::Null);
+    assert_eq!(out["status"]["entries"], json!([]));
+    assert_eq!(out["commit"]["parents"][0], out["previous"]);
+    assert_eq!(lines[2]["commits"][0], out["commit"]);
+
+    // Niente da committare: errore, e la CLI esce con un codice di errore.
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"commit.create={"message":"ancora"}"#])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("niente da committare"), "{stderr}");
+
+    // `amend`: il commit riscritto resta in un ref di backup.
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args([
+            "--cmd",
+            r#"commit.create={"message":"Aggiungi b, corretto","amend":true}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let out = &json_lines(&output.stdout)[0];
+    assert!(
+        out["backup"]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/amend-")
+    );
+    assert_eq!(out["commit"]["summary"], "Aggiungi b, corretto");
+}
+
+#[test]
 fn run_stage_and_unstage_lines() {
     let repo = temp_repo(3);
     std::fs::write(repo.path().join("a.txt"), "riga 1\nDUE\nriga 3\nquattro\n").unwrap();
@@ -294,6 +349,7 @@ fn commands_lists_the_catalog() {
     assert_eq!(
         ids,
         [
+            "commit.create",
             "commit.show",
             "diff.commit",
             "diff.index",
@@ -317,6 +373,7 @@ fn commands_lists_the_catalog() {
     assert_eq!(
         marked,
         [
+            "commit.create",
             "index.stage",
             "index.stage_lines",
             "index.unstage",

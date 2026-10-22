@@ -62,7 +62,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test che leggono il repo di esempio dal `MemoryBackend`; CI verde.
 
 ### S06 — Crate `project-git` con `CliBackend` in lettura
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** nuovo crate `crates/git` (`project-git`, L6, dichiarato in
   `xtask/src/layers.rs`) con `CliBackend` e `CliOpener` che implementano i trait di S05 eseguendo
   `git` secondo le regole di §5 e usando i parser di S02–S04. Controllo della versione minima.

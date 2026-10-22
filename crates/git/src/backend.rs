@@ -5,12 +5,13 @@ use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text}
 use project_domain::EntryKind;
 use project_domain::{Change, Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use project_domain::{
-    DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_diff,
-    parse_diff_tree, parse_log, parse_refs, parse_status,
+    DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, PatchDirection, REFS_ARGS, STATUS_ARGS,
+    parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener, StagedVersion,
-    backup_message, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, DiffSpec, EngineError, GitBackend, LinePatch, LineSelection, LogQuery,
+    RepoOpener, StagedVersion, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -124,6 +125,12 @@ impl CliOpener {
                 String::from_utf8_lossy(format)
             ))
         })?;
+        let empty_blob = empty_blob(format).ok_or_else(|| {
+            not_found(format!(
+                "formato degli oggetti `{}` sconosciuto",
+                String::from_utf8_lossy(format)
+            ))
+        })?;
         let git_dir = path_from_output(git_dir);
 
         // Fallisce, ad esempio, dentro la cartella `.git`.
@@ -140,6 +147,7 @@ impl CliOpener {
             workdir,
             git_dir,
             empty_tree,
+            empty_blob,
         })
     }
 }
@@ -152,6 +160,17 @@ fn empty_tree(format: &[u8]) -> Option<&'static str> {
     match format {
         b"sha1" => Some("4b825dc642cb6eb9a060e54bf8d69288fbee4904"),
         b"sha256" => Some("6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"),
+        _ => None,
+    }
+}
+
+/// Id del blob vuoto nel formato degli oggetti `format`: è l'id della voce di un file
+/// `intent-to-add` (`git add -N`) nell'indice. Oggi `Oid` è solo SHA-1 e un repo SHA-256 non
+/// si apre: il ramo sha256 non serve ancora, c'è per non dare per scontato il formato.
+fn empty_blob(format: &[u8]) -> Option<&'static str> {
+    match format {
+        b"sha1" => Some("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"),
+        b"sha256" => Some("473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813"),
         _ => None,
     }
 }
@@ -228,6 +247,8 @@ pub struct CliBackend {
     git_dir: PathBuf,
     /// Id dell'albero vuoto nel formato del repo.
     empty_tree: &'static str,
+    /// Id del blob vuoto nel formato del repo (la voce di un file `intent-to-add`).
+    empty_blob: &'static str,
 }
 
 impl CliBackend {
@@ -619,6 +640,11 @@ impl CliBackend {
                 return true;
             }
             match before.get(&entry.path) {
+                // Un file `intent-to-add` (`.A`): `git status` dà modo e id zero, ma
+                // nell'indice c'è una voce con il blob vuoto.
+                Some(e) if entry.worktree == Change::Added && info.mode_index == 0 => {
+                    self.is_intent_to_add(e)
+                }
                 Some(e) => info.mode_index == e.mode && info.oid_index == e.oid,
                 None => info.mode_index == 0,
             }
@@ -632,6 +658,154 @@ impl CliBackend {
                     .to_owned(),
             ))
         }
+    }
+
+    /// [`EngineError::IndexLocked`] se l'indice è bloccato da un altro processo git (esiste
+    /// `index.lock`). Solo un controllo anticipato, per non salvare un backup inutile prima di
+    /// una scrittura che fallirebbe: la scrittura vera lo ricontrolla comunque (git non
+    /// sovrascrive mai un lock).
+    fn check_index_unlocked(&self) -> Result<(), EngineError> {
+        let lock = self.git_dir.join("index.lock");
+        if lock.symlink_metadata().is_ok() {
+            return Err(EngineError::IndexLocked {
+                lock: lock.to_string_lossy().into_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Subito dopo aver letto il diff da cui viene la patch: la voce dell'indice che la patch
+    /// cambia è quella su cui il diff è stato calcolato, cioè quella letta prima in `index`
+    /// (da cui vengono anche il controllo dei rischi e il backup). Il lato indice del diff è il
+    /// vecchio per lo stage (`git diff`), il nuovo per l'unstage (`git diff --cached`).
+    fn check_diff_matches_index(
+        &self,
+        index: &IndexListing,
+        prepared: &LinePatch,
+        direction: PatchDirection,
+    ) -> Result<(), EngineError> {
+        let file = &prepared.file;
+        let entry = index.get(prepared.target());
+        let consistent = match direction {
+            // Un file nuovo nel diff del worktree è un segnaposto `intent-to-add`: nell'indice
+            // c'è, con il blob vuoto.
+            PatchDirection::Stage if file.change == Change::Added => {
+                entry.is_some_and(|e| self.is_intent_to_add(e))
+            }
+            PatchDirection::Stage => entry.map(|e| e.oid) == file.old_oid,
+            // Un file eliminato in stage non è nell'indice.
+            PatchDirection::Unstage if file.change == Change::Deleted => entry.is_none(),
+            PatchDirection::Unstage => entry.map(|e| e.oid) == file.new_oid,
+        };
+        if consistent {
+            Ok(())
+        } else {
+            Err(EngineError::NotAllowed(
+                "l'indice è cambiato mentre si preparava la scrittura (un altro processo git?): \
+                 niente scritto, riprovare"
+                    .to_owned(),
+            ))
+        }
+    }
+
+    /// Vero se la voce è quella di un file `intent-to-add`: il blob vuoto nel formato del repo
+    /// (`git status` la riporta con modo e id zero e Y = `A`).
+    fn is_intent_to_add(&self, entry: &IndexEntry) -> bool {
+        entry.oid.to_string() == self.empty_blob
+    }
+
+    /// Il contenuto del blob `oid` (`git cat-file blob`, senza filtri).
+    fn blob(&self, oid: &Oid) -> Result<Vec<u8>, EngineError> {
+        self.run(&["cat-file", "blob", &oid.to_string()])
+    }
+
+    /// Salva `content` come blob (`hash-object -w --stdin --no-filters`: è già nella forma
+    /// dell'indice, niente filtri `clean` né conversioni di fine riga) e ne restituisce l'id.
+    /// Scrive solo nel database degli oggetti, non nell'indice.
+    fn hash_blob(&self, content: &[u8]) -> Result<Oid, EngineError> {
+        let args = ["hash-object", "-w", "--stdin", "--no-filters"];
+        let out = self.run_input(&args, content, &[])?;
+        Ok(Oid::from_hex(out.trim_ascii_end())?)
+    }
+
+    /// Scrive nell'indice la voce di `path`: `Some((modo, id))` la crea o la sostituisce,
+    /// `None` la toglie (`update-index -z --index-info`, percorso su stdin). È l'unico passo
+    /// che scrive l'indice. `--index-info` crea una voce nuova: i flag `--skip-worktree` e
+    /// `--assume-unchanged` della vecchia si perdono e li rimette [`Self::restore_flags`].
+    fn write_index_entry(
+        &self,
+        path: &RepoPath,
+        entry: Option<(u32, Oid)>,
+    ) -> Result<(), EngineError> {
+        let mut info = match &entry {
+            Some((mode, oid)) => format!("{mode:o} {oid}\t").into_bytes(),
+            // Modo 0: `update-index --index-info` toglie la voce.
+            None => format!("0 {}\t", Oid::from_bytes([0; Oid::LEN])).into_bytes(),
+        };
+        info.extend_from_slice(path.as_bytes());
+        info.push(0);
+        self.run_input(&["update-index", "-z", "--index-info"], &info, &[])?;
+        Ok(())
+    }
+
+    /// Dopo una scrittura che ricrea le voci dell'indice (`update-index --index-info`,
+    /// `restore --staged`), rimette i flag `--skip-worktree` e `--assume-unchanged` che le voci
+    /// di `paths` avevano in `before` (lettere di `ls-files -v`: `S`/`s` skip-worktree,
+    /// minuscola assume-unchanged) e che ora non hanno più. Senza, un file fuori dal cono di
+    /// uno sparse checkout sembrerebbe eliminato dal worktree, e un `git add -A` o `commit -a`
+    /// successivo metterebbe in stage una cancellazione mai fatta. Le voci che non sono più
+    /// nell'indice si saltano. Se non riesce, errore: le voci scritte sono comunque corrette.
+    fn restore_flags(&self, before: &IndexListing, paths: &[RepoPath]) -> Result<(), EngineError> {
+        let wanted = |listing: &IndexListing| -> Vec<(RepoPath, bool, bool)> {
+            listing
+                .iter()
+                .filter(|(p, _)| paths.iter().any(|w| path_matches(p, w)))
+                .map(|(p, e)| {
+                    (
+                        p.clone(),
+                        e.tag.eq_ignore_ascii_case(&b'S'),
+                        e.tag.is_ascii_lowercase(),
+                    )
+                })
+                .collect()
+        };
+        let flagged: Vec<_> = wanted(before)
+            .into_iter()
+            .filter(|(_, s, a)| *s || *a)
+            .collect();
+        if flagged.is_empty() {
+            return Ok(());
+        }
+        let now = self.index_listing()?;
+        let mut skip = Vec::new();
+        let mut assume = Vec::new();
+        for (path, s, a) in flagged {
+            let Some(e) = now.get(&path) else { continue };
+            if s && !e.tag.eq_ignore_ascii_case(&b'S') {
+                skip.extend_from_slice(path.as_bytes());
+                skip.push(0);
+            }
+            if a && !e.tag.is_ascii_lowercase() {
+                assume.extend_from_slice(path.as_bytes());
+                assume.push(0);
+            }
+        }
+        for (flag, list) in [("--skip-worktree", skip), ("--assume-unchanged", assume)] {
+            if list.is_empty() {
+                continue;
+            }
+            let args = ["update-index", flag, "-z", "--stdin"];
+            self.run_input(&args, &list, &[])
+                .map_err(|e| EngineError::Git {
+                    command: "update-index".to_owned(),
+                    stderr: format!(
+                        "l'indice è stato scritto correttamente, ma non si è riusciti a rimettere \
+                     `{flag}` sui file che lo avevano (rimetterlo a mano con `git update-index \
+                     {flag} <percorso>`): {e}"
+                    ),
+                })?;
+        }
+        Ok(())
     }
 
     /// `git <args>` con `input` su stdin e le variabili `env`; stdout, o l'errore di git.
@@ -907,6 +1081,81 @@ impl GitBackend for CliBackend {
         if !out.status.success() {
             return Err(failure(&args, &out));
         }
+        // `restore --staged` ricrea le voci senza `--skip-worktree`/`--assume-unchanged`.
+        self.restore_flags(&index, paths)?;
+        Ok(backup)
+    }
+
+    fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {
+        let operation = selection.command_id();
+        let status = self.status_for_write()?;
+        let index = self.index_listing()?;
+        // Il diff si legge dopo l'indice: se nel frattempo un altro git ha cambiato la voce,
+        // `check_diff_matches_index` se ne accorge.
+        let diff = self.diff(&selection.diff_spec())?;
+        let prepared = line_patch(&diff, selection)?;
+        self.check_diff_matches_index(&index, &prepared, selection.direction)?;
+
+        // Il contenuto nuovo si calcola qui, con l'applicatore rigoroso, sul blob della voce
+        // appena controllata: ogni hunk solo alla sua posizione, contesto byte per byte. Non
+        // si usa `git apply`, che cerca il preimage anche altrove (con poco contesto potrebbe
+        // mettere le righe nel posto sbagliato e riuscire lo stesso).
+        let target = prepared.target().clone();
+        let entry = index.get(&target);
+        let base = match entry {
+            Some(e) if !(prepared.patch.change == Change::Added && self.is_intent_to_add(e)) => {
+                Some(self.blob(&e.oid)?)
+            }
+            _ => None,
+        };
+        let content = apply_patch(base.as_deref(), &prepared.patch).map_err(|e| {
+            EngineError::NotAllowed(format!(
+                "la patch non si applica alla versione in stage di `{target}` ({e}): niente \
+                 scritto, rileggere il diff"
+            ))
+        })?;
+        // Il modo resta quello dell'indice; per un file che nell'indice non c'era (o era solo
+        // `intent-to-add`) quello del lato nuovo della patch.
+        let mode = match entry {
+            Some(e) if base.is_some() => e.mode,
+            _ => prepared
+                .patch
+                .new_mode
+                .or(entry.map(|e| e.mode))
+                .unwrap_or(0o100644),
+        };
+
+        self.check_index_unlocked()?;
+        // Il blob si salva prima del backup e del ricontrollo: fra il ricontrollo e la
+        // scrittura resta solo `update-index`. Con la CLI di git non c'è un vero
+        // compare-and-swap sull'indice: rimane l'istante fra quel ricontrollo e il lock che
+        // prende `update-index`.
+        let written = match &content {
+            Some(c) => Some((mode, self.hash_blob(c)?)),
+            None => None,
+        };
+        let touched = prepared.touched(selection);
+        let backup = self.backup(operation, &status, &index, &touched)?;
+        self.check_index_unchanged(&status, &index, &touched)?;
+        self.write_index_entry(&target, written)?;
+        self.restore_flags(&index, std::slice::from_ref(&target))?;
+
+        // La voce nell'indice è quella scritta (un altro git potrebbe averla cambiata subito
+        // dopo: in quel caso lo si dice, il backup resta).
+        let now = self.index_listing()?;
+        if now.get(&target).map(|e| (e.mode, e.oid)) != written {
+            return Err(EngineError::Git {
+                command: "update-index".to_owned(),
+                stderr: format!(
+                    "dopo la scrittura la voce di `{target}` nell'indice non è quella attesa \
+                     (un altro processo git?){}",
+                    backup
+                        .as_ref()
+                        .map(|b| format!("; la versione in stage precedente è in `{b}`"))
+                        .unwrap_or_default()
+                ),
+            });
+        }
         Ok(backup)
     }
 }
@@ -952,6 +1201,17 @@ mod tests {
             ignored_paths("fatal: pathspec 'x' did not match any files"),
             None
         );
+    }
+
+    #[test]
+    fn empty_blob_per_object_format() {
+        // `git hash-object -t blob /dev/null`, la voce di un file `intent-to-add`.
+        assert_eq!(
+            empty_blob(b"sha1"),
+            Some("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
+        );
+        assert_eq!(empty_blob(b"sha256").map(str::len), Some(64));
+        assert_eq!(empty_blob(b"md5"), None);
     }
 
     #[test]

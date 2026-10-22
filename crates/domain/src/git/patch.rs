@@ -94,6 +94,13 @@ use std::collections::HashSet;
 ///   coincidere con un indice diverso negli spazi.
 ///
 /// Prima di scrivere si può provare la patch con `--check` in più.
+///
+/// Attenzione: `git apply` cerca il preimage di un hunk anche lontano dalla posizione scritta,
+/// e un hunk senza contesto in coda lo ancora alla fine del file. È sicuro solo con patch da un
+/// diff letto con `DIFF_ARGS` (contesto fisso `--unified=3`, anche con `diff.context=0` nella
+/// configurazione) e applicate allo stesso indice da cui il diff è stato calcolato. I comandi
+/// `index.stage_lines`/`index.unstage_lines` per questo non usano `git apply`: calcolano il
+/// risultato con un applicatore rigoroso nel motore e lo scrivono nell'indice.
 pub const APPLY_ARGS: &[&str] = &[
     "--cached",
     "--recount",

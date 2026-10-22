@@ -1,8 +1,10 @@
 //! Catalogo dei comandi predefiniti.
 
 use crate::commands::parse_params;
-use crate::{CommandSpec, DiffSpec, EngineError, LogQuery, Registry, Session};
-use project_domain::RepoPath;
+use crate::{
+    CommandSpec, DiffSpec, EngineError, LineSelection, LogQuery, Registry, Session, file_digest,
+};
+use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -74,12 +76,29 @@ impl Registry {
             r#"{"paths": [percorso, ...]}"#,
             index_unstage,
         );
+        add(
+            "index.stage_lines",
+            "Metti in stage le righe scelte",
+            r#"{"path": percorso, "lines": [{"old": n} | {"new": n}, ...], "digest": string (da diff.worktree)}"#,
+            index_stage_lines,
+        );
+        add(
+            "index.unstage_lines",
+            "Togli dallo stage le righe scelte",
+            r#"{"path": percorso, "lines": [{"old": n} | {"new": n}, ...], "digest": string (da diff.index)}"#,
+            index_unstage_lines,
+        );
         r
     }
 }
 
 /// I comandi che modificano il repository ([`CommandSpec::writes`]).
-const WRITES: &[&str] = &["index.stage", "index.unstage"];
+const WRITES: &[&str] = &[
+    "index.stage",
+    "index.unstage",
+    "index.stage_lines",
+    "index.unstage_lines",
+];
 
 type Out = Result<Value, EngineError>;
 
@@ -184,19 +203,37 @@ fn check_path(id: &'static str, path: RepoPath) -> Result<RepoPath, EngineError>
     }
 }
 
-/// Il [`Diff`](project_domain::Diff) del worktree rispetto all'indice (modifiche non in
-/// stage): `{"files": [...]}`. I file non tracciati non compaiono.
+/// Il JSON di un [`Diff`] con in più, in ogni file, il campo `digest` ([`file_digest`]) da
+/// passare a `index.stage_lines`/`index.unstage_lines`. Chi legge il risultato come
+/// [`Diff`] lo ignora.
+fn diff_with_digests(diff: &Diff) -> Value {
+    let mut out = to_json(diff);
+    if let Some(files) = out["files"].as_array_mut() {
+        for (json, file) in files.iter_mut().zip(&diff.files) {
+            json["digest"] = Value::String(file_digest(file));
+        }
+    }
+    out
+}
+
+/// Il [`Diff`] del worktree rispetto all'indice (modifiche non in stage): `{"files": [...]}`,
+/// ogni file con il suo `digest`. I file non tracciati non compaiono.
 fn diff_worktree(s: &mut Session, p: Value) -> Out {
     let DiffParams { path } = parse_params("diff.worktree", p)?;
     let path = check_opt_path("diff.worktree", path)?;
-    Ok(to_json(s.repo()?.diff(&DiffSpec::Worktree { path })?))
+    Ok(diff_with_digests(
+        &s.repo()?.diff(&DiffSpec::Worktree { path })?,
+    ))
 }
 
-/// Il [`Diff`](project_domain::Diff) dell'indice rispetto a HEAD (modifiche in stage).
+/// Il [`Diff`] dell'indice rispetto a HEAD (modifiche in stage), ogni file con il suo
+/// `digest`.
 fn diff_index(s: &mut Session, p: Value) -> Out {
     let DiffParams { path } = parse_params("diff.index", p)?;
     let path = check_opt_path("diff.index", path)?;
-    Ok(to_json(s.repo()?.diff(&DiffSpec::Index { path })?))
+    Ok(diff_with_digests(
+        &s.repo()?.diff(&DiffSpec::Index { path })?,
+    ))
 }
 
 /// Il [`Diff`](project_domain::Diff) del commit `id` rispetto al primo genitore (come
@@ -259,6 +296,52 @@ fn index_unstage(s: &mut Session, p: Value) -> Out {
     Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
 }
 
+/// Parametri di `index.stage_lines` e `index.unstage_lines`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LinesParams {
+    path: RepoPath,
+    lines: Vec<LineRef>,
+    digest: String,
+}
+
+/// Le righe `lines` del file `path` in stage o fuori, con il diff visto identificato da
+/// `digest` (vedi [`GitBackend::apply_lines`](crate::GitBackend::apply_lines)). Una selezione
+/// vuota è un errore, non un'operazione che non fa niente: è quasi sempre uno sbaglio di chi
+/// chiama. Risultato come `index.stage`.
+fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: Value) -> Out {
+    let LinesParams {
+        path,
+        lines,
+        digest,
+    } = parse_params(id, p)?;
+    let path = check_path(id, path)?;
+    if lines.is_empty() {
+        return Err(EngineError::InvalidParams {
+            id,
+            reason: "`lines` è vuoto: indicare almeno una riga cambiata del diff".to_owned(),
+        });
+    }
+    let repo = s.repo_mut()?;
+    let backup = repo.apply_lines(&LineSelection {
+        path,
+        lines,
+        digest,
+        direction,
+    })?;
+    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
+}
+
+/// Mette in stage le righe scelte del diff del worktree.
+fn index_stage_lines(s: &mut Session, p: Value) -> Out {
+    index_lines("index.stage_lines", PatchDirection::Stage, s, p)
+}
+
+/// Toglie dallo stage le righe scelte del diff dell'indice.
+fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
+    index_lines("index.unstage_lines", PatchDirection::Unstage, s, p)
+}
+
 /// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
 /// l'ultimo commit restituito ce ne sono altri (la pagina seguente parte da `skip + limit`).
 fn repo_log(s: &mut Session, p: Value) -> Out {
@@ -316,7 +399,9 @@ mod tests {
                 "diff.index",
                 "diff.worktree",
                 "index.stage",
+                "index.stage_lines",
                 "index.unstage",
+                "index.unstage_lines",
                 "repo.log",
                 "repo.open",
                 "repo.refs",
@@ -326,7 +411,15 @@ mod tests {
         let ids: Vec<_> = r.search("CRONOLOGIA").map(|c| c.id).collect();
         assert_eq!(ids, ["repo.log"]);
         let writes: Vec<_> = r.list().filter(|c| c.writes).map(|c| c.id).collect();
-        assert_eq!(writes, ["index.stage", "index.unstage"]);
+        assert_eq!(
+            writes,
+            [
+                "index.stage",
+                "index.stage_lines",
+                "index.unstage",
+                "index.unstage_lines"
+            ]
+        );
     }
 
     #[test]
@@ -360,9 +453,13 @@ mod tests {
             "diff.commit",
             "index.stage",
             "index.unstage",
+            "index.stage_lines",
+            "index.unstage_lines",
         ] {
             let params = if matches!(id, "commit.show" | "diff.commit") {
                 json!({ "id": "HEAD" })
+            } else if id.ends_with("_lines") {
+                json!({ "path": "README.md", "lines": [{ "new": 1 }], "digest": "x" })
             } else if id.starts_with("index.") {
                 json!({ "paths": ["README.md"] })
             } else {
@@ -624,6 +721,90 @@ mod tests {
     }
 
     #[test]
+    fn stage_and_unstage_lines() {
+        let (r, mut s) = opened();
+        let original = r.run("repo.status", &mut s, json!({})).unwrap();
+
+        // `diff.worktree` e `diff.index` danno il digest di ogni file.
+        let diff = r
+            .run("diff.worktree", &mut s, json!({ "path": "src/lib.rs" }))
+            .unwrap();
+        let file = &diff["files"][0];
+        let parsed: project_domain::FileDiff = serde_json::from_value(file.clone()).unwrap();
+        assert_eq!(file["digest"], file_digest(&parsed));
+        let all = r.run("diff.index", &mut s, json!({})).unwrap();
+        assert!(
+            all["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["digest"].is_string())
+        );
+        let first = parsed.line_refs()[0];
+
+        let out = r
+            .run(
+                "index.stage_lines",
+                &mut s,
+                json!({ "path": "src/lib.rs", "lines": [first], "digest": file["digest"] }),
+            )
+            .unwrap();
+        assert_eq!(out["backup"], Value::Null);
+        assert_eq!(
+            out["status"],
+            r.run("repo.status", &mut s, json!({})).unwrap()
+        );
+        let lib = out["status"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"] == "src/lib.rs")
+            .unwrap();
+        assert_eq!(
+            (&lib["index"], &lib["worktree"]),
+            (&json!("Modified"), &json!("Modified"))
+        );
+
+        // Lo stesso digest ora è vecchio: niente cambia.
+        let err = r
+            .run(
+                "index.stage_lines",
+                &mut s,
+                json!({ "path": "src/lib.rs", "lines": [first], "digest": file["digest"] }),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::StaleDiff { .. }), "{err}");
+
+        // Righe che non esistono nel diff.
+        let diff = r
+            .run("diff.index", &mut s, json!({ "path": "src/lib.rs" }))
+            .unwrap();
+        let digest = diff["files"][0]["digest"].clone();
+        let err = r
+            .run(
+                "index.unstage_lines",
+                &mut s,
+                json!({ "path": "src/lib.rs", "lines": [{ "old": 999 }], "digest": digest }),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
+
+        // Unstage di tutte le righe in stage: si torna allo stato iniziale, con un backup
+        // perché il file era `MM`.
+        let parsed: project_domain::FileDiff =
+            serde_json::from_value(diff["files"][0].clone()).unwrap();
+        let out = r
+            .run(
+                "index.unstage_lines",
+                &mut s,
+                json!({ "path": "src/lib.rs", "lines": parsed.line_refs(), "digest": digest }),
+            )
+            .unwrap();
+        assert_eq!(out["backup"], "refs/project/backup/index-1");
+        assert_eq!(out["status"], original);
+    }
+
+    #[test]
     fn errors() {
         let (r, mut s) = opened();
         assert!(matches!(
@@ -654,6 +835,35 @@ mod tests {
                 json!({ "paths": ["README.md"], "confirm": true }),
             ),
             ("index.unstage", json!({ "paths": [3] })),
+            ("index.stage_lines", json!({})),
+            (
+                "index.stage_lines",
+                json!({ "path": "src/lib.rs", "lines": [{ "new": 2 }] }),
+            ),
+            (
+                "index.stage_lines",
+                json!({ "path": "src/lib.rs", "lines": [], "digest": "x" }),
+            ),
+            (
+                "index.stage_lines",
+                json!({ "path": "src/lib.rs", "lines": [2], "digest": "x" }),
+            ),
+            (
+                "index.stage_lines",
+                json!({ "path": "src/lib.rs", "lines": [{ "riga": 2 }], "digest": "x" }),
+            ),
+            (
+                "index.stage_lines",
+                json!({ "path": "src/lib.rs", "lines": [{ "new": -1 }], "digest": "x" }),
+            ),
+            (
+                "index.unstage_lines",
+                json!({ "path": "README.md", "lines": [{ "new": 1 }], "digest": "x", "confirm": true }),
+            ),
+            (
+                "index.unstage_lines",
+                json!({ "paths": ["README.md"], "lines": [{ "new": 1 }], "digest": "x" }),
+            ),
         ] {
             let err = r.run(id, &mut s, params).unwrap_err();
             assert!(
@@ -678,6 +888,14 @@ mod tests {
                 ("diff.commit", json!({ "id": "HEAD", "path": path })),
                 ("index.stage", json!({ "paths": ["README.md", path] })),
                 ("index.unstage", json!({ "paths": [path] })),
+                (
+                    "index.stage_lines",
+                    json!({ "path": path, "lines": [{ "new": 1 }], "digest": "x" }),
+                ),
+                (
+                    "index.unstage_lines",
+                    json!({ "path": path, "lines": [{ "old": 1 }], "digest": "x" }),
+                ),
             ] {
                 let err = r.run(id, &mut s, params).unwrap_err();
                 assert!(

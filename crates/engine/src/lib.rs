@@ -13,8 +13,9 @@ mod session;
 pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
-    BACKUP_PREFIX, DiffSpec, GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener,
-    StagedVersion, backup_message, path_matches, versions_at_risk, versions_at_risk_hidden,
+    BACKUP_PREFIX, DiffSpec, GitBackend, LinePatch, LineSelection, LogQuery, MemoryBackend,
+    MemoryOpener, RepoOpener, StagedVersion, apply_patch, backup_message, file_digest, line_patch,
+    path_matches, versions_at_risk, versions_at_risk_hidden,
 };
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
@@ -64,6 +65,14 @@ pub enum EngineError {
     /// unstage di un file in conflitto); niente è stato modificato.
     #[error("operazione rifiutata: {0}")]
     NotAllowed(String),
+    /// Il diff da cui vengono le righe scelte (`index.stage_lines`, `index.unstage_lines`) non
+    /// è più quello attuale: il file è cambiato da quando il diff è stato letto (o non ha più
+    /// modifiche). Niente è stato modificato; va riletto il diff e rifatta la selezione.
+    #[error(
+        "il diff di `{path}` non è più quello letto ({reason}): niente modificato, rileggere il \
+         diff e rifare la selezione"
+    )]
+    StaleDiff { path: String, reason: String },
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]

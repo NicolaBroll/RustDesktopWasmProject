@@ -6,6 +6,7 @@
 
 mod backup;
 mod line_diff;
+mod lines;
 mod memory;
 mod sample;
 
@@ -18,6 +19,7 @@ pub use backup::{
     BACKUP_PREFIX, StagedVersion, backup_message, path_matches, versions_at_risk,
     versions_at_risk_hidden,
 };
+pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{MemoryBackend, MemoryOpener};
 
 use crate::EngineError;
@@ -109,6 +111,21 @@ pub trait GitBackend: Send {
     /// - Un percorso sconosciuto a git (né in HEAD né nell'indice) dà errore e niente cambia.
     /// - `paths` vuoto non fa niente.
     fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
+
+    /// Mette in stage ([`PatchDirection::Stage`](project_domain::PatchDirection)) o toglie
+    /// dallo stage ([`PatchDirection::Unstage`](project_domain::PatchDirection)) solo le righe
+    /// `selection.lines` di un file: `index.stage_lines` e `index.unstage_lines`. **Non tocca
+    /// mai il worktree.**
+    ///
+    /// Rilegge il diff del file ([`LineSelection::diff_spec`]), controlla che sia quello visto
+    /// (`selection.digest`) e costruisce la patch con [`line_patch`] (vedi lì gli errori), poi
+    /// calcola il nuovo contenuto in stage con [`apply_patch`] (rigoroso: ogni hunk solo alla
+    /// sua posizione) e lo scrive nell'indice. Come stage e unstage: prima un backup se la
+    /// versione in stage esiste solo nell'indice (es. righe di un file `MM`), e il ref nel
+    /// risultato; il `CliBackend` ricontrolla l'indice prima di scrivere, rilegge la voce dopo
+    /// e con l'indice bloccato dà [`EngineError::IndexLocked`]. Un errore prima della scrittura
+    /// non cambia niente.
+    fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

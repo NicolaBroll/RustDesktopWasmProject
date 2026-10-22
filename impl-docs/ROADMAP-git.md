@@ -70,7 +70,7 @@ Regole valide per tutti gli step:
   `cargo xtask layers` passa; CI verde.
 
 ### S07 — Helper per gli scenari di test
-- [ ] **Agente:** `git-scenarios`
+- [x] **Agente:** `git-scenarios`
 - **Obiettivo:** in `crates/git/tests/common/` un helper che crea repo temporanei in ambiente
   deterministico (§9) con funzioni tipo `commit_file`, `branch`, `merge`, `conflict`. Riscrivere
   i test di S06 con l'helper.

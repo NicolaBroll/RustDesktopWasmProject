@@ -12,7 +12,10 @@ pub mod git;
 
 pub use document::{Document, Item};
 pub use format::{FORMAT_ID, FORMAT_VERSION};
-pub use git::{Commit, Head, Oid, RefInfo, RefKind, Signature, Upstream};
+pub use git::{
+    Commit, GraphLayout, GraphRow, GraphSegment, Head, Oid, RefInfo, RefKind, Signature, Upstream,
+    layout_graph, layout_graph_nodes,
+};
 
 /// Errori di dominio.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

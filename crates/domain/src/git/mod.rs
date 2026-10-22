@@ -1,15 +1,18 @@
 //! Tipi del client git: identificatori, commit, ref, HEAD.
 //!
 //! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
-//! (per ora il log, [`parse_log`], e lo stato, [`parse_status`]; i ref arriveranno accanto).
+//! (il log, [`parse_log`], lo stato, [`parse_status`], e i ref, [`parse_refs`]).
 
 mod log;
 mod oid;
 mod path;
+mod refs;
 mod status;
 
 #[cfg(test)]
 mod log_tests;
+#[cfg(test)]
+mod refs_tests;
 #[cfg(test)]
 mod status_tests;
 #[cfg(test)]
@@ -18,6 +21,7 @@ mod tests;
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
 pub use path::RepoPath;
+pub use refs::{REFS_ARGS, REFS_FIELDS, REFS_FORMAT, parse_refs};
 pub use status::{STATUS_ARGS, parse_status};
 
 use serde::{Deserialize, Serialize};
@@ -88,7 +92,13 @@ pub struct RefInfo {
     /// Nome completo, es. `refs/heads/main`.
     pub name: String,
     pub kind: RefKind,
+    /// Il commit a cui punta il ref. Per un tag annotato è l'oggetto puntato dal tag (di solito
+    /// un commit; un tag su un albero o un blob punta a quello), non il tag.
     pub target: Oid,
+    /// Solo per i tag annotati: l'id dell'oggetto tag, cioè il valore del ref (serve, ad esempio,
+    /// come valore atteso in `git update-ref -d <ref> <vecchio>`). `None` per i tag leggeri e gli
+    /// altri ref.
+    pub tag_object: Option<Oid>,
     /// Solo per i branch locali che ne hanno uno.
     pub upstream: Option<Upstream>,
 }

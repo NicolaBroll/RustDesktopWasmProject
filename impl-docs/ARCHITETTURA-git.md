@@ -74,7 +74,8 @@ pub struct Commit {
     pub body: String,              // %b: il resto, senza a capo finali
 }
 pub enum RefKind { LocalBranch, RemoteBranch, Tag, Stash }
-pub struct RefInfo { pub name: String, pub kind: RefKind, pub target: Oid, pub upstream: Option<Upstream> }
+pub struct RefInfo { pub name: String, pub kind: RefKind, pub target: Oid, pub tag_object: Option<Oid>, pub upstream: Option<Upstream> }
+// target: il commit (per un tag annotato quello puntato dal tag); tag_object: l'id del tag annotato
 pub enum Head { Branch { name: String, target: Option<Oid> }, Detached(Oid) }
 pub struct Status { pub head: Head, pub upstream: Option<Upstream>, pub entries: Vec<StatusEntry>, pub operation: Option<Operation> }
 pub enum Operation { Merge, Rebase, CherryPick, Revert, Bisect }   // stato "in corso"
@@ -88,7 +89,7 @@ Ogni comando git ha un formato scelto apposta per essere letto senza ambiguità:
 | Dato | Comando | Note |
 | --- | --- | --- |
 | Log | `git log -z --date=raw --encoding=UTF-8 --no-show-signature --no-color --format=tformat:%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b` (costante `LOG_ARGS`) | 10 campi per record, **ognuno terminato da NUL** (il decimo NUL lo mette `-z`, anche dopo l'ultimo record): un messaggio git non può contenere NUL, quindi contare i campi è univoco. `%ad`/`%cd` con `--date=raw` danno `<secondi> <+hhmm>`, cioè anche il fuso orario che `%at`/`%ct` non hanno. `%s` è il primo paragrafo unito su una riga, `%b` il resto (a capo finali tolti dal parser) |
-| Ref | `git for-each-ref --format=...` con `%00` | include upstream e ahead/behind (`%(upstream:track)`) |
+| Ref | `git for-each-ref --format=%(refname)%00%(objectname)%00%(*objectname)%00%(upstream)%00%(upstream:track,nobracket)%00%(symref)%00 refs/heads/ refs/remotes/ refs/tags/ refs/stash` (costante `REFS_ARGS`) | 6 campi per ref, **ognuno terminato da NUL**; git aggiunge un a capo dopo ogni record (non c'è `-z`), quindi il parser divide solo sui NUL e toglie l'a capo all'inizio del record seguente: i nomi dei ref non possono contenere NUL né a capo, ma `%(upstream)` viene dalla config e può contenere un a capo. Ref simbolici (`origin/HEAD`), con nome non UTF-8 o fuori dai quattro tipi: ignorati. Tag annotati: `target` dal `%(*objectname)` (risalendo i tag di tag presenti nella lista), `tag_object` dal `%(objectname)`. Ahead/behind: vuoto ⇒ 0/0, `gone` ⇒ `None` |
 | Stato | `git status --porcelain=v2 -z --branch --untracked-files=all` | formato stabile per definizione |
 | Diff | `git -c core.quotePath=false diff --no-color --no-ext-diff --find-renames` | parser del formato unified diff |
 

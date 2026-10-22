@@ -203,6 +203,7 @@ fn ref_e_head_round_trip_json() {
             name: "refs/heads/main".into(),
             kind: RefKind::LocalBranch,
             target: oid(HEX),
+            tag_object: None,
             upstream: Some(Upstream {
                 name: "refs/remotes/origin/main".into(),
                 ahead: Some(2),
@@ -213,6 +214,7 @@ fn ref_e_head_round_trip_json() {
             name: "refs/heads/vecchio".into(),
             kind: RefKind::LocalBranch,
             target: oid(HEX),
+            tag_object: None,
             upstream: Some(Upstream {
                 name: "refs/remotes/origin/vecchio".into(),
                 ahead: None,
@@ -223,6 +225,7 @@ fn ref_e_head_round_trip_json() {
             name: "refs/tags/v1.0".into(),
             kind: RefKind::Tag,
             target: oid(HEX),
+            tag_object: Some(oid("0123456789abcdef0123456789abcdef01234567")),
             upstream: None,
         },
     ];
@@ -251,6 +254,7 @@ fn nomi_brevi_dei_ref() {
         name: name.into(),
         kind,
         target: oid(HEX),
+        tag_object: None,
         upstream: None,
     };
     assert_eq!(

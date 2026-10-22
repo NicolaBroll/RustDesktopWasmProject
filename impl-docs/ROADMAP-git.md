@@ -49,7 +49,7 @@ Regole valide per tutti gli step:
   HEAD staccata, branch senza upstream, ahead/behind; CI verde.
 
 ### S04 — Parser dei ref
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** formato di `git for-each-ref` (costante) e `parse_refs(&[u8])` per branch locali,
   remoti, tag e stash, con upstream e ahead/behind.
 - **Fatto quando:** test con output catturato; CI verde.

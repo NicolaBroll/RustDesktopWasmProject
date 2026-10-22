@@ -2,6 +2,7 @@
 //! niente direttamente.
 
 use crate::details::Shown;
+use crate::diff::DiffTarget;
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::CommitList;
@@ -457,11 +458,12 @@ fn signer(sig: &Signature) -> String {
 /// Pannello a destra: messaggio e metadati del commit selezionato, poi i file cambiati.
 ///
 /// `selected` è il commit della lista: mentre `commit.show` lavora se ne mostrano subito
-/// messaggio e metadati, i file arrivano dopo.
+/// messaggio e metadati, i file arrivano dopo. `open` è il file del diff aperto, evidenziato.
 pub(crate) fn details_panel(
     ui: &mut Ui,
     selected: Option<&Commit>,
     shown: Shown<'_>,
+    open: Option<&DiffTarget>,
     actions: &mut Vec<Action>,
 ) {
     let (commit, compared_to) = match &shown {
@@ -498,7 +500,9 @@ pub(crate) fn details_panel(
                 actions.push(Action::RetryDetails);
             }
         }
-        Shown::Loaded(details) => changed_files(ui, &details.files),
+        Shown::Loaded(details) => {
+            changed_files(ui, details.commit.id, &details.files, open, actions);
+        }
     }
 }
 
@@ -610,8 +614,15 @@ fn change_color(change: Change) -> Color32 {
     }
 }
 
-/// Elenco dei file cambiati, virtualizzato: si disegnano solo le righe visibili.
-fn changed_files(ui: &mut Ui, files: &[ChangedFile]) {
+/// Elenco dei file cambiati del commit `commit`, virtualizzato: si disegnano solo le righe
+/// visibili. Un clic su un file ne apre il diff; il file del diff aperto (`open`) è evidenziato.
+fn changed_files(
+    ui: &mut Ui,
+    commit: Oid,
+    files: &[ChangedFile],
+    open: Option<&DiffTarget>,
+    actions: &mut Vec<Action>,
+) {
     ui.strong(match files.len() {
         0 => "Nessun file cambiato".to_owned(),
         1 => "1 file cambiato".to_owned(),
@@ -629,9 +640,16 @@ fn changed_files(ui: &mut Ui, files: &[ChangedFile]) {
             for file in &files[range] {
                 let (rect, response) = ui.allocate_exact_size(
                     vec2(ui.available_width(), FILE_ROW_HEIGHT),
-                    Sense::hover(),
+                    Sense::click(),
                 );
-                if response.hovered() {
+                let target = DiffTarget {
+                    commit,
+                    path: file.path.clone(),
+                };
+                if open == Some(&target) {
+                    ui.painter()
+                        .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+                } else if response.hovered() {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
@@ -669,7 +687,10 @@ fn changed_files(ui: &mut Ui, files: &[ChangedFile]) {
                 let top = rect.center().y - galley.size().y / 2.0;
                 painter.galley(egui::pos2(left, top), galley, text);
 
-                response.on_hover_text(file_tooltip(file));
+                let response = response.on_hover_text(file_tooltip(file));
+                if response.clicked() {
+                    actions.push(Action::OpenDiff(target));
+                }
             }
         });
 }
@@ -715,6 +736,7 @@ fn file_tooltip(file: &ChangedFile) -> String {
     if file.is_submodule() {
         lines.push("sottomodulo".to_owned());
     }
+    lines.push("Clic: mostra il diff".to_owned());
     lines.join("\n")
 }
 

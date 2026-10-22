@@ -188,7 +188,7 @@ fn parse_raw_date(raw: &[u8]) -> Result<(i64, i32), String> {
 }
 
 /// Cifre decimali ASCII (almeno una) in un `u64`; `None` se vuoto, non numerico o troppo grande.
-fn parse_digits(s: &[u8]) -> Option<u64> {
+pub(super) fn parse_digits(s: &[u8]) -> Option<u64> {
     if s.is_empty() {
         return None;
     }

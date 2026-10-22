@@ -42,7 +42,7 @@ Regole valide per tutti gli step:
   corpo vuoto, corpo su più righe, autore non UTF-8); CI verde.
 
 ### S03 — Parser dello stato
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** `Status`, `StatusEntry`, `Operation` e `parse_status(&[u8])` per
   `git status --porcelain=v2 -z --branch --untracked-files=all`.
 - **Fatto quando:** test su file modificati, in stage, rinominati, non tracciati, in conflitto,

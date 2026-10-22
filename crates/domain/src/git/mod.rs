@@ -1,18 +1,24 @@
 //! Tipi del client git: identificatori, commit, ref, HEAD.
 //!
 //! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
-//! (per ora il log, [`parse_log`]; ref e stato arriveranno accanto).
+//! (per ora il log, [`parse_log`], e lo stato, [`parse_status`]; i ref arriveranno accanto).
 
 mod log;
 mod oid;
+mod path;
+mod status;
 
 #[cfg(test)]
 mod log_tests;
+#[cfg(test)]
+mod status_tests;
 #[cfg(test)]
 mod tests;
 
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
+pub use path::RepoPath;
+pub use status::{STATUS_ARGS, parse_status};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +72,9 @@ pub enum RefKind {
 /// Branch remoto seguito da un branch locale.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Upstream {
-    /// Nome completo del ref remoto, es. `refs/remotes/origin/main`.
+    /// Nome dell'upstream nella forma data da git: completo in [`RefInfo`]
+    /// (es. `refs/remotes/origin/main`), breve in [`Status`] (es. `origin/main`, come in
+    /// `# branch.upstream` di `git status`).
     pub name: String,
     /// Commit locali non presenti nell'upstream. `None` se git non lo sa (es. upstream sparito).
     pub ahead: Option<u32>,
@@ -117,4 +125,238 @@ impl Head {
             Head::Detached(oid) => Some(*oid),
         }
     }
+}
+
+/// Lo stato del repo: HEAD, upstream del branch corrente e file modificati.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Status {
+    pub head: Head,
+    /// Upstream del branch corrente, con il nome breve (es. `origin/main`). `None` se il branch
+    /// non ne ha uno o HEAD è staccata. `ahead`/`behind` sono `None` se il ref dell'upstream
+    /// non esiste più.
+    pub upstream: Option<Upstream>,
+    /// Una voce per file, nell'ordine di git. Vuoto se il worktree è pulito.
+    pub entries: Vec<StatusEntry>,
+    /// Operazione in corso. [`parse_status`] la lascia sempre a `None` (l'output di
+    /// `git status --porcelain=v2` non la riporta): la riempie il backend guardando in `.git`
+    /// (`MERGE_HEAD`, `rebase-merge/`, `CHERRY_PICK_HEAD`, ...).
+    pub operation: Option<Operation>,
+}
+
+impl Status {
+    /// Vero se non c'è niente da mettere in stage o da committare: nessuna voce tranne i file
+    /// ignorati.
+    pub fn is_clean(&self) -> bool {
+        self.entries
+            .iter()
+            .all(|e| matches!(e.kind, EntryKind::Ignored))
+    }
+
+    /// Vero se almeno un file è in conflitto.
+    pub fn has_conflicts(&self) -> bool {
+        self.entries.iter().any(StatusEntry::is_conflict)
+    }
+}
+
+/// Operazione in corso nel repo, da concludere o annullare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Operation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
+/// Un file nello stato del repo.
+///
+/// `index` e `worktree` sono le lettere `X` e `Y` di git: la modifica in stage (HEAD → indice)
+/// e quella non in stage (indice → worktree). Per i file non tracciati e ignorati valgono
+/// entrambe [`Change::Untracked`] o [`Change::Ignored`], come `??` e `!!` di `git status -s`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusEntry {
+    /// Percorso attuale (per una rinomina, quello nuovo).
+    pub path: RepoPath,
+    pub index: Change,
+    pub worktree: Change,
+    pub kind: EntryKind,
+}
+
+impl StatusEntry {
+    /// Vero se il file ha modifiche in stage (esclusi i conflitti).
+    pub fn is_staged(&self) -> bool {
+        !self.is_conflict() && self.index.is_change()
+    }
+
+    /// Vero se il file ha modifiche nel worktree non ancora in stage (esclusi conflitti, file
+    /// non tracciati e ignorati). Include i file aggiunti con `git add -N` (`.A`).
+    pub fn is_unstaged(&self) -> bool {
+        !self.is_conflict() && self.worktree.is_change()
+    }
+
+    /// Vero se il file è in conflitto (record `u`).
+    pub fn is_conflict(&self) -> bool {
+        matches!(self.kind, EntryKind::Unmerged(_))
+    }
+
+    /// Vero se il file non è tracciato.
+    pub fn is_untracked(&self) -> bool {
+        matches!(self.kind, EntryKind::Untracked)
+    }
+
+    /// Percorso di partenza di una rinomina o copia.
+    pub fn original_path(&self) -> Option<&RepoPath> {
+        match &self.kind {
+            EntryKind::Renamed { original, .. } | EntryKind::Copied { original, .. } => {
+                Some(original)
+            }
+            _ => None,
+        }
+    }
+
+    /// Stato del sottomodulo, se il percorso è un sottomodulo.
+    pub fn submodule(&self) -> Option<SubmoduleStatus> {
+        match &self.kind {
+            EntryKind::Ordinary(info)
+            | EntryKind::Renamed { info, .. }
+            | EntryKind::Copied { info, .. } => info.submodule,
+            EntryKind::Unmerged(info) => info.submodule,
+            EntryKind::Untracked | EntryKind::Ignored => None,
+        }
+    }
+}
+
+/// Una lettera `X` o `Y` dello stato di git.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Change {
+    /// `.`
+    Unmodified,
+    /// `M`
+    Modified,
+    /// `T`: cambiato il tipo (es. da file a link simbolico).
+    TypeChanged,
+    /// `A`
+    Added,
+    /// `D`
+    Deleted,
+    /// `R`
+    Renamed,
+    /// `C`
+    Copied,
+    /// `U`: in conflitto.
+    Unmerged,
+    /// `?`
+    Untracked,
+    /// `!`
+    Ignored,
+}
+
+impl Change {
+    /// La lettera usata da git.
+    pub fn letter(self) -> char {
+        match self {
+            Change::Unmodified => '.',
+            Change::Modified => 'M',
+            Change::TypeChanged => 'T',
+            Change::Added => 'A',
+            Change::Deleted => 'D',
+            Change::Renamed => 'R',
+            Change::Copied => 'C',
+            Change::Unmerged => 'U',
+            Change::Untracked => '?',
+            Change::Ignored => '!',
+        }
+    }
+
+    /// Vero per una modifica vera e propria: né `.`, né `U`, né `?`, né `!`.
+    pub fn is_change(self) -> bool {
+        !matches!(
+            self,
+            Change::Unmodified | Change::Unmerged | Change::Untracked | Change::Ignored
+        )
+    }
+}
+
+/// Il tipo di voce, con i dati propri di ciascun record di `git status --porcelain=v2`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntryKind {
+    /// Record `1`: file tracciato modificato.
+    Ordinary(TrackedInfo),
+    /// Record `2` con `R`: rinominato da `original`; `score` è la somiglianza (0–100).
+    Renamed {
+        info: TrackedInfo,
+        original: RepoPath,
+        score: u8,
+    },
+    /// Record `2` con `C`: copiato da `original` (solo con `status.renames=copies`).
+    Copied {
+        info: TrackedInfo,
+        original: RepoPath,
+        score: u8,
+    },
+    /// Record `u`: in conflitto.
+    Unmerged(UnmergedInfo),
+    /// Record `?`.
+    Untracked,
+    /// Record `!` (solo con `--ignored`).
+    Ignored,
+}
+
+/// Modi e id di un file tracciato. I modi sono numeri ottali (es. `0o100644`, `0o120000` per un
+/// link, `0o160000` per un sottomodulo, `0` se il file non c'è); gli id sono zero se l'oggetto
+/// non esiste (es. `oid_head` di un file aggiunto).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrackedInfo {
+    /// `Some` se il percorso è un sottomodulo.
+    pub submodule: Option<SubmoduleStatus>,
+    pub mode_head: u32,
+    pub mode_index: u32,
+    pub mode_worktree: u32,
+    pub oid_head: Oid,
+    pub oid_index: Oid,
+}
+
+/// Dati di un file in conflitto: gli stadi 1 (base), 2 (nostro) e 3 (loro) dell'indice.
+/// Uno stadio assente ha modo `0` e id zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnmergedInfo {
+    pub conflict: Conflict,
+    pub submodule: Option<SubmoduleStatus>,
+    pub mode_base: u32,
+    pub mode_ours: u32,
+    pub mode_theirs: u32,
+    pub mode_worktree: u32,
+    pub oid_base: Oid,
+    pub oid_ours: Oid,
+    pub oid_theirs: Oid,
+}
+
+/// Tipo di conflitto, dal codice XY di un record `u`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Conflict {
+    /// `DD`
+    BothDeleted,
+    /// `AU`
+    AddedByUs,
+    /// `UD`
+    DeletedByThem,
+    /// `UA`
+    AddedByThem,
+    /// `DU`
+    DeletedByUs,
+    /// `AA`
+    BothAdded,
+    /// `UU`
+    BothModified,
+}
+
+/// Stato di un sottomodulo (campo `S<c><m><u>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SubmoduleStatus {
+    /// `C`: il commit del sottomodulo è cambiato.
+    pub commit_changed: bool,
+    /// `M`: il sottomodulo ha modifiche ai file tracciati.
+    pub modified: bool,
+    /// `U`: il sottomodulo ha file non tracciati.
+    pub untracked: bool,
 }

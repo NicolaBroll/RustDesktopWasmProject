@@ -23,4 +23,7 @@ pub trait Platform: Send + Sync {
     /// l'utente annulla.
     fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>);
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>);
+    /// Esegue `job` fuori dal thread della UI (vedi `impl-docs/ARCHITETTURA-git.md` §6): un
+    /// thread sul desktop. Sul web non ci sono thread e il job gira subito, prima del ritorno.
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 }

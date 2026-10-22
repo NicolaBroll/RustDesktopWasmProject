@@ -97,7 +97,7 @@ Regole valide per tutti gli step:
 ## Fase 2 — Vedere
 
 ### S10 — Lavoro in background
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** `Platform::spawn` (§6) con implementazione a thread sul desktop ed esecuzione
   immediata sul web. Nella UI, un esecutore che manda comandi alla sessione condivisa e riceve i
   risultati da un canale, con stato "in corso" visibile.

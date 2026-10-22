@@ -20,10 +20,12 @@ pub fn start() {
                 Box::new(|cc| {
                     // Il browser non vede i repo locali: repo di esempio in memoria.
                     let opener = Arc::new(MemoryOpener::sample());
+                    let repo = Some(MemoryOpener::SAMPLE_PATH.to_owned());
                     Ok(Box::new(project_ui::App::new(
                         cc,
                         Arc::new(WebPlatform),
                         opener,
+                        repo,
                     )))
                 }),
             )
@@ -54,6 +56,11 @@ impl Platform for WebPlatform {
         if let Err(e) = pick_file(on_done) {
             log::error!("apertura file: {e:?}");
         }
+    }
+
+    /// Il browser non ha thread: il job gira subito (il `MemoryBackend` è istantaneo).
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+        job();
     }
 
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {

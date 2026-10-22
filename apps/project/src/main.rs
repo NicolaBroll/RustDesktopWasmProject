@@ -11,6 +11,8 @@ fn main() -> eframe::Result {
 
     let platform = Arc::new(NativePlatform);
     let opener = Arc::new(CliOpener::new());
+    // `project <percorso>` apre subito un repository.
+    let repo = std::env::args().nth(1);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
@@ -20,7 +22,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Project",
         options,
-        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform, opener)))),
+        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform, opener, repo)))),
     )
 }
 
@@ -53,6 +55,16 @@ impl Platform for NativePlatform {
                 }
             });
         on_done(picked);
+    }
+
+    /// Un thread per job: i comandi lenti sono pochi e brevi (fetch, push, log grandi).
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+        if let Err(e) = std::thread::Builder::new()
+            .name("project-job".to_owned())
+            .spawn(job)
+        {
+            log::error!("impossibile avviare un thread: {e}");
+        }
     }
 
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {

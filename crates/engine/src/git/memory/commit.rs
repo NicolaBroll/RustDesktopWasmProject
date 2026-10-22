@@ -113,7 +113,13 @@ impl MemoryBackend {
         let id = self.new_commit_id(&parents, &message, &tree, now.time);
         let backup = match (&old, previous) {
             (Some(_), Some(previous)) => {
-                let name = format!("{BACKUP_PREFIX}amend-{}", self.commit_backups.len() + 1);
+                let prefix = format!("{BACKUP_PREFIX}amend-");
+                let n = self
+                    .commit_backups
+                    .iter()
+                    .filter(|(name, _)| name.starts_with(&prefix))
+                    .count();
+                let name = format!("{prefix}{}", n + 1);
                 self.commit_backups.push((name.clone(), previous));
                 Some(name)
             }
@@ -163,7 +169,7 @@ impl MemoryBackend {
     }
 
     /// L'albero dell'indice: quello di HEAD con le modifiche in stage.
-    fn index_tree(&self) -> Tree {
+    pub(super) fn index_tree(&self) -> Tree {
         let mut tree = self.head_tree();
         for entry in &self.entries {
             let Some(info) = tracked_info(entry) else {

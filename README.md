@@ -69,6 +69,18 @@ un errore che dice di non ripetere il commit e nomina il backup. Risultato: `{"c
 "previous", "branch", "backup", "also_on", "status"}` (il commit come in `repo.log`, HEAD prima,
 il branch spostato, il backup o `null`, i ref rimasti sul commit riscritto, il nuovo stato).
 
+`edit.undo {}` annulla l'ultima operazione che ha spostato ref (oggi `commit.create`, anche con
+`amend`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
+frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
+Indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un commit le sue
+modifiche sono di nuovo in stage. Il commit annullato, se non è più raggiungibile, resta in un
+ref `refs/project/backup/undo-...`. Stage e unstage non entrano nel diario. Il diario è in
+memoria e vale per il repo aperto: nella CLI più `--cmd` della stessa invocazione lo
+condividono, invocazioni diverse no (`edit.undo` da solo dice che non c'è niente da annullare).
+Risultato di undo e redo: `{"undone"|"redone": voce, "backups", "status", "can_undo",
+"can_redo", "next_undo", "next_redo"}`.
+
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
 `writes: true` per i comandi che modificano il repository. All'avvio apre il
 repository di `--root` (default: cartella corrente), se c'è. Tutti i percorsi sono confinati in

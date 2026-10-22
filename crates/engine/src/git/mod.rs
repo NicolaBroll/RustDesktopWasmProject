@@ -9,6 +9,7 @@ mod commit;
 mod line_diff;
 mod lines;
 mod memory;
+mod restore;
 mod sample;
 
 #[cfg(test)]
@@ -26,6 +27,8 @@ pub use commit::{
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{MemoryBackend, MemoryOpener};
+pub(crate) use restore::short;
+pub use restore::{HeadState, RefMove, RefRestore, valid_ref_name};
 
 use crate::EngineError;
 use project_domain::{Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
@@ -149,6 +152,22 @@ pub trait GitBackend: Send {
     /// HEAD, nessun branch). Senza identità (`user.name`/`user.email`) l'errore è quello di
     /// git: nessun nome inventato.
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError>;
+
+    /// Sposta HEAD e i ref come chiede `request` (`edit.undo` e `edit.redo`, §7): tutti insieme
+    /// o nessuno, e **solo** se ora valgono `expected`. Indice e worktree non si toccano.
+    /// Restituisce i ref di backup creati.
+    ///
+    /// Prima di scrivere: [`RefRestore::check`] (operazioni in corso, nomi, cambi di HEAD non
+    /// supportati); poi HEAD e i ref attuali confrontati con `expected`
+    /// ([`RefRestore::conflicts`]): se qualcosa è cambiato da fuori,
+    /// [`EngineError::UndoConflict`] e niente cambia. Ogni commit di
+    /// [`RefRestore::abandoned`] che dopo non sarebbe più raggiungibile né dai nuovi valori
+    /// né da altri ref (backup compresi) si salva in `refs/project/backup/<undo|redo>-...`;
+    /// se il backup non riesce non si sposta niente. Il `CliBackend` scrive con una sola
+    /// transazione `git update-ref --stdin` (`start`, `update`/`create`/`delete` con il valore
+    /// vecchio, `commit`) e il messaggio `request.reflog`; se la transazione fallisce perché
+    /// un ref è cambiato nel frattempo, ancora [`EngineError::UndoConflict`].
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

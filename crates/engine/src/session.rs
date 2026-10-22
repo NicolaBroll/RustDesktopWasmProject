@@ -1,11 +1,13 @@
-use crate::{EngineError, GitBackend, RepoOpener};
+use crate::{EngineError, GitBackend, Journal, RepoOpener};
 use std::fmt;
 use std::sync::Arc;
 
-/// La sessione di lavoro su un repository: l'opener iniettato dall'app e il repo aperto.
+/// La sessione di lavoro su un repository: l'opener iniettato dall'app, il repo aperto e il
+/// suo diario delle operazioni ([`Journal`], per `edit.undo`/`edit.redo`).
 ///
 /// I comandi del [`Registry`](crate::Registry) la ricevono come `&mut Session`; `repo.open`
-/// apre un repo con l'opener, gli altri comandi leggono quello aperto.
+/// apre un repo con l'opener, gli altri comandi leggono quello aperto. Il diario è in memoria
+/// e appartiene al repo aperto: aprire un repo (anche lo stesso) ne parte uno vuoto.
 pub struct Session {
     opener: Arc<dyn RepoOpener>,
     repo: Option<OpenRepo>,
@@ -15,6 +17,7 @@ struct OpenRepo {
     /// Il percorso come è stato passato a `repo.open`.
     path: String,
     backend: Box<dyn GitBackend>,
+    journal: Journal,
 }
 
 impl Session {
@@ -28,9 +31,12 @@ impl Session {
     /// repo aperto prima resta com'è.
     pub fn open(&mut self, path: &str) -> Result<(), EngineError> {
         let backend = self.opener.open(path)?;
+        // La numerazione delle voci continua: un id non indica mai due voci diverse.
+        let next_id = self.repo.as_ref().map_or(0, |r| r.journal.next_id());
         self.repo = Some(OpenRepo {
             path: path.to_owned(),
             backend,
+            journal: Journal::starting_at(next_id),
         });
         Ok(())
     }
@@ -53,6 +59,23 @@ impl Session {
     pub fn repo_mut(&mut self) -> Result<&mut dyn GitBackend, EngineError> {
         match self.repo.as_mut() {
             Some(repo) => Ok(repo.backend.as_mut()),
+            None => Err(EngineError::NoRepo),
+        }
+    }
+
+    /// Il diario delle operazioni del repo aperto; [`EngineError::NoRepo`] se non ce n'è uno.
+    pub fn journal(&self) -> Result<&Journal, EngineError> {
+        self.repo
+            .as_ref()
+            .map(|repo| &repo.journal)
+            .ok_or(EngineError::NoRepo)
+    }
+
+    /// Il repo aperto e il suo diario insieme, per i comandi che scrivono e registrano
+    /// l'operazione (o la annullano); [`EngineError::NoRepo`] se non c'è un repo.
+    pub fn repo_and_journal(&mut self) -> Result<(&mut dyn GitBackend, &mut Journal), EngineError> {
+        match self.repo.as_mut() {
+            Some(repo) => Ok((repo.backend.as_mut(), &mut repo.journal)),
             None => Err(EngineError::NoRepo),
         }
     }
@@ -84,5 +107,31 @@ mod tests {
         let err = s.open("altrove").unwrap_err();
         assert!(matches!(err, EngineError::RepoNotFound { .. }), "{err}");
         assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
+    }
+
+    #[test]
+    fn the_journal_belongs_to_the_open_repo() {
+        use crate::{CommitRequest, JournalEntry};
+        let mut s = Session::new(Arc::new(MemoryOpener::sample()));
+        assert!(matches!(s.journal(), Err(EngineError::NoRepo)));
+        s.open(MemoryOpener::SAMPLE_PATH).unwrap();
+        let (repo, journal) = s.repo_and_journal().unwrap();
+        let out = repo.commit(&CommitRequest::new("x")).unwrap();
+        journal.record(JournalEntry::commit(&out, false).unwrap());
+        assert!(s.journal().unwrap().can_undo());
+
+        // Un'apertura non riuscita lascia repo e diario.
+        assert!(s.open("altrove").is_err());
+        assert_eq!(s.journal().unwrap().done().len(), 1);
+
+        // Riaprire (anche lo stesso repo) azzera il diario; gli id continuano.
+        s.open(MemoryOpener::SAMPLE_PATH).unwrap();
+        assert!(!s.journal().unwrap().can_undo());
+        let (repo, journal) = s.repo_and_journal().unwrap();
+        let out = repo.commit(&CommitRequest::new("y")).unwrap();
+        assert_eq!(
+            journal.record(JournalEntry::commit(&out, false).unwrap()),
+            2
+        );
     }
 }

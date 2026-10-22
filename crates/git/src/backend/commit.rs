@@ -205,7 +205,7 @@ impl CliBackend {
 
     /// Il nome completo del ref a cui punta HEAD (es. `refs/heads/main`), `None` se HEAD è
     /// staccata.
-    fn head_ref_name(&self) -> Result<Option<String>, EngineError> {
+    pub(super) fn head_ref_name(&self) -> Result<Option<String>, EngineError> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
         let out = self.git.output(Some(&self.workdir), &args)?;
         if out.status.success() {

@@ -8,7 +8,7 @@ Architettura di riferimento: [impl-docs/ARCHITETTURA-rust.md](impl-docs/ARCHITET
 | --- | --- | --- |
 | L0 | `project-core` | `crates/core` — errori, parsing `id=<json>` |
 | L2 | `project-domain` | `crates/domain` — tipi git e parser dell'output di git |
-| L5 | `project-engine` | `crates/engine` — `Session` (repo aperto), `Registry`, `GitBackend`/`RepoOpener`, `MemoryBackend`, trait `Platform` |
+| L5 | `project-engine` | `crates/engine` — `Session` (repo aperto e diario per undo/redo), `Registry`, `GitBackend`/`RepoOpener`, `MemoryBackend`, trait `Platform` |
 | L6 | `project-ui` | `crates/ui` — `App` egui, nessun `cfg(target_arch)` |
 | L6 | `project-mcp` | `crates/mcp` — server MCP su stdio |
 | L6 | `project-git` | `crates/git` — `CliBackend`/`CliOpener`: esegue `git`; lo importano solo le app L7 |
@@ -28,6 +28,9 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
   e non scrive se il backup fallisce (§1 e §7
   dell'architettura git). Chi riscrive un commit (`commit.create` con `amend`) salva sempre un
   ref di backup del commit riscritto e chiede `confirm` se quel commit è già pubblicato.
+- Un comando che sposta ref (commit, e poi branch, checkout, merge, reset...) registra una
+  `JournalEntry` nel diario della `Session` con HEAD e i ref prima e dopo, così `edit.undo` e
+  `edit.redo` lo coprono (§7 dell'architettura git).
 - L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
 
 ## Branch
@@ -65,6 +68,8 @@ cargo run -p project-cli -- --repo . run --cmd 'index.stage_lines={"path":"READM
 # commit di quello che è in stage; amend di un commit già pubblicato vuole anche "confirm":true
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo\n\nCorpo"}'
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo corretto","amend":true}'
+# diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
+cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval
 cargo run -p project-cli -- mcp --root .   # tool: list_commands, execute_command, open_repo
 ```

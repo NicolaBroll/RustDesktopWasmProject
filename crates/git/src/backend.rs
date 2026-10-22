@@ -1,6 +1,7 @@
 //! [`CliBackend`] e [`CliOpener`]: lettura di un repository eseguendo `git`.
 
 mod commit;
+mod restore;
 
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
@@ -12,8 +13,8 @@ use project_domain::{
 };
 use project_engine::{
     BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, EngineError, GitBackend, LinePatch,
-    LineSelection, LogQuery, RepoOpener, StagedVersion, apply_patch, backup_message, line_patch,
-    path_matches, versions_at_risk_hidden,
+    LineSelection, LogQuery, RefRestore, RepoOpener, StagedVersion, apply_patch, backup_message,
+    line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1102,6 +1103,10 @@ impl GitBackend for CliBackend {
 
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError> {
         self.create_commit(request)
+    }
+
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
+        self.restore(request)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

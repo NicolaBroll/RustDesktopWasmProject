@@ -253,6 +253,54 @@ fn run_commit_create() {
 }
 
 #[test]
+fn run_undo_and_redo_in_one_invocation() {
+    let repo = temp_repo(1);
+    std::fs::write(repo.path().join("b.txt"), "nuovo\n").unwrap();
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"index.stage={"paths":["b.txt"]}"#])
+        .args(["--cmd", r#"commit.create={"message":"Aggiungi b"}"#])
+        .args(["--cmd", "edit.undo"])
+        .args(["--cmd", "edit.history"])
+        .args(["--cmd", "edit.redo"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    let commit = &lines[1];
+    let undo = &lines[2];
+    assert_eq!(undo["undone"]["command"], "commit.create");
+    assert_eq!(
+        undo["status"]["head"]["Branch"]["target"],
+        commit["previous"]
+    );
+    assert_eq!(undo["status"]["entries"][0]["index"], "Added");
+    assert_eq!(undo["can_redo"], true);
+    assert!(
+        undo["backups"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/undo-")
+    );
+    assert_eq!(lines[3]["undone"][0]["id"], undo["undone"]["id"]);
+    let redo = &lines[4];
+    assert_eq!(
+        redo["status"]["head"]["Branch"]["target"],
+        commit["commit"]["id"]
+    );
+    assert_eq!(redo["can_undo"], true);
+
+    // Il diario non sopravvive fra due invocazioni: niente da annullare.
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run", "--cmd", "edit.undo"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("niente da annullare"), "{stderr}");
+}
+
+#[test]
 fn run_stage_and_unstage_lines() {
     let repo = temp_repo(3);
     std::fs::write(repo.path().join("a.txt"), "riga 1\nDUE\nriga 3\nquattro\n").unwrap();
@@ -354,6 +402,9 @@ fn commands_lists_the_catalog() {
             "diff.commit",
             "diff.index",
             "diff.worktree",
+            "edit.history",
+            "edit.redo",
+            "edit.undo",
             "index.stage",
             "index.stage_lines",
             "index.unstage",
@@ -374,6 +425,8 @@ fn commands_lists_the_catalog() {
         marked,
         [
             "commit.create",
+            "edit.redo",
+            "edit.undo",
             "index.stage",
             "index.stage_lines",
             "index.unstage",

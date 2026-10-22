@@ -225,7 +225,8 @@ fn serde_andata_e_ritorno() {
 /// ```
 const LOG_TOPO: &[u8] = include_bytes!("testdata/log-topo-parents.txt");
 
-fn parse_log(bytes: &[u8]) -> Vec<(Oid, Vec<Oid>)> {
+/// Legge le righe `<oid> <genitori...>` di `git log --format='%H %P'`.
+fn parse_parents(bytes: &[u8]) -> Vec<(Oid, Vec<Oid>)> {
     bytes
         .split(|&b| b == b'\n')
         .filter(|line| !line.is_empty())
@@ -242,7 +243,7 @@ fn parse_log(bytes: &[u8]) -> Vec<(Oid, Vec<Oid>)> {
 
 #[test]
 fn corsie_di_un_log_reale() {
-    let nodes = parse_log(LOG_TOPO);
+    let nodes = parse_parents(LOG_TOPO);
     assert_eq!(nodes.len(), 13);
     let g = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
     check_invariants(&nodes, &g);
@@ -261,6 +262,21 @@ fn corsie_di_un_log_reale() {
     );
     // La radice `a` chiude tutto: nessun tratto verso la seconda storia.
     assert!(g.rows[10].segments.is_empty());
+}
+
+/// Output reale di [`LOG_ARGS`] (generato da `testdata/log.sh`), letto con [`parse_log`]:
+/// le corsie si calcolano direttamente sui [`Commit`] del parser.
+#[test]
+fn corsie_dei_commit_di_parse_log() {
+    let commits = parse_log(include_bytes!("testdata/log.bin")).expect("log di esempio valido");
+    assert!(
+        commits.iter().any(|c| c.parents.len() > 1),
+        "il log contiene un merge"
+    );
+    let g = layout_graph(&commits);
+    let nodes: Vec<(Oid, Vec<Oid>)> = commits.iter().map(|c| (c.id, c.parents.clone())).collect();
+    check_invariants(&nodes, &g);
+    assert!(g.width >= 2, "il merge apre una seconda corsia");
 }
 
 // --- Invarianti --------------------------------------------------------------------------

@@ -153,7 +153,7 @@ Regole valide per tutti gli step:
 ## Fase 3 — Modificare in locale
 
 ### S18 — Stage e unstage di file
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `index.stage`, `index.unstage` e area di stage nella UI (riga "modifiche non
   committate" in cima alla lista).
 - **Fatto quando:** test di integrazione; revisione di `safety-reviewer`; CI verde.

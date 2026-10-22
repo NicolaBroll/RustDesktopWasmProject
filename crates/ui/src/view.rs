@@ -2,14 +2,15 @@
 //! niente direttamente.
 
 use crate::details::Shown;
-use crate::diff::DiffTarget;
+use crate::diff::{DiffSource, DiffTarget};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::CommitList;
+use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::{Action, Job, ListViewport, RepoView};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
-    Change, ChangedFile, Commit, Head, Oid, RefInfo, RefKind, Signature, Upstream,
+    Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
 
 /// Ultimo componente del percorso, per il titolo.
@@ -83,9 +84,13 @@ pub(crate) fn top_bar(
     });
 }
 
-pub(crate) fn status_bar(ui: &mut Ui, running: &[Job], error: &str) {
+/// `write` è la scrittura in corso, descritta: ha la precedenza sugli altri comandi.
+pub(crate) fn status_bar(ui: &mut Ui, running: &[Job], write: Option<&str>, error: &str) {
     ui.horizontal(|ui| {
-        if let Some(job) = running.first() {
+        if let Some(write) = write {
+            ui.spinner();
+            ui.label(format!("{write} in corso…"));
+        } else if let Some(job) = running.first() {
             ui.spinner();
             let text = match running.len() - 1 {
                 0 => format!("{} in corso…", job.command),
@@ -177,7 +182,10 @@ pub(crate) fn commit_list(
     actions: &mut Vec<Action>,
 ) {
     let list = &repo.list;
-    if list.commits().is_empty() {
+    // La riga "Modifiche non committate" è la riga 0: i commit partono da `offset`.
+    let header = repo.has_changes();
+    let offset = usize::from(header);
+    if list.commits().is_empty() && !header {
         let text = if list.is_loading() {
             "Caricamento dei commit…"
         } else {
@@ -197,13 +205,18 @@ pub(crate) fn commit_list(
         head_text: ui.visuals().panel_fill,
     };
     // Una riga in più in fondo mentre ci sono altri commit da caricare.
-    let rows = list.commits().len() + usize::from(list.has_more());
+    let rows = offset + list.commits().len() + usize::from(list.has_more());
     let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
     // Il grafo prende al massimo due quinti della lista: oltre si taglia a destra.
     let graph_w = graph::graph_width(list.graph().width).min(ui.available_width() * 0.4);
 
     let mut area = egui::ScrollArea::vertical().auto_shrink(false);
-    if let Some(target) = scroll_target(list, viewport) {
+    let wanted = if repo.scroll_header {
+        Some(0)
+    } else {
+        list.peek_scroll_to().map(|i| i + offset)
+    };
+    if let Some(target) = scroll_target(wanted, viewport) {
         let top = target as f32 * step;
         // Verso l'alto la riga va in cima, verso il basso in fondo alla vista.
         let offset = if target <= viewport.rows.start {
@@ -217,9 +230,17 @@ pub(crate) fn commit_list(
     let output = area.show_rows(ui, ROW_HEIGHT, rows, |ui, range| {
         // Righe di commit disegnate: il grafo va sopra gli sfondi di tutte, quindi dopo.
         let mut drawn = Vec::with_capacity(range.len());
-        for index in range.clone() {
+        for row in range.clone() {
             let (rect, response) =
                 ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+            if header && row == 0 {
+                changes_row(ui, rect, &response, repo, graph_w, &style);
+                if response.clicked() {
+                    actions.push(Action::SelectWorktree);
+                }
+                continue;
+            }
+            let index = row - offset;
             let Some(commit) = list.commits().get(index) else {
                 ui.painter().text(
                     rect.left_center() + vec2(graph_w + 8.0, 0.0),
@@ -230,7 +251,7 @@ pub(crate) fn commit_list(
                 );
                 continue;
             };
-            if list.selected() == Some(index) {
+            if list.selected() == Some(index) && !repo.worktree_selected {
                 ui.painter()
                     .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
             } else if response.hovered() {
@@ -258,7 +279,63 @@ pub(crate) fn commit_list(
     });
     viewport.rows = output.inner;
     viewport.height = output.inner_rect.height();
-    actions.push(Action::Visible(viewport.rows.end));
+    actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
+}
+
+/// La riga "Modifiche non committate": un anello vuoto nel grafo, il titolo e i conteggi.
+fn changes_row(
+    ui: &Ui,
+    rect: egui::Rect,
+    response: &egui::Response,
+    repo: &RepoView,
+    graph_w: f32,
+    style: &RowStyle,
+) {
+    if repo.worktree_selected {
+        ui.painter()
+            .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    let center = egui::pos2(graph::column_x(rect.left(), 0), rect.center().y);
+    ui.painter().circle_stroke(
+        center,
+        graph::NODE_RADIUS,
+        egui::Stroke::new(graph::EDGE_WIDTH, style.weak),
+    );
+    let painter = ui.painter_at(rect);
+    let x = rect.left() + graph_w.max(graph::graph_width(1)) + 8.0;
+    let title = painter.layout_no_wrap(
+        "Modifiche non committate".to_owned(),
+        style.font.clone(),
+        style.text,
+    );
+    let width = title.size().x;
+    painter.galley(
+        egui::pos2(x, rect.center().y - title.size().y / 2.0),
+        title,
+        style.text,
+    );
+    let count = repo.status.as_ref().map_or(0, stage::change_count);
+    let staged = repo.stage.staged.len();
+    let mut detail = match count {
+        1 => "1 file".to_owned(),
+        n => format!("{n} file"),
+    };
+    if staged > 0 {
+        detail.push_str(&format!(", {staged} in stage"));
+    }
+    painter.text(
+        egui::pos2(x + width + 10.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        detail,
+        style.font.clone(),
+        style.weak,
+    );
+    response
+        .clone()
+        .on_hover_text("Clic: mostra l'area di stage");
 }
 
 /// Archi e pallini del grafo per le righe `rows` (indice e rettangolo), nella colonna larga
@@ -321,9 +398,9 @@ fn paint_graph(ui: &Ui, list: &CommitList, rows: &[(usize, egui::Rect)], width: 
     }
 }
 
-/// La riga da portare in vista, se non è già tutta visibile.
-fn scroll_target(list: &CommitList, viewport: &ListViewport) -> Option<usize> {
-    let target = list.peek_scroll_to()?;
+/// La riga (della vista) da portare in vista, se non è già tutta visibile.
+fn scroll_target(target: Option<usize>, viewport: &ListViewport) -> Option<usize> {
+    let target = target?;
     let fully_visible = viewport.rows.start < target && target + 1 < viewport.rows.end;
     (!fully_visible).then_some(target)
 }
@@ -610,6 +687,7 @@ fn change_color(change: Change) -> Color32 {
         Change::TypeChanged => Color32::from_rgb(0xb0, 0x7c, 0xe8),
         Change::Renamed => Color32::from_rgb(0x4c, 0x9a, 0xf0),
         Change::Copied => Color32::from_rgb(0x2a, 0xb7, 0xa9),
+        Change::Unmerged => Color32::from_rgb(0xf5, 0x7c, 0x00),
         _ => Color32::GRAY,
     }
 }
@@ -642,10 +720,7 @@ fn changed_files(
                     vec2(ui.available_width(), FILE_ROW_HEIGHT),
                     Sense::click(),
                 );
-                let target = DiffTarget {
-                    commit,
-                    path: file.path.clone(),
-                };
+                let target = DiffTarget::commit(commit, file.path.clone());
                 if open == Some(&target) {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
@@ -738,6 +813,316 @@ fn file_tooltip(file: &ChangedFile) -> String {
     }
     lines.push("Clic: mostra il diff".to_owned());
     lines.join("\n")
+}
+
+/// Area di stage, al posto dei dettagli quando è selezionata la riga delle modifiche: le liste
+/// "In stage" e "Non in stage", ciascuna virtualizzata. `writing` è vero mentre una scrittura
+/// è in corso: le azioni che modificano il repo sono disabilitate.
+pub(crate) fn stage_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
+    ui.add_space(4.0);
+    ui.heading("Modifiche non committate");
+    if writing {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            let label = repo.write_label.as_deref().unwrap_or("Scrittura");
+            ui.weak(format!("{label} in corso…"));
+        });
+    }
+    if let Some(error) = &repo.write_error {
+        ui.horizontal_top(|ui| {
+            if ui.small_button("x").on_hover_text("Nascondi").clicked() {
+                actions.push(Action::DismissWriteError);
+            }
+            ui.add(
+                egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap(),
+            );
+        });
+    }
+    ui.separator();
+    let enabled = !writing && repo.confirm.is_none();
+    let open = repo.diff.target();
+    // Le due liste si dividono lo spazio; una lista corta lascia il resto all'altra.
+    let section_header = 28.0;
+    let spare = (ui.available_height() - 2.0 * section_header - 12.0).max(80.0);
+    let staged_h = list_height(repo.stage.staged.len())
+        .min((spare / 2.0).max(spare - list_height(repo.stage.unstaged.len())));
+    let sides = [
+        (Side::Staged, &repo.stage.staged, staged_h),
+        (Side::Unstaged, &repo.stage.unstaged, f32::INFINITY),
+    ];
+    for (i, (side, items, height)) in sides.into_iter().enumerate() {
+        if i > 0 {
+            ui.separator();
+        }
+        let height = height.min(ui.available_height() - section_header).max(40.0);
+        stage_section(ui, side, items, open, enabled, height, actions);
+    }
+}
+
+/// Altezza che serve a una lista di `rows` file, almeno una riga.
+fn list_height(rows: usize) -> f32 {
+    rows.max(1) as f32 * (FILE_ROW_HEIGHT + 2.0)
+}
+
+/// Titolo con il conteggio, pulsante per tutta la lista, poi i file.
+fn stage_section(
+    ui: &mut Ui,
+    side: Side,
+    items: &[StageItem],
+    open: Option<&DiffTarget>,
+    enabled: bool,
+    height: f32,
+    actions: &mut Vec<Action>,
+) {
+    let (title, op, all_label, all_help) = match side {
+        Side::Staged => (
+            "In stage",
+            StageOp::Unstage,
+            "Unstage di tutto",
+            "Toglie dallo stage tutti i file di questa lista; il worktree non cambia",
+        ),
+        Side::Unstaged => (
+            "Non in stage",
+            StageOp::Stage,
+            "Stage di tutto",
+            "Mette in stage tutti i file di questa lista",
+        ),
+    };
+    ui.horizontal(|ui| {
+        ui.strong(format!("{title} ({})", items.len()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let button = ui
+                .add_enabled(
+                    enabled && !items.is_empty(),
+                    egui::Button::new(all_label).small(),
+                )
+                .on_hover_text(all_help);
+            if button.clicked()
+                && let Some(paths) = stage::all_paths(items)
+            {
+                actions.push(Action::Write(op, paths));
+            }
+        });
+    });
+    if items.is_empty() {
+        let text = match side {
+            Side::Staged => "Nessun file in stage.",
+            Side::Unstaged => "Nessuna modifica fuori dallo stage.",
+        };
+        ui.weak(text);
+        return;
+    }
+    let source = match side {
+        Side::Staged => DiffSource::Index,
+        Side::Unstaged => DiffSource::Worktree,
+    };
+    let font = FontId::proportional(13.0);
+    let mono = FontId::monospace(12.0);
+    let text = ui.visuals().text_color();
+    let weak = ui.visuals().weak_text_color();
+    let button_label = match op {
+        StageOp::Stage => "Stage",
+        StageOp::Unstage => "Unstage",
+    };
+    egui::ScrollArea::vertical()
+        .id_salt(("area-stage", side == Side::Staged))
+        .auto_shrink([false, true])
+        .max_height(height)
+        .show_rows(ui, FILE_ROW_HEIGHT, items.len(), |ui, range| {
+            for item in &items[range] {
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), FILE_ROW_HEIGHT),
+                    Sense::click(),
+                );
+                let target = DiffTarget {
+                    source,
+                    path: item.path.clone(),
+                };
+                if open == Some(&target) {
+                    ui.painter()
+                        .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+                } else if response.hovered() {
+                    ui.painter()
+                        .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                }
+                let painter = ui.painter_at(rect);
+                let badge = egui::Rect::from_center_size(
+                    egui::pos2(rect.left() + 11.0, rect.center().y),
+                    vec2(18.0, 16.0),
+                );
+                painter.rect_filled(badge, 3.0, change_color(item.change));
+                painter.text(
+                    badge.center(),
+                    Align2::CENTER_CENTER,
+                    change_letter(item.change),
+                    mono.clone(),
+                    Color32::from_gray(20),
+                );
+
+                // A destra il pulsante della riga.
+                let button_w = 62.0;
+                let button_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.right() - button_w, rect.top()),
+                    rect.right_bottom(),
+                );
+                let mut cell = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(button_rect)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
+                let button = cell
+                    .add_enabled(enabled, egui::Button::new(button_label).small())
+                    .on_hover_text(row_action_help(op, item));
+
+                let left = badge.right() + 6.0;
+                let right = button_rect.left() - 4.0;
+                let job = stage_path_job(item, &font, text, weak, right - left);
+                let galley = painter.layout_job(job);
+                let top = rect.center().y - galley.size().y / 2.0;
+                painter.galley(egui::pos2(left, top), galley, text);
+
+                let response = response.on_hover_text(stage_tooltip(op, item));
+                if (button.clicked() || response.double_clicked()) && enabled {
+                    actions.push(Action::Write(op, vec![item.path.clone()]));
+                } else if response.clicked() {
+                    actions.push(Action::OpenDiff(target));
+                }
+            }
+        });
+}
+
+fn stage_path_job(
+    item: &StageItem,
+    font: &FontId,
+    text: Color32,
+    weak: Color32,
+    width: f32,
+) -> egui::text::LayoutJob {
+    let format = |color| egui::TextFormat {
+        font_id: font.clone(),
+        color,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    if let Some(original) = &item.original {
+        job.append(&format!("{original} -> "), 0.0, format(weak));
+    }
+    job.append(&item.path.to_string(), 0.0, format(text));
+    job.wrap.max_width = width.max(10.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    job
+}
+
+fn conflict_name(conflict: Conflict) -> &'static str {
+    match conflict {
+        Conflict::BothDeleted => "eliminato da entrambi",
+        Conflict::AddedByUs => "aggiunto da noi",
+        Conflict::DeletedByThem => "eliminato da loro",
+        Conflict::AddedByThem => "aggiunto da loro",
+        Conflict::DeletedByUs => "eliminato da noi",
+        Conflict::BothAdded => "aggiunto da entrambi",
+        Conflict::BothModified => "modificato da entrambi",
+    }
+}
+
+fn row_action_help(op: StageOp, item: &StageItem) -> &'static str {
+    match op {
+        StageOp::Stage if item.is_conflict() => "Segna il conflitto come risolto (chiede conferma)",
+        StageOp::Stage => "Metti in stage questo file",
+        StageOp::Unstage => "Togli dallo stage questo file; il worktree non cambia",
+    }
+}
+
+fn stage_tooltip(op: StageOp, item: &StageItem) -> String {
+    let mut lines = Vec::new();
+    let path = match &item.original {
+        Some(original) => format!("{original} -> {}", item.path),
+        None => item.path.to_string(),
+    };
+    match item.conflict {
+        Some(conflict) => lines.push(format!(
+            "{path} (in conflitto: {})",
+            conflict_name(conflict)
+        )),
+        None => lines.push(format!("{path} ({})", format::change_name(item.change))),
+    }
+    lines.push("Clic: mostra il diff".to_owned());
+    lines.push(
+        match op {
+            StageOp::Stage if item.is_conflict() => {
+                "Doppio clic: segna il conflitto come risolto (chiede conferma)"
+            }
+            StageOp::Stage => "Doppio clic: metti in stage",
+            StageOp::Unstage => "Doppio clic: togli dallo stage",
+        }
+        .to_owned(),
+    );
+    lines.join("\n")
+}
+
+/// Quanti file in conflitto elencare nella conferma; gli altri diventano "e altri N".
+const CONFIRM_LIST: usize = 8;
+
+/// Conferma prima di mettere in stage file in conflitto: spiega che vengono segnati risolti.
+pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: &mut Vec<Action>) {
+    let modal = egui::Modal::new(egui::Id::unique("conferma-scrittura")).show(ctx, |ui| {
+        ui.set_max_width(440.0);
+        let n = write.conflicts.len();
+        ui.heading(if n == 1 {
+            "Segnare il conflitto come risolto?"
+        } else {
+            "Segnare i conflitti come risolti?"
+        });
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                "Mettere in stage un file in conflitto lo segna come risolto: nell'indice va il \
+                 contenuto attuale del file nel worktree, così com'è, compresi eventuali \
+                 marcatori di conflitto (<<<<<<<, =======, >>>>>>>) rimasti. Le versioni del \
+                 conflitto (base, nostra e loro) escono dall'indice. Controllare prima che il \
+                 file sia davvero risolto.",
+            )
+            .wrap(),
+        );
+        ui.add_space(6.0);
+        ui.strong(if n == 1 {
+            "File in conflitto:".to_owned()
+        } else {
+            format!("{n} file in conflitto:")
+        });
+        for path in write.conflicts.iter().take(CONFIRM_LIST) {
+            ui.monospace(path.to_string_lossy());
+        }
+        if n > CONFIRM_LIST {
+            ui.weak(format!("e altri {}", n - CONFIRM_LIST));
+        }
+        let others = write.paths.len() - n;
+        if others > 0 {
+            ui.add_space(4.0);
+            ui.weak(format!(
+                "Insieme a {others} altri file senza conflitti, messi in stage normalmente."
+            ));
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let label = if n == 1 {
+                "Segna come risolto"
+            } else {
+                "Segna come risolti"
+            };
+            if ui.button(label).clicked() {
+                actions.push(Action::ConfirmWrite);
+            }
+            if ui.button("Annulla").clicked() {
+                actions.push(Action::CancelWrite);
+            }
+        });
+    });
+    if modal.should_close() {
+        actions.push(Action::CancelWrite);
+    }
 }
 
 #[cfg(test)]

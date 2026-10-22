@@ -3,8 +3,8 @@
 
 use crate::Action;
 use crate::diff::{
-    DiffDoc, DiffTarget, Pane, Row, display_line, file_summary, file_title, line_number,
-    line_prefix,
+    DiffDoc, DiffSource, DiffTarget, Pane, Row, display_line, file_summary, file_title,
+    line_number, line_prefix,
 };
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use project_domain::LineKind;
@@ -38,8 +38,18 @@ pub(crate) fn diff_panel(ui: &mut Ui, pane: Pane<'_>, actions: &mut Vec<Action>)
                 actions.push(Action::RetryDiff);
             }
         }
-        Pane::Loaded(_, doc) if doc.diff.files.is_empty() => {
-            ui.centered_and_justified(|ui| ui.weak("Nessuna differenza per questo file."));
+        Pane::Loaded(target, doc) if doc.diff.files.is_empty() => {
+            let text = match target.source {
+                DiffSource::Worktree => {
+                    "Nessuna differenza rispetto all'indice. Un file non tracciato non ha diff \
+                     finché non è in stage: dopo lo stage il contenuto compare tra le modifiche \
+                     in stage."
+                }
+                _ => "Nessuna differenza per questo file.",
+            };
+            ui.centered_and_justified(|ui| {
+                ui.add(egui::Label::new(egui::RichText::new(text).weak()).wrap())
+            });
         }
         Pane::Loaded(_, doc) => rows(ui, doc),
     }
@@ -57,8 +67,20 @@ fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<A
         }
         ui.separator();
         ui.strong(target.path.to_string_lossy());
-        ui.weak(format!("nel commit {}", target.commit.short()))
-            .on_hover_text(target.commit.to_string());
+        match target.source {
+            DiffSource::Commit(id) => {
+                ui.weak(format!("nel commit {}", id.short()))
+                    .on_hover_text(id.to_string());
+            }
+            DiffSource::Worktree => {
+                ui.weak("non in stage")
+                    .on_hover_text("Modifiche nel worktree rispetto all'indice");
+            }
+            DiffSource::Index => {
+                ui.weak("in stage")
+                    .on_hover_text("Modifiche nell'indice rispetto all'ultimo commit (HEAD)");
+            }
+        }
         if let Pane::Loaded(_, doc) = pane
             && doc.line_counts() != (0, 0)
         {

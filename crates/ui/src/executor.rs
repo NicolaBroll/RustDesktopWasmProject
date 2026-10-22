@@ -20,6 +20,8 @@ pub struct Job {
     pub ticket: Ticket,
     /// Id del comando, es. `repo.open`.
     pub command: String,
+    /// Vero se il comando modifica il repository ([`CommandSpec::writes`](project_engine::CommandSpec::writes)).
+    pub writes: bool,
 }
 
 /// Un comando finito.
@@ -71,9 +73,11 @@ impl Executor {
     pub fn submit(&mut self, command: &str, params: Value) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
+        let writes = self.registry.get(command).is_some_and(|spec| spec.writes);
         self.running.push(Job {
             ticket,
             command: command.to_owned(),
+            writes,
         });
 
         let session = Arc::clone(&self.session);
@@ -114,6 +118,12 @@ impl Executor {
     /// Vero se c'è almeno un comando in corso.
     pub fn is_busy(&self) -> bool {
         !self.running.is_empty()
+    }
+
+    /// La scrittura in corso, se c'è: finché non è raccolta da [`Executor::poll`] la UI non ne
+    /// manda un'altra e disabilita le azioni che modificano il repo.
+    pub fn writing(&self) -> Option<&Job> {
+        self.running.iter().find(|job| job.writes)
     }
 }
 
@@ -194,6 +204,11 @@ mod tests {
         }
     }
 
+    fn slow_write(_: &mut Session, _: Value) -> Result<Value, EngineError> {
+        std::thread::sleep(SLOW);
+        Ok(json!({}))
+    }
+
     fn slow(_: &mut Session, params: Value) -> Result<Value, EngineError> {
         std::thread::sleep(SLOW);
         Ok(json!({ "echo": params }))
@@ -203,7 +218,8 @@ mod tests {
         panic!("comando finto che va in panico");
     }
 
-    /// Il catalogo vero più `test.slow` (dorme [`SLOW`]) e `test.panic`.
+    /// Il catalogo vero più `test.slow` (dorme [`SLOW`]), `test.panic` e `test.write` (una
+    /// scrittura che dorme [`SLOW`]).
     fn registry() -> Registry {
         let mut registry = Registry::builtin();
         let spec = |id| CommandSpec {
@@ -214,6 +230,13 @@ mod tests {
         };
         registry.register(spec("test.slow"), slow);
         registry.register(spec("test.panic"), panics);
+        registry.register(
+            CommandSpec {
+                writes: true,
+                ..spec("test.write")
+            },
+            slow_write,
+        );
         registry
     }
 
@@ -312,5 +335,40 @@ mod tests {
                 .contains("senza risultato")
         );
         assert!(!ex.is_busy());
+    }
+
+    #[test]
+    fn write_jobs_are_tracked_until_collected() {
+        let (mut ex, _) = executor(TestPlatform::Threads);
+        let read = ex.submit("test.slow", json!({}));
+        assert!(ex.writing().is_none(), "una lettura non è una scrittura");
+        let write = ex.submit("test.write", json!({}));
+        let job = ex.writing().expect("scrittura in corso");
+        assert_eq!(job.ticket, write);
+        assert!(job.writes);
+        assert!(
+            !ex.running()
+                .iter()
+                .find(|j| j.ticket == read)
+                .unwrap()
+                .writes
+        );
+
+        let done = wait(&mut ex, 2);
+        assert!(done.iter().all(|d| d.result.is_ok()));
+        assert!(ex.writing().is_none());
+    }
+
+    #[test]
+    fn builtin_write_commands_are_marked() {
+        let (mut ex, _) = executor(TestPlatform::Drop);
+        ex.submit("index.stage", json!({ "paths": ["a"] }));
+        assert!(ex.writing().is_some());
+        ex.poll();
+        assert!(ex.writing().is_none());
+        ex.submit("repo.status", json!({}));
+        assert!(ex.writing().is_none());
+        ex.submit("comando.inesistente", json!({}));
+        assert!(ex.writing().is_none());
     }
 }

@@ -1,4 +1,5 @@
-//! Vista del diff di un file: quale diff chiedere a `diff.commit`, quale risposta mostrare e
+//! Vista del diff di un file: quale diff chiedere (`diff.commit`, `diff.worktree` o
+//! `diff.index`), quale risposta mostrare e
 //! come trasformarla in righe da disegnare. Solo dati, senza egui: si prova con test unitari.
 //!
 //! Regole delle richieste (come il pannello dettagli):
@@ -9,12 +10,45 @@
 use crate::format::change_name;
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
 
-/// Il file di un commit di cui mostrare il diff.
+/// Da dove viene il diff di un file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSource {
+    /// Il commit rispetto al primo genitore (`diff.commit`).
+    Commit(Oid),
+    /// Le modifiche non in stage, worktree rispetto all'indice (`diff.worktree`).
+    Worktree,
+    /// Le modifiche in stage, indice rispetto a HEAD (`diff.index`).
+    Index,
+}
+
+/// Il file di cui mostrare il diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffTarget {
-    pub commit: Oid,
+    pub source: DiffSource,
     /// Il percorso nuovo del file (per rinomine e copie quello di arrivo).
     pub path: RepoPath,
+}
+
+impl DiffTarget {
+    pub fn commit(commit: Oid, path: RepoPath) -> Self {
+        Self {
+            source: DiffSource::Commit(commit),
+            path,
+        }
+    }
+
+    /// Il comando e i parametri che chiedono questo diff.
+    pub fn request(&self) -> (&'static str, serde_json::Value) {
+        let path = serde_json::to_value(&self.path).unwrap_or_default();
+        match self.source {
+            DiffSource::Commit(id) => (
+                "diff.commit",
+                serde_json::json!({ "id": id.to_string(), "path": path }),
+            ),
+            DiffSource::Worktree => ("diff.worktree", serde_json::json!({ "path": path })),
+            DiffSource::Index => ("diff.index", serde_json::json!({ "path": path })),
+        }
+    }
 }
 
 /// Cosa sa la vista del diff aperto.
@@ -66,6 +100,16 @@ impl DiffState {
         matches!(self.open.as_ref()?.answer, Some(Err(_)))
             .then(|| self.open(target))
             .flatten()
+    }
+
+    /// Richiede il diff aperto anche se è già caricato (il file è cambiato): restituisce il
+    /// numero della nuova richiesta. Fino alla risposta la vista mostra il caricamento.
+    pub fn reload(&mut self) -> Option<u64> {
+        let open = self.open.as_mut()?;
+        open.seq = self.next;
+        open.answer = None;
+        self.next += 1;
+        Some(open.seq)
     }
 
     /// Chiude la vista: le risposte in arrivo si scarteranno.
@@ -329,7 +373,7 @@ mod tests {
 
     fn target(n: u8, path: &str) -> DiffTarget {
         DiffTarget {
-            commit: oid(n),
+            source: DiffSource::Commit(oid(n)),
             path: path.into(),
         }
     }
@@ -593,5 +637,44 @@ mod tests {
         assert_eq!(line_prefix(LineKind::Added), '+');
         assert_eq!(line_prefix(LineKind::Removed), '-');
         assert_eq!(line_prefix(LineKind::Context), ' ');
+    }
+
+    #[test]
+    fn reload_asks_again_for_the_same_file() {
+        let mut state = DiffState::default();
+        assert_eq!(state.reload(), None, "niente da ricaricare");
+        let first = state.open(target(1, "a")).unwrap();
+        assert!(state.receive(first, Ok(Diff { files: Vec::new() })));
+        let second = state.reload().unwrap();
+        assert_ne!(first, second);
+        assert!(matches!(state.pane(), Pane::Loading(_)));
+        // La risposta della richiesta vecchia non vale più.
+        assert!(!state.receive(first, Ok(Diff { files: Vec::new() })));
+        assert!(state.receive(second, Ok(Diff { files: Vec::new() })));
+        assert!(matches!(state.pane(), Pane::Loaded(..)));
+    }
+
+    #[test]
+    fn each_source_asks_its_command() {
+        let path = RepoPath::from("src/lib.rs");
+        let commit = DiffTarget::commit(oid(3), path.clone());
+        let (command, params) = commit.request();
+        assert_eq!(command, "diff.commit");
+        assert_eq!(
+            params,
+            serde_json::json!({ "id": oid(3).to_string(), "path": "src/lib.rs" })
+        );
+        for (source, expected) in [
+            (DiffSource::Worktree, "diff.worktree"),
+            (DiffSource::Index, "diff.index"),
+        ] {
+            let target = DiffTarget {
+                source,
+                path: path.clone(),
+            };
+            let (command, params) = target.request();
+            assert_eq!(command, expected);
+            assert_eq!(params, serde_json::json!({ "path": "src/lib.rs" }));
+        }
     }
 }

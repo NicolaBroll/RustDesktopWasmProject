@@ -30,7 +30,8 @@ Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "
 (pagine da 200 commit se manca `limit`, con `has_more`), `commit.show {"id"}` (metadati e file
 cambiati rispetto al primo genitore), `diff.worktree {"path"?}` (modifiche non in stage),
 `diff.index {"path"?}` (modifiche in stage) e `diff.commit {"id", "path"?}` (commit rispetto al
-primo genitore). I diff restituiscono `{"files": [...]}` con hunk e righe; `path` limita il
+primo genitore). I diff restituiscono `{"files": [...]}` con hunk e righe (in `diff.worktree` e
+`diff.index` ogni file ha anche `digest`, da passare a `index.*_lines`); `path` limita il
 risultato a quel file (le rinomine restano tali) ed è una stringa, o un array di byte per i nomi
 non UTF-8. Non c'è un limite di dimensione: per i commit grandi conviene chiedere un file alla
 volta.
@@ -45,6 +46,15 @@ restituiscono `{"status", "backup"}`: il nuovo stato, come `repo.status`, e il r
 dell'indice (o `null`). Il backup si salva da solo prima di scrivere quando una versione in stage
 non è né in HEAD né nel worktree e andrebbe persa (`git show <ref>:<percorso>` la recupera); se
 non riesce, l'indice non si tocca.
+
+`index.stage_lines {"path", "lines", "digest"}` e `index.unstage_lines {"path", "lines",
+"digest"}` mettono in stage o tolgono dallo stage solo alcune righe di un file (con `git apply
+--cached`, mai il worktree): `lines` è una lista non vuota di `{"old": n}` (riga tolta) o
+`{"new": n}` (riga aggiunta) con i numeri di riga di `diff.worktree` (stage) o `diff.index`
+(unstage) per `path`, e `digest` è quello del file nello stesso diff. Se il file è cambiato da
+quando il diff è stato letto il comando fallisce senza scrivere niente (va riletto il diff).
+Risultato e backup come `index.stage`. File binari, sottomoduli, link simbolici e conflitti si
+mettono in stage solo interi.
 
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
 `writes: true` per i comandi che modificano il repository. All'avvio apre il

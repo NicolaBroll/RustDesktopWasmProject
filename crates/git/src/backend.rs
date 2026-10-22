@@ -3,14 +3,14 @@
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
 use project_domain::EntryKind;
-use project_domain::{Change, Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use project_domain::{
-    DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_diff,
-    parse_diff_tree, parse_log, parse_refs, parse_status,
+    APPLY_ARGS, DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, PatchDirection, REFS_ARGS,
+    STATUS_ARGS, parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
+use project_domain::{Change, Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use project_engine::{
-    BACKUP_PREFIX, DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener, StagedVersion,
-    backup_message, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, DiffSpec, EngineError, GitBackend, LinePatch, LineSelection, LogQuery,
+    RepoOpener, StagedVersion, backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -619,6 +619,9 @@ impl CliBackend {
                 return true;
             }
             match before.get(&entry.path) {
+                // Un file `intent-to-add` (`.A`): `git status` dà modo e id zero, ma
+                // nell'indice c'è una voce con il blob vuoto.
+                Some(_) if entry.worktree == Change::Added && info.mode_index == 0 => true,
                 Some(e) => info.mode_index == e.mode && info.oid_index == e.oid,
                 None => info.mode_index == 0,
             }
@@ -632,6 +635,63 @@ impl CliBackend {
                     .to_owned(),
             ))
         }
+    }
+
+    /// [`EngineError::IndexLocked`] se l'indice è bloccato da un altro processo git (esiste
+    /// `index.lock`). Solo un controllo anticipato, per non salvare un backup inutile prima di
+    /// una scrittura che fallirebbe: la scrittura vera lo ricontrolla comunque (git non
+    /// sovrascrive mai un lock).
+    fn check_index_unlocked(&self) -> Result<(), EngineError> {
+        let lock = self.git_dir.join("index.lock");
+        if lock.symlink_metadata().is_ok() {
+            return Err(EngineError::IndexLocked {
+                lock: lock.to_string_lossy().into_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Subito dopo aver letto il diff da cui viene la patch: la voce dell'indice che la patch
+    /// cambia è quella su cui il diff è stato calcolato, cioè quella letta prima in `index`
+    /// (da cui vengono anche il controllo dei rischi e il backup). Il lato indice del diff è il
+    /// vecchio per lo stage (`git diff`), il nuovo per l'unstage (`git diff --cached`).
+    fn check_diff_matches_index(
+        &self,
+        index: &IndexListing,
+        prepared: &LinePatch,
+        direction: PatchDirection,
+    ) -> Result<(), EngineError> {
+        let file = &prepared.file;
+        let entry = index.get(prepared.target());
+        let consistent = match direction {
+            // Un file nuovo nel diff del worktree è un segnaposto `intent-to-add`: nell'indice
+            // c'è, con il blob vuoto.
+            PatchDirection::Stage if file.change == Change::Added => entry.is_some(),
+            PatchDirection::Stage => entry.map(|e| e.oid) == file.old_oid,
+            // Un file eliminato in stage non è nell'indice.
+            PatchDirection::Unstage if file.change == Change::Deleted => entry.is_none(),
+            PatchDirection::Unstage => entry.map(|e| e.oid) == file.new_oid,
+        };
+        if consistent {
+            Ok(())
+        } else {
+            Err(EngineError::NotAllowed(
+                "l'indice è cambiato mentre si preparava la scrittura (un altro processo git?): \
+                 niente scritto, riprovare"
+                    .to_owned(),
+            ))
+        }
+    }
+
+    /// `git apply <APPLY_ARGS> [--check] -` con la patch su stdin.
+    fn git_apply(&self, patch: &[u8], check: bool) -> Result<(), EngineError> {
+        let mut args = vec!["apply"];
+        args.extend_from_slice(APPLY_ARGS);
+        if check {
+            args.push("--check");
+        }
+        args.push("-");
+        self.run_input(&args, patch, &[]).map(|_| ())
     }
 
     /// `git <args>` con `input` su stdin e le variabili `env`; stdout, o l'errore di git.
@@ -907,6 +967,27 @@ impl GitBackend for CliBackend {
         if !out.status.success() {
             return Err(failure(&args, &out));
         }
+        Ok(backup)
+    }
+
+    fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {
+        let operation = selection.command_id();
+        let status = self.status_for_write()?;
+        let index = self.index_listing()?;
+        // Il diff si legge dopo l'indice: se nel frattempo un altro git ha cambiato la voce,
+        // `check_diff_matches_index` se ne accorge.
+        let diff = self.diff(&selection.diff_spec())?;
+        let prepared = line_patch(&diff, selection)?;
+        self.check_diff_matches_index(&index, &prepared, selection.direction)?;
+        let patch = prepared.patch.to_patch();
+        // Prima la prova, che non scrive niente: una patch che non si applica non lascia
+        // nemmeno un backup.
+        self.git_apply(&patch, true)?;
+        self.check_index_unlocked()?;
+        let touched = prepared.touched(selection);
+        let backup = self.backup(operation, &status, &index, &touched)?;
+        self.check_index_unchanged(&status, &index, &touched)?;
+        self.git_apply(&patch, false)?;
         Ok(backup)
     }
 }

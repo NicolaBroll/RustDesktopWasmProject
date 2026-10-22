@@ -198,6 +198,53 @@ fn run_stage_and_unstage() {
 }
 
 #[test]
+fn run_stage_and_unstage_lines() {
+    let repo = temp_repo(3);
+    std::fs::write(repo.path().join("a.txt"), "riga 1\nDUE\nriga 3\nquattro\n").unwrap();
+    let run = |cmd: String| {
+        let output = cli()
+            .args(["--repo", path_str(repo.path()), "run", "--cmd", &cmd])
+            .output()
+            .unwrap();
+        (output.status.success(), json_lines(&output.stdout), output)
+    };
+    // Prima il diff, da cui vengono i numeri di riga e il digest.
+    let (ok, lines, output) = run(r#"diff.worktree={"path":"a.txt"}"#.to_owned());
+    assert!(ok, "{output:?}");
+    let digest = lines[0]["files"][0]["digest"].as_str().unwrap().to_owned();
+    let params = json!({ "path": "a.txt", "lines": [{ "new": 4 }], "digest": digest });
+    let (ok, lines, output) = run(format!("index.stage_lines={params}"));
+    assert!(ok, "{output:?}");
+    assert_eq!(lines[0]["backup"], Value::Null);
+    assert_eq!(lines[0]["status"]["entries"][0]["index"], "Modified");
+    assert_eq!(lines[0]["status"]["entries"][0]["worktree"], "Modified");
+    // Il worktree non cambia.
+    let a = std::fs::read_to_string(repo.path().join("a.txt")).unwrap();
+    assert_eq!(a, "riga 1\nDUE\nriga 3\nquattro\n");
+
+    // Lo stesso digest, dopo la scrittura, è vecchio.
+    let (ok, _, output) = run(format!("index.stage_lines={params}"));
+    assert!(!ok, "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("rileggere"), "{stderr}");
+
+    let (ok, lines, output) = run(r#"diff.index={"path":"a.txt"}"#.to_owned());
+    assert!(ok, "{output:?}");
+    let digest = lines[0]["files"][0]["digest"].as_str().unwrap().to_owned();
+    let params = json!({ "path": "a.txt", "lines": [{ "new": 4 }], "digest": digest });
+    let (ok, lines, output) = run(format!("index.unstage_lines={params}"));
+    assert!(ok, "{output:?}");
+    // `MM`: la versione in stage era solo nell'indice.
+    assert!(
+        lines[0]["backup"]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/")
+    );
+    assert_eq!(lines[0]["status"]["entries"][0]["index"], "Unmodified");
+}
+
+#[test]
 fn repo_option_goes_before_or_after_the_subcommand() {
     let repo = temp_repo(1);
     let output = cli()
@@ -252,7 +299,9 @@ fn commands_lists_the_catalog() {
             "diff.index",
             "diff.worktree",
             "index.stage",
+            "index.stage_lines",
             "index.unstage",
+            "index.unstage_lines",
             "repo.log",
             "repo.open",
             "repo.refs",
@@ -265,7 +314,15 @@ fn commands_lists_the_catalog() {
         .filter(|l| l.ends_with("[modifica]"))
         .map(|l| l.split_whitespace().next().unwrap())
         .collect();
-    assert_eq!(marked, ["index.stage", "index.unstage"]);
+    assert_eq!(
+        marked,
+        [
+            "index.stage",
+            "index.stage_lines",
+            "index.unstage",
+            "index.unstage_lines"
+        ]
+    );
 
     let output = cli()
         .args(["commands", "--search", "cronologia"])

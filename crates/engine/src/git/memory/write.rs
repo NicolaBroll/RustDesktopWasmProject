@@ -7,7 +7,9 @@
 //! copia e la applica solo se tutti i percorsi sono validi: un errore non cambia niente.
 
 use super::{MemoryBackend, content_oid};
-use crate::git::{BACKUP_PREFIX, GitBackend, versions_at_risk};
+use crate::git::{
+    BACKUP_PREFIX, GitBackend, LineSelection, apply_patch, line_patch, versions_at_risk,
+};
 use crate::{EngineError, path_matches as matches};
 use project_domain::{
     Change, ChangedFile, EntryKind, Oid, RepoPath, StatusEntry, TrackedInfo, UnmergedInfo,
@@ -435,6 +437,111 @@ impl MemoryBackend {
     }
 }
 
+impl MemoryBackend {
+    /// [`GitBackend::apply_lines`](crate::GitBackend::apply_lines): la patch delle righe scelte
+    /// applicata al contenuto in stage del file, poi stato e diff ricalcolati come dopo uno
+    /// stage. Il worktree non cambia.
+    pub(super) fn apply_line_patch(
+        &mut self,
+        selection: &LineSelection,
+    ) -> Result<Option<String>, EngineError> {
+        let diff = self.diff(&selection.diff_spec())?;
+        let prepared = line_patch(&diff, selection)?;
+        let target = prepared.target().clone();
+        let not_in_index = || EngineError::Git {
+            command: "apply".to_owned(),
+            stderr: format!("error: {target}: does not exist in index"),
+        };
+        let i = self
+            .entries
+            .iter()
+            .position(|e| e.path == target && tracked_info(e).is_some())
+            .ok_or_else(not_in_index)?;
+        let entry = self.entries[i].clone();
+        let info = tracked_info(&entry).cloned().ok_or_else(not_in_index)?;
+        // Senza versione in stage (file `intent-to-add`, o eliminato in stage) la patch crea il
+        // file.
+        let base = (info.mode_index != 0)
+            .then(|| self.blobs.get(&info.oid_index).cloned())
+            .flatten();
+        if info.mode_index != 0 && base.is_none() {
+            return Err(EngineError::Git {
+                command: "apply".to_owned(),
+                stderr: format!("error: {target}: contenuto in stage sconosciuto"),
+            });
+        }
+        let content =
+            apply_patch(base.as_deref(), &prepared.patch).map_err(|e| EngineError::Git {
+                command: "apply".to_owned(),
+                stderr: format!("error: patch failed: {target}: {e}"),
+            })?;
+        let backup = self.backup(&prepared.touched(selection))?;
+
+        self.keep_worktree(&entry, info.mode_index, info.oid_index);
+        let mut info = info;
+        match content {
+            Some(content) => {
+                if info.mode_index == 0 {
+                    info.mode_index = prepared
+                        .patch
+                        .new_mode
+                        .or(Some(info.mode_worktree).filter(|m| *m != 0))
+                        .unwrap_or(FILE_MODE);
+                }
+                // Come in git, lo stesso contenuto ha lo stesso id: se torna come in HEAD, l'id
+                // di HEAD (gli id del `MemoryBackend` sono finti e non vengono dal contenuto).
+                info.oid_index = if self.blobs.get(&info.oid_head) == Some(&content) {
+                    info.oid_head
+                } else {
+                    self.store_blob(content)
+                };
+            }
+            None => {
+                info.mode_index = 0;
+                info.oid_index = ZERO;
+            }
+        }
+        let mut entry = entry;
+        let mut extra = None;
+        let absent = entry.worktree == Change::Deleted || info.mode_worktree == 0;
+        entry.worktree = if absent {
+            info.mode_worktree = 0;
+            if info.mode_index == 0 {
+                Change::Unmodified
+            } else {
+                Change::Deleted
+            }
+        } else if info.mode_index == 0 {
+            if info.mode_head == 0 {
+                // Uscito dall'indice e mai stato in HEAD: torna non tracciato.
+                self.entries[i] = untracked(entry.path);
+                self.entries
+                    .sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
+                return Ok(backup);
+            }
+            // Eliminato in stage ma ancora nel worktree: anche non tracciato, come per git.
+            extra = Some(untracked(entry.path.clone()));
+            info.mode_worktree = 0;
+            Change::Unmodified
+        } else if info.mode_worktree == info.mode_index
+            && self.worktree_is(&entry.path, info.oid_index)
+        {
+            Change::Unmodified
+        } else if file_type(info.mode_worktree) != file_type(info.mode_index) {
+            Change::TypeChanged
+        } else {
+            Change::Modified
+        };
+        let next = self.finish(entry, info);
+        self.entries.remove(i);
+        self.entries.extend(next);
+        self.entries.extend(extra);
+        self.entries
+            .sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
+        Ok(backup)
+    }
+}
+
 const FILE_MODE: u32 = 0o100644;
 
 /// Una rinomina (o copia) in stage come due voci: il vecchio percorso cancellato in stage (solo
@@ -489,3 +596,7 @@ fn apply_change(tree: &mut BTreeMap<RepoPath, TreeEntry>, file: &ChangedFile) {
 #[cfg(test)]
 #[path = "write_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "lines_tests.rs"]
+mod lines_tests;

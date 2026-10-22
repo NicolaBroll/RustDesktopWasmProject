@@ -342,7 +342,9 @@ mod tests {
             ids,
             [
                 (json!("index.stage"), json!(true)),
-                (json!("index.unstage"), json!(true))
+                (json!("index.stage_lines"), json!(true)),
+                (json!("index.unstage"), json!(true)),
+                (json!("index.unstage_lines"), json!(true))
             ]
         );
 
@@ -370,6 +372,52 @@ mod tests {
             json!({"id": "index.unstage", "params": {"paths": ["../fuori"]}}),
         );
         assert_eq!(r["isError"], true, "{r}");
+
+        // Righe: prima il diff (numeri di riga e digest), poi lo stage di una riga.
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "diff.worktree", "params": {"path": "src/lib.rs"}}),
+        );
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let diff: Value = serde_json::from_str(text).unwrap();
+        let file = &diff["files"][0];
+        let added = file["hunks"][0]["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["kind"] == "Added")
+            .unwrap();
+        let params = json!({
+            "path": "src/lib.rs",
+            "lines": [{ "new": added["new_line"] }],
+            "digest": file["digest"],
+        });
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "index.stage_lines", "params": params}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let out: Value = serde_json::from_str(text).unwrap();
+        let lib = out["status"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"] == "src/lib.rs")
+            .unwrap();
+        assert_eq!(lib["index"], "Modified");
+        assert_eq!(lib["worktree"], "Modified");
+        // Lo stesso digest è ormai vecchio: errore che spiega cosa fare.
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "index.stage_lines", "params": params}),
+        );
+        assert_eq!(r["isError"], true, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("rileggere il diff"), "{text}");
     }
 
     #[test]

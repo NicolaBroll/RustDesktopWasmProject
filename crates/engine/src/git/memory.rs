@@ -3,7 +3,7 @@
 mod write;
 
 use super::line_diff;
-use super::{DiffSpec, GitBackend, LogQuery, RepoOpener, StagedVersion};
+use super::{DiffSpec, GitBackend, LineSelection, LogQuery, RepoOpener, StagedVersion};
 use crate::EngineError;
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
@@ -614,6 +614,10 @@ impl GitBackend for MemoryBackend {
 
     fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         self.unstage_paths(paths)
+    }
+
+    fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {
+        self.apply_line_patch(selection)
     }
 }
 

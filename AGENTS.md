@@ -59,6 +59,8 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
 # scrivono nell'indice del repo (segnati `[modifica]` in `commands`, `writes` in MCP)
 cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["README.md"]}' --cmd 'index.unstage={"paths":["README.md"]}'
+# righe: numeri e `digest` dal diff del file, poi
+cargo run -p project-cli -- --repo . run --cmd 'index.stage_lines={"path":"README.md","lines":[{"new":3}],"digest":"<da diff.worktree>"}'
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval
 cargo run -p project-cli -- mcp --root .   # tool: list_commands, execute_command, open_repo
 ```

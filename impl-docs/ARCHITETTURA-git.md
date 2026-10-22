@@ -76,7 +76,7 @@ pub struct Commit {
 pub enum RefKind { LocalBranch, RemoteBranch, Tag, Stash }
 pub struct RefInfo { pub name: String, pub kind: RefKind, pub target: Oid, pub upstream: Option<Upstream> }
 pub enum Head { Branch { name: String, target: Option<Oid> }, Detached(Oid) }
-pub struct Status { pub head: Head, pub entries: Vec<StatusEntry>, pub operation: Option<Operation> }
+pub struct Status { pub head: Head, pub upstream: Option<Upstream>, pub entries: Vec<StatusEntry>, pub operation: Option<Operation> }
 pub enum Operation { Merge, Rebase, CherryPick, Revert, Bisect }   // stato "in corso"
 pub struct Diff { pub files: Vec<FileDiff> }                        // FileDiff → Hunk → Line
 ```

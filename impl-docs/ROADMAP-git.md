@@ -175,7 +175,7 @@ Regole valide per tutti gli step:
   CI verde.
 
 ### S21 — Commit
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `commit.create` (messaggio via stdin, opzione `amend`), con hook e firma
   secondo la configurazione dell'utente; casella del messaggio nell'area di stage.
 - **Fatto quando:** test di integrazione, anche con un hook `pre-commit` che fallisce; CI verde.

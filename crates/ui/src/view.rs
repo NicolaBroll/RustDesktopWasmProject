@@ -1,6 +1,7 @@
 //! Disegno dei pannelli. Le funzioni leggono la vista e producono [`Action`]; non cambiano
 //! niente direttamente.
 
+use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
 use crate::details::Shown;
 use crate::diff::{DiffSource, DiffTarget};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
@@ -825,9 +826,20 @@ fn file_tooltip(file: &ChangedFile) -> String {
 }
 
 /// Area di stage, al posto dei dettagli quando è selezionata la riga delle modifiche: le liste
-/// "In stage" e "Non in stage", ciascuna virtualizzata. `writing` è vero mentre una scrittura
-/// è in corso: le azioni che modificano il repo sono disabilitate.
-pub(crate) fn stage_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
+/// "In stage" e "Non in stage", ciascuna virtualizzata, e sotto la casella del messaggio di
+/// commit. `writing` è vero mentre una scrittura è in corso: le azioni che modificano il repo
+/// sono disabilitate. `draft` è la bozza del messaggio, che i campi di testo cambiano.
+pub(crate) fn stage_panel(
+    ui: &mut Ui,
+    repo: &RepoView,
+    draft: &mut CommitDraft,
+    writing: bool,
+    actions: &mut Vec<Action>,
+) {
+    egui::Panel::bottom("messaggio-commit")
+        .resizable(false)
+        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
+        .show(ui, |ui| commit_box(ui, repo, draft, writing, actions));
     ui.add_space(4.0);
     ui.heading("Modifiche non committate");
     if writing {
@@ -848,7 +860,7 @@ pub(crate) fn stage_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: 
         });
     }
     ui.separator();
-    let enabled = !writing && repo.confirm.is_none();
+    let enabled = !writing && !repo.modal_open();
     let open = repo.diff.target();
     // Le due liste si dividono lo spazio; una lista corta lascia il resto all'altra.
     let section_header = 28.0;
@@ -865,6 +877,166 @@ pub(crate) fn stage_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: 
         }
         let height = height.min(ui.available_height() - section_header).max(40.0);
         stage_section(ui, side, items, open, enabled, height, actions);
+    }
+}
+
+/// Righe del corpo del messaggio.
+const BODY_ROWS: usize = 4;
+/// Altezza massima dell'output di git dopo un commit fallito; oltre si scorre.
+const OUTPUT_HEIGHT: f32 = 140.0;
+
+/// Casella del messaggio di commit: oggetto con il contatore, corpo, amend, pulsante "Commit"
+/// (anche Ctrl+Invio) e l'errore dell'ultimo commit.
+fn commit_box(
+    ui: &mut Ui,
+    repo: &RepoView,
+    draft: &mut CommitDraft,
+    writing: bool,
+    actions: &mut Vec<Action>,
+) {
+    let sending = repo.commit.sending().is_some();
+    let gate = Gate {
+        draft,
+        ..repo.commit_gate(writing)
+    }
+    .check();
+    // Prima dei campi di testo, che altrimenti riceverebbero il tasto.
+    let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Enter);
+    if !repo.modal_open() && ui.input_mut(|i| i.consume_shortcut(&shortcut)) && gate.is_ok() {
+        actions.push(Action::Commit);
+    }
+
+    ui.horizontal(|ui| {
+        ui.strong("Messaggio di commit");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let len = draft.subject_len();
+            let text = format!("{len}/{}", commit::SUBJECT_LIMIT);
+            if draft.subject_too_long() {
+                ui.label(RichText::new(text).small().color(ui.visuals().warn_fg_color))
+                    .on_hover_text(format!(
+                        "L'oggetto supera {} caratteri: nel log e in molti strumenti viene                          tagliato. Il resto può andare nel corpo.",
+                        commit::SUBJECT_LIMIT
+                    ));
+            } else {
+                ui.label(RichText::new(text).small().weak())
+                    .on_hover_text("Caratteri dell'oggetto");
+            }
+        });
+    });
+    ui.add_enabled(
+        !sending,
+        egui::TextEdit::singleline(&mut draft.subject)
+            .id_salt("oggetto-commit")
+            .hint_text("Oggetto (una riga breve)")
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_enabled(
+        !sending,
+        egui::TextEdit::multiline(&mut draft.body)
+            .id_salt("corpo-commit")
+            .hint_text("Descrizione (facoltativa)")
+            .desired_rows(BODY_ROWS)
+            .desired_width(f32::INFINITY),
+    );
+
+    let mut amend = draft.amend();
+    let toggle = ui
+        .add_enabled(
+            !sending && !writing,
+            egui::Checkbox::new(&mut amend, "Amend (modifica l'ultimo commit)"),
+        )
+        .on_hover_text(
+            "Sostituisce l'ultimo commit con uno nuovo: stesso autore e genitori, il messaggio              scritto qui e le modifiche in stage aggiunte. Il commit sostituito resta salvato in              un ref di backup.",
+        );
+    if toggle.changed() {
+        actions.push(Action::SetAmend(amend));
+    }
+    if draft.amend() {
+        let what = match repo.head_commit() {
+            Some(c) => format!("l'ultimo commit {} «{}»", c.id.short(), c.summary),
+            None => match repo.head.target() {
+                Some(id) => format!("l'ultimo commit {}", id.short()),
+                None => "l'ultimo commit".to_owned(),
+            },
+        };
+        let mut text = format!("Cambierà {what}: verrà sostituito da un commit nuovo.");
+        if draft.is_proposed() {
+            text.push_str(" Il messaggio è quello attuale: modificarlo se serve.");
+        }
+        ui.add(
+            egui::Label::new(
+                RichText::new(text)
+                    .small()
+                    .color(ui.visuals().warn_fg_color),
+            )
+            .wrap(),
+        );
+    }
+
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        let label = if draft.amend() {
+            "Commit (amend)"
+        } else {
+            "Commit"
+        };
+        let button = ui.add_enabled(gate.is_ok(), egui::Button::new(label));
+        let button = match gate {
+            Ok(()) => button.on_hover_text("Crea il commit (Ctrl+Invio)"),
+            Err(blocked) => button.on_disabled_hover_text(blocked.hint()),
+        };
+        if button.clicked() {
+            actions.push(Action::Commit);
+        }
+        if sending {
+            ui.spinner();
+            let label = repo.write_label.as_deref().unwrap_or("Commit");
+            ui.weak(format!("{label} in corso…"));
+        } else {
+            ui.weak("Ctrl+Invio");
+        }
+    });
+    // Perché il pulsante è spento, senza dover passare il mouse (non durante il lavoro).
+    if let Err(blocked) = gate
+        && !matches!(blocked, commit::Blocked::Busy)
+    {
+        ui.add(egui::Label::new(RichText::new(blocked.hint()).small().weak()).wrap());
+    }
+
+    if let Some(error) = repo.commit.error() {
+        ui.add_space(4.0);
+        ui.horizontal_top(|ui| {
+            if ui.small_button("x").on_hover_text("Nascondi").clicked() {
+                actions.push(Action::DismissCommitError);
+            }
+            ui.add(
+                egui::Label::new(RichText::new(&error.message).color(ui.visuals().error_fg_color))
+                    .wrap(),
+            );
+        });
+        if let Some(output) = &error.output {
+            egui::ScrollArea::vertical()
+                .id_salt("output-commit")
+                .max_height(OUTPUT_HEIGHT)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    // Un `&str` rende il campo di sola lettura, ma selezionabile e copiabile.
+                    ui.add(
+                        egui::TextEdit::multiline(&mut output.as_str())
+                            .id_salt("output-commit-testo")
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(1)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+            if ui
+                .small_button("Copia l'output")
+                .on_hover_text("Copia negli appunti tutto l'output di git")
+                .clicked()
+            {
+                ui.ctx().copy_text(output.clone());
+            }
+        }
     }
 }
 
@@ -1131,6 +1303,56 @@ pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: 
     });
     if modal.should_close() {
         actions.push(Action::CancelWrite);
+    }
+}
+
+/// Conferma prima di riscrivere con amend un commit già su un branch remoto.
+pub(crate) fn confirm_amend(
+    ctx: &egui::Context,
+    confirm: &ConfirmAmend,
+    left_behind: &[String],
+    actions: &mut Vec<Action>,
+) {
+    let modal = egui::Modal::new(egui::Id::unique("conferma-amend")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        ui.heading("Riscrivere un commit già pubblicato?");
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                "L'ultimo commit è già pubblicato o etichettato: lo contiene un branch remoto o \
+                 un tag. Con amend viene sostituito da un commit nuovo: i branch remoti e i tag \
+                 restano sul commit vecchio, il branch locale diverge da quello remoto e per \
+                 pubblicare la modifica servirà un push forzato, che riscrive la storia anche per \
+                 chi ha già scaricato il commit. Il commit attuale resta salvato in un ref di \
+                 backup.",
+            )
+            .wrap(),
+        );
+        ui.add_space(6.0);
+        ui.strong("Motivo:");
+        ui.add(egui::Label::new(RichText::new(&confirm.reason).monospace()).wrap());
+        if !left_behind.is_empty() {
+            ui.add_space(6.0);
+            ui.strong("Restano sul commit vecchio anche:");
+            for name in left_behind.iter().take(CONFIRM_LIST) {
+                ui.monospace(name);
+            }
+            if left_behind.len() > CONFIRM_LIST {
+                ui.weak(format!("e altri {}", left_behind.len() - CONFIRM_LIST));
+            }
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui.button("Riscrivi il commit").clicked() {
+                actions.push(Action::ConfirmCommit);
+            }
+            if ui.button("Annulla").clicked() {
+                actions.push(Action::CancelCommit);
+            }
+        });
+    });
+    if modal.should_close() {
+        actions.push(Action::CancelCommit);
     }
 }
 

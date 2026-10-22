@@ -55,7 +55,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test con output catturato; CI verde.
 
 ### S05 — Trait del backend e `MemoryBackend`
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** in `crates/engine` i trait `GitBackend` (sola lettura: `head`, `refs`, `log`,
   `status`) e `RepoOpener`, più `MemoryBackend` con un costruttore di repo di esempio (una
   dozzina di commit con due branch e un merge).

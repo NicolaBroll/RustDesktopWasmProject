@@ -1,14 +1,17 @@
-//! Tipi del client git: identificatori, commit, ref, HEAD.
+//! Tipi del client git: identificatori, commit, ref, HEAD, corsie del grafo.
 //!
 //! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
 //! (il log, [`parse_log`], lo stato, [`parse_status`], e i ref, [`parse_refs`]).
 
+mod graph;
 mod log;
 mod oid;
 mod path;
 mod refs;
 mod status;
 
+#[cfg(test)]
+mod graph_tests;
 #[cfg(test)]
 mod log_tests;
 #[cfg(test)]
@@ -18,6 +21,7 @@ mod status_tests;
 #[cfg(test)]
 mod tests;
 
+pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
 pub use path::RepoPath;

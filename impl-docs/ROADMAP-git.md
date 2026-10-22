@@ -120,7 +120,7 @@ Regole valide per tutti gli step:
   commit); CI verde.
 
 ### S13 — Corsie del grafo
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** algoritmo delle corsie (§3) come funzione pura, con test di proprietà
   (`proptest`) sugli invarianti e casi fissi (lineare, branch, merge, ottopus merge, più radici).
 - **Fatto quando:** test passano; CI verde.

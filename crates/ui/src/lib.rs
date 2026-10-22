@@ -9,11 +9,13 @@
 
 mod executor;
 mod format;
+mod graph;
 mod list;
 mod view;
 
 pub use executor::{Done, Executor, Job, Ticket, Wake};
 
+use graph::RefLabel;
 use list::{CommitList, PageRequest};
 use project_domain::{Commit, Head, Oid, RefInfo, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
@@ -59,17 +61,26 @@ struct RepoView {
     refs: Vec<RefInfo>,
     status: Option<Status>,
     list: CommitList,
+    /// Etichette dei ref per commit, rifatte quando cambiano ref o HEAD.
+    labels: HashMap<Oid, Vec<RefLabel>>,
 }
 
 impl RepoView {
     fn new(path: String, head: Head) -> Self {
-        Self {
+        let mut view = Self {
             path,
             head,
             refs: Vec::new(),
             status: None,
             list: CommitList::default(),
-        }
+            labels: HashMap::new(),
+        };
+        view.update_labels();
+        view
+    }
+
+    fn update_labels(&mut self) {
+        self.labels = graph::ref_labels(&self.refs, &self.head);
     }
 }
 
@@ -282,6 +293,7 @@ impl App {
             Request::Refs(generation) => {
                 if let Some(repo) = self.current(generation) {
                     repo.refs = serde_json::from_value(value)?;
+                    repo.update_labels();
                 }
             }
             Request::Status(generation) => {
@@ -289,6 +301,7 @@ impl App {
                     let status: Status = serde_json::from_value(value)?;
                     repo.head = status.head.clone();
                     repo.status = Some(status);
+                    repo.update_labels();
                 }
             }
             Request::Log(generation, page) => {

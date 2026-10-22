@@ -56,6 +56,11 @@ impl Platform for WebPlatform {
         }
     }
 
+    /// Il browser non ha thread: il job gira subito (il `MemoryBackend` è istantaneo).
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+        job();
+    }
+
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {
         if let Err(e) = download(suggested_name, &bytes) {
             log::error!("salvataggio file: {e:?}");

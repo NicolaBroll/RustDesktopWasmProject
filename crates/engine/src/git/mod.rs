@@ -5,6 +5,7 @@
 //! [`MemoryBackend`] (qui, per i test e la versione web) e `CliBackend` (in `project-git`).
 
 mod backup;
+mod commit;
 mod line_diff;
 mod lines;
 mod memory;
@@ -18,6 +19,10 @@ mod memory_tests;
 pub use backup::{
     BACKUP_PREFIX, StagedVersion, backup_message, path_matches, versions_at_risk,
     versions_at_risk_hidden,
+};
+pub use commit::{
+    CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
+    cleanup_message, split_message,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{MemoryBackend, MemoryOpener};
@@ -126,6 +131,24 @@ pub trait GitBackend: Send {
     /// e con l'indice bloccato dà [`EngineError::IndexLocked`]. Un errore prima della scrittura
     /// non cambia niente.
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError>;
+
+    /// Crea un commit con quello che è in stage (`commit.create`), o con `request.amend`
+    /// riscrive l'ultimo. Il worktree non si tocca; dopo, l'indice è uguale al nuovo HEAD.
+    ///
+    /// Prima di scrivere: [`CommitRequest::check_message`], [`check_commit_state`] (conflitti,
+    /// operazioni in corso, niente da committare, `amend` senza commit o durante un merge) e,
+    /// con `amend`, [`check_amend_published`] sui branch remoti e i tag che contengono HEAD
+    /// ([`amend_impact`]; gli altri branch e tag che lo contengono vanno in `also_on`). Con
+    /// `amend` il commit riscritto è salvato in un ref di backup
+    /// (`refs/project/backup/amend-...`, nel risultato) prima di scrivere; se il backup non
+    /// riesce non si committa. Il `CliBackend` esegue `git commit` con hook e firma secondo la
+    /// configurazione dell'utente: un hook che rifiuta o una firma che non riesce danno
+    /// [`EngineError::Git`] con tutto quello che hanno scritto, e nessun commit.
+    ///
+    /// Primo commit di un branch e HEAD staccata funzionano (con HEAD staccata si sposta
+    /// HEAD, nessun branch). Senza identità (`user.name`/`user.email`) l'errore è quello di
+    /// git: nessun nome inventato.
+    fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

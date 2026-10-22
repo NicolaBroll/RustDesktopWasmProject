@@ -17,18 +17,18 @@ use project_domain::{
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Modo e id di un file in un albero.
-type TreeEntry = (u32, Oid);
+pub(super) type TreeEntry = (u32, Oid);
 
-const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
+pub(super) const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
 
 /// Il tipo di oggetto di un modo (file, link, sottomodulo), senza i permessi.
-fn file_type(mode: u32) -> u32 {
+pub(super) fn file_type(mode: u32) -> u32 {
     mode & 0o170000
 }
 
 /// Ordine delle voci di `git status --porcelain=v2`: file tracciati e in conflitto per
 /// percorso, poi i non tracciati, poi gli ignorati.
-fn entry_order(entry: &StatusEntry) -> (u8, &RepoPath) {
+pub(super) fn entry_order(entry: &StatusEntry) -> (u8, &RepoPath) {
     let group = match entry.kind {
         EntryKind::Untracked => 1,
         EntryKind::Ignored => 2,
@@ -37,7 +37,7 @@ fn entry_order(entry: &StatusEntry) -> (u8, &RepoPath) {
     (group, &entry.path)
 }
 
-fn tracked_info(entry: &StatusEntry) -> Option<&TrackedInfo> {
+pub(super) fn tracked_info(entry: &StatusEntry) -> Option<&TrackedInfo> {
     match &entry.kind {
         EntryKind::Ordinary(info)
         | EntryKind::Renamed { info, .. }
@@ -58,7 +58,7 @@ fn untracked(path: RepoPath) -> StatusEntry {
 impl MemoryBackend {
     /// L'albero del commit `id`: i file cambiati lungo la catena dei primi genitori, applicati
     /// dalla radice (ogni commit ha i file cambiati rispetto al primo genitore).
-    fn tree_at(&self, id: Oid) -> BTreeMap<RepoPath, TreeEntry> {
+    pub(super) fn tree_at(&self, id: Oid) -> BTreeMap<RepoPath, TreeEntry> {
         let mut chain = Vec::new();
         let mut next = Some(id);
         while let Some(id) = next {
@@ -77,7 +77,7 @@ impl MemoryBackend {
         tree
     }
 
-    fn head_tree(&self) -> BTreeMap<RepoPath, TreeEntry> {
+    pub(super) fn head_tree(&self) -> BTreeMap<RepoPath, TreeEntry> {
         self.head_target()
             .map(|id| self.tree_at(id))
             .unwrap_or_default()

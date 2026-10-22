@@ -13,16 +13,17 @@ mod session;
 pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
-    BACKUP_PREFIX, DiffSpec, GitBackend, LinePatch, LineSelection, LogQuery, MemoryBackend,
-    MemoryOpener, RepoOpener, StagedVersion, apply_patch, backup_message, file_digest, line_patch,
-    path_matches, versions_at_risk, versions_at_risk_hidden,
+    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, GitBackend, LinePatch, LineSelection,
+    LogQuery, MemoryBackend, MemoryOpener, RepoOpener, StagedVersion, amend_impact, apply_patch,
+    backup_message, check_amend_published, check_commit_state, cleanup_message, file_digest,
+    line_patch, path_matches, split_message, versions_at_risk, versions_at_risk_hidden,
 };
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
 pub use session::Session;
 
 use project_core::CoreError;
-use project_domain::DomainError;
+use project_domain::{DomainError, Oid};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -73,6 +74,34 @@ pub enum EngineError {
          diff e rifare la selezione"
     )]
     StaleDiff { path: String, reason: String },
+    /// `commit.create` senza niente da committare: l'indice è uguale a HEAD (o, su un branch
+    /// senza commit, è vuoto) e non c'è un merge in corso. Niente è stato modificato.
+    #[error(
+        "niente da committare: l'indice è uguale a HEAD. Mettere in stage le modifiche \
+         (`index.stage`), oppure usare `amend` per cambiare solo il messaggio dell'ultimo commit"
+    )]
+    NothingToCommit,
+    /// L'operazione può far perdere lavoro o riscrive qualcosa di già pubblicato e serve
+    /// `"confirm": true` nei parametri (§1). `reason` dice cosa succederebbe. Niente è stato
+    /// modificato.
+    #[error(
+        "`{command}` chiede una conferma: {reason}. Niente modificato; per procedere ripetere \
+         il comando con `\"confirm\": true`"
+    )]
+    ConfirmRequired {
+        command: &'static str,
+        reason: String,
+    },
+    /// Il commit è **riuscito**, ma dopo qualcosa non torna: HEAD spostato da un hook
+    /// `post-commit` o da un altro processo, `previous` non verificabile, stato non rileggibile.
+    /// Non va ripetuto: `commit` è il commit creato (se noto), `backup` il ref del commit
+    /// riscritto da `amend` (se c'è), che resta.
+    #[error("{}", post_commit_text(.commit, .backup, .reason))]
+    PostCommit {
+        commit: Option<Oid>,
+        backup: Option<String>,
+        reason: String,
+    },
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]
@@ -111,6 +140,34 @@ impl EngineError {
             list(paths)
         ))
     }
+}
+
+impl EngineError {
+    /// [`EngineError::InvalidParams`] di `commit.create` per un messaggio che la pulizia di git
+    /// (`commit.cleanup`, es. `strip` che toglie i commenti) ha reso vuoto: niente committato.
+    pub fn empty_commit_message() -> Self {
+        EngineError::InvalidParams {
+            id: "commit.create",
+            reason: "il messaggio è vuoto dopo la pulizia di git (`commit.cleanup` toglie le \
+                     righe di commento e gli spazi), niente committato: scrivere un messaggio \
+                     che non sia solo commenti"
+                .to_owned(),
+        }
+    }
+}
+
+fn post_commit_text(commit: &Option<Oid>, backup: &Option<String>, reason: &str) -> String {
+    let mut text = match commit {
+        Some(id) => format!("il commit {id} è stato creato, ma {reason}"),
+        None => format!("il commit è stato creato, ma {reason}"),
+    };
+    if let Some(backup) = backup {
+        text.push_str(&format!(
+            "; il commit riscritto da `amend` è salvato in `{backup}`"
+        ));
+    }
+    text.push_str(": non ripetere il commit, rileggere stato e log");
+    text
 }
 
 fn list(paths: &[impl std::fmt::Display]) -> String {

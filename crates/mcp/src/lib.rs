@@ -191,7 +191,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`), quelli che possono far perdere dati chiedono `\"confirm\": true`.",
+            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`, `commit.create`), quelli che possono far perdere dati o riscrivere commit pubblicati chiedono `\"confirm\": true` (passarlo solo se l'utente lo ha chiesto).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -418,6 +418,62 @@ mod tests {
         assert_eq!(r["isError"], true, "{r}");
         let text = r["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("rileggere il diff"), "{text}");
+    }
+
+    #[test]
+    fn commit_create_is_a_write_and_amend_of_published_needs_confirm() {
+        let root = temp_root("commit");
+        let mut server = server(&root);
+        let r = call(
+            &mut server,
+            "list_commands",
+            json!({"search": "commit.create"}),
+        );
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let commands: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(commands[0]["id"], "commit.create");
+        assert_eq!(commands[0]["writes"], true);
+
+        call(&mut server, "open_repo", json!({"path": "repo"}));
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "commit.create", "params": {"message": "Da un agente"}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let out: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(out["commit"]["summary"], "Da un agente");
+        assert_eq!(out["branch"], "refs/heads/main");
+
+        // Un repo in cui HEAD è già su `origin/main`: `amend` chiede una conferma esplicita.
+        let root = temp_root("commit-published");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let mut sample = MemoryBackend::sample();
+        let head = project_engine::GitBackend::head(&sample)
+            .unwrap()
+            .target()
+            .unwrap();
+        sample.set_remote_branch("origin/main", head);
+        let mut opener = MemoryOpener::new();
+        opener.insert(repo.to_str().unwrap(), sample);
+        let mut server = Server::new(&root, Arc::new(opener)).unwrap();
+        call(&mut server, "open_repo", json!({"path": "repo"}));
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "commit.create", "params": {"message": "x", "amend": true}}),
+        );
+        assert_eq!(r["isError"], true, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\"confirm\": true"), "{text}");
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "commit.create", "params": {"message": "x", "amend": true, "confirm": true}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
     }
 
     #[test]

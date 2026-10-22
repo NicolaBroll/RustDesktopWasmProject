@@ -7,8 +7,10 @@
 //! Layout (`impl-docs/ARCHITETTURA-git.md` §8): barra in alto, ref a sinistra, commit al
 //! centro, dettagli del commit selezionato a destra. In cima alla lista la riga "Modifiche non
 //! committate" apre a destra l'area di stage. Il diff di un file si apre al posto del grafo,
-//! con il pannello a destra accanto per passare da un file all'altro.
+//! con il pannello a destra accanto per passare da un file all'altro. Sotto le liste dell'area
+//! di stage c'è la casella del messaggio di commit.
 
+mod commit;
 mod details;
 mod diff;
 mod diff_view;
@@ -22,6 +24,7 @@ mod view;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
+use commit::{CommitBox, CommitResult, Gate};
 use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
@@ -87,6 +90,16 @@ enum Action {
     WriteHunk(usize),
     /// Stage o unstage delle righe selezionate.
     WriteSelectedLines,
+    /// Attiva o disattiva "Amend" nella casella del messaggio.
+    SetAmend(bool),
+    /// Commit del messaggio scritto (pulsante o Ctrl+Invio).
+    Commit,
+    /// Conferma l'amend di un commit già pubblicato: reinvia con `"confirm": true`.
+    ConfirmCommit,
+    /// Annulla l'amend in attesa di conferma.
+    CancelCommit,
+    /// Nasconde l'errore dell'ultimo commit.
+    DismissCommitError,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -120,6 +133,11 @@ enum Request {
     Show(u64, Oid),
     /// `diff.commit` con il numero di richiesta di [`DiffState`].
     Diff(u64, u64),
+    /// `commit.create`: il risultato è il nuovo commit e lo stato.
+    Commit(u64),
+    /// `commit.show` di HEAD per proporre il suo messaggio con amend, quando HEAD non è tra
+    /// i commit caricati.
+    HeadMessage(u64),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -147,6 +165,11 @@ struct RepoView {
     details: DetailsState,
     /// Diff del file aperto (`diff.commit`), mostrato al posto del grafo.
     diff: DiffState,
+    /// La casella del messaggio di commit: bozza, commit in corso, conferma, errore.
+    commit: CommitBox,
+    /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
+    /// riga delle modifiche è sparita).
+    select_after_load: Option<Oid>,
 }
 
 impl RepoView {
@@ -166,6 +189,8 @@ impl RepoView {
             labels: HashMap::new(),
             details: DetailsState::default(),
             diff: DiffState::default(),
+            commit: CommitBox::default(),
+            select_after_load: None,
         };
         view.update_labels();
         view
@@ -186,6 +211,29 @@ impl RepoView {
             self.confirm = None;
         }
         self.update_labels();
+    }
+
+    /// Vero se è aperta una conferma (stage di conflitti o amend pubblicato): finché c'è, niente
+    /// scritture e i tasti vanno solo a lei.
+    fn modal_open(&self) -> bool {
+        self.confirm.is_some() || self.commit.confirm().is_some()
+    }
+
+    /// L'ultimo commit (HEAD), se è tra quelli caricati.
+    fn head_commit(&self) -> Option<&Commit> {
+        let head = self.head.target()?;
+        self.list.commits().iter().find(|c| c.id == head)
+    }
+
+    /// Lo stato del pulsante "Commit".
+    fn commit_gate(&self, writing: bool) -> Gate<'_> {
+        Gate {
+            draft: &self.commit.draft,
+            status: self.status.as_ref(),
+            staged: self.stage.staged.len(),
+            has_head: self.head.target().is_some(),
+            busy: writing || self.modal_open(),
+        }
     }
 
     /// Vero se c'è la riga "Modifiche non committate" in cima alla lista.
@@ -350,7 +398,7 @@ impl App {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                if self.executor.writing().is_some() || repo.confirm.is_some() {
+                if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
                 if let Some(write) = stage::plan_write(&repo.stage, op, paths) {
@@ -415,6 +463,33 @@ impl App {
                     self.send_line_write(write);
                 }
             }
+            Action::SetAmend(on) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if repo.commit.sending().is_some() {
+                    return;
+                }
+                let last = repo.head_commit().cloned();
+                let ask = repo.commit.draft.set_amend(on, last.as_ref());
+                if ask && let Some(head) = repo.head.target() {
+                    let params = json!({ "id": head.to_string() });
+                    self.submit("commit.show", params, Request::HeadMessage(generation));
+                }
+            }
+            Action::Commit => self.send_commit(false),
+            Action::ConfirmCommit => self.send_commit(true),
+            Action::CancelCommit => {
+                if let Some(repo) = &mut self.repo {
+                    repo.commit.cancel_confirm();
+                }
+            }
+            Action::DismissCommitError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.commit.dismiss_error();
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -472,6 +547,33 @@ impl App {
         self.submit(write.op.command(), params, Request::Write(generation));
     }
 
+    /// Manda il commit della bozza (`confirmed`: quello in attesa di conferma, con
+    /// `"confirm": true`), se il pulsante è attivo: mai insieme a un'altra scrittura.
+    fn send_commit(&mut self, confirmed: bool) {
+        let writing = self.executor.writing().is_some();
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let request = if confirmed {
+            if writing {
+                return;
+            }
+            repo.commit.confirmed()
+        } else {
+            if repo.commit_gate(writing).check().is_err() {
+                return;
+            }
+            repo.commit.start()
+        };
+        let Some((send, params)) = request else {
+            return;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(send.label().to_owned());
+        self.submit(send.command(), params, Request::Commit(generation));
+    }
+
     /// Manda lo stage o l'unstage di righe, come [`App::send_write`]: mai due scritture
     /// insieme, né con una conferma aperta.
     fn send_line_write(&mut self, write: LineWrite) {
@@ -482,7 +584,7 @@ impl App {
         let Some(repo) = &mut self.repo else {
             return;
         };
-        if repo.confirm.is_some() {
+        if repo.modal_open() {
             return;
         }
         repo.write_error = None;
@@ -573,7 +675,7 @@ impl App {
             return;
         };
         // Con la conferma aperta i tasti vanno solo a lei.
-        if ctx.egui_wants_keyboard_input() || repo.confirm.is_some() {
+        if ctx.egui_wants_keyboard_input() || repo.modal_open() {
             return;
         }
         if repo.diff.target().is_some() {
@@ -687,6 +789,10 @@ impl App {
                 }
                 continue;
             }
+            if let Request::Commit(generation) = request {
+                self.receive_commit(generation, done);
+                continue;
+            }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -722,6 +828,61 @@ impl App {
         }
     }
 
+    /// Risultato di `commit.create`: stato dalla risposta, log e ref riletti; oppure l'errore
+    /// (o la conferma) nella casella, con il messaggio scritto conservato.
+    fn receive_commit(&mut self, generation: u64, done: Done) {
+        let result = done.result.and_then(|value| {
+            serde_json::from_value::<CommitResult>(value)
+                .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+        });
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match result {
+            Ok(result) => {
+                repo.commit.succeeded();
+                let notice = result.notice();
+                let id = result.commit.id;
+                repo.set_status(result.status);
+                // Con altre modifiche si resta sulla riga delle modifiche; se è sparita si
+                // seleziona il nuovo commit appena arriva il log.
+                if !repo.worktree_selected {
+                    repo.select_after_load = Some(id);
+                }
+                self.error.clear();
+                self.notice = notice;
+                self.follow_diff();
+                // Il nuovo commit in cima (con amend il vecchio sparisce) e le etichette dei
+                // ref spostate.
+                self.submit("repo.refs", json!({}), Request::Refs(generation));
+                if let Some(repo) = self.current(generation) {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            Err(e) if done.error_kind == Some(ErrorKind::PostCommit) => {
+                // Il commit c'è: si rilegge tutto, e non si ripropone il messaggio.
+                log::warn!("{}: {e}", done.command);
+                repo.commit.done_with_error(&e);
+                self.error = e;
+                self.notice.clear();
+                self.load();
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", done.command);
+                repo.commit
+                    .failed(done.error_kind, &e, done.error_detail.clone());
+                if done.error_kind == Some(ErrorKind::ConfirmRequired) {
+                    self.error.clear();
+                } else {
+                    self.error = format!("Commit non riuscito: {e}");
+                }
+                self.notice.clear();
+            }
+        }
+    }
+
     /// Il repo mostrato, se è ancora quello della generazione `generation`.
     fn current(&mut self, generation: u64) -> Option<&mut RepoView> {
         self.repo.as_mut().filter(|_| generation == self.generation)
@@ -753,11 +914,23 @@ impl App {
             Request::Log(generation, page) => {
                 if let Some(repo) = self.current(generation) {
                     let LogPage { commits, has_more } = serde_json::from_value(value)?;
-                    repo.list.receive(page, commits, has_more);
+                    if repo.list.receive(page, commits, has_more)
+                        && page.skip == 0
+                        && let Some(id) = repo.select_after_load.take()
+                        && !repo.worktree_selected
+                    {
+                        repo.list.select_id(id);
+                    }
+                }
+            }
+            Request::HeadMessage(generation) => {
+                if let Some(repo) = self.current(generation) {
+                    let details: CommitDetails = serde_json::from_value(value)?;
+                    repo.commit.draft.propose(&details.commit);
                 }
             }
             // Gestiti a parte in `receive`.
-            Request::Show(..) | Request::Diff(..) | Request::Write(..) => {}
+            Request::Show(..) | Request::Diff(..) | Request::Write(..) | Request::Commit(..) => {}
         }
         Ok(())
     }
@@ -771,6 +944,13 @@ impl eframe::App for App {
         self.keyboard(&ctx, &mut actions);
         let can_pick = self.platform.capabilities().open_folder;
         let writing = self.executor.writing().is_some();
+        // La bozza del messaggio si scrive direttamente (stato della UI, non del repo): si
+        // presta al pannello per questo frame e poi si rimette a posto.
+        let mut draft = self
+            .repo
+            .as_mut()
+            .map(|r| std::mem::take(&mut r.commit.draft))
+            .unwrap_or_default();
 
         egui::Panel::top("barra").show(ui, |ui| {
             view::top_bar(ui, self.repo.as_ref(), can_pick, &mut actions);
@@ -802,7 +982,7 @@ impl eframe::App for App {
                     .max_size(side_max)
                     .show(ui, |ui| {
                         if repo.worktree_selected {
-                            view::stage_panel(ui, repo, writing, &mut actions);
+                            view::stage_panel(ui, repo, &mut draft, writing, &mut actions);
                         } else {
                             view::details_panel(
                                 ui,
@@ -816,13 +996,22 @@ impl eframe::App for App {
                 if let Some(write) = &repo.confirm {
                     view::confirm_write(&ctx, write, &mut actions);
                 }
+                if let Some(confirm) = repo.commit.confirm() {
+                    let branch = match &repo.head {
+                        Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
+                        Head::Detached(_) => None,
+                    };
+                    let left_behind =
+                        commit::refs_left_behind(&repo.refs, repo.head.target(), branch.as_deref());
+                    view::confirm_amend(&ctx, confirm, &left_behind, &mut actions);
+                }
                 let viewport = &mut self.viewport;
                 egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
                     Pane::Closed => view::commit_list(ui, repo, viewport, &mut actions),
                     pane => {
                         let lines = diff_view::LinesUi {
                             selection: repo.diff.selection(),
-                            can_write: !writing && repo.confirm.is_none(),
+                            can_write: !writing && !repo.modal_open(),
                         };
                         diff_view::diff_panel(ui, pane, lines, &mut actions);
                     }
@@ -837,6 +1026,7 @@ impl eframe::App for App {
 
         // La lista ha portato in vista la riga chiesta: non serve più.
         if let Some(repo) = &mut self.repo {
+            repo.commit.draft = draft;
             repo.list.take_scroll_to();
             repo.scroll_header = false;
         }

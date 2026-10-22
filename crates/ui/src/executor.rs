@@ -34,6 +34,9 @@ pub struct Done {
     /// Il tipo dell'errore, se il comando è fallito: la UI reagisce in modo diverso, ad
     /// esempio rilegge il diff dopo [`ErrorKind::StaleDiff`].
     pub error_kind: Option<ErrorKind>,
+    /// Il dettaglio strutturato dell'errore, se il tipo ne ha uno: il motivo di
+    /// [`ErrorKind::ConfirmRequired`], l'output completo di git (stderr) per [`ErrorKind::Git`].
+    pub error_detail: Option<String>,
 }
 
 /// Il tipo di un errore del motore, per le reazioni della UI che non dipendono dal testo.
@@ -47,6 +50,17 @@ pub enum ErrorKind {
     InvalidParams,
     /// [`EngineError::IndexLocked`].
     IndexLocked,
+    /// [`EngineError::ConfirmRequired`]: serve `"confirm": true`; il motivo è in
+    /// [`Done::error_detail`].
+    ConfirmRequired,
+    /// [`EngineError::NothingToCommit`].
+    NothingToCommit,
+    /// [`EngineError::Git`]: git è terminato con errore (es. un hook che fallisce); il suo
+    /// stderr è in [`Done::error_detail`].
+    Git,
+    /// [`EngineError::PostCommit`]: il commit è riuscito, ma dopo qualcosa non torna (es. HEAD
+    /// spostato da un hook `post-commit`); non va ripetuto, vanno riletti stato e log.
+    PostCommit,
     /// Tutti gli altri errori.
     Other,
 }
@@ -58,10 +72,27 @@ impl ErrorKind {
             EngineError::NotAllowed(_) => ErrorKind::NotAllowed,
             EngineError::InvalidParams { .. } => ErrorKind::InvalidParams,
             EngineError::IndexLocked { .. } => ErrorKind::IndexLocked,
+            EngineError::ConfirmRequired { .. } => ErrorKind::ConfirmRequired,
+            EngineError::NothingToCommit => ErrorKind::NothingToCommit,
+            EngineError::Git { .. } => ErrorKind::Git,
+            EngineError::PostCommit { .. } => ErrorKind::PostCommit,
             _ => ErrorKind::Other,
         }
     }
+
+    /// Il dettaglio da mettere in [`Done::error_detail`]: il motivo di una conferma, lo stderr
+    /// di git.
+    pub fn detail(error: &EngineError) -> Option<String> {
+        match error {
+            EngineError::ConfirmRequired { reason, .. } => Some(reason.clone()),
+            EngineError::Git { stderr, .. } => Some(stderr.clone()),
+            _ => None,
+        }
+    }
 }
+
+/// Un errore del comando, come arriva dal job: tipo, dettaglio e messaggio.
+type Failure = (ErrorKind, Option<String>, String);
 
 /// Chiamata quando arriva un risultato, da qualunque thread: nella UI chiede un nuovo frame.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -125,7 +156,7 @@ impl Executor {
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run(&reply.command, &mut session, params)
-                .map_err(|e| (ErrorKind::of(&e), e.to_string()));
+                .map_err(|e| (ErrorKind::of(&e), ErrorKind::detail(&e), e.to_string()));
             drop(session);
             reply.send(result);
         }));
@@ -169,19 +200,23 @@ struct Reply {
 }
 
 impl Reply {
-    fn send(mut self, result: Result<Value, (ErrorKind, String)>) {
+    fn send(mut self, result: Result<Value, Failure>) {
         self.deliver(result);
     }
 
-    fn deliver(&mut self, result: Result<Value, (ErrorKind, String)>) {
+    fn deliver(&mut self, result: Result<Value, Failure>) {
         self.sent = true;
-        let error_kind = result.as_ref().err().map(|(kind, _)| *kind);
+        let (error_kind, error_detail) = match &result {
+            Ok(_) => (None, None),
+            Err((kind, detail, _)) => (Some(*kind), detail.clone()),
+        };
         // Se la UI è già chiusa nessuno aspetta il risultato.
         let _ = self.sender.send(Done {
             ticket: self.ticket,
             command: self.command.clone(),
-            result: result.map_err(|(_, message)| message),
+            result: result.map_err(|(_, _, message)| message),
             error_kind,
+            error_detail,
         });
         (self.wake)();
     }
@@ -192,6 +227,7 @@ impl Drop for Reply {
         if !self.sent {
             self.deliver(Err((
                 ErrorKind::Other,
+                None,
                 format!("`{}` è terminato senza risultato", self.command),
             )));
         }
@@ -353,6 +389,44 @@ mod tests {
             json!({ "path": "src/lib.rs", "lines": [{ "new": 1 }], "digest": "0".repeat(32) });
         ex.submit("index.stage_lines", stale);
         assert_eq!(ex.poll()[0].error_kind, Some(ErrorKind::StaleDiff));
+
+        ex.submit("commit.create", json!({ "message": "primo" }));
+        let done = ex.poll().remove(0);
+        assert!(done.result.is_ok(), "{:?}", done.result);
+        assert_eq!(done.error_detail, None);
+        ex.submit("commit.create", json!({ "message": "ancora" }));
+        let done = ex.poll().remove(0);
+        assert_eq!(done.error_kind, Some(ErrorKind::NothingToCommit));
+        assert_eq!(done.error_detail, None);
+    }
+
+    #[test]
+    fn confirm_and_git_errors_carry_their_detail() {
+        let confirm = EngineError::ConfirmRequired {
+            command: "commit.create",
+            reason: "il commit è su refs/remotes/origin/main".to_owned(),
+        };
+        assert_eq!(ErrorKind::of(&confirm), ErrorKind::ConfirmRequired);
+        assert_eq!(
+            ErrorKind::detail(&confirm).as_deref(),
+            Some("il commit è su refs/remotes/origin/main")
+        );
+        let git = EngineError::Git {
+            command: "commit".to_owned(),
+            stderr: "pre-commit: riga 1\nriga 2".to_owned(),
+        };
+        assert_eq!(ErrorKind::of(&git), ErrorKind::Git);
+        assert_eq!(
+            ErrorKind::detail(&git).as_deref(),
+            Some("pre-commit: riga 1\nriga 2")
+        );
+        assert_eq!(ErrorKind::detail(&EngineError::NoRepo), None);
+        let post = EngineError::PostCommit {
+            commit: None,
+            backup: None,
+            reason: "HEAD è cambiato".to_owned(),
+        };
+        assert_eq!(ErrorKind::of(&post), ErrorKind::PostCommit);
     }
 
     #[test]

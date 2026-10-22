@@ -2,7 +2,8 @@
 
 use crate::commands::parse_params;
 use crate::{
-    CommandSpec, DiffSpec, EngineError, LineSelection, LogQuery, Registry, Session, file_digest,
+    CommandSpec, CommitRequest, DiffSpec, EngineError, LineSelection, LogQuery, Registry, Session,
+    file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -88,12 +89,19 @@ impl Registry {
             r#"{"path": percorso, "lines": [{"old": n} | {"new": n}, ...], "digest": string (da diff.index)}"#,
             index_unstage_lines,
         );
+        add(
+            "commit.create",
+            "Crea un commit con le modifiche in stage",
+            r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend di un commit pubblicato)}"#,
+            commit_create,
+        );
         r
     }
 }
 
 /// I comandi che modificano il repository ([`CommandSpec::writes`]).
 const WRITES: &[&str] = &[
+    "commit.create",
     "index.stage",
     "index.unstage",
     "index.stage_lines",
@@ -342,6 +350,32 @@ fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
     index_lines("index.unstage_lines", PatchDirection::Unstage, s, p)
 }
 
+/// Crea un commit con quello che è in stage, o con `amend` riscrive l'ultimo (vedi
+/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` serve solo per `amend` di un
+/// commit già pubblicato.
+///
+/// Risultato: `{"commit": Commit, "previous": string | null, "branch": string | null, "backup":
+/// string | null, "also_on": [string], "status": Status}`: il commit creato (come in `repo.log`), HEAD prima
+/// (`null` per il primo commit), il branch spostato con il nome completo (`null` con HEAD
+/// staccata), il ref di backup del commit riscritto (solo con `amend`), gli altri branch e tag
+/// che restano sul commit riscritto (solo con `amend`) e il nuovo stato. Un errore dopo un
+/// commit riuscito è [`EngineError::PostCommit`].
+fn commit_create(s: &mut Session, p: Value) -> Out {
+    let request: CommitRequest = parse_params("commit.create", p)?;
+    request.check_message()?;
+    let repo = s.repo_mut()?;
+    let outcome = repo.commit(&request)?;
+    // Il commit è fatto: un errore da qui in poi non deve sembrare un commit fallito.
+    let status = repo.status().map_err(|e| EngineError::PostCommit {
+        commit: Some(outcome.commit.id),
+        backup: outcome.backup.clone(),
+        reason: format!("lo stato non si rilegge ({e})"),
+    })?;
+    let mut out = to_json(outcome);
+    out["status"] = to_json(status);
+    Ok(out)
+}
+
 /// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
 /// l'ultimo commit restituito ce ne sono altri (la pagina seguente parte da `skip + limit`).
 fn repo_log(s: &mut Session, p: Value) -> Out {
@@ -394,6 +428,7 @@ mod tests {
         assert_eq!(
             ids,
             [
+                "commit.create",
                 "commit.show",
                 "diff.commit",
                 "diff.index",
@@ -414,6 +449,7 @@ mod tests {
         assert_eq!(
             writes,
             [
+                "commit.create",
                 "index.stage",
                 "index.stage_lines",
                 "index.unstage",
@@ -455,6 +491,7 @@ mod tests {
             "index.unstage",
             "index.stage_lines",
             "index.unstage_lines",
+            "commit.create",
         ] {
             let params = if matches!(id, "commit.show" | "diff.commit") {
                 json!({ "id": "HEAD" })
@@ -462,6 +499,8 @@ mod tests {
                 json!({ "path": "README.md", "lines": [{ "new": 1 }], "digest": "x" })
             } else if id.starts_with("index.") {
                 json!({ "paths": ["README.md"] })
+            } else if id == "commit.create" {
+                json!({ "message": "x" })
             } else {
                 json!({})
             };
@@ -805,6 +844,80 @@ mod tests {
     }
 
     #[test]
+    fn commit_create_returns_commit_previous_branch_and_status() {
+        let (r, mut s) = opened();
+        let head = MemoryBackend::sample().head().unwrap().target().unwrap();
+        let out = r
+            .run(
+                "commit.create",
+                &mut s,
+                json!({ "message": "Aggiorna README\n\nCon la guida." }),
+            )
+            .unwrap();
+        let commit: Commit = serde_json::from_value(out["commit"].clone()).unwrap();
+        assert_eq!(commit.summary, "Aggiorna README");
+        assert_eq!(commit.body, "Con la guida.");
+        assert_eq!(commit.parents, [head]);
+        assert_eq!(out["previous"], head.to_string());
+        assert_eq!(out["branch"], "refs/heads/main");
+        assert_eq!(out["backup"], Value::Null);
+        assert_eq!(
+            out["status"],
+            r.run("repo.status", &mut s, json!({})).unwrap()
+        );
+        assert_eq!(
+            out["status"]["head"]["Branch"]["target"],
+            commit.id.to_string()
+        );
+        // Lo stesso commit è in cima a `repo.log`.
+        let (log, _) = log_page(&r, &mut s, json!({ "limit": 1 }));
+        assert_eq!(log, std::slice::from_ref(&commit));
+
+        // Niente più in stage.
+        let err = r
+            .run("commit.create", &mut s, json!({ "message": "ancora" }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::NothingToCommit), "{err}");
+
+        // `amend` di un commit non pubblicato: senza conferma, con il backup.
+        let out = r
+            .run(
+                "commit.create",
+                &mut s,
+                json!({ "message": "Aggiorna README e guida", "amend": true }),
+            )
+            .unwrap();
+        assert_eq!(out["previous"], commit.id.to_string());
+        assert_eq!(out["backup"], "refs/project/backup/amend-1");
+        assert_eq!(out["commit"]["parents"], json!([head.to_string()]));
+
+        // HEAD pubblicato: `amend` chiede `confirm`.
+        let mut repo = MemoryBackend::sample();
+        repo.set_remote_branch("origin/main", head);
+        let mut opener = MemoryOpener::new();
+        opener.insert("pubblicato", repo);
+        let mut s = Session::new(Arc::new(opener));
+        r.run("repo.open", &mut s, json!({ "path": "pubblicato" }))
+            .unwrap();
+        let err = r
+            .run(
+                "commit.create",
+                &mut s,
+                json!({ "message": "x", "amend": true }),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+        let out = r
+            .run(
+                "commit.create",
+                &mut s,
+                json!({ "message": "x", "amend": true, "confirm": true }),
+            )
+            .unwrap();
+        assert_eq!(out["previous"], head.to_string());
+    }
+
+    #[test]
     fn errors() {
         let (r, mut s) = opened();
         assert!(matches!(
@@ -863,6 +976,20 @@ mod tests {
             (
                 "index.unstage_lines",
                 json!({ "paths": ["README.md"], "lines": [{ "new": 1 }], "digest": "x" }),
+            ),
+            ("commit.create", json!({})),
+            ("commit.create", json!({ "message": 3 })),
+            ("commit.create", json!({ "message": "" })),
+            ("commit.create", json!({ "message": " \n\t\n" })),
+            ("commit.create", json!({ "message": "x", "amend": "sì" })),
+            ("commit.create", json!({ "message": "x", "paths": ["a"] })),
+            (
+                "commit.create",
+                json!({ "message": "x", "allow_empty": true }),
+            ),
+            (
+                "commit.create",
+                json!({ "message": "x", "no_verify": true }),
             ),
         ] {
             let err = r.run(id, &mut s, params).unwrap_err();

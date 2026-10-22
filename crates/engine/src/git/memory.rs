@@ -1,9 +1,13 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
+mod commit;
 mod write;
 
 use super::line_diff;
-use super::{DiffSpec, GitBackend, LineSelection, LogQuery, RepoOpener, StagedVersion};
+use super::{
+    CommitOutcome, CommitRequest, DiffSpec, GitBackend, LineSelection, LogQuery, RepoOpener,
+    StagedVersion,
+};
 use crate::EngineError;
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
@@ -53,6 +57,10 @@ pub struct MemoryBackend {
     worktree: BTreeMap<RepoPath, Vec<u8>>,
     /// Backup dell'indice salvati da stage e unstage: nome del ref e versioni salvate.
     backups: Vec<(String, Vec<StagedVersion>)>,
+    /// Ref di backup dei commit riscritti da `amend`: nome e commit.
+    commit_backups: Vec<(String, Oid)>,
+    /// Nome ed email di chi committa (`user.name`/`user.email`); `None` = non configurata.
+    identity: Option<(String, String)>,
 }
 
 impl Default for MemoryBackend {
@@ -75,6 +83,8 @@ impl MemoryBackend {
             blobs: BTreeMap::new(),
             worktree: BTreeMap::new(),
             backups: Vec::new(),
+            commit_backups: Vec::new(),
+            identity: None,
         }
     }
 
@@ -124,6 +134,17 @@ impl MemoryBackend {
     /// stage salvate (i contenuti sono nei blob).
     pub fn backups(&self) -> &[(String, Vec<StagedVersion>)] {
         &self.backups
+    }
+
+    /// I ref di backup dei commit riscritti da `amend`, in ordine: nome del ref e commit.
+    pub fn commit_backups(&self) -> &[(String, Oid)] {
+        &self.commit_backups
+    }
+
+    /// Identità di chi committa, come `user.name` e `user.email`. Senza (il default di
+    /// [`MemoryBackend::new`]) un commit dà errore, come git senza identità.
+    pub fn set_identity(&mut self, name: &str, email: &str) {
+        self.identity = Some((name.to_owned(), email.to_owned()));
     }
 
     /// Il contenuto del blob `id`, se noto.
@@ -618,6 +639,10 @@ impl GitBackend for MemoryBackend {
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {
         self.apply_line_patch(selection)
+    }
+
+    fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError> {
+        self.create_commit(request)
     }
 }
 

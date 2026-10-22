@@ -333,6 +333,7 @@ impl MemoryBackend {
     /// `origin/feature/grafo`, allineato. Il worktree non è pulito: `README.md` modificato in
     /// stage e fuori, `docs/guida.md` aggiunto in stage, `src/lib.rs` modificato fuori stage,
     /// `note.txt` non tracciato (con un contenuto nel worktree, così si può mettere in stage).
+    /// Chi committa è Ada Rossi (`ada@example.com`).
     ///
     /// Ogni commit ha i suoi file cambiati (per `commit.show`): aggiunte, modifiche, una
     /// cancellazione (`.gitkeep` nel commit 3, file vuoto) e una rinomina con modifiche
@@ -371,6 +372,7 @@ impl MemoryBackend {
         repo.set_upstream("feature/grafo", "origin/feature/grafo");
         repo.set_tag("v0.1.0", oid(10), Some(oid(TAG_SEED)));
         repo.set_head_branch("main");
+        repo.set_identity(ADA.name, ADA.email);
 
         // Worktree: README.md cambiato in stage e poi ancora fuori, docs/guida.md nuovo in
         // stage, src/lib.rs cambiato fuori stage, note.txt non tracciato.

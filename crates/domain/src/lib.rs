@@ -14,8 +14,9 @@ pub use document::{Document, Item};
 pub use format::{FORMAT_ID, FORMAT_VERSION};
 pub use git::{
     Change, Commit, Conflict, EntryKind, Head, LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Oid, Operation,
-    RefInfo, RefKind, RepoPath, STATUS_ARGS, Signature, Status, StatusEntry, SubmoduleStatus,
-    TrackedInfo, UnmergedInfo, Upstream, parse_log, parse_status,
+    REFS_ARGS, REFS_FIELDS, REFS_FORMAT, RefInfo, RefKind, RepoPath, STATUS_ARGS, Signature,
+    Status, StatusEntry, SubmoduleStatus, TrackedInfo, UnmergedInfo, Upstream, parse_log,
+    parse_refs, parse_status,
 };
 
 /// Errori di dominio.

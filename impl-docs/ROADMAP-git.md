@@ -139,7 +139,7 @@ Regole valide per tutti gli step:
   selezionato; CI verde.
 
 ### S16 — Parser del diff
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** `Diff`, `FileDiff`, `Hunk`, `Line` e `parse_diff(&[u8])` per unified diff,
   con rinomine, file nuovi ed eliminati, binari, "no newline at end of file".
 - **Fatto quando:** test con output catturati; CI verde.

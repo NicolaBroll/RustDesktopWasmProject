@@ -82,41 +82,61 @@ impl From<Vec<u8>> for RepoPath {
 
 impl Serialize for RepoPath {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.to_str() {
-            Some(s) => serializer.serialize_str(s),
-            None => self.0.serialize(serializer),
-        }
+        serialize_bytes(&self.0, serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for RepoPath {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct PathVisitor;
+        deserialize_bytes(
+            deserializer,
+            "un percorso come stringa o come array di byte",
+        )
+        .map(Self)
+    }
+}
 
-        impl<'de> Visitor<'de> for PathVisitor {
-            type Value = RepoPath;
+/// Serializza dei byte come stringa se sono UTF-8 valido, altrimenti come array di byte.
+pub(super) fn serialize_bytes<S: Serializer>(
+    bytes: &[u8],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => serializer.serialize_str(s),
+        Err(_) => bytes.serialize(serializer),
+    }
+}
 
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("un percorso come stringa o come array di byte")
-            }
+/// Legge dei byte scritti da [`serialize_bytes`]: una stringa o un array di byte.
+pub(super) fn deserialize_bytes<'de, D: Deserializer<'de>>(
+    deserializer: D,
+    expecting: &'static str,
+) -> Result<Vec<u8>, D::Error> {
+    struct BytesVisitor(&'static str);
 
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<RepoPath, E> {
-                Ok(RepoPath::from(v))
-            }
+    impl<'de> Visitor<'de> for BytesVisitor {
+        type Value = Vec<u8>;
 
-            fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<RepoPath, E> {
-                Ok(RepoPath::from(v))
-            }
-
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<RepoPath, A::Error> {
-                let mut bytes = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-                while let Some(b) = seq.next_element::<u8>()? {
-                    bytes.push(b);
-                }
-                Ok(RepoPath(bytes))
-            }
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.0)
         }
 
-        deserializer.deserialize_any(PathVisitor)
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<u8>, E> {
+            Ok(v.as_bytes().to_vec())
+        }
+
+        fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Vec<u8>, E> {
+            Ok(v.to_vec())
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<u8>, A::Error> {
+            let mut bytes = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+            while let Some(b) = seq.next_element::<u8>()? {
+                bytes.push(b);
+            }
+            Ok(bytes)
+        }
     }
+
+    deserializer.deserialize_any(BytesVisitor(expecting))
 }

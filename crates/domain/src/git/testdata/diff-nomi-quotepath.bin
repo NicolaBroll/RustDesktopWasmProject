@@ -1,0 +1,53 @@
+diff --git "a/a\ncapo.txt" "b/a\ncapo.txt"
+index 34a031efda3a0776658d520798c590c0ac37aed4..1a9b72a95b5428151288bcba8e76ff3e37343950 100644
+--- "a/a\ncapo.txt"
++++ "b/a\ncapo.txt"
+@@ -1 +1,2 @@
+ a capo
++modificato
+diff --git "a/caff\377.txt" "b/caff\377.txt"
+index 3a1c020488b7b68d038f0f7d5c8af10e1c2ffeb7..704b955e9640006309f103a15119af15d2aa2f54 100644
+--- "a/caff\377.txt"
++++ "b/caff\377.txt"
+@@ -1 +1,2 @@
+ latin
++modificato
+diff --git "a/con\ttab.txt" "b/con\ttab.txt"
+index 8cc35a3d55c810ba1f998f398e475feb0e5f6b8a..a2a263b00db2a8a4dfaff4b62ff6b67fdfa02d1c 100644
+--- "a/con\ttab.txt"
++++ "b/con\ttab.txt"
+@@ -1 +1,2 @@
+ tab
++modificato
+diff --git "a/con \"virgolette\".txt" "b/con \"virgolette\".txt"
+index 585d96c440e4c700aed37e07bd3c3238d8148dbd..1c9879ed0a6b79e5ac52bfe36c3545eb8a3d29d9 100644
+--- "a/con \"virgolette\".txt"	
++++ "b/con \"virgolette\".txt"	
+@@ -1 +1,2 @@
+ virgolette
++modificato
+diff --git a/con spazio.txt b/con spazio.txt
+index 10ce608bf8e06fd2aac47488f959d7e3bc44aed7..cf09a95b6aa3dc78822edbfccd6644115302e0d6 100644
+--- a/con spazio.txt	
++++ b/con spazio.txt	
+@@ -1 +1,2 @@
+ spazio
++modificato
+diff --git "a/con\\back.txt" "b/con\\back.txt"
+index 8f57a771d472509c58aa2faffbb8e2d8a9bdefd9..3707fc669ce52bbdf4dd89c17e2e6e6fdfe3f3c2 100644
+--- "a/con\\back.txt"
++++ "b/con\\back.txt"
+@@ -1 +1,2 @@
+ backslash
++modificato
+diff --git "a/perch\303\251.txt" "b/perch\303\251.txt"
+index 5546241a359d3be69594e40b68ad556151a86b08..71cec31d0f18a1b80b19f690dd63d396c598e5e8 100644
+--- "a/perch\303\251.txt"
++++ "b/perch\303\251.txt"
+@@ -1 +1,2 @@
+ utf8
++modificato
+diff --git a/semplice.txt "b/strano \"nome\"\tcon spazio.txt"
+similarity index 100%
+rename from semplice.txt
+rename to "strano \"nome\"\tcon spazio.txt"

@@ -7,11 +7,12 @@
 pub mod git;
 
 pub use git::{
-    Change, ChangedFile, Commit, CommitDetails, Conflict, DIFF_TREE_ARGS, EntryKind, GraphLayout,
-    GraphRow, GraphSegment, Head, LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Oid, Operation, REFS_ARGS,
+    ByteText, Change, ChangedFile, Commit, CommitDetails, Conflict, DIFF_ARGS, DIFF_TREE_ARGS,
+    Diff, EntryKind, FileDiff, GraphLayout, GraphRow, GraphSegment, Head, Hunk, LOG_ARGS,
+    LOG_FIELDS, LOG_FORMAT, Line, LineKind, NO_NEWLINE_MARKER, Oid, Operation, REFS_ARGS,
     REFS_FIELDS, REFS_FORMAT, RefInfo, RefKind, RepoPath, STATUS_ARGS, Signature, Status,
     StatusEntry, SubmoduleStatus, TrackedInfo, UnmergedInfo, Upstream, layout_graph,
-    layout_graph_nodes, parse_diff_tree, parse_log, parse_refs, parse_status,
+    layout_graph_nodes, parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 
 /// Errori di dominio.

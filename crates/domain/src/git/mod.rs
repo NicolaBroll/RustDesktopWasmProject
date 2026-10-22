@@ -1,17 +1,22 @@
 //! Tipi del client git: identificatori, commit, ref, HEAD, corsie del grafo.
 //!
 //! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
-//! (il log, [`parse_log`], lo stato, [`parse_status`], i ref, [`parse_refs`], e i file cambiati
-//! da un commit, [`parse_diff_tree`]).
+//! (il log, [`parse_log`], lo stato, [`parse_status`], i ref, [`parse_refs`], i file cambiati
+//! da un commit, [`parse_diff_tree`], e il diff, [`parse_diff`]).
 
+mod diff;
 mod diff_tree;
 mod graph;
 mod log;
 mod oid;
 mod path;
+mod quote;
 mod refs;
 mod status;
+mod text;
 
+#[cfg(test)]
+mod diff_tests;
 #[cfg(test)]
 mod diff_tree_tests;
 #[cfg(test)]
@@ -25,6 +30,7 @@ mod status_tests;
 #[cfg(test)]
 mod tests;
 
+pub use diff::{DIFF_ARGS, Diff, FileDiff, Hunk, Line, LineKind, NO_NEWLINE_MARKER, parse_diff};
 pub use diff_tree::{ChangedFile, CommitDetails, DIFF_TREE_ARGS, parse_diff_tree};
 pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
@@ -32,6 +38,7 @@ pub use oid::Oid;
 pub use path::RepoPath;
 pub use refs::{REFS_ARGS, REFS_FIELDS, REFS_FORMAT, parse_refs};
 pub use status::{STATUS_ARGS, parse_status};
+pub use text::ByteText;
 
 use serde::{Deserialize, Serialize};
 

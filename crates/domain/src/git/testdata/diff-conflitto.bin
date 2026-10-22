@@ -1,0 +1,28 @@
+diff --cc "conflitto\tstrano.txt"
+index ba2906d0666cf726c7eaadd2cd3db615dedfdf3a,891442819aa84f8bfce3157d86a514a2ec541b21..0000000000000000000000000000000000000000
+--- "a/conflitto\tstrano.txt"
++++ "b/conflitto\tstrano.txt"
+@@@ -1,1 -1,1 +1,5 @@@
+++<<<<<<< HEAD
+ +main
+++=======
++ laterale
+++>>>>>>> laterale
+diff --cc conflitto.txt
+index 28b1438fe96dd4d2bd3f2c2bba092547fba34c20,f40d3f8e658ded80b250a26c7bf405be6a06614c..0000000000000000000000000000000000000000
+--- a/conflitto.txt
++++ b/conflitto.txt
+@@@ -1,1 -1,1 +1,5 @@@
+++<<<<<<< HEAD
+ +da main
+++=======
++ dal branch
+++>>>>>>> laterale
+diff --git a/nuovo.txt b/nuovo.txt
+index 8aca59e8dfec981b7ba7841094f765b68a843b69..9010b36d8509c0d5f5480a520f66c29100b745aa 100644
+--- a/nuovo.txt
++++ b/nuovo.txt
+@@ -1,2 +1,3 @@
+ nuovo
+ pulito
++nel worktree

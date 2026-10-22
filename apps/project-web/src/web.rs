@@ -58,6 +58,11 @@ impl Platform for WebPlatform {
         }
     }
 
+    /// Il browser non vede le cartelle locali: si usa il repo di esempio.
+    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+        on_done(None);
+    }
+
     /// Il browser non ha thread: il job gira subito (il `MemoryBackend` è istantaneo).
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         job();

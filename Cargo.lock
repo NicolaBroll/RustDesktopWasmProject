@@ -2207,7 +2207,9 @@ dependencies = [
  "eframe",
  "egui",
  "log",
+ "project-domain",
  "project-engine",
+ "serde",
  "serde_json",
 ]
 

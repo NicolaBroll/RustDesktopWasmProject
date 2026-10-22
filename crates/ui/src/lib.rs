@@ -7,6 +7,7 @@
 //! Layout (`impl-docs/ARCHITETTURA-git.md` §8): barra in alto, ref a sinistra, commit al
 //! centro, dettagli del commit selezionato a destra.
 
+mod details;
 mod executor;
 mod format;
 mod graph;
@@ -15,9 +16,10 @@ mod view;
 
 pub use executor::{Done, Executor, Job, Ticket, Wake};
 
+use details::DetailsState;
 use graph::RefLabel;
 use list::{CommitList, PageRequest};
-use project_domain::{Commit, Head, Oid, RefInfo, Status};
+use project_domain::{Commit, CommitDetails, Head, Oid, RefInfo, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,6 +44,8 @@ enum Action {
     Edge(bool),
     /// La lista mostra le righe fino a questa (esclusa): se serve chiede la pagina seguente.
     Visible(usize),
+    /// Richiede i dettagli del commit selezionato dopo un errore.
+    RetryDetails,
 }
 
 /// A cosa serve un comando mandato all'executor. Le letture portano la generazione del repo
@@ -52,6 +56,8 @@ enum Request {
     Refs(u64),
     Status(u64),
     Log(u64, PageRequest),
+    /// `commit.show` del commit indicato.
+    Show(u64, Oid),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -63,6 +69,8 @@ struct RepoView {
     list: CommitList,
     /// Etichette dei ref per commit, rifatte quando cambiano ref o HEAD.
     labels: HashMap<Oid, Vec<RefLabel>>,
+    /// Dettagli del commit selezionato (`commit.show`).
+    details: DetailsState,
 }
 
 impl RepoView {
@@ -74,6 +82,7 @@ impl RepoView {
             status: None,
             list: CommitList::default(),
             labels: HashMap::new(),
+            details: DetailsState::default(),
         };
         view.update_labels();
         view
@@ -191,6 +200,11 @@ impl App {
                     repo.list.select_edge(first);
                 }
             }
+            Action::RetryDetails => {
+                if let Some(repo) = &mut self.repo {
+                    repo.details.retry();
+                }
+            }
             Action::Visible(end) => {
                 if let Some(request) = self.repo.as_mut().and_then(|r| r.list.next_page(end)) {
                     self.request_page(request);
@@ -202,6 +216,18 @@ impl App {
     fn request_page(&mut self, page: PageRequest) {
         let params = json!({ "skip": page.skip, "limit": page.limit });
         self.submit("repo.log", params, Request::Log(self.generation, page));
+    }
+
+    /// Chiede i dettagli del commit selezionato, se è cambiato e non ci sono già.
+    fn request_details(&mut self) {
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let selected = repo.list.selected_commit().map(|c| c.id);
+        if let Some(id) = repo.details.want(selected) {
+            let request = Request::Show(self.generation, id);
+            self.submit("commit.show", json!({ "id": id.to_string() }), request);
+        }
     }
 
     /// Azioni dei tasti della lista: frecce, Pagina su/giù, Inizio/Fine. Solo se nessun campo
@@ -252,6 +278,17 @@ impl App {
             let Some(request) = self.pending.remove(&done.ticket) else {
                 continue;
             };
+            // I dettagli hanno il loro stato, errori compresi: li mostra il pannello.
+            if let Request::Show(generation, id) = request {
+                let result = done.result.and_then(|value| {
+                    serde_json::from_value::<CommitDetails>(value)
+                        .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+                });
+                if let Some(repo) = self.current(generation) {
+                    repo.details.receive(id, result);
+                }
+                continue;
+            }
             // Una pagina non arrivata si potrà chiedere di nuovo.
             if done.result.is_err()
                 && let Request::Log(generation, page) = request
@@ -310,6 +347,8 @@ impl App {
                     repo.list.receive(page, commits, has_more);
                 }
             }
+            // Gestiti a parte in `receive`.
+            Request::Show(..) => {}
         }
         Ok(())
     }
@@ -345,7 +384,12 @@ impl eframe::App for App {
                     .min_size(200.0)
                     .max_size(side_max)
                     .show(ui, |ui| {
-                        view::details_panel(ui, repo.list.selected_commit())
+                        view::details_panel(
+                            ui,
+                            repo.list.selected_commit(),
+                            repo.details.shown(),
+                            &mut actions,
+                        )
                     });
                 let viewport = &mut self.viewport;
                 egui::CentralPanel::default()
@@ -365,5 +409,7 @@ impl eframe::App for App {
         for action in actions {
             self.apply(&ctx, action);
         }
+        // Dopo le azioni: la selezione appena cambiata si chiede in questo stesso frame.
+        self.request_details();
     }
 }

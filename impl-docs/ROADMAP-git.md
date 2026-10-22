@@ -132,7 +132,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** screenshot web del repo di esempio con merge visibile; CI verde.
 
 ### S15 — Dettagli del commit
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** comando `commit.show` (metadati e file cambiati con `git diff-tree`) e pannello
   dettagli nella UI.
 - **Fatto quando:** test del comando su repo temporaneo; il pannello mostra i dati del commit

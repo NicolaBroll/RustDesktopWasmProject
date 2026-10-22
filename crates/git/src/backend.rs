@@ -2,9 +2,10 @@
 
 use crate::GitVersion;
 use crate::command::{Git, failure, path_from_output, stderr_text};
-use project_domain::{Commit, Head, RefInfo, Status};
+use project_domain::{Commit, CommitDetails, Head, RefInfo, Status};
 use project_domain::{
-    LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_log, parse_refs, parse_status,
+    DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_diff_tree, parse_log,
+    parse_refs, parse_status,
 };
 use project_engine::{EngineError, GitBackend, LogQuery, RepoOpener};
 use std::ffi::OsString;
@@ -278,5 +279,41 @@ impl GitBackend for CliBackend {
         let mut status = parse_status(&self.run(&args)?)?;
         status.operation = self.operation();
         Ok(status)
+    }
+
+    fn show_commit(&self, rev: &str) -> Result<CommitDetails, EngineError> {
+        let id = self
+            .resolve(rev)?
+            .ok_or_else(|| EngineError::UnknownRev(rev.to_owned()))?;
+        let hex = id.to_string();
+
+        let mut args = vec!["log"];
+        args.extend_from_slice(LOG_ARGS);
+        args.extend(["--max-count=1", "--end-of-options", &hex, "--"]);
+        let commit = parse_log(&self.run(&args)?)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| EngineError::Git {
+                command: "log".to_owned(),
+                stderr: format!("nessun commit letto per `{hex}`"),
+            })?;
+
+        // Confronto con il primo genitore, anche per i merge (senza opzioni `diff-tree` non
+        // mostrerebbe niente per un merge); un commit radice si confronta con l'albero vuoto.
+        let compared_to = commit.parents.first().copied();
+        let parent = compared_to.map(|p| p.to_string());
+        let mut args = vec!["diff-tree"];
+        args.extend_from_slice(DIFF_TREE_ARGS);
+        match &parent {
+            Some(parent) => args.extend(["--end-of-options", parent, &hex]),
+            None => args.extend(["--root", "--end-of-options", &hex]),
+        }
+        args.push("--");
+        let files = parse_diff_tree(&self.run(&args)?)?;
+        Ok(CommitDetails {
+            commit,
+            compared_to,
+            files,
+        })
     }
 }

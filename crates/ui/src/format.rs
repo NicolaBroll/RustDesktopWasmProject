@@ -1,6 +1,51 @@
-//! Testo per la UI: date dei commit.
+//! Testo per la UI: date dei commit, file cambiati.
 
-use project_domain::Signature;
+use project_domain::{Change, ChangedFile, Signature};
+
+/// Lettera del tipo di modifica, come la scrive git: `A`, `D`, `M`, `T`, `R`, `C`.
+pub fn change_letter(change: Change) -> &'static str {
+    match change {
+        Change::Added => "A",
+        Change::Deleted => "D",
+        Change::Modified => "M",
+        Change::TypeChanged => "T",
+        Change::Renamed => "R",
+        Change::Copied => "C",
+        Change::Unmerged => "U",
+        Change::Untracked => "?",
+        Change::Ignored => "!",
+        Change::Unmodified => ".",
+    }
+}
+
+/// Nome del tipo di modifica, per il suggerimento.
+pub fn change_name(change: Change) -> &'static str {
+    match change {
+        Change::Added => "aggiunto",
+        Change::Deleted => "eliminato",
+        Change::Modified => "modificato",
+        Change::TypeChanged => "cambiato tipo",
+        Change::Renamed => "rinominato",
+        Change::Copied => "copiato",
+        Change::Unmerged => "in conflitto",
+        Change::Untracked => "non tracciato",
+        Change::Ignored => "ignorato",
+        Change::Unmodified => "invariato",
+    }
+}
+
+/// Percorso da mostrare: `vecchio -> nuovo` (ASCII: i font di default non hanno le frecce) per rinomine e copie, altrimenti il percorso.
+pub fn file_path(file: &ChangedFile) -> String {
+    match &file.original {
+        Some(original) => format!("{original} -> {}", file.path),
+        None => file.path.to_string(),
+    }
+}
+
+/// Somiglianza di rinomine e copie, es. `92%`; vuoto per gli altri file.
+pub fn file_score(file: &ChangedFile) -> String {
+    file.score.map(|s| format!("{s}%")).unwrap_or_default()
+}
 
 /// Data e ora di una firma nel fuso orario di chi ha firmato, es. `2023-11-14 22:13`.
 pub fn date_time(sig: &Signature) -> String {
@@ -47,6 +92,52 @@ mod tests {
             time,
             offset_min,
         }
+    }
+
+    fn file(change: Change, path: &str, original: Option<&str>, score: Option<u8>) -> ChangedFile {
+        ChangedFile {
+            path: path.into(),
+            change,
+            original: original.map(Into::into),
+            score,
+            old_mode: 0o100644,
+            new_mode: 0o100644,
+            old_oid: project_domain::Oid::from_bytes([1; 20]),
+            new_oid: project_domain::Oid::from_bytes([2; 20]),
+        }
+    }
+
+    #[test]
+    fn changed_file_text() {
+        let renamed = file(
+            Change::Renamed,
+            "src/bin/app.rs",
+            Some("src/main.rs"),
+            Some(92),
+        );
+        assert_eq!(change_letter(renamed.change), "R");
+        assert_eq!(file_path(&renamed), "src/main.rs -> src/bin/app.rs");
+        assert_eq!(file_score(&renamed), "92%");
+
+        let modified = file(Change::Modified, "README.md", None, None);
+        assert_eq!(change_letter(modified.change), "M");
+        assert_eq!(file_path(&modified), "README.md");
+        assert_eq!(file_score(&modified), "");
+
+        // Un percorso non UTF-8 si mostra con U+FFFD.
+        let mut odd = file(Change::Added, "", None, None);
+        odd.path = project_domain::RepoPath::from_bytes(b"ca\xff".to_vec());
+        assert_eq!(file_path(&odd), "ca\u{fffd}");
+        let letters: String = [
+            Change::Added,
+            Change::Deleted,
+            Change::Modified,
+            Change::TypeChanged,
+            Change::Copied,
+        ]
+        .map(change_letter)
+        .concat();
+        assert_eq!(letters, "ADMTC");
     }
 
     #[test]

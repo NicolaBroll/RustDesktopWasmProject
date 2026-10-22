@@ -337,6 +337,69 @@ pub fn repo_with_merge_conflict() -> Repo {
     repo
 }
 
+/// Gli id di [`repo_with_file_changes`].
+pub struct FileChanges {
+    pub repo: Repo,
+    /// Commit radice: `vecchio.txt`, `sposta.txt`, `eliminato.txt`, `script.sh`.
+    pub base: Oid,
+    /// Rispetto a `base`: `vecchio.txt` → `nuovo.txt` (rinomina esatta), `sposta.txt` →
+    /// `spostato.txt` (rinomina con modifiche), `eliminato.txt` eliminato, `script.sh` reso
+    /// eseguibile, aggiunti `cartella/con spazio.txt` e un file con nome non UTF-8 (byte `0xff`,
+    /// solo su Unix).
+    pub changes: Oid,
+    /// Commit vuoto (`--allow-empty`) dopo `changes`.
+    pub empty: Oid,
+}
+
+/// Il nome non UTF-8 di [`repo_with_file_changes`].
+pub const NON_UTF8_NAME: &[u8] = b"caff\xff.txt";
+
+/// Un commit con una modifica di ogni tipo, e un commit vuoto dopo.
+pub fn repo_with_file_changes() -> FileChanges {
+    let repo = Repo::new();
+    repo.write(
+        "vecchio.txt",
+        "contenuto abbastanza lungo da riconoscere la rinomina\n",
+    );
+    repo.write(
+        "sposta.txt",
+        "prima riga abbastanza lunga\nseconda riga\nterza riga\nquarta riga\n",
+    );
+    repo.write("eliminato.txt", "da eliminare\n");
+    repo.write("script.sh", "#!/bin/sh\n");
+    repo.git(&["add", "-A"]);
+    let base = repo.commit("base");
+
+    repo.git(&["mv", "vecchio.txt", "nuovo.txt"]);
+    repo.git(&["mv", "sposta.txt", "spostato.txt"]);
+    let moved = std::fs::read_to_string(repo.path().join("spostato.txt")).unwrap();
+    repo.write("spostato.txt", &format!("{moved}quinta riga\n"));
+    repo.git(&["rm", "--quiet", "eliminato.txt"]);
+    repo.write("cartella/con spazio.txt", "spazio\n");
+    #[cfg(unix)]
+    {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        std::fs::write(
+            repo.path().join(OsStr::from_bytes(NON_UTF8_NAME)),
+            "latin\n",
+        )
+        .unwrap();
+    }
+    repo.git(&["add", "-A"]);
+    // Dopo `add -A`, che riprenderebbe il modo dal file system.
+    repo.git(&["update-index", "--chmod=+x", "script.sh"]);
+    let changes = repo.commit("ogni tipo di modifica");
+    repo.git(&["commit", "--quiet", "--allow-empty", "-m", "vuoto"]);
+    let empty = repo.rev("HEAD");
+    FileChanges {
+        repo,
+        base,
+        changes,
+        empty,
+    }
+}
+
 /// HEAD staccata sul commit `f1` di [`repo_with_history`].
 pub fn repo_detached_head() -> History {
     let h = repo_with_history();

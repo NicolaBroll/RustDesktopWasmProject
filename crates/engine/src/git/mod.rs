@@ -13,7 +13,7 @@ mod memory_tests;
 pub use memory::{MemoryBackend, MemoryOpener};
 
 use crate::EngineError;
-use project_domain::{Commit, Head, RefInfo, Status};
+use project_domain::{Commit, CommitDetails, Head, RefInfo, Status};
 use serde::{Deserialize, Serialize};
 
 /// Un repository aperto, in sola lettura (le scritture arrivano con gli step successivi).
@@ -36,6 +36,13 @@ pub trait GitBackend: Send {
 
     /// Stato del worktree e dell'indice, con HEAD e upstream del branch corrente.
     fn status(&self) -> Result<Status, EngineError>;
+
+    /// Metadati e file cambiati del commit a cui porta `rev` (un id, anche abbreviato, o
+    /// qualunque rev accettata da [`GitBackend::log`]). I file sono confrontati con il **primo
+    /// genitore**, anche per i merge (i file portati nel branch dal merge); un commit radice è
+    /// confrontato con l'albero vuoto. Le rinomine sono riconosciute. Una `rev` che non si
+    /// risolve in un commit dà [`EngineError::UnknownRev`].
+    fn show_commit(&self, rev: &str) -> Result<CommitDetails, EngineError>;
 }
 
 /// Apre un repository dato il percorso. L'app lo inietta nella sessione: desktop e CLI usano

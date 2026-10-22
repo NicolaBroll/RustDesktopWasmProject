@@ -1,12 +1,15 @@
 //! Disegno dei pannelli. Le funzioni leggono la vista e producono [`Action`]; non cambiano
 //! niente direttamente.
 
-use crate::format::{date_time, date_time_zone};
+use crate::details::Shown;
+use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::CommitList;
 use crate::{Action, Job, ListViewport, RepoView};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
-use project_domain::{Commit, Head, RefInfo, RefKind, Signature, Upstream};
+use project_domain::{
+    Change, ChangedFile, Commit, Head, Oid, RefInfo, RefKind, Signature, Upstream,
+};
 
 /// Ultimo componente del percorso, per il titolo.
 fn repo_name(path: &str) -> &str {
@@ -451,59 +454,268 @@ fn signer(sig: &Signature) -> String {
     format!("{} <{}>", sig.name, sig.email)
 }
 
-pub(crate) fn details_panel(ui: &mut Ui, commit: Option<&Commit>) {
-    let Some(commit) = commit else {
-        ui.centered_and_justified(|ui| ui.weak("Nessun commit selezionato."));
-        return;
-    };
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.add_space(4.0);
-        ui.add(egui::Label::new(RichText::new(&commit.summary).heading()).wrap());
-        if !commit.body.is_empty() {
-            ui.add_space(4.0);
-            ui.add(egui::Label::new(&commit.body).wrap());
+/// Pannello a destra: messaggio e metadati del commit selezionato, poi i file cambiati.
+///
+/// `selected` è il commit della lista: mentre `commit.show` lavora se ne mostrano subito
+/// messaggio e metadati, i file arrivano dopo.
+pub(crate) fn details_panel(
+    ui: &mut Ui,
+    selected: Option<&Commit>,
+    shown: Shown<'_>,
+    actions: &mut Vec<Action>,
+) {
+    let (commit, compared_to) = match &shown {
+        Shown::Nothing => {
+            ui.centered_and_justified(|ui| ui.weak("Nessun commit selezionato."));
+            return;
         }
-        ui.add_space(8.0);
-        ui.separator();
-        egui::Grid::new("dettagli-commit")
-            .num_columns(2)
-            .spacing(vec2(12.0, 4.0))
-            .show(ui, |ui| {
-                ui.weak("Commit");
-                ui.add(egui::Label::new(RichText::new(commit.id.to_string()).monospace()).wrap());
-                ui.end_row();
-                let parents = match commit.parents.len() {
-                    0 => "Radice",
-                    1 => "Genitore",
-                    _ => "Genitori",
-                };
-                ui.weak(parents);
-                ui.vertical(|ui| {
-                    for parent in &commit.parents {
-                        ui.monospace(parent.short());
-                    }
-                });
-                ui.end_row();
-                ui.weak("Autore");
-                ui.add(egui::Label::new(signer(&commit.author)).wrap());
-                ui.end_row();
-                ui.weak("");
-                ui.weak(date_time_zone(&commit.author));
-                ui.end_row();
-                if commit.committer != commit.author {
-                    ui.weak("Committer");
-                    ui.add(egui::Label::new(signer(&commit.committer)).wrap());
-                    ui.end_row();
-                    ui.weak("");
-                    ui.weak(date_time_zone(&commit.committer));
-                    ui.end_row();
+        Shown::Loaded(details) => (Some(&details.commit), Some(details.compared_to)),
+        Shown::Loading(id) | Shown::Failed(id, _) => (selected.filter(|c| c.id == *id), None),
+    };
+    // Il messaggio può essere lungo: scorre da solo e lascia ai file almeno metà pannello.
+    let max_header = (ui.available_height() * 0.5).max(120.0);
+    egui::ScrollArea::vertical()
+        .id_salt("dettagli-testa")
+        .max_height(max_header)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            if let Some(commit) = commit {
+                commit_header(ui, commit, compared_to, actions);
+            }
+        });
+    ui.separator();
+    match shown {
+        Shown::Nothing => {}
+        Shown::Loading(_) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("Caricamento dei file cambiati…");
+            });
+        }
+        Shown::Failed(_, error) => {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+            if ui.button("Riprova").clicked() {
+                actions.push(Action::RetryDetails);
+            }
+        }
+        Shown::Loaded(details) => changed_files(ui, &details.files),
+    }
+}
+
+/// Oggetto, corpo e metadati. `compared_to` è `None` finché `commit.show` non risponde.
+fn commit_header(
+    ui: &mut Ui,
+    commit: &Commit,
+    compared_to: Option<Option<Oid>>,
+    actions: &mut Vec<Action>,
+) {
+    ui.add_space(4.0);
+    ui.add(egui::Label::new(RichText::new(&commit.summary).heading()).wrap());
+    if !commit.body.is_empty() {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(&commit.body).wrap());
+    }
+    ui.add_space(8.0);
+    egui::Grid::new("dettagli-commit")
+        .num_columns(2)
+        .spacing(vec2(12.0, 4.0))
+        .show(ui, |ui| {
+            ui.weak("Commit");
+            ui.horizontal_wrapped(|ui| {
+                let id = commit.id.to_string();
+                ui.add(egui::Label::new(RichText::new(&id).monospace()).selectable(true));
+                if ui
+                    .small_button("Copia")
+                    .on_hover_text("Copia l'id completo")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(id);
                 }
             });
-        if commit.is_merge() {
-            ui.add_space(8.0);
-            ui.colored_label(Color32::from_rgb(0x9b, 0x6b, 0xdf), "Commit di merge");
-        }
+            ui.end_row();
+
+            ui.weak(if commit.parents.len() == 1 {
+                "Genitore"
+            } else {
+                "Genitori"
+            });
+            ui.horizontal_wrapped(|ui| {
+                if commit.parents.is_empty() {
+                    ui.weak("nessuno");
+                }
+                for parent in &commit.parents {
+                    oid_link(ui, *parent, actions);
+                }
+            });
+            ui.end_row();
+
+            for (title, sig) in [("Autore", &commit.author), ("Committer", &commit.committer)] {
+                ui.weak(title);
+                ui.vertical(|ui| {
+                    ui.add(egui::Label::new(signer(sig)).wrap());
+                    ui.weak(date_time_zone(sig));
+                });
+                ui.end_row();
+            }
+
+            ui.weak("Confrontato con");
+            match compared_to {
+                None => {
+                    ui.weak("…");
+                }
+                Some(None) => {
+                    ui.label("commit radice (albero vuoto)");
+                }
+                Some(Some(base)) => {
+                    ui.horizontal_wrapped(|ui| {
+                        oid_link(ui, base, actions);
+                        if commit.is_merge() {
+                            ui.weak("(primo genitore)");
+                        }
+                    });
+                }
+            }
+            ui.end_row();
+        });
+    if commit.is_merge() {
+        ui.add_space(4.0);
+        ui.colored_label(Color32::from_rgb(0x9b, 0x6b, 0xdf), "Commit di merge");
+    }
+    ui.add_space(4.0);
+}
+
+/// Id breve cliccabile: seleziona il commit nella lista.
+fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
+    let response = ui
+        .link(RichText::new(id.short()).monospace())
+        .on_hover_text(format!("{id}\nClic: seleziona il commit"));
+    if response.clicked() {
+        actions.push(Action::SelectCommit(id));
+    }
+}
+
+/// Altezza di una riga della lista dei file.
+const FILE_ROW_HEIGHT: f32 = 20.0;
+
+/// Colore della lettera del tipo di modifica.
+fn change_color(change: Change) -> Color32 {
+    match change {
+        Change::Added => Color32::from_rgb(0x3f, 0xb9, 0x50),
+        Change::Deleted => Color32::from_rgb(0xe5, 0x53, 0x4b),
+        Change::Modified => Color32::from_rgb(0xd2, 0x99, 0x22),
+        Change::TypeChanged => Color32::from_rgb(0xb0, 0x7c, 0xe8),
+        Change::Renamed => Color32::from_rgb(0x4c, 0x9a, 0xf0),
+        Change::Copied => Color32::from_rgb(0x2a, 0xb7, 0xa9),
+        _ => Color32::GRAY,
+    }
+}
+
+/// Elenco dei file cambiati, virtualizzato: si disegnano solo le righe visibili.
+fn changed_files(ui: &mut Ui, files: &[ChangedFile]) {
+    ui.strong(match files.len() {
+        0 => "Nessun file cambiato".to_owned(),
+        1 => "1 file cambiato".to_owned(),
+        n => format!("{n} file cambiati"),
     });
+    ui.add_space(2.0);
+    let font = FontId::proportional(13.0);
+    let mono = FontId::monospace(12.0);
+    let text = ui.visuals().text_color();
+    let weak = ui.visuals().weak_text_color();
+    egui::ScrollArea::vertical()
+        .id_salt("dettagli-file")
+        .auto_shrink(false)
+        .show_rows(ui, FILE_ROW_HEIGHT, files.len(), |ui, range| {
+            for file in &files[range] {
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), FILE_ROW_HEIGHT),
+                    Sense::hover(),
+                );
+                if response.hovered() {
+                    ui.painter()
+                        .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                }
+                let painter = ui.painter_at(rect);
+                let color = change_color(file.change);
+                let badge = egui::Rect::from_center_size(
+                    egui::pos2(rect.left() + 11.0, rect.center().y),
+                    vec2(18.0, 16.0),
+                );
+                painter.rect_filled(badge, 3.0, color);
+                painter.text(
+                    badge.center(),
+                    Align2::CENTER_CENTER,
+                    change_letter(file.change),
+                    mono.clone(),
+                    Color32::from_gray(20),
+                );
+
+                // A destra: somiglianza e segno del sottomodulo.
+                let mut right = rect.right() - 4.0;
+                let mut tail = file_score(file);
+                if file.is_submodule() {
+                    tail = format!("{tail} [sottomodulo]").trim_start().to_owned();
+                }
+                if !tail.is_empty() {
+                    let galley = painter.layout_no_wrap(tail, font.clone(), weak);
+                    right -= galley.size().x;
+                    let top = rect.center().y - galley.size().y / 2.0;
+                    painter.galley(egui::pos2(right, top), galley, weak);
+                    right -= 8.0;
+                }
+
+                let left = badge.right() + 6.0;
+                let galley = painter.layout_job(path_job(file, &font, text, weak, right - left));
+                let top = rect.center().y - galley.size().y / 2.0;
+                painter.galley(egui::pos2(left, top), galley, text);
+
+                response.on_hover_text(file_tooltip(file));
+            }
+        });
+}
+
+/// Percorso su una riga, tagliato con `…` se non entra in `width`. Per rinomine e copie
+/// l'origine è più tenue.
+fn path_job(
+    file: &ChangedFile,
+    font: &FontId,
+    text: Color32,
+    weak: Color32,
+    width: f32,
+) -> egui::text::LayoutJob {
+    let format = |color| egui::TextFormat {
+        font_id: font.clone(),
+        color,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    if let Some(original) = &file.original {
+        job.append(&format!("{original} -> "), 0.0, format(weak));
+    }
+    job.append(&file.path.to_string(), 0.0, format(text));
+    job.wrap.max_width = width.max(10.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    job
+}
+
+fn file_tooltip(file: &ChangedFile) -> String {
+    let mut lines = vec![format!(
+        "{} ({})",
+        file_path(file),
+        format::change_name(file.change)
+    )];
+    if let Some(score) = file.score {
+        lines.push(format!("somiglianza {score}%"));
+    }
+    if file.old_mode != file.new_mode && file.old_mode != 0 && file.new_mode != 0 {
+        lines.push(format!("modo {:o} -> {:o}", file.old_mode, file.new_mode));
+    }
+    if file.is_submodule() {
+        lines.push("sottomodulo".to_owned());
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]

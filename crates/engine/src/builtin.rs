@@ -36,6 +36,12 @@ impl Registry {
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string}"#,
             repo_log,
         );
+        add(
+            "commit.show",
+            "Dettagli del commit",
+            r#"{"id": string}"#,
+            commit_show,
+        );
         r
     }
 }
@@ -76,6 +82,20 @@ fn repo_refs(s: &mut Session, p: Value) -> Out {
     Ok(to_json(s.repo()?.refs()?))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdParam {
+    id: String,
+}
+
+/// I [`CommitDetails`](project_domain::CommitDetails) del commit `id` (anche abbreviato, o un
+/// nome di ref): `{"commit", "compared_to", "files"}`, con i file confrontati con il primo
+/// genitore.
+fn commit_show(s: &mut Session, p: Value) -> Out {
+    let IdParam { id } = parse_params("commit.show", p)?;
+    Ok(to_json(s.repo()?.show_commit(&id)?))
+}
+
 /// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
 /// l'ultimo commit restituito ce ne sono altri (la pagina seguente parte da `skip + limit`).
 fn repo_log(s: &mut Session, p: Value) -> Out {
@@ -96,7 +116,7 @@ fn repo_log(s: &mut Session, p: Value) -> Out {
 mod tests {
     use super::*;
     use crate::{GitBackend, MemoryBackend, MemoryOpener};
-    use project_domain::{Commit, RefInfo, Status};
+    use project_domain::{Commit, CommitDetails, RefInfo, Status};
     use std::sync::Arc;
 
     fn session() -> Session {
@@ -125,7 +145,16 @@ mod tests {
     fn catalog() {
         let r = Registry::builtin();
         let ids: Vec<_> = r.list().map(|c| c.id).collect();
-        assert_eq!(ids, ["repo.log", "repo.open", "repo.refs", "repo.status"]);
+        assert_eq!(
+            ids,
+            [
+                "commit.show",
+                "repo.log",
+                "repo.open",
+                "repo.refs",
+                "repo.status"
+            ]
+        );
         let ids: Vec<_> = r.search("CRONOLOGIA").map(|c| c.id).collect();
         assert_eq!(ids, ["repo.log"]);
     }
@@ -151,8 +180,13 @@ mod tests {
     fn reads_need_an_open_repo() {
         let r = Registry::builtin();
         let mut s = session();
-        for id in ["repo.status", "repo.refs", "repo.log"] {
-            let err = r.run(id, &mut s, json!({})).unwrap_err();
+        for id in ["repo.status", "repo.refs", "repo.log", "commit.show"] {
+            let params = if id == "commit.show" {
+                json!({ "id": "HEAD" })
+            } else {
+                json!({})
+            };
+            let err = r.run(id, &mut s, params).unwrap_err();
             assert!(matches!(err, EngineError::NoRepo), "{id}: {err}");
         }
     }
@@ -213,6 +247,47 @@ mod tests {
     }
 
     #[test]
+    fn commit_show_returns_metadata_and_files() {
+        let (r, mut s) = opened();
+        let sample = MemoryBackend::sample();
+        let head = sample.head().unwrap().target().unwrap();
+
+        let out = r
+            .run("commit.show", &mut s, json!({ "id": "HEAD" }))
+            .unwrap();
+        let details: CommitDetails = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(details, sample.show_commit("HEAD").unwrap());
+        assert_eq!(details.commit.id, head);
+        assert_eq!(details.compared_to, Some(details.commit.parents[0]));
+        assert!(!details.files.is_empty());
+
+        // Forma del JSON che legge la UI.
+        assert_eq!(out["commit"]["id"], head.to_string());
+        assert_eq!(out["compared_to"], details.commit.parents[0].to_string());
+        let renamed = out["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["change"] == "Renamed")
+            .expect("il commit 12 dell'esempio ha una rinomina");
+        assert_eq!(renamed["original"], "src/main.rs");
+        assert_eq!(renamed["path"], "src/bin/app.rs");
+        assert_eq!(renamed["score"], 92);
+
+        // Id abbreviato e nome di ref portano allo stesso commit.
+        let short = head.to_string()[..8].to_owned();
+        for id in [short.as_str(), "main", "refs/heads/main"] {
+            let out = r.run("commit.show", &mut s, json!({ "id": id })).unwrap();
+            assert_eq!(out["commit"]["id"], head.to_string(), "{id}");
+        }
+
+        let err = r
+            .run("commit.show", &mut s, json!({ "id": "nessuno" }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
+    }
+
+    #[test]
     fn errors() {
         let (r, mut s) = opened();
         assert!(matches!(
@@ -225,6 +300,9 @@ mod tests {
             ("repo.status", json!({ "x": 1 })),
             ("repo.log", json!({ "limit": -1 })),
             ("repo.log", json!({ "page": 2 })),
+            ("commit.show", json!({})),
+            ("commit.show", json!({ "id": 3 })),
+            ("commit.show", json!({ "id": "HEAD", "path": "a" })),
         ] {
             let err = r.run(id, &mut s, params).unwrap_err();
             assert!(

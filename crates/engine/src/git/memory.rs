@@ -3,7 +3,8 @@
 use super::{GitBackend, LogQuery, RepoOpener};
 use crate::EngineError;
 use project_domain::{
-    Commit, Head, Oid, Operation, RefInfo, RefKind, Status, StatusEntry, Upstream,
+    ChangedFile, Commit, CommitDetails, Head, Oid, Operation, RefInfo, RefKind, Status,
+    StatusEntry, Upstream,
 };
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
@@ -33,6 +34,9 @@ struct RefEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryBackend {
     commits: BTreeMap<Oid, Commit>,
+    /// File cambiati da ogni commit rispetto al primo genitore; un commit assente non cambia
+    /// niente.
+    changes: BTreeMap<Oid, Vec<ChangedFile>>,
     /// Nome completo → destinazione; l'ordine della mappa è quello di `git for-each-ref`.
     refs: BTreeMap<String, RefEntry>,
     /// Branch locale → branch remoto, entrambi nomi completi.
@@ -53,6 +57,7 @@ impl MemoryBackend {
     pub fn new() -> Self {
         Self {
             commits: BTreeMap::new(),
+            changes: BTreeMap::new(),
             refs: BTreeMap::new(),
             upstreams: BTreeMap::new(),
             head: HeadRef::Branch("main".to_owned()),
@@ -82,6 +87,13 @@ impl MemoryBackend {
     /// come in un clone superficiale.
     pub fn insert_commit(&mut self, commit: Commit) {
         self.commits.insert(commit.id, commit);
+    }
+
+    /// File cambiati dal commit `id` rispetto al primo genitore (o all'albero vuoto per un
+    /// commit radice), nell'ordine in cui li darebbe git. Li restituisce
+    /// [`GitBackend::show_commit`]; senza questa chiamata il commit non cambia nessun file.
+    pub fn set_changes(&mut self, id: Oid, files: Vec<ChangedFile>) {
+        self.changes.insert(id, files);
     }
 
     /// Crea o sposta il branch locale `name` (nome breve, es. `main`).
@@ -318,6 +330,20 @@ impl GitBackend for MemoryBackend {
             upstream,
             entries: self.entries.clone(),
             operation: self.operation,
+        })
+    }
+
+    fn show_commit(&self, rev: &str) -> Result<CommitDetails, EngineError> {
+        let id = self.resolve(rev)?;
+        // Un ref può puntare a un commit che il repo non ha (come in un clone superficiale).
+        let commit = self
+            .commits
+            .get(&id)
+            .ok_or_else(|| EngineError::UnknownRev(rev.to_owned()))?;
+        Ok(CommitDetails {
+            commit: commit.clone(),
+            compared_to: commit.parents.first().copied(),
+            files: self.changes.get(&id).cloned().unwrap_or_default(),
         })
     }
 }

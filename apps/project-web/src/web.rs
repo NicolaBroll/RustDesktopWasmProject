@@ -20,10 +20,12 @@ pub fn start() {
                 Box::new(|cc| {
                     // Il browser non vede i repo locali: repo di esempio in memoria.
                     let opener = Arc::new(MemoryOpener::sample());
+                    let repo = Some(MemoryOpener::SAMPLE_PATH.to_owned());
                     Ok(Box::new(project_ui::App::new(
                         cc,
                         Arc::new(WebPlatform),
                         opener,
+                        repo,
                     )))
                 }),
             )

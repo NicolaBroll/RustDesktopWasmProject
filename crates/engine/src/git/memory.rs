@@ -1,7 +1,9 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
+mod write;
+
 use super::line_diff;
-use super::{DiffSpec, GitBackend, LogQuery, RepoOpener};
+use super::{DiffSpec, GitBackend, LogQuery, RepoOpener, StagedVersion};
 use crate::EngineError;
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
@@ -49,6 +51,8 @@ pub struct MemoryBackend {
     blobs: BTreeMap<Oid, Vec<u8>>,
     /// Contenuto dei file nel worktree, per `diff.worktree`.
     worktree: BTreeMap<RepoPath, Vec<u8>>,
+    /// Backup dell'indice salvati da stage e unstage: nome del ref e versioni salvate.
+    backups: Vec<(String, Vec<StagedVersion>)>,
 }
 
 impl Default for MemoryBackend {
@@ -70,6 +74,7 @@ impl MemoryBackend {
             operation: None,
             blobs: BTreeMap::new(),
             worktree: BTreeMap::new(),
+            backups: Vec::new(),
         }
     }
 
@@ -113,6 +118,17 @@ impl MemoryBackend {
     /// dello stato modificate fuori stage (per i file eliminati no).
     pub fn set_worktree_file(&mut self, path: impl Into<RepoPath>, content: impl Into<Vec<u8>>) {
         self.worktree.insert(path.into(), content.into());
+    }
+
+    /// I backup dell'indice salvati da stage e unstage, in ordine: nome del ref e versioni in
+    /// stage salvate (i contenuti sono nei blob).
+    pub fn backups(&self) -> &[(String, Vec<StagedVersion>)] {
+        &self.backups
+    }
+
+    /// Il contenuto del blob `id`, se noto.
+    pub fn blob(&self, id: Oid) -> Option<&[u8]> {
+        self.blobs.get(&id).map(Vec::as_slice)
     }
 
     /// Crea o sposta il branch locale `name` (nome breve, es. `main`).
@@ -590,6 +606,14 @@ impl GitBackend for MemoryBackend {
             files.retain(|f| f.new_path == *path || f.old_path == *path);
         }
         Ok(Diff { files })
+    }
+
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
+        self.stage_paths(paths)
+    }
+
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
+        self.unstage_paths(paths)
     }
 }
 

@@ -4,6 +4,7 @@
 //! [`GitBackend`], aperto da un [`RepoOpener`] iniettato dall'app. Le implementazioni sono
 //! [`MemoryBackend`] (qui, per i test e la versione web) e `CliBackend` (in `project-git`).
 
+mod backup;
 mod line_diff;
 mod memory;
 mod sample;
@@ -13,13 +14,17 @@ mod memory_diff_tests;
 #[cfg(test)]
 mod memory_tests;
 
+pub use backup::{
+    BACKUP_PREFIX, StagedVersion, backup_message, path_matches, versions_at_risk,
+    versions_at_risk_hidden,
+};
 pub use memory::{MemoryBackend, MemoryOpener};
 
 use crate::EngineError;
 use project_domain::{Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// Un repository aperto, in sola lettura (le scritture arrivano con gli step successivi).
+/// Un repository aperto: letture e, uno step alla volta, scritture (stage e unstage per ora).
 ///
 /// `Send` perché la sessione può spostarlo su un thread di lavoro per i comandi lenti (§6).
 pub trait GitBackend: Send {
@@ -59,6 +64,51 @@ pub trait GitBackend: Send {
     /// [`GitBackend::show_commit`]). Per [`DiffSpec::Commit`] una `rev` che non si risolve in
     /// un commit dà [`EngineError::UnknownRev`].
     fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
+
+    // --- Scritture: cambiano il repo. Prendono `&mut self` perché il `MemoryBackend` tiene lo
+    // stato in sé; una lettura fatta dopo vede sempre il nuovo stato.
+    //
+    // Stage e unstage restituiscono il nome del ref di backup (`refs/project/backup/...`) se
+    // prima di scrivere hanno salvato versioni in stage che esistevano solo nell'indice
+    // ([`versions_at_risk`]); se il backup non riesce l'indice non si tocca e il risultato è
+    // l'errore.
+    //
+    // Il controllo dei rischi legge lo stato prima di scrivere: fra la lettura e la scrittura
+    // un altro processo git potrebbe cambiare l'indice (finestra breve, solo con scritture
+    // esterne concorrenti). Il `CliBackend` ricontrolla le voci toccate subito prima di
+    // scrivere e, se sono cambiate, dà errore senza scrivere; resta solo l'istante fra
+    // quell'ultimo controllo e la scrittura.
+
+    /// Mette in stage i file `paths` com'erano nel worktree (`git add`): modifiche, file nuovi
+    /// non tracciati e cancellazioni. Per una rinomina fatta nel worktree si passano i due
+    /// percorsi (la cancellazione del vecchio e il nuovo file). Non tocca il worktree.
+    ///
+    /// - I percorsi sono presi alla lettera (niente glob né pathspec magici); un percorso che
+    ///   è una cartella comprende i file che contiene, come in git (i file ignorati al suo
+    ///   interno sono saltati).
+    /// - Un file ignorato da `.gitignore` e non tracciato, chiesto per nome, dà
+    ///   [`EngineError::NotAllowed`] e **niente** viene messo in stage (non si forza mai).
+    /// - Un percorso che non esiste né nel worktree né nell'indice né in HEAD dà errore e
+    ///   niente cambia; uno (file o cartella) che indica solo cancellazioni già in stage non
+    ///   fa niente.
+    /// - Un file in conflitto messo in stage è **risolto** con il contenuto del worktree (come
+    ///   `git add`): gli stadi del conflitto spariscono dall'indice (git ne tiene le versioni
+    ///   nell'estensione REUC, da cui `git checkout -m` rifà il conflitto). Solo se chiesto per
+    ///   nome: un file in conflitto dentro una cartella richiesta dà
+    ///   [`EngineError::NotAllowed`] e niente cambia.
+    /// - `paths` vuoto non fa niente (non vuol dire "tutto").
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
+
+    /// Toglie dallo stage i file `paths`: l'indice torna come in HEAD per quei percorsi (un
+    /// file aggiunto torna non tracciato), come `git restore --staged`. Su un branch senza
+    /// commit l'indice torna vuoto per quei percorsi. **Non tocca mai il worktree.**
+    ///
+    /// - Percorsi alla lettera, cartelle comprese, come in [`GitBackend::stage`].
+    /// - Un file in conflitto dà [`EngineError::NotAllowed`]: togliere dall'indice gli stadi
+    ///   del conflitto ne perderebbe le versioni; si risolve con [`GitBackend::stage`].
+    /// - Un percorso sconosciuto a git (né in HEAD né nell'indice) dà errore e niente cambia.
+    /// - `paths` vuoto non fa niente.
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

@@ -19,6 +19,7 @@ impl Registry {
                     id,
                     title,
                     params_help,
+                    writes: WRITES.contains(&id),
                 },
                 handler,
             )
@@ -61,9 +62,24 @@ impl Registry {
             r#"{"id": string, "path"?: percorso}"#,
             diff_commit,
         );
+        add(
+            "index.stage",
+            "Metti in stage i file",
+            r#"{"paths": [percorso, ...]}"#,
+            index_stage,
+        );
+        add(
+            "index.unstage",
+            "Togli i file dallo stage",
+            r#"{"paths": [percorso, ...]}"#,
+            index_unstage,
+        );
         r
     }
 }
+
+/// I comandi che modificano il repository ([`CommandSpec::writes`]).
+const WRITES: &[&str] = &["index.stage", "index.unstage"];
 
 type Out = Result<Value, EngineError>;
 
@@ -132,12 +148,17 @@ struct CommitDiffParams {
     path: Option<RepoPath>,
 }
 
+/// Come [`check_path`], per un percorso facoltativo.
+fn check_opt_path(
+    id: &'static str,
+    path: Option<RepoPath>,
+) -> Result<Option<RepoPath>, EngineError> {
+    path.map(|p| check_path(id, p)).transpose()
+}
+
 /// Un percorso di file come lo scrive git: relativo alla radice, con `/` come separatore, senza
 /// componenti vuoti, `.` o `..` e senza NUL. Altrimenti [`EngineError::InvalidParams`].
-fn check_path(id: &'static str, path: Option<RepoPath>) -> Result<Option<RepoPath>, EngineError> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
+fn check_path(id: &'static str, path: RepoPath) -> Result<RepoPath, EngineError> {
     let bytes = path.as_bytes();
     let reason = if bytes.is_empty() {
         Some("il percorso è vuoto")
@@ -159,7 +180,7 @@ fn check_path(id: &'static str, path: Option<RepoPath>) -> Result<Option<RepoPat
             id,
             reason: format!("{reason}: `{path}`"),
         }),
-        None => Ok(Some(path)),
+        None => Ok(path),
     }
 }
 
@@ -167,14 +188,14 @@ fn check_path(id: &'static str, path: Option<RepoPath>) -> Result<Option<RepoPat
 /// stage): `{"files": [...]}`. I file non tracciati non compaiono.
 fn diff_worktree(s: &mut Session, p: Value) -> Out {
     let DiffParams { path } = parse_params("diff.worktree", p)?;
-    let path = check_path("diff.worktree", path)?;
+    let path = check_opt_path("diff.worktree", path)?;
     Ok(to_json(s.repo()?.diff(&DiffSpec::Worktree { path })?))
 }
 
 /// Il [`Diff`](project_domain::Diff) dell'indice rispetto a HEAD (modifiche in stage).
 fn diff_index(s: &mut Session, p: Value) -> Out {
     let DiffParams { path } = parse_params("diff.index", p)?;
-    let path = check_path("diff.index", path)?;
+    let path = check_opt_path("diff.index", path)?;
     Ok(to_json(s.repo()?.diff(&DiffSpec::Index { path })?))
 }
 
@@ -182,10 +203,60 @@ fn diff_index(s: &mut Session, p: Value) -> Out {
 /// `commit.show`).
 fn diff_commit(s: &mut Session, p: Value) -> Out {
     let CommitDiffParams { id, path } = parse_params("diff.commit", p)?;
-    let path = check_path("diff.commit", path)?;
+    let path = check_opt_path("diff.commit", path)?;
     Ok(to_json(
         s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,
     ))
+}
+
+/// Parametri di `index.stage` e `index.unstage`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PathsParams {
+    paths: Vec<RepoPath>,
+}
+
+/// I percorsi di `index.stage`/`index.unstage`, validati come in `diff.*` e senza doppioni
+/// (nell'ordine dato). Una lista vuota è un errore: per git "nessun percorso" vorrebbe dire
+/// "tutto", ed è meglio che non si possa chiedere per sbaglio.
+fn check_paths(id: &'static str, p: Value) -> Result<Vec<RepoPath>, EngineError> {
+    let PathsParams { paths } = parse_params(id, p)?;
+    if paths.is_empty() {
+        return Err(EngineError::InvalidParams {
+            id,
+            reason: "`paths` è vuoto: indicare almeno un percorso".to_owned(),
+        });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        let path = check_path(id, path)?;
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+    Ok(out)
+}
+
+/// Mette in stage `paths` (vedi [`GitBackend::stage`](crate::GitBackend::stage)).
+/// Risultato: `{"status": Status, "backup": string | null}`, con il nuovo
+/// [`Status`](project_domain::Status) (chi chiama aggiorna la vista senza un secondo comando) e
+/// il ref del backup dell'indice, se prima di scrivere sono state salvate versioni in stage
+/// che esistevano solo nell'indice.
+fn index_stage(s: &mut Session, p: Value) -> Out {
+    let paths = check_paths("index.stage", p)?;
+    let repo = s.repo_mut()?;
+    let backup = repo.stage(&paths)?;
+    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
+}
+
+/// Toglie dallo stage `paths` (vedi [`GitBackend::unstage`](crate::GitBackend::unstage)),
+/// senza toccare il worktree. Risultato come `index.stage`.
+fn index_unstage(s: &mut Session, p: Value) -> Out {
+    let paths = check_paths("index.unstage", p)?;
+    let repo = s.repo_mut()?;
+    let backup = repo.unstage(&paths)?;
+    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
 }
 
 /// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
@@ -244,6 +315,8 @@ mod tests {
                 "diff.commit",
                 "diff.index",
                 "diff.worktree",
+                "index.stage",
+                "index.unstage",
                 "repo.log",
                 "repo.open",
                 "repo.refs",
@@ -252,6 +325,8 @@ mod tests {
         );
         let ids: Vec<_> = r.search("CRONOLOGIA").map(|c| c.id).collect();
         assert_eq!(ids, ["repo.log"]);
+        let writes: Vec<_> = r.list().filter(|c| c.writes).map(|c| c.id).collect();
+        assert_eq!(writes, ["index.stage", "index.unstage"]);
     }
 
     #[test]
@@ -283,9 +358,13 @@ mod tests {
             "diff.worktree",
             "diff.index",
             "diff.commit",
+            "index.stage",
+            "index.unstage",
         ] {
             let params = if matches!(id, "commit.show" | "diff.commit") {
                 json!({ "id": "HEAD" })
+            } else if id.starts_with("index.") {
+                json!({ "paths": ["README.md"] })
             } else {
                 json!({})
             };
@@ -478,6 +557,73 @@ mod tests {
     }
 
     #[test]
+    fn stage_and_unstage_return_the_new_status() {
+        let (r, mut s) = opened();
+        let original = MemoryBackend::sample();
+
+        let out = r
+            .run(
+                "index.stage",
+                &mut s,
+                json!({ "paths": ["note.txt", "src/lib.rs", "note.txt"] }),
+            )
+            .unwrap();
+        assert_eq!(
+            out["status"],
+            r.run("repo.status", &mut s, json!({})).unwrap()
+        );
+        // Niente a rischio: `note.txt` e `src/lib.rs` non avevano versioni solo in stage.
+        assert_eq!(out["backup"], Value::Null);
+        let status: Status = serde_json::from_value(out["status"].clone()).unwrap();
+        let staged: Vec<_> = status
+            .entries
+            .iter()
+            .map(|e| (e.path.to_string(), e.index.letter(), e.worktree.letter()))
+            .collect();
+        assert_eq!(
+            staged,
+            [
+                ("README.md".to_owned(), 'M', 'M'),
+                ("docs/guida.md".to_owned(), 'A', '.'),
+                ("note.txt".to_owned(), 'A', '.'),
+                ("src/lib.rs".to_owned(), 'M', '.'),
+            ]
+        );
+        // Forma del JSON che legge la UI: `status` come `repo.status`.
+        assert_eq!(out["status"]["entries"][2]["path"], "note.txt");
+        assert_eq!(out["status"]["entries"][2]["index"], "Added");
+        assert_eq!(out["status"]["head"]["Branch"]["name"], "main");
+        // I diff vedono il nuovo indice.
+        let diff = r
+            .run("diff.index", &mut s, json!({ "path": "note.txt" }))
+            .unwrap();
+        assert_eq!(diff["files"][0]["change"], "Added");
+
+        let out = r
+            .run(
+                "index.unstage",
+                &mut s,
+                json!({ "paths": ["note.txt", "src/lib.rs"] }),
+            )
+            .unwrap();
+        let status: Status = serde_json::from_value(out["status"].clone()).unwrap();
+        assert_eq!(status, original.status().unwrap());
+
+        // README.md è `MM`: la versione in stage esiste solo nell'indice, prima un backup.
+        let out = r
+            .run("index.unstage", &mut s, json!({ "paths": ["README.md"] }))
+            .unwrap();
+        assert_eq!(out["backup"], "refs/project/backup/index-1");
+        assert_eq!(out["status"]["entries"][0]["index"], "Unmodified");
+
+        // Un percorso non UTF-8 si passa come array di byte; qui non esiste.
+        let err = r
+            .run("index.stage", &mut s, json!({ "paths": [[99, 97, 255]] }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    }
+
+    #[test]
     fn errors() {
         let (r, mut s) = opened();
         assert!(matches!(
@@ -499,6 +645,15 @@ mod tests {
             ("diff.commit", json!({})),
             ("diff.commit", json!({ "path": "a" })),
             ("diff.commit", json!({ "id": "HEAD", "rev": "HEAD" })),
+            ("index.stage", json!({})),
+            ("index.stage", json!({ "paths": [] })),
+            ("index.stage", json!({ "paths": "README.md" })),
+            ("index.stage", json!({ "path": "README.md" })),
+            (
+                "index.unstage",
+                json!({ "paths": ["README.md"], "confirm": true }),
+            ),
+            ("index.unstage", json!({ "paths": [3] })),
         ] {
             let err = r.run(id, &mut s, params).unwrap_err();
             assert!(
@@ -521,6 +676,8 @@ mod tests {
                 ("diff.worktree", json!({ "path": path })),
                 ("diff.index", json!({ "path": path })),
                 ("diff.commit", json!({ "id": "HEAD", "path": path })),
+                ("index.stage", json!({ "paths": ["README.md", path] })),
+                ("index.unstage", json!({ "paths": [path] })),
             ] {
                 let err = r.run(id, &mut s, params).unwrap_err();
                 assert!(

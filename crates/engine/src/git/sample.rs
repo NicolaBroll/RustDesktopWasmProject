@@ -332,7 +332,7 @@ impl MemoryBackend {
     /// `main` segue `origin/main` ed è avanti di 1; `feature/grafo` segue
     /// `origin/feature/grafo`, allineato. Il worktree non è pulito: `README.md` modificato in
     /// stage e fuori, `docs/guida.md` aggiunto in stage, `src/lib.rs` modificato fuori stage,
-    /// `note.txt` non tracciato.
+    /// `note.txt` non tracciato (con un contenuto nel worktree, così si può mettere in stage).
     ///
     /// Ogni commit ha i suoi file cambiati (per `commit.show`): aggiunte, modifiche, una
     /// cancellazione (`.gitkeep` nel commit 3, file vuoto) e una rinomina con modifiche
@@ -386,6 +386,7 @@ impl MemoryBackend {
         repo.set_blob(oid(BLOB_SEED + 1), guide);
         repo.set_worktree_file("README.md", readme_worktree);
         repo.set_worktree_file("src/lib.rs", lib_worktree);
+        repo.set_worktree_file("note.txt", "Appunti da non perdere.\n");
         repo.set_entries(vec![
             tracked(
                 "README.md",

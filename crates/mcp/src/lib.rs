@@ -191,7 +191,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri.",
+            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`), quelli che possono far perdere dati chiedono `\"confirm\": true`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -323,6 +323,53 @@ mod tests {
         let text = r["content"][0]["text"].as_str().unwrap();
         let diff: Value = serde_json::from_str(text).unwrap();
         assert_eq!(diff["files"][0]["change"], "Renamed", "{diff}");
+    }
+
+    #[test]
+    fn write_commands_are_marked_and_change_the_repo() {
+        let root = temp_root("write");
+        let mut server = server(&root);
+        let r = call(&mut server, "list_commands", json!({"search": "index."}));
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let commands: Value = serde_json::from_str(text).unwrap();
+        let ids: Vec<_> = commands
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["id"].clone(), c["writes"].clone()))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                (json!("index.stage"), json!(true)),
+                (json!("index.unstage"), json!(true))
+            ]
+        );
+
+        call(&mut server, "open_repo", json!({"path": "repo"}));
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "index.stage", "params": {"paths": ["note.txt"]}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let out: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(out["backup"], Value::Null);
+        let note = out["status"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"] == "note.txt")
+            .unwrap();
+        assert_eq!(note["index"], "Added");
+
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "index.unstage", "params": {"paths": ["../fuori"]}}),
+        );
+        assert_eq!(r["isError"], true, "{r}");
     }
 
     #[test]

@@ -11,6 +11,9 @@ pub struct CommandSpec {
     pub title: &'static str,
     /// Descrizione dei parametri JSON, per CLI, MCP e help.
     pub params_help: &'static str,
+    /// Vero se il comando modifica il repository (indice, worktree, ref). La UI li disabilita
+    /// mentre un job è in corso (§6); CLI e MCP lo mostrano nel catalogo.
+    pub writes: bool,
 }
 
 pub type Handler = fn(&mut Session, Value) -> Result<Value, EngineError>;

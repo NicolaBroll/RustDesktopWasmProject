@@ -52,6 +52,7 @@ clap = { version = "4", features = ["derive"] }
 cargo_metadata = "0.23"
 proptest = "1"
 tempfile = "3"
+insta = "1.49"
 
 [profile.release]
 opt-level = 2

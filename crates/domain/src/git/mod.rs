@@ -2,13 +2,15 @@
 //!
 //! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
 //! (il log, [`parse_log`], lo stato, [`parse_status`], i ref, [`parse_refs`], i file cambiati
-//! da un commit, [`parse_diff_tree`], e il diff, [`parse_diff`]).
+//! da un commit, [`parse_diff_tree`], e il diff, [`parse_diff`]); [`build_patch`] costruisce le
+//! patch per lo stage di singole righe.
 
 mod diff;
 mod diff_tree;
 mod graph;
 mod log;
 mod oid;
+mod patch;
 mod path;
 mod quote;
 mod refs;
@@ -24,6 +26,8 @@ mod graph_tests;
 #[cfg(test)]
 mod log_tests;
 #[cfg(test)]
+mod patch_tests;
+#[cfg(test)]
 mod refs_tests;
 #[cfg(test)]
 mod status_tests;
@@ -35,6 +39,7 @@ pub use diff_tree::{ChangedFile, CommitDetails, DIFF_TREE_ARGS, parse_diff_tree}
 pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
+pub use patch::{APPLY_ARGS, LineRef, PatchDirection, build_patch};
 pub use path::RepoPath;
 pub use refs::{REFS_ARGS, REFS_FIELDS, REFS_FORMAT, parse_refs};
 pub use status::{STATUS_ARGS, parse_status};

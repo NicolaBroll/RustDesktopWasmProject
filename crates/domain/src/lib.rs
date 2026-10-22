@@ -7,12 +7,13 @@
 pub mod git;
 
 pub use git::{
-    ByteText, Change, ChangedFile, Commit, CommitDetails, Conflict, DIFF_ARGS, DIFF_TREE_ARGS,
-    Diff, EntryKind, FileDiff, GraphLayout, GraphRow, GraphSegment, Head, Hunk, LOG_ARGS,
-    LOG_FIELDS, LOG_FORMAT, Line, LineKind, NO_NEWLINE_MARKER, Oid, Operation, REFS_ARGS,
-    REFS_FIELDS, REFS_FORMAT, RefInfo, RefKind, RepoPath, STATUS_ARGS, Signature, Status,
-    StatusEntry, SubmoduleStatus, TrackedInfo, UnmergedInfo, Upstream, layout_graph,
-    layout_graph_nodes, parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
+    APPLY_ARGS, ByteText, Change, ChangedFile, Commit, CommitDetails, Conflict, DIFF_ARGS,
+    DIFF_TREE_ARGS, Diff, EntryKind, FileDiff, GraphLayout, GraphRow, GraphSegment, Head, Hunk,
+    LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Line, LineKind, LineRef, NO_NEWLINE_MARKER, Oid, Operation,
+    PatchDirection, REFS_ARGS, REFS_FIELDS, REFS_FORMAT, RefInfo, RefKind, RepoPath, STATUS_ARGS,
+    Signature, Status, StatusEntry, SubmoduleStatus, TrackedInfo, UnmergedInfo, Upstream,
+    build_patch, layout_graph, layout_graph_nodes, parse_diff, parse_diff_tree, parse_log,
+    parse_refs, parse_status,
 };
 
 /// Errori di dominio.
@@ -25,6 +26,22 @@ pub enum DomainError {
     InvalidGitOutput {
         /// Il sottocomando git, es. `log`.
         command: &'static str,
+        reason: String,
+    },
+    /// Il file non si presta a una patch per righe (binario, sottomodulo, in conflitto, ...).
+    #[error(
+        "impossibile mettere in stage o togliere dallo stage singole righe di `{path}`: {reason}"
+    )]
+    UnsupportedPatch {
+        /// Il percorso, da mostrare.
+        path: String,
+        reason: String,
+    },
+    /// Le righe selezionate non corrispondono a righe cambiate del diff.
+    #[error("selezione di righe non valida per `{path}`: {reason}")]
+    InvalidLineSelection {
+        /// Il percorso, da mostrare.
+        path: String,
         reason: String,
     },
 }

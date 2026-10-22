@@ -1,0 +1,11 @@
+---
+source: crates/domain/src/git/patch_tests.rs
+expression: "render(&patch(&f, lines, dir))"
+---
+diff --git a/coda.txt b/coda.txt
+--- a/coda.txt
++++ b/coda.txt
+@@ -1,2 +1 @@
+ a
+-b
+\ No newline at end of file

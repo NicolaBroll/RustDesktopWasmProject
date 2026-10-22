@@ -159,7 +159,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test di integrazione; revisione di `safety-reviewer`; CI verde.
 
 ### S19 — Costruttore di patch
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** costruttore di patch per righe selezionate (§3), in entrambe le direzioni
   (stage e unstage).
 - **Fatto quando:** snapshot `insta` e test che applicano la patch con `git apply --check` su un

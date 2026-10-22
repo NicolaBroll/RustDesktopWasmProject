@@ -9,10 +9,12 @@
 
 mod executor;
 mod format;
+mod list;
 mod view;
 
 pub use executor::{Done, Executor, Job, Ticket, Wake};
 
+use list::{CommitList, PageRequest};
 use project_domain::{Commit, Head, Oid, RefInfo, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use serde::Deserialize;
@@ -20,10 +22,8 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Commit chiesti a `repo.log` per la lista (le pagine successive arrivano con lo step S12).
-const LOG_PAGE: usize = 1000;
-
 /// Ciò che l'utente ha chiesto durante il frame.
+#[derive(Debug, Clone)]
 enum Action {
     /// Dialogo per scegliere la cartella del repo.
     PickFolder,
@@ -34,6 +34,12 @@ enum Action {
     Select(usize),
     /// Seleziona il commit puntato da un ref, se è nella lista.
     SelectCommit(Oid),
+    /// Sposta la selezione di tante righe (tastiera).
+    Move(isize),
+    /// Seleziona il primo commit (`true`) o l'ultimo caricato (`false`).
+    Edge(bool),
+    /// La lista mostra le righe fino a questa (esclusa): se serve chiede la pagina seguente.
+    Visible(usize),
 }
 
 /// A cosa serve un comando mandato all'executor. Le letture portano la generazione del repo
@@ -43,7 +49,7 @@ enum Request {
     Open,
     Refs(u64),
     Status(u64),
-    Log(u64),
+    Log(u64, PageRequest),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -52,10 +58,7 @@ struct RepoView {
     head: Head,
     refs: Vec<RefInfo>,
     status: Option<Status>,
-    commits: Vec<Commit>,
-    has_more: bool,
-    /// Indice in `commits`.
-    selected: Option<usize>,
+    list: CommitList,
 }
 
 impl RepoView {
@@ -65,15 +68,18 @@ impl RepoView {
             head,
             refs: Vec::new(),
             status: None,
-            commits: Vec::new(),
-            has_more: false,
-            selected: None,
+            list: CommitList::default(),
         }
     }
+}
 
-    fn selected_commit(&self) -> Option<&Commit> {
-        self.commits.get(self.selected?)
-    }
+/// Dove era la lista dei commit nell'ultimo frame: serve per portare in vista la selezione e
+/// per sapere quante righe salta Pagina giù.
+#[derive(Debug, Default)]
+struct ListViewport {
+    /// Righe disegnate, anche solo in parte.
+    rows: std::ops::Range<usize>,
+    height: f32,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +103,7 @@ pub struct App {
     /// Cresce a ogni repo aperto.
     generation: u64,
     repo: Option<RepoView>,
+    viewport: ListViewport,
     error: String,
 }
 
@@ -123,6 +130,7 @@ impl App {
             pending: HashMap::new(),
             generation: 0,
             repo: None,
+            viewport: ListViewport::default(),
             error: String::new(),
         };
         if let Some(path) = repo {
@@ -152,17 +160,62 @@ impl App {
             Action::Refresh => self.load(),
             Action::Select(index) => {
                 if let Some(repo) = &mut self.repo {
-                    repo.selected = Some(index);
+                    repo.list.select(index);
                 }
             }
             Action::SelectCommit(id) => {
                 if let Some(repo) = &mut self.repo
-                    && let Some(index) = repo.commits.iter().position(|c| c.id == id)
+                    && !repo.list.select_id(id)
                 {
-                    repo.selected = Some(index);
+                    self.error = format!("il commit {} non è tra quelli caricati", id.short());
+                }
+            }
+            Action::Move(delta) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.list.move_selection(delta);
+                }
+            }
+            Action::Edge(first) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.list.select_edge(first);
+                }
+            }
+            Action::Visible(end) => {
+                if let Some(request) = self.repo.as_mut().and_then(|r| r.list.next_page(end)) {
+                    self.request_page(request);
                 }
             }
         }
+    }
+
+    fn request_page(&mut self, page: PageRequest) {
+        let params = json!({ "skip": page.skip, "limit": page.limit });
+        self.submit("repo.log", params, Request::Log(self.generation, page));
+    }
+
+    /// Azioni dei tasti della lista: frecce, Pagina su/giù, Inizio/Fine. Solo se nessun campo
+    /// di testo sta ricevendo la tastiera.
+    fn keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        if self.repo.is_none() || ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
+            .unwrap_or(isize::MAX);
+        ctx.input(|i| {
+            let keys = [
+                (egui::Key::ArrowDown, Action::Move(1)),
+                (egui::Key::ArrowUp, Action::Move(-1)),
+                (egui::Key::PageDown, Action::Move(page)),
+                (egui::Key::PageUp, Action::Move(-page)),
+                (egui::Key::Home, Action::Edge(true)),
+                (egui::Key::End, Action::Edge(false)),
+            ];
+            for (key, action) in keys {
+                for _ in 0..i.num_presses(key) {
+                    actions.push(action.clone());
+                }
+            }
+        });
     }
 
     /// Chiede ref, stato e log del repo aperto.
@@ -173,8 +226,10 @@ impl App {
         let generation = self.generation;
         self.submit("repo.refs", json!({}), Request::Refs(generation));
         self.submit("repo.status", json!({}), Request::Status(generation));
-        let params = json!({ "limit": LOG_PAGE });
-        self.submit("repo.log", params, Request::Log(generation));
+        if let Some(repo) = &mut self.repo {
+            let first = repo.list.reset();
+            self.request_page(first);
+        }
     }
 
     fn receive(&mut self, ctx: &egui::Context) {
@@ -186,6 +241,13 @@ impl App {
             let Some(request) = self.pending.remove(&done.ticket) else {
                 continue;
             };
+            // Una pagina non arrivata si potrà chiedere di nuovo.
+            if done.result.is_err()
+                && let Request::Log(generation, page) = request
+                && let Some(repo) = self.current(generation)
+            {
+                repo.list.failed(page);
+            }
             match done.result {
                 Ok(value) => {
                     if let Err(e) = self.store(request, value) {
@@ -229,16 +291,10 @@ impl App {
                     repo.status = Some(status);
                 }
             }
-            Request::Log(generation) => {
+            Request::Log(generation, page) => {
                 if let Some(repo) = self.current(generation) {
                     let LogPage { commits, has_more } = serde_json::from_value(value)?;
-                    // Dopo un aggiornamento resta selezionato lo stesso commit, se c'è ancora.
-                    let selected = repo.selected_commit().map(|c| c.id);
-                    repo.selected = selected
-                        .and_then(|id| commits.iter().position(|c| c.id == id))
-                        .or((!commits.is_empty()).then_some(0));
-                    repo.commits = commits;
-                    repo.has_more = has_more;
+                    repo.list.receive(page, commits, has_more);
                 }
             }
         }
@@ -251,6 +307,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
         let mut actions = Vec::new();
+        self.keyboard(&ctx, &mut actions);
         let can_pick = self.platform.capabilities().open_folder;
 
         egui::Panel::top("barra").show(ui, |ui| {
@@ -274,9 +331,12 @@ impl eframe::App for App {
                     .default_size(320.0)
                     .min_size(200.0)
                     .max_size(side_max)
-                    .show(ui, |ui| view::details_panel(ui, repo.selected_commit()));
+                    .show(ui, |ui| {
+                        view::details_panel(ui, repo.list.selected_commit())
+                    });
+                let viewport = &mut self.viewport;
                 egui::CentralPanel::default()
-                    .show(ui, |ui| view::commit_list(ui, repo, &mut actions));
+                    .show(ui, |ui| view::commit_list(ui, repo, viewport, &mut actions));
             }
             None => {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -285,6 +345,10 @@ impl eframe::App for App {
             }
         }
 
+        // La lista ha portato in vista la riga chiesta: non serve più.
+        if let Some(repo) = &mut self.repo {
+            repo.list.take_scroll_to();
+        }
         for action in actions {
             self.apply(&ctx, action);
         }

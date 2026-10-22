@@ -2,7 +2,8 @@
 //! niente direttamente.
 
 use crate::format::{date_time, date_time_zone};
-use crate::{Action, Job, RepoView};
+use crate::list::CommitList;
+use crate::{Action, Job, ListViewport, RepoView};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{Commit, Head, RefInfo, RefKind, Signature, Upstream};
 
@@ -164,73 +165,113 @@ fn ref_row(ui: &mut Ui, info: &RefInfo, is_head: bool, actions: &mut Vec<Action>
 /// Altezza di una riga della lista dei commit.
 const ROW_HEIGHT: f32 = 22.0;
 
-pub(crate) fn commit_list(ui: &mut Ui, repo: &RepoView, actions: &mut Vec<Action>) {
-    if repo.commits.is_empty() {
-        ui.centered_and_justified(|ui| ui.weak("Nessun commit."));
+pub(crate) fn commit_list(
+    ui: &mut Ui,
+    repo: &RepoView,
+    viewport: &mut ListViewport,
+    actions: &mut Vec<Action>,
+) {
+    let list = &repo.list;
+    if list.commits().is_empty() {
+        let text = if list.is_loading() {
+            "Caricamento dei commit…"
+        } else {
+            "Nessun commit."
+        };
+        ui.centered_and_justified(|ui| ui.weak(text));
         return;
     }
     let font = FontId::proportional(13.5);
     let mono = FontId::monospace(12.5);
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
-    let rows = repo.commits.len() + usize::from(repo.has_more);
+    // Una riga in più in fondo mentre ci sono altri commit da caricare.
+    let rows = list.commits().len() + usize::from(list.has_more());
 
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
-        .show_rows(ui, ROW_HEIGHT, rows, |ui, range| {
-            for index in range {
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
-                let Some(commit) = repo.commits.get(index) else {
-                    ui.painter().text(
-                        rect.left_center() + vec2(8.0, 0.0),
-                        Align2::LEFT_CENTER,
-                        "… altri commit (arrivano con lo scorrimento a pagine)",
-                        font.clone(),
-                        weak,
-                    );
-                    continue;
-                };
-                let selected = repo.selected == Some(index);
-                if selected {
-                    ui.painter()
-                        .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
-                } else if response.hovered() {
-                    ui.painter()
-                        .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
-                }
-                if response.clicked() {
-                    actions.push(Action::Select(index));
-                }
+    let mut area = egui::ScrollArea::vertical().auto_shrink(false);
+    if let Some(target) = scroll_target(list, viewport) {
+        let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
+        let top = target as f32 * step;
+        // Verso l'alto la riga va in cima, verso il basso in fondo alla vista.
+        let offset = if target <= viewport.rows.start {
+            top
+        } else {
+            top + step - viewport.height
+        };
+        area = area.vertical_scroll_offset(offset.max(0.0));
+    }
 
-                // Colonne: id | oggetto (elastico) | autore | data.
-                let date_w = 120.0;
-                let author_w = (rect.width() * 0.2).clamp(80.0, 180.0);
-                let id_w = 70.0;
-                let summary_w = (rect.width() - id_w - author_w - date_w).max(40.0);
-                let columns = [
-                    (id_w, commit.id.short(), mono.clone(), weak),
-                    (summary_w, commit.summary.clone(), font.clone(), text),
-                    (author_w, commit.author.name.clone(), font.clone(), weak),
-                    (date_w, date_time(&commit.author), font.clone(), weak),
-                ];
-                let mut x = rect.left() + 8.0;
-                for (width, value, font, color) in columns {
-                    let cell = egui::Rect::from_min_size(
-                        egui::pos2(x, rect.top()),
-                        vec2(width - 8.0, rect.height()),
-                    );
-                    ui.painter_at(cell).text(
-                        cell.left_center(),
-                        Align2::LEFT_CENTER,
-                        value,
-                        font,
-                        color,
-                    );
-                    x += width;
-                }
+    let output = area.show_rows(ui, ROW_HEIGHT, rows, |ui, range| {
+        for index in range.clone() {
+            let (rect, response) =
+                ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+            let Some(commit) = list.commits().get(index) else {
+                ui.painter().text(
+                    rect.left_center() + vec2(8.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    "Caricamento di altri commit…",
+                    font.clone(),
+                    weak,
+                );
+                continue;
+            };
+            if list.selected() == Some(index) {
+                ui.painter()
+                    .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+            } else if response.hovered() {
+                ui.painter()
+                    .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
             }
-        });
+            if response.clicked() {
+                actions.push(Action::Select(index));
+            }
+            commit_row(ui, rect, commit, [&mono, &font], [text, weak]);
+        }
+        range
+    });
+    viewport.rows = output.inner;
+    viewport.height = output.inner_rect.height();
+    actions.push(Action::Visible(viewport.rows.end));
+}
+
+/// La riga da portare in vista, se non è già tutta visibile.
+fn scroll_target(list: &CommitList, viewport: &ListViewport) -> Option<usize> {
+    let target = list.peek_scroll_to()?;
+    let fully_visible = viewport.rows.start < target && target + 1 < viewport.rows.end;
+    (!fully_visible).then_some(target)
+}
+
+/// Colonne: id | oggetto (elastico) | autore | data.
+fn commit_row(
+    ui: &Ui,
+    rect: egui::Rect,
+    commit: &Commit,
+    [mono, font]: [&FontId; 2],
+    [text, weak]: [Color32; 2],
+) {
+    let date_w = 120.0;
+    let author_w = (rect.width() * 0.2).clamp(80.0, 180.0);
+    let id_w = 70.0;
+    let summary_w = (rect.width() - id_w - author_w - date_w).max(40.0);
+    let columns = [
+        (id_w, commit.id.short(), mono, weak),
+        (summary_w, commit.summary.clone(), font, text),
+        (author_w, commit.author.name.clone(), font, weak),
+        (date_w, date_time(&commit.author), font, weak),
+    ];
+    let mut x = rect.left() + 8.0;
+    for (width, value, font, color) in columns {
+        let cell =
+            egui::Rect::from_min_size(egui::pos2(x, rect.top()), vec2(width - 8.0, rect.height()));
+        ui.painter_at(cell).text(
+            cell.left_center(),
+            Align2::LEFT_CENTER,
+            value,
+            font.clone(),
+            color,
+        );
+        x += width;
+    }
 }
 
 fn signer(sig: &Signature) -> String {

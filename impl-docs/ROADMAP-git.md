@@ -113,7 +113,7 @@ Regole valide per tutti gli step:
   web con Playwright; CI verde.
 
 ### S12 — Lista dei commit virtualizzata
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** `ScrollArea::show_rows` con caricamento a pagine di `repo.log` durante lo
   scorrimento; selezione con mouse e tastiera.
 - **Fatto quando:** un repo con almeno 50.000 commit scorre fluido (verifica a mano, annotata nel

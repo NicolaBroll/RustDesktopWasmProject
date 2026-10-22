@@ -35,7 +35,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test su parsing di `Oid` validi e non validi e round-trip JSON; CI verde.
 
 ### S02 — Parser del log
-- [ ] **Agente:** `git-domain`
+- [x] **Agente:** `git-domain`
 - **Obiettivo:** funzione pura `parse_log(&[u8]) -> Result<Vec<Commit>, DomainError>` per il
   formato `-z` a campi fissi descritto in §3, più la costante con la stringa `--format`.
 - **Fatto quando:** test con output catturato da un repo vero (commit di merge, commit radice,

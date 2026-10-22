@@ -12,7 +12,10 @@ pub mod git;
 
 pub use document::{Document, Item};
 pub use format::{FORMAT_ID, FORMAT_VERSION};
-pub use git::{Commit, Head, Oid, RefInfo, RefKind, Signature, Upstream};
+pub use git::{
+    Commit, Head, LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Oid, RefInfo, RefKind, Signature, Upstream,
+    parse_log,
+};
 
 /// Errori di dominio.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -27,4 +30,11 @@ pub enum DomainError {
     UnsupportedFormat { format: String, version: u32 },
     #[error("identificatore git `{input}` non valido: {reason}")]
     InvalidOid { input: String, reason: String },
+    /// L'output di un comando git non ha il formato atteso dal parser.
+    #[error("output di `git {command}` non valido: {reason}")]
+    InvalidGitOutput {
+        /// Il sottocomando git, es. `log`.
+        command: &'static str,
+        reason: String,
+    },
 }

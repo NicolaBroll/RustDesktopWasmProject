@@ -70,8 +70,8 @@ pub struct Commit {
     pub parents: Vec<Oid>,
     pub author: Signature,
     pub committer: Signature,
-    pub summary: String,
-    pub body: String,
+    pub summary: String,           // %s: primo paragrafo su una riga
+    pub body: String,              // %b: il resto, senza a capo finali
 }
 pub enum RefKind { LocalBranch, RemoteBranch, Tag, Stash }
 pub struct RefInfo { pub name: String, pub kind: RefKind, pub target: Oid, pub upstream: Option<Upstream> }
@@ -87,7 +87,7 @@ Ogni comando git ha un formato scelto apposta per essere letto senza ambiguità:
 
 | Dato | Comando | Note |
 | --- | --- | --- |
-| Log | `git log -z --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct%x00%s%x00%b` | campi e record separati da NUL, **numero fisso di campi** per record: un messaggio git non può contenere NUL, quindi è univoco |
+| Log | `git log -z --date=raw --encoding=UTF-8 --no-show-signature --no-color --format=tformat:%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b` (costante `LOG_ARGS`) | 10 campi per record, **ognuno terminato da NUL** (il decimo NUL lo mette `-z`, anche dopo l'ultimo record): un messaggio git non può contenere NUL, quindi contare i campi è univoco. `%ad`/`%cd` con `--date=raw` danno `<secondi> <+hhmm>`, cioè anche il fuso orario che `%at`/`%ct` non hanno. `%s` è il primo paragrafo unito su una riga, `%b` il resto (a capo finali tolti dal parser) |
 | Ref | `git for-each-ref --format=...` con `%00` | include upstream e ahead/behind (`%(upstream:track)`) |
 | Stato | `git status --porcelain=v2 -z --branch --untracked-files=all` | formato stabile per definizione |
 | Diff | `git -c core.quotePath=false diff --no-color --no-ext-diff --find-renames` | parser del formato unified diff |

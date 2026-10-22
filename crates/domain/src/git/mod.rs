@@ -1,13 +1,17 @@
 //! Tipi del client git: identificatori, commit, ref, HEAD.
 //!
-//! Solo dati: i parser dell'output di git (log, ref, stato) arriveranno accanto a questi tipi
-//! e lavoreranno su `&[u8]`.
+//! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
+//! (per ora il log, [`parse_log`]; ref e stato arriveranno accanto).
 
+mod log;
 mod oid;
 
 #[cfg(test)]
+mod log_tests;
+#[cfg(test)]
 mod tests;
 
+pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
 
 use serde::{Deserialize, Serialize};
@@ -32,9 +36,10 @@ pub struct Commit {
     pub parents: Vec<Oid>,
     pub author: Signature,
     pub committer: Signature,
-    /// Prima riga del messaggio.
+    /// Oggetto: il primo paragrafo del messaggio con le righe unite da uno spazio (`%s` di git).
     pub summary: String,
-    /// Resto del messaggio dopo la riga vuota; può essere vuoto.
+    /// Resto del messaggio dopo il primo paragrafo (`%b` di git), senza gli a capo finali;
+    /// può essere vuoto.
     pub body: String,
 }
 

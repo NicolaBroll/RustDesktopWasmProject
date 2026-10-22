@@ -451,7 +451,7 @@ mod tests {
 
         let params = json!({ "paths": ["note.txt"] });
         let out = registry.run("index.stage", &mut session, params).unwrap();
-        let lists = StageLists::new(&serde_json::from_value(out).unwrap());
+        let lists = StageLists::new(&serde_json::from_value(out["status"].clone()).unwrap());
         assert!(lists.contains(Side::Staged, &"note.txt".into()));
         assert!(!lists.contains(Side::Unstaged, &"note.txt".into()));
         assert_eq!(
@@ -463,7 +463,9 @@ mod tests {
         let out = registry
             .run("index.unstage", &mut session, json!({ "paths": all }))
             .unwrap();
-        let lists = StageLists::new(&serde_json::from_value(out).unwrap());
+        // README.md era `MM`: la versione in stage è salvata in un backup.
+        assert!(out["backup"].is_string(), "{out}");
+        let lists = StageLists::new(&serde_json::from_value(out["status"].clone()).unwrap());
         assert!(lists.staged.is_empty());
         assert!(lists.contains(Side::Unstaged, &"note.txt".into()));
     }

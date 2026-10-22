@@ -40,8 +40,11 @@ Scritture (segnate `[modifica]` da `commands`): `index.stage {"paths"}` mette in
 li toglie dallo stage senza toccare il worktree. `paths` è una lista non vuota di percorsi esatti
 (stringhe o array di byte), presi alla lettera; una cartella comprende i file che contiene. Un file
 ignorato da `.gitignore` non viene mai forzato: errore, e niente cambia. Mettere in stage un file
-in conflitto lo risolve; toglierlo dallo stage è rifiutato. Entrambi restituiscono il nuovo stato,
-come `repo.status`.
+in conflitto (chiesto per nome) lo risolve; toglierlo dallo stage è rifiutato. Entrambi
+restituiscono `{"status", "backup"}`: il nuovo stato, come `repo.status`, e il ref del backup
+dell'indice (o `null`). Il backup si salva da solo prima di scrivere quando una versione in stage
+non è né in HEAD né nel worktree e andrebbe persa (`git show <ref>:<percorso>` la recupera); se
+non riesce, l'indice non si tocca.
 
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
 `writes: true` per i comandi che modificano il repository. All'avvio apre il

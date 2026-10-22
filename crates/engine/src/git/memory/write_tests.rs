@@ -383,3 +383,74 @@ fn branch_without_commits() {
         Err(EngineError::Git { .. })
     ));
 }
+
+#[test]
+fn staged_versions_unique_to_the_index_are_backed_up() {
+    let mut repo = MemoryBackend::sample();
+    // README.md è `MM`: la versione in stage non è né in HEAD né nel worktree.
+    let staged = match &repo.status().unwrap().entries[0].kind {
+        EntryKind::Ordinary(info) => info.oid_index,
+        other => panic!("{other:?}"),
+    };
+    let staged_content = repo.blob(staged).unwrap().to_vec();
+
+    // Niente a rischio: nessun backup.
+    assert_eq!(repo.stage(&ps(&["src/lib.rs", "note.txt"])).unwrap(), None);
+    assert!(repo.backups().is_empty());
+
+    let name = repo.unstage(&ps(&["README.md"])).unwrap().unwrap();
+    assert_eq!(name, "refs/project/backup/index-1");
+    let (saved_name, versions) = &repo.backups()[0];
+    assert_eq!(saved_name, &name);
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0].path, p("README.md"));
+    assert_eq!(repo.blob(versions[0].oid).unwrap(), staged_content);
+
+    // `AD` dentro una cartella richiesta: anche quello.
+    let mut list = repo.status().unwrap().entries;
+    for entry in &mut list {
+        if entry.path == p("docs/guida.md") {
+            entry.worktree = Change::Deleted;
+        }
+    }
+    repo.set_entries(list);
+    let name = repo.stage(&ps(&["docs"])).unwrap().unwrap();
+    assert_eq!(name, "refs/project/backup/index-2");
+    assert_eq!(repo.backups()[1].1[0].path, p("docs/guida.md"));
+    assert!(
+        !entries(&repo)
+            .iter()
+            .any(|(path, ..)| path == "docs/guida.md")
+    );
+}
+
+#[test]
+fn folders_with_conflicts_are_refused_on_stage() {
+    let mut repo = MemoryBackend::sample();
+    let ours = head_oid(&repo, "src/lib.rs");
+    let mut list = repo.status().unwrap().entries;
+    list.retain(|e| e.path != p("src/lib.rs"));
+    list.push(StatusEntry {
+        path: p("src/lib.rs"),
+        index: Change::Unmerged,
+        worktree: Change::Unmerged,
+        kind: EntryKind::Unmerged(UnmergedInfo {
+            conflict: Conflict::BothModified,
+            submodule: None,
+            mode_base: FILE_MODE,
+            mode_ours: FILE_MODE,
+            mode_theirs: FILE_MODE,
+            mode_worktree: FILE_MODE,
+            oid_base: ours,
+            oid_ours: ours,
+            oid_theirs: MemoryBackend::fake_oid(99),
+        }),
+    });
+    repo.set_entries(list);
+    let before = repo.status().unwrap();
+    let err = repo.stage(&ps(&["src"])).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert_eq!(repo.status().unwrap(), before);
+    repo.stage(&ps(&["src", "src/lib.rs"])).unwrap();
+    assert!(entries(&repo).contains(&e("src/lib.rs", 'M', '.')));
+}

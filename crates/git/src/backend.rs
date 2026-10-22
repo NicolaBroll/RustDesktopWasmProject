@@ -2,15 +2,19 @@
 
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
+use project_domain::EntryKind;
 use project_domain::{Change, Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use project_domain::{
     DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_diff,
     parse_diff_tree, parse_log, parse_refs, parse_status,
 };
-use project_engine::{DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener};
-use std::collections::BTreeSet;
+use project_engine::{
+    BACKUP_PREFIX, DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener, StagedVersion,
+    backup_message, path_matches, versions_at_risk,
+};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Apre repository con il `git` di sistema. È il [`RepoOpener`] del desktop e della CLI.
 ///
@@ -113,6 +117,12 @@ impl CliOpener {
                 String::from_utf8_lossy(format)
             )));
         }
+        let empty_tree = empty_tree(format).ok_or_else(|| {
+            not_found(format!(
+                "formato degli oggetti `{}` sconosciuto",
+                String::from_utf8_lossy(format)
+            ))
+        })?;
         let git_dir = path_from_output(git_dir);
 
         // Fallisce, ad esempio, dentro la cartella `.git`.
@@ -128,13 +138,56 @@ impl CliOpener {
             git: self.git.clone(),
             workdir,
             git_dir,
+            empty_tree,
         })
     }
 }
 
-/// Id dell'albero vuoto in sha1 (l'unico formato supportato): git lo conosce sempre, anche se
-/// non è nel repo. Serve a confrontare un commit radice.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// Id dell'albero vuoto nel formato degli oggetti `format` (`rev-parse --show-object-format`):
+/// git lo conosce sempre, anche se non è nel repo. Serve a confrontare un commit radice e a
+/// togliere dallo stage su un branch senza commit. Per ora i parser supportano solo sha1, ma
+/// l'id non va mai dato per scontato.
+fn empty_tree(format: &[u8]) -> Option<&'static str> {
+    match format {
+        b"sha1" => Some("4b825dc642cb6eb9a060e54bf8d69288fbee4904"),
+        b"sha256" => Some("6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"),
+        _ => None,
+    }
+}
+
+/// Identità dei commit di backup dell'indice: non serve quella dell'utente, e così il backup
+/// riesce anche se `user.name`/`user.email` non sono configurati.
+const BACKUP_IDENTITY: &[(&str, &str)] = &[
+    ("GIT_AUTHOR_NAME", "Project"),
+    ("GIT_AUTHOR_EMAIL", "backup@project.invalid"),
+    ("GIT_COMMITTER_NAME", "Project"),
+    ("GIT_COMMITTER_EMAIL", "backup@project.invalid"),
+];
+
+/// Un indice temporaneo nella cartella git, cancellato (con il suo lock) quando esce dallo
+/// scope. Serve a costruire l'albero del backup senza toccare l'indice vero.
+struct TempIndex(PathBuf);
+
+impl TempIndex {
+    fn new(git_dir: &Path) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        Self(git_dir.join(format!(
+            "project-backup-index-{}-{nanos}",
+            std::process::id()
+        )))
+    }
+}
+
+impl Drop for TempIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let mut lock = self.0.clone().into_os_string();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(lock);
+    }
+}
 
 /// [`EngineError::Git`] per un comando riuscito ma con un output inatteso.
 fn failure_text(args: &[&str], stdout: &[u8]) -> EngineError {
@@ -161,6 +214,8 @@ pub struct CliBackend {
     git: Git,
     workdir: PathBuf,
     git_dir: PathBuf,
+    /// Id dell'albero vuoto nel formato del repo.
+    empty_tree: &'static str,
 }
 
 impl CliBackend {
@@ -278,36 +333,198 @@ impl CliBackend {
         Ok(paths)
     }
 
-    /// I file la cui cancellazione è in stage (in HEAD, non nell'indice), senza rinomine.
-    fn staged_deletions(&self) -> Result<BTreeSet<RepoPath>, EngineError> {
-        // Su un branch senza commit il confronto è con l'albero vuoto: nessuna cancellazione.
-        let args = [
-            "--no-optional-locks",
-            "diff",
-            "--cached",
-            "--no-renames",
-            "--no-relative",
-            "--name-only",
-            "-z",
-            "--diff-filter=D",
-            "--",
-        ];
-        Ok(nul_separated(&self.run(&args)?).collect())
+    /// Vero se `path` esiste nel worktree (anche come link simbolico rotto o cartella).
+    fn in_worktree(&self, path: &RepoPath) -> bool {
+        std::fs::symlink_metadata(self.workdir.join(os_from_bytes(path.as_bytes()))).is_ok()
     }
 
-    /// I file in conflitto (con stadi 1–3 nell'indice), da `git ls-files --unmerged`.
-    fn unmerged_paths(&self) -> Result<BTreeSet<RepoPath>, EngineError> {
-        // Un record `<modo> <id> <stadio>\t<percorso>` per stadio.
-        let out = self.run(&["ls-files", "-z", "--unmerged", "--"])?;
-        nul_separated(&out)
-            .map(|record| {
-                let bytes = record.as_bytes();
-                match bytes.iter().position(|&b| b == b'\t') {
-                    Some(tab) => Ok(RepoPath::from_bytes(&bytes[tab + 1..])),
-                    None => Err(failure_text(&["ls-files"], bytes)),
+    /// `paths` senza quelli che indicano solo cancellazioni già in stage: un file così non è
+    /// più né nell'indice né nel worktree e `git add` lo rifiuterebbe ("did not match any
+    /// files"), anche se non c'è niente da fare. Vale per un file (per esempio il vecchio
+    /// percorso di una rinomina in stage) e per una cartella che contiene solo cancellazioni
+    /// in stage.
+    fn without_staged_deletions(&self, status: &Status, paths: &[RepoPath]) -> Vec<RepoPath> {
+        // (percorso, è una cancellazione in stage) per ogni voce dello stato.
+        let mut items: Vec<(&RepoPath, bool)> = Vec::new();
+        for entry in &status.entries {
+            match &entry.kind {
+                EntryKind::Ordinary(_) => {
+                    items.push((&entry.path, entry.index == Change::Deleted));
                 }
+                EntryKind::Renamed { original, .. } => {
+                    items.push((original, true));
+                    items.push((&entry.path, false));
+                }
+                _ => items.push((&entry.path, false)),
+            }
+        }
+        paths
+            .iter()
+            .filter(|p| {
+                let mut matched = items.iter().filter(|(path, _)| path_matches(path, p));
+                let mut any = false;
+                let only_deletions = matched.all(|(_, deleted)| {
+                    any = true;
+                    *deleted
+                });
+                !(any && only_deletions && !self.in_worktree(p))
             })
+            .cloned()
             .collect()
+    }
+
+    /// Da dove `unstage` riprende l'indice: il commit di HEAD, oppure l'albero vuoto se HEAD
+    /// è un branch che non ha ancora commit. Un HEAD che non si risolve per altri motivi (ref
+    /// rotto, oggetto mancante) è un errore: trattarlo come "nessun commit" toglierebbe
+    /// dall'indice tutti i file richiesti.
+    fn index_source(&self) -> Result<String, EngineError> {
+        if let Some(head) = self.resolve("HEAD")? {
+            return Ok(head.to_string());
+        }
+        let out = self
+            .git
+            .output(Some(&self.workdir), &["symbolic-ref", "--quiet", "HEAD"])?;
+        if out.status.success() {
+            let name =
+                String::from_utf8_lossy(out.stdout.strip_suffix(b"\n").unwrap_or(&out.stdout))
+                    .into_owned();
+            let exists = self
+                .git
+                .output(
+                    Some(&self.workdir),
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        "--end-of-options",
+                        &name,
+                    ],
+                )?
+                .status
+                .success();
+            if !exists {
+                return Ok(self.empty_tree.to_owned());
+            }
+        }
+        Err(EngineError::Git {
+            command: "rev-parse".to_owned(),
+            stderr: "HEAD non punta a un commit valido (né a un branch senza commit): \
+                     niente tolto dallo stage"
+                .to_owned(),
+        })
+    }
+
+    /// Prima di riscrivere l'indice per `operation` sui `paths`: se ci sono versioni in stage
+    /// che esistono solo nell'indice ([`versions_at_risk`]) le salva con [`Self::save_backup`]
+    /// e restituisce il ref; `None` se non c'è niente a rischio.
+    fn backup(
+        &self,
+        operation: &str,
+        status: &Status,
+        paths: &[RepoPath],
+    ) -> Result<Option<String>, EngineError> {
+        let versions = versions_at_risk(status, paths);
+        if versions.is_empty() {
+            return Ok(None);
+        }
+        self.save_backup(operation, &versions).map(Some)
+    }
+
+    /// Salva `versions` come §7: un albero con quei file (costruito in un indice temporaneo,
+    /// così funziona anche con conflitti nell'indice vero), un commit con genitore HEAD (se
+    /// c'è) e un ref nuovo `refs/project/backup/index-<secondi>-<nanosecondi>`, creato solo se
+    /// non esiste (`update-ref <ref> <id> ""`): un ref esistente non si sovrascrive mai. Il
+    /// contenuto si recupera con `git show <ref>:<percorso>`.
+    fn save_backup(
+        &self,
+        operation: &str,
+        versions: &[StagedVersion],
+    ) -> Result<String, EngineError> {
+        let index = TempIndex::new(&self.git_dir);
+        let index_env = [("GIT_INDEX_FILE", index.0.as_os_str())];
+        let mut info = Vec::new();
+        for v in versions {
+            info.extend_from_slice(format!("{:o} {}\t", v.mode, v.oid).as_bytes());
+            info.extend_from_slice(v.path.as_bytes());
+            info.push(0);
+        }
+        self.run_input(&["update-index", "-z", "--index-info"], &info, &index_env)?;
+        let tree = self.run_input(&["write-tree"], b"", &index_env)?;
+        let tree = String::from_utf8_lossy(tree.trim_ascii_end()).into_owned();
+
+        let message = backup_message(operation, versions);
+        let head = self.resolve("HEAD")?.map(|h| h.to_string());
+        let mut args = vec!["commit-tree", "--no-gpg-sign"];
+        if let Some(head) = &head {
+            args.extend(["-p", head]);
+        }
+        args.extend(["-F", "-", &tree]);
+        let identity: Vec<(&str, &OsStr)> = BACKUP_IDENTITY
+            .iter()
+            .map(|(k, v)| (*k, OsStr::new(v)))
+            .collect();
+        let commit = self.run_input(&args, message.as_bytes(), &identity)?;
+        let commit = String::from_utf8_lossy(commit.trim_ascii_end()).into_owned();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let base = format!(
+            "{BACKUP_PREFIX}index-{}-{:09}",
+            now.as_secs(),
+            now.subsec_nanos()
+        );
+        let reflog = format!("project: backup dell'indice prima di {operation}");
+        for attempt in 0..10 {
+            let name = match attempt {
+                0 => base.clone(),
+                n => format!("{base}-{n}"),
+            };
+            let args = ["update-ref", "-m", &reflog, &name, &commit, ""];
+            let out = self.git.output(Some(&self.workdir), &args)?;
+            if out.status.success() {
+                return Ok(name);
+            }
+            // Solo se il nome è già preso si prova il successivo.
+            let taken = self
+                .git
+                .output(
+                    Some(&self.workdir),
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        "--end-of-options",
+                        &name,
+                    ],
+                )?
+                .status
+                .success();
+            if !taken {
+                return Err(failure(&args, &out));
+            }
+        }
+        Err(EngineError::Git {
+            command: "update-ref".to_owned(),
+            stderr: format!("nessun nome libero per il backup dell'indice dopo `{base}`"),
+        })
+    }
+
+    /// `git <args>` con `input` su stdin e le variabili `env`; stdout, o l'errore di git.
+    fn run_input(
+        &self,
+        args: &[&str],
+        input: &[u8],
+        env: &[(&str, &OsStr)],
+    ) -> Result<Vec<u8>, EngineError> {
+        let out = self
+            .git
+            .output_with_input_env(Some(&self.workdir), args, input, env)?;
+        if out.status.success() {
+            Ok(out.stdout)
+        } else {
+            Err(failure(args, &out))
+        }
     }
 
     /// Esegue `git <args>` con `paths` letti da stdin (`--pathspec-from-file=-
@@ -469,7 +686,7 @@ impl GitBackend for CliBackend {
                 // Primo genitore anche per i merge, come `show_commit`.
                 parent = match self.first_parent(&id)? {
                     Some(p) => p.to_string(),
-                    None => EMPTY_TREE.to_owned(),
+                    None => self.empty_tree.to_owned(),
                 };
                 vec!["--end-of-options", &parent, &id]
             }
@@ -487,26 +704,27 @@ impl GitBackend for CliBackend {
         Ok(diff)
     }
 
-    fn stage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         if paths.is_empty() {
             // `git add` senza percorsi non aggiunge niente, ma meglio non chiederlo affatto.
-            return Ok(());
+            return Ok(None);
         }
-        // Un file la cui cancellazione è già in stage non è più né nell'indice né nel
-        // worktree: `git add` lo rifiuterebbe ("did not match any files"). Non c'è niente da
-        // fare: si salta (succede chiedendo di nuovo i due percorsi di una rinomina in stage).
-        let deleted = self.staged_deletions()?;
-        let paths: Vec<RepoPath> = paths
+        let status = self.status()?;
+        // Un file in conflitto messo in stage è risolto: solo se chiesto per nome, non perché
+        // è dentro una cartella richiesta.
+        let in_folder: Vec<&RepoPath> = status
+            .entries
             .iter()
-            .filter(|p| {
-                !(deleted.contains(*p)
-                    && std::fs::symlink_metadata(self.workdir.join(os_from_bytes(p.as_bytes())))
-                        .is_err())
-            })
-            .cloned()
+            .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
+            .map(|e| &e.path)
+            .filter(|u| !paths.contains(u) && paths.iter().any(|p| path_matches(u, p)))
             .collect();
+        if !in_folder.is_empty() {
+            return Err(EngineError::unmerged_in_folder(&in_folder));
+        }
+        let paths = self.without_staged_deletions(&status, paths);
         if paths.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         // `--no-ignore-errors`: un file illeggibile ferma tutto (la config `add.ignoreErrors`
         // farebbe continuare con gli altri).
@@ -523,23 +741,29 @@ impl GitBackend for CliBackend {
                 None => failure(&dry, &out),
             });
         }
+        // Le versioni in stage che resterebbero solo in un blob irraggiungibile: prima un
+        // backup; se non riesce, l'indice non si tocca.
+        let backup = self.backup("index.stage", &status, &paths)?;
         let out = self.output_with_paths(&add, &paths)?;
         if !out.status.success() {
             return Err(failure(&add, &out));
         }
-        Ok(())
+        Ok(backup)
     }
 
-    fn unstage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         if paths.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
+        let status = self.status()?;
         // `restore --staged` su un file in conflitto toglierebbe senza dire niente gli stadi
         // del conflitto (le versioni base, nostra e loro).
-        let conflicts: Vec<RepoPath> = self
-            .unmerged_paths()?
-            .into_iter()
-            .filter(|u| paths.iter().any(|p| under(u, p)))
+        let conflicts: Vec<&RepoPath> = status
+            .entries
+            .iter()
+            .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
+            .map(|e| &e.path)
+            .filter(|u| paths.iter().any(|p| path_matches(u, p)))
             .collect();
         if !conflicts.is_empty() {
             return Err(EngineError::unmerged(&conflicts));
@@ -548,31 +772,15 @@ impl GitBackend for CliBackend {
         // non tracciati (`restore` senza `--source` fallirebbe: HEAD non si risolve).
         // `--no-overlay` (già il default di `restore`): i file che in HEAD non ci sono escono
         // dall'indice. Senza `--worktree` il worktree non si tocca.
-        let source = match self.resolve("HEAD")? {
-            Some(head) => head.to_string(),
-            None => EMPTY_TREE.to_owned(),
-        };
-        let source = format!("--source={source}");
+        let source = format!("--source={}", self.index_source()?);
+        let backup = self.backup("index.unstage", &status, paths)?;
         let args = ["restore", "--staged", "--no-overlay", &source];
         let out = self.output_with_paths(&args, paths)?;
         if !out.status.success() {
             return Err(failure(&args, &out));
         }
-        Ok(())
+        Ok(backup)
     }
-}
-
-/// I percorsi separati da NUL nell'output di git (`-z`), senza il NUL finale.
-fn nul_separated(out: &[u8]) -> impl Iterator<Item = RepoPath> + '_ {
-    out.split(|&b| b == 0)
-        .filter(|p| !p.is_empty())
-        .map(RepoPath::from_bytes)
-}
-
-/// Vero se `path` è `wanted` o un file sotto la cartella `wanted` (come un pathspec letterale).
-fn under(path: &RepoPath, wanted: &RepoPath) -> bool {
-    let (path, wanted) = (path.as_bytes(), wanted.as_bytes());
-    path == wanted || (path.starts_with(wanted) && path.get(wanted.len()) == Some(&b'/'))
 }
 
 /// I percorsi elencati da `git add` quando rifiuta dei file ignorati (con `LC_ALL=C`):
@@ -619,11 +827,12 @@ mod tests {
     }
 
     #[test]
-    fn under_matches_files_and_folders() {
-        let p = |s: &str| RepoPath::from(s);
-        assert!(under(&p("a/b.txt"), &p("a")));
-        assert!(under(&p("a"), &p("a")));
-        assert!(!under(&p("ab/c"), &p("a")));
-        assert!(!under(&p("a"), &p("a/b")));
+    fn empty_tree_per_object_format() {
+        assert_eq!(
+            empty_tree(b"sha1"),
+            Some("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+        );
+        assert_eq!(empty_tree(b"sha256").map(str::len), Some(64));
+        assert_eq!(empty_tree(b"md5"), None);
     }
 }

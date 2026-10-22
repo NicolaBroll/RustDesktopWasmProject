@@ -238,23 +238,25 @@ fn check_paths(id: &'static str, p: Value) -> Result<Vec<RepoPath>, EngineError>
     Ok(out)
 }
 
-/// Mette in stage `paths` (vedi [`GitBackend::stage`](crate::GitBackend::stage)) e
-/// restituisce il nuovo [`Status`](project_domain::Status), così chi chiama aggiorna la vista
-/// senza un secondo comando.
+/// Mette in stage `paths` (vedi [`GitBackend::stage`](crate::GitBackend::stage)).
+/// Risultato: `{"status": Status, "backup": string | null}`, con il nuovo
+/// [`Status`](project_domain::Status) (chi chiama aggiorna la vista senza un secondo comando) e
+/// il ref del backup dell'indice, se prima di scrivere sono state salvate versioni in stage
+/// che esistevano solo nell'indice.
 fn index_stage(s: &mut Session, p: Value) -> Out {
     let paths = check_paths("index.stage", p)?;
     let repo = s.repo_mut()?;
-    repo.stage(&paths)?;
-    Ok(to_json(repo.status()?))
+    let backup = repo.stage(&paths)?;
+    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
 }
 
 /// Toglie dallo stage `paths` (vedi [`GitBackend::unstage`](crate::GitBackend::unstage)),
-/// senza toccare il worktree, e restituisce il nuovo [`Status`](project_domain::Status).
+/// senza toccare il worktree. Risultato come `index.stage`.
 fn index_unstage(s: &mut Session, p: Value) -> Out {
     let paths = check_paths("index.unstage", p)?;
     let repo = s.repo_mut()?;
-    repo.unstage(&paths)?;
-    Ok(to_json(repo.status()?))
+    let backup = repo.unstage(&paths)?;
+    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
 }
 
 /// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
@@ -566,8 +568,13 @@ mod tests {
                 json!({ "paths": ["note.txt", "src/lib.rs", "note.txt"] }),
             )
             .unwrap();
-        assert_eq!(out, r.run("repo.status", &mut s, json!({})).unwrap());
-        let status: Status = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(
+            out["status"],
+            r.run("repo.status", &mut s, json!({})).unwrap()
+        );
+        // Niente a rischio: `note.txt` e `src/lib.rs` non avevano versioni solo in stage.
+        assert_eq!(out["backup"], Value::Null);
+        let status: Status = serde_json::from_value(out["status"].clone()).unwrap();
         let staged: Vec<_> = status
             .entries
             .iter()
@@ -582,10 +589,10 @@ mod tests {
                 ("src/lib.rs".to_owned(), 'M', '.'),
             ]
         );
-        // Forma del JSON che legge la UI: come `repo.status`.
-        assert_eq!(out["entries"][2]["path"], "note.txt");
-        assert_eq!(out["entries"][2]["index"], "Added");
-        assert_eq!(out["head"]["Branch"]["name"], "main");
+        // Forma del JSON che legge la UI: `status` come `repo.status`.
+        assert_eq!(out["status"]["entries"][2]["path"], "note.txt");
+        assert_eq!(out["status"]["entries"][2]["index"], "Added");
+        assert_eq!(out["status"]["head"]["Branch"]["name"], "main");
         // I diff vedono il nuovo indice.
         let diff = r
             .run("diff.index", &mut s, json!({ "path": "note.txt" }))
@@ -599,8 +606,15 @@ mod tests {
                 json!({ "paths": ["note.txt", "src/lib.rs"] }),
             )
             .unwrap();
-        let status: Status = serde_json::from_value(out).unwrap();
+        let status: Status = serde_json::from_value(out["status"].clone()).unwrap();
         assert_eq!(status, original.status().unwrap());
+
+        // README.md è `MM`: la versione in stage esiste solo nell'indice, prima un backup.
+        let out = r
+            .run("index.unstage", &mut s, json!({ "paths": ["README.md"] }))
+            .unwrap();
+        assert_eq!(out["backup"], "refs/project/backup/index-1");
+        assert_eq!(out["status"]["entries"][0]["index"], "Unmodified");
 
         // Un percorso non UTF-8 si passa come array di byte; qui non esiste.
         let err = r

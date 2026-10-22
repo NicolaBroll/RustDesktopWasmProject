@@ -23,7 +23,9 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
   UI, CLI, MCP e test lo invocano con `Registry::run`; niente logica di modifica nei callback grafici.
 - Gli id dei comandi sono stabili: non rinominarli.
 - Un comando che modifica il repo va in `WRITES` (`builtin.rs`): `CommandSpec::writes` lo segnala a
-  UI, CLI e MCP. Se può far perdere dati chiede `"confirm": true` e salva un backup (§1 e §7
+  UI, CLI e MCP. Se può far perdere dati chiede `"confirm": true` e salva un backup; se riscrive
+  l'unica copia di qualcosa senza che git chieda conferma (stage/unstage) salva da solo un backup
+  e non scrive se il backup fallisce (§1 e §7
   dell'architettura git).
 - L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
 

@@ -19,6 +19,24 @@ const REPO_ENV: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
+/// Configurazione passata dall'ambiente (`git -c` di un processo git che avvia l'app, oppure
+/// `GIT_CONFIG_COUNT` con `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`): vale come la riga di
+/// comando, quindi prevale sulla config del repo, e un `core.worktree` iniettato così
+/// sposterebbe le scritture in un'altra cartella. Si tolgono sempre, insieme a ogni
+/// `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*` ereditata ([`inherited_config_vars`]). Le variabili
+/// impostate apposta con [`Git::set_env`] (es. `GIT_CONFIG_GLOBAL` nei test) restano.
+const CONFIG_ENV: &[&str] = &["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"];
+
+/// Le variabili `GIT_CONFIG_KEY_*` e `GIT_CONFIG_VALUE_*` fra `vars` (i nomi delle variabili
+/// d'ambiente del processo).
+fn inherited_config_vars(vars: impl Iterator<Item = OsString>) -> Vec<OsString> {
+    vars.filter(|key| {
+        key.to_str()
+            .is_some_and(|k| k.starts_with("GIT_CONFIG_KEY_") || k.starts_with("GIT_CONFIG_VALUE_"))
+    })
+    .collect()
+}
+
 /// Variabili che cambiano il significato dei pathspec (glob, maiuscole, letterali): i percorsi
 /// passati a git devono valere per quello che sono. Si tolgono sempre; dove servono percorsi
 /// letterali si passa `--literal-pathspecs`.
@@ -65,7 +83,10 @@ impl Git {
             .stderr(Stdio::piped())
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C");
-        for key in REPO_ENV.iter().chain(PATHSPEC_ENV) {
+        for key in REPO_ENV.iter().chain(PATHSPEC_ENV).chain(CONFIG_ENV) {
+            cmd.env_remove(key);
+        }
+        for key in inherited_config_vars(std::env::vars_os().map(|(k, _)| k)) {
             cmd.env_remove(key);
         }
         for (key, value) in &self.env {
@@ -102,14 +123,26 @@ impl Git {
         args: &[&str],
         input: &[u8],
     ) -> Result<Output, EngineError> {
+        self.output_with_input_env(dir, args, input, &[])
+    }
+
+    /// Come [`Git::output_with_input`], con in più le variabili `env` solo per questa
+    /// esecuzione (es. `GIT_INDEX_FILE` per un indice temporaneo).
+    pub(crate) fn output_with_input_env(
+        &self,
+        dir: Option<&Path>,
+        args: &[&str],
+        input: &[u8],
+        env: &[(&str, &OsStr)],
+    ) -> Result<Output, EngineError> {
         let not_found = |e: std::io::Error| {
             EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
         };
-        let mut child = self
-            .command(dir, args, &[])
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(not_found)?;
+        let mut cmd = self.command(dir, args, &[]);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let mut child = cmd.stdin(Stdio::piped()).spawn().map_err(not_found)?;
         let mut stdin = child
             .stdin
             .take()
@@ -260,9 +293,32 @@ mod tests {
         assert_eq!(value("GIT_CONFIG_NOSYSTEM"), Some(Some("1".as_ref())));
         // Ereditate da un hook git farebbero leggere un altro repo: tolte.
         // Così come quelle che cambiano il significato dei pathspec.
-        for key in REPO_ENV.iter().chain(PATHSPEC_ENV) {
+        for key in REPO_ENV.iter().chain(PATHSPEC_ENV).chain(CONFIG_ENV) {
             assert_eq!(value(key), Some(None), "{key}");
         }
+    }
+
+    #[test]
+    fn inherited_config_is_dropped() {
+        let vars = [
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "GIT_CONFIG_KEY_12",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+            "PATH",
+        ]
+        .map(OsString::from);
+        assert_eq!(
+            inherited_config_vars(vars.into_iter()),
+            [
+                "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_VALUE_0",
+                "GIT_CONFIG_KEY_12"
+            ]
+        );
+        assert!(CONFIG_ENV.contains(&"GIT_CONFIG_PARAMETERS"));
+        assert!(CONFIG_ENV.contains(&"GIT_CONFIG_COUNT"));
     }
 
     #[test]

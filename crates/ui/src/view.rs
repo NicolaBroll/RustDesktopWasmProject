@@ -84,8 +84,15 @@ pub(crate) fn top_bar(
     });
 }
 
-/// `write` è la scrittura in corso, descritta: ha la precedenza sugli altri comandi.
-pub(crate) fn status_bar(ui: &mut Ui, running: &[Job], write: Option<&str>, error: &str) {
+/// `write` è la scrittura in corso, descritta: ha la precedenza sugli altri comandi. `notice`
+/// è un messaggio informativo, mostrato se non c'è niente in corso né un errore.
+pub(crate) fn status_bar(
+    ui: &mut Ui,
+    running: &[Job],
+    write: Option<&str>,
+    error: &str,
+    notice: &str,
+) {
     ui.horizontal(|ui| {
         if let Some(write) = write {
             ui.spinner();
@@ -99,6 +106,8 @@ pub(crate) fn status_bar(ui: &mut Ui, running: &[Job], write: Option<&str>, erro
             ui.label(text);
         } else if !error.is_empty() {
             ui.colored_label(ui.visuals().error_fg_color, error);
+        } else if !notice.is_empty() {
+            ui.label(notice);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::warn_if_debug_build(ui);

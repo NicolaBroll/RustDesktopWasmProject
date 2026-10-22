@@ -451,8 +451,12 @@ fn index_commands_on_a_real_repo() {
         "index.stage",
         json!({ "paths": ["a.txt", "cartella/non tracciato.txt"] }),
     );
-    assert_eq!(out, run(&registry, &mut session, "repo.status", json!({})));
-    let status: Status = serde_json::from_value(out).unwrap();
+    assert_eq!(
+        out["status"],
+        run(&registry, &mut session, "repo.status", json!({}))
+    );
+    assert_eq!(out["backup"], Value::Null);
+    let status: Status = serde_json::from_value(out["status"].clone()).unwrap();
     assert!(entries(&status).contains(&entry("a.txt", 'M', '.')));
 
     let out = run(
@@ -461,9 +465,9 @@ fn index_commands_on_a_real_repo() {
         "index.unstage",
         json!({ "paths": ["a.txt"] }),
     );
-    assert_eq!(out["entries"][0]["path"], "a.txt");
-    assert_eq!(out["entries"][0]["index"], "Unmodified");
-    assert_eq!(out["entries"][0]["worktree"], "Modified");
+    assert_eq!(out["status"]["entries"][0]["path"], "a.txt");
+    assert_eq!(out["status"]["entries"][0]["index"], "Unmodified");
+    assert_eq!(out["status"]["entries"][0]["worktree"], "Modified");
     let diff = run(
         &registry,
         &mut session,
@@ -495,4 +499,66 @@ fn index_commands_on_a_real_repo() {
             );
         }
     }
+}
+
+#[test]
+fn folders_with_conflicts_are_refused() {
+    let repo = Repo::new();
+    repo.commit_file("dir/a.txt", "base\n", "base");
+    repo.diverge("altro", "dir/a.txt", "nostra\n", "loro\n");
+    repo.conflict("altro");
+    repo.write("dir/nuovo.txt", "nuovo\n");
+    let mut backend = repo.open();
+    let before = backend.status().unwrap();
+    // Per la cartella: il conflitto non si risolve di nascosto, e niente va in stage.
+    let err = backend.stage(&paths(&["dir"])).unwrap_err();
+    assert!(is_not_allowed(&err), "{err}");
+    assert!(err.to_string().contains("dir/a.txt"), "{err}");
+    assert_eq!(backend.status().unwrap(), before);
+    // Per nome sì (è la risoluzione), anche insieme alla cartella.
+    backend.stage(&paths(&["dir", "dir/a.txt"])).unwrap();
+    let after = entries(&backend.status().unwrap());
+    assert!(after.contains(&entry("dir/a.txt", 'M', '.')), "{after:?}");
+    assert!(
+        after.contains(&entry("dir/nuovo.txt", 'A', '.')),
+        "{after:?}"
+    );
+}
+
+#[test]
+fn folder_with_only_staged_deletions_is_a_no_op() {
+    let repo = Repo::new();
+    repo.write("dir/a.txt", "a\n");
+    repo.write("dir/b.txt", "b\n");
+    repo.git(&["add", "-A"]);
+    repo.commit("primo");
+    repo.git(&["rm", "--quiet", "-r", "dir"]);
+    assert!(!exists(&repo, "dir"));
+    let mut backend = repo.open();
+    let before = backend.status().unwrap();
+    assert_eq!(backend.stage(&paths(&["dir"])).unwrap(), None);
+    assert_eq!(backend.status().unwrap(), before);
+}
+
+#[test]
+fn broken_head_is_not_an_empty_branch() {
+    let repo = Repo::new();
+    repo.commit_file("a.txt", "a\n", "primo");
+    repo.write("b.txt", "b\n");
+    repo.stage(&["b.txt"]);
+    let mut backend = repo.open();
+    // `main` punta a un commit che non esiste.
+    std::fs::write(
+        repo.path().join(".git/refs/heads/main"),
+        "1111111111111111111111111111111111111111\n",
+    )
+    .unwrap();
+    let index = std::fs::read(repo.path().join(".git/index")).unwrap();
+    let err = backend.unstage(&paths(&["a.txt", "b.txt"])).unwrap_err();
+    assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    assert_eq!(
+        std::fs::read(repo.path().join(".git/index")).unwrap(),
+        index,
+        "l'indice non si svuota"
+    );
 }

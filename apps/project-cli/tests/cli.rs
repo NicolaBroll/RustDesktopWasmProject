@@ -168,13 +168,15 @@ fn run_stage_and_unstage() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let lines = json_lines(&output.stdout);
-    // Ogni scrittura restituisce il nuovo stato.
-    let entries = &lines[0]["entries"];
+    // Ogni scrittura restituisce il nuovo stato e l'eventuale backup dell'indice (qui niente
+    // a rischio).
+    assert_eq!(lines[0]["backup"], Value::Null);
+    let entries = &lines[0]["status"]["entries"];
     assert_eq!(entries[0]["path"], "a.txt");
     assert_eq!(entries[0]["index"], "Modified");
     assert_eq!(entries[1]["path"], "b.txt");
     assert_eq!(entries[1]["index"], "Added");
-    let entries = &lines[1]["entries"];
+    let entries = &lines[1]["status"]["entries"];
     assert_eq!(entries[0]["index"], "Unmodified");
     assert_eq!(entries[0]["worktree"], "Modified");
     let files = lines[2]["files"].as_array().unwrap();

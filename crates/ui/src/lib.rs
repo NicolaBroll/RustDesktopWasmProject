@@ -72,6 +72,14 @@ enum Action {
     DismissWriteError,
 }
 
+/// Risultato di `index.stage`/`index.unstage`: il nuovo stato e il ref del backup dell'indice,
+/// se prima di scrivere ne è stato salvato uno.
+#[derive(serde::Deserialize)]
+struct WriteResult {
+    status: Status,
+    backup: Option<String>,
+}
+
 /// A cosa serve un comando mandato all'executor. Le letture portano la generazione del repo
 /// aperto: se nel frattempo se n'è aperto un altro il risultato si scarta.
 #[derive(Debug, Clone, Copy)]
@@ -221,6 +229,8 @@ pub struct App {
     repo: Option<RepoView>,
     viewport: ListViewport,
     error: String,
+    /// Messaggio informativo nella barra di stato (es. il backup dell'indice salvato).
+    notice: String,
 }
 
 impl App {
@@ -248,6 +258,7 @@ impl App {
             repo: None,
             viewport: ListViewport::default(),
             error: String::new(),
+            notice: String::new(),
         };
         if let Some(path) = repo {
             app.apply(&cc.egui_ctx, Action::Open(path));
@@ -538,7 +549,7 @@ impl App {
             // Le scritture: il nuovo stato, oppure l'errore nell'area di stage.
             if let Request::Write(generation, op) = request {
                 let result = done.result.and_then(|value| {
-                    serde_json::from_value::<Status>(value)
+                    serde_json::from_value::<WriteResult>(value)
                         .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
                 });
                 let Some(repo) = self.current(generation) else {
@@ -549,9 +560,14 @@ impl App {
                     .take()
                     .unwrap_or_else(|| op.command().to_owned());
                 match result {
-                    Ok(status) => {
+                    Ok(WriteResult { status, backup }) => {
                         repo.set_status(status);
                         self.error.clear();
+                        // Versioni in stage che esistevano solo nell'indice: salvate prima di
+                        // scrivere, lo si dice nella barra di stato.
+                        self.notice = backup
+                            .map(|r| format!("Backup dell'indice salvato in {r}"))
+                            .unwrap_or_default();
                         self.follow_diff();
                     }
                     Err(e) => {
@@ -559,6 +575,7 @@ impl App {
                         let message = format!("{label} non riuscito: {e}");
                         repo.write_error = Some(message.clone());
                         self.error = message;
+                        self.notice.clear();
                     }
                 }
                 continue;
@@ -609,6 +626,7 @@ impl App {
             Request::Open => {
                 let Opened { path, head } = serde_json::from_value(value)?;
                 self.generation += 1;
+                self.notice.clear();
                 self.repo = Some(RepoView::new(path, head));
                 self.load();
             }
@@ -652,7 +670,13 @@ impl eframe::App for App {
         });
         egui::Panel::bottom("stato").show(ui, |ui| {
             let write = self.repo.as_ref().and_then(|r| r.write_label.as_deref());
-            view::status_bar(ui, self.executor.running(), write, &self.error);
+            view::status_bar(
+                ui,
+                self.executor.running(),
+                write,
+                &self.error,
+                &self.notice,
+            );
         });
         // I pannelli laterali non superano un terzo della finestra: il contenuto va a capo.
         let side_max = (ui.available_width() / 3.0).max(200.0);

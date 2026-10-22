@@ -18,6 +18,10 @@ dipendenza**.
 1. **Non perdere mai dati dell'utente.** Ogni operazione che può cancellare lavoro (scartare
    modifiche, reset, eliminare branch non uniti, drop di uno stash) chiede `"confirm": true` nei
    parametri e prima salva un backup recuperabile (§7). Vale per UI, CLI e MCP allo stesso modo.
+   Le operazioni che la UX di git fa senza conferma ma che possono riscrivere l'unica copia di
+   qualcosa (stage e unstage di una versione in stage che non è né in HEAD né nel worktree)
+   non chiedono `confirm`: salvano da sole un backup prima di scrivere e, se il backup non
+   riesce, non scrivono (§7).
 2. **git di sistema per scrivere, parser puri per leggere.** Le operazioni passano dal comando
    `git` installato: così funzionano subito chiavi SSH, `ssh-agent`, credential helper, hook,
    firma dei commit e la configurazione dell'utente. L'output di git (formati porcelain, `-z`) si
@@ -132,8 +136,9 @@ pub trait GitBackend: Send {
     fn status(&self) -> Result<Status, EngineError>;
     fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;   // DiffSpec: Worktree | Index | Commit { rev }, ognuno con `path` facoltativo
     // Scritture (`&mut self`: il MemoryBackend tiene lo stato in sé), una per step:
-    fn stage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError>;
-    fn unstage(&mut self, paths: &[RepoPath]) -> Result<(), EngineError>;
+    // Restituiscono il ref del backup dell'indice, se ne hanno salvato uno (§7).
+    fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
+    fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
     // poi commit, checkout, ...
 }
 
@@ -166,7 +171,7 @@ come JSON, così CLI e MCP li usano direttamente. Catalogo iniziale:
 | `repo.log` | `{"skip"?, "limit"?, "rev"?}` | paginato |
 | `commit.show` | `{"id"}` | metadati e file cambiati rispetto al primo genitore |
 | `diff.worktree` / `diff.index` / `diff.commit` | `{"path"?}` / `{"path"?}` / `{"id", "path"?}` | worktree rispetto all'indice (senza i non tracciati), indice rispetto a HEAD (albero vuoto se non ci sono commit), commit rispetto al primo genitore (albero vuoto per un commit radice, come `commit.show`). Risultato: il `Diff` (`{"files": [...]}`). `path` (stringa o array di byte, come `RepoPath`) limita al file con quel percorso esatto, vecchio o nuovo: una rinomina resta tale (il backend cerca prima l'altro percorso con `--diff-filter=R`) e i percorsi vanno a git dopo `--` con `--literal-pathspecs`. Nessun limite di dimensione |
-| `index.stage` / `index.unstage` | `{"paths"}` | `paths`: lista non vuota di `RepoPath` validati come in `diff.*`, presi alla lettera (una cartella comprende i suoi file). Risultato: il nuovo `Status`, come `repo.status`. `stage` = `git add` (modifiche, file nuovi, cancellazioni; una rinomina fatta nel worktree si mette in stage con i due percorsi; una cancellazione già in stage si salta); prima una prova a vuoto (`--dry-run`), così un file ignorato chiesto per nome (`NotAllowed`, mai `-f`) o un percorso inesistente non lasciano niente a metà. Stage di un file in conflitto = risoluzione. `unstage` = `git restore --staged --no-overlay --source=<HEAD>` (albero vuoto senza commit): solo l'indice, mai il worktree; un file in conflitto è rifiutato (`NotAllowed`), perché perderebbe gli stadi del conflitto. Indice bloccato da un altro git: `IndexLocked`, senza riprovare né cancellare il lock |
+| `index.stage` / `index.unstage` | `{"paths"}` | `paths`: lista non vuota di `RepoPath` validati come in `diff.*`, presi alla lettera (una cartella comprende i suoi file). Risultato: `{"status": Status, "backup": string \| null}`, con il nuovo stato (come `repo.status`) e il ref del backup dell'indice salvato prima di scrivere, se c'erano versioni in stage che esistevano solo nell'indice (§7). `stage` = `git add` (modifiche, file nuovi, cancellazioni; una rinomina fatta nel worktree si mette in stage con i due percorsi; una cancellazione già in stage si salta); prima una prova a vuoto (`--dry-run`), così un file ignorato chiesto per nome (`NotAllowed`, mai `-f`) o un percorso inesistente non lasciano niente a metà. Stage di un file in conflitto = risoluzione, solo se il file è chiesto per nome: dentro una cartella richiesta è rifiutato (`NotAllowed`). `unstage` = `git restore --staged --no-overlay --source=<HEAD>` (albero vuoto senza commit): solo l'indice, mai il worktree; un file in conflitto è rifiutato (`NotAllowed`), perché perderebbe gli stadi del conflitto. Indice bloccato da un altro git: `IndexLocked`, senza riprovare né cancellare il lock |
 | `index.stage_lines` / `index.unstage_lines` | `{"path", "lines"}` | usa il costruttore di patch |
 | `worktree.discard` | `{"paths", "confirm"}` | con backup (§7) |
 | `commit.create` | `{"message", "amend"?}` | |
@@ -196,6 +201,15 @@ Regole per ogni chiamata a git:
   dire "tutto il repo").
 - Le letture non scrivono l'indice: `--no-optional-locks`, e per `git diff` anche
   `-c diff.autoRefreshIndex=false` (altrimenti riscrive l'indice per aggiornare i dati di `stat`).
+- Variabili d'ambiente tolte sempre, oltre a quelle del repo (`GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_INDEX_FILE`, ...) e dei pathspec: la configurazione ereditata `GIT_CONFIG_PARAMETERS`,
+  `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*` (un `core.worktree` iniettato
+  sposterebbe le scritture).
+- Limiti noti, voluti: la configurazione del repo e dell'utente può far eseguire comandi a git
+  (filtri `clean`/`smudge`, `core.fsmonitor`, hook come `reference-transaction`): è la
+  configurazione dell'utente e si rispetta, come in ogni client che usa git di sistema; aprire
+  un repo non fidato è come eseguire git in quel repo. `index.stage` di una cartella che è un
+  repo annidato aggiunge un gitlink (come `git add`, che lo segnala solo con un avviso).
 - Un comando che modifica il repo è segnato in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), così la UI lo disabilita durante un job e un agente sa cosa scrive.
 - All'apertura del repo si verifica la versione di git (minimo 2.30) e si dà un errore chiaro se
@@ -231,6 +245,29 @@ frattempo non sono cambiati (altrimenti errore chiaro, nessuna sovrascrittura).
 Prima di scartare modifiche non committate si crea un backup con `git stash create` e se ne
 salva l'oid nel diario (con un ref `refs/project/backup/<data>` perché il garbage collector di git
 non lo elimini). Così anche "scarta" si può annullare.
+
+### Backup dell'indice (stage e unstage)
+
+`index.stage` e `index.unstage` riscrivono la versione in stage dei file. Se un file toccato
+(anche dentro una cartella richiesta) ha nell'indice una versione diversa da HEAD e dal worktree
+(codice XY di `git status` con X ∉ {`.`, `?`} e Y ≠ `.`: `MM`, `AM`, `AD`, `MD`, `RM`, ...), dopo
+la scrittura quella versione resterebbe solo in un blob irraggiungibile. Prima di scrivere il
+backend la salva:
+
+1. un indice temporaneo nella cartella git (`GIT_INDEX_FILE`) con solo quelle versioni
+   (`update-index --index-info`), così funziona anche con conflitti nell'indice vero, e
+   `write-tree`;
+2. `commit-tree` con genitore HEAD (se c'è), messaggio con l'operazione e i percorsi, identità
+   fissa (il backup riesce anche senza `user.name`) e `--no-gpg-sign`;
+3. `update-ref refs/project/backup/index-<secondi>-<nanosecondi> <commit> ""`: il ref si crea solo
+   se non esiste, un backup non ne sovrascrive mai un altro.
+
+Se un passo fallisce l'indice non si tocca e il comando restituisce l'errore. Il risultato del
+comando riporta il ref (`"backup"`), la UI lo mostra nella barra di stato; il contenuto si
+recupera con `git show <ref>:<percorso>`. Lo stage di un file in conflitto non fa backup: git
+tiene le versioni del conflitto nell'estensione REUC dell'indice (`git checkout -m` rifà il
+conflitto), e l'unstage di un conflitto è rifiutato. Il `MemoryBackend` registra i backup in
+memoria (`MemoryBackend::backups`).
 
 L'undo non copre le operazioni sui remoti: un push non si annulla da qui.
 

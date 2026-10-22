@@ -12,7 +12,10 @@ mod session;
 
 pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
-pub use git::{DiffSpec, GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener};
+pub use git::{
+    BACKUP_PREFIX, DiffSpec, GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener,
+    StagedVersion, backup_message, path_matches, versions_at_risk,
+};
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
 pub use session::Session;
@@ -84,6 +87,18 @@ impl EngineError {
         EngineError::NotAllowed(format!(
             "file in conflitto, niente tolto dallo stage (si perderebbero le versioni del \
              conflitto; per risolverlo va messo in stage): {}",
+            list(paths)
+        ))
+    }
+}
+
+impl EngineError {
+    /// [`EngineError::NotAllowed`] per lo stage di una cartella con file in conflitto: un
+    /// conflitto si risolve solo chiedendo il file per nome. Niente è stato messo in stage.
+    pub fn unmerged_in_folder(paths: &[impl std::fmt::Display]) -> Self {
+        EngineError::NotAllowed(format!(
+            "la cartella contiene file in conflitto, niente messo in stage (metterli in stage \
+             li segnerebbe come risolti: vanno chiesti per nome): {}",
             list(paths)
         ))
     }

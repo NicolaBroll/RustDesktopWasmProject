@@ -354,8 +354,9 @@ mod tests {
         );
         assert_eq!(r["isError"], false, "{r}");
         let text = r["content"][0]["text"].as_str().unwrap();
-        let status: Value = serde_json::from_str(text).unwrap();
-        let note = status["entries"]
+        let out: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(out["backup"], Value::Null);
+        let note = out["status"]["entries"]
             .as_array()
             .unwrap()
             .iter()

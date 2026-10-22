@@ -7,7 +7,8 @@
 //! copia e la applica solo se tutti i percorsi sono validi: un errore non cambia niente.
 
 use super::{MemoryBackend, content_oid};
-use crate::EngineError;
+use crate::git::{BACKUP_PREFIX, GitBackend, versions_at_risk};
+use crate::{EngineError, path_matches as matches};
 use project_domain::{
     Change, ChangedFile, EntryKind, Oid, RepoPath, StatusEntry, TrackedInfo, UnmergedInfo,
 };
@@ -17,12 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 type TreeEntry = (u32, Oid);
 
 const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
-
-/// Vero se `path` è `wanted` o un file sotto la cartella `wanted` (come un pathspec letterale).
-fn matches(path: &RepoPath, wanted: &RepoPath) -> bool {
-    let (path, wanted) = (path.as_bytes(), wanted.as_bytes());
-    path == wanted || (path.starts_with(wanted) && path.get(wanted.len()) == Some(&b'/'))
-}
 
 /// Il tipo di oggetto di un modo (file, link, sottomodulo), senza i permessi.
 fn file_type(mode: u32) -> u32 {
@@ -150,10 +145,26 @@ impl MemoryBackend {
     }
 
     /// [`GitBackend::stage`](crate::GitBackend::stage) sulle voci dello stato.
-    pub(super) fn stage_paths(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+    /// Salva in un backup (in memoria) le versioni in stage che stage o unstage di `paths`
+    /// farebbero perdere; il nome del ref, se ce n'erano.
+    fn backup(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
+        let versions = versions_at_risk(&self.status()?, paths);
+        if versions.is_empty() {
+            return Ok(None);
+        }
+        let name = format!("{BACKUP_PREFIX}index-{}", self.backups.len() + 1);
+        self.backups.push((name.clone(), versions));
+        Ok(Some(name))
+    }
+
+    pub(super) fn stage_paths(
+        &mut self,
+        paths: &[RepoPath],
+    ) -> Result<Option<String>, EngineError> {
         let head = self.head_tree();
         let mut selected = BTreeSet::new();
         let mut ignored = Vec::new();
+        let mut conflicts = Vec::new();
         for wanted in paths {
             let hits = Self::hits(&self.entries, &head, wanted, || EngineError::Git {
                 command: "add".to_owned(),
@@ -165,6 +176,11 @@ impl MemoryBackend {
                     // Un file ignorato si rifiuta solo se chiesto per nome; dentro una
                     // cartella si salta, come fa git.
                     EntryKind::Ignored if entry.path == *wanted => ignored.push(wanted.clone()),
+                    // Un conflitto si risolve solo chiedendolo per nome, non per sbaglio con
+                    // la sua cartella.
+                    EntryKind::Unmerged(_) if !paths.contains(&entry.path) => {
+                        conflicts.push(entry.path.clone());
+                    }
                     EntryKind::Ignored => {}
                     _ => {
                         selected.insert(i);
@@ -175,6 +191,10 @@ impl MemoryBackend {
         if !ignored.is_empty() {
             return Err(EngineError::ignored(&ignored));
         }
+        if !conflicts.is_empty() {
+            return Err(EngineError::unmerged_in_folder(&conflicts));
+        }
+        let backup = self.backup(paths)?;
 
         let entries = std::mem::take(&mut self.entries);
         let mut next = Vec::with_capacity(entries.len());
@@ -187,7 +207,7 @@ impl MemoryBackend {
         }
         next.sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
         self.entries = next;
-        Ok(())
+        Ok(backup)
     }
 
     /// La voce dopo lo stage del file; `None` se il file non è più cambiato.
@@ -313,7 +333,10 @@ impl MemoryBackend {
     /// [`GitBackend::unstage`](crate::GitBackend::unstage) sulle voci dello stato. Il
     /// worktree non cambia (se serve, il contenuto di un file non modificato viene copiato
     /// dall'indice al worktree, che per il `MemoryBackend` è solo una mappa).
-    pub(super) fn unstage_paths(&mut self, paths: &[RepoPath]) -> Result<(), EngineError> {
+    pub(super) fn unstage_paths(
+        &mut self,
+        paths: &[RepoPath],
+    ) -> Result<Option<String>, EngineError> {
         let head = self.head_tree();
         // Una rinomina o copia toccata da uno dei percorsi diventa due voci (cancellazione del
         // vecchio e aggiunta del nuovo), così ognuno dei due si toglie dallo stage da solo.
@@ -366,6 +389,7 @@ impl MemoryBackend {
         if !conflicts.is_empty() {
             return Err(EngineError::unmerged(&conflicts));
         }
+        let backup = self.backup(paths)?;
 
         let mut next = Vec::with_capacity(entries.len());
         for (i, entry) in entries.into_iter().enumerate() {
@@ -377,7 +401,7 @@ impl MemoryBackend {
         }
         next.sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
         self.entries = next;
-        Ok(())
+        Ok(backup)
     }
 
     /// La voce dopo l'unstage del file (un file tracciato, non in conflitto).

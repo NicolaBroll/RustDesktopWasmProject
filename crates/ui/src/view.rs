@@ -9,7 +9,7 @@ use crate::discard::{self, Discard, UndoOp};
 use crate::fetch::{self, Failure, Running};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
-use crate::list::CommitList;
+use crate::list::{Anchor, CommitList};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::{Action, Job, ListViewport, RepoView};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
@@ -483,14 +483,20 @@ pub(crate) fn commit_list(
         area = area.vertical_scroll_offset(offset.max(0.0));
     }
 
+    // La riga delle modifiche sta nella colonna di HEAD, che non è sempre il primo commit
+    // (un branch remoto appena scaricato può essere più recente).
+    let anchor = repo.head.target().and_then(|head| list.anchor(head));
     let output = area.show_rows(ui, ROW_HEIGHT, rows, |ui, range| {
         // Righe di commit disegnate: il grafo va sopra gli sfondi di tutte, quindi dopo.
         let mut drawn = Vec::with_capacity(range.len());
+        let mut header_rect = None;
         for row in range.clone() {
             let (rect, response) =
                 ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
             if header && row == 0 {
-                changes_row(ui, rect, &response, repo, graph_w, &style);
+                let column = anchor.map_or(0, |a| a.column);
+                changes_row(ui, rect, &response, repo, column, graph_w, &style);
+                header_rect = Some(rect);
                 if response.clicked() {
                     actions.push(Action::SelectWorktree);
                 }
@@ -498,10 +504,14 @@ pub(crate) fn commit_list(
             }
             let index = row - offset;
             let Some(commit) = list.commits().get(index) else {
+                let text = match list.seeking() {
+                    Some(id) => format!("Ricerca del commit {} nei commit più vecchi…", id.short()),
+                    None => "Caricamento di altri commit…".to_owned(),
+                };
                 ui.painter().text(
                     rect.left_center() + vec2(graph_w + 8.0, 0.0),
                     Align2::LEFT_CENTER,
-                    "Caricamento di altri commit…",
+                    text,
                     style.font.clone(),
                     style.weak,
                 );
@@ -541,6 +551,9 @@ pub(crate) fn commit_list(
             );
             drawn.push((index, rect));
         }
+        if let (Some(rect), Some(anchor)) = (header_rect, anchor) {
+            paint_changes_link(ui, rect, anchor, graph_w, step, style.weak);
+        }
         paint_graph(ui, list, &drawn, graph_w, step);
         range
     });
@@ -549,12 +562,45 @@ pub(crate) fn commit_list(
     actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
 }
 
-/// La riga "Modifiche non committate": un anello vuoto nel grafo, il titolo e i conteggi.
+/// Il tratto dall'anello delle modifiche giù fino al pallino di HEAD, se la colonna di HEAD è
+/// libera nelle righe in mezzo (altrimenti coprirebbe gli archi di altri commit).
+fn paint_changes_link(
+    ui: &Ui,
+    header: egui::Rect,
+    anchor: Anchor,
+    width: f32,
+    step: f32,
+    color: Color32,
+) {
+    if !anchor.free_above {
+        return;
+    }
+    let x = graph::column_x(header.left(), anchor.column);
+    let top = header.center().y + graph::NODE_RADIUS;
+    let bottom = header.center().y + (anchor.index + 1) as f32 * step - graph::NODE_RADIUS;
+    let column = egui::Rect::from_x_y_ranges(
+        header.left()..=header.left() + width,
+        ui.clip_rect().y_range(),
+    );
+    let painter = ui
+        .painter()
+        .with_clip_rect(column.intersect(ui.clip_rect()));
+    painter.add(egui::Shape::dashed_line(
+        &[egui::pos2(x, top), egui::pos2(x, bottom)],
+        egui::Stroke::new(graph::EDGE_WIDTH, color),
+        3.0,
+        3.0,
+    ));
+}
+
+/// La riga "Modifiche non committate": un anello vuoto nel grafo (nella colonna `column` di
+/// HEAD), il titolo e i conteggi.
 fn changes_row(
     ui: &Ui,
     rect: egui::Rect,
     response: &egui::Response,
     repo: &RepoView,
+    column: usize,
     graph_w: f32,
     style: &RowStyle,
 ) {
@@ -565,7 +611,7 @@ fn changes_row(
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
-    let center = egui::pos2(graph::column_x(rect.left(), 0), rect.center().y);
+    let center = egui::pos2(graph::column_x(rect.left(), column), rect.center().y);
     ui.painter().circle_stroke(
         center,
         graph::NODE_RADIUS,

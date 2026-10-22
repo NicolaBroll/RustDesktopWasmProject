@@ -61,7 +61,9 @@ pub trait GitBackend: Send {
     /// Commit raggiungibili da `query.rev` (HEAD se manca), figli sempre prima dei genitori e,
     /// a parità, il più recente per data del committer prima. Su un branch senza commit e senza
     /// `rev` il risultato è vuoto; una `rev` che non si risolve dà
-    /// [`EngineError::UnknownRev`].
+    /// [`EngineError::UnknownRev`]. Con `query.all` parte da tutti i branch locali e remoti, i
+    /// tag e HEAD (una HEAD senza commit si salta); `rev` e `all` insieme danno
+    /// [`EngineError::InvalidParams`] ([`LogQuery::check`]).
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
 
     /// Stato del worktree e dell'indice, con HEAD e upstream del branch corrente.
@@ -338,7 +340,7 @@ pub trait RepoOpener: Send + Sync {
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;
 }
 
-/// Una pagina del log: parametri di `repo.log` (§4), `{"skip"?, "limit"?, "rev"?}`.
+/// Una pagina del log: parametri di `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogQuery {
@@ -349,9 +351,32 @@ pub struct LogQuery {
     /// Da dove partire: nome di un ref (`main`, `origin/main`, `v1.0`, `refs/heads/main`),
     /// `HEAD` o un id (anche abbreviato, almeno 4 cifre). `None` = HEAD.
     pub rev: Option<String>,
+    /// Parte da tutti i branch locali, i branch remoti, i tag e HEAD (anche staccata), come
+    /// `git log --branches --remotes --tags HEAD`. Gli altri ref (`refs/stash`, i backup in
+    /// `refs/project/backup/`, le note) non ci sono. Esclude `rev`.
+    pub all: bool,
 }
 
 impl LogQuery {
+    /// Errore se i parametri si contraddicono: `rev` e `all` insieme.
+    pub fn check(&self) -> Result<(), EngineError> {
+        if self.all && self.rev.is_some() {
+            return Err(EngineError::InvalidParams {
+                id: "repo.log",
+                reason: "`rev` e `all` sono alternativi: `all` parte già da tutti i branch, i \
+                         tag e HEAD"
+                    .to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Stessa pagina, a partire da tutti i branch, i tag e HEAD.
+    pub fn from_all_refs(mut self) -> Self {
+        self.all = true;
+        self
+    }
+
     /// Tutto il log da HEAD.
     pub fn all() -> Self {
         Self::default()
@@ -363,6 +388,7 @@ impl LogQuery {
             skip,
             limit: Some(limit),
             rev: None,
+            all: false,
         }
     }
 

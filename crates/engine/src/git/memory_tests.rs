@@ -397,6 +397,95 @@ fn log_query_da_json() {
     assert_eq!(q.limit, None);
     assert!(serde_json::from_str::<LogQuery>(r#"{"count":1}"#).is_err());
     assert!(serde_json::from_str::<LogQuery>(r#"{"skip":-1}"#).is_err());
+    let q: LogQuery = serde_json::from_str(r#"{"all":true,"limit":5}"#).unwrap();
+    assert_eq!(q, LogQuery::page(0, 5).from_all_refs());
+    assert!(serde_json::from_str::<LogQuery>(r#"{"all":1}"#).is_err());
+}
+
+/// Un commit nuovo `n` figlio di `parent`, con data dopo tutti quelli dell'esempio.
+fn extra_commit(repo: &mut MemoryBackend, n: u64, parent: Oid, summary: &str) -> Oid {
+    let mut commit = log(repo, LogQuery::page(0, 1))[0].clone();
+    commit.id = MemoryBackend::fake_oid(n);
+    commit.parents = vec![parent];
+    commit.summary = summary.into();
+    commit.committer.time += i64::try_from(n).unwrap() * 60;
+    repo.insert_commit(commit);
+    MemoryBackend::fake_oid(n)
+}
+
+#[test]
+fn log_di_tutti_i_ref() {
+    let mut repo = sample();
+    // Nell'esempio tutto è raggiungibile da HEAD: stesso log.
+    assert_eq!(
+        log(&repo, LogQuery::all().from_all_refs()),
+        log(&repo, LogQuery::all())
+    );
+
+    let base = ref_target(&repo, "refs/heads/feature/grafo");
+    let branch = extra_commit(&mut repo, 90, base, "Solo su un branch");
+    repo.set_branch("non-unito", branch);
+    let remote = extra_commit(&mut repo, 91, base, "Solo sul remoto");
+    repo.set_remote_branch("origin/altro", remote);
+    let tag = extra_commit(&mut repo, 92, base, "Solo sul tag");
+    repo.set_tag("solo-tag", tag, None);
+    let stash = extra_commit(&mut repo, 93, base, "Stash");
+    repo.set_stash(stash);
+
+    let all = log(&repo, LogQuery::all().from_all_refs());
+    let ids: BTreeSet<Oid> = all.iter().map(|c| c.id).collect();
+    assert_eq!(all.len(), 12 + 3, "{:?}", summaries(&all));
+    for id in [branch, remote, tag] {
+        assert!(ids.contains(&id));
+    }
+    assert!(!ids.contains(&stash), "lo stash non è nel grafo");
+    // Senza `all` niente cambia.
+    assert_eq!(log(&repo, LogQuery::all()).len(), 12);
+    // Figli prima dei genitori, il più recente prima.
+    assert_eq!(all[0].id, tag);
+    for (i, c) in all.iter().enumerate() {
+        for p in &c.parents {
+            assert!(all[i + 1..].iter().any(|later| later.id == *p));
+        }
+    }
+    // Pagine contigue.
+    let pages: Vec<Commit> = (0..4)
+        .flat_map(|p| log(&repo, LogQuery::page(p * 4, 4).from_all_refs()))
+        .collect();
+    assert_eq!(pages, all);
+
+    // HEAD staccata su un commit che nessun ref raggiunge.
+    let detached = extra_commit(&mut repo, 94, base, "HEAD staccata");
+    repo.detach_head(detached);
+    let all = log(&repo, LogQuery::all().from_all_refs());
+    assert_eq!(all[0].id, detached);
+    assert_eq!(all.len(), 12 + 4);
+}
+
+#[test]
+fn log_di_tutti_i_ref_senza_commit() {
+    let repo = MemoryBackend::new();
+    assert_eq!(log(&repo, LogQuery::all().from_all_refs()), []);
+    // HEAD senza commit ma un altro branch c'è: il log è quello del branch.
+    let mut repo = sample();
+    repo.set_head_branch("orfano");
+    assert_eq!(
+        log(&repo, LogQuery::all().from_all_refs()),
+        log(&repo, LogQuery::all().from_rev("main"))
+    );
+    assert_eq!(log(&repo, LogQuery::all()), []);
+}
+
+#[test]
+fn log_rev_e_all_insieme_sono_un_errore() {
+    let repo = sample();
+    let err = repo
+        .log(&LogQuery::all().from_rev("main").from_all_refs())
+        .unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidParams { id: "repo.log", reason } if reason.contains("alternativi")),
+        "{err}"
+    );
 }
 
 fn changed(repo: &MemoryBackend, rev: &str) -> Vec<(Change, String, Option<String>)> {

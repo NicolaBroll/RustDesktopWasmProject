@@ -41,7 +41,7 @@ impl Registry {
         add(
             "repo.log",
             "Cronologia dei commit",
-            r#"{"skip"?: number, "limit"?: number (200), "rev"?: string}"#,
+            r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool}"#,
             repo_log,
         );
         add(
@@ -769,6 +769,31 @@ mod tests {
             .run("repo.log", &mut s, json!({ "rev": "nessuno" }))
             .unwrap_err();
         assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
+    }
+
+    #[test]
+    fn log_of_all_refs() {
+        let (r, mut s) = opened();
+        let sample = MemoryBackend::sample();
+        let (all, more) = log_page(&r, &mut s, json!({ "all": true }));
+        assert_eq!(
+            (all, more),
+            (sample.log(&LogQuery::all().from_all_refs()).unwrap(), false)
+        );
+        let (page, more) = log_page(&r, &mut s, json!({ "all": true, "skip": 2, "limit": 3 }));
+        assert_eq!(
+            page,
+            sample.log(&LogQuery::page(2, 3).from_all_refs()).unwrap()
+        );
+        assert!(more);
+
+        let err = r
+            .run("repo.log", &mut s, json!({ "all": true, "rev": "main" }))
+            .unwrap_err();
+        assert!(
+            matches!(err, EngineError::InvalidParams { id: "repo.log", .. }),
+            "{err}"
+        );
     }
 
     #[test]

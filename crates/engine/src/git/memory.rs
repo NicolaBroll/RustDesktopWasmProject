@@ -262,8 +262,12 @@ impl MemoryBackend {
 
     /// Commit raggiungibili da `start` (compreso), solo quelli presenti nel repo.
     fn reachable(&self, start: Oid) -> BTreeSet<Oid> {
+        self.reachable_from([start])
+    }
+
+    fn reachable_from(&self, starts: impl IntoIterator<Item = Oid>) -> BTreeSet<Oid> {
         let mut seen = BTreeSet::new();
-        let mut stack = vec![start];
+        let mut stack: Vec<Oid> = starts.into_iter().collect();
         while let Some(id) = stack.pop() {
             if let Some(commit) = self.commits.get(&id)
                 && seen.insert(id)
@@ -558,15 +562,23 @@ impl GitBackend for MemoryBackend {
     }
 
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError> {
-        let start = match &query.rev {
-            Some(rev) => self.resolve(rev)?,
-            None => match self.head_target() {
-                Some(id) => id,
-                None => return Ok(Vec::new()),
-            },
+        query.check()?;
+        let starts: Vec<Oid> = if query.all {
+            // Come `--branches --remotes --tags HEAD`: niente stash né backup.
+            self.refs
+                .iter()
+                .filter(|(name, _)| [HEADS, REMOTES, TAGS].iter().any(|p| name.starts_with(p)))
+                .map(|(_, entry)| entry.target)
+                .chain(self.head_target())
+                .collect()
+        } else {
+            match &query.rev {
+                Some(rev) => vec![self.resolve(rev)?],
+                None => self.head_target().into_iter().collect(),
+            }
         };
         let wanted = query.skip.saturating_add(query.limit.unwrap_or(usize::MAX));
-        let reachable = self.reachable(start);
+        let reachable = self.reachable_from(starts);
 
         // Come `git log --date-order`: un commit esce solo dopo tutti i suoi figli; fra quelli
         // pronti, prima il più recente (a parità di data decide l'id, per un ordine stabile).

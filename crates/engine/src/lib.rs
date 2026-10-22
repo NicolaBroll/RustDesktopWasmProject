@@ -32,6 +32,19 @@ pub enum EngineError {
     /// La rev non corrisponde a nessun ref né commit (o l'id abbreviato è ambiguo).
     #[error("revisione sconosciuta: `{0}`")]
     UnknownRev(String),
+    /// Il programma `git` non si avvia (non installato o non nel `PATH`).
+    #[error("impossibile eseguire `git`: {0}")]
+    GitNotFound(String),
+    /// Il `git` installato è più vecchio della versione minima supportata.
+    #[error("git {found} non è supportato: serve almeno la versione {required}")]
+    GitTooOld { found: String, required: String },
+    /// Un comando git è terminato con errore; `stderr` è il suo messaggio.
+    #[error("`git {command}` non riuscito: {stderr}")]
+    Git {
+        /// Il sottocomando git, es. `status`.
+        command: String,
+        stderr: String,
+    },
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]

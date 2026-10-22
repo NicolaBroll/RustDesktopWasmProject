@@ -2180,6 +2180,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "project-git"
+version = "0.1.0"
+dependencies = [
+ "project-domain",
+ "project-engine",
+ "tempfile",
+]
+
+[[package]]
 name = "project-mcp"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,17 @@
+[package]
+name = "project-git"
+description = "L6: backend git che esegue il comando `git` di sistema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+project-domain.workspace = true
+project-engine.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

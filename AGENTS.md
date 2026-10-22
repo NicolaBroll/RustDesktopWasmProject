@@ -11,6 +11,7 @@ Architettura di riferimento: [impl-docs/ARCHITETTURA-rust.md](impl-docs/ARCHITET
 | L5 | `project-engine` | `crates/engine` — `Session` (undo/redo), `Registry`, trait `Platform` |
 | L6 | `project-ui` | `crates/ui` — `App` egui, nessun `cfg(target_arch)` |
 | L6 | `project-mcp` | `crates/mcp` — server MCP su stdio |
+| L6 | `project-git` | `crates/git` — `CliBackend`/`CliOpener`: esegue `git`; lo importano solo le app L7 |
 | L7 | `project`, `project-cli`, `project-web` | `apps/*` — solo avvio e collegamento |
 
 Un crate importa solo da livelli **strettamente inferiori**; `cargo xtask layers` lo verifica.

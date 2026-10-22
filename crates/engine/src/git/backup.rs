@@ -8,6 +8,7 @@
 //! riesce l'indice non si tocca.
 
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
+use std::collections::BTreeSet;
 
 /// Prefisso dei ref di backup: `refs/project/backup/index-<data>`.
 pub const BACKUP_PREFIX: &str = "refs/project/backup/";
@@ -35,6 +36,17 @@ pub fn path_matches(path: &RepoPath, wanted: &RepoPath) -> bool {
 /// li rifiuta e lo stage li risolve lasciando le loro versioni nell'estensione REUC
 /// dell'indice (`git checkout -m` le ripristina).
 pub fn versions_at_risk(status: &Status, paths: &[RepoPath]) -> Vec<StagedVersion> {
+    versions_at_risk_hidden(status, paths, &BTreeSet::new())
+}
+
+/// Come [`versions_at_risk`], ma per i file in `hidden` il worktree non è affidabile: con
+/// `--assume-unchanged` o `--skip-worktree` `git status` dà Y = `.` anche se il file è
+/// diverso. Per loro basta che la versione in stage sia diversa da HEAD (X ∉ {`.`, `?`}).
+pub fn versions_at_risk_hidden(
+    status: &Status,
+    paths: &[RepoPath],
+    hidden: &BTreeSet<RepoPath>,
+) -> Vec<StagedVersion> {
     status
         .entries
         .iter()
@@ -50,7 +62,7 @@ pub fn versions_at_risk(status: &Status, paths: &[RepoPath]) -> Vec<StagedVersio
                     || matches!(&entry.kind, EntryKind::Renamed { original, .. } if path_matches(original, p))
             });
             let at_risk = entry.index.is_change()
-                && entry.worktree != Change::Unmodified
+                && (entry.worktree != Change::Unmodified || hidden.contains(&entry.path))
                 && info.mode_index != 0;
             (touched && at_risk).then(|| StagedVersion {
                 path: entry.path.clone(),
@@ -91,6 +103,13 @@ mod tests {
         assert_eq!(risky, [p("README.md")]);
         assert!(versions_at_risk(&status, &[p("docs"), p("src/lib.rs")]).is_empty());
         assert!(versions_at_risk(&status, &[p("READ")]).is_empty());
+        // docs/guida.md è `A.`: a rischio solo se il worktree non è affidabile.
+        let hidden = BTreeSet::from([p("docs/guida.md")]);
+        let risky: Vec<_> = versions_at_risk_hidden(&status, &all, &hidden)
+            .into_iter()
+            .map(|v| v.path)
+            .collect();
+        assert_eq!(risky, [p("README.md"), p("docs/guida.md")]);
     }
 
     #[test]

@@ -14,7 +14,10 @@ mod memory_diff_tests;
 #[cfg(test)]
 mod memory_tests;
 
-pub use backup::{BACKUP_PREFIX, StagedVersion, backup_message, path_matches, versions_at_risk};
+pub use backup::{
+    BACKUP_PREFIX, StagedVersion, backup_message, path_matches, versions_at_risk,
+    versions_at_risk_hidden,
+};
 pub use memory::{MemoryBackend, MemoryOpener};
 
 use crate::EngineError;
@@ -69,6 +72,12 @@ pub trait GitBackend: Send {
     // prima di scrivere hanno salvato versioni in stage che esistevano solo nell'indice
     // ([`versions_at_risk`]); se il backup non riesce l'indice non si tocca e il risultato è
     // l'errore.
+    //
+    // Il controllo dei rischi legge lo stato prima di scrivere: fra la lettura e la scrittura
+    // un altro processo git potrebbe cambiare l'indice (finestra breve, solo con scritture
+    // esterne concorrenti). Il `CliBackend` ricontrolla le voci toccate subito prima di
+    // scrivere e, se sono cambiate, dà errore senza scrivere; resta solo l'istante fra
+    // quell'ultimo controllo e la scrittura.
 
     /// Mette in stage i file `paths` com'erano nel worktree (`git add`): modifiche, file nuovi
     /// non tracciati e cancellazioni. Per una rinomina fatta nel worktree si passano i due

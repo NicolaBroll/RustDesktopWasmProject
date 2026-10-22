@@ -211,3 +211,64 @@ fn backup_on_a_branch_without_commits_has_no_parent() {
     let parents = repo.git(&["log", "-1", "--format=%P", &backup]);
     assert_eq!(parents, "");
 }
+
+/// `a.txt` con una versione in stage e un'altra nel worktree, nascosta da `flag`
+/// (`--assume-unchanged` o `--skip-worktree`): `git status` dà `M.`.
+fn hidden_worktree_change(flag: &str) -> Repo {
+    let repo = base();
+    repo.write("a.txt", "versione in stage\n");
+    repo.stage(&["a.txt"]);
+    repo.git(&["update-index", flag, "a.txt"]);
+    repo.write("a.txt", "versione nel worktree\n");
+    repo
+}
+
+#[test]
+fn assume_unchanged_and_skip_worktree_files_are_at_risk() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let repo = hidden_worktree_change(flag);
+        let mut backend = repo.open();
+        let status = backend.status().unwrap();
+        assert_eq!(
+            (
+                status.entries[0].index.letter(),
+                status.entries[0].worktree.letter()
+            ),
+            ('M', '.'),
+            "{flag}: git non vede il worktree"
+        );
+        let backup = backend
+            .unstage(&paths(&["a.txt"]))
+            .unwrap()
+            .unwrap_or_else(|| panic!("{flag}: nessun backup"));
+        assert_eq!(show(&repo, &backup, "a.txt"), "versione in stage", "{flag}");
+        assert_eq!(repo.git(&["show", ":a.txt"]), "in HEAD", "{flag}");
+    }
+}
+
+#[test]
+fn split_index_leaves_no_shared_index_behind() {
+    let repo = base();
+    repo.git(&["config", "core.splitIndex", "true"]);
+    repo.git(&["update-index", "--split-index"]);
+    let shared = || -> Vec<String> {
+        std::fs::read_dir(repo.path().join(".git"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("sharedindex."))
+            .collect()
+    };
+    repo.write("a.txt", "versione in stage\n");
+    repo.stage(&["a.txt"]);
+    repo.write("a.txt", "versione nel worktree\n");
+    let before = shared();
+    assert!(!before.is_empty(), "lo split index è attivo");
+    let mut backend = repo.open();
+    assert!(backend.unstage(&paths(&["a.txt"])).unwrap().is_some());
+    let after = shared();
+    // L'indice temporaneo non ha lasciato un suo `sharedindex.*`.
+    let new: Vec<_> = after.iter().filter(|n| !before.contains(n)).collect();
+    assert!(new.is_empty(), "{new:?}");
+    assert_no_temp_index(&repo);
+}

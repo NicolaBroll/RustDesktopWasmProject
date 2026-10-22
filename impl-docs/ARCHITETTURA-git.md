@@ -262,6 +262,19 @@ backend la salva:
 3. `update-ref refs/project/backup/index-<secondi>-<nanosecondi> <commit> ""`: il ref si crea solo
    se non esiste, un backup non ne sovrascrive mai un altro.
 
+Per i file `--assume-unchanged` o `--skip-worktree` (lettere da `git ls-files -v`) `git status`
+dà Y = `.` anche se il worktree è diverso: per loro basta X ∉ {`.`, `?`}. Lo stato letto prima di
+scrivere non usa `core.fsmonitor` (un fsmonitor non aggiornato nasconderebbe le modifiche).
+L'indice temporaneo si scrive con `core.splitIndex=false`, `core.fsmonitor=false` e
+`index.sparse=false`, così non lascia file in `.git`.
+
+Fra la lettura dello stato e la scrittura c'è una finestra breve in cui un altro processo git
+potrebbe cambiare l'indice. Subito prima di scrivere il backend rilegge l'indice
+(`ls-files -s`) e controlla che le voci toccate concordino con lo stato e con la prima lettura;
+se no, errore senza scrivere. Resta solo l'istante fra quel controllo e la scrittura, e solo con
+scritture git esterne concorrenti. Il `MemoryBackend` non ha i flag `assume-unchanged` e
+`skip-worktree` né processi concorrenti: usa solo il codice XY.
+
 Se un passo fallisce l'indice non si tocca e il comando restituisce l'errore. Il risultato del
 comando riporta il ref (`"backup"`), la UI lo mostra nella barra di stato; il contenuto si
 recupera con `git show <ref>:<percorso>`. Lo stage di un file in conflitto non fa backup: git

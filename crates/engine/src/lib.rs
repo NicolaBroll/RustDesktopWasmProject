@@ -14,7 +14,7 @@ pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
     BACKUP_PREFIX, DiffSpec, GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener,
-    StagedVersion, backup_message, path_matches, versions_at_risk,
+    StagedVersion, backup_message, path_matches, versions_at_risk, versions_at_risk_hidden,
 };
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;

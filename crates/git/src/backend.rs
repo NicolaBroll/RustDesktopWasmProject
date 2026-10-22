@@ -10,8 +10,9 @@ use project_domain::{
 };
 use project_engine::{
     BACKUP_PREFIX, DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener, StagedVersion,
-    backup_message, path_matches, versions_at_risk,
+    backup_message, path_matches, versions_at_risk_hidden,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -154,6 +155,17 @@ fn empty_tree(format: &[u8]) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// Una voce di stadio 0 dell'indice, da `git ls-files -v -s`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IndexEntry {
+    /// Lettera di `-v`: minuscola per `--assume-unchanged`, `S` per `--skip-worktree`.
+    tag: u8,
+    mode: u32,
+    oid: Oid,
+}
+
+type IndexListing = BTreeMap<RepoPath, IndexEntry>;
 
 /// Identità dei commit di backup dell'indice: non serve quella dell'utente, e così il backup
 /// riesce anche se `user.name`/`user.email` non sono configurati.
@@ -421,9 +433,17 @@ impl CliBackend {
         &self,
         operation: &str,
         status: &Status,
+        index: &IndexListing,
         paths: &[RepoPath],
     ) -> Result<Option<String>, EngineError> {
-        let versions = versions_at_risk(status, paths);
+        // Con `--assume-unchanged` (lettera minuscola) o `--skip-worktree` (`S`) git non
+        // guarda il worktree e `status` dà Y = `.` anche se il file è diverso.
+        let hidden: BTreeSet<RepoPath> = index
+            .iter()
+            .filter(|(_, e)| e.tag.is_ascii_lowercase() || e.tag == b'S')
+            .map(|(p, _)| p.clone())
+            .collect();
+        let versions = versions_at_risk_hidden(status, paths, &hidden);
         if versions.is_empty() {
             return Ok(None);
         }
@@ -448,8 +468,20 @@ impl CliBackend {
             info.extend_from_slice(v.path.as_bytes());
             info.push(0);
         }
-        self.run_input(&["update-index", "-z", "--index-info"], &info, &index_env)?;
-        let tree = self.run_input(&["write-tree"], b"", &index_env)?;
+        // L'indice temporaneo è semplice: niente split index (lascerebbe un `sharedindex.*` per
+        // ogni backup), fsmonitor o indice sparso, qualunque sia la config del repo.
+        let plain = [
+            "-c",
+            "core.splitIndex=false",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "index.sparse=false",
+        ];
+        let update = [&plain[..], &["update-index", "-z", "--index-info"]].concat();
+        self.run_input(&update, &info, &index_env)?;
+        let write = [&plain[..], &["write-tree"]].concat();
+        let tree = self.run_input(&write, b"", &index_env)?;
         let tree = String::from_utf8_lossy(tree.trim_ascii_end()).into_owned();
 
         let message = backup_message(operation, versions);
@@ -508,6 +540,98 @@ impl CliBackend {
             command: "update-ref".to_owned(),
             stderr: format!("nessun nome libero per il backup dell'indice dopo `{base}`"),
         })
+    }
+
+    /// Lo stato letto prima di una scrittura: come [`GitBackend::status`], ma senza
+    /// `core.fsmonitor`, che se non è aggiornato fa sembrare invariato un file cambiato.
+    fn status_for_write(&self) -> Result<Status, EngineError> {
+        let mut args = vec![
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+        ];
+        args.extend_from_slice(STATUS_ARGS);
+        let mut status = parse_status(&self.run(&args)?)?;
+        status.operation = self.operation();
+        Ok(status)
+    }
+
+    /// Le voci di stadio 0 dell'indice (`git ls-files -v -s -z`), per percorso.
+    fn index_listing(&self) -> Result<IndexListing, EngineError> {
+        let args = ["ls-files", "-v", "-s", "-z", "--"];
+        let out = self.run(&args)?;
+        let mut listing = BTreeMap::new();
+        for record in out.split(|&b| b == 0).filter(|r| !r.is_empty()) {
+            // `<lettera> <modo> <id> <stadio>\t<percorso>`
+            let bad = || failure_text(&args, record);
+            let tab = record.iter().position(|&b| b == b'\t').ok_or_else(bad)?;
+            let (head, path) = (&record[..tab], &record[tab + 1..]);
+            let fields: Vec<&[u8]> = head.split(|&b| b == b' ').collect();
+            let [[tag], mode, oid, stage] = fields[..] else {
+                return Err(bad());
+            };
+            if stage != b"0" {
+                continue;
+            }
+            let mode = std::str::from_utf8(mode)
+                .ok()
+                .and_then(|m| u32::from_str_radix(m, 8).ok())
+                .ok_or_else(bad)?;
+            listing.insert(
+                RepoPath::from_bytes(path),
+                IndexEntry {
+                    tag: *tag,
+                    mode,
+                    oid: Oid::from_hex(oid)?,
+                },
+            );
+        }
+        Ok(listing)
+    }
+
+    /// Subito prima di scrivere: le voci dell'indice toccate da `paths` concordano con lo stato
+    /// letto all'inizio e sono ancora quelle lette all'inizio (`before`, da cui vengono anche il controllo dei rischi e il backup).
+    /// Se un altro processo git le ha cambiate nel frattempo, errore senza scrivere.
+    fn check_index_unchanged(
+        &self,
+        status: &Status,
+        before: &IndexListing,
+        paths: &[RepoPath],
+    ) -> Result<(), EngineError> {
+        let now = self.index_listing()?;
+        let touched = |listing: &IndexListing| -> Vec<(RepoPath, u32, Oid)> {
+            listing
+                .iter()
+                .filter(|(p, _)| paths.iter().any(|w| path_matches(p, w)))
+                .map(|(p, e)| (p.clone(), e.mode, e.oid))
+                .collect()
+        };
+        // E le voci dello stato (lette ancora prima) concordano con l'indice letto dopo.
+        let consistent = status.entries.iter().all(|entry| {
+            let info = match &entry.kind {
+                EntryKind::Ordinary(info)
+                | EntryKind::Renamed { info, .. }
+                | EntryKind::Copied { info, .. } => info,
+                _ => return true,
+            };
+            if !paths.iter().any(|w| path_matches(&entry.path, w)) {
+                return true;
+            }
+            match before.get(&entry.path) {
+                Some(e) => info.mode_index == e.mode && info.oid_index == e.oid,
+                None => info.mode_index == 0,
+            }
+        });
+        if consistent && touched(before) == touched(&now) {
+            Ok(())
+        } else {
+            Err(EngineError::NotAllowed(
+                "l'indice è cambiato mentre si preparava la scrittura (un altro processo git?): \
+                 niente scritto, riprovare"
+                    .to_owned(),
+            ))
+        }
     }
 
     /// `git <args>` con `input` su stdin e le variabili `env`; stdout, o l'errore di git.
@@ -709,7 +833,8 @@ impl GitBackend for CliBackend {
             // `git add` senza percorsi non aggiunge niente, ma meglio non chiederlo affatto.
             return Ok(None);
         }
-        let status = self.status()?;
+        let status = self.status_for_write()?;
+        let index = self.index_listing()?;
         // Un file in conflitto messo in stage è risolto: solo se chiesto per nome, non perché
         // è dentro una cartella richiesta.
         let in_folder: Vec<&RepoPath> = status
@@ -743,7 +868,8 @@ impl GitBackend for CliBackend {
         }
         // Le versioni in stage che resterebbero solo in un blob irraggiungibile: prima un
         // backup; se non riesce, l'indice non si tocca.
-        let backup = self.backup("index.stage", &status, &paths)?;
+        let backup = self.backup("index.stage", &status, &index, &paths)?;
+        self.check_index_unchanged(&status, &index, &paths)?;
         let out = self.output_with_paths(&add, &paths)?;
         if !out.status.success() {
             return Err(failure(&add, &out));
@@ -755,7 +881,8 @@ impl GitBackend for CliBackend {
         if paths.is_empty() {
             return Ok(None);
         }
-        let status = self.status()?;
+        let status = self.status_for_write()?;
+        let index = self.index_listing()?;
         // `restore --staged` su un file in conflitto toglierebbe senza dire niente gli stadi
         // del conflitto (le versioni base, nostra e loro).
         let conflicts: Vec<&RepoPath> = status
@@ -773,7 +900,8 @@ impl GitBackend for CliBackend {
         // `--no-overlay` (già il default di `restore`): i file che in HEAD non ci sono escono
         // dall'indice. Senza `--worktree` il worktree non si tocca.
         let source = format!("--source={}", self.index_source()?);
-        let backup = self.backup("index.unstage", &status, paths)?;
+        let backup = self.backup("index.unstage", &status, &index, paths)?;
+        self.check_index_unchanged(&status, &index, paths)?;
         let args = ["restore", "--staged", "--no-overlay", &source];
         let out = self.output_with_paths(&args, paths)?;
         if !out.status.success() {

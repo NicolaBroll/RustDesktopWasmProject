@@ -1,0 +1,10 @@
+---
+source: crates/domain/src/git/patch_tests.rs
+expression: "render(&patch(&f, lines, dir))"
+---
+diff --git a/script.sh b/script.sh
+--- a/script.sh
++++ b/script.sh
+@@ -1 +1,2 @@
+ resta
++aggiunta

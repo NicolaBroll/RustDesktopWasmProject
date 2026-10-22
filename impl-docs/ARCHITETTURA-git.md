@@ -119,10 +119,57 @@ volta; nessun commit occupa due colonne; le corsie libere vengono riusate (largh
 
 ### Costruttore di patch
 
-Per lo stage di singole righe: dato un `FileDiff` e le righe selezionate produce una patch valida
-per `git apply --cached --recount`. Le righe aggiunte non selezionate si tolgono, quelle rimosse
-non selezionate diventano righe di contesto. Funzione pura, con test sui casi limite: file nuovi,
-fine file senza newline, hunk adiacenti.
+Per lo stage e l'unstage di singole righe: `build_patch(file: &FileDiff, lines: &[LineRef],
+direction: PatchDirection) -> Result<Option<FileDiff>, DomainError>` (modulo
+`crates/domain/src/git/patch.rs`), funzione pura. La patch restituita è un `FileDiff`
+(`to_patch()` dà i byte) da applicare con `git apply` più gli argomenti di `APPLY_ARGS`
+(`--cached --recount --whitespace=nowarn --no-ignore-whitespace`), patch su stdin; `--check` in
+più per provarla. Le due flag sugli spazi neutralizzano `apply.whitespace=error` (rifiuterebbe
+righe con spazi finali) e `apply.ignoreWhitespace` (accetterebbe un indice diverso negli spazi).
+
+- **Direzioni.** `git apply --cached` confronta il preimage della patch (contesto e righe `-`)
+  con l'indice. La patch è sempre costruita *in avanti* rispetto all'indice, così le due
+  direzioni si applicano allo stesso modo, **senza `--reverse`**.
+  `stage` lavora sul diff di `diff.worktree`, il cui lato vecchio è l'indice: aggiunte
+  selezionate `+`, aggiunte non selezionate tolte, rimosse selezionate `-`, rimosse non
+  selezionate contesto. `unstage` lavora sul diff di `diff.index`, in cui l'indice è il lato
+  **nuovo**: il diff si inverte e si applica la stessa regola, che rispetto alle righe mostrate
+  diventa: aggiunte selezionate `-` (escono dall'indice), aggiunte non selezionate contesto
+  (restano), rimosse selezionate `+` (tornano), rimosse non selezionate tolte.
+- **Ordine nel risultato.** In ogni gruppo di modifiche fra due righe di contesto, tolte e
+  aggiunte si accoppiano per posizione (prima tolta con prima aggiunta, ...): di `-x -y +x' +y'`
+  lo stage di `x → x'` dà `x' y`. L'unstage di una selezione dà lo stesso contenuto dello stage
+  delle righe non selezionate partendo da HEAD.
+- **Selezione** (`LineRef`, in JSON `{"old": n}` / `{"new": n}`): il numero di riga nel lato in
+  cui la riga cambiata esiste, come nel `Line` del diff (`old_line` per le tolte, `new_line` per
+  le aggiunte); `Line::line_ref`, `Hunk::line_refs` e `FileDiff::line_refs` danno i riferimenti
+  di una riga, di un hunk intero e del file. Selezione vuota: `Ok(None)`. Un riferimento che non
+  è una riga cambiata del diff (contesto, numero inesistente, lato sbagliato):
+  `DomainError::InvalidLineSelection`, mai una patch su altre righe.
+- **Fine file senza a capo**: una riga senza a capo che nel risultato non è più l'ultima prende
+  l'a capo (se era nel preimage diventa `-riga` + `\ No newline` e `+riga`).
+- **File nuovo**: patch `new file mode` con le sole righe scelte. Nel diff worktree compare solo
+  con `git add -N` (`git apply --cached` accetta di creare un file `intent-to-add`); un file non
+  tracciato non è nel diff e va messo in stage intero. Nell'unstage è il caso di un file
+  eliminato in stage: torna nell'indice con le righe scelte.
+- **File eliminato** (dal worktree nello stage, file nuovo in stage nell'unstage): tutte le righe
+  ⇒ `deleted file mode`, il file esce dall'indice; selezione parziale ⇒ modifica, il file resta
+  con le righe non selezionate.
+- **Rinomine**: le patch per righe non rinominano. Nell'unstage (rinomina in stage) la patch
+  modifica il percorso nuovo, quello nell'indice; il vecchio non torna (lo fa `index.unstage`
+  del file). Nello stage (rinomina vista con `git add -N`) è rifiutata.
+- **Cambi di modo**: mai nella patch, che non ha righe `old mode`/`new mode` né `index` e lascia
+  il modo dell'indice; vanno con lo stage del file intero.
+- **Intestazioni**: scritte da `FileDiff::write_header` (nomi tra virgolette dove servono, byte
+  esatti), senza `index`, `similarity`, `rename`; conteggi degli hunk ricalcolati, quindi la
+  patch è valida anche senza `--recount`. Contenuto (CRLF, byte non UTF-8) copiato byte per byte.
+- **Rifiutati** con `DomainError::UnsupportedPatch` (prima di guardare la selezione): binari,
+  sottomoduli, link simbolici, conflitti, copie, rinomine nello stage.
+
+Test: snapshot `insta` delle patch su output reali di git (`testdata/patch.sh`), test di
+proprietà con un applicatore puro (righe scelte applicate e le altre no, selezione totale = diff
+originale, unstage = stage del complemento, stage poi unstage = contenuto iniziale) e test in
+`crates/git/tests/patch.rs` che applicano le patch con `git apply --check` e poi davvero.
 
 ## 4. Motore (L5)
 
@@ -172,7 +219,7 @@ come JSON, così CLI e MCP li usano direttamente. Catalogo iniziale:
 | `commit.show` | `{"id"}` | metadati e file cambiati rispetto al primo genitore |
 | `diff.worktree` / `diff.index` / `diff.commit` | `{"path"?}` / `{"path"?}` / `{"id", "path"?}` | worktree rispetto all'indice (senza i non tracciati), indice rispetto a HEAD (albero vuoto se non ci sono commit), commit rispetto al primo genitore (albero vuoto per un commit radice, come `commit.show`). Risultato: il `Diff` (`{"files": [...]}`). `path` (stringa o array di byte, come `RepoPath`) limita al file con quel percorso esatto, vecchio o nuovo: una rinomina resta tale (il backend cerca prima l'altro percorso con `--diff-filter=R`) e i percorsi vanno a git dopo `--` con `--literal-pathspecs`. Nessun limite di dimensione |
 | `index.stage` / `index.unstage` | `{"paths"}` | `paths`: lista non vuota di `RepoPath` validati come in `diff.*`, presi alla lettera (una cartella comprende i suoi file). Risultato: `{"status": Status, "backup": string \| null}`, con il nuovo stato (come `repo.status`) e il ref del backup dell'indice salvato prima di scrivere, se c'erano versioni in stage che esistevano solo nell'indice (§7). `stage` = `git add` (modifiche, file nuovi, cancellazioni; una rinomina fatta nel worktree si mette in stage con i due percorsi; una cancellazione già in stage si salta); prima una prova a vuoto (`--dry-run`), così un file ignorato chiesto per nome (`NotAllowed`, mai `-f`) o un percorso inesistente non lasciano niente a metà. Stage di un file in conflitto = risoluzione, solo se il file è chiesto per nome: dentro una cartella richiesta è rifiutato (`NotAllowed`). `unstage` = `git restore --staged --no-overlay --source=<HEAD>` (albero vuoto senza commit): solo l'indice, mai il worktree; un file in conflitto è rifiutato (`NotAllowed`), perché perderebbe gli stadi del conflitto. Indice bloccato da un altro git: `IndexLocked`, senza riprovare né cancellare il lock |
-| `index.stage_lines` / `index.unstage_lines` | `{"path", "lines"}` | usa il costruttore di patch |
+| `index.stage_lines` / `index.unstage_lines` | `{"path", "lines"}` | usa il costruttore di patch (§3): `lines` è una lista di `LineRef` (`{"old": n}` / `{"new": n}`) con i numeri di riga di `diff.worktree` (stage) o `diff.index` (unstage) per `path`; la patch si applica con `git apply` + `APPLY_ARGS` |
 | `worktree.discard` | `{"paths", "confirm"}` | con backup (§7) |
 | `commit.create` | `{"message", "amend"?}` | |
 | `branch.create` / `branch.checkout` / `branch.delete` | `{"name", ...}` | `delete` di un branch non unito chiede `confirm` |

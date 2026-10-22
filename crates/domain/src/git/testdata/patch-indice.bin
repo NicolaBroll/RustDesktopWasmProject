@@ -1,0 +1,95 @@
+diff --git a/aggiunge-a-capo.txt b/aggiunge-a-capo.txt
+index 31e15c2ce411fa418cab30dbb661a05708a5e69d..aace3cb8b223521f4fcdc57d15d50a60f025c9a8 100644
+--- a/aggiunge-a-capo.txt
++++ b/aggiunge-a-capo.txt
+@@ -1,2 +1,3 @@
+ uno
+-senza a capo
+\ No newline at end of file
++senza a capo
++più
+diff --git "a/con\ttab.txt" "b/con\ttab.txt"
+index de980441c3ab03a8c07dda1ad27b8a11f39deb1e..a7bc997ebe8cf84988b83d2e83f1d193124fe593 100644
+--- "a/con\ttab.txt"
++++ "b/con\ttab.txt"
+@@ -1,3 +1,4 @@
+ a
+-b
++B
+ c
++d
+diff --git a/crlf.txt b/crlf.txt
+index d08ad3da1807c7930b65b8f2af5b629447c8ca61..9480361cc29a1185ad93598c10869bf2cedab664 100644
+--- a/crlf.txt
++++ b/crlf.txt
+@@ -1,3 +1,3 @@
+-uno
++UNO
+ due
+-tre
++TRE
+diff --git a/eliminato.txt b/eliminato.txt
+deleted file mode 100644
+index e9d58edbb93f83d0b87b1f143b2ced3d49a89efa..0000000000000000000000000000000000000000
+--- a/eliminato.txt
++++ /dev/null
+@@ -1,3 +0,0 @@
+-via uno
+-via due
+-via tre
+diff --git a/entrambi-senza.txt b/entrambi-senza.txt
+index d7870f9cecf60930de6ee5697c05ee56668ff206..c3b4638d87ef6970c01599300d129bfc9768e7a3 100644
+--- a/entrambi-senza.txt
++++ b/entrambi-senza.txt
+@@ -1 +1 @@
+-vecchia
+\ No newline at end of file
++nuova
+\ No newline at end of file
+diff --git a/vecchio-nome.txt b/nuovo nome.txt
+similarity index 73%
+rename from vecchio-nome.txt
+rename to nuovo nome.txt
+index 4d32149dd7e8347ca60e01194dec7343a807d825..96a66db7589c76edd550413b0e6020dffa804a7c 100644
+--- a/vecchio-nome.txt
++++ b/nuovo nome.txt	
+@@ -4,5 +4,5 @@ riga 3
+ riga 4
+ riga 5
+ riga 6
+-riga 7
++riga 7 rinominata
+ riga 8
+diff --git a/nuovo.txt b/nuovo.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..2e403b3a6b36869905054cbaded33ec23eda32fc
+--- /dev/null
++++ b/nuovo.txt
+@@ -0,0 +1,3 @@
++nuovo uno
++nuovo due
++nuovo tre
+diff --git a/vicini.txt b/vicini.txt
+index d11f396d33a816cfd36519289f1423419f9b11cd..2d630b05f5977d68282746e629b807dbbeb48231 100644
+--- a/vicini.txt
++++ b/vicini.txt
+@@ -1,7 +1,7 @@
+ riga 1
+-riga 2
++riga 2 in stage
+ riga 3
+-riga 4
++riga 4 in stage
+ riga 5
+ riga 6
+ riga 7
+@@ -12,7 +12,8 @@ riga 11
+ riga 12
+ riga 13
+ riga 14
+-riga 15
++riga 15 in stage
++riga 15 bis
+ riga 16
+ riga 17
+ riga 18

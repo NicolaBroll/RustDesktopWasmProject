@@ -1,0 +1,12 @@
+---
+source: crates/domain/src/git/patch_tests.rs
+expression: "render(&patch(&f, lines, dir))"
+---
+diff --git a/crlf.txt b/crlf.txt
+--- a/crlf.txt
++++ b/crlf.txt
+@@ -1,3 +1,4 @@
+ UNO␍
+ due␍
+ TRE␍
++quattro␍

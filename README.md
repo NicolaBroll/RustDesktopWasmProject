@@ -48,8 +48,8 @@ non è né in HEAD né nel worktree e andrebbe persa (`git show <ref>:<percorso>
 non riesce, l'indice non si tocca.
 
 `index.stage_lines {"path", "lines", "digest"}` e `index.unstage_lines {"path", "lines",
-"digest"}` mettono in stage o tolgono dallo stage solo alcune righe di un file (con `git apply
---cached`, mai il worktree): `lines` è una lista non vuota di `{"old": n}` (riga tolta) o
+"digest"}` mettono in stage o tolgono dallo stage solo alcune righe di un file (solo l'indice,
+mai il worktree): `lines` è una lista non vuota di `{"old": n}` (riga tolta) o
 `{"new": n}` (riga aggiunta) con i numeri di riga di `diff.worktree` (stage) o `diff.index`
 (unstage) per `path`, e `digest` è quello del file nello stesso diff. Se il file è cambiato da
 quando il diff è stato letto il comando fallisce senza scrivere niente (va riletto il diff).

@@ -119,11 +119,12 @@ pub trait GitBackend: Send {
     ///
     /// Rilegge il diff del file ([`LineSelection::diff_spec`]), controlla che sia quello visto
     /// (`selection.digest`) e costruisce la patch con [`line_patch`] (vedi lì gli errori), poi
-    /// la applica all'indice. Come stage e unstage: prima un backup se la versione in stage
-    /// esiste solo nell'indice (es. righe di un file `MM`), e il ref nel risultato; il
-    /// `CliBackend` ricontrolla l'indice prima di scrivere, prova la patch (`git apply
-    /// --check`) prima di applicarla e con l'indice bloccato dà [`EngineError::IndexLocked`].
-    /// Un errore non cambia niente.
+    /// calcola il nuovo contenuto in stage con [`apply_patch`] (rigoroso: ogni hunk solo alla
+    /// sua posizione) e lo scrive nell'indice. Come stage e unstage: prima un backup se la
+    /// versione in stage esiste solo nell'indice (es. righe di un file `MM`), e il ref nel
+    /// risultato; il `CliBackend` ricontrolla l'indice prima di scrivere, rilegge la voce dopo
+    /// e con l'indice bloccato dà [`EngineError::IndexLocked`]. Un errore prima della scrittura
+    /// non cambia niente.
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError>;
 }
 

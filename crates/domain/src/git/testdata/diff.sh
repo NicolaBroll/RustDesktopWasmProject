@@ -19,7 +19,7 @@ export GIT_COMMITTER_NAME='Carlo Committer' GIT_COMMITTER_EMAIL=carlo@example.co
 export GIT_AUTHOR_DATE='1700000000 +0000' GIT_COMMITTER_DATE='1700000000 +0000'
 
 d() {
-    git -c core.quotePath=false diff --no-color --no-ext-diff --no-textconv --find-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --no-relative "$@"
+    git -c core.quotePath=false diff --no-color --no-ext-diff --no-textconv --find-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --no-relative --unified=3 "$@"
 }
 
 git init -q -b main repo
@@ -66,6 +66,7 @@ cat >"$dir/ostile.gitconfig" <<'CFG'
 	relative = true
 	submodule = log
 	suppressBlankEmpty = true
+	context = 0
 [color]
 	ui = always
 	diff = always
@@ -131,7 +132,7 @@ git mv semplice.txt "$(printf 'strano "nome"\tcon spazio.txt')"
 git add -A
 d --cached >"$out/diff-nomi.bin"
 # core.quotePath predefinito (vero): i byte non ASCII diventano escape ottali.
-git diff --no-color --no-ext-diff --no-textconv --find-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --no-relative --cached >"$out/diff-nomi-quotepath.bin"
+git diff --no-color --no-ext-diff --no-textconv --find-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --no-relative --unified=3 --cached >"$out/diff-nomi-quotepath.bin"
 git commit -q -m 'Nomi cambiati'
 
 # --- Sottomodulo: aggiunto, poi spostato su un altro commit (con `diff.submodule=log`, che
@@ -146,7 +147,7 @@ d --cached >"$out/diff-sottomodulo-nuovo.bin"
 git commit -q -m 'Sottomodulo'
 git -C "$dir/sub" commit -q --allow-empty -m 'Due'
 git -C sub -c protocol.file.allow=always pull -q
-git -c diff.submodule=log diff --no-color --no-ext-diff --no-textconv --find-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --no-relative >"$out/diff-sottomodulo.bin"
+git -c diff.submodule=log diff --no-color --no-ext-diff --no-textconv --find-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --no-relative --unified=3 >"$out/diff-sottomodulo.bin"
 git add sub
 git commit -q -m 'Sottomodulo aggiornato'
 

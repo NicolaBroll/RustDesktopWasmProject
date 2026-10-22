@@ -2,9 +2,20 @@
 //! comune ai backend.
 //!
 //! Il backend rilegge il diff del file ([`LineSelection::diff_spec`]), controlla che sia quello
-//! che ha visto chi ha scelto le righe e costruisce la patch con [`line_patch`]; poi la applica
-//! all'indice (il `CliBackend` con `git apply` e `APPLY_ARGS`, il `MemoryBackend` con
-//! [`apply_patch`]).
+//! che ha visto chi ha scelto le righe e costruisce la patch con [`line_patch`]; poi calcola il
+//! nuovo contenuto in stage con [`apply_patch`] e lo scrive nell'indice (il `CliBackend` con
+//! `hash-object -w --no-filters` e `update-index --index-info`, il `MemoryBackend` nei suoi
+//! blob).
+//!
+//! # Perché non `git apply`
+//!
+//! `git apply` cerca il preimage di un hunk anche lontano dalla posizione scritta, e un hunk
+//! senza contesto in coda lo ancora alla fine del file: con un diff a contesto zero
+//! (`diff.context=0` nella configurazione) un inserimento in mezzo al file finiva in fondo e il
+//! comando riusciva. Ora il contesto è fisso (`--unified=3` in `DIFF_ARGS`), [`line_patch`]
+//! rifiuta le patch con hunk non ancorati e [`apply_patch`] applica ogni hunk solo alla sua
+//! posizione, sul blob della voce dell'indice da cui il diff è stato calcolato (controllata
+//! dal backend): il risultato è esattamente quello che la selezione descrive.
 //!
 //! # Il diff visto
 //!
@@ -172,10 +183,48 @@ pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, E
         id,
         reason: "nessuna riga scelta: `lines` è vuoto".to_owned(),
     })?;
+    check_anchored(&patch).map_err(|reason| {
+        EngineError::NotAllowed(format!(
+            "la patch per `{path}` non si può ancorare con sicurezza: {reason}; si mette in \
+             stage o si toglie dallo stage il file intero"
+        ))
+    })?;
     Ok(LinePatch {
         file: file.clone(),
         patch,
     })
+}
+
+/// Ogni hunk della patch dice da solo dove va: ha una riga di contesto in testa, oppure
+/// parte dall'inizio del file; ha una riga di contesto in coda, oppure è l'ultimo hunk (e
+/// [`apply_patch`] controlla che arrivi alla fine del file). Un hunk senza contesto (es. da un
+/// diff con `diff.context=0`) non fissa la sua posizione, e `git apply` potrebbe applicarlo
+/// altrove (un inserimento senza contesto in coda finisce in fondo al file). Con `DIFF_ARGS`
+/// (`--unified=3`) le patch di [`build_patch`] lo rispettano sempre: è una difesa in più.
+fn check_anchored(patch: &FileDiff) -> Result<(), String> {
+    let last = patch.hunks.len().saturating_sub(1);
+    for (i, h) in patch.hunks.iter().enumerate() {
+        let at_start = if h.old_count == 0 {
+            h.old_start == 0
+        } else {
+            h.old_start == 1
+        };
+        let context =
+            |l: Option<&project_domain::Line>| l.is_some_and(|l| l.kind == LineKind::Context);
+        if !context(h.lines.first()) && !at_start {
+            return Err(format!(
+                "l'hunk alla riga {} non ha contesto in testa e non parte dall'inizio del file",
+                h.old_start
+            ));
+        }
+        if !context(h.lines.last()) && i != last {
+            return Err(format!(
+                "l'hunk alla riga {} non ha contesto in coda e non arriva alla fine del file",
+                h.old_start
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Una riga di un file con il suo a capo (l'ultima può non averlo).
@@ -184,10 +233,12 @@ fn split_lines(content: &[u8]) -> Vec<&[u8]> {
 }
 
 /// Applica una patch di [`build_patch`] a `base` (`None` = file assente dall'indice, o
-/// presente solo come segnaposto `intent-to-add`), come `git apply --cached --recount`:
-/// ogni hunk si applica alla sua posizione (`old_start`) e le righe di contesto e tolte devono
-/// coincidere byte per byte, a capo compreso. Risultato `None`: il file esce dall'indice.
-/// Serve al `MemoryBackend`.
+/// presente solo come segnaposto `intent-to-add`), in modo rigoroso: ogni hunk si applica
+/// **solo** alla sua posizione (`old_start`, mai cercata altrove come fa `git apply`), le righe
+/// di contesto e tolte devono coincidere byte per byte, a capo compreso, e un hunk senza
+/// contesto in testa o in coda deve toccare l'inizio o la fine del file. Risultato `None`: il
+/// file esce dall'indice. Lo usano entrambi i backend: il `CliBackend` scrive nell'indice il
+/// contenuto che ne risulta.
 pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u8>>, String> {
     let base = match (base, patch.change) {
         (Some(_), Change::Added) => return Err("file nuovo, ma esiste già".into()),
@@ -212,6 +263,15 @@ pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u
             out.extend_from_slice(l);
         }
         pos = first;
+        let context =
+            |l: Option<&project_domain::Line>| l.is_some_and(|l| l.kind == LineKind::Context);
+        // Un hunk senza contesto in testa deve partire dall'inizio del file, uno senza
+        // contesto in coda arrivare alla fine: altrimenti la sua posizione non è verificata.
+        if !context(h.lines.first()) && first != 0 {
+            return Err(format!(
+                "hunk senza contesto in testa alla riga {start}, non all'inizio del file"
+            ));
+        }
         for l in &h.lines {
             let mut bytes = l.content.as_bytes().to_vec();
             if !l.no_newline {
@@ -229,6 +289,11 @@ pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u
                 }
                 out.extend_from_slice(&bytes);
             }
+        }
+        if !context(h.lines.last()) && pos != src.len() {
+            return Err(format!(
+                "hunk senza contesto in coda alla riga {start}, non alla fine del file"
+            ));
         }
     }
     for l in &src[pos..] {
@@ -381,6 +446,59 @@ mod tests {
             apply_patch(Some(b"a\nB\n"), &p.patch).unwrap().unwrap(),
             b"a\n"
         );
+    }
+
+    #[test]
+    fn hunks_without_context_must_touch_the_ends_of_the_file() {
+        // Diff a contesto zero (come con `diff.context=0`): un inserimento dopo la riga 2.
+        let insert = diff(
+            "diff --git a/f b/f\n\
+             index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
+             --- a/f\n\
+             +++ b/f\n\
+             @@ -2,0 +3 @@\n\
+             +NUOVA\n",
+        );
+        let sel = selection(&insert, vec![LineRef::New(3)], PatchDirection::Stage);
+        let err = line_patch(&insert, &sel).unwrap_err();
+        assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+        assert!(err.to_string().contains("contesto in testa"), "{err}");
+
+        // Primo hunk all'inizio ma senza contesto in coda, e non è l'ultimo.
+        let two = diff(
+            "diff --git a/f b/f\n\
+             index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
+             --- a/f\n\
+             +++ b/f\n\
+             @@ -1 +1 @@\n\
+             -a\n\
+             +A\n\
+             @@ -3 +3 @@\n\
+             -c\n\
+             +C\n",
+        );
+        let sel = selection(&two, two.files[0].line_refs(), PatchDirection::Stage);
+        let err = line_patch(&two, &sel).unwrap_err();
+        assert!(err.to_string().contains("contesto in coda"), "{err}");
+        // Solo il secondo: niente contesto in testa, non all'inizio.
+        let sel = selection(
+            &two,
+            vec![LineRef::Old(3), LineRef::New(3)],
+            PatchDirection::Stage,
+        );
+        let err = line_patch(&two, &sel).unwrap_err();
+        assert!(err.to_string().contains("contesto in testa"), "{err}");
+        // Solo il primo, che diventa l'ultimo: `line_patch` lo accetta, ma `apply_patch`
+        // controlla che arrivi davvero alla fine del file.
+        let sel = selection(
+            &two,
+            vec![LineRef::Old(1), LineRef::New(1)],
+            PatchDirection::Stage,
+        );
+        let p = line_patch(&two, &sel).unwrap().patch;
+        assert_eq!(apply_patch(Some(b"a\n"), &p).unwrap().unwrap(), b"A\n");
+        let err = apply_patch(Some(b"a\nb\nc\n"), &p).unwrap_err();
+        assert!(err.contains("fine del file"), "{err}");
     }
 
     #[test]

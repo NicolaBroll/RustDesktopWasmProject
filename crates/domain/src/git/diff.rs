@@ -53,8 +53,8 @@ use serde::{Deserialize, Serialize};
 /// `-c core.quotePath=false` prima del sottocomando (il backend lo passa già a ogni comando).
 ///
 /// Chi chiama aggiunge cosa confrontare (`--cached`, revisioni) e i percorsi dopo `--`; può
-/// aggiungere `-C`/`--find-copies-harder` o `--unified=<n>`, ma non opzioni che cambiano il
-/// formato, come `--stat`, `--word-diff`, `--binary` o `-B`.
+/// aggiungere `-C`/`--find-copies-harder`, ma non opzioni che cambiano il formato, come
+/// `--stat`, `--word-diff`, `--binary` o `-B`, né un altro `--unified`.
 ///
 /// - `--no-color`: niente sequenze di colore con `color.diff=always`;
 /// - `--no-ext-diff`: niente programma esterno da `diff.external` o dagli attributi;
@@ -65,7 +65,12 @@ use serde::{Deserialize, Serialize};
 ///   `diff.mnemonicPrefix` (che li toglierebbe o li cambierebbe in `i/`, `w/`, `c/`...);
 /// - `--submodule=short`: un sottomodulo come riga `Subproject commit <id>` anche con
 ///   `diff.submodule=log`, che scriverebbe l'elenco dei commit al posto del diff;
-/// - `--no-relative`: percorsi dalla radice del repo anche con `diff.relative=true`.
+/// - `--no-relative`: percorsi dalla radice del repo anche con `diff.relative=true`;
+/// - `--unified=3`: tre righe di contesto anche con `diff.context=0` (o un altro valore) nella
+///   configurazione. Il diff mostrato, il suo digest e le patch per righe costruite da lì
+///   (`build_patch`) hanno così sempre lo stesso contesto, e un hunk senza contesto in testa o
+///   in coda vuol dire che tocca l'inizio o la fine del file: senza contesto un hunk di solo
+///   inserimento (`@@ -2,0 +3 @@`) non dice più dove va, e `git apply` lo ancorerebbe altrove.
 pub const DIFF_ARGS: &[&str] = &[
     "--no-color",
     "--no-ext-diff",
@@ -76,6 +81,7 @@ pub const DIFF_ARGS: &[&str] = &[
     "--dst-prefix=b/",
     "--submodule=short",
     "--no-relative",
+    "--unified=3",
 ];
 
 /// Il testo che git scrive dopo una riga senza a capo finale.

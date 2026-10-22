@@ -470,11 +470,12 @@ impl MemoryBackend {
                 stderr: format!("error: {target}: contenuto in stage sconosciuto"),
             });
         }
-        let content =
-            apply_patch(base.as_deref(), &prepared.patch).map_err(|e| EngineError::Git {
-                command: "apply".to_owned(),
-                stderr: format!("error: patch failed: {target}: {e}"),
-            })?;
+        let content = apply_patch(base.as_deref(), &prepared.patch).map_err(|e| {
+            EngineError::NotAllowed(format!(
+                "la patch non si applica alla versione in stage di `{target}` ({e}): niente \
+                     scritto, rileggere il diff"
+            ))
+        })?;
         let backup = self.backup(&prepared.touched(selection))?;
 
         self.keep_worktree(&entry, info.mode_index, info.oid_index);

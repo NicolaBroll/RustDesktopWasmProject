@@ -597,3 +597,47 @@ fn stage_intero_di_un_file_intent_to_add() {
     assert_eq!(index_str(&repo, "nuovo.txt").unwrap(), "uno\n");
     assert_eq!(letters(&repo, "nuovo.txt"), ('A', '.'));
 }
+
+/// Con `diff.context=0` nella configurazione il diff resta a tre righe di contesto
+/// (`--unified=3` in `DIFF_ARGS`) e le righe vanno al loro posto nell'indice, anche in mezzo al
+/// file e senza a capo finale (un hunk senza contesto `git apply` lo ancorerebbe in fondo).
+#[test]
+fn contesto_zero_nella_configurazione() {
+    let repo = Repo::new();
+    repo.git(&["config", "diff.context", "0"]);
+    repo.commit_file("f.txt", "uno\ndue\ntre\nquattro\n", "base");
+    repo.write("f.txt", "uno\ndue\nNUOVA\ntre\nquattro\n");
+    let file = seen(&repo, b"f.txt", PatchDirection::Stage);
+    assert_eq!(
+        file.hunks[0].lines.len(),
+        5,
+        "contesto intorno all'inserimento"
+    );
+    assert_eq!(stage(&repo, "f.txt", &[('+', "NUOVA")]), None);
+    assert_eq!(
+        index_str(&repo, "f.txt").unwrap(),
+        "uno\ndue\nNUOVA\ntre\nquattro\n"
+    );
+    // E l'unstage della stessa riga, sempre con contesto zero.
+    assert_eq!(unstage(&repo, "f.txt", &[('+', "NUOVA")]), None);
+    assert_eq!(
+        index_str(&repo, "f.txt").unwrap(),
+        "uno\ndue\ntre\nquattro\n"
+    );
+
+    // Senza a capo finale le righe non si fondono.
+    repo.commit_file("g.txt", "uno\ndue\ntre", "senza a capo");
+    repo.write("g.txt", "uno\ndue\nNUOVA\ntre");
+    assert_eq!(stage(&repo, "g.txt", &[('+', "NUOVA")]), None);
+    assert_eq!(index(&repo, b"g.txt").unwrap(), b"uno\ndue\nNUOVA\ntre");
+    // Due inserimenti lontani, uno solo scelto.
+    repo.commit_file("h.txt", &numbered(20, &[]), "lungo");
+    let mut changed = numbered(20, &[]).replace("riga 3\n", "riga 3\nPRIMA\n");
+    changed = changed.replace("riga 17\n", "riga 17\nSECONDA\n");
+    repo.write("h.txt", &changed);
+    assert_eq!(stage(&repo, "h.txt", &[('+', "PRIMA")]), None);
+    assert_eq!(
+        index_str(&repo, "h.txt").unwrap(),
+        numbered(20, &[]).replace("riga 3\n", "riga 3\nPRIMA\n")
+    );
+}

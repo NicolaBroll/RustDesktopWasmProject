@@ -78,8 +78,10 @@ modifiche sono di nuovo in stage. Il commit annullato, se non è più raggiungib
 ref `refs/project/backup/undo-...`. Stage e unstage non entrano nel diario. Il diario è in
 memoria e vale per il repo aperto: nella CLI più `--cmd` della stessa invocazione lo
 condividono, invocazioni diverse no (`edit.undo` da solo dice che non c'è niente da annullare).
-Risultato di undo e redo: `{"undone"|"redone": voce, "backups", "status", "can_undo",
-"can_redo", "next_undo", "next_redo"}`.
+Risultato di undo e redo: `{"undone"|"redone": voce, "backups", "warnings", "status",
+"can_undo", "can_redo", "next_undo", "next_redo"}` (`warnings`, di solito vuoto, segnala ad
+esempio HEAD cambiata da un altro processo proprio durante l'undo). Durante un merge, rebase,
+cherry-pick, revert, bisect o `git am` undo e redo sono rifiutati.
 
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
 `writes: true` per i comandi che modificano il repository. All'avvio apre il

@@ -26,7 +26,8 @@ fn undo_and_redo_of_a_commit() {
     let new = commit(&mut repo, &mut journal, CommitRequest::new("Aggiorna"));
     let status_after = repo.status().unwrap();
 
-    let (entry, backups) = journal.undo(&mut repo).unwrap();
+    let (entry, outcome) = journal.undo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert_eq!(
         entry.description,
         format!("Commit {} «Aggiorna»", &new.to_string()[..7])
@@ -44,7 +45,8 @@ fn undo_and_redo_of_a_commit() {
     assert_eq!(entry.undo_backups, backups);
     assert!(!journal.can_undo() && journal.can_redo());
 
-    let (entry, backups) = journal.redo(&mut repo).unwrap();
+    let (entry, outcome) = journal.redo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert_eq!(entry.undo_backups, ["refs/project/backup/undo-1"]);
     // Il commit di prima è il genitore del nuovo HEAD: nessun backup.
     assert!(backups.is_empty());
@@ -132,7 +134,8 @@ fn undo_of_the_first_commit_deletes_the_branch() {
     let mut journal = Journal::new();
     let first = commit(&mut repo, &mut journal, CommitRequest::new("primo"));
 
-    let (entry, backups) = journal.undo(&mut repo).unwrap();
+    let (entry, outcome) = journal.undo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert_eq!(entry.refs[0].before, None);
     assert!(repo.refs().unwrap().is_empty());
     assert_eq!(
@@ -166,7 +169,8 @@ fn undo_of_an_amend_goes_back_to_the_rewritten_commit() {
     );
     assert_ne!(first, amended);
 
-    let (entry, backups) = journal.undo(&mut repo).unwrap();
+    let (entry, outcome) = journal.undo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert_eq!(entry.backup.as_deref(), Some("refs/project/backup/amend-1"));
     assert_eq!(head(&repo), Some(first));
     // Il commit di `amend` non è più raggiungibile: backup. Il commit riscritto era già nel
@@ -180,7 +184,8 @@ fn undo_of_an_amend_goes_back_to_the_rewritten_commit() {
             .all(|e| !e.is_staged())
     );
 
-    let (_, backups) = journal.redo(&mut repo).unwrap();
+    let (_, outcome) = journal.redo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert!(
         backups.is_empty(),
         "il commit riscritto ha già il backup di amend"
@@ -223,11 +228,13 @@ fn several_undos_in_a_row_and_no_backup_when_still_reachable() {
     // Un tag su `b`: resta raggiungibile, nessun backup.
     repo.set_tag("tenuto", b, None);
 
-    let (_, backups) = journal.undo(&mut repo).unwrap();
+    let (_, outcome) = journal.undo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert!(backups.is_empty());
     assert_eq!(head(&repo), Some(a));
     // Anche `a`, genitore di `b`, resta raggiungibile dal tag.
-    let (_, backups) = journal.undo(&mut repo).unwrap();
+    let (_, outcome) = journal.undo(&mut repo).unwrap();
+    let backups = outcome.backups;
     assert!(backups.is_empty());
     assert_eq!(head(&repo), Some(start));
     assert!(matches!(

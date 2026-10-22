@@ -73,7 +73,7 @@ impl RefRestore {
     ///
     /// [`Status::operation`]: project_domain::Status::operation
     ///
-    /// - Merge, rebase, cherry-pick, revert o bisect in corso → [`EngineError::NotAllowed`]:
+    /// - Merge, rebase, cherry-pick, revert, bisect o `git am` in corso → [`EngineError::NotAllowed`]:
     ///   spostare un branch a metà di un'operazione la cambierebbe in modo poco visibile (es.
     ///   un merge che si concluderebbe su un altro commit).
     /// - Nomi di ref non validi (non sotto `refs/`, con spazi, caratteri di controllo o
@@ -89,6 +89,7 @@ impl RefRestore {
                 Operation::CherryPick => "un cherry-pick",
                 Operation::Revert => "un revert",
                 Operation::Bisect => "un bisect",
+                Operation::Am => "un `git am`",
             };
             return Err(EngineError::NotAllowed(format!(
                 "è in corso {name}: `{}` sposterebbe i ref a metà dell'operazione, niente \
@@ -189,6 +190,17 @@ impl RefRestore {
     }
 }
 
+/// Esito di [`GitBackend::restore_refs`](crate::GitBackend::restore_refs).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreOutcome {
+    /// I ref di backup creati per i commit che non sarebbero più raggiungibili.
+    pub backups: Vec<String>,
+    /// Avvisi su qualcosa di inatteso scoperto **dopo** lo spostamento riuscito (es. un altro
+    /// processo che ha cambiato HEAD proprio durante l'operazione). Niente è perso, ma chi
+    /// chiama va informato. Vuoto di solito.
+    pub warnings: Vec<String>,
+}
+
 /// Vero se `name` è un nome completo di ref che git accetterebbe (`git check-ref-format`) e che
 /// si può passare a `update-ref --stdin -z` senza ambiguità: sotto `refs/`, senza spazi né
 /// caratteri di controllo, senza `~ ^ : ? * [ \`, `..`, `@{`, componenti vuoti o che iniziano
@@ -281,7 +293,12 @@ mod tests {
     #[test]
     fn checks() {
         restore().check(None).unwrap();
-        for op in [Operation::Merge, Operation::Rebase, Operation::Bisect] {
+        for op in [
+            Operation::Merge,
+            Operation::Rebase,
+            Operation::Bisect,
+            Operation::Am,
+        ] {
             let err = restore().check(Some(op)).unwrap_err();
             assert!(matches!(err, EngineError::NotAllowed(_)), "{op:?}");
         }

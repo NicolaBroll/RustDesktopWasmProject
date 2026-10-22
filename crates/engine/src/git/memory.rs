@@ -7,7 +7,7 @@ mod write;
 use super::line_diff;
 use super::{
     CommitOutcome, CommitRequest, DiffSpec, GitBackend, LineSelection, LogQuery, RefRestore,
-    RepoOpener, StagedVersion,
+    RepoOpener, RestoreOutcome, StagedVersion,
 };
 use crate::EngineError;
 use project_domain::{
@@ -649,8 +649,11 @@ impl GitBackend for MemoryBackend {
         self.create_commit(request)
     }
 
-    fn restore_refs(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
-        self.restore(request)
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        Ok(RestoreOutcome {
+            backups: self.restore(request)?,
+            warnings: Vec::new(),
+        })
     }
 }
 

@@ -28,7 +28,7 @@ pub use commit::{
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{MemoryBackend, MemoryOpener};
 pub(crate) use restore::short;
-pub use restore::{HeadState, RefMove, RefRestore, valid_ref_name};
+pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
 
 use crate::EngineError;
 use project_domain::{Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
@@ -166,8 +166,10 @@ pub trait GitBackend: Send {
     /// se il backup non riesce non si sposta niente. Il `CliBackend` scrive con una sola
     /// transazione `git update-ref --stdin` (`start`, `update`/`create`/`delete` con il valore
     /// vecchio, `commit`) e il messaggio `request.reflog`; se la transazione fallisce perché
-    /// un ref è cambiato nel frattempo, ancora [`EngineError::UndoConflict`].
-    fn restore_refs(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError>;
+    /// un ref è cambiato nel frattempo, ancora [`EngineError::UndoConflict`]. Un problema
+    /// scoperto dopo una transazione riuscita (HEAD cambiata da un altro processo proprio in
+    /// quell'istante) va in [`RestoreOutcome::warnings`].
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

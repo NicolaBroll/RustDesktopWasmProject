@@ -6,7 +6,8 @@
 //! L'indice e il worktree non cambiano, come con `update-ref`: l'indice è quello di prima, e le
 //! voci dello stato si ricalcolano rispetto al nuovo HEAD (le modifiche del commit annullato
 //! ricompaiono in stage). Le rinomine in stage tornano come cancellazione e aggiunta: il repo
-//! in memoria non riconosce le rinomine.
+//! in memoria non riconosce le rinomine. Il repo in memoria non ha ref simbolici né replace
+//! object: per la raggiungibilità contano i ref, i nuovi valori e i backup.
 
 use super::write::{TreeEntry, ZERO, entry_order, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend, RefEntry};

@@ -527,3 +527,174 @@ fn refused_while_a_merge_is_in_progress() {
     assert!(err.to_string().contains("merge"), "{err}");
     assert_eq!(refs(&repo), before);
 }
+
+#[test]
+fn a_symbolic_ref_to_the_moved_branch_does_not_count_as_protection() {
+    let repo = repo_ready_to_commit();
+    // `master` è un alias di `main`: `for-each-ref --contains` lo mostra con il valore di
+    // `main` prima della transazione, ma dopo non tiene niente.
+    repo.git(&["symbolic-ref", "refs/heads/master", "refs/heads/main"]);
+    let (r, mut s) = open(&repo);
+    run(
+        &r,
+        &mut s,
+        "commit.create",
+        json!({ "message": "Aggiungi b" }),
+    );
+    let commit = repo.rev("HEAD").to_string();
+    let out = run(&r, &mut s, "edit.undo", json!({}));
+    let backup = out["backups"][0]
+        .as_str()
+        .expect("backup creato")
+        .to_owned();
+    assert_eq!(repo.rev(&backup).to_string(), commit);
+
+    repo.git(&["reflog", "expire", "--expire=now", "--all"]);
+    repo.git(&["gc", "--quiet", "--prune=now"]);
+    repo.git(&["cat-file", "-e", &format!("{commit}^{{commit}}")]);
+    run(&r, &mut s, "edit.redo", json!({}));
+    assert_eq!(repo.rev("refs/heads/main").to_string(), commit);
+    assert_eq!(repo.rev("refs/heads/master").to_string(), commit);
+}
+
+#[test]
+fn a_failed_backup_moves_nothing() {
+    let repo = repo_ready_to_commit();
+    let before = repo.rev("HEAD").to_string();
+    let (r, mut s) = open(&repo);
+    run(
+        &r,
+        &mut s,
+        "commit.create",
+        json!({ "message": "Aggiungi b" }),
+    );
+    let commit = repo.rev("HEAD");
+    // Un ref `refs/project/backup` (un file) occupa il nome della cartella dei backup: il
+    // ref di backup non si può creare. Punta al commit di prima, così non protegge quello
+    // da annullare.
+    repo.git(&["update-ref", "refs/project/backup", &before]);
+    let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
+    assert!(
+        matches!(&err, EngineError::Git { command, .. } if command == "update-ref"),
+        "{err}"
+    );
+    assert_eq!(repo.rev("refs/heads/main"), commit, "niente spostato");
+    let history = run(&r, &mut s, "edit.history", json!({}));
+    assert_eq!(history["can_undo"], true, "la voce resta");
+    // Tolto l'ostacolo, l'undo riesce.
+    repo.git(&["update-ref", "-d", "refs/project/backup"]);
+    let out = run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(out["backups"].as_array().unwrap().len(), 1);
+    assert_eq!(repo.rev("refs/heads/main").to_string(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn head_changed_during_the_transaction_is_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = repo_detached_head();
+    let repo = &h.repo;
+    repo.write("c.txt", "c\n");
+    repo.stage(&["c.txt"]);
+    let (r, mut s) = open(repo);
+    run(
+        &r,
+        &mut s,
+        "commit.create",
+        json!({ "message": "staccata" }),
+    );
+    // Un altro processo rimette HEAD su `main` subito dopo la nostra transazione (simulato
+    // con un hook `reference-transaction` nello stato `committed`, solo una volta).
+    let hook = repo.path().join(".git/hooks/reference-transaction");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nd=$(git rev-parse --absolute-git-dir)\nif [ \"$1\" = committed ] && grep -q ' HEAD$' && [ ! -e \"$d/fatto\" ]; then\n  touch \"$d/fatto\"\n  git symbolic-ref HEAD refs/heads/main\nfi\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = run(&r, &mut s, "edit.undo", json!({}));
+    let warnings = out["warnings"].as_array().unwrap();
+    assert!(!warnings.is_empty(), "{out}");
+    assert!(
+        warnings[0].as_str().unwrap().contains("HEAD"),
+        "{warnings:?}"
+    );
+    assert_eq!(repo.git(&["symbolic-ref", "HEAD"]), "refs/heads/main");
+    // Nessun branch è stato toccato.
+    assert_eq!(repo.rev("refs/heads/main"), h.m);
+}
+
+#[test]
+fn normal_undo_has_no_warnings() {
+    let repo = repo_ready_to_commit();
+    let (r, mut s) = open(&repo);
+    run(
+        &r,
+        &mut s,
+        "commit.create",
+        json!({ "message": "Aggiungi b" }),
+    );
+    let out = run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(out["warnings"], json!([]));
+    let out = run(&r, &mut s, "edit.redo", json!({}));
+    assert_eq!(out["warnings"], json!([]));
+}
+
+#[test]
+fn refused_during_git_am_and_a_stopped_sequencer() {
+    // `git am` fermo su una patch che non si applica.
+    let repo = Repo::new();
+    repo.commit_file("a.txt", "uno\n", "base");
+    repo.branch("altro");
+    repo.checkout("altro");
+    repo.commit_file("a.txt", "due\n", "su altro");
+    let patch = repo.git(&["format-patch", "-1", "--stdout", "HEAD"]);
+    repo.checkout("main");
+    repo.write("c.txt", "c\n");
+    repo.stage(&["c.txt"]);
+    let (r, mut s) = open(&repo);
+    run(&r, &mut s, "commit.create", json!({ "message": "c" }));
+    repo.commit_file("a.txt", "tre\n", "conflitto");
+    let patch_file = repo.path().join("p.patch");
+    std::fs::write(&patch_file, format!("{patch}\n")).unwrap();
+    repo.git_fails(&["am", "--quiet", patch_file.to_str().unwrap()]);
+    assert!(repo.path().join(".git/rebase-apply/applying").exists());
+    let status = run(&r, &mut s, "repo.status", json!({}));
+    assert_eq!(status["operation"], "Am");
+    let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(err.to_string().contains("git am"), "{err}");
+    repo.write("d.txt", "d\n");
+    repo.stage(&["d.txt"]);
+    let err = r
+        .run("commit.create", &mut s, json!({ "message": "x" }))
+        .unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+
+    // Cherry-pick di due commit: il primo va in conflitto, risolto con `git commit`; il
+    // sequencer resta fermo senza `CHERRY_PICK_HEAD`.
+    let repo = Repo::new();
+    repo.commit_file("a.txt", "uno\n", "base");
+    repo.branch("altro");
+    repo.checkout("altro");
+    let p1 = repo.commit_file("a.txt", "due\n", "uno su altro");
+    let p2 = repo.commit_file("b.txt", "b\n", "due su altro");
+    repo.checkout("main");
+    repo.write("c.txt", "c\n");
+    repo.stage(&["c.txt"]);
+    let (r, mut s) = open(&repo);
+    run(&r, &mut s, "commit.create", json!({ "message": "c" }));
+    repo.commit_file("a.txt", "tre\n", "conflitto");
+    repo.git_fails(&["cherry-pick", &p1.to_string(), &p2.to_string()]);
+    repo.write("a.txt", "risolto\n");
+    repo.stage(&["a.txt"]);
+    repo.git(&["commit", "--quiet", "--no-edit"]);
+    assert!(!repo.path().join(".git/CHERRY_PICK_HEAD").exists());
+    assert!(repo.path().join(".git/sequencer").exists());
+    let status = run(&r, &mut s, "repo.status", json!({}));
+    assert_eq!(status["operation"], "CherryPick");
+    let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(err.to_string().contains("cherry-pick"), "{err}");
+}

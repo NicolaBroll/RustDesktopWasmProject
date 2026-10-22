@@ -16,9 +16,9 @@ pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
     BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, GitBackend, HeadState, LinePatch,
     LineSelection, LogQuery, MemoryBackend, MemoryOpener, RefMove, RefRestore, RepoOpener,
-    StagedVersion, amend_impact, apply_patch, backup_message, check_amend_published,
-    check_commit_state, cleanup_message, file_digest, line_patch, path_matches, split_message,
-    valid_ref_name, versions_at_risk, versions_at_risk_hidden,
+    RestoreOutcome, StagedVersion, amend_impact, apply_patch, backup_message,
+    check_amend_published, check_commit_state, cleanup_message, file_digest, line_patch,
+    path_matches, split_message, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use platform::{Capabilities, Picked, Platform};

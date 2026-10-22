@@ -13,8 +13,8 @@ use project_domain::{
 };
 use project_engine::{
     BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, EngineError, GitBackend, LinePatch,
-    LineSelection, LogQuery, RefRestore, RepoOpener, StagedVersion, apply_patch, backup_message,
-    line_patch, path_matches, versions_at_risk_hidden,
+    LineSelection, LogQuery, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, apply_patch,
+    backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -865,22 +865,46 @@ impl CliBackend {
     }
 
     /// Operazione in corso, dai file che git lascia nella sua cartella (come `git status`).
+    ///
+    /// `rebase-apply/applying` indica `git am` ([`Operation::Am`]). Un cherry-pick o un revert
+    /// di più commit fermo fra un commit e l'altro (dopo `git commit` di una risoluzione, o con
+    /// un commit vuoto) lascia `sequencer/` senza `CHERRY_PICK_HEAD`/`REVERT_HEAD`: è ancora in
+    /// corso, e il tipo si legge dalla prima riga di `sequencer/todo` (`revert ...` →
+    /// [`Operation::Revert`], altrimenti [`Operation::CherryPick`]).
     fn operation(&self) -> Option<Operation> {
         let has = |name: &str| self.git_dir.join(name).exists();
         if has("MERGE_HEAD") {
             Some(Operation::Merge)
-        } else if has("rebase-merge") || (has("rebase-apply") && !has("rebase-apply/applying")) {
-            // `rebase-apply/applying` indica `git am`, che `Operation` non ha.
+        } else if has("rebase-apply/applying") {
+            Some(Operation::Am)
+        } else if has("rebase-merge") || has("rebase-apply") {
             Some(Operation::Rebase)
         } else if has("CHERRY_PICK_HEAD") {
             Some(Operation::CherryPick)
         } else if has("REVERT_HEAD") {
             Some(Operation::Revert)
+        } else if has("sequencer") {
+            Some(sequencer_operation(
+                &std::fs::read(self.git_dir.join("sequencer/todo")).unwrap_or_default(),
+            ))
         } else if has("BISECT_LOG") {
             Some(Operation::Bisect)
         } else {
             None
         }
+    }
+}
+
+/// Il tipo di un sequencer fermo dal contenuto di `sequencer/todo`: la prima riga che non è
+/// un commento dice `revert` o `pick`; senza righe (o illeggibile) cherry-pick.
+fn sequencer_operation(todo: &[u8]) -> Operation {
+    let first = todo
+        .split(|&b| b == b'\n')
+        .map(<[u8]>::trim_ascii)
+        .find(|l| !l.is_empty() && !l.starts_with(b"#"));
+    match first {
+        Some(line) if line.starts_with(b"revert ") || line.starts_with(b"r ") => Operation::Revert,
+        _ => Operation::CherryPick,
     }
 }
 
@@ -1105,7 +1129,7 @@ impl GitBackend for CliBackend {
         self.create_commit(request)
     }
 
-    fn restore_refs(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         self.restore(request)
     }
 
@@ -1224,6 +1248,19 @@ mod tests {
             ignored_paths("fatal: pathspec 'x' did not match any files"),
             None
         );
+    }
+
+    #[test]
+    fn sequencer_kind_from_todo() {
+        assert_eq!(
+            sequencer_operation(b"revert 1234567 x\npick 89abcde y\n"),
+            Operation::Revert
+        );
+        assert_eq!(
+            sequencer_operation(b"# c\npick 1234567 x\n"),
+            Operation::CherryPick
+        );
+        assert_eq!(sequencer_operation(b""), Operation::CherryPick);
     }
 
     #[test]

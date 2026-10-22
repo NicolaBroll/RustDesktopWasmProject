@@ -8,8 +8,9 @@
 //!    confrontati con i valori attesi: se qualcosa è cambiato da fuori,
 //!    [`EngineError::UndoConflict`];
 //! 3. per ogni commit che verrebbe abbandonato ([`RefRestore::abandoned`]) e che non resta
-//!    raggiungibile da un nuovo valore (`merge-base --is-ancestor`) né da un altro ref
-//!    (`for-each-ref --contains`, backup compresi): un ref di backup
+//!    raggiungibile da un nuovo valore (`merge-base --is-ancestor`) né da un altro ref non
+//!    simbolico (`for-each-ref --contains`, backup compresi; un ref simbolico verso il branch
+//!    spostato non conta): un ref di backup
 //!    `refs/project/backup/<undo|redo>-<secondi>-<nanosecondi>` creato solo se non esiste;
 //! 4. una sola transazione `update-ref -m <reflog> -z --stdin` con `start`, poi per ogni ref
 //!    `update <ref> <nuovo> <vecchio>` / `create <ref> <nuovo>` / `delete <ref> <vecchio>` (git
@@ -24,22 +25,40 @@
 //! primo commit) cancella anche il suo reflog, come `git update-ref -d`; resta la voce nel
 //! reflog di HEAD.
 //!
-//! Limite: che HEAD punti ancora allo stesso branch si controlla al passo 2, non dentro la
-//! transazione (`update-ref` non sa verificare un ref simbolico senza `symref-verify`, che c'è
-//! solo da git 2.46): resta l'istante fra il controllo e la transazione, solo con un altro
-//! processo git che cambia branch proprio allora. Il valore dei branch invece è controllato
-//! sotto lock.
+//! Limiti (HEAD non si verifica dentro la transazione):
+//!
+//! - Con HEAD su un branch, che HEAD punti ancora a quel branch si controlla al passo 2. Il
+//!   valore dei branch invece è controllato sotto lock.
+//! - Con HEAD staccata, `option no-deref` + `update HEAD <nuovo> <vecchio>` controlla solo il
+//!   valore: se fra il passo 2 e la transazione un altro processo fa `git checkout main` con
+//!   `main` sul commit atteso, la transazione riesce e stacca di nuovo HEAD (verificato con
+//!   git 2.43; `main` non si sposta, nessun commit è perso).
+//!
+//! `symref-verify` (git ≥ 2.46) non si usa: si potrebbe solo per il caso del branch, ma una
+//! verifica di HEAD nella stessa transazione che aggiorna il branch a cui HEAD punta urta il
+//! controllo di git sugli aggiornamenti multipli di HEAD (git aggiunge da sé una voce di solo
+//! reflog per HEAD), e la CI non ha un git così recente per provarlo. Al suo posto, dopo la
+//! transazione si rilegge HEAD e si contano le voci nuove del reflog di HEAD (al massimo una,
+//! la nostra): se HEAD non è quella chiesta o è cambiata nel frattempo, il risultato lo dice
+//! in `warnings`. Senza reflog di HEAD resta solo il confronto con HEAD attuale.
+//!
+//! I controlli di raggiungibilità (`merge-base`, `for-each-ref --contains`) usano
+//! `--no-replace-objects`: un replace object potrebbe far sembrare raggiungibile un commit che
+//! per il gc non lo è.
 
 use super::CliBackend;
 use crate::command::failure;
 use project_domain::Oid;
-use project_engine::{EngineError, HeadState, RefMove, RefRestore};
+use project_engine::{EngineError, HeadState, RefMove, RefRestore, RestoreOutcome};
 use std::collections::BTreeSet;
 
 impl CliBackend {
     /// [`GitBackend::restore_refs`](project_engine::GitBackend::restore_refs).
-    pub(super) fn restore(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
+    pub(super) fn restore(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         request.check(self.operation())?;
+        // Le voci del reflog di HEAD prima del controllo: dopo la transazione ce ne deve essere
+        // al massimo una in più (la nostra), altrimenti HEAD è cambiata nel frattempo.
+        let head_log_before = self.head_log_len()?;
         self.check_expected(request)?;
         let backups = self.protect(request)?;
 
@@ -52,7 +71,59 @@ impl CliBackend {
             self.check_expected(request)?;
             return Err(failure(&args, &out));
         }
-        Ok(backups)
+        let warnings = self.check_head_after(request, head_log_before);
+        Ok(RestoreOutcome { backups, warnings })
+    }
+
+    /// Le voci del reflog di HEAD (`rev-list --walk-reflogs --count`, 0 se non c'è).
+    fn head_log_len(&self) -> Result<usize, EngineError> {
+        if !self.git_dir.join("logs/HEAD").exists() {
+            return Ok(0);
+        }
+        let out = self.run(&[
+            "rev-list",
+            "--walk-reflogs",
+            "--ignore-missing",
+            "--count",
+            "HEAD",
+        ])?;
+        Ok(String::from_utf8_lossy(&out).trim().parse().unwrap_or(0))
+    }
+
+    /// Dopo una transazione riuscita: HEAD deve essere quella chiesta, e nel reflog di HEAD ci
+    /// deve essere al massimo una voce nuova. Altrimenti un altro processo ha cambiato HEAD
+    /// proprio durante l'operazione: con HEAD staccata, ad esempio, un `git checkout main`
+    /// fatto fra il controllo e la transazione (con `main` sul commit atteso) viene staccato di
+    /// nuovo da `option no-deref` + `update HEAD` (`update-ref` non può verificare che HEAD
+    /// non sia simbolica). Nessun commit è perso, ma va detto: un avviso per ogni problema.
+    fn check_head_after(&self, request: &RefRestore, log_before: usize) -> Vec<String> {
+        let mut warnings = Vec::new();
+        match self.head_state() {
+            Ok(head) if head == request.head_target => {}
+            Ok(head) => warnings.push(format!(
+                "dopo `{}` HEAD è {head} invece di {}: un altro processo l'ha cambiata \
+                 durante l'operazione; controllare HEAD prima di continuare (nessun commit è \
+                 perso)",
+                request.command, request.head_target
+            )),
+            Err(e) => warnings.push(format!(
+                "dopo `{}` HEAD non si rilegge ({e}): controllare il repository",
+                request.command
+            )),
+        }
+        if let Ok(after) = self.head_log_len()
+            && after > log_before + 1
+        {
+            warnings.push(format!(
+                "durante `{}` un altro processo ha cambiato HEAD ({} voci nuove nel reflog di \
+                 HEAD invece di una): se era tornata su un branch (`git checkout`), ora è {}; \
+                 rifare il checkout se serve (nessun commit è perso, vedi `git reflog HEAD`)",
+                request.command,
+                after - log_before,
+                request.head_target
+            ));
+        }
+        warnings
     }
 
     /// HEAD come la registra il diario: il branch a cui punta (nome completo, anche senza
@@ -100,10 +171,15 @@ impl CliBackend {
 
     /// Salva in un ref di backup ogni commit abbandonato che non resterebbe raggiungibile, e
     /// restituisce i nomi dei ref creati. Un errore ferma tutto prima di spostare i ref.
+    ///
+    /// Non contano come protezione i ref spostati dalla richiesta né i ref simbolici (es.
+    /// `refs/heads/master -> refs/heads/main`): `for-each-ref` li mostra con il valore del
+    /// ref a cui puntano *prima* della transazione, e dopo non terrebbero niente. Il ref a cui
+    /// puntano compare comunque da solo, se non si sposta.
     fn protect(&self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
         let targets = request.targets();
         let moved: BTreeSet<&str> = request.refs.iter().map(|r| r.name.as_str()).collect();
-        let mut backups = Vec::new();
+        let mut candidates = Vec::new();
         for oid in request.abandoned() {
             let mut kept = false;
             for target in &targets {
@@ -112,14 +188,35 @@ impl CliBackend {
                     break;
                 }
             }
-            if kept
-                || self
-                    .refs_containing_any(&oid)?
-                    .iter()
-                    .any(|name| !moved.contains(name.as_str()))
-            {
-                continue;
+            if !kept {
+                candidates.push(oid);
             }
+        }
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let holders = |oids: &[Oid]| -> Result<bool, EngineError> {
+            Ok(self
+                .refs_containing_any(oids)?
+                .iter()
+                .any(|name| !moved.contains(name.as_str())))
+        };
+        // Un solo `for-each-ref` per tutti: di solito nessun altro ref li contiene.
+        let unprotected: Vec<Oid> = if !holders(&candidates)? {
+            candidates
+        } else if candidates.len() == 1 {
+            Vec::new()
+        } else {
+            let mut out = Vec::new();
+            for oid in candidates {
+                if !holders(std::slice::from_ref(&oid))? {
+                    out.push(oid);
+                }
+            }
+            out
+        };
+        let mut backups = Vec::new();
+        for oid in unprotected {
             let name = self.create_backup_ref(
                 request.backup_kind(),
                 &oid.to_string(),
@@ -130,10 +227,18 @@ impl CliBackend {
         Ok(backups)
     }
 
-    /// Vero se il commit `a` è raggiungibile da `b` (o è `b`).
+    /// Vero se il commit `a` è raggiungibile da `b` (o è `b`). Senza i replace object
+    /// (`--no-replace-objects`): conta la storia vera, quella che vede il gc.
     fn is_ancestor(&self, a: &Oid, b: &Oid) -> Result<bool, EngineError> {
         let (a, b) = (a.to_string(), b.to_string());
-        let args = ["merge-base", "--is-ancestor", "--end-of-options", &a, &b];
+        let args = [
+            "--no-replace-objects",
+            "merge-base",
+            "--is-ancestor",
+            "--end-of-options",
+            &a,
+            &b,
+        ];
         let out = self.git.output(Some(&self.workdir), &args)?;
         match out.status.code() {
             Some(0) => Ok(true),
@@ -142,16 +247,30 @@ impl CliBackend {
         }
     }
 
-    /// Tutti i ref (branch, remoti, tag, stash, backup, ...) da cui il commit `id` è
-    /// raggiungibile, nomi completi.
-    fn refs_containing_any(&self, id: &Oid) -> Result<Vec<String>, EngineError> {
-        let id = id.to_string();
-        let args = ["for-each-ref", "--format=%(refname)", "--contains", &id];
+    /// I ref non simbolici (branch, remoti, tag, stash, backup, ...) da cui almeno uno dei
+    /// commit `ids` è raggiungibile, nomi completi. Senza i replace object, come
+    /// [`Self::is_ancestor`].
+    fn refs_containing_any(&self, ids: &[Oid]) -> Result<Vec<String>, EngineError> {
+        let ids: Vec<String> = ids.iter().map(Oid::to_string).collect();
+        let mut args = vec![
+            "--no-replace-objects",
+            "for-each-ref",
+            "--format=%(refname)%00%(symref)",
+        ];
+        for id in &ids {
+            args.extend(["--contains", id]);
+        }
         let out = self.run(&args)?;
         Ok(out
             .split(|&b| b == b'\n')
-            .filter(|l| !l.is_empty())
-            .map(|l| String::from_utf8_lossy(l).into_owned())
+            .filter_map(|line| {
+                let mut fields = line.split(|&b| b == 0);
+                let name = fields.next().filter(|n| !n.is_empty())?;
+                let symref = fields.next().unwrap_or_default();
+                symref
+                    .is_empty()
+                    .then(|| String::from_utf8_lossy(name).into_owned())
+            })
             .collect())
     }
 }

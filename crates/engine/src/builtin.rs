@@ -3,7 +3,7 @@
 use crate::commands::parse_params;
 use crate::{
     CommandSpec, CommitRequest, DiffSpec, EngineError, Journal, JournalEntry, LineSelection,
-    LogQuery, Registry, Session, file_digest,
+    LogQuery, Registry, RestoreOutcome, Session, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -401,14 +401,17 @@ fn journal_state(journal: &Journal) -> Value {
     })
 }
 
-/// Risultato di `edit.undo`/`edit.redo`: `{<key>: voce, "backups": [string], "status": Status
-/// | null, "can_undo", "can_redo", "next_undo", "next_redo"}`. Lo stato è `null` (con
+/// Risultato di `edit.undo`/`edit.redo`: `{<key>: voce, "backups": [string], "warnings":
+/// [string], "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// `warnings` segnala qualcosa di inatteso scoperto dopo lo spostamento riuscito (di solito
+/// vuoto). Lo stato è `null` (con
 /// `status_error`) se non si rilegge: l'operazione è comunque fatta e non va ripetuta (un
 /// secondo undo annullerebbe la voce precedente).
-fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, backups: Vec<String>) -> Out {
+fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, outcome: RestoreOutcome) -> Out {
     let mut out = journal_state(s.journal()?);
     out[key] = to_json(entry);
-    out["backups"] = to_json(backups);
+    out["backups"] = to_json(outcome.backups);
+    out["warnings"] = to_json(outcome.warnings);
     match s.repo()?.status() {
         Ok(status) => out["status"] = to_json(status),
         Err(e) => {
@@ -426,8 +429,8 @@ fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, backups: Vec<Str
 fn edit_undo(s: &mut Session, p: Value) -> Out {
     let NoParams {} = parse_params("edit.undo", p)?;
     let (repo, journal) = s.repo_and_journal()?;
-    let (entry, backups) = journal.undo(repo)?;
-    undo_result(s, "undone", entry, backups)
+    let (entry, outcome) = journal.undo(repo)?;
+    undo_result(s, "undone", entry, outcome)
 }
 
 /// Rifà l'ultima operazione annullata (vedi [`Journal::redo`]), con lo stesso controllo.
@@ -435,8 +438,8 @@ fn edit_undo(s: &mut Session, p: Value) -> Out {
 fn edit_redo(s: &mut Session, p: Value) -> Out {
     let NoParams {} = parse_params("edit.redo", p)?;
     let (repo, journal) = s.repo_and_journal()?;
-    let (entry, backups) = journal.redo(repo)?;
-    undo_result(s, "redone", entry, backups)
+    let (entry, outcome) = journal.redo(repo)?;
+    undo_result(s, "redone", entry, outcome)
 }
 
 /// Il diario del repo aperto: `{"done": [voce], "undone": [voce], "can_undo", "can_redo",
@@ -1048,6 +1051,7 @@ mod tests {
         assert_eq!(out["can_undo"], true);
         assert_eq!(out["can_redo"], true);
         assert_eq!(out["backups"], json!(["refs/project/backup/undo-1"]));
+        assert_eq!(out["warnings"], json!([]));
         assert_eq!(
             out["status"],
             r.run("repo.status", &mut s, json!({})).unwrap()

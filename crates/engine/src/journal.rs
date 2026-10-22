@@ -27,7 +27,9 @@
 //! - Il diario tiene al massimo [`Journal::MAX_ENTRIES`] voci: le più vecchie escono.
 
 use crate::git::short;
-use crate::{CommitOutcome, EngineError, GitBackend, HeadState, RefMove, RefRestore};
+use crate::{
+    CommitOutcome, EngineError, GitBackend, HeadState, RefMove, RefRestore, RestoreOutcome,
+};
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
@@ -223,22 +225,22 @@ impl Journal {
     /// ([`JournalEntry::undo_request`]). Se riesce la voce passa fra quelle annullate, con i
     /// ref di backup eventualmente creati in `undo_backups`; se no (anche per
     /// [`EngineError::UndoConflict`]) resta dov'è e niente è cambiato. Senza voci,
-    /// [`EngineError::NotAllowed`]. Restituisce la voce e i backup creati ora.
+    /// [`EngineError::NotAllowed`]. Restituisce la voce e l'esito (backup creati ora, avvisi).
     pub fn undo(
         &mut self,
         repo: &mut dyn GitBackend,
-    ) -> Result<(JournalEntry, Vec<String>), EngineError> {
+    ) -> Result<(JournalEntry, RestoreOutcome), EngineError> {
         let entry = self.done.last().ok_or_else(|| {
             EngineError::NotAllowed(
                 "niente da annullare: nessuna operazione sui ref nel diario di questa sessione"
                     .to_owned(),
             )
         })?;
-        let backups = repo.restore_refs(&entry.undo_request())?;
+        let outcome = repo.restore_refs(&entry.undo_request())?;
         let mut entry = self.done.pop().expect("c'è almeno una voce");
-        entry.undo_backups.extend(backups.iter().cloned());
+        entry.undo_backups.extend(outcome.backups.iter().cloned());
         self.undone.push(entry.clone());
-        Ok((entry, backups))
+        Ok((entry, outcome))
     }
 
     /// Rifà l'ultima voce annullata, come [`Journal::undo`] al contrario
@@ -246,15 +248,15 @@ impl Journal {
     pub fn redo(
         &mut self,
         repo: &mut dyn GitBackend,
-    ) -> Result<(JournalEntry, Vec<String>), EngineError> {
+    ) -> Result<(JournalEntry, RestoreOutcome), EngineError> {
         let entry = self.undone.last().ok_or_else(|| {
             EngineError::NotAllowed("niente da rifare: nessuna operazione annullata".to_owned())
         })?;
-        let backups = repo.restore_refs(&entry.redo_request())?;
+        let outcome = repo.restore_refs(&entry.redo_request())?;
         let mut entry = self.undone.pop().expect("c'è almeno una voce");
-        entry.undo_backups.extend(backups.iter().cloned());
+        entry.undo_backups.extend(outcome.backups.iter().cloned());
         self.done.push(entry.clone());
-        Ok((entry, backups))
+        Ok((entry, outcome))
     }
 }
 

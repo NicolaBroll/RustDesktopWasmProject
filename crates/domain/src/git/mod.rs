@@ -197,6 +197,8 @@ pub enum Operation {
     CherryPick,
     Revert,
     Bisect,
+    /// `git am` fermo a metà (`.git/rebase-apply/applying`). Aggiunta dopo le altre.
+    Am,
 }
 
 /// Un file nello stato del repo.

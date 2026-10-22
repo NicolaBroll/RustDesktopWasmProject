@@ -191,7 +191,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`, `commit.create`), quelli che possono far perdere dati o riscrivere commit pubblicati chiedono `\"confirm\": true` (passarlo solo se l'utente lo ha chiesto).",
+            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`, `commit.create`, `edit.undo`), quelli che possono far perdere dati o riscrivere commit pubblicati chiedono `\"confirm\": true` (passarlo solo se l'utente lo ha chiesto).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -474,6 +474,69 @@ mod tests {
             json!({"id": "commit.create", "params": {"message": "x", "amend": true, "confirm": true}}),
         );
         assert_eq!(r["isError"], false, "{r}");
+    }
+
+    #[test]
+    fn undo_and_redo_are_writes_and_use_the_session_journal() {
+        let root = temp_root("undo");
+        let mut server = server(&root);
+        let r = call(&mut server, "list_commands", json!({"search": "edit."}));
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let commands: Value = serde_json::from_str(text).unwrap();
+        let ids: Vec<_> = commands
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["id"].clone(), c["writes"].clone()))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                (json!("edit.history"), json!(false)),
+                (json!("edit.redo"), json!(true)),
+                (json!("edit.undo"), json!(true))
+            ]
+        );
+
+        call(&mut server, "open_repo", json!({"path": "repo"}));
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "commit.create", "params": {"message": "Da un agente"}}),
+        );
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let commit: Value = serde_json::from_str(text).unwrap();
+        let r = call(&mut server, "execute_command", json!({"id": "edit.undo"}));
+        assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let undo: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            undo["status"]["head"]["Branch"]["target"],
+            commit["previous"]
+        );
+        assert_eq!(undo["can_redo"], true);
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "edit.redo", "params": {}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "edit.history"}),
+        );
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let history: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            history["done"][0]["description"],
+            undo["undone"]["description"]
+        );
+        // Niente più da rifare: errore che lo dice.
+        let r = call(&mut server, "execute_command", json!({"id": "edit.redo"}));
+        assert_eq!(r["isError"], true, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("niente da rifare"), "{text}");
     }
 
     #[test]

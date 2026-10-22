@@ -7,17 +7,20 @@
 mod builtin;
 mod commands;
 mod git;
+mod journal;
 mod platform;
 mod session;
 
 pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
-    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, GitBackend, LinePatch, LineSelection,
-    LogQuery, MemoryBackend, MemoryOpener, RepoOpener, StagedVersion, amend_impact, apply_patch,
-    backup_message, check_amend_published, check_commit_state, cleanup_message, file_digest,
-    line_patch, path_matches, split_message, versions_at_risk, versions_at_risk_hidden,
+    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, GitBackend, HeadState, LinePatch,
+    LineSelection, LogQuery, MemoryBackend, MemoryOpener, RefMove, RefRestore, RepoOpener,
+    RestoreOutcome, StagedVersion, amend_impact, apply_patch, backup_message,
+    check_amend_published, check_commit_state, cleanup_message, file_digest, line_patch,
+    path_matches, split_message, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
+pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
 pub use session::Session;
@@ -101,6 +104,19 @@ pub enum EngineError {
         commit: Option<Oid>,
         backup: Option<String>,
         reason: String,
+    },
+    /// `edit.undo`/`edit.redo`: HEAD o i ref non sono più come li ha lasciati l'operazione da
+    /// annullare (o l'undo da rifare): qualcuno li ha spostati da fuori (un `git commit` o
+    /// `git reset` da terminale, un altro programma). Niente è stato modificato e la voce
+    /// resta nel diario; `refs` dice cosa è cambiato, una riga per ref.
+    #[error(
+        "`{command}` rifiutato: i ref sono cambiati dopo l'operazione ({}). Niente modificato: \
+         per non sovrascrivere lavoro fatto altrove, l'operazione va annullata a mano",
+        .refs.join("; ")
+    )]
+    UndoConflict {
+        command: &'static str,
+        refs: Vec<String>,
     },
     #[error(transparent)]
     Core(#[from] CoreError),

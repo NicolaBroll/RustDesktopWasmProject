@@ -283,7 +283,7 @@ impl MemoryBackend {
 
     /// Aggiorna la voce con i nuovi dati dell'indice e ricalcola il cambiamento in stage;
     /// `None` se il file non è più cambiato né in stage né fuori.
-    fn finish(&self, mut entry: StatusEntry, info: TrackedInfo) -> Option<StatusEntry> {
+    pub(super) fn finish(&self, mut entry: StatusEntry, info: TrackedInfo) -> Option<StatusEntry> {
         let index = if info.mode_index == 0 {
             if info.mode_head == 0 {
                 // Aggiunto e poi cancellato: per git non c'è più.

@@ -202,6 +202,9 @@ pub trait GitBackend: Send {
     // Commit (`CommitRequest`: message, amend, confirm; `CommitOutcome`: commit, previous,
     // branch, backup).
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError>;
+    // Undo/redo (§7): sposta HEAD e ref da `expected` a `target`, tutti o nessuno, solo se ora
+    // valgono `expected`; restituisce i ref di backup creati.
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError>;
     // poi checkout, ...
 }
 
@@ -216,10 +219,13 @@ pub trait RepoOpener: Send + Sync {
 
 ### Sessione
 
-`Session` diventa la sessione di un repo: contiene il `Box<dyn GitBackend>` aperto (o nessuno),
-una cache di quello che la UI mostra (stato, ref, prima pagina del log) e il **diario delle
-operazioni** per l'undo (§7). La `Session` attuale con gli snapshot del documento si rimuove
-quando l'esempio "lista di voci" viene tolto (step S08).
+`Session` è la sessione di un repo: contiene il `Box<dyn GitBackend>` aperto (o nessuno) e il
+**diario delle operazioni** (`Journal`) per l'undo (§7), che appartiene al repo aperto: aprire un
+repo, anche lo stesso, ne parte uno vuoto (gli id delle voci continuano). `repo_and_journal()`
+dà backend e diario insieme ai comandi che scrivono e registrano l'operazione. La cache di
+quello che la UI mostra (stato, ref, prima pagina del log) per ora sta nella UI. La `Session`
+con gli snapshot del documento dell'esempio originale è stata tolta (S08): undo e redo
+esistono solo sul diario.
 
 ### Comandi
 
@@ -248,10 +254,11 @@ obbligatorio perché chi sceglie le righe ha comunque appena letto il diff da cu
 numeri. Non è un hash crittografico: protegge da un file cambiato, non da chi costruisce apposta
 due diff con lo stesso digest.
 | `worktree.discard` | `{"paths", "confirm"}` | con backup (§7) |
-| `commit.create` | `{"message", "amend"?, "confirm"?}` | `git commit -F -` (§5). Controlli comuni ai backend (`check_commit_state`, `CommitRequest::check_message`, `check_amend_published`), sempre prima di scrivere: messaggio vuoto o di soli spazi (o con NUL) → `InvalidParams`; file in conflitto → `NotAllowed`; rebase, cherry-pick o revert in corso → `NotAllowed` (un commit da qui li concluderebbe o cambierebbe in modo poco visibile: un cherry-pick prenderebbe l'autore originale); niente in stage (indice uguale a HEAD, file `intent-to-add` esclusi) senza `amend` e senza merge → `NothingToCommit`, mai un commit vuoto. Merge in corso: il commit è il commit di merge (genitori HEAD e `MERGE_HEAD`), anche senza modifiche. Bisect: nessun controllo. Primo commit di un branch e HEAD staccata funzionano (con HEAD staccata si sposta solo HEAD). Identità mancante: l'errore di git, nessun default. `amend`: stessi genitori e autore, albero dall'indice, messaggio nuovo (anche solo il messaggio); rifiutato senza commit, durante un merge e se renderebbe vuoto il commit (errore di git); un merge si riscrive tenendo i due genitori. Se il commit riscritto è raggiungibile da un branch remoto o da un tag (`for-each-ref --contains <HEAD> refs/heads/ refs/remotes/ refs/tags/`, senza i ref simbolici; divisione in `amend_impact`) serve `"confirm": true`, altrimenti `ConfirmRequired` che elenca i ref (un tag resterebbe sul commit vecchio); un commit non pubblicato si riscrive senza conferma (è nel reflog e nel backup). "Pubblicato" si vede solo dai ref di tracciamento: un push per URL, senza `refs/remotes/...`, non è visibile e il commit risulta non pubblicato. Gli altri branch locali e i tag che contengono il commit riscritto finiscono in `also_on`: dopo l'`amend` restano sulla storia vecchia. Un `amend` che produce lo stesso commit (stesso albero, messaggio, autore e date: es. due `amend` uguali nello stesso secondo) è un successo senza cambiamenti: `commit.id == previous`, `backup` `null`. Prima di scrivere, con `amend`, un ref di backup sul commit riscritto (§7). Risultato: `{"commit": Commit, "previous": oid \| null, "branch": string \| null, "backup": string \| null, "also_on": [string], "status": Status}`: il commit come in `repo.log`, HEAD prima, il branch spostato con il nome completo (`refs/heads/main`; `null` con HEAD staccata), il ref di backup (solo `amend`), gli altri branch e tag rimasti sul commit riscritto (solo `amend`, altrimenti vuoto) e il nuovo stato. Un problema **dopo** un commit riuscito (HEAD spostato da un hook `post-commit` o da un altro processo, reflog che non torna, stato non rileggibile) è `PostCommit { commit, backup, reason }`: il commit non va ripetuto, `commit` è il commit creato se noto (`null` se HEAD non è più quello), `backup` il ref del commit riscritto, che resta |
+| `commit.create` | `{"message", "amend"?, "confirm"?}` | `git commit -F -` (§5). Controlli comuni ai backend (`check_commit_state`, `CommitRequest::check_message`, `check_amend_published`), sempre prima di scrivere: messaggio vuoto o di soli spazi (o con NUL) → `InvalidParams`; file in conflitto → `NotAllowed`; rebase, cherry-pick, revert o `git am` in corso (anche un cherry-pick/revert di più commit fermo fra un commit e l'altro: `.git/sequencer`) → `NotAllowed` (un commit da qui li concluderebbe o cambierebbe in modo poco visibile: un cherry-pick prenderebbe l'autore originale); niente in stage (indice uguale a HEAD, file `intent-to-add` esclusi) senza `amend` e senza merge → `NothingToCommit`, mai un commit vuoto. Merge in corso: il commit è il commit di merge (genitori HEAD e `MERGE_HEAD`), anche senza modifiche. Bisect: nessun controllo. Primo commit di un branch e HEAD staccata funzionano (con HEAD staccata si sposta solo HEAD). Identità mancante: l'errore di git, nessun default. `amend`: stessi genitori e autore, albero dall'indice, messaggio nuovo (anche solo il messaggio); rifiutato senza commit, durante un merge e se renderebbe vuoto il commit (errore di git); un merge si riscrive tenendo i due genitori. Se il commit riscritto è raggiungibile da un branch remoto o da un tag (`for-each-ref --contains <HEAD> refs/heads/ refs/remotes/ refs/tags/`, senza i ref simbolici; divisione in `amend_impact`) serve `"confirm": true`, altrimenti `ConfirmRequired` che elenca i ref (un tag resterebbe sul commit vecchio); un commit non pubblicato si riscrive senza conferma (è nel reflog e nel backup). "Pubblicato" si vede solo dai ref di tracciamento: un push per URL, senza `refs/remotes/...`, non è visibile e il commit risulta non pubblicato. Gli altri branch locali e i tag che contengono il commit riscritto finiscono in `also_on`: dopo l'`amend` restano sulla storia vecchia. Un `amend` che produce lo stesso commit (stesso albero, messaggio, autore e date: es. due `amend` uguali nello stesso secondo) è un successo senza cambiamenti: `commit.id == previous`, `backup` `null`. Prima di scrivere, con `amend`, un ref di backup sul commit riscritto (§7). Risultato: `{"commit": Commit, "previous": oid \| null, "branch": string \| null, "backup": string \| null, "also_on": [string], "status": Status}`: il commit come in `repo.log`, HEAD prima, il branch spostato con il nome completo (`refs/heads/main`; `null` con HEAD staccata), il ref di backup (solo `amend`), gli altri branch e tag rimasti sul commit riscritto (solo `amend`, altrimenti vuoto) e il nuovo stato. Un problema **dopo** un commit riuscito (HEAD spostato da un hook `post-commit` o da un altro processo, reflog che non torna, stato non rileggibile) è `PostCommit { commit, backup, reason }`: il commit non va ripetuto, `commit` è il commit creato se noto (`null` se HEAD non è più quello), `backup` il ref del commit riscritto, che resta |
 | `branch.create` / `branch.checkout` / `branch.delete` | `{"name", ...}` | `delete` di un branch non unito chiede `confirm` |
 | `remote.fetch` / `remote.pull` / `remote.push` | `{"remote"?, "branch"?}` | lenti: vedi §6 |
-| `edit.undo` / `edit.redo` | `{}` | sul diario delle operazioni |
+| `edit.undo` / `edit.redo` | `{}` | sul diario delle operazioni (§7). Scritture. `undo` annulla l'ultima voce fatta, `redo` rifà l'ultima annullata; senza voci `NotAllowed`. I ref devono valere ancora quello che l'operazione (o l'undo) ha lasciato, altrimenti `UndoConflict { command, refs }` e niente cambia (la voce resta). Merge, rebase, cherry-pick, revert, bisect o `git am` in corso (anche un sequencer fermo, `.git/sequencer` senza `CHERRY_PICK_HEAD`/`REVERT_HEAD`): `NotAllowed`. Risultato: `{"undone" \| "redone": JournalEntry, "backups": [string], "warnings": [string], "status": Status \| null, "can_undo": bool, "can_redo": bool, "next_undo": string \| null, "next_redo": string \| null}` (`warnings`: avvisi scoperti dopo uno spostamento riuscito, es. HEAD cambiata da un altro processo in quell'istante; di solito vuoto. `status` `null`, con `status_error`, se non si rilegge: l'operazione è fatta, non va ripetuta) |
+| `edit.history` | `{}` | sola lettura: `{"done": [JournalEntry], "undone": [JournalEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`; in tutte e due le liste l'ultima voce è la prossima per `undo` / `redo` |
 
 Il catalogo cresce con gli step. Gli id, una volta pubblicati, non si rinominano.
 
@@ -356,6 +363,87 @@ legge da stderr con `--progress`.
 Il diario delle operazioni registra, per ogni comando che sposta ref, i valori prima e dopo:
 `HEAD`, il branch coinvolto, l'oid. `edit.undo` riporta i ref ai valori precedenti, solo se nel
 frattempo non sono cambiati (altrimenti errore chiaro, nessuna sovrascrittura).
+
+### Diario delle operazioni (S22)
+
+Ogni voce (`JournalEntry`, JSON `{"id", "command", "description", "head": {"before",
+"after"}, "refs": [{"name", "before", "after"}], "backup", "undo_backups"}`) ha l'id del
+comando, una descrizione per le persone (`Commit a0744b4 «oggetto»`, `Amend b12c3d4 «oggetto»
+(era a0744b4)`), HEAD prima e dopo (`HeadState`: `{"branch": "refs/heads/main"}` o
+`{"detached": oid}`), i ref spostati con il nome completo e l'oid prima e dopo (`null` = il ref
+non esisteva / è stato cancellato: più ref per voce, per branch, rinomine, merge, rebase e reset
+futuri), il backup salvato dall'operazione (es. quello di `amend`) e i backup creati da undo e
+redo. Oggi l'unico comando che la registra è `commit.create` (normale e `amend`; con HEAD
+staccata nessun ref, si sposta HEAD; un `amend` che produce lo stesso commit e un `PostCommit`
+non entrano). Stage e unstage non spostano ref e non entrano nel diario: il loro recupero è il
+backup dell'indice. Una nuova voce svuota le voci annullate (il redo); il diario tiene al
+massimo 100 voci.
+
+Scelte:
+
+- **In memoria, per repo aperto.** Non si salva su disco: le CLI eseguono una sessione per
+  invocazione, quindi più `--cmd` della stessa invocazione condividono il diario e invocazioni
+  diverse no; il server MCP e l'app lo tengono finché il repo resta aperto. Persisterlo (es. in
+  `.git/project/journal`) vorrebbe dire gestire più istanze sullo stesso repo e formati di
+  versioni diverse; per non perdere dati non serve, perché i commit annullati restano in ref di
+  backup e ogni spostamento è nel reflog (`project: undo ...`). Si può aggiungere dopo senza
+  cambiare i comandi: il controllo sui valori attesi rende sicura anche una voce vecchia.
+- **Undo di un commit = `git reset --soft`.** Si spostano solo i ref: indice e worktree non si
+  toccano, quindi le modifiche del commit annullato ricompaiono in stage rispetto al nuovo HEAD
+  e `edit.redo` riporta il branch allo stesso commit. Con `amend`, l'undo riporta il branch al
+  commit riscritto (che esiste: c'è il backup di `amend`) e quello che `amend` aveva aggiunto
+  resta in stage; nessun controllo sull'indice serve, perché niente lo scrive. L'undo del primo
+  commit cancella il branch (`delete` con il valore vecchio): HEAD resta sul branch, che torna
+  senza commit, e i file restano in stage come aggiunti. Cancellare il branch ne cancella anche
+  il reflog (come `git update-ref -d`); resta la voce nel reflog di HEAD.
+- **Controllo atomico.** `GitBackend::restore_refs` riceve una `RefRestore` (HEAD e ref attesi e
+  nuovi). Prima: `RefRestore::check` (operazioni in corso, nomi di ref validi, cambi di branch
+  di HEAD non ancora supportati), poi HEAD e ref attuali confrontati con quelli attesi
+  (`RefRestore::conflicts`: se qualcosa è cambiato, `UndoConflict` con un ref per riga e niente
+  cambia). Il `CliBackend` scrive con una transazione `git update-ref -m "project: undo <descrizione>"
+  -z --stdin`: `start`, poi `update <ref> <nuovo> <vecchio>` / `create <ref> <nuovo>` /
+  `delete <ref> <vecchio>` e, con HEAD staccata, `option no-deref` + `update HEAD <nuovo>
+  <vecchio>`, infine `commit`. Git controlla i valori vecchi sotto il lock dei ref: un ref
+  spostato fra il controllo e la transazione la fa fallire tutta, e l'errore torna
+  `UndoConflict`. Con HEAD su un branch si aggiorna il branch (HEAD non si stacca) e git scrive
+  la voce anche nel reflog di HEAD. Un hook `reference-transaction` che rifiuta dà l'errore di
+  git e niente cambia.
+- **Limiti su HEAD.** HEAD non si verifica dentro la transazione. Con HEAD su un branch, che
+  punti ancora a quel branch si controlla prima: resta l'istante fra il controllo e la
+  transazione. Con HEAD staccata `option no-deref` + `update HEAD` controlla solo il valore: un
+  `git checkout main` fatto in quell'istante da un altro processo, con `main` sul commit
+  atteso, verrebbe staccato di nuovo (`main` non si sposta, nessun commit è perso).
+  `symref-verify` (git ≥ 2.46) non si usa: servirebbe solo al caso del branch, ma verificare
+  HEAD nella stessa transazione che aggiorna il branch a cui punta urta il controllo di git
+  sugli aggiornamenti multipli di HEAD (git aggiunge da sé una voce di reflog per HEAD), e la
+  CI non ha quel git per provarlo. Al suo posto, dopo la transazione il `CliBackend` rilegge
+  HEAD e conta le voci nuove del reflog di HEAD (al massimo una, la nostra): se HEAD non è
+  quella chiesta o è cambiata nel frattempo, il risultato lo dice in `warnings`
+  (`RestoreOutcome::warnings`). Senza reflog di HEAD resta solo il confronto con HEAD.
+- **Backup dei commit annullati.** Prima di spostare i ref, ogni commit che verrebbe abbandonato
+  (`RefRestore::abandoned`: i valori attesi che non sono fra i nuovi) e che non resta
+  raggiungibile da un nuovo valore (`merge-base --is-ancestor`) né da un altro ref non
+  simbolico, backup compresi (`for-each-ref --format=%(refname)%00%(symref) --contains`, un solo
+  comando per tutti i commit; i ref simbolici si scartano come in `amend_impact`: un
+  `refs/heads/master -> refs/heads/main` comparirebbe con il valore di `main` prima della
+  transazione e dopo non terrebbe niente), si salva in `refs/project/backup/undo-<secondi>-<nanosecondi>`
+  (`redo-...` per il redo; creato solo se non esiste, come gli altri backup). Così il gc non lo
+  elimina e il redo resta possibile anche dopo un riavvio (a mano, dal ref). Se il backup non
+  riesce non si sposta niente. Il risultato li elenca in `backups` e la voce in `undo_backups`.
+  I controlli di raggiungibilità usano `--no-replace-objects`: conta la storia vera, quella che
+  vede il gc. Le protezioni date da `refs/stash`, dai branch remoti e dai backup dell'indice
+  (`refs/project/backup/index-*`, che hanno HEAD per genitore) sono **volatili**: uno stash si
+  scarta, un remoto si aggiorna con un fetch, un backup dell'indice si può cancellare. Oggi non
+  si crea un backup in più per loro; una futura pulizia di `refs/project/backup/*` non deve
+  considerare indipendenti questi ref (prima di togliere un backup va controllato che il commit
+  non resti tenuto solo da ref volatili o da altri backup che si stanno togliendo).
+  Il `MemoryBackend` fa gli stessi controlli, registra i backup in `commit_backups`
+  (`refs/project/backup/undo-<n>`) e ricalcola le voci dello stato rispetto al nuovo HEAD con lo
+  stesso indice e worktree (le rinomine in stage tornano cancellazione e aggiunta).
+
+Per `worktree.discard` (S23) la voce avrà in più il backup del worktree (`git stash create` e il
+suo ref) e l'undo lo riapplicherà: il tipo cresce con campi nuovi (`#[serde(default)]`), e
+`Journal::undo`/`redo` sceglieranno l'operazione del backend in base alla voce.
 
 Prima di scartare modifiche non committate si crea un backup con `git stash create` e se ne
 salva l'oid nel diario (con un ref `refs/project/backup/<data>` perché il garbage collector di git

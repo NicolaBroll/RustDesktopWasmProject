@@ -2,8 +2,8 @@
 
 use crate::commands::parse_params;
 use crate::{
-    CommandSpec, CommitRequest, DiffSpec, EngineError, LineSelection, LogQuery, Registry, Session,
-    file_digest,
+    CommandSpec, CommitRequest, DiffSpec, EngineError, Journal, JournalEntry, LineSelection,
+    LogQuery, Registry, RestoreOutcome, Session, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -95,6 +95,14 @@ impl Registry {
             r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend di un commit pubblicato)}"#,
             commit_create,
         );
+        add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
+        add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
+        add(
+            "edit.history",
+            "Diario delle operazioni",
+            "{}",
+            edit_history,
+        );
         r
     }
 }
@@ -102,6 +110,8 @@ impl Registry {
 /// I comandi che modificano il repository ([`CommandSpec::writes`]).
 const WRITES: &[&str] = &[
     "commit.create",
+    "edit.redo",
+    "edit.undo",
     "index.stage",
     "index.unstage",
     "index.stage_lines",
@@ -363,8 +373,12 @@ fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
 fn commit_create(s: &mut Session, p: Value) -> Out {
     let request: CommitRequest = parse_params("commit.create", p)?;
     request.check_message()?;
-    let repo = s.repo_mut()?;
+    let (repo, journal) = s.repo_and_journal()?;
     let outcome = repo.commit(&request)?;
+    // Il commit è fatto: va nel diario (per `edit.undo`) anche se poi lo stato non si rilegge.
+    if let Some(entry) = JournalEntry::commit(&outcome, request.amend) {
+        journal.record(entry);
+    }
     // Il commit è fatto: un errore da qui in poi non deve sembrare un commit fallito.
     let status = repo.status().map_err(|e| EngineError::PostCommit {
         commit: Some(outcome.commit.id),
@@ -373,6 +387,70 @@ fn commit_create(s: &mut Session, p: Value) -> Out {
     })?;
     let mut out = to_json(outcome);
     out["status"] = to_json(status);
+    Ok(out)
+}
+
+/// `{"can_undo", "can_redo", "next_undo", "next_redo"}`: se `edit.undo`/`edit.redo` hanno
+/// qualcosa da fare e la descrizione della voce che toccherebbero (`null` se nessuna).
+fn journal_state(journal: &Journal) -> Value {
+    json!({
+        "can_undo": journal.can_undo(),
+        "can_redo": journal.can_redo(),
+        "next_undo": journal.done().last().map(|e| e.description.clone()),
+        "next_redo": journal.undone().last().map(|e| e.description.clone()),
+    })
+}
+
+/// Risultato di `edit.undo`/`edit.redo`: `{<key>: voce, "backups": [string], "warnings":
+/// [string], "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// `warnings` segnala qualcosa di inatteso scoperto dopo lo spostamento riuscito (di solito
+/// vuoto). Lo stato è `null` (con
+/// `status_error`) se non si rilegge: l'operazione è comunque fatta e non va ripetuta (un
+/// secondo undo annullerebbe la voce precedente).
+fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, outcome: RestoreOutcome) -> Out {
+    let mut out = journal_state(s.journal()?);
+    out[key] = to_json(entry);
+    out["backups"] = to_json(outcome.backups);
+    out["warnings"] = to_json(outcome.warnings);
+    match s.repo()?.status() {
+        Ok(status) => out["status"] = to_json(status),
+        Err(e) => {
+            out["status"] = Value::Null;
+            out["status_error"] = Value::String(e.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// Annulla l'ultima operazione del diario (vedi [`Journal::undo`]): i ref tornano ai valori di
+/// prima, solo se nessuno li ha spostati nel frattempo ([`EngineError::UndoConflict`]
+/// altrimenti, e niente cambia). Indice e worktree non si toccano. Risultato: vedi
+/// [`undo_result`], con la voce in `undone`.
+fn edit_undo(s: &mut Session, p: Value) -> Out {
+    let NoParams {} = parse_params("edit.undo", p)?;
+    let (repo, journal) = s.repo_and_journal()?;
+    let (entry, outcome) = journal.undo(repo)?;
+    undo_result(s, "undone", entry, outcome)
+}
+
+/// Rifà l'ultima operazione annullata (vedi [`Journal::redo`]), con lo stesso controllo.
+/// Risultato: vedi [`undo_result`], con la voce in `redone`.
+fn edit_redo(s: &mut Session, p: Value) -> Out {
+    let NoParams {} = parse_params("edit.redo", p)?;
+    let (repo, journal) = s.repo_and_journal()?;
+    let (entry, outcome) = journal.redo(repo)?;
+    undo_result(s, "redone", entry, outcome)
+}
+
+/// Il diario del repo aperto: `{"done": [voce], "undone": [voce], "can_undo", "can_redo",
+/// "next_undo", "next_redo"}`. In `done` l'ultima voce è quella che `edit.undo` annulla, in
+/// `undone` l'ultima è quella che `edit.redo` rifà.
+fn edit_history(s: &mut Session, p: Value) -> Out {
+    let NoParams {} = parse_params("edit.history", p)?;
+    let journal = s.journal()?;
+    let mut out = journal_state(journal);
+    out["done"] = to_json(journal.done());
+    out["undone"] = to_json(journal.undone());
     Ok(out)
 }
 
@@ -433,6 +511,9 @@ mod tests {
                 "diff.commit",
                 "diff.index",
                 "diff.worktree",
+                "edit.history",
+                "edit.redo",
+                "edit.undo",
                 "index.stage",
                 "index.stage_lines",
                 "index.unstage",
@@ -450,6 +531,8 @@ mod tests {
             writes,
             [
                 "commit.create",
+                "edit.redo",
+                "edit.undo",
                 "index.stage",
                 "index.stage_lines",
                 "index.unstage",
@@ -915,6 +998,135 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out["previous"], head.to_string());
+    }
+
+    #[test]
+    fn undo_redo_and_history() {
+        let (r, mut s) = opened();
+        let start = MemoryBackend::sample().head().unwrap().target().unwrap();
+        let original = r.run("repo.status", &mut s, json!({})).unwrap();
+        let history = r.run("edit.history", &mut s, json!({})).unwrap();
+        assert_eq!(
+            history,
+            json!({
+                "done": [], "undone": [],
+                "can_undo": false, "can_redo": false,
+                "next_undo": null, "next_redo": null
+            })
+        );
+        let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
+        assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+        let err = r.run("edit.redo", &mut s, Value::Null).unwrap_err();
+        assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+
+        let first = r
+            .run("commit.create", &mut s, json!({ "message": "Uno" }))
+            .unwrap();
+        let first_id = first["commit"]["id"].as_str().unwrap().to_owned();
+        // Stage e unstage non vanno nel diario.
+        r.run("index.stage", &mut s, json!({ "paths": ["src/lib.rs"] }))
+            .unwrap();
+        let second = r
+            .run("commit.create", &mut s, json!({ "message": "Due" }))
+            .unwrap();
+        let second_id = second["commit"]["id"].as_str().unwrap().to_owned();
+        let history = r.run("edit.history", &mut s, json!({})).unwrap();
+        let done = history["done"].as_array().unwrap();
+        assert_eq!(done.len(), 2);
+        assert_eq!(done[0]["id"], 1);
+        assert_eq!(done[1]["command"], "commit.create");
+        assert_eq!(
+            done[1]["refs"],
+            json!([{ "name": "refs/heads/main", "before": first_id, "after": second_id }])
+        );
+        assert_eq!(
+            history["next_undo"],
+            format!("Commit {} «Due»", &second_id[..7])
+        );
+
+        // Due undo di seguito.
+        let out = r.run("edit.undo", &mut s, json!({})).unwrap();
+        assert_eq!(out["undone"]["description"], done[1]["description"]);
+        assert_eq!(out["status"]["head"]["Branch"]["target"], first_id);
+        assert_eq!(out["can_undo"], true);
+        assert_eq!(out["can_redo"], true);
+        assert_eq!(out["backups"], json!(["refs/project/backup/undo-1"]));
+        assert_eq!(out["warnings"], json!([]));
+        assert_eq!(
+            out["status"],
+            r.run("repo.status", &mut s, json!({})).unwrap()
+        );
+        let out = r.run("edit.undo", &mut s, json!({})).unwrap();
+        // Indice e worktree non si toccano: le modifiche dei due commit sono in stage
+        // (anche `src/lib.rs`, messo in stage prima del secondo).
+        assert_eq!(out["status"]["entries"][0], original["entries"][0]);
+        assert_eq!(out["status"]["entries"][1], original["entries"][1]);
+        assert_eq!(out["status"]["entries"][2]["path"], "src/lib.rs");
+        assert_eq!(out["status"]["entries"][2]["index"], "Modified");
+        assert_eq!(out["status"]["entries"][2]["worktree"], "Unmodified");
+        assert_eq!(out["status"]["head"]["Branch"]["target"], start.to_string());
+        assert_eq!(out["can_undo"], false);
+        assert_eq!(out["next_redo"], format!("Commit {} «Uno»", &first_id[..7]));
+
+        // Redo dell'ultimo annullato (il primo commit).
+        let out = r.run("edit.redo", &mut s, json!({})).unwrap();
+        assert_eq!(out["redone"]["id"], 1);
+        assert_eq!(out["status"]["head"]["Branch"]["target"], first_id);
+        assert_eq!(out["can_redo"], true);
+
+        // Una nuova operazione svuota il redo.
+        r.run("commit.create", &mut s, json!({ "message": "Altro" }))
+            .unwrap();
+        let history = r.run("edit.history", &mut s, json!({})).unwrap();
+        assert_eq!(history["can_redo"], false);
+        assert_eq!(history["undone"], json!([]));
+        assert_eq!(history["done"].as_array().unwrap().len(), 2);
+        let err = r.run("edit.redo", &mut s, json!({})).unwrap_err();
+        assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+
+        // Riaprire il repo azzera il diario.
+        r.run(
+            "repo.open",
+            &mut s,
+            json!({ "path": MemoryOpener::SAMPLE_PATH }),
+        )
+        .unwrap();
+        let history = r.run("edit.history", &mut s, json!({})).unwrap();
+        assert_eq!(history["done"], json!([]));
+
+        // Senza repo.
+        let mut empty = session();
+        for id in ["edit.undo", "edit.redo", "edit.history"] {
+            let err = r.run(id, &mut empty, json!({})).unwrap_err();
+            assert!(matches!(err, EngineError::NoRepo), "{id}: {err}");
+        }
+    }
+
+    #[test]
+    fn undo_of_an_amend() {
+        let (r, mut s) = opened();
+        let out = r
+            .run("commit.create", &mut s, json!({ "message": "Uno" }))
+            .unwrap();
+        let out2 = r
+            .run(
+                "commit.create",
+                &mut s,
+                json!({ "message": "Uno bis", "amend": true }),
+            )
+            .unwrap();
+        assert_eq!(out2["previous"], out["commit"]["id"]);
+        let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
+        assert_eq!(
+            undo["status"]["head"]["Branch"]["target"],
+            out["commit"]["id"]
+        );
+        // Il commit di `amend` annullato è salvato; quello riscritto era nel backup di amend.
+        assert_eq!(undo["backups"], json!(["refs/project/backup/undo-1"]));
+        assert_eq!(
+            undo["undone"]["backup"],
+            json!("refs/project/backup/amend-1")
+        );
     }
 
     #[test]

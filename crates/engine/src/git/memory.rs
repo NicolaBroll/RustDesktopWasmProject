@@ -1,12 +1,13 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
 mod commit;
+mod restore;
 mod write;
 
 use super::line_diff;
 use super::{
-    CommitOutcome, CommitRequest, DiffSpec, GitBackend, LineSelection, LogQuery, RepoOpener,
-    StagedVersion,
+    CommitOutcome, CommitRequest, DiffSpec, GitBackend, LineSelection, LogQuery, RefRestore,
+    RepoOpener, RestoreOutcome, StagedVersion,
 };
 use crate::EngineError;
 use project_domain::{
@@ -57,7 +58,7 @@ pub struct MemoryBackend {
     worktree: BTreeMap<RepoPath, Vec<u8>>,
     /// Backup dell'indice salvati da stage e unstage: nome del ref e versioni salvate.
     backups: Vec<(String, Vec<StagedVersion>)>,
-    /// Ref di backup dei commit riscritti da `amend`: nome e commit.
+    /// Ref di backup dei commit (riscritti da `amend`, abbandonati da undo/redo): nome e commit.
     commit_backups: Vec<(String, Oid)>,
     /// Nome ed email di chi committa (`user.name`/`user.email`); `None` = non configurata.
     identity: Option<(String, String)>,
@@ -136,7 +137,10 @@ impl MemoryBackend {
         &self.backups
     }
 
-    /// I ref di backup dei commit riscritti da `amend`, in ordine: nome del ref e commit.
+    /// I ref di backup dei commit, in ordine: nome del ref e commit. Li creano `amend`
+    /// (`refs/project/backup/amend-<n>`, il commit riscritto) e `edit.undo`/`edit.redo`
+    /// (`refs/project/backup/undo-<n>`/`redo-<n>`, i commit che non sarebbero più
+    /// raggiungibili).
     pub fn commit_backups(&self) -> &[(String, Oid)] {
         &self.commit_backups
     }
@@ -643,6 +647,13 @@ impl GitBackend for MemoryBackend {
 
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError> {
         self.create_commit(request)
+    }
+
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        Ok(RestoreOutcome {
+            backups: self.restore(request)?,
+            warnings: Vec::new(),
+        })
     }
 }
 

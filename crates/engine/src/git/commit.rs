@@ -131,7 +131,7 @@ pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>
 /// HEAD ha già un commit. Niente è stato modificato quando danno errore.
 ///
 /// - File in conflitto nell'indice → [`EngineError::NotAllowed`] (git rifiuterebbe comunque).
-/// - Rebase, cherry-pick o revert in corso → [`EngineError::NotAllowed`]: `git commit`
+/// - Rebase, cherry-pick, revert o `git am` in corso → [`EngineError::NotAllowed`]: `git commit`
 ///   concluderebbe o cambierebbe l'operazione in modi poco visibili (un cherry-pick prenderebbe
 ///   l'autore del commit originale e chiuderebbe l'operazione; durante un rebase il commit
 ///   finirebbe nella sequenza). Si concludono con i comandi dell'operazione (step futuri) o da
@@ -158,10 +158,13 @@ pub fn check_commit_state(status: &Status, has_head: bool, amend: bool) -> Resul
         )));
     }
     match status.operation {
-        Some(op @ (Operation::Rebase | Operation::CherryPick | Operation::Revert)) => {
+        Some(
+            op @ (Operation::Rebase | Operation::CherryPick | Operation::Revert | Operation::Am),
+        ) => {
             let name = match op {
                 Operation::Rebase => "un rebase",
                 Operation::CherryPick => "un cherry-pick",
+                Operation::Am => "un `git am`",
                 _ => "un revert",
             };
             return Err(EngineError::NotAllowed(format!(
@@ -334,7 +337,12 @@ mod tests {
         let merging = status_with(unstaged, Some(Operation::Merge));
         check_commit_state(&merging, true, false).unwrap();
         assert!(check_commit_state(&merging, true, true).is_err());
-        for op in [Operation::Rebase, Operation::CherryPick, Operation::Revert] {
+        for op in [
+            Operation::Rebase,
+            Operation::CherryPick,
+            Operation::Revert,
+            Operation::Am,
+        ] {
             let status = status_with(sample.entries.clone(), Some(op));
             let err = check_commit_state(&status, true, false).unwrap_err();
             assert!(matches!(err, EngineError::NotAllowed(_)), "{op:?}");

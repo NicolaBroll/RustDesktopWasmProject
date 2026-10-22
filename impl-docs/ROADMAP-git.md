@@ -12,8 +12,8 @@ Regole valide per tutti gli step:
 - Aggiornare la casella dello step in questo file quando è finito.
 - Gli step che scrivono nel repo dell'utente (da S18 in poi) passano da `safety-reviewer` prima
   della consegna.
-- Consegna di ogni step: pull request verso `master` e, con la CI verde, squash merge. Lo step
-  successivo riparte dal `master` aggiornato.
+- Consegna di ogni step: un commit sul branch `dev` con `cargo xtask ci` verde in locale, poi
+  push. La CI di GitHub su `dev` per ora non gira; `dev` andrà in `master` con una pull request.
 
 ## Fase 0 — Preparazione
 

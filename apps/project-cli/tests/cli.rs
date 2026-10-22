@@ -112,6 +112,25 @@ fn run_with_repo_reads_status_and_log() {
 }
 
 #[test]
+fn run_commit_show() {
+    let repo = temp_repo(2);
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"commit.show={"id":"HEAD"}"#])
+        .args(["--cmd", r#"commit.show={"id":"HEAD~1"}"#])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    assert_eq!(lines[0]["commit"]["summary"], "commit 2");
+    assert_eq!(lines[0]["compared_to"], lines[1]["commit"]["id"]);
+    assert_eq!(lines[0]["files"][0]["path"], "a.txt");
+    assert_eq!(lines[0]["files"][0]["change"], "Modified");
+    assert_eq!(lines[1]["compared_to"], Value::Null);
+    assert_eq!(lines[1]["files"][0]["change"], "Added");
+}
+
+#[test]
 fn repo_option_goes_before_or_after_the_subcommand() {
     let repo = temp_repo(1);
     let output = cli()
@@ -158,7 +177,16 @@ fn commands_lists_the_catalog() {
         .lines()
         .map(|l| l.split_whitespace().next().unwrap())
         .collect();
-    assert_eq!(ids, ["repo.log", "repo.open", "repo.refs", "repo.status"]);
+    assert_eq!(
+        ids,
+        [
+            "commit.show",
+            "repo.log",
+            "repo.open",
+            "repo.refs",
+            "repo.status"
+        ]
+    );
 
     let output = cli()
         .args(["commands", "--search", "cronologia"])

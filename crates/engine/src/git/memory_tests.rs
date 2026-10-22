@@ -1,6 +1,6 @@
 use super::{GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener};
 use crate::EngineError;
-use project_domain::{Change, Commit, Head, Oid, RefKind, Upstream};
+use project_domain::{Change, ChangedFile, Commit, Head, Oid, RefKind, Upstream};
 use std::collections::BTreeSet;
 
 fn sample() -> MemoryBackend {
@@ -397,4 +397,135 @@ fn log_query_da_json() {
     assert_eq!(q.limit, None);
     assert!(serde_json::from_str::<LogQuery>(r#"{"count":1}"#).is_err());
     assert!(serde_json::from_str::<LogQuery>(r#"{"skip":-1}"#).is_err());
+}
+
+fn changed(repo: &MemoryBackend, rev: &str) -> Vec<(Change, String, Option<String>)> {
+    repo.show_commit(rev)
+        .unwrap()
+        .files
+        .iter()
+        .map(|f| {
+            (
+                f.change,
+                f.path.to_string(),
+                f.original.as_ref().map(ToString::to_string),
+            )
+        })
+        .collect()
+}
+
+fn commit_by_summary(repo: &MemoryBackend, summary: &str) -> Commit {
+    log(repo, LogQuery::all())
+        .into_iter()
+        .find(|c| c.summary == summary)
+        .unwrap_or_else(|| panic!("manca {summary}"))
+}
+
+#[test]
+fn dettagli_del_commit_di_head() {
+    let repo = sample();
+    let details = repo.show_commit("HEAD").unwrap();
+    let head = &log(&repo, LogQuery::page(0, 1))[0];
+    assert_eq!(&details.commit, head);
+    assert_eq!(details.compared_to, Some(head.parents[0]));
+    assert_eq!(
+        changed(&repo, "HEAD"),
+        [
+            (
+                Change::Renamed,
+                "src/bin/app.rs".to_owned(),
+                Some("src/main.rs".to_owned())
+            ),
+            (Change::Modified, "src/lib.rs".to_owned(), None),
+            (Change::Added, "src/panel.rs".to_owned(), None),
+        ]
+    );
+    let renamed = &details.files[0];
+    assert_eq!(renamed.score, Some(92));
+    assert_ne!(renamed.old_oid, renamed.new_oid);
+    // Stesso commit per id abbreviato, nome di branch o tag.
+    let short = head.id.to_string()[..6].to_owned();
+    assert_eq!(repo.show_commit(&short).unwrap(), details);
+    assert_eq!(repo.show_commit("main").unwrap(), details);
+}
+
+#[test]
+fn dettagli_radice_merge_e_cancellazione() {
+    let repo = sample();
+    let root = commit_by_summary(&repo, "Primo commit");
+    let details = repo.show_commit(&root.id.to_string()).unwrap();
+    assert_eq!(details.compared_to, None);
+    for f in &details.files {
+        assert_eq!((f.change, f.old_mode), (Change::Added, 0));
+        assert_eq!(f.old_oid, Oid::from_bytes([0; Oid::LEN]));
+    }
+
+    let structure = commit_by_summary(&repo, "Struttura del progetto");
+    let deleted: Vec<ChangedFile> = repo
+        .show_commit(&structure.id.to_string())
+        .unwrap()
+        .files
+        .into_iter()
+        .filter(|f| f.change == Change::Deleted)
+        .collect();
+    assert_eq!(deleted.len(), 1);
+    assert_eq!(deleted[0].path.to_str(), Some(".gitkeep"));
+    assert_eq!(deleted[0].new_mode, 0);
+    // Il contenuto eliminato è quello aggiunto dal primo commit.
+    let added = details
+        .files
+        .iter()
+        .find(|f| f.path.to_str() == Some(".gitkeep"))
+        .unwrap();
+    assert_eq!(deleted[0].old_oid, added.new_oid);
+
+    // Il merge è confrontato con il primo genitore: i file portati da `feature/grafo`, con il
+    // contenuto che hanno sul branch.
+    let merge = repo.show_commit("v0.1.0").unwrap();
+    assert!(merge.commit.is_merge());
+    assert_eq!(merge.compared_to, Some(merge.commit.parents[0]));
+    let feature = repo.show_commit("feature/grafo").unwrap();
+    let cargo = |files: &[ChangedFile]| {
+        files
+            .iter()
+            .find(|f| f.path.to_str() == Some("Cargo.toml"))
+            .unwrap()
+            .new_oid
+    };
+    assert_eq!(cargo(&merge.files), cargo(&feature.files));
+    let paths: Vec<_> = merge.files.iter().map(|f| f.path.to_string()).collect();
+    assert_eq!(paths, ["Cargo.toml", "src/graph.rs", "tests/graph.rs"]);
+}
+
+#[test]
+fn dettagli_errori_e_commit_senza_file() {
+    let repo = sample();
+    for rev in ["nessuno", "", "abc"] {
+        let err = repo.show_commit(rev).unwrap_err();
+        assert!(
+            matches!(err, EngineError::UnknownRev(ref r) if r == rev),
+            "{err}"
+        );
+    }
+    let empty = MemoryBackend::new();
+    assert!(matches!(
+        empty.show_commit("HEAD"),
+        Err(EngineError::UnknownRev(_))
+    ));
+
+    // Un commit senza `set_changes` non cambia file; un ref verso un commit assente non si
+    // mostra.
+    let mut repo = MemoryBackend::new();
+    let mut commit = sample().show_commit("HEAD").unwrap().commit;
+    commit.parents.clear();
+    repo.insert_commit(commit.clone());
+    repo.set_branch("main", commit.id);
+    repo.set_branch("fantasma", MemoryBackend::fake_oid(4242));
+    let details = repo.show_commit("main").unwrap();
+    assert!(details.files.is_empty());
+    assert_eq!(details.compared_to, None);
+    assert!(matches!(
+        repo.show_commit("fantasma"),
+        Err(EngineError::UnknownRev(_))
+    ));
 }

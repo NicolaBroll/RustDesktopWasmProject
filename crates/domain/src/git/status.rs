@@ -404,7 +404,7 @@ fn parse_sub(sub: &[u8]) -> Result<Option<SubmoduleStatus>, String> {
 }
 
 /// Modo in ottale, es. `100644`.
-fn mode(m: &[u8]) -> Result<u32, String> {
+pub(super) fn mode(m: &[u8]) -> Result<u32, String> {
     let bad = || format!("`{}` non è un modo ottale valido", show(m));
     if m.is_empty() || m.len() > 7 {
         return Err(bad());
@@ -415,7 +415,7 @@ fn mode(m: &[u8]) -> Result<u32, String> {
     })
 }
 
-fn oid(hex: &[u8], what: &str) -> Result<Oid, String> {
+pub(super) fn oid(hex: &[u8], what: &str) -> Result<Oid, String> {
     Oid::from_hex(hex).map_err(|e| match e {
         DomainError::InvalidOid { input, reason } => {
             format!("{what}: `{input}` non è un id valido ({reason})")
@@ -431,7 +431,7 @@ fn path(p: &[u8]) -> Result<RepoPath, String> {
     Ok(RepoPath::from(p))
 }
 
-fn show(s: &[u8]) -> String {
+pub(super) fn show(s: &[u8]) -> String {
     String::from_utf8_lossy(s).into_owned()
 }
 

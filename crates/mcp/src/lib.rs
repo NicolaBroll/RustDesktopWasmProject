@@ -300,6 +300,19 @@ mod tests {
         let text = r["content"][0]["text"].as_str().unwrap();
         let log: Value = serde_json::from_str(text).unwrap();
         assert_eq!(log["commits"].as_array().unwrap().len(), 2);
+
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "commit.show", "params": {"id": "HEAD"}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let details: Value = serde_json::from_str(text).unwrap();
+        assert!(
+            !details["files"].as_array().unwrap().is_empty(),
+            "{details}"
+        );
     }
 
     #[test]

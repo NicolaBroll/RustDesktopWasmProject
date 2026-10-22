@@ -91,6 +91,7 @@ Ogni comando git ha un formato scelto apposta per essere letto senza ambiguità:
 | Log | `git log -z --date=raw --encoding=UTF-8 --no-show-signature --no-color --format=tformat:%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b` (costante `LOG_ARGS`) | 10 campi per record, **ognuno terminato da NUL** (il decimo NUL lo mette `-z`, anche dopo l'ultimo record): un messaggio git non può contenere NUL, quindi contare i campi è univoco. `%ad`/`%cd` con `--date=raw` danno `<secondi> <+hhmm>`, cioè anche il fuso orario che `%at`/`%ct` non hanno. `%s` è il primo paragrafo unito su una riga, `%b` il resto (a capo finali tolti dal parser) |
 | Ref | `git for-each-ref --format=%(refname)%00%(objectname)%00%(*objectname)%00%(upstream)%00%(upstream:track,nobracket)%00%(symref)%00 refs/heads/ refs/remotes/ refs/tags/ refs/stash` (costante `REFS_ARGS`) | 6 campi per ref, **ognuno terminato da NUL**; git aggiunge un a capo dopo ogni record (non c'è `-z`), quindi il parser divide solo sui NUL e toglie l'a capo all'inizio del record seguente: i nomi dei ref non possono contenere NUL né a capo, ma `%(upstream)` viene dalla config e può contenere un a capo. Ref simbolici (`origin/HEAD`), con nome non UTF-8 o fuori dai quattro tipi: ignorati. Tag annotati: `target` dal `%(*objectname)` (risalendo i tag di tag presenti nella lista), `tag_object` dal `%(objectname)`. Ahead/behind: vuoto ⇒ 0/0, `gone` ⇒ `None` |
 | Stato | `git status --porcelain=v2 -z --branch --untracked-files=all` | formato stabile per definizione |
+| File di un commit | `git diff-tree -z -r --raw --no-abbrev -M --no-commit-id <primo genitore> <commit>` (costante `DIFF_TREE_ARGS`; `--root <commit>` per un commit radice) | un record per file: `:<modi> <id> <stato>` e uno o due percorsi (origine e destinazione per `R`/`C`), **ognuno terminato da NUL**. I merge si confrontano con il primo genitore (i file portati nel branch), come fa `commit.show` |
 | Diff | `git -c core.quotePath=false diff --no-color --no-ext-diff --find-renames` | parser del formato unified diff |
 
 I parser ricevono `&[u8]`, non `&str`: nomi di file e messaggi possono non essere UTF-8.
@@ -159,7 +160,7 @@ come JSON, così CLI e MCP li usano direttamente. Catalogo iniziale:
 | `repo.status` | `{}` | |
 | `repo.refs` | `{}` | |
 | `repo.log` | `{"skip"?, "limit"?, "rev"?}` | paginato |
-| `commit.show` | `{"id"}` | metadati e file cambiati |
+| `commit.show` | `{"id"}` | metadati e file cambiati rispetto al primo genitore |
 | `diff.worktree` / `diff.index` / `diff.commit` | `{"path"?}` / `{"id"}` | |
 | `index.stage` / `index.unstage` | `{"paths"}` | |
 | `index.stage_lines` / `index.unstage_lines` | `{"path", "lines"}` | usa il costruttore di patch |

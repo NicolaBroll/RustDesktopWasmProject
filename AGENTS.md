@@ -24,6 +24,13 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
 - Gli id dei comandi sono stabili: non rinominarli.
 - L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
 
+## Branch
+
+- Si lavora sempre su `dev`, non su `master`: ogni nuovo branch parte dall'ultimo `origin/dev`
+  e le pull request vanno verso `dev`.
+- Prima di iniziare uno step, `git fetch origin dev` e controllare lo stato della roadmap su
+  `origin/dev`.
+
 ## Client git (in sviluppo)
 
 Il progetto sta diventando un client git grafico: architettura in

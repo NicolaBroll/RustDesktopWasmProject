@@ -11,6 +11,7 @@ mod discard;
 mod line_diff;
 mod lines;
 mod memory;
+mod remote;
 mod restore;
 mod sample;
 
@@ -36,11 +37,12 @@ pub use discard::{
     discard_description, discard_plan,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
-pub use memory::{MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub use remote::{FetchOutcome, FetchRequest, check_remote_name, default_remote, unknown_remote};
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
 
-use crate::EngineError;
+use crate::{EngineError, JobContext};
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
@@ -281,6 +283,26 @@ pub trait GitBackend: Send {
         entries: &[ConfigEntry],
         remove: bool,
     ) -> Vec<String>;
+
+    /// I nomi dei remoti configurati (`git remote`), in ordine di nome. Lettura.
+    fn remotes(&self) -> Result<Vec<String>, EngineError>;
+
+    /// Scarica dal remoto `request.remote` (`git fetch --progress`, §6): oggetti nuovi e branch
+    /// remoti (`refs/remotes/<remote>/...`) e tag come dice la configurazione del remoto, più
+    /// `FETCH_HEAD`. Mai i branch locali, l'indice o il worktree (salvo un refspec configurato
+    /// apposta verso `refs/heads/`, che il comando segnala). Con `request.branch` solo quel
+    /// branch del remoto (`refs/heads/<branch>`), che aggiorna il suo branch remoto come dice il
+    /// refspec configurato. Comando lento: l'avanzamento va a `job` ([`JobContext::report`]);
+    /// se `job` è annullato il processo si ferma e il risultato è
+    /// [`EngineError::Cancelled`]. Errori: credenziali → [`EngineError::Auth`], remoto non
+    /// raggiungibile → [`EngineError::RemoteUnreachable`], branch che il remoto non ha →
+    /// [`EngineError::NotAllowed`], altro → [`EngineError::Git`]. Il remoto è già controllato
+    /// dal comando (configurato, nome valido).
+    fn fetch(
+        &mut self,
+        request: &FetchRequest,
+        job: &JobContext,
+    ) -> Result<FetchOutcome, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

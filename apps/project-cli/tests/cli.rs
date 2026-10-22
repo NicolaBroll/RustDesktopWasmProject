@@ -451,6 +451,7 @@ fn commands_lists_the_catalog() {
             "index.stage_lines",
             "index.unstage",
             "index.unstage_lines",
+            "remote.fetch",
             "repo.log",
             "repo.open",
             "repo.refs",
@@ -478,6 +479,7 @@ fn commands_lists_the_catalog() {
             "index.stage_lines",
             "index.unstage",
             "index.unstage_lines",
+            "remote.fetch",
             "worktree.discard"
         ]
     );
@@ -608,4 +610,55 @@ fn mcp_rejects_the_repo_option() {
         .output()
         .unwrap();
     assert!(!output.status.success());
+}
+
+#[test]
+fn run_fetch_from_a_local_remote() {
+    // `source` ha due commit e il remoto `origin` (bare); `work` ha lo stesso remoto e niente.
+    let source = temp_repo(2);
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--quiet", "--bare"]);
+    git(
+        source.path(),
+        &["remote", "add", "origin", path_str(remote.path())],
+    );
+    git(source.path(), &["push", "--quiet", "origin", "main"]);
+    let work = temp_repo(0);
+    git(
+        work.path(),
+        &["remote", "add", "origin", path_str(remote.path())],
+    );
+
+    let output = cli()
+        .args(["--repo", path_str(work.path()), "run"])
+        .args([
+            "--cmd",
+            "remote.fetch",
+            "--cmd",
+            r#"remote.fetch={"remote":"origin"}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines = json_lines(&output.stdout);
+    assert_eq!(lines[0]["remote"], "origin");
+    assert_eq!(lines[0]["updated"][0]["name"], "refs/remotes/origin/main");
+    assert_eq!(lines[0]["updated"][0]["before"], Value::Null);
+    assert_eq!(lines[1]["updated"], json!([]));
+
+    let output = cli()
+        .args(["--repo", path_str(work.path()), "run"])
+        .args(["--cmd", r#"remote.fetch={"remote":"nessuno"}"#])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("non esiste un remoto `nessuno`"),
+        "{stderr}"
+    );
 }

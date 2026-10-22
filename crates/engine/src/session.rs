@@ -1,4 +1,4 @@
-use crate::{EngineError, GitBackend, Journal, RepoOpener};
+use crate::{EngineError, GitBackend, JobContext, Journal, RepoOpener};
 use std::fmt;
 use std::sync::Arc;
 
@@ -11,6 +11,10 @@ use std::sync::Arc;
 pub struct Session {
     opener: Arc<dyn RepoOpener>,
     repo: Option<OpenRepo>,
+    /// Avanzamento e annullamento del comando in corso: quello passato a
+    /// [`Registry::run_with`](crate::Registry::run_with), vuoto fuori da un comando e con
+    /// [`Registry::run`](crate::Registry::run).
+    job: JobContext,
 }
 
 struct OpenRepo {
@@ -24,7 +28,11 @@ impl Session {
     /// Sessione senza repo aperto. Desktop e CLI passano `CliOpener` di `project-git`, la
     /// versione web e i test un [`MemoryOpener`](crate::MemoryOpener).
     pub fn new(opener: Arc<dyn RepoOpener>) -> Self {
-        Self { opener, repo: None }
+        Self {
+            opener,
+            repo: None,
+            job: JobContext::new(),
+        }
     }
 
     /// Apre il repo al percorso `path` e sostituisce quello aperto. Se l'apertura fallisce il
@@ -78,6 +86,20 @@ impl Session {
             Some(repo) => Ok((repo.backend.as_mut(), &mut repo.journal)),
             None => Err(EngineError::NoRepo),
         }
+    }
+}
+
+impl Session {
+    /// Avanzamento e annullamento del comando in corso (§6): i comandi lenti lo passano al
+    /// backend. Vuoto (nessun avanzamento, mai annullato) se il comando è stato lanciato con
+    /// [`Registry::run`](crate::Registry::run).
+    pub fn job(&self) -> &JobContext {
+        &self.job
+    }
+
+    /// Il contesto del comando che sta per partire (o, dopo, quello vuoto).
+    pub(crate) fn set_job(&mut self, job: JobContext) {
+        self.job = job;
     }
 }
 

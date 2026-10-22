@@ -73,6 +73,8 @@ cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["READ
 # branch: crea, passa, rinomina, elimina (non unito: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"prova"}' --cmd 'branch.checkout={"name":"prova"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"prova","new_name":"prova2"}' --cmd 'branch.delete={"name":"prova2"}'
+# fetch da un remoto configurato (solo branch remoti e tag; avanzamento su stderr se è un terminale)
+cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

@@ -3,6 +3,7 @@
 mod branch;
 mod commit;
 mod discard;
+mod remote;
 mod restore;
 
 use crate::GitVersion;
@@ -15,9 +16,10 @@ use project_domain::{
 };
 use project_engine::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, EngineError, GitBackend, HeadState, LinePatch, LineSelection,
-    LogQuery, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, WorktreeRestore, apply_patch,
-    backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    DiscardOutcome, DiscardedFile, EngineError, FetchOutcome, FetchRequest, GitBackend, HeadState,
+    JobContext, LinePatch, LineSelection, LogQuery, RefRestore, RepoOpener, RestoreOutcome,
+    StagedVersion, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1149,6 +1151,18 @@ impl GitBackend for CliBackend {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)
+    }
+
+    fn remotes(&self) -> Result<Vec<String>, EngineError> {
+        self.remote_names()
+    }
+
+    fn fetch(
+        &mut self,
+        request: &FetchRequest,
+        job: &JobContext,
+    ) -> Result<FetchOutcome, EngineError> {
+        self.fetch_remote(request, job)
     }
 
     fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {

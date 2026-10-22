@@ -9,6 +9,7 @@
 
 mod backend;
 mod command;
+mod progress;
 mod version;
 
 pub use backend::{CliBackend, CliOpener};

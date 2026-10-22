@@ -17,6 +17,7 @@ mod diff;
 mod diff_view;
 mod discard;
 mod executor;
+mod fetch;
 mod format;
 mod graph;
 mod lines;
@@ -32,6 +33,7 @@ use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
 use discard::{DiscardBox, History, Received, UndoOp, UndoResult};
+use fetch::FetchBox;
 use graph::RefLabel;
 use lines::{LineWrite, Pick};
 use list::{CommitList, PageRequest};
@@ -130,6 +132,13 @@ enum Action {
     ConfirmDeleteBranch,
     /// Chiude il dialogo dei branch aperto senza mandare niente.
     CloseBranchDialog,
+    /// Fetch dal remoto indicato (`None`: quello scelto dal motore: upstream, `origin`,
+    /// l'unico).
+    Fetch(Option<String>),
+    /// "Interrompi" il fetch in corso.
+    CancelFetch,
+    /// Chiude la finestra dell'errore del fetch.
+    DismissFetchError,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -176,6 +185,8 @@ enum Request {
     History(u64),
     /// `branch.*` (lo stato del dialogo è in [`BranchBox`]).
     Branch(u64, branch::Op),
+    /// `remote.fetch` (lo stato è in [`FetchBox`]).
+    Fetch(u64),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -209,6 +220,8 @@ struct RepoView {
     discard: DiscardBox,
     /// I comandi sui branch: dialoghi del nome, conferma dell'eliminazione, checkout.
     branch: BranchBox,
+    /// Il fetch in corso e l'ultimo errore da spiegare.
+    fetch: FetchBox,
     /// Cosa farebbero Annulla e Ripeti.
     history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
@@ -236,6 +249,7 @@ impl RepoView {
             commit: CommitBox::default(),
             discard: DiscardBox::default(),
             branch: BranchBox::default(),
+            fetch: FetchBox::default(),
             history: History::default(),
             select_after_load: None,
         };
@@ -409,7 +423,12 @@ impl App {
                 }));
             }
             Action::Open(path) => self.submit("repo.open", json!({ "path": path }), Request::Open),
-            Action::Refresh => self.load(),
+            // Durante una scrittura (un fetch può durare) le letture aspetterebbero in coda.
+            Action::Refresh => {
+                if self.executor.writing().is_none() {
+                    self.load();
+                }
+            }
             Action::Select(index) => {
                 if let Some(repo) = &mut self.repo {
                     repo.select_worktree(false);
@@ -678,6 +697,35 @@ impl App {
             Action::CloseBranchDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.branch.close();
+                }
+            }
+            Action::Fetch(remote) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let Some(params) = repo.fetch.request(remote.as_deref()) else {
+                    return;
+                };
+                repo.write_error = None;
+                repo.write_label = Some(fetch::label(remote.as_deref()));
+                let ticket = self.executor.submit(fetch::COMMAND, params);
+                self.pending.insert(ticket, Request::Fetch(generation));
+                if let Some(repo) = &mut self.repo {
+                    repo.fetch.started(ticket, remote);
+                }
+            }
+            Action::CancelFetch => {
+                if let Some(ticket) = self.repo.as_mut().and_then(|r| r.fetch.cancel()) {
+                    self.executor.cancel(ticket);
+                }
+            }
+            Action::DismissFetchError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.fetch.dismiss();
                 }
             }
             Action::RetryDetails => {
@@ -996,6 +1044,10 @@ impl App {
                 self.receive_branch(generation, op, done);
                 continue;
             }
+            if let Request::Fetch(generation) = request {
+                self.receive_fetch(generation, done);
+                continue;
+            }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1234,6 +1286,63 @@ impl App {
         }
     }
 
+    /// Risposta di `remote.fetch`: i ref dalla risposta (la colonna mostra i branch remoti
+    /// nuovi e quanto i branch locali sono indietro), poi log e stato riletti se qualcosa è
+    /// cambiato; l'avviso con i ref aggiornati, o l'errore.
+    fn receive_fetch(&mut self, generation: u64, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        let received =
+            repo.fetch
+                .receive(done.ticket, done.result, done.error_kind, done.error_detail);
+        match received {
+            fetch::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if outcome.changed {
+                    self.reload_after_fetch(generation);
+                }
+            }
+            fetch::Received::Cancelled { notice } => {
+                self.notice = notice;
+                self.error.clear();
+                // Qualche branch remoto può essere già aggiornato.
+                self.submit("repo.refs", json!({}), Request::Refs(generation));
+                self.reload_after_fetch(generation);
+            }
+            fetch::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    self.reload_after_fetch(generation);
+                }
+            }
+        }
+    }
+
+    /// Dopo un fetch: lo stato (avanti/indietro rispetto all'upstream) e il log (i commit
+    /// nuovi dei branch remoti).
+    fn reload_after_fetch(&mut self, generation: u64) {
+        self.submit("repo.status", json!({}), Request::Status(generation));
+        if let Some(repo) = self.current(generation) {
+            let first = repo.list.reset();
+            self.request_page(first);
+        }
+    }
+
     /// Il repo mostrato, se è ancora quello della generazione `generation`.
     fn current(&mut self, generation: u64) -> Option<&mut RepoView> {
         self.repo.as_mut().filter(|_| generation == self.generation)
@@ -1292,7 +1401,8 @@ impl App {
             | Request::Commit(..)
             | Request::Discard(..)
             | Request::Undo(..)
-            | Request::Branch(..) => {}
+            | Request::Branch(..)
+            | Request::Fetch(..) => {}
         }
         Ok(())
     }
@@ -1314,8 +1424,20 @@ impl eframe::App for App {
             .map(|r| std::mem::take(&mut r.commit.draft))
             .unwrap_or_default();
 
+        // Il fetch in corso con il suo ultimo avanzamento, per la barra.
+        let fetching = self.repo.as_ref().and_then(|r| {
+            let running = r.fetch.running()?;
+            Some((running, self.executor.progress(running.ticket)))
+        });
         egui::Panel::top("barra").show(ui, |ui| {
-            view::top_bar(ui, self.repo.as_ref(), can_pick, writing, &mut actions);
+            view::top_bar(
+                ui,
+                self.repo.as_ref(),
+                can_pick,
+                writing,
+                fetching,
+                &mut actions,
+            );
         });
         egui::Panel::bottom("stato").show(ui, |ui| {
             let write = self.repo.as_ref().and_then(|r| r.write_label.as_deref());
@@ -1360,6 +1482,9 @@ impl eframe::App for App {
                 }
                 if let Some(pending) = repo.discard.confirm() {
                     view::confirm_discard(&ctx, pending, &mut actions);
+                }
+                if let Some(failure) = repo.fetch.failure() {
+                    view::fetch_failure(&ctx, failure, &mut actions);
                 }
                 if let Some(dialog) = repo.branch.dialog() {
                     view::branch_dialog(&ctx, dialog, &mut actions);

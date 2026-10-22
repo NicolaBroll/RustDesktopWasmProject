@@ -107,6 +107,18 @@ configurazione (se nel frattempo non ne è comparsa una nuova; il reflog del bra
 torna), rinomina all'indietro e torna al branch (o commit) di prima con un altro checkout
 sicuro; sempre solo se nel frattempo nessuno ha toccato quei ref o HEAD.
 
+`remote.fetch {"remote"?, "branch"?}` scarica dal remoto (`git fetch --progress`): commit nuovi,
+branch remoti e tag come dice la configurazione del remoto (anche `fetch.prune`), mai i branch
+locali, l'indice o il worktree. `remote` è il nome di un remoto configurato (mai un URL o un
+percorso; un nome che non c'è dà un errore con l'elenco dei remoti); se manca, quello
+dell'upstream del branch attivo, poi `origin`, poi l'unico remoto. Con `branch` scarica solo quel
+branch del remoto. Non chiede mai niente da tastiera (niente terminale, stdin chiuso): credenziali
+rifiutate o mancanti danno un errore di autenticazione, un remoto che non si raggiunge (es. URL
+verso una cartella che non c'è) un errore a parte. Risultato: `{"remote", "branch", "updated":
+[{"name", "before", "after"}], "messages", "warnings", "refs"}` (i ref cambiati, le righe di git,
+il nuovo elenco dei ref). Non entra nel diario. Nella CLI, su un terminale, l'avanzamento va su
+stderr; la UI lo mostra mentre il fetch gira e può annullarlo.
+
 `edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
 `branch.*` e `worktree.discard`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel

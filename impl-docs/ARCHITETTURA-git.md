@@ -212,6 +212,11 @@ pub trait GitBackend: Send {
     fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError>;
     fn rename_branch(&mut self, from: &str, to: &str, expected: &Oid)
         -> Result<RestoreOutcome, EngineError>;
+    // Remoti (S25): nomi dei remoti configurati e fetch (lento: avanzamento e annullamento da
+    // `job`, §6). `FetchRequest`: remote (già controllato), branch; `FetchOutcome`: messages.
+    fn remotes(&self) -> Result<Vec<String>, EngineError>;
+    fn fetch(&mut self, request: &FetchRequest, job: &JobContext)
+        -> Result<FetchOutcome, EngineError>;
     // poi merge, rebase, ...
 }
 
@@ -221,7 +226,11 @@ pub trait RepoOpener: Send + Sync {
 ```
 
 - `MemoryBackend` (nel motore): repo finto costruito in codice. Serve ai test dei comandi e alla
-  versione web. Le scritture modificano lo stato in memoria.
+  versione web. Le scritture modificano lo stato in memoria. Ha anche remoti in memoria
+  (`add_remote`, `set_branch_on_remote`, `insert_remote_commit`, `fail_fetch` per simulare
+  `Auth`/`RemoteUnreachable`): il fetch copia i commit raggiungibili e aggiorna
+  `refs/remotes/<remote>/<branch>` (senza prune). Nel repo di esempio `origin` ha un commit in
+  più su `feature/grafo`.
 - `CliBackend` (in `project-git`): esegue `git` (§5).
 
 ### Sessione
@@ -266,7 +275,8 @@ due diff con lo stesso digest.
 | `branch.checkout` | `{"name"}` | passa al branch locale `name` (`git switch`, mai forzato). Risultato: `{"branch", "previous": HeadState, "changed", "warnings", "status", ...diario}`. Modifiche locali che verrebbero sovrascritte → `CheckoutConflict { target, files, stderr }` e niente cambia; operazione in corso o file in conflitto → `NotAllowed`; già sul branch: `changed: false` |
 | `branch.delete` | `{"name", "confirm"?, "expected"?}` | `expected`: id **completo** (40 cifre, altrimenti `InvalidParams`) del commit su cui il branch è stato mostrato; se il branch punta altrove → `NotAllowed` ("si è spostato da quando è stato visto: ... ora punta a ...") prima della conferma e dell'eliminazione, niente cambia: la conferma vale solo per il commit visto (senza `expected` nessun controllo in più). Branch non unito (commit non raggiungibili né da HEAD né dal suo upstream) → `ConfirmRequired` senza `confirm`; branch di HEAD, aperto in un altro worktree, operazione in corso → `NotAllowed`. Backup sempre. Risultato: `{"branch", "target", "unmerged", "backup", "removed_config": [{"key", "value"}], "warnings", "refs", ...diario}` |
 | `branch.rename` | `{"name", "new_name"}` | `git branch -m` (mai `-M`): reflog, upstream e HEAD seguono; nome nuovo controllato come in `create`, mai sopra un branch esistente (`NotAllowed`). Risultato: `{"branch", "previous", "target", "head", "warnings", "refs", ...diario}` |
-| `remote.fetch` / `remote.pull` / `remote.push` | `{"remote"?, "branch"?}` | lenti: vedi §6 |
+| `remote.fetch` | `{"remote"?, "branch"?}` | lento (§6), scrive (`writes`: branch remoti, tag, `FETCH_HEAD`). `remote`: il **nome** di un remoto configurato (`GitBackend::remotes`, cioè `git remote`), controllato con `check_remote_name` (come git: `refs/remotes/<nome>/x` dev'essere un nome di ref valido; un `-` iniziale è ammesso) e cercato fra i configurati prima di chiamare il backend: un nome che non c'è → `NotAllowed` con l'elenco dei remoti (mai passato a git, che lo userebbe come URL o percorso). Senza `remote`: quello dell'upstream del branch attivo, altrimenti `origin`, altrimenti l'unico remoto (`default_remote`; nessuno o ambiguo → `NotAllowed`). `branch`: nome breve di un branch **del remoto** (`check_branch_name`), scaricato da solo come `refs/heads/<branch>`; il remoto non lo ha → `NotAllowed`. Errori: credenziali rifiutate o da chiedere → `Auth { remote, message }`; remoto non raggiungibile (cartella che non c'è, host, rete, repository inesistente sul server) → `RemoteUnreachable { remote, message }`; annullato → `Cancelled`; altro → `Git`. Risultato: `{"remote", "branch": string \| null, "updated": [{"name", "before": oid \| null, "after": oid \| null}] \| null, "messages": [string], "warnings": [string], "refs": [RefInfo] \| null, "refs_error"?}`: `updated` sono i ref cambiati (confronto di `refs()` prima e dopo, un tag annotato con il commit puntato; `null` con `refs_error` se i ref non si rileggono: il fetch è fatto), `messages` le righe di git che non sono avanzamento (`From <url>`, ` * [new branch] ...`), `warnings` i ref fuori da `refs/remotes/` e `refs/tags/` spostati da un refspec configurato (es. un mirror verso `refs/heads/`). Non va nel diario (§7). Dettagli del `CliBackend` in §5 |
+| `remote.pull` / `remote.push` | `{"remote"?, "branch"?}` | lenti: vedi §6 |
 | `edit.undo` / `edit.redo` | `{}` | sul diario delle operazioni (§7). Scritture. `undo` annulla l'ultima voce fatta, `redo` rifà l'ultima annullata; senza voci `NotAllowed`. I ref devono valere ancora quello che l'operazione (o l'undo) ha lasciato, altrimenti `UndoConflict { command, refs }` e niente cambia (la voce resta). Undo e redo di `branch.checkout` sono checkout sicuri: con modifiche locali in conflitto `CheckoutConflict` (la voce resta). Merge, rebase, cherry-pick, revert, bisect o `git am` in corso (anche un sequencer fermo, `.git/sequencer` senza `CHERRY_PICK_HEAD`/`REVERT_HEAD`): `NotAllowed`. Risultato: `{"undone" \| "redone": JournalEntry, "backups": [string], "warnings": [string], "status": Status \| null, "can_undo": bool, "can_redo": bool, "next_undo": string \| null, "next_redo": string \| null}` (`warnings`: avvisi scoperti dopo uno spostamento riuscito, es. HEAD cambiata da un altro processo in quell'istante; di solito vuoto. `status` `null`, con `status_error`, se non si rilegge: l'operazione è fatta, non va ripetuta) |
 | `edit.history` | `{}` | sola lettura: `{"done": [JournalEntry], "undone": [JournalEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`; in tutte e due le liste l'ultima voce è la prossima per `undo` / `redo` |
 
@@ -342,6 +352,35 @@ Regole per ogni chiamata a git:
   configurazione dell'utente e si rispetta, come in ogni client che usa git di sistema; aprire
   un repo non fidato è come eseguire git in quel repo. `index.stage` di una cartella che è un
   repo annidato aggiunge un gitlink (come `git add`, che lo segnala solo con un avviso).
+- **Fetch** (`remote.fetch`, S25): `git fetch --progress --end-of-options <remote>
+  [refs/heads/<branch>]`. Il remoto (sempre un remoto configurato, mai un URL) e il branch
+  vanno dopo `--end-of-options`: un remoto che si chiama `-x` o `--upload-pack=false` non
+  diventa un'opzione (test con questi nomi). Il branch è un refspec senza destinazione, senza
+  `:` né `+`: non scrive ref locali, e il branch remoto si aggiorna con il refspec configurato.
+  Niente `--prune`, `--force`, `--tags`, `--update-head-ok`, `--recurse-submodules`: tag,
+  pulizia dei branch remoti spariti (`fetch.prune`, `remote.<nome>.prune`) e sottomoduli come
+  dice la configurazione dell'utente, come `git fetch` da terminale. **Nessuna richiesta di
+  input**, mai: stdin chiuso, `GIT_TERMINAL_PROMPT=0` e, su Unix, il processo parte in una
+  sessione nuova (`setsid`, dipendenza `libc`) senza terminale di controllo, così né git, né
+  ssh (passphrase, conferma della chiave dell'host), né un credential helper possono aprire
+  `/dev/tty` e aspettare, anche se CLI o server MCP sono avviati da un terminale. Restano le
+  richieste grafiche (`SSH_ASKPASS` con un display, `GIT_ASKPASS`, `core.askPass`) e i
+  credential helper che non chiedono niente (cache, keychain, libsecret, GCM); senza, una
+  credenziale mancante fallisce subito con `Auth`. stderr si legge mentre git gira
+  (`Git::run_streaming`): diviso a ogni `\r` e `\n`, le righe di avanzamento vanno al
+  `JobContext` (§6), le altre, solo quelle chiuse da `\n`, sono i `messages` del risultato o il
+  testo dell'errore. Errori riconosciuti dal testo (`LC_ALL=C`, `progress::remote_error`):
+  `Auth` per "Authentication failed", "could not read Username/Password", "terminal prompts
+  disabled", "Permission denied (publickey...)", "Host key verification failed", HTTP 401/403;
+  `NotAllowed` per "couldn't find remote ref"; `RemoteUnreachable` per "does not appear to be a
+  git repository", "Could not resolve host", "Connection refused/timed out", "repository not
+  found", HTTP 404, "unable to access", "Could not read from remote repository" (guardati dopo
+  quelli di `Auth`, che li precedono nello stesso stderr). Dopo l'uscita di git il backend
+  aspetta al massimo un secondo che stderr si chiuda: un processo rimasto in background (un
+  master ssh con `ControlPersist`) non blocca il comando. Annullamento: vedi §6. Limiti: su
+  Windows niente `setsid` (non c'è `/dev/tty`; l'annullamento usa `kill`); la configurazione
+  del repo può dare remoti con URL fuori dalla radice del server MCP (il fetch legge da lì, come
+  da terminale).
 - Un comando che modifica il repo è segnato in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), così la UI lo disabilita durante un job e un agente sa cosa scrive.
 - All'apertura del repo si verifica la versione di git (minimo 2.30) e si dà un errore chiaro se
@@ -367,6 +406,39 @@ La sessione sta dietro un `Arc<Mutex<...>>` condiviso con il job; il risultato t
 un canale e la UI chiede un nuovo frame (`ctx.request_repaint()`). Durante un job la UI mostra
 l'avanzamento e disabilita i comandi che modificano il repo. L'avanzamento di fetch e push si
 legge da stderr con `--progress`.
+
+### Avanzamento e annullamento (S25)
+
+`Registry::run` resta sincrono e senza callback. Per i comandi lenti c'è
+`Registry::run_with(id, session, params, job: JobContext)`: per la durata del comando la
+sessione tiene `job` (`Session::job()`), il comando lo passa al backend, e dopo torna un
+contesto vuoto (`Registry::run` è `run_with` con `JobContext::new()`: nessun avanzamento, mai
+annullato). Così l'estensione non cambia la firma dei comandi né dei `Handler`.
+
+- `JobContext::new().with_progress(sink).with_cancel(token)`: `sink` è un
+  `Fn(&Progress) + Send + Sync`, chiamato dal thread del job; `token` è un `CancelToken`
+  (`Arc<AtomicBool>` condiviso: `cancel()` da qualunque thread, `is_cancelled()`).
+- `Progress` (serializzabile): `{"phase", "remote", "percent", "current", "total", "done",
+  "text"}` da una riga di git (`Receiving objects:  45% (9/20), 1.2 MiB | 2 MiB/s` → fase
+  `Receiving objects`, 45, 9, 20; `remote: Enumerating objects: 5, done.` → `remote: true`,
+  `current` 5, `done`). Le fasi si susseguono (`Enumerating`, `Counting`, `Compressing` sul
+  remoto, poi `Receiving`/`Unpacking objects` e `Resolving deltas` in locale); la UI mostra
+  l'ultima ricevuta. Git ne scrive al più qualche decina al secondo: il sink deve solo salvarla
+  (es. in un `Mutex`) e chiedere un frame, non disegnare.
+- **La UI** (`Executor`): per `remote.fetch` chiama `run_with` nel job di `Platform::spawn` con
+  un sink che salva l'ultimo `Progress` del ticket e chiama `wake`, e tiene il `CancelToken`
+  del ticket per un pulsante "Annulla". La sessione resta bloccata dal job per tutto il fetch
+  (§6): le letture mandate nel frattempo aspettano la fine. Sul web il `MemoryBackend` finisce
+  subito (eventi finti con la stessa forma).
+- **Annullamento**: il `CliBackend` controlla il token ogni 50 ms mentre git gira; se è
+  annullato manda SIGTERM al gruppo di processi del fetch (git, ssh, `git-remote-http`,
+  `index-pack`: git toglie i propri `.lock`), dopo 3 secondi SIGKILL, e il comando dà
+  `EngineError::Cancelled`. I ref già aggiornati da git restano (git li aggiorna alla fine, ogni
+  ref sotto il suo lock), gli oggetti già ricevuti restano nel database (li toglie un `gc`):
+  nessun ref locale, indice o worktree è toccato. Un token annullato prima dell'inizio dà
+  `Cancelled` senza avviare git.
+- CLI: con stderr su un terminale stampa l'avanzamento su stderr (una riga riscritta con `\r`);
+  stdout resta il JSON. Server MCP: usa `Registry::run`, niente avanzamento.
 
 ## 7. Undo e backup
 
@@ -722,6 +794,14 @@ configurazione ha solo l'upstream (`branch.<nome>.remote`/`merge`), e registra i
 `commit_backups` (`refs/project/backup/delete-<n>`).
 
 L'undo non copre le operazioni sui remoti: un push non si annulla da qui.
+
+**Il fetch non entra nel diario** (scelta, S25): sposta solo branch remoti e tag, che
+rispecchiano il remoto. Riportarli indietro farebbe vedere un remoto che non esiste più (e il
+fetch successivo li rimetterebbe dov'erano), e niente di locale va perso: gli oggetti si
+aggiungono soltanto, branch locali, indice e worktree non si toccano, e un branch remoto tolto
+da `fetch.prune` è sparito dal remoto. Le voci già nel diario non ne risentono: controllano solo
+HEAD e i ref che hanno spostato. L'eccezione è un refspec configurato verso `refs/heads/` (un
+mirror): il valore di prima resta nel reflog del ref e il risultato lo segnala in `warnings`.
 
 ## 8. Interfaccia (L6)
 

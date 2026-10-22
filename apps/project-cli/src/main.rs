@@ -2,9 +2,9 @@
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use project_engine::{Invocation, Registry, Session};
+use project_engine::{Invocation, JobContext, Progress, Registry, Session};
 use project_git::CliOpener;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal as _, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -111,8 +111,20 @@ fn execute(
 ) -> anyhow::Result<serde_json::Value> {
     let Invocation { id, params } = text.parse()?;
     registry
-        .run(&id, session, params)
+        .run_with(&id, session, params, progress_on_stderr())
         .with_context(|| format!("comando `{id}`"))
+}
+
+/// L'avanzamento dei comandi lenti (`remote.fetch`) su stderr, su una riga riscritta con `\r`,
+/// solo se stderr è un terminale: stdout resta il JSON dei risultati.
+fn progress_on_stderr() -> JobContext {
+    if !io::stderr().is_terminal() {
+        return JobContext::new();
+    }
+    JobContext::new().with_progress(|p: &Progress| {
+        let end = if p.done { "\n" } else { "\r" };
+        eprint!("{}\x1b[K{end}", p.text);
+    })
 }
 
 /// Sessione che apre i repo con il `git` di sistema, con `repo` già aperto se c'è.

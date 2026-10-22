@@ -205,7 +205,7 @@ Regole valide per tutti gli step:
 ## Fase 4 — Remoti
 
 ### S25 — Fetch
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `remote.fetch` in background con avanzamento da stderr (`--progress`) ed errori
   di autenticazione riconosciuti; pulsante nella barra.
 - **Fatto quando:** test con un remoto locale (`git init --bare` in cartella temporanea); CI verde.

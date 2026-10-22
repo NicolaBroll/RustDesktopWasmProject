@@ -7,6 +7,7 @@
 mod builtin;
 mod commands;
 mod git;
+mod job;
 mod journal;
 mod platform;
 mod session;
@@ -15,14 +16,16 @@ pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, GitBackend, HEADS_PREFIX, HeadState, LinePatch, LineSelection,
-    LogQuery, MemoryBackend, MemoryOpener, RefMove, RefRestore, RepoOpener, RestoreOutcome,
-    StagedVersion, StashedFile, WorktreeBackup, WorktreeRestore, WorktreeStash, amend_impact,
-    apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
-    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
-    check_same_plan, cleanup_message, discard_description, discard_plan, file_digest, line_patch,
-    path_matches, split_message, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
+    DiscardOutcome, DiscardedFile, FetchFailure, FetchOutcome, FetchRequest, GitBackend,
+    HEADS_PREFIX, HeadState, LinePatch, LineSelection, LogQuery, MemoryBackend, MemoryOpener,
+    RefMove, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, StashedFile, WorktreeBackup,
+    WorktreeRestore, WorktreeStash, amend_impact, apply_patch, backup_message, branch_ref,
+    branch_short, check_amend_published, check_branch_name, check_commit_state,
+    check_new_branch_name, check_no_operation, check_remote_name, check_same_plan, cleanup_message,
+    default_remote, discard_description, discard_plan, file_digest, line_patch, path_matches,
+    split_message, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
+pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
@@ -138,6 +141,28 @@ pub enum EngineError {
         files: Vec<String>,
         stderr: String,
     },
+    /// Il remoto ha rifiutato le credenziali, o servirebbe chiederle (nome utente, password,
+    /// passphrase, conferma della chiave dell'host) e non c'è modo di farlo senza terminale:
+    /// "Authentication failed", "could not read Username", "Permission denied (publickey)",
+    /// HTTP 401/403, "Host key verification failed". Niente è stato modificato. `message` è il
+    /// testo di git (stderr).
+    #[error(
+        "autenticazione con il remoto `{remote}` non riuscita: {message}. Niente modificato: \
+         controllare le credenziali (credential helper, chiave SSH caricata nell'agent, host \
+         noto in `known_hosts`)"
+    )]
+    Auth { remote: String, message: String },
+    /// Il remoto non si raggiunge: l'URL punta a una cartella che non c'è o non è un
+    /// repository, host sconosciuto, connessione rifiutata o interrotta, repository inesistente
+    /// sul server. Niente è stato modificato. `message` è il testo di git (stderr).
+    #[error("il remoto `{remote}` non è raggiungibile: {message}. Niente modificato")]
+    RemoteUnreachable { remote: String, message: String },
+    /// Il comando è stato annullato da chi lo ha lanciato
+    /// ([`CancelToken::cancel`](crate::CancelToken::cancel)). Quello che il comando dice di sé
+    /// vale anche qui (es. `remote.fetch` annullato: i ref già aggiornati restano, nessun ref
+    /// locale toccato).
+    #[error("`{command}` annullato")]
+    Cancelled { command: &'static str },
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]

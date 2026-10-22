@@ -10,6 +10,7 @@
 //! con il pannello a destra accanto per passare da un file all'altro. Sotto le liste dell'area
 //! di stage c'è la casella del messaggio di commit.
 
+mod branch;
 mod commit;
 mod details;
 mod diff;
@@ -25,6 +26,7 @@ mod view;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
+use branch::{BranchBox, Start};
 use commit::{CommitBox, CommitResult, Gate};
 use details::DetailsState;
 use diff::DiffDoc;
@@ -111,6 +113,23 @@ enum Action {
     CancelCommit,
     /// Nasconde l'errore dell'ultimo commit.
     DismissCommitError,
+    /// Apre il dialogo per un branch nuovo da `start`, con il nome proposto.
+    NewBranch(Start, String),
+    /// Apre il dialogo per rinominare il branch locale (nome breve).
+    RenameBranch(String),
+    /// Il testo del dialogo del nome del branch è cambiato.
+    BranchName(String),
+    /// Manda il dialogo del nome: crea o rinomina.
+    SubmitBranchName,
+    /// Passa al branch locale (nome breve).
+    Checkout(String),
+    /// Elimina il branch locale (nome breve) visto sul commit indicato: prima senza conferma;
+    /// se il motore la chiede si apre il dialogo. Il commit va al motore come `expected`.
+    DeleteBranch(String, Oid),
+    /// Conferma l'eliminazione in attesa: reinvia con `"confirm": true`.
+    ConfirmDeleteBranch,
+    /// Chiude il dialogo dei branch aperto senza mandare niente.
+    CloseBranchDialog,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -155,6 +174,8 @@ enum Request {
     Undo(u64),
     /// `edit.history`: lo stato dei pulsanti Annulla e Ripeti.
     History(u64),
+    /// `branch.*` (lo stato del dialogo è in [`BranchBox`]).
+    Branch(u64, branch::Op),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -186,6 +207,8 @@ struct RepoView {
     commit: CommitBox,
     /// Lo scarto delle modifiche: controllo, conferma, invio.
     discard: DiscardBox,
+    /// I comandi sui branch: dialoghi del nome, conferma dell'eliminazione, checkout.
+    branch: BranchBox,
     /// Cosa farebbero Annulla e Ripeti.
     history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
@@ -212,6 +235,7 @@ impl RepoView {
             diff: DiffState::default(),
             commit: CommitBox::default(),
             discard: DiscardBox::default(),
+            branch: BranchBox::default(),
             history: History::default(),
             select_after_load: None,
         };
@@ -237,12 +261,13 @@ impl RepoView {
         self.update_labels();
     }
 
-    /// Vero se è aperta una conferma (stage di conflitti, amend pubblicato, scarto): finché
-    /// c'è, niente scritture e i tasti vanno solo a lei.
+    /// Vero se è aperta una conferma (stage di conflitti, amend pubblicato, scarto) o un
+    /// dialogo dei branch: finché c'è, niente scritture e i tasti vanno solo a lei.
     fn modal_open(&self) -> bool {
         self.confirm.is_some()
             || self.commit.confirm().is_some()
             || self.discard.confirm().is_some()
+            || self.branch.modal_open()
     }
 
     /// L'ultimo commit (HEAD), se è tra quelli caricati.
@@ -565,6 +590,96 @@ impl App {
                     repo.commit.dismiss_error();
                 }
             }
+            Action::NewBranch(start, name) => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.branch.open_create(start, name);
+                }
+            }
+            Action::RenameBranch(name) => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.branch.open_rename(name);
+                }
+            }
+            Action::BranchName(name) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.set_name(name);
+                }
+            }
+            Action::SubmitBranchName => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((op, params, label)) = repo.branch.submit_name() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::Checkout(name) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = format!("Checkout di «{name}»");
+                if let Some(params) = repo.branch.start_checkout(name) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = branch::Op::Checkout;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::DeleteBranch(name, target) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = format!("Eliminazione di «{name}»");
+                if let Some(params) = repo.branch.start_delete(name, target) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = branch::Op::Delete;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::ConfirmDeleteBranch => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let label = match repo.branch.dialog() {
+                    Some(branch::Dialog::Delete(d)) => format!("Eliminazione di «{}»", d.name),
+                    _ => return,
+                };
+                if let Some(params) = repo.branch.confirm_delete() {
+                    repo.write_label = Some(label);
+                    let op = branch::Op::Delete;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::CloseBranchDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.close();
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -877,6 +992,10 @@ impl App {
                 self.receive_undo(generation, done);
                 continue;
             }
+            if let Request::Branch(generation, op) = request {
+                self.receive_branch(generation, op, done);
+                continue;
+            }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1049,6 +1168,72 @@ impl App {
         }
     }
 
+    /// Risposta di `branch.*`: ref e diario dalla risposta, poi il log riletto (un branch
+    /// eliminato può portarsi via dei commit); dopo un checkout si rilegge tutto (HEAD, grafo,
+    /// area di stage). Un nome rifiutato resta nel suo dialogo.
+    fn receive_branch(&mut self, generation: u64, op: branch::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .branch
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            branch::Received::Inline | branch::Received::Confirm | branch::Received::Refused => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            branch::Received::Done(outcome) => {
+                repo.history = outcome.history.clone();
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                let checkout = outcome.op == branch::Op::Checkout;
+                // Dopo un checkout il nuovo HEAD si seleziona appena arriva il log.
+                if checkout && !repo.worktree_selected {
+                    repo.select_after_load = repo.head.target();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                if checkout {
+                    self.follow_diff();
+                    self.load();
+                } else {
+                    // Di solito i ref arrivano con la risposta: basta il log.
+                    if !refs_read {
+                        self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    }
+                    if let Some(repo) = self.current(generation) {
+                        let first = repo.list.reset();
+                        self.request_page(first);
+                    }
+                }
+            }
+            branch::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    // Un'eliminazione rifiutata (es. il branch non è più sul commit visto): i
+                    // ref si rileggono, così la colonna mostra dov'è adesso.
+                    if op == branch::Op::Delete {
+                        self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    }
+                    // Il diario si rilegge comunque: costa poco e resta allineato.
+                    self.submit("edit.history", json!({}), Request::History(generation));
+                }
+            }
+        }
+    }
+
     /// Il repo mostrato, se è ancora quello della generazione `generation`.
     fn current(&mut self, generation: u64) -> Option<&mut RepoView> {
         self.repo.as_mut().filter(|_| generation == self.generation)
@@ -1106,7 +1291,8 @@ impl App {
             | Request::Write(..)
             | Request::Commit(..)
             | Request::Discard(..)
-            | Request::Undo(..) => {}
+            | Request::Undo(..)
+            | Request::Branch(..) => {}
         }
         Ok(())
     }
@@ -1150,7 +1336,7 @@ impl eframe::App for App {
                     .default_size(220.0)
                     .min_size(140.0)
                     .max_size(side_max)
-                    .show(ui, |ui| view::refs_panel(ui, repo, &mut actions));
+                    .show(ui, |ui| view::refs_panel(ui, repo, writing, &mut actions));
                 egui::Panel::right("dettagli")
                     .resizable(true)
                     .default_size(320.0)
@@ -1175,6 +1361,9 @@ impl eframe::App for App {
                 if let Some(pending) = repo.discard.confirm() {
                     view::confirm_discard(&ctx, pending, &mut actions);
                 }
+                if let Some(dialog) = repo.branch.dialog() {
+                    view::branch_dialog(&ctx, dialog, &mut actions);
+                }
                 if let Some(confirm) = repo.commit.confirm() {
                     let branch = match &repo.head {
                         Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
@@ -1186,7 +1375,7 @@ impl eframe::App for App {
                 }
                 let viewport = &mut self.viewport;
                 egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
-                    Pane::Closed => view::commit_list(ui, repo, viewport, &mut actions),
+                    Pane::Closed => view::commit_list(ui, repo, viewport, writing, &mut actions),
                     pane => {
                         let lines = diff_view::LinesUi {
                             selection: repo.diff.selection(),

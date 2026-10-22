@@ -1,5 +1,6 @@
 //! [`CliBackend`] e [`CliOpener`]: lettura di un repository eseguendo `git`.
 
+mod branch;
 mod commit;
 mod discard;
 mod restore;
@@ -13,10 +14,10 @@ use project_domain::{
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, DiscardOutcome, DiscardedFile,
-    EngineError, GitBackend, LinePatch, LineSelection, LogQuery, RefRestore, RepoOpener,
-    RestoreOutcome, StagedVersion, WorktreeRestore, apply_patch, backup_message, line_patch,
-    path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
+    DiscardOutcome, DiscardedFile, EngineError, GitBackend, HeadState, LinePatch, LineSelection,
+    LogQuery, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, WorktreeRestore, apply_patch,
+    backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1148,6 +1149,40 @@ impl GitBackend for CliBackend {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)
+    }
+
+    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
+        self.count_unmerged(tip, into)
+    }
+
+    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
+        self.create_local_branch(name, target)
+    }
+
+    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
+        self.switch_to(target)
+    }
+
+    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError> {
+        self.delete_local_branch(name, expected)
+    }
+
+    fn rename_branch(
+        &mut self,
+        from: &str,
+        to: &str,
+        expected: &Oid,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.rename_local_branch(from, to, expected)
+    }
+
+    fn restore_branch_config(
+        &mut self,
+        name: &str,
+        entries: &[ConfigEntry],
+        remove: bool,
+    ) -> Vec<String> {
+        self.set_branch_config(name, entries, remove)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

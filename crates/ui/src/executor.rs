@@ -61,6 +61,9 @@ pub enum ErrorKind {
     /// [`EngineError::PostCommit`]: il commit è riuscito, ma dopo qualcosa non torna (es. HEAD
     /// spostato da un hook `post-commit`); non va ripetuto, vanno riletti stato e log.
     PostCommit,
+    /// [`EngineError::CheckoutConflict`]: il checkout sovrascriverebbe modifiche locali e
+    /// niente è cambiato; i file indicati da git sono in [`Done::error_detail`], uno per riga.
+    CheckoutConflict,
     /// Tutti gli altri errori.
     Other,
 }
@@ -76,16 +79,18 @@ impl ErrorKind {
             EngineError::NothingToCommit => ErrorKind::NothingToCommit,
             EngineError::Git { .. } => ErrorKind::Git,
             EngineError::PostCommit { .. } => ErrorKind::PostCommit,
+            EngineError::CheckoutConflict { .. } => ErrorKind::CheckoutConflict,
             _ => ErrorKind::Other,
         }
     }
 
     /// Il dettaglio da mettere in [`Done::error_detail`]: il motivo di una conferma, lo stderr
-    /// di git.
+    /// di git, i file che un checkout sovrascriverebbe (uno per riga).
     pub fn detail(error: &EngineError) -> Option<String> {
         match error {
             EngineError::ConfirmRequired { reason, .. } => Some(reason.clone()),
             EngineError::Git { stderr, .. } => Some(stderr.clone()),
+            EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
             _ => None,
         }
     }
@@ -427,6 +432,16 @@ mod tests {
             reason: "HEAD è cambiato".to_owned(),
         };
         assert_eq!(ErrorKind::of(&post), ErrorKind::PostCommit);
+        let checkout = EngineError::CheckoutConflict {
+            target: "feature/x".to_owned(),
+            files: vec!["README.md".to_owned(), "src/lib.rs".to_owned()],
+            stderr: "error: ...".to_owned(),
+        };
+        assert_eq!(ErrorKind::of(&checkout), ErrorKind::CheckoutConflict);
+        assert_eq!(
+            ErrorKind::detail(&checkout).as_deref(),
+            Some("README.md\nsrc/lib.rs")
+        );
     }
 
     #[test]

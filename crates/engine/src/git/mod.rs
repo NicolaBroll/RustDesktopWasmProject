@@ -5,6 +5,7 @@
 //! [`MemoryBackend`] (qui, per i test e la versione web) e `CliBackend` (in `project-git`).
 
 mod backup;
+mod branch;
 mod commit;
 mod discard;
 mod line_diff;
@@ -22,6 +23,10 @@ pub use backup::{
     BACKUP_PREFIX, StagedVersion, backup_message, path_matches, versions_at_risk,
     versions_at_risk_hidden,
 };
+pub use branch::{
+    BranchDeleted, ConfigEntry, HEADS_PREFIX, branch_ref, branch_short, check_branch_name,
+    check_new_branch_name, check_no_operation,
+};
 pub use commit::{
     CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
     cleanup_message, split_message,
@@ -36,7 +41,7 @@ pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
 
 use crate::EngineError;
-use project_domain::{Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
+use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
 /// Un repository aperto: letture e, uno step alla volta, scritture (stage e unstage per ora).
@@ -209,6 +214,73 @@ pub trait GitBackend: Send {
         &mut self,
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
+
+    // --- Branch (S24). I nomi sono brevi (`feature/x`), già controllati dal comando con
+    // [`check_branch_name`] / [`check_new_branch_name`]; ai backend arrivano solo come
+    // `refs/heads/<nome>` o dopo `--end-of-options`, così un nome che inizia con `-` non
+    // diventa un'opzione.
+
+    /// Quanti commit raggiungibili da `tip` non lo sono da nessuno di `into` (`git rev-list
+    /// --count <tip> ^<into>...`): 0 vuol dire che `tip` è unito. Lettura, per la conferma di
+    /// `branch.delete`.
+    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError>;
+
+    /// Crea il branch locale `name` sul commit `target` (`branch.create`), **solo se non
+    /// esiste** (`update-ref refs/heads/<nome> <id> ""`: un ref esistente non si sovrascrive
+    /// mai, nemmeno se creato da un altro processo nell'istante prima). HEAD, indice e
+    /// worktree non si toccano; nessun upstream. Un nome già preso (anche da un ref che lo
+    /// contiene, come `a` per `a/b`) dà [`EngineError::NotAllowed`]; un nome che git rifiuta
+    /// [`EngineError::InvalidParams`].
+    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError>;
+
+    /// Porta HEAD su `target` aggiornando indice e worktree (`git switch`): il branch locale
+    /// (nome completo, deve esistere) o un commit con HEAD staccata (per l'undo di un checkout
+    /// fatto da HEAD staccata). `branch.checkout` e il suo undo/redo.
+    ///
+    /// **Non perde mai modifiche locali**: mai `--force`, `--discard-changes` né `--merge`.
+    /// Le modifiche che non toccano i file diversi fra HEAD e `target` restano (come in git);
+    /// se un file modificato (in stage o no), non tracciato o ignorato verrebbe sovrascritto,
+    /// [`EngineError::CheckoutConflict`] con i file e niente cambia. Rifiutati prima di
+    /// toccare qualcosa ([`EngineError::NotAllowed`]): operazioni in corso, file in conflitto,
+    /// `target` che non esiste. Restituisce gli avvisi scoperti dopo un checkout riuscito
+    /// (es. HEAD diversa da `target` per un hook `post-checkout`).
+    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError>;
+
+    /// Elimina il branch locale `name`, solo se vale ancora `expected` (`branch.delete`).
+    /// Prima salva il commit in un ref di backup nuovo `refs/project/backup/delete-...` (nel
+    /// risultato); se il backup non riesce non si elimina niente. Toglie poi la configurazione
+    /// `branch.<nome>.*` (upstream, ...), come `git branch -d`. Rifiutato
+    /// ([`EngineError::NotAllowed`], niente cambia) se è il branch di HEAD o se è aperto in un
+    /// altro worktree, o se non vale più `expected`. Il controllo "unito o no" lo fa il comando
+    /// ([`GitBackend::unmerged_count`]).
+    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError>;
+
+    /// Rinomina il branch locale `from` in `to` (`branch.rename` e il suo undo/redo), solo se
+    /// `from` vale ancora `expected` e `to` non esiste (mai sovrascritto). Come `git branch
+    /// -m`: reflog e configurazione `branch.<nome>.*` seguono il branch, e HEAD (anche di altri
+    /// worktree) che puntava a `from` punta a `to`. Indice e worktree non si toccano.
+    /// Restituisce gli avvisi scoperti dopo la rinomina riuscita. Rifiuti
+    /// ([`EngineError::NotAllowed`], niente cambia): `from` assente o cambiato, `to` già
+    /// presente; un nome `to` che git rifiuta: [`EngineError::InvalidParams`].
+    fn rename_branch(
+        &mut self,
+        from: &str,
+        to: &str,
+        expected: &Oid,
+    ) -> Result<RestoreOutcome, EngineError>;
+    /// La configurazione `branch.<name>.*` del repo per undo e redo di `branch.delete`, dopo
+    /// che il ref è stato ricreato o eliminato. `remove == false` (undo): riscrive `entries`,
+    /// solo se il repo non ha già voci `branch.<name>.*` (altrimenti non scrive niente e lo dice
+    /// in un avviso). `remove == true` (redo): toglie la sezione, solo se contiene esattamente
+    /// `entries` (quello che l'undo ha rimesso); una configurazione diversa resta, con un
+    /// avviso. Restituisce gli avvisi: il ref è già spostato, quindi un problema qui non è un
+    /// errore dell'operazione.
+    fn restore_branch_config(
+        &mut self,
+        name: &str,
+        entries: &[ConfigEntry],
+        remove: bool,
+    ) -> Vec<String>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

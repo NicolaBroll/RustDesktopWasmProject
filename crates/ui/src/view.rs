@@ -1,6 +1,7 @@
 //! Disegno dei pannelli. Le funzioni leggono la vista e producono [`Action`]; non cambiano
 //! niente direttamente.
 
+use crate::branch::{self, Dialog, NameKind, Start};
 use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
 use crate::details::Shown;
 use crate::diff::{DiffSource, DiffTarget};
@@ -152,11 +153,13 @@ pub(crate) fn welcome(ui: &mut Ui, can_pick: bool, busy: bool, actions: &mut Vec
     });
 }
 
-pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, actions: &mut Vec<Action>) {
+/// `writing`: c'è una scrittura in corso, le voci del menu che scrivono aspettano.
+pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
     let current = match &repo.head {
         Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
         Head::Detached(_) => None,
     };
+    let can_write = !writing && !repo.modal_open();
     egui::ScrollArea::vertical().show(ui, |ui| {
         let sections = [
             (RefKind::LocalBranch, "Branch locali"),
@@ -173,21 +176,43 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, actions: &mut Vec<Action>
                 .default_open(kind != RefKind::Tag)
                 .show(ui, |ui| {
                     for info in refs {
-                        ref_row(ui, info, current.as_deref() == Some(&info.name), actions);
+                        let is_head = current.as_deref() == Some(&info.name);
+                        ref_row(ui, info, is_head, can_write, actions);
                     }
                 });
         }
     });
 }
 
-fn ref_row(ui: &mut Ui, info: &RefInfo, is_head: bool, actions: &mut Vec<Action>) {
+/// `can_write`: le voci che scrivono sono attive (nessuna scrittura in corso, nessun dialogo).
+fn ref_row(ui: &mut Ui, info: &RefInfo, is_head: bool, can_write: bool, actions: &mut Vec<Action>) {
+    // L'id della riga viene dal nome del ref, non dalla posizione: se i ref si rileggono fra
+    // i due clic, un doppio clic non finisce su un altro branch.
+    ui.push_id(&info.name, |ui| {
+        ref_row_inner(ui, info, is_head, can_write, actions);
+    });
+}
+
+fn ref_row_inner(
+    ui: &mut Ui,
+    info: &RefInfo,
+    is_head: bool,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    let local = info.kind == RefKind::LocalBranch;
     ui.horizontal(|ui| {
         // Il branch corrente è evidenziato e in grassetto.
         let name = RichText::new(info.short_name());
         let name = if is_head { name.strong() } else { name };
         let response = ui.selectable_label(is_head, name);
-        if response.clicked() {
+        if response.double_clicked() && local && !is_head && can_write {
+            actions.push(Action::Checkout(info.short_name().to_owned()));
+        } else if response.clicked() {
             actions.push(Action::SelectCommit(info.target));
+        }
+        if info.kind != RefKind::Stash {
+            response.context_menu(|ui| ref_menu(ui, info, is_head, can_write, actions));
         }
         if let Some(upstream) = &info.upstream {
             let text = ahead_behind(upstream);
@@ -197,18 +222,112 @@ fn ref_row(ui: &mut Ui, info: &RefInfo, is_head: bool, actions: &mut Vec<Action>
         }
     })
     .response
-    .on_hover_text(format!("{}\n{}", info.name, info.target));
+    .on_hover_text(ref_tooltip(info, is_head));
+}
+
+fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
+    let mut text = format!("{}\n{}\nClic: seleziona il commit", info.name, info.target);
+    match info.kind {
+        RefKind::LocalBranch if is_head => text.push_str("\nClic destro: altre azioni"),
+        RefKind::LocalBranch => text.push_str("\nDoppio clic: checkout\nClic destro: altre azioni"),
+        RefKind::RemoteBranch | RefKind::Tag => text.push_str("\nClic destro: nuovo branch da qui"),
+        RefKind::Stash => {}
+    }
+    text
+}
+
+/// Quando una voce che scrive è spenta perché si aspetta: il motivo.
+const WAIT: &str = "Aspettare l'operazione in corso (o chiudere il dialogo aperto)";
+
+/// Il menu contestuale di un ref: sui branch locali checkout, nuovo branch, rinomina ed
+/// eliminazione; su branch remoti e tag solo il nuovo branch.
+fn ref_menu(
+    ui: &mut Ui,
+    info: &RefInfo,
+    is_head: bool,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    let name = info.short_name();
+    if info.kind == RefKind::LocalBranch {
+        let button = ui
+            .add_enabled(can_write && !is_head, egui::Button::new("Checkout"))
+            .on_hover_text(format!(
+                "Passa a «{name}»: le modifiche locali restano, se non toccano file diversi nel \
+                 branch (altrimenti niente cambia)"
+            ))
+            .on_disabled_hover_text(if is_head {
+                "È già il branch attivo"
+            } else {
+                WAIT
+            });
+        if button.clicked() {
+            actions.push(Action::Checkout(name.to_owned()));
+            ui.close();
+        }
+    }
+    let button = ui
+        .add_enabled(can_write, egui::Button::new("Nuovo branch da qui…"))
+        .on_hover_text(format!(
+            "Crea un branch su {} senza passarci",
+            info.target.short()
+        ))
+        .on_disabled_hover_text(WAIT);
+    if button.clicked() {
+        let (start, proposed) = Start::from_ref(info);
+        actions.push(Action::NewBranch(start, proposed));
+        ui.close();
+    }
+    if info.kind != RefKind::LocalBranch {
+        return;
+    }
+    let button = ui
+        .add_enabled(can_write, egui::Button::new("Rinomina…"))
+        .on_disabled_hover_text(WAIT);
+    if button.clicked() {
+        actions.push(Action::RenameBranch(name.to_owned()));
+        ui.close();
+    }
+    ui.separator();
+    let enabled = can_write && !is_head;
+    let color = if enabled {
+        ui.visuals().error_fg_color
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let button = ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(RichText::new("Elimina").color(color)),
+        )
+        .on_hover_text(
+            "Elimina il branch. Se è unito si elimina subito; se ha commit che non sono altrove \
+             chiede conferma. In ogni caso il commit resta in un backup \
+             (refs/project/backup/delete-…) e «Annulla» ricrea il branch",
+        )
+        .on_disabled_hover_text(if is_head {
+            "È il branch attivo: passare prima a un altro branch per eliminarlo"
+        } else {
+            WAIT
+        });
+    if button.clicked() {
+        actions.push(Action::DeleteBranch(name.to_owned(), info.target));
+        ui.close();
+    }
 }
 
 /// Altezza di una riga della lista dei commit.
 const ROW_HEIGHT: f32 = 22.0;
 
+/// `writing`: c'è una scrittura in corso, le voci del menu che scrivono aspettano.
 pub(crate) fn commit_list(
     ui: &mut Ui,
     repo: &RepoView,
     viewport: &mut ListViewport,
+    writing: bool,
     actions: &mut Vec<Action>,
 ) {
+    let can_write = !writing && !repo.modal_open();
     let list = &repo.list;
     // La riga "Modifiche non committate" è la riga 0: i commit partono da `offset`.
     let header = repo.has_changes();
@@ -289,6 +408,17 @@ pub(crate) fn commit_list(
             if response.clicked() {
                 actions.push(Action::Select(index));
             }
+            let id = commit.id;
+            response.context_menu(|ui| {
+                let button = ui
+                    .add_enabled(can_write, egui::Button::new("Nuovo branch da qui…"))
+                    .on_hover_text(format!("Crea un branch su {} senza passarci", id.short()))
+                    .on_disabled_hover_text(WAIT);
+                if button.clicked() {
+                    actions.push(Action::NewBranch(Start::from_commit(id), String::new()));
+                    ui.close();
+                }
+            });
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
             let text_rect = rect.with_min_x(rect.left() + graph_w);
@@ -1517,6 +1647,178 @@ pub(crate) fn confirm_amend(
     });
     if modal.should_close() {
         actions.push(Action::CancelCommit);
+    }
+}
+
+/// Il dialogo dei branch aperto: nome (nuovo o rinomina), conferma dell'eliminazione,
+/// checkout rifiutato.
+pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut Vec<Action>) {
+    let modal = egui::Modal::new(egui::Id::unique("dialogo-branch")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        match dialog {
+            Dialog::Name(dialog) => name_dialog(ui, dialog, actions),
+            Dialog::Delete(delete) => {
+                let discard::Phase::Confirm { reason } = &delete.phase else {
+                    return;
+                };
+                delete_dialog(ui, delete, reason, actions);
+            }
+            Dialog::Refused(refused) => refused_dialog(ui, refused, actions),
+        }
+    });
+    if modal.should_close() {
+        actions.push(Action::CloseBranchDialog);
+    }
+}
+
+fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mut Vec<Action>) {
+    let (title, button) = match &dialog.kind {
+        NameKind::Create(_) => ("Nuovo branch", "Crea il branch"),
+        NameKind::Rename(_) => ("Rinomina il branch", "Rinomina"),
+    };
+    ui.heading(title);
+    ui.add_space(6.0);
+    match &dialog.kind {
+        NameKind::Create(start) => {
+            ui.label(format!(
+                "Il branch parte da {} ({}). Si crea senza passarci: il branch attivo non cambia.",
+                start.label,
+                start.target.short()
+            ));
+        }
+        NameKind::Rename(old) => {
+            ui.label(format!(
+                "Nuovo nome per «{old}». Reflog e upstream seguono il branch."
+            ));
+        }
+    }
+    ui.add_space(6.0);
+    let id = ui.make_persistent_id("nome-branch");
+    // Invio nel campo manda il nome: si legge prima del campo, che altrimenti lo prenderebbe.
+    let enter = ui.memory(|m| m.has_focus(id))
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let mut name = dialog.name.clone();
+    let edit = egui::TextEdit::singleline(&mut name)
+        .id(id)
+        .hint_text("es. feature/nuova")
+        .desired_width(f32::INFINITY)
+        .interactive(!dialog.sending);
+    let response = ui.add(edit);
+    // Il campo prende la tastiera all'apertura.
+    if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+        response.request_focus();
+    }
+    if response.changed() {
+        actions.push(Action::BranchName(name));
+    }
+    if let Some(error) = &dialog.error {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let clicked = ui
+            .add_enabled(dialog.can_submit(), egui::Button::new(button))
+            .clicked();
+        if (clicked || enter) && dialog.can_submit() {
+            actions.push(Action::SubmitBranchName);
+        }
+        if ui
+            .add_enabled(!dialog.sending, egui::Button::new("Chiudi"))
+            .clicked()
+        {
+            actions.push(Action::CloseBranchDialog);
+        }
+        if dialog.sending {
+            ui.spinner();
+        }
+    });
+}
+
+fn delete_dialog(
+    ui: &mut Ui,
+    delete: &branch::DeleteDialog,
+    reason: &str,
+    actions: &mut Vec<Action>,
+) {
+    ui.heading(format!(
+        "Eliminare «{}» ({})?",
+        delete.name,
+        delete.target.short()
+    ));
+    ui.add_space(6.0);
+    ui.add(
+        egui::Label::new(
+            "Il branch non è unito: ha commit che non sono nel branch attivo (né nel suo \
+             upstream). Eliminandolo quei commit non sono più raggiungibili da nessun branch.",
+        )
+        .wrap(),
+    );
+    ui.add_space(6.0);
+    ui.strong("Motivo:");
+    ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
+    ui.add_space(6.0);
+    ui.add(
+        egui::Label::new(
+            "Prima di eliminare si salva un backup del commit (refs/project/backup/delete-…): \
+             con «Annulla» nella barra in alto il branch torna sullo stesso commit, con la \
+             sua configurazione (upstream compreso), finché l'app resta aperta: il diario delle \
+             operazioni è in memoria. Dopo la chiusura resta solo il backup del commit in \
+             refs/project/backup/, da cui il branch si ricrea a mano.",
+        )
+        .wrap(),
+    );
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let button = egui::Button::new(
+            RichText::new("Elimina il branch").color(ui.visuals().strong_text_color()),
+        )
+        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        if ui.add(button).clicked() {
+            actions.push(Action::ConfirmDeleteBranch);
+        }
+        if ui.button("Non eliminare").clicked() {
+            actions.push(Action::CloseBranchDialog);
+        }
+    });
+}
+
+/// Altezza massima dell'elenco dei file del checkout rifiutato; oltre si scorre.
+const REFUSED_LIST_HEIGHT: f32 = 160.0;
+
+fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &mut Vec<Action>) {
+    ui.heading(format!("Checkout di «{}» non possibile", refused.name));
+    ui.add_space(6.0);
+    ui.add(
+        egui::Label::new(
+            "Il checkout sovrascriverebbe modifiche locali: questi percorsi sono modificati (in \
+             stage o no) o non tracciati (anche dentro una cartella che nel branch è un file, o \
+             in un submodule), e nel branch di destinazione sono diversi. Niente è stato \
+             modificato. Committare, scartare o mettere da parte queste modifiche e \
+             riprovare.",
+        )
+        .wrap(),
+    );
+    ui.add_space(6.0);
+    let n = refused.files.len();
+    ui.strong(match n {
+        0 => "Git non ha indicato i file.".to_owned(),
+        1 => "File:".to_owned(),
+        n => format!("{n} file:"),
+    });
+    let row = ui.text_style_height(&egui::TextStyle::Monospace);
+    egui::ScrollArea::vertical()
+        .id_salt("checkout-file")
+        .max_height(REFUSED_LIST_HEIGHT)
+        .auto_shrink([false, true])
+        .show_rows(ui, row, n, |ui, range| {
+            for path in &refused.files[range] {
+                ui.monospace(path);
+            }
+        });
+    ui.add_space(10.0);
+    if ui.button("Chiudi").clicked() {
+        actions.push(Action::CloseBranchDialog);
     }
 }
 

@@ -56,6 +56,21 @@ impl CliBackend {
     /// [`GitBackend::restore_refs`](project_engine::GitBackend::restore_refs).
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         request.check(self.operation())?;
+        // Un branch aperto in un altro worktree non si cancella (es. redo di `branch.delete`).
+        for r in &request.refs {
+            if r.target.is_none()
+                && r.name.starts_with("refs/heads/")
+                && let Some(path) = self.checked_out_elsewhere(&r.name)?
+            {
+                return Err(EngineError::NotAllowed(format!(
+                    "`{}` cancellerebbe `{}`, il branch attivo del worktree `{}`: niente \
+                     modificato",
+                    request.command,
+                    r.name,
+                    path.display()
+                )));
+            }
+        }
         // Le voci del reflog di HEAD prima del controllo: dopo la transazione ce ne deve essere
         // al massimo una in più (la nostra), altrimenti HEAD è cambiata nel frattempo.
         let head_log_before = self.head_log_len()?;
@@ -129,7 +144,7 @@ impl CliBackend {
 
     /// HEAD come la registra il diario: il branch a cui punta (nome completo, anche senza
     /// commit) o il commit se staccata.
-    fn head_state(&self) -> Result<HeadState, EngineError> {
+    pub(super) fn head_state(&self) -> Result<HeadState, EngineError> {
         match self.head_ref_name()? {
             Some(name) => Ok(HeadState::Branch(name)),
             None => self
@@ -142,7 +157,7 @@ impl CliBackend {
     /// Il valore del ref `name` (nome completo, validato da [`RefRestore::check`]), `None` se
     /// non esiste. `for-each-ref` con il nome come modello trova anche i ref sotto `name/`:
     /// si tiene solo quello con il nome esatto.
-    fn ref_value(&self, name: &str) -> Result<Option<Oid>, EngineError> {
+    pub(super) fn ref_value(&self, name: &str) -> Result<Option<Oid>, EngineError> {
         let args = ["for-each-ref", "--format=%(refname)%00%(objectname)", name];
         let out = self.run(&args)?;
         for line in out.split(|&b| b == b'\n') {

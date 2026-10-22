@@ -10,6 +10,7 @@
 
 use crate::EngineError;
 use project_domain::{Oid, Operation};
+
 use serde::{Deserialize, Serialize};
 
 /// Dove punta HEAD in un momento, per il diario: su un branch (nome completo, es.
@@ -68,9 +69,12 @@ pub struct RefRestore {
     pub command: &'static str,
     /// HEAD come deve essere ora.
     pub head_expected: HeadState,
-    /// HEAD come deve diventare. Oggi solo lo stesso branch di `head_expected` (HEAD non si
-    /// tocca) o un altro commit con HEAD staccata; un cambio di branch arriverà con
-    /// `branch.checkout`.
+    /// HEAD come deve diventare: solo lo stesso branch di `head_expected` (HEAD non si tocca)
+    /// o un altro commit con HEAD staccata. Un cambio di branch non passa da qui: undo e redo
+    /// di `branch.checkout` e `branch.rename` usano
+    /// [`GitBackend::checkout`](crate::GitBackend::checkout) e
+    /// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch), che aggiornano anche
+    /// worktree, reflog e configurazione.
     pub head_target: HeadState,
     pub refs: Vec<RefMove>,
     /// Messaggio del reflog (`update-ref -m`), es. `project: undo Commit a0744b4 «...»`.
@@ -98,21 +102,7 @@ impl RefRestore {
     /// - HEAD che dovrebbe cambiare branch, o passare fra branch e staccata →
     ///   [`EngineError::NotAllowed`]: non ancora supportato (nessun comando del diario lo fa).
     pub fn check(&self, operation: Option<Operation>) -> Result<(), EngineError> {
-        if let Some(op) = operation {
-            let name = match op {
-                Operation::Merge => "un merge",
-                Operation::Rebase => "un rebase",
-                Operation::CherryPick => "un cherry-pick",
-                Operation::Revert => "un revert",
-                Operation::Bisect => "un bisect",
-                Operation::Am => "un `git am`",
-            };
-            return Err(EngineError::NotAllowed(format!(
-                "è in corso {name}: `{}` sposterebbe i ref a metà dell'operazione, niente \
-                 modificato. Concludere o annullare l'operazione e riprovare",
-                self.command
-            )));
-        }
+        super::check_no_operation(self.command, "sposterebbe i ref", operation)?;
         for r in &self.refs {
             if !valid_ref_name(&r.name) {
                 return Err(EngineError::NotAllowed(format!(

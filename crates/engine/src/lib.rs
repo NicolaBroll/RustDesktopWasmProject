@@ -14,13 +14,14 @@ mod session;
 pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
-    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, DiscardOutcome, DiscardedFile,
-    GitBackend, HeadState, LinePatch, LineSelection, LogQuery, MemoryBackend, MemoryOpener,
-    RefMove, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, StashedFile, WorktreeBackup,
-    WorktreeRestore, WorktreeStash, amend_impact, apply_patch, backup_message,
-    check_amend_published, check_commit_state, check_same_plan, cleanup_message,
-    discard_description, discard_plan, file_digest, line_patch, path_matches, split_message,
-    valid_ref_name, versions_at_risk, versions_at_risk_hidden,
+    BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
+    DiscardOutcome, DiscardedFile, GitBackend, HEADS_PREFIX, HeadState, LinePatch, LineSelection,
+    LogQuery, MemoryBackend, MemoryOpener, RefMove, RefRestore, RepoOpener, RestoreOutcome,
+    StagedVersion, StashedFile, WorktreeBackup, WorktreeRestore, WorktreeStash, amend_impact,
+    apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
+    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
+    check_same_plan, cleanup_message, discard_description, discard_plan, file_digest, line_patch,
+    path_matches, split_message, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use platform::{Capabilities, Picked, Platform};
@@ -119,6 +120,23 @@ pub enum EngineError {
     UndoConflict {
         command: &'static str,
         refs: Vec<String>,
+    },
+    /// `branch.checkout` (o l'undo/redo di un checkout) rifiutato da git perché sovrascriverebbe
+    /// modifiche locali: file modificati (in stage o no) diversi nel branch di destinazione, o
+    /// file non tracciati o ignorati che il branch di destinazione contiene. Niente è stato
+    /// modificato (git controlla prima di scrivere); `files` sono i file indicati da git,
+    /// `stderr` il suo messaggio. Le modifiche vanno committate, messe da parte o scartate
+    /// prima del checkout.
+    #[error(
+        "checkout di `{target}` rifiutato: sovrascriverebbe modifiche locali ({}). Niente \
+         modificato: committare, mettere da parte o scartare queste modifiche e riprovare",
+        list(.files)
+    )]
+    CheckoutConflict {
+        /// Il branch (nome breve) o il commit di destinazione.
+        target: String,
+        files: Vec<String>,
+        stderr: String,
     },
     #[error(transparent)]
     Core(#[from] CoreError),

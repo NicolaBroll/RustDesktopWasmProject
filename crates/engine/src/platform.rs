@@ -15,6 +15,9 @@ pub struct Capabilities {
     pub reveal_in_file_manager: bool,
     /// L'app può chiudere la propria finestra (falso nel browser).
     pub window_control: bool,
+    /// [`Platform::pick_folder`] apre un dialogo (falso nel browser, che non vede le cartelle
+    /// locali).
+    pub open_folder: bool,
 }
 
 pub trait Platform: Send + Sync {
@@ -23,6 +26,10 @@ pub trait Platform: Send + Sync {
     /// l'utente annulla.
     fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>);
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>);
+    /// Chiede all'utente una cartella; `None` se annulla o se la piattaforma non ha cartelle
+    /// (vedi [`Capabilities::open_folder`]). Il percorso è una stringa perché va passato a
+    /// `repo.open`: una cartella con un nome non UTF-8 dà `None`.
+    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>);
     /// Esegue `job` fuori dal thread della UI (vedi `impl-docs/ARCHITETTURA-git.md` §6): un
     /// thread sul desktop. Sul web non ci sono thread e il job gira subito, prima del ritorno.
     fn spawn(&self, job: Box<dyn FnOnce() + Send>);

@@ -105,7 +105,7 @@ Regole valide per tutti gli step:
   CI verde.
 
 ### S11 — Layout principale
-- [ ] **Agente:** `egui-ui`
+- [x] **Agente:** `egui-ui`
 - **Obiettivo:** barra in alto, colonna sinistra con i ref, lista dei commit al centro (senza
   grafo), pannello dettagli a destra (§8). Desktop: apertura di un repo con il dialogo cartelle.
   Web: `MemoryBackend` con il repo di esempio.

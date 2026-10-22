@@ -182,6 +182,9 @@ mod tests {
             on_done(None);
         }
         fn save_file(&self, _: &str, _: Vec<u8>) {}
+        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+            on_done(None);
+        }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             match self {
                 TestPlatform::Threads => drop(std::thread::spawn(job)),

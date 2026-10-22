@@ -147,6 +147,9 @@ impl Blocked {
             Blocked::Operation(Operation::Revert) => {
                 "Revert in corso: si conclude con i comandi del revert, non con un commit"
             }
+            Blocked::Operation(Operation::Am) => {
+                "`git am` in corso: si conclude con `git am --continue`, non con un commit"
+            }
             Blocked::Operation(_) => "Un'operazione in corso impedisce il commit",
             Blocked::AmendInMerge => {
                 "Merge in corso: non si può modificare l'ultimo commit, disattivare amend"
@@ -184,7 +187,12 @@ impl Gate<'_> {
             Some(status) if status.has_conflicts() => return Err(Blocked::Conflicts),
             Some(Status {
                 operation:
-                    Some(op @ (Operation::Rebase | Operation::CherryPick | Operation::Revert)),
+                    Some(
+                        op @ (Operation::Rebase
+                        | Operation::CherryPick
+                        | Operation::Revert
+                        | Operation::Am),
+                    ),
                 ..
             }) => return Err(Blocked::Operation(*op)),
             Some(status) => status.operation == Some(Operation::Merge),
@@ -592,6 +600,11 @@ mod tests {
         assert_eq!(
             gate(&ready, &rebase, 1, false),
             Err(Blocked::Operation(Operation::Rebase))
+        );
+        let am = status(Vec::new(), Some(Operation::Am));
+        assert_eq!(
+            gate(&ready, &am, 1, false),
+            Err(Blocked::Operation(Operation::Am))
         );
         // Merge risolto: il commit di merge si fa anche senza niente in stage.
         let merge = status(Vec::new(), Some(Operation::Merge));

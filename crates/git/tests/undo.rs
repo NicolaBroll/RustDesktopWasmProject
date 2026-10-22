@@ -259,13 +259,19 @@ fn undo_of_the_first_commit_leaves_an_unborn_branch() {
     assert_eq!(index_and_files(&repo, &["a.txt"]), index);
     assert_eq!(porcelain(&repo), "A  a.txt");
     assert_eq!(out["status"]["head"]["Branch"]["target"], Value::Null);
+    assert_eq!(out["warnings"], json!([]));
     let backup = out["backups"][0].as_str().unwrap();
     assert_eq!(repo.rev(backup), first);
     // `repo.log` su un branch senza commit è vuoto.
     let log = run(&r, &mut s, "repo.log", json!({}));
     assert_eq!(log["commits"], json!([]));
 
-    run(&r, &mut s, "edit.redo", json!({}));
+    let out = run(&r, &mut s, "edit.redo", json!({}));
+    assert_eq!(
+        out["warnings"],
+        json!([]),
+        "nessun altro processo: nessun avviso"
+    );
     assert_eq!(repo.rev("refs/heads/main"), first);
     assert_eq!(porcelain(&repo), "");
 }
@@ -609,7 +615,7 @@ fn head_changed_during_the_transaction_is_reported() {
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
     std::fs::write(
         &hook,
-        "#!/bin/sh\nd=$(git rev-parse --absolute-git-dir)\nif [ \"$1\" = committed ] && grep -q ' HEAD$' && [ ! -e \"$d/fatto\" ]; then\n  touch \"$d/fatto\"\n  git symbolic-ref HEAD refs/heads/main\nfi\nexit 0\n",
+        "#!/bin/sh\nd=$(git rev-parse --absolute-git-dir) || exit 1\nif [ \"$1\" = committed ] && grep -q ' HEAD$' && [ ! -e \"$d/fatto\" ]; then\n  touch \"$d/fatto\"\n  git symbolic-ref HEAD refs/heads/main\nfi\nexit 0\n",
     )
     .unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -697,4 +703,73 @@ fn refused_during_git_am_and_a_stopped_sequencer() {
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(err.to_string().contains("cherry-pick"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_checkout_just_before_the_transaction_is_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = repo_detached_head();
+    let repo = &h.repo;
+    repo.write("c.txt", "c\n");
+    repo.stage(&["c.txt"]);
+    let (r, mut s) = open(repo);
+    run(
+        &r,
+        &mut s,
+        "commit.create",
+        json!({ "message": "staccata" }),
+    );
+    let commit = repo.rev("HEAD");
+    let branches = repo.git(&[
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        "refs/heads/",
+    ]);
+    // Un altro processo fa un checkout fra il controllo e la transazione: simulato da un hook
+    // sulla creazione del ref di backup (che viene subito prima), con un branch `altro` sul
+    // commit atteso. La transazione (`option no-deref` + `update HEAD`) riesce e stacca di
+    // nuovo HEAD: HEAD finale è quella chiesta, ma il reflog di HEAD ha due voci nuove.
+    let hook = repo.path().join(".git/hooks/reference-transaction");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nd=$(git rev-parse --absolute-git-dir) || exit 1\n\
+             if [ \"$1\" = committed ] && grep -q ' refs/project/backup/undo-' && [ ! -e \"$d/fatto\" ]; then\n\
+             \x20 touch \"$d/fatto\"\n\
+             \x20 git branch altro {commit}\n\
+             \x20 git symbolic-ref -m 'checkout: moving to altro' HEAD refs/heads/altro\n\
+             fi\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = run(&r, &mut s, "edit.undo", json!({}));
+    let warnings = out["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{out}");
+    assert!(
+        warnings[0].as_str().unwrap().contains("voci nuove"),
+        "{warnings:?}"
+    );
+    // HEAD staccata sul commit di prima, come chiesto; i branch non si spostano (c'è solo
+    // `altro`, creato dal "checkout").
+    assert!(
+        !repo
+            .git_output(&["symbolic-ref", "-q", "HEAD"])
+            .status
+            .success()
+    );
+    assert_eq!(repo.rev("HEAD"), h.f1);
+    assert_eq!(repo.rev("refs/heads/altro"), commit);
+    let now = repo.git(&[
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        "refs/heads/",
+    ]);
+    let without_altro: Vec<&str> = now
+        .lines()
+        .filter(|l| !l.starts_with("refs/heads/altro "))
+        .collect();
+    assert_eq!(without_altro.join("\n"), branches);
 }

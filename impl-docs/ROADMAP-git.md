@@ -181,7 +181,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test di integrazione, anche con un hook `pre-commit` che fallisce; CI verde.
 
 ### S22 — Diario delle operazioni e undo
-- [ ] **Agente:** `git-engine`
+- [x] **Agente:** `git-engine`
 - **Obiettivo:** diario (§7) per i comandi che spostano ref; `edit.undo` e `edit.redo` con
   controllo che i ref non siano cambiati nel frattempo.
 - **Fatto quando:** test: commit poi undo riporta il branch al commit precedente; undo rifiutato

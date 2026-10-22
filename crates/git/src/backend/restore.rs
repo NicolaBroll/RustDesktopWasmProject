@@ -47,7 +47,7 @@
 //! per il gc non lo è.
 
 use super::CliBackend;
-use crate::command::failure;
+use crate::command::{failure, path_from_output};
 use project_domain::Oid;
 use project_engine::{EngineError, HeadState, RefMove, RefRestore, RestoreOutcome};
 use std::collections::BTreeSet;
@@ -75,19 +75,20 @@ impl CliBackend {
         Ok(RestoreOutcome { backups, warnings })
     }
 
-    /// Le voci del reflog di HEAD (`rev-list --walk-reflogs --count`, 0 se non c'è).
+    /// Le voci del reflog di HEAD: le righe del file `logs/HEAD` della worktree (il percorso
+    /// lo dà `rev-parse --git-path logs/HEAD`). Non `rev-list --walk-reflogs --count HEAD`,
+    /// che con HEAD su un branch senza commit dà 0 anche se il file ha righe. Con il formato
+    /// reftable il file non esiste: 0, e resta solo il confronto con HEAD attuale.
     fn head_log_len(&self) -> Result<usize, EngineError> {
-        if !self.git_dir.join("logs/HEAD").exists() {
-            return Ok(0);
-        }
-        let out = self.run(&[
-            "rev-list",
-            "--walk-reflogs",
-            "--ignore-missing",
-            "--count",
-            "HEAD",
-        ])?;
-        Ok(String::from_utf8_lossy(&out).trim().parse().unwrap_or(0))
+        let out = self.run(&["rev-parse", "--git-path", "logs/HEAD"])?;
+        let path = self.workdir.join(path_from_output(&out));
+        Ok(match std::fs::read(&path) {
+            Ok(content) => content
+                .split(|&b| b == b'\n')
+                .filter(|l| !l.is_empty())
+                .count(),
+            Err(_) => 0,
+        })
     }
 
     /// Dopo una transazione riuscita: HEAD deve essere quella chiesta, e nel reflog di HEAD ci

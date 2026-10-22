@@ -12,7 +12,7 @@ mod session;
 
 pub use builtin::DEFAULT_LOG_LIMIT;
 pub use commands::{CommandSpec, Handler, Registry};
-pub use git::{GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener};
+pub use git::{DiffSpec, GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener};
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
 pub use session::Session;

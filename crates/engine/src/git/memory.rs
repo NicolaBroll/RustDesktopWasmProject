@@ -1,10 +1,11 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
-use super::{GitBackend, LogQuery, RepoOpener};
+use super::line_diff;
+use super::{DiffSpec, GitBackend, LogQuery, RepoOpener};
 use crate::EngineError;
 use project_domain::{
-    ChangedFile, Commit, CommitDetails, Head, Oid, Operation, RefInfo, RefKind, Status,
-    StatusEntry, Upstream,
+    Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
+    RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
 };
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
@@ -44,6 +45,10 @@ pub struct MemoryBackend {
     head: HeadRef,
     entries: Vec<StatusEntry>,
     operation: Option<Operation>,
+    /// Contenuto degli oggetti blob, per i diff.
+    blobs: BTreeMap<Oid, Vec<u8>>,
+    /// Contenuto dei file nel worktree, per `diff.worktree`.
+    worktree: BTreeMap<RepoPath, Vec<u8>>,
 }
 
 impl Default for MemoryBackend {
@@ -63,6 +68,8 @@ impl MemoryBackend {
             head: HeadRef::Branch("main".to_owned()),
             entries: Vec::new(),
             operation: None,
+            blobs: BTreeMap::new(),
+            worktree: BTreeMap::new(),
         }
     }
 
@@ -94,6 +101,18 @@ impl MemoryBackend {
     /// [`GitBackend::show_commit`]; senza questa chiamata il commit non cambia nessun file.
     pub fn set_changes(&mut self, id: Oid, files: Vec<ChangedFile>) {
         self.changes.insert(id, files);
+    }
+
+    /// Contenuto del blob `id`, usato dai diff dei file che lo hanno come id. Un file il cui
+    /// contenuto non è noto compare nei diff come binario (senza hunk).
+    pub fn set_blob(&mut self, id: Oid, content: impl Into<Vec<u8>>) {
+        self.blobs.insert(id, content.into());
+    }
+
+    /// Contenuto del file `path` nel worktree, per [`DiffSpec::Worktree`]: serve per le voci
+    /// dello stato modificate fuori stage (per i file eliminati no).
+    pub fn set_worktree_file(&mut self, path: impl Into<RepoPath>, content: impl Into<Vec<u8>>) {
+        self.worktree.insert(path.into(), content.into());
     }
 
     /// Crea o sposta il branch locale `name` (nome breve, es. `main`).
@@ -238,6 +257,220 @@ fn kind_of(name: &str) -> RefKind {
     }
 }
 
+/// Un lato di un file in un diff: modo, id e contenuto (se noto).
+#[derive(Clone, Copy)]
+struct Side<'a> {
+    mode: u32,
+    oid: Oid,
+    content: Option<&'a [u8]>,
+}
+
+/// Id finto del contenuto di un file del worktree (git lo calcola con `hash-object`).
+fn content_oid(content: &[u8]) -> Oid {
+    // FNV-1a: deterministico e diverso per contenuti diversi (in pratica).
+    let hash = content.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    MemoryBackend::fake_oid(hash)
+}
+
+/// Il [`FileDiff`] di un file da `old` (assente per un file aggiunto) a `new` (assente per un
+/// file eliminato), con i campi come li legge `parse_diff` dall'output di git.
+fn file_diff<'a>(
+    change: Change,
+    old_path: &RepoPath,
+    new_path: &RepoPath,
+    similarity: Option<u8>,
+    old: Option<Side<'a>>,
+    new: Option<Side<'a>>,
+) -> FileDiff {
+    let zero = Oid::from_bytes([0; Oid::LEN]);
+    let mut file = FileDiff {
+        old_path: old_path.clone(),
+        new_path: new_path.clone(),
+        change,
+        similarity,
+        old_mode: old.map(|s| s.mode),
+        new_mode: new.map(|s| s.mode),
+        old_oid: Some(old.map_or(zero, |s| s.oid)),
+        new_oid: Some(new.map_or(zero, |s| s.oid)),
+        binary: false,
+        hunks: Vec::new(),
+    };
+    if let (Some(o), Some(n)) = (old, new)
+        && o.oid == n.oid
+    {
+        // Contenuto invariato (rinomina esatta, cambio di solo modo): git non scrive la riga
+        // `index`, e i modi solo se cambiano.
+        file.old_oid = None;
+        file.new_oid = None;
+        if o.mode == n.mode {
+            file.old_mode = None;
+            file.new_mode = None;
+        }
+        return file;
+    }
+    let content = |side: Option<Side<'a>>| -> Option<&'a [u8]> {
+        match side {
+            None => Some(&[][..]),
+            Some(s) if s.oid == zero => Some(&[][..]),
+            Some(s) => s.content,
+        }
+    };
+    match (content(old), content(new)) {
+        // Come git: binario se c'è un NUL nei primi 8000 byte.
+        (Some(o), Some(n)) if !is_binary(o) && !is_binary(n) => {
+            file.hunks = line_diff::hunks(o, n);
+        }
+        _ => file.binary = true,
+    }
+    file
+}
+
+fn is_binary(content: &[u8]) -> bool {
+    content.iter().take(8000).any(|&b| b == 0)
+}
+
+fn unmerged(path: &RepoPath) -> FileDiff {
+    FileDiff {
+        old_path: path.clone(),
+        new_path: path.clone(),
+        change: Change::Unmerged,
+        similarity: None,
+        old_mode: None,
+        new_mode: None,
+        old_oid: None,
+        new_oid: None,
+        binary: false,
+        hunks: Vec::new(),
+    }
+}
+
+/// Il tipo di modifica di un file nel diff: un cambio di tipo è una modifica (git lo scrive
+/// come due sezioni, ma qui basta una).
+fn diff_change(change: Change) -> Change {
+    match change {
+        Change::TypeChanged => Change::Modified,
+        other => other,
+    }
+}
+
+impl MemoryBackend {
+    fn side(&self, mode: u32, oid: Oid) -> Option<Side<'_>> {
+        (mode != 0).then(|| Side {
+            mode,
+            oid,
+            content: self.blobs.get(&oid).map(Vec::as_slice),
+        })
+    }
+
+    /// I file del commit `rev` rispetto al primo genitore, dai file di `show_commit`.
+    fn commit_diff(&self, rev: &str) -> Result<Vec<FileDiff>, EngineError> {
+        let details = self.show_commit(rev)?;
+        Ok(details
+            .files
+            .iter()
+            .map(|f| {
+                file_diff(
+                    diff_change(f.change),
+                    f.old_path(),
+                    &f.path,
+                    f.score,
+                    self.side(f.old_mode, f.old_oid),
+                    self.side(f.new_mode, f.new_oid),
+                )
+            })
+            .collect())
+    }
+
+    /// Indice rispetto a HEAD, dalle voci dello stato.
+    fn index_diff(&self) -> Vec<FileDiff> {
+        let mut files = Vec::new();
+        for entry in &self.entries {
+            let (info, original, score) = match &entry.kind {
+                EntryKind::Ordinary(info) => (info, None, None),
+                EntryKind::Renamed {
+                    info,
+                    original,
+                    score,
+                }
+                | EntryKind::Copied {
+                    info,
+                    original,
+                    score,
+                } => (info, Some(original), Some(*score)),
+                EntryKind::Unmerged(_) => {
+                    files.push(unmerged(&entry.path));
+                    continue;
+                }
+                EntryKind::Untracked | EntryKind::Ignored => continue,
+            };
+            if !entry.index.is_change() {
+                continue;
+            }
+            let old = self.side(info.mode_head, info.oid_head);
+            let new = match entry.index {
+                Change::Deleted => None,
+                _ => self.side(info.mode_index, info.oid_index),
+            };
+            files.push(file_diff(
+                diff_change(entry.index),
+                original.unwrap_or(&entry.path),
+                &entry.path,
+                score,
+                old,
+                new,
+            ));
+        }
+        files
+    }
+
+    /// Worktree rispetto all'indice, dalle voci dello stato e dai file del worktree.
+    fn worktree_diff(&self) -> Vec<FileDiff> {
+        let mut files = Vec::new();
+        for entry in &self.entries {
+            let info = match &entry.kind {
+                EntryKind::Ordinary(info)
+                | EntryKind::Renamed { info, .. }
+                | EntryKind::Copied { info, .. } => info,
+                EntryKind::Unmerged(_) => {
+                    files.push(unmerged(&entry.path));
+                    continue;
+                }
+                EntryKind::Untracked | EntryKind::Ignored => continue,
+            };
+            if !entry.worktree.is_change() {
+                continue;
+            }
+            // Un file aggiunto fuori stage (`git add -N`) non ha contenuto nell'indice.
+            let old = match entry.worktree {
+                Change::Added => None,
+                _ => self.side(info.mode_index, info.oid_index),
+            };
+            let new = match entry.worktree {
+                Change::Deleted => None,
+                _ => {
+                    let content = self.worktree.get(&entry.path).map(Vec::as_slice);
+                    Some(Side {
+                        mode: info.mode_worktree,
+                        oid: content.map_or_else(|| MemoryBackend::fake_oid(u64::MAX), content_oid),
+                        content,
+                    })
+                }
+            };
+            files.push(file_diff(
+                diff_change(entry.worktree),
+                &entry.path,
+                &entry.path,
+                None,
+                old,
+                new,
+            ));
+        }
+        files
+    }
+}
+
 impl GitBackend for MemoryBackend {
     fn head(&self) -> Result<Head, EngineError> {
         Ok(match &self.head {
@@ -345,6 +578,18 @@ impl GitBackend for MemoryBackend {
             compared_to: commit.parents.first().copied(),
             files: self.changes.get(&id).cloned().unwrap_or_default(),
         })
+    }
+
+    fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError> {
+        let mut files = match spec {
+            DiffSpec::Worktree { .. } => self.worktree_diff(),
+            DiffSpec::Index { .. } => self.index_diff(),
+            DiffSpec::Commit { rev, .. } => self.commit_diff(rev)?,
+        };
+        if let Some(path) = spec.path() {
+            files.retain(|f| f.new_path == *path || f.old_path == *path);
+        }
+        Ok(Diff { files })
     }
 }
 

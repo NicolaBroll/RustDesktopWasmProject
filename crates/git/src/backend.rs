@@ -1,14 +1,14 @@
 //! [`CliBackend`] e [`CliOpener`]: lettura di un repository eseguendo `git`.
 
 use crate::GitVersion;
-use crate::command::{Git, failure, path_from_output, stderr_text};
-use project_domain::{Commit, CommitDetails, Head, RefInfo, Status};
+use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
+use project_domain::{Change, Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use project_domain::{
-    DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_diff_tree, parse_log,
-    parse_refs, parse_status,
+    DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, REFS_ARGS, STATUS_ARGS, parse_diff,
+    parse_diff_tree, parse_log, parse_refs, parse_status,
 };
-use project_engine::{EngineError, GitBackend, LogQuery, RepoOpener};
-use std::ffi::OsString;
+use project_engine::{DiffSpec, EngineError, GitBackend, LogQuery, RepoOpener};
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// Apre repository con il `git` di sistema. È il [`RepoOpener`] del desktop e della CLI.
@@ -131,6 +131,10 @@ impl CliOpener {
     }
 }
 
+/// Id dell'albero vuoto in sha1 (l'unico formato supportato): git lo conosce sempre, anche se
+/// non è nel repo. Serve a confrontare un commit radice.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 /// [`EngineError::Git`] per un comando riuscito ma con un output inatteso.
 fn failure_text(args: &[&str], stdout: &[u8]) -> EngineError {
     EngineError::Git {
@@ -194,6 +198,75 @@ impl CliBackend {
         } else {
             Err(failure(&args, &out))
         }
+    }
+
+    /// Il primo genitore del commit `id`, `None` per un commit radice.
+    fn first_parent(&self, id: &str) -> Result<Option<Oid>, EngineError> {
+        // Una riga `<commit> <genitori>...`.
+        let args = [
+            "rev-list",
+            "--max-count=1",
+            "--parents",
+            "--end-of-options",
+            id,
+            "--",
+        ];
+        let out = self.run(&args)?;
+        let mut ids = out
+            .split(|b| b.is_ascii_whitespace())
+            .filter(|t| !t.is_empty());
+        ids.next();
+        match ids.next() {
+            Some(hex) => Ok(Some(Oid::from_hex(hex)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// `git diff` con `compare` (cosa confrontare, già con `--end-of-options` se servono
+    /// revisioni) e `extra` (opzioni), limitato a `paths`, presi alla lettera: niente glob né
+    /// pathspec magici (`--literal-pathspecs`). Una lettura: non aggiorna l'indice
+    /// (`--no-optional-locks`).
+    fn run_diff(
+        &self,
+        extra: &[&str],
+        compare: &[&str],
+        paths: &[&RepoPath],
+    ) -> Result<Vec<u8>, EngineError> {
+        let mut args = vec!["--no-optional-locks", "--literal-pathspecs", "diff"];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(compare);
+        args.push("--");
+        let paths: Vec<OsString> = paths.iter().map(|p| os_from_bytes(p.as_bytes())).collect();
+        let paths: Vec<&OsStr> = paths.iter().map(OsString::as_os_str).collect();
+        self.git.run_with_paths(Some(&self.workdir), &args, &paths)
+    }
+
+    /// I percorsi da passare a `git diff` per il file `path`: anche l'altro percorso se il
+    /// file è rinominato (da o verso `path`), altrimenti git, limitato a un solo percorso, non
+    /// vedrebbe la rinomina ma un file aggiunto o eliminato.
+    fn diff_paths(&self, compare: &[&str], path: &RepoPath) -> Result<Vec<RepoPath>, EngineError> {
+        // Solo le rinomine (`--diff-filter=R`), nel formato di `diff-tree`.
+        let raw = [
+            "-z",
+            "--raw",
+            "--no-abbrev",
+            "--find-renames",
+            "--diff-filter=R",
+        ];
+        let renames = parse_diff_tree(&self.run_diff(&raw, compare, &[])?)?;
+        let mut paths = vec![path.clone()];
+        for file in renames {
+            if file.change != Change::Renamed {
+                continue;
+            }
+            let old = file.old_path().clone();
+            if file.path == *path {
+                paths.push(old);
+            } else if old == *path {
+                paths.push(file.path);
+            }
+        }
+        Ok(paths)
     }
 
     /// Operazione in corso, dai file che git lascia nella sua cartella (come `git status`).
@@ -315,5 +388,37 @@ impl GitBackend for CliBackend {
             compared_to,
             files,
         })
+    }
+
+    fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError> {
+        let (parent, id);
+        let compare: Vec<&str> = match spec {
+            DiffSpec::Worktree { .. } => Vec::new(),
+            // Su un branch senza commit git confronta l'indice con l'albero vuoto.
+            DiffSpec::Index { .. } => vec!["--cached"],
+            DiffSpec::Commit { rev, .. } => {
+                id = self
+                    .resolve(rev)?
+                    .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?
+                    .to_string();
+                // Primo genitore anche per i merge, come `show_commit`.
+                parent = match self.first_parent(&id)? {
+                    Some(p) => p.to_string(),
+                    None => EMPTY_TREE.to_owned(),
+                };
+                vec!["--end-of-options", &parent, &id]
+            }
+        };
+        let Some(path) = spec.path() else {
+            return Ok(parse_diff(&self.run_diff(DIFF_ARGS, &compare, &[])?)?);
+        };
+        let paths = self.diff_paths(&compare, path)?;
+        let paths: Vec<&RepoPath> = paths.iter().collect();
+        let mut diff = parse_diff(&self.run_diff(DIFF_ARGS, &compare, &paths)?)?;
+        // Un percorso letterale comprende anche i file sotto una cartella con quel nome (es. se
+        // `path` era un file e ora è una cartella): solo il file con quel percorso esatto.
+        diff.files
+            .retain(|f| f.new_path == *path || f.old_path == *path);
+        Ok(diff)
     }
 }

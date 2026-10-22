@@ -131,6 +131,30 @@ fn run_commit_show() {
 }
 
 #[test]
+fn run_diff_commands() {
+    let repo = temp_repo(2);
+    std::fs::write(repo.path().join("a.txt"), "riga 1\nriga 2\nriga 3\n").unwrap();
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", "diff.worktree", "--cmd", "diff.index"])
+        .args(["--cmd", r#"diff.commit={"id":"HEAD","path":"a.txt"}"#])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    let file = &lines[0]["files"][0];
+    assert_eq!(file["new_path"], "a.txt");
+    let added = &file["hunks"][0]["lines"][2];
+    assert_eq!(added["kind"], "Added");
+    assert_eq!(added["content"], "riga 3");
+    assert_eq!(added["new_line"], 3);
+    assert_eq!(lines[1], json!({ "files": [] }));
+    let hunk = &lines[2]["files"][0]["hunks"][0];
+    assert_eq!(hunk["old_start"], 1);
+    assert_eq!(hunk["new_count"], 2);
+}
+
+#[test]
 fn repo_option_goes_before_or_after_the_subcommand() {
     let repo = temp_repo(1);
     let output = cli()
@@ -181,6 +205,9 @@ fn commands_lists_the_catalog() {
         ids,
         [
             "commit.show",
+            "diff.commit",
+            "diff.index",
+            "diff.worktree",
             "repo.log",
             "repo.open",
             "repo.refs",

@@ -4,16 +4,19 @@
 //! [`GitBackend`], aperto da un [`RepoOpener`] iniettato dall'app. Le implementazioni sono
 //! [`MemoryBackend`] (qui, per i test e la versione web) e `CliBackend` (in `project-git`).
 
+mod line_diff;
 mod memory;
 mod sample;
 
+#[cfg(test)]
+mod memory_diff_tests;
 #[cfg(test)]
 mod memory_tests;
 
 pub use memory::{MemoryBackend, MemoryOpener};
 
 use crate::EngineError;
-use project_domain::{Commit, CommitDetails, Head, RefInfo, Status};
+use project_domain::{Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
 /// Un repository aperto, in sola lettura (le scritture arrivano con gli step successivi).
@@ -43,6 +46,45 @@ pub trait GitBackend: Send {
     /// confrontato con l'albero vuoto. Le rinomine sono riconosciute. Una `rev` che non si
     /// risolve in un commit dà [`EngineError::UnknownRev`].
     fn show_commit(&self, rev: &str) -> Result<CommitDetails, EngineError>;
+
+    /// Il diff descritto da `spec` (vedi [`DiffSpec`]), con le rinomine riconosciute.
+    ///
+    /// Con un percorso in `spec` il risultato ha solo il file con quel percorso **esatto**,
+    /// nuovo o vecchio: una cartella non comprende i file che contiene, e una rinomina resta
+    /// una rinomina (con l'altro percorso) anche se si chiede solo uno dei due. Un percorso
+    /// che non è cambiato dà un diff vuoto.
+    ///
+    /// Non c'è un limite di dimensione: il diff di un commit enorme è tutto in memoria. Per i
+    /// commit grandi conviene chiedere un file alla volta (l'elenco viene da
+    /// [`GitBackend::show_commit`]). Per [`DiffSpec::Commit`] una `rev` che non si risolve in
+    /// un commit dà [`EngineError::UnknownRev`].
+    fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
+}
+
+/// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e
+/// `diff.commit` (§4). `path`, se c'è, limita il diff a quel file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffSpec {
+    /// Worktree rispetto all'indice: le modifiche non in stage (`git diff`). I file non
+    /// tracciati non compaiono.
+    Worktree { path: Option<RepoPath> },
+    /// Indice rispetto a HEAD: le modifiche in stage (`git diff --cached`). Su un branch senza
+    /// commit il confronto è con l'albero vuoto (ogni file in stage è aggiunto).
+    Index { path: Option<RepoPath> },
+    /// Il commit a cui porta `rev` rispetto al **primo genitore**, anche per i merge; un
+    /// commit radice rispetto all'albero vuoto. Gli stessi file di
+    /// [`GitBackend::show_commit`].
+    Commit { rev: String, path: Option<RepoPath> },
+}
+
+impl DiffSpec {
+    /// Il file a cui è limitato il diff, se c'è.
+    pub fn path(&self) -> Option<&RepoPath> {
+        match self {
+            DiffSpec::Worktree { path } | DiffSpec::Index { path } => path.as_ref(),
+            DiffSpec::Commit { path, .. } => path.as_ref(),
+        }
+    }
 }
 
 /// Apre un repository dato il percorso. L'app lo inietta nella sessione: desktop e CLI usano

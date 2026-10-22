@@ -5,9 +5,12 @@
 //! [`Registry::run`](project_engine::Registry::run) fuori dal thread della UI.
 //!
 //! Layout (`impl-docs/ARCHITETTURA-git.md` §8): barra in alto, ref a sinistra, commit al
-//! centro, dettagli del commit selezionato a destra.
+//! centro, dettagli del commit selezionato a destra. Il diff di un file si apre al posto del
+//! grafo, con il pannello dettagli accanto per passare da un file all'altro.
 
 mod details;
+mod diff;
+mod diff_view;
 mod executor;
 mod format;
 mod graph;
@@ -17,9 +20,10 @@ mod view;
 pub use executor::{Done, Executor, Job, Ticket, Wake};
 
 use details::DetailsState;
+use diff::{DiffState, DiffTarget, Pane};
 use graph::RefLabel;
 use list::{CommitList, PageRequest};
-use project_domain::{Commit, CommitDetails, Head, Oid, RefInfo, Status};
+use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -46,6 +50,12 @@ enum Action {
     Visible(usize),
     /// Richiede i dettagli del commit selezionato dopo un errore.
     RetryDetails,
+    /// Apre il diff di un file del commit selezionato al posto del grafo.
+    OpenDiff(DiffTarget),
+    /// Chiude il diff e torna al grafo.
+    CloseDiff,
+    /// Richiede il diff aperto dopo un errore.
+    RetryDiff,
 }
 
 /// A cosa serve un comando mandato all'executor. Le letture portano la generazione del repo
@@ -58,6 +68,8 @@ enum Request {
     Log(u64, PageRequest),
     /// `commit.show` del commit indicato.
     Show(u64, Oid),
+    /// `diff.commit` con il numero di richiesta di [`DiffState`].
+    Diff(u64, u64),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -71,6 +83,8 @@ struct RepoView {
     labels: HashMap<Oid, Vec<RefLabel>>,
     /// Dettagli del commit selezionato (`commit.show`).
     details: DetailsState,
+    /// Diff del file aperto (`diff.commit`), mostrato al posto del grafo.
+    diff: DiffState,
 }
 
 impl RepoView {
@@ -83,6 +97,7 @@ impl RepoView {
             list: CommitList::default(),
             labels: HashMap::new(),
             details: DetailsState::default(),
+            diff: DiffState::default(),
         };
         view.update_labels();
         view
@@ -205,6 +220,25 @@ impl App {
                     repo.details.retry();
                 }
             }
+            Action::OpenDiff(target) => {
+                if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
+                    self.request_diff(&target, seq);
+                }
+            }
+            Action::CloseDiff => {
+                if let Some(repo) = &mut self.repo {
+                    repo.diff.close();
+                }
+            }
+            Action::RetryDiff => {
+                let repo = self.repo.as_mut();
+                if let Some((seq, target)) = repo.and_then(|r| {
+                    let seq = r.diff.retry()?;
+                    Some((seq, r.diff.target()?.clone()))
+                }) {
+                    self.request_diff(&target, seq);
+                }
+            }
             Action::Visible(end) => {
                 if let Some(request) = self.repo.as_mut().and_then(|r| r.list.next_page(end)) {
                     self.request_page(request);
@@ -216,6 +250,25 @@ impl App {
     fn request_page(&mut self, page: PageRequest) {
         let params = json!({ "skip": page.skip, "limit": page.limit });
         self.submit("repo.log", params, Request::Log(self.generation, page));
+    }
+
+    fn request_diff(&mut self, target: &DiffTarget, seq: u64) {
+        let params = json!({ "id": target.commit.to_string(), "path": target.path });
+        self.submit("diff.commit", params, Request::Diff(self.generation, seq));
+    }
+
+    /// Chiude il diff se il commit selezionato non è più quello del diff.
+    fn close_stale_diff(&mut self) {
+        if let Some(repo) = &mut self.repo {
+            let selected = repo.list.selected_commit().map(|c| c.id);
+            if repo
+                .diff
+                .target()
+                .is_some_and(|t| Some(t.commit) != selected)
+            {
+                repo.diff.close();
+            }
+        }
     }
 
     /// Chiede i dettagli del commit selezionato, se è cambiato e non ci sono già.
@@ -230,10 +283,20 @@ impl App {
         }
     }
 
-    /// Azioni dei tasti della lista: frecce, Pagina su/giù, Inizio/Fine. Solo se nessun campo
-    /// di testo sta ricevendo la tastiera.
+    /// Azioni dei tasti della lista: frecce, Pagina su/giù, Inizio/Fine. Con il diff aperto,
+    /// Esc lo chiude e le frecce restano alla vista del diff. Solo se nessun campo di testo sta
+    /// ricevendo la tastiera.
     fn keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        if self.repo.is_none() || ctx.egui_wants_keyboard_input() {
+        let Some(repo) = &self.repo else {
+            return;
+        };
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        if repo.diff.target().is_some() {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                actions.push(Action::CloseDiff);
+            }
             return;
         }
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
@@ -286,6 +349,17 @@ impl App {
                 });
                 if let Some(repo) = self.current(generation) {
                     repo.details.receive(id, result);
+                }
+                continue;
+            }
+            // Anche il diff: errori nella sua vista, risposte vecchie scartate.
+            if let Request::Diff(generation, seq) = request {
+                let result = done.result.and_then(|value| {
+                    serde_json::from_value::<Diff>(value)
+                        .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+                });
+                if let Some(repo) = self.current(generation) {
+                    repo.diff.receive(seq, result);
                 }
                 continue;
             }
@@ -348,7 +422,7 @@ impl App {
                 }
             }
             // Gestiti a parte in `receive`.
-            Request::Show(..) => {}
+            Request::Show(..) | Request::Diff(..) => {}
         }
         Ok(())
     }
@@ -388,12 +462,15 @@ impl eframe::App for App {
                             ui,
                             repo.list.selected_commit(),
                             repo.details.shown(),
+                            repo.diff.target(),
                             &mut actions,
                         )
                     });
                 let viewport = &mut self.viewport;
-                egui::CentralPanel::default()
-                    .show(ui, |ui| view::commit_list(ui, repo, viewport, &mut actions));
+                egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
+                    Pane::Closed => view::commit_list(ui, repo, viewport, &mut actions),
+                    pane => diff_view::diff_panel(ui, pane, &mut actions),
+                });
             }
             None => {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -410,6 +487,7 @@ impl eframe::App for App {
             self.apply(&ctx, action);
         }
         // Dopo le azioni: la selezione appena cambiata si chiede in questo stesso frame.
+        self.close_stale_diff();
         self.request_details();
     }
 }

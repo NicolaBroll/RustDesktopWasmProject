@@ -28,7 +28,12 @@ project-cli mcp [--root <dir>]                               # server MCP su std
 
 Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?}`
 (pagine da 200 commit se manca `limit`, con `has_more`), `commit.show {"id"}` (metadati e file
-cambiati rispetto al primo genitore).
+cambiati rispetto al primo genitore), `diff.worktree {"path"?}` (modifiche non in stage),
+`diff.index {"path"?}` (modifiche in stage) e `diff.commit {"id", "path"?}` (commit rispetto al
+primo genitore). I diff restituiscono `{"files": [...]}` con hunk e righe; `path` limita il
+risultato a quel file (le rinomine restano tali) ed è una stringa, o un array di byte per i nomi
+non UTF-8. Non c'è un limite di dimensione: per i commit grandi conviene chiedere un file alla
+volta.
 
 Il server MCP espone `list_commands`, `execute_command` e `open_repo`. All'avvio apre il
 repository di `--root` (default: cartella corrente), se c'è. Tutti i percorsi sono confinati in

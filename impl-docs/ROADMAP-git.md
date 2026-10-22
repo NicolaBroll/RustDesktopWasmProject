@@ -145,7 +145,7 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test con output catturati; CI verde.
 
 ### S17 — Vista del diff
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** comandi `diff.worktree`, `diff.index`, `diff.commit`; vista con numeri di riga,
   colori per aggiunte e rimozioni, intestazioni degli hunk.
 - **Fatto quando:** test dei comandi; il diff si apre dal pannello dettagli; CI verde.

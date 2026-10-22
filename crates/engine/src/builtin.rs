@@ -1,7 +1,8 @@
 //! Catalogo dei comandi predefiniti.
 
 use crate::commands::parse_params;
-use crate::{CommandSpec, EngineError, LogQuery, Registry, Session};
+use crate::{CommandSpec, DiffSpec, EngineError, LogQuery, Registry, Session};
+use project_domain::RepoPath;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -41,6 +42,24 @@ impl Registry {
             "Dettagli del commit",
             r#"{"id": string}"#,
             commit_show,
+        );
+        add(
+            "diff.worktree",
+            "Diff delle modifiche non in stage",
+            r#"{"path"?: percorso}"#,
+            diff_worktree,
+        );
+        add(
+            "diff.index",
+            "Diff delle modifiche in stage",
+            r#"{"path"?: percorso}"#,
+            diff_index,
+        );
+        add(
+            "diff.commit",
+            "Diff del commit",
+            r#"{"id": string, "path"?: percorso}"#,
+            diff_commit,
         );
         r
     }
@@ -96,6 +115,79 @@ fn commit_show(s: &mut Session, p: Value) -> Out {
     Ok(to_json(s.repo()?.show_commit(&id)?))
 }
 
+/// Parametri di `diff.worktree` e `diff.index`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiffParams {
+    #[serde(default)]
+    path: Option<RepoPath>,
+}
+
+/// Parametri di `diff.commit`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommitDiffParams {
+    id: String,
+    #[serde(default)]
+    path: Option<RepoPath>,
+}
+
+/// Un percorso di file come lo scrive git: relativo alla radice, con `/` come separatore, senza
+/// componenti vuoti, `.` o `..` e senza NUL. Altrimenti [`EngineError::InvalidParams`].
+fn check_path(id: &'static str, path: Option<RepoPath>) -> Result<Option<RepoPath>, EngineError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let bytes = path.as_bytes();
+    let reason = if bytes.is_empty() {
+        Some("il percorso è vuoto")
+    } else if bytes.contains(&0) {
+        Some("il percorso contiene un byte NUL")
+    } else if bytes
+        .split(|&b| b == b'/')
+        .any(|c| c.is_empty() || c == b"." || c == b"..")
+    {
+        Some(
+            "il percorso deve essere relativo alla radice del repo, con `/` come separatore e \
+             senza componenti vuoti, `.` o `..`",
+        )
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(EngineError::InvalidParams {
+            id,
+            reason: format!("{reason}: `{path}`"),
+        }),
+        None => Ok(Some(path)),
+    }
+}
+
+/// Il [`Diff`](project_domain::Diff) del worktree rispetto all'indice (modifiche non in
+/// stage): `{"files": [...]}`. I file non tracciati non compaiono.
+fn diff_worktree(s: &mut Session, p: Value) -> Out {
+    let DiffParams { path } = parse_params("diff.worktree", p)?;
+    let path = check_path("diff.worktree", path)?;
+    Ok(to_json(s.repo()?.diff(&DiffSpec::Worktree { path })?))
+}
+
+/// Il [`Diff`](project_domain::Diff) dell'indice rispetto a HEAD (modifiche in stage).
+fn diff_index(s: &mut Session, p: Value) -> Out {
+    let DiffParams { path } = parse_params("diff.index", p)?;
+    let path = check_path("diff.index", path)?;
+    Ok(to_json(s.repo()?.diff(&DiffSpec::Index { path })?))
+}
+
+/// Il [`Diff`](project_domain::Diff) del commit `id` rispetto al primo genitore (come
+/// `commit.show`).
+fn diff_commit(s: &mut Session, p: Value) -> Out {
+    let CommitDiffParams { id, path } = parse_params("diff.commit", p)?;
+    let path = check_path("diff.commit", path)?;
+    Ok(to_json(
+        s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,
+    ))
+}
+
 /// Una pagina del log: `{"commits": [...], "has_more": bool}`. `has_more` dice se dopo
 /// l'ultimo commit restituito ce ne sono altri (la pagina seguente parte da `skip + limit`).
 fn repo_log(s: &mut Session, p: Value) -> Out {
@@ -116,7 +208,7 @@ fn repo_log(s: &mut Session, p: Value) -> Out {
 mod tests {
     use super::*;
     use crate::{GitBackend, MemoryBackend, MemoryOpener};
-    use project_domain::{Commit, CommitDetails, RefInfo, Status};
+    use project_domain::{Commit, CommitDetails, Diff, RefInfo, Status};
     use std::sync::Arc;
 
     fn session() -> Session {
@@ -149,6 +241,9 @@ mod tests {
             ids,
             [
                 "commit.show",
+                "diff.commit",
+                "diff.index",
+                "diff.worktree",
                 "repo.log",
                 "repo.open",
                 "repo.refs",
@@ -180,8 +275,16 @@ mod tests {
     fn reads_need_an_open_repo() {
         let r = Registry::builtin();
         let mut s = session();
-        for id in ["repo.status", "repo.refs", "repo.log", "commit.show"] {
-            let params = if id == "commit.show" {
+        for id in [
+            "repo.status",
+            "repo.refs",
+            "repo.log",
+            "commit.show",
+            "diff.worktree",
+            "diff.index",
+            "diff.commit",
+        ] {
+            let params = if matches!(id, "commit.show" | "diff.commit") {
                 json!({ "id": "HEAD" })
             } else {
                 json!({})
@@ -288,6 +391,93 @@ mod tests {
     }
 
     #[test]
+    fn diff_commands_return_the_backend_diff() {
+        let (r, mut s) = opened();
+        let sample = MemoryBackend::sample();
+        let path = |p: &str| Some(RepoPath::from(p));
+        for (id, params, spec) in [
+            (
+                "diff.worktree",
+                json!({}),
+                DiffSpec::Worktree { path: None },
+            ),
+            ("diff.index", Value::Null, DiffSpec::Index { path: None }),
+            (
+                "diff.index",
+                json!({ "path": "README.md" }),
+                DiffSpec::Index {
+                    path: path("README.md"),
+                },
+            ),
+            (
+                "diff.worktree",
+                json!({ "path": null }),
+                DiffSpec::Worktree { path: None },
+            ),
+            (
+                "diff.commit",
+                json!({ "id": "main" }),
+                DiffSpec::Commit {
+                    rev: "HEAD".into(),
+                    path: None,
+                },
+            ),
+            (
+                "diff.commit",
+                json!({ "id": "HEAD", "path": "src/main.rs" }),
+                DiffSpec::Commit {
+                    rev: "HEAD".into(),
+                    path: path("src/main.rs"),
+                },
+            ),
+        ] {
+            let out = r.run(id, &mut s, params.clone()).unwrap();
+            let diff: Diff = serde_json::from_value(out).unwrap();
+            assert_eq!(diff, sample.diff(&spec).unwrap(), "{id} {params}");
+            assert!(!diff.files.is_empty(), "{id} {params}");
+        }
+
+        // Forma del JSON che legge la UI.
+        let out = r
+            .run(
+                "diff.commit",
+                &mut s,
+                json!({ "id": "HEAD", "path": "src/bin/app.rs" }),
+            )
+            .unwrap();
+        let files = out["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+        let f = &files[0];
+        assert_eq!(f["change"], "Renamed");
+        assert_eq!(f["old_path"], "src/main.rs");
+        assert_eq!(f["new_path"], "src/bin/app.rs");
+        assert_eq!(f["similarity"], 92);
+        assert_eq!(f["old_mode"], 0o100644);
+        assert_eq!(f["binary"], false);
+        assert!(f["old_oid"].is_string());
+        let hunk = &f["hunks"][0];
+        assert_eq!(hunk["old_start"], 1);
+        assert_eq!(hunk["section"], "");
+        let line = &hunk["lines"][1];
+        assert_eq!(line["kind"], "Removed");
+        assert_eq!(line["old_line"], 2);
+        assert_eq!(line["new_line"], Value::Null);
+        assert_eq!(line["content"], "// ultima modifica: commit 3");
+        assert_eq!(line["no_newline"], false);
+
+        // Un percorso non UTF-8 si passa come array di byte; qui non è cambiato.
+        let out = r
+            .run("diff.index", &mut s, json!({ "path": [99, 97, 255] }))
+            .unwrap();
+        assert_eq!(out, json!({ "files": [] }));
+
+        let err = r
+            .run("diff.commit", &mut s, json!({ "id": "nessuno" }))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
+    }
+
+    #[test]
     fn errors() {
         let (r, mut s) = opened();
         assert!(matches!(
@@ -303,12 +493,41 @@ mod tests {
             ("commit.show", json!({})),
             ("commit.show", json!({ "id": 3 })),
             ("commit.show", json!({ "id": "HEAD", "path": "a" })),
+            ("diff.worktree", json!({ "id": "HEAD" })),
+            ("diff.index", json!({ "paths": ["a"] })),
+            ("diff.index", json!({ "path": 3 })),
+            ("diff.commit", json!({})),
+            ("diff.commit", json!({ "path": "a" })),
+            ("diff.commit", json!({ "id": "HEAD", "rev": "HEAD" })),
         ] {
             let err = r.run(id, &mut s, params).unwrap_err();
             assert!(
                 matches!(err, EngineError::InvalidParams { .. }),
                 "{id}: {err}"
             );
+        }
+        // Percorsi che non sono percorsi di file del repo.
+        for path in [
+            json!(""),
+            json!("/etc/passwd"),
+            json!("../fuori"),
+            json!("a/../b"),
+            json!("./a"),
+            json!("a//b"),
+            json!("cartella/"),
+            json!([97, 0, 98]),
+        ] {
+            for (id, params) in [
+                ("diff.worktree", json!({ "path": path })),
+                ("diff.index", json!({ "path": path })),
+                ("diff.commit", json!({ "id": "HEAD", "path": path })),
+            ] {
+                let err = r.run(id, &mut s, params).unwrap_err();
+                assert!(
+                    matches!(err, EngineError::InvalidParams { .. }),
+                    "{id} {path}: {err}"
+                );
+            }
         }
         let err = r
             .run("repo.open", &mut s, json!({ "path": "altrove" }))

@@ -406,3 +406,28 @@ pub fn repo_detached_head() -> History {
     h.repo.detach(h.f1);
     h
 }
+
+/// Nomi che git leggerebbe come pathspec speciali se non fossero presi alla lettera, nel
+/// commit radice e poi tutti modificati fuori stage: `file*.txt` e `file1.txt` (il primo come
+/// glob comprende il secondo), `a[1].txt` e `a1.txt`, `:(top)magia.txt` (pathspec magico) e
+/// `-trattino.txt` (sembra un'opzione).
+pub fn repo_with_special_names() -> Repo {
+    const NAMES: &[&str] = &[
+        "file*.txt",
+        "file1.txt",
+        "a[1].txt",
+        "a1.txt",
+        ":(top)magia.txt",
+        "-trattino.txt",
+    ];
+    let repo = Repo::new();
+    for name in NAMES {
+        repo.write(name, "prima\n");
+    }
+    repo.git(&["add", "-A"]);
+    repo.commit("nomi speciali");
+    for name in NAMES {
+        repo.write(name, &format!("dopo: {name}\n"));
+    }
+    repo
+}

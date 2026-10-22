@@ -130,7 +130,7 @@ pub trait GitBackend: Send {
     fn refs(&self) -> Result<Vec<RefInfo>, EngineError>;
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
     fn status(&self) -> Result<Status, EngineError>;
-    fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
+    fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;   // DiffSpec: Worktree | Index | Commit { rev }, ognuno con `path` facoltativo
     // Le scritture si aggiungono uno step alla volta: stage, commit, checkout, ...
 }
 
@@ -162,7 +162,7 @@ come JSON, così CLI e MCP li usano direttamente. Catalogo iniziale:
 | `repo.refs` | `{}` | |
 | `repo.log` | `{"skip"?, "limit"?, "rev"?}` | paginato |
 | `commit.show` | `{"id"}` | metadati e file cambiati rispetto al primo genitore |
-| `diff.worktree` / `diff.index` / `diff.commit` | `{"path"?}` / `{"id"}` | |
+| `diff.worktree` / `diff.index` / `diff.commit` | `{"path"?}` / `{"path"?}` / `{"id", "path"?}` | worktree rispetto all'indice (senza i non tracciati), indice rispetto a HEAD (albero vuoto se non ci sono commit), commit rispetto al primo genitore (albero vuoto per un commit radice, come `commit.show`). Risultato: il `Diff` (`{"files": [...]}`). `path` (stringa o array di byte, come `RepoPath`) limita al file con quel percorso esatto, vecchio o nuovo: una rinomina resta tale (il backend cerca prima l'altro percorso con `--diff-filter=R`) e i percorsi vanno a git dopo `--` con `--literal-pathspecs`. Nessun limite di dimensione |
 | `index.stage` / `index.unstage` | `{"paths"}` | |
 | `index.stage_lines` / `index.unstage_lines` | `{"path", "lines"}` | usa il costruttore di patch |
 | `worktree.discard` | `{"paths", "confirm"}` | con backup (§7) |
@@ -180,7 +180,9 @@ Regole per ogni chiamata a git:
 - **Mai una shell.** `std::process::Command` con argomenti separati.
 - Sempre `git -C <repo> -c core.quotePath=false -c color.ui=false ...`.
 - Prima di valori che vengono dall'utente (nomi di branch, rev): `--end-of-options`, così un nome
-  che inizia con `-` non diventa un'opzione. Prima dei percorsi: `--`.
+  che inizia con `-` non diventa un'opzione. Prima dei percorsi: `--`. I percorsi si passano
+  alla lettera (`--literal-pathspecs`: niente glob né pathspec magici come `:(top)`), e le
+  variabili `GIT_*_PATHSPECS` ereditate si tolgono.
 - Ambiente: `GIT_TERMINAL_PROMPT=0` (git non deve mai aspettare input da un terminale che non
   c'è), `LC_ALL=C` per i messaggi di errore da riconoscere. Il resto dell'ambiente si eredita
   (SSH agent, credential helper).

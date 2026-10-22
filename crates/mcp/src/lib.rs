@@ -313,6 +313,16 @@ mod tests {
             !details["files"].as_array().unwrap().is_empty(),
             "{details}"
         );
+
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "diff.commit", "params": {"id": "HEAD", "path": "src/main.rs"}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let diff: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(diff["files"][0]["change"], "Renamed", "{diff}");
     }
 
     #[test]

@@ -51,6 +51,7 @@ cargo xtask ci   # fmt, clippy -D warnings, test, layering, clippy wasm
 cargo run -p project-cli -- commands
 cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"limit":5}'
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
+cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval
 cargo run -p project-cli -- mcp --root .   # tool: list_commands, execute_command, open_repo
 ```

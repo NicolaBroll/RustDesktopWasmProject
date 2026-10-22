@@ -2,7 +2,7 @@
 //! ambiente fissi.
 
 use project_engine::EngineError;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -16,6 +16,16 @@ const REPO_ENV: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
+];
+
+/// Variabili che cambiano il significato dei pathspec (glob, maiuscole, letterali): i percorsi
+/// passati a git devono valere per quello che sono. Si tolgono sempre; dove servono percorsi
+/// letterali si passa `--literal-pathspecs`.
+const PATHSPEC_ENV: &[&str] = &[
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ];
 
 /// Come avviare `git`: il programma e le variabili d'ambiente aggiunte da chi lo configura.
@@ -37,22 +47,24 @@ impl Git {
         self.env.push((key, value));
     }
 
-    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args>`, con stdin vuoto,
-    /// `GIT_TERMINAL_PROMPT=0` e `LC_ALL=C`. Il resto dell'ambiente si eredita (SSH agent,
-    /// credential helper).
-    fn command(&self, dir: Option<&Path>, args: &[&str]) -> Command {
+    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args> <paths>`, con stdin
+    /// vuoto, `GIT_TERMINAL_PROMPT=0` e `LC_ALL=C`. Il resto dell'ambiente si eredita (SSH
+    /// agent, credential helper). `paths` vanno dopo un `--` che chi chiama mette in fondo ad
+    /// `args`.
+    fn command(&self, dir: Option<&Path>, args: &[&str], paths: &[&OsStr]) -> Command {
         let mut cmd = Command::new(&self.program);
         if let Some(dir) = dir {
             cmd.arg("-C").arg(dir);
         }
         cmd.args(["-c", "core.quotePath=false", "-c", "color.ui=false"])
             .args(args)
+            .args(paths)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C");
-        for key in REPO_ENV {
+        for key in REPO_ENV.iter().chain(PATHSPEC_ENV) {
             cmd.env_remove(key);
         }
         for (key, value) in &self.env {
@@ -64,7 +76,18 @@ impl Git {
     /// Esegue git e restituisce l'output qualunque sia il codice di uscita. Errore solo se il
     /// programma non si avvia.
     pub(crate) fn output(&self, dir: Option<&Path>, args: &[&str]) -> Result<Output, EngineError> {
-        self.command(dir, args).output().map_err(|e| {
+        self.output_with_paths(dir, args, &[])
+    }
+
+    /// Come [`Git::output`], con `paths` dopo `args` (che deve finire con `--`).
+    pub(crate) fn output_with_paths(
+        &self,
+        dir: Option<&Path>,
+        args: &[&str],
+        paths: &[&OsStr],
+    ) -> Result<Output, EngineError> {
+        debug_assert!(paths.is_empty() || args.last() == Some(&"--"));
+        self.command(dir, args, paths).output().map_err(|e| {
             EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
         })
     }
@@ -72,7 +95,17 @@ impl Git {
     /// Esegue git e restituisce stdout; un codice di uscita diverso da zero dà
     /// [`EngineError::Git`] con il testo di stderr.
     pub(crate) fn run(&self, dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, EngineError> {
-        let output = self.output(dir, args)?;
+        self.run_with_paths(dir, args, &[])
+    }
+
+    /// Come [`Git::run`], con `paths` dopo `args` (che deve finire con `--`).
+    pub(crate) fn run_with_paths(
+        &self,
+        dir: Option<&Path>,
+        args: &[&str],
+        paths: &[&OsStr],
+    ) -> Result<Vec<u8>, EngineError> {
+        let output = self.output_with_paths(dir, args, paths)?;
         if output.status.success() {
             Ok(output.stdout)
         } else {
@@ -114,15 +147,16 @@ pub(crate) fn path_from_output(line: &[u8]) -> PathBuf {
     os_from_bytes(line).into()
 }
 
+/// Byte di un percorso (es. un `RepoPath`) come argomento per git.
 #[cfg(unix)]
-fn os_from_bytes(bytes: &[u8]) -> OsString {
+pub(crate) fn os_from_bytes(bytes: &[u8]) -> OsString {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     OsStr::from_bytes(bytes).to_owned()
 }
 
 #[cfg(not(unix))]
-fn os_from_bytes(bytes: &[u8]) -> OsString {
+pub(crate) fn os_from_bytes(bytes: &[u8]) -> OsString {
     // Su Windows git stampa i percorsi in UTF-8.
     OsString::from(String::from_utf8_lossy(bytes).into_owned())
 }
@@ -145,7 +179,11 @@ mod tests {
     fn command_has_fixed_options_and_environment() {
         let mut git = Git::new("git");
         git.set_env("GIT_CONFIG_NOSYSTEM".into(), "1".into());
-        let cmd = git.command(Some(Path::new("/repo")), &["status"]);
+        let cmd = git.command(
+            Some(Path::new("/repo")),
+            &["diff", "--"],
+            &[OsStr::new("a b.txt")],
+        );
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(
             args,
@@ -156,7 +194,9 @@ mod tests {
                 "core.quotePath=false",
                 "-c",
                 "color.ui=false",
-                "status"
+                "diff",
+                "--",
+                "a b.txt"
             ]
         );
         let envs: Vec<_> = cmd.get_envs().collect();
@@ -165,7 +205,8 @@ mod tests {
         assert_eq!(value("LC_ALL"), Some(Some("C".as_ref())));
         assert_eq!(value("GIT_CONFIG_NOSYSTEM"), Some(Some("1".as_ref())));
         // Ereditate da un hook git farebbero leggere un altro repo: tolte.
-        for key in REPO_ENV {
+        // Così come quelle che cambiano il significato dei pathspec.
+        for key in REPO_ENV.iter().chain(PATHSPEC_ENV) {
             assert_eq!(value(key), Some(None), "{key}");
         }
     }

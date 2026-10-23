@@ -6,6 +6,9 @@ use project_engine::{Capabilities, Picked, Platform};
 use project_git::CliOpener;
 use std::sync::Arc;
 
+/// Icona della finestra (sorgente in `assets/icon.svg`).
+const ICON: &[u8] = include_bytes!("../../../assets/icon-256.png");
+
 fn main() -> eframe::Result {
     env_logger::init();
 
@@ -16,11 +19,14 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 760.0])
-            .with_min_inner_size([640.0, 400.0]),
+            .with_min_inner_size([640.0, 400.0])
+            .with_icon(Arc::new(
+                eframe::icon_data::from_png_bytes(ICON).expect("icona PNG valida"),
+            )),
         ..Default::default()
     };
     eframe::run_native(
-        "Project",
+        "BinariGit",
         options,
         Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform, opener, repo)))),
     )
@@ -90,5 +96,14 @@ impl Platform for NativePlatform {
         if let Err(e) = std::fs::write(&path, bytes) {
             log::error!("{}: {e}", path.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn icon_is_valid_png() {
+        let icon = eframe::icon_data::from_png_bytes(super::ICON).unwrap();
+        assert_eq!((icon.width, icon.height), (256, 256));
     }
 }

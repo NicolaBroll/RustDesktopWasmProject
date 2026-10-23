@@ -1,4 +1,7 @@
-# Project
+# BinariGit
+
+![BinariGit](assets/banner.png)
+
 
 Client git grafico in costruzione (vedi [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md)),
 scritto in Rust con architettura a strati: motore indipendente dalla UI,
@@ -281,3 +284,9 @@ apre solo con `open_repo`, non con `repo.open`.
 
 `cargo xtask ci` esegue formattazione, Clippy con warning come errori, test, controllo del
 layering e Clippy per `wasm32-unknown-unknown`. La CI di GitHub usa lo stesso comando.
+
+## Nome e grafica
+
+Il nome visibile è **BinariGit**; crate, binari e ref tecnici restano `project-*`. Icona, logo e
+banner stanno in [assets/](assets/): si modificano gli SVG e si rigenerano i PNG con
+`assets/render.sh` (Chrome headless).

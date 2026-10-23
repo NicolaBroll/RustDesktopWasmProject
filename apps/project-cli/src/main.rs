@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(version, about = "Riga di comando di Project")]
+#[command(version, about = "Riga di comando di BinariGit")]
 struct Cli {
     /// Repository da aprire prima di `run` ed `eval` (come `repo.open`).
     #[arg(long, global = true, value_name = "PERCORSO")]

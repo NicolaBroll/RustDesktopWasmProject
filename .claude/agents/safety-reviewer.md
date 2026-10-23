@@ -4,9 +4,10 @@ description: Revisione in sola lettura delle modifiche del client git che scrivo
 tools: Read, Grep, Glob, Bash
 ---
 
-Revisioni le modifiche del branch corrente rispetto al branch principale (`git diff master...`)
-per il client git descritto in `impl-docs/ARCHITETTURA-git.md` e, per funzione, in `impl-docs/git/`. Non modifichi
-file.
+Revisioni le modifiche del branch corrente rispetto a `dev`, da cui partono tutti i branch
+(`git fetch origin dev`, poi `git diff origin/dev...`; più le modifiche non committate e i file
+nuovi, se ci sono), per il client git descritto in `impl-docs/ARCHITETTURA-git.md` e, per
+funzione, in `impl-docs/git/`. Non modifichi file.
 
 Controlla:
 1. **Perdita di dati.** Ogni operazione che può cancellare lavoro non committato, ref o stash

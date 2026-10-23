@@ -68,6 +68,8 @@ pub enum ErrorKind {
     InvalidParams,
     /// [`EngineError::IndexLocked`].
     IndexLocked,
+    /// [`EngineError::UnknownRev`]: la rev non corrisponde a nessun ref né commit.
+    UnknownRev,
     /// [`EngineError::ConfirmRequired`]: serve `"confirm": true`; il motivo è in
     /// [`Done::error_detail`].
     ConfirmRequired,
@@ -108,6 +110,7 @@ impl ErrorKind {
             EngineError::NotAllowed(_) => ErrorKind::NotAllowed,
             EngineError::InvalidParams { .. } => ErrorKind::InvalidParams,
             EngineError::IndexLocked { .. } => ErrorKind::IndexLocked,
+            EngineError::UnknownRev(_) => ErrorKind::UnknownRev,
             EngineError::ConfirmRequired { .. } => ErrorKind::ConfirmRequired,
             EngineError::NothingToCommit => ErrorKind::NothingToCommit,
             EngineError::Git { .. } => ErrorKind::Git,

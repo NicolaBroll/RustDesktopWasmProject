@@ -31,6 +31,11 @@ pub use git::{
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
 pub use git::{
+    MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
+    OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
+    merge_source,
+};
+pub use git::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     PushKind, PushOutcome, PushRejection, PushRequest, StrategySource, UpstreamConfig,
     check_pull_state, merge_message, pull_mode, tracking_ref,

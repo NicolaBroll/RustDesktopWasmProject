@@ -1,6 +1,7 @@
 //! Catalogo dei comandi predefiniti.
 
 mod branch;
+mod merge;
 mod pull;
 mod push;
 mod remote;
@@ -42,6 +43,12 @@ impl Registry {
         );
         add("repo.status", "Stato del repository", "{}", repo_status);
         add("repo.refs", "Branch, tag e stash", "{}", repo_refs);
+        add(
+            "repo.operation",
+            "Operazione in corso (merge, rebase...) e file in conflitto",
+            "{}",
+            merge::repo_operation,
+        );
         add(
             "repo.log",
             "Cronologia dei commit",
@@ -193,6 +200,24 @@ impl Registry {
             r#"{"index"?: number (stash@{n}, 0), "expected": oid completo (lo stash da eliminare; obbligatorio con confirm), "confirm": true}"#,
             stash::stash_drop,
         );
+        add(
+            "merge.start",
+            "Unisci un branch nel branch attivo (merge)",
+            r#"{"rev": string (branch, branch remoto, tag o id), "no_ff"?: bool (sempre un commit di merge), "ff_only"?: bool (solo fast-forward), "message"?: string (del commit di merge)}"#,
+            merge::merge_start,
+        );
+        add(
+            "merge.continue",
+            "Concludi il merge in corso",
+            r#"{"message"?: string (altrimenti quello preparato da git)}"#,
+            merge::merge_continue,
+        );
+        add(
+            "merge.abort",
+            "Annulla il merge in corso",
+            r#"{"confirm": true}"#,
+            merge::merge_abort,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -218,6 +243,9 @@ const WRITES: &[&str] = &[
     "index.unstage",
     "index.stage_lines",
     "index.unstage_lines",
+    "merge.abort",
+    "merge.continue",
+    "merge.start",
     "remote.add",
     "remote.fetch",
     "remote.pull",
@@ -701,6 +729,9 @@ mod tests {
                 "index.stage_lines",
                 "index.unstage",
                 "index.unstage_lines",
+                "merge.abort",
+                "merge.continue",
+                "merge.start",
                 "remote.add",
                 "remote.fetch",
                 "remote.list",
@@ -709,6 +740,7 @@ mod tests {
                 "remote.remove",
                 "repo.log",
                 "repo.open",
+                "repo.operation",
                 "repo.refs",
                 "repo.status",
                 "stash.apply",
@@ -736,6 +768,9 @@ mod tests {
                 "index.stage_lines",
                 "index.unstage",
                 "index.unstage_lines",
+                "merge.abort",
+                "merge.continue",
+                "merge.start",
                 "remote.add",
                 "remote.fetch",
                 "remote.pull",

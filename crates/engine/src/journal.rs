@@ -29,6 +29,10 @@
 //!   branch attivo undo e redo passano da [`GitBackend::reset_branch`] (come `git reset --keep`:
 //!   aggiornano indice e worktree, rifiutano se un file da ripristinare ha modifiche locali), per
 //!   un altro branch spostano solo il ref. Il fetch e il push no.
+//! - **`merge.start` e `merge.continue` entrano nel diario** quando il merge si conclude
+//!   ([`JournalEntry::merge`]): undo e redo come il pull del branch attivo. Un merge fermo in
+//!   conflitto no: il branch non si è mosso, e finché il merge è in corso undo e redo sono
+//!   rifiutati; `merge.abort` nemmeno (il recupero è il suo backup di indice e worktree).
 //! - **`remote.add` e `remote.remove` entrano nel diario** ([`JournalEntry::remote_add`],
 //!   [`JournalEntry::remote_remove`]): la voce tiene il remoto ([`RemoteSnapshot`]:
 //!   configurazione, branch remoti, upstream che lo usano); undo e redo lo tolgono o lo
@@ -337,11 +341,55 @@ impl JournalEntry {
         )
     }
 
+    /// La voce di un merge concluso (`merge.start` riuscito, o `merge.continue`, `command`):
+    /// il branch di HEAD `branch` (nome completo) da `before` ad `after` (il commit di merge o
+    /// quello del fast-forward), HEAD uguale prima e dopo; `strategy` `fast_forward`/`merge`,
+    /// `source` il nome di quello che si è unito (`feature`, `origin/x`, un id), `backup` il ref
+    /// del branch prima del merge (se salvato). Undo e redo come per un pull del branch attivo:
+    /// [`GitBackend::reset_branch`] (come `git reset --keep`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn merge(
+        command: &str,
+        branch: &str,
+        before: Oid,
+        after: Oid,
+        head: HeadState,
+        strategy: &str,
+        source: &str,
+        backup: Option<String>,
+    ) -> Self {
+        let how = match strategy {
+            "fast_forward" => "fast-forward",
+            _ => "commit di merge",
+        };
+        Self::branch_entry(
+            command,
+            format!(
+                "Merge di {source} in `{}` ({how}: da {} a {})",
+                branch_short(branch),
+                short(&before),
+                short(&after)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: branch.to_owned(),
+                before: Some(before),
+                after: Some(after),
+            }],
+            backup,
+        )
+    }
+
     /// Vero se la voce sposta il branch di HEAD con indice e worktree (un pull del branch
-    /// attivo): undo e redo usano [`GitBackend::reset_branch`].
+    /// attivo, un merge): undo e redo usano [`GitBackend::reset_branch`].
     fn moves_worktree(&self) -> bool {
-        self.command == "remote.pull"
-            && matches!(&self.head.after, HeadState::Branch(b) if self.refs.len() == 1 && self.refs[0].name == *b)
+        matches!(
+            self.command.as_str(),
+            "remote.pull" | "merge.start" | "merge.continue"
+        ) && matches!(&self.head.after, HeadState::Branch(b) if self.refs.len() == 1 && self.refs[0].name == *b)
     }
 
     fn branch_entry(
@@ -643,6 +691,12 @@ impl JournalEntry {
         redo: bool,
     ) -> Result<RestoreOutcome, EngineError> {
         if let Some(request) = self.worktree_request(redo) {
+            // Come per i ref: mai a metà di un merge, rebase... (riscriverebbe file del merge).
+            check_no_operation(
+                request.command,
+                "riscriverebbe file",
+                repo.status()?.operation,
+            )?;
             let expected = if redo {
                 &self.head.before
             } else {
@@ -729,7 +783,7 @@ impl JournalEntry {
                     Ok(outcome)
                 }
             }
-            "remote.pull" if self.moves_worktree() => {
+            "remote.pull" | "merge.start" | "merge.continue" if self.moves_worktree() => {
                 Self::check_unchanged(repo, &request, "sposterebbe il branch")?;
                 repo.reset_branch(&request)
             }

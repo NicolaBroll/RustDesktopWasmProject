@@ -220,9 +220,29 @@ elimina uno stash (senza `confirm` l'errore dice cosa si perderebbe e dà l'id d
 `expected`; `confirm` senza `expected` è un errore), con il backup in `refs/project/backup/stash-...`: entra nel diario e l'undo lo
 rimette in cima all'elenco. Risultato: `{"stash", "backup", "warnings", "stashes"}`.
 
+`merge.start {"rev", "no_ff"?, "ff_only"?, "message"?}` unisce `rev` (branch locale o remoto,
+tag, id) nel branch attivo: fast-forward se si può (`no_ff`: sempre un commit di merge;
+`ff_only`: solo fast-forward), altrimenti un commit di merge con `message` o il messaggio di git
+(`Merge branch 'x'`). Rifiutato con HEAD staccata, un'operazione in corso, file in conflitto e,
+per un commit di merge, qualunque modifica ai file tracciati (mai `--autostash`); prima salva il
+branch in `refs/project/backup/merge-...`. **Con conflitti il merge resta in corso**: il risultato
+ha `in_progress: true` e i file in `conflicts`. Risultato: `{"rev", "source", "target", "branch",
+"strategy": "fast_forward"|"merge"|"up_to_date", "before", "after", "ahead", "behind",
+"in_progress", "conflicts", "message", "backup", "warnings", "status", "refs"}`. `merge.continue
+{"message"?}` conclude il merge quando non restano file in conflitto (risolti e messi in stage con
+`index.stage`; altrimenti l'errore li elenca), con il messaggio preparato da git senza il blocco
+`# Conflicts:`. `merge.abort {"confirm": true}` lo annulla (`git merge --abort`): senza `confirm`
+l'errore dice quali risoluzioni e modifiche si perderebbero; prima salva indice e worktree in
+`refs/project/backup/merge-abort-...` (si rimettono con `git stash apply <ref>`). Il merge concluso
+(subito o con `merge.continue`) entra nel diario e l'undo riporta il branch com'era, con indice e
+worktree; un merge fermo e l'abort no. `repo.operation {}` (sola lettura) è il banner
+dell'operazione in corso: `{"operation", "head", "conflicts", "incoming": [{"id", "label",
+"summary", "refs"}], "message", "onto", "rebase_branch", "ready", "continue", "abort"}`
+(`continue`/`abort` sono i comandi da usare, oggi solo per il merge).
+
 `edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
-`branch.*`, `worktree.discard`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push` e
-`stash.drop`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+`branch.*`, `worktree.discard`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
+`stash.drop` e il merge concluso, `merge.start` e `merge.continue`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
 frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
 Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un

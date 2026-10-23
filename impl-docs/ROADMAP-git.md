@@ -241,10 +241,15 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test di integrazione; revisione di `safety-reviewer`; CI verde.
 
 ### S29 — Merge e stato "in corso"
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `merge.start`, `merge.abort`, `merge.continue`; banner nella UI quando il repo è
   in merge, rebase, cherry-pick o revert, con i file in conflitto.
 - **Fatto quando:** test con lo scenario di conflitto di S07; CI verde.
+- [x] Parte `git-engine`: comandi `merge.start`, `merge.continue`, `merge.abort` e la lettura
+  `repo.operation` per il banner ([git/merge.md](git/merge.md)).
+- [x] Parte `egui-ui`: riquadro dell'operazione in corso con i file in conflitto, "Continua il
+  merge…" e "Annulla il merge…" (con conferma), "Unisci in «branch»" dai menu di branch, tag e
+  commit; demo web con un branch in conflitto (§8 dell'architettura).
 
 ### S30 — Editor dei conflitti
 - [ ] **Agente:** `egui-ui`, con `git-domain` per il parser dei marcatori

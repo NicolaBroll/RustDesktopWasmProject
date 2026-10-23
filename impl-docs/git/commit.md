@@ -18,7 +18,9 @@ commit e l'altro: `.git/sequencer`) → `NotAllowed` (un commit da qui li conclu
 in modo poco visibile: un cherry-pick prenderebbe l'autore originale); niente in stage (indice
 uguale a HEAD, file `intent-to-add` esclusi) senza `amend` e senza merge → `NothingToCommit`, mai un
 commit vuoto. Merge in corso: il commit è il commit di merge (genitori HEAD e `MERGE_HEAD`), anche
-senza modifiche. Bisect: nessun controllo. Primo commit di un branch e HEAD staccata funzionano (con
+senza modifiche; per concludere un merge il comando è `merge.continue` ([merge.md](merge.md)),
+che usa lo stesso commit ma toglie dal messaggio di `MERGE_MSG` il blocco `# Conflicts:` ed entra nel
+diario come un merge (con `commit.create` la voce è quella di un commit). Bisect: nessun controllo. Primo commit di un branch e HEAD staccata funzionano (con
 HEAD staccata si sposta solo HEAD). Identità mancante: l'errore di git, nessun default. `amend`:
 stessi genitori e autore, albero dall'indice, messaggio nuovo (anche solo il messaggio); rifiutato
 senza commit, durante un merge e se renderebbe vuoto il commit (errore di git); un merge si riscrive

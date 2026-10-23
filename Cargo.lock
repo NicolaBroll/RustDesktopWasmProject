@@ -2252,8 +2252,10 @@ dependencies = [
  "eframe",
  "js-sys",
  "log",
+ "project-domain",
  "project-engine",
  "project-ui",
+ "serde_json",
  "wasm-bindgen-futures",
  "web-sys",
 ]

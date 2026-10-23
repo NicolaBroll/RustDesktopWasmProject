@@ -119,10 +119,8 @@ pub enum Blocked {
     Busy,
     /// File in conflitto.
     Conflicts,
-    /// Rebase, cherry-pick o revert in corso.
+    /// Merge, rebase, cherry-pick o revert in corso.
     Operation(Operation),
-    /// Amend durante un merge: git lo rifiuta.
-    AmendInMerge,
     /// Amend senza un commit da riscrivere (branch senza commit).
     NoCommitToAmend,
     /// Niente in stage, senza amend.
@@ -138,6 +136,10 @@ impl Blocked {
             Blocked::Conflicts => {
                 "Ci sono file in conflitto: risolverli e metterli in stage prima di committare"
             }
+            Blocked::Operation(Operation::Merge) => {
+                "Merge in corso: si conclude con «Continua il merge…» nel riquadro in alto (o si \
+                 annulla con «Annulla il merge…»)"
+            }
             Blocked::Operation(Operation::Rebase) => {
                 "Rebase in corso: si conclude con i comandi del rebase, non con un commit"
             }
@@ -151,9 +153,6 @@ impl Blocked {
                 "`git am` in corso: si conclude con `git am --continue`, non con un commit"
             }
             Blocked::Operation(_) => "Un'operazione in corso impedisce il commit",
-            Blocked::AmendInMerge => {
-                "Merge in corso: non si può modificare l'ultimo commit, disattivare amend"
-            }
             Blocked::NoCommitToAmend => "Non c'è ancora un commit da modificare",
             Blocked::NothingStaged => {
                 "Niente in stage: mettere in stage le modifiche da committare (oppure attivare \
@@ -183,30 +182,22 @@ impl Gate<'_> {
         if self.busy {
             return Err(Blocked::Busy);
         }
-        let merging = match self.status {
+        // Un merge in corso si conclude con `merge.continue` (il riquadro dell'operazione),
+        // che entra nel diario come merge; il commit della casella resta per i commit normali.
+        match self.status {
             Some(status) if status.has_conflicts() => return Err(Blocked::Conflicts),
+            // Durante un bisect si committa normalmente.
             Some(Status {
-                operation:
-                    Some(
-                        op @ (Operation::Rebase
-                        | Operation::CherryPick
-                        | Operation::Revert
-                        | Operation::Am),
-                    ),
+                operation: Some(op),
                 ..
-            }) => return Err(Blocked::Operation(*op)),
-            Some(status) => status.operation == Some(Operation::Merge),
-            None => false,
-        };
+            }) if *op != Operation::Bisect => return Err(Blocked::Operation(*op)),
+            _ => {}
+        }
         if self.draft.amend() {
-            if merging {
-                return Err(Blocked::AmendInMerge);
-            }
             if !self.has_head {
                 return Err(Blocked::NoCommitToAmend);
             }
-        } else if self.staged == 0 && !merging {
-            // Durante un merge il commit di merge si fa anche senza modifiche in stage.
+        } else if self.staged == 0 {
             return Err(Blocked::NothingStaged);
         }
         if self.draft.is_blank() {
@@ -606,14 +597,20 @@ mod tests {
             gate(&ready, &am, 1, false),
             Err(Blocked::Operation(Operation::Am))
         );
-        // Merge risolto: il commit di merge si fa anche senza niente in stage.
+        // Merge risolto: si conclude dal riquadro dell'operazione, non con un commit.
         let merge = status(Vec::new(), Some(Operation::Merge));
-        assert_eq!(gate(&ready, &merge, 0, false), Ok(()));
+        assert_eq!(
+            gate(&ready, &merge, 0, false),
+            Err(Blocked::Operation(Operation::Merge))
+        );
 
         let mut amend = ready.clone();
         amend.set_amend(true, None);
         assert_eq!(gate(&amend, &clean, 0, false), Ok(()));
-        assert_eq!(gate(&amend, &merge, 0, false), Err(Blocked::AmendInMerge));
+        assert_eq!(
+            gate(&amend, &merge, 0, false),
+            Err(Blocked::Operation(Operation::Merge))
+        );
         let no_head = Gate {
             draft: &amend,
             status: Some(&clean),

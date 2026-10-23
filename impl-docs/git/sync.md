@@ -64,7 +64,12 @@ sovrascriverebbe modifiche o non tracciati → `NotAllowed` con i file. **Backup
 pulito, quindi torna identico) e l'errore è `PullConflict { branch, upstream, operation: merge |
 rebase, files, message }`; lasciare il repo nel merge/rebase in corso non avrebbe uscita dal client
 finché non ci sono `merge.abort`/`merge.continue` (S29), l'editor dei conflitti (S30) e
-`rebase.abort`/`rebase.continue` (S32); allora si potrà aggiungere un'opzione per tenerlo. Errori
+`rebase.abort`/`rebase.continue` (S32); allora si potrà aggiungere un'opzione per tenerlo.
+**Da rivedere** (annotato in S29): ora `merge.abort`/`merge.continue` e `repo.operation` esistono
+([merge.md](merge.md)), quindi un pull con strategia merge potrebbe lasciare il merge in corso come
+fa `merge.start`; per ora il comportamento resta questo (il rebase non ha ancora
+`rebase.abort`/`rebase.continue`, e un pull che a volte annulla e a volte no sarebbe confuso).
+Errori
 del fetch: `Auth`, `RemoteUnreachable`, `Cancelled`. Risultato: `{"branch", "remote", "upstream",
 "strategy": "fast_forward" | "merge" | "rebase" | "up_to_date", "strategy_source": "param" |
 "config" | "default", "before", "after", "ahead", "behind", "backup": string | null, "fetch":

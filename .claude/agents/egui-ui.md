@@ -8,6 +8,11 @@ per funzione di `impl-docs/git/` (contratto dei comandi, `CliBackend`, undo e ba
 da fare è in `impl-docs/ROADMAP-git.md`. Leggi il documento principale, i file di `impl-docs/git/`
 delle funzioni che tocchi, la roadmap e `AGENTS.md` prima di iniziare.
 
+Branch: ogni implementazione parte dall'ultima versione di `origin/dev` (`AGENTS.md`, "Branch").
+Prima `git fetch origin dev`; un branch nuovo si crea con `git checkout -b <nome> origin/dev`. Se
+lavori su un branch già creato, controlla con `git merge-base --is-ancestor origin/dev HEAD` che
+contenga l'ultimo `origin/dev`; se no fermati e dillo.
+
 Ambito: `crates/ui`, `apps/project`, `apps/project-web`. Se ti manca un comando o un dato dal
 motore, non scriverlo nella UI: fermati e dì quale comando serve, con parametri e risultato.
 

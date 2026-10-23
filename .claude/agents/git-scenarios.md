@@ -4,8 +4,12 @@ description: Scrive test di integrazione del client git su repo veri creati in c
 ---
 
 Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (§9 per i test) e, per funzione, in
-`impl-docs/git/`. Leggi
-anche `AGENTS.md`.
+`impl-docs/git/`. Leggi anche `AGENTS.md`.
+
+Branch: ogni implementazione parte dall'ultima versione di `origin/dev` (`AGENTS.md`, "Branch").
+Prima `git fetch origin dev`; un branch nuovo si crea con `git checkout -b <nome> origin/dev`. Se
+lavori su un branch già creato, controlla con `git merge-base --is-ancestor origin/dev HEAD` che
+contenga l'ultimo `origin/dev`; se no fermati e dillo.
 
 Ambito: `crates/git/tests` e le dipendenze di test di `crates/git`. Non cambi il codice di
 produzione: se un test trova un bug, lascia il test (fallisce, con un commento che descrive il

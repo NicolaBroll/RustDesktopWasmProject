@@ -1,6 +1,7 @@
 //! Testo per la UI: date dei commit, file cambiati.
 
 use project_domain::{Change, ChangedFile, Signature};
+use project_i18n::tr;
 
 /// Lettera del tipo di modifica, come la scrive git: `A`, `D`, `M`, `T`, `R`, `C`.
 pub fn change_letter(change: Change) -> &'static str {
@@ -19,18 +20,18 @@ pub fn change_letter(change: Change) -> &'static str {
 }
 
 /// Nome del tipo di modifica, per il suggerimento.
-pub fn change_name(change: Change) -> &'static str {
+pub fn change_name(change: Change) -> String {
     match change {
-        Change::Added => "aggiunto",
-        Change::Deleted => "eliminato",
-        Change::Modified => "modificato",
-        Change::TypeChanged => "cambiato tipo",
-        Change::Renamed => "rinominato",
-        Change::Copied => "copiato",
-        Change::Unmerged => "in conflitto",
-        Change::Untracked => "non tracciato",
-        Change::Ignored => "ignorato",
-        Change::Unmodified => "invariato",
+        Change::Added => tr!("format-change-added"),
+        Change::Deleted => tr!("format-change-deleted"),
+        Change::Modified => tr!("format-change-modified"),
+        Change::TypeChanged => tr!("format-change-type-changed"),
+        Change::Renamed => tr!("format-change-renamed"),
+        Change::Copied => tr!("format-change-copied"),
+        Change::Unmerged => tr!("format-change-unmerged"),
+        Change::Untracked => tr!("format-change-untracked"),
+        Change::Ignored => tr!("format-change-ignored"),
+        Change::Unmodified => tr!("format-change-unmodified"),
     }
 }
 

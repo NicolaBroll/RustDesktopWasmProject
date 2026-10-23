@@ -17,7 +17,7 @@ pub(crate) fn details_panel(
 ) {
     let (commit, compared_to) = match &shown {
         Shown::Nothing => {
-            ui.centered_and_justified(|ui| ui.weak("Nessun commit selezionato."));
+            ui.centered_and_justified(|ui| ui.weak(tr!("details-no-commit")));
             return;
         }
         Shown::Loaded(details) => (Some(&details.commit), Some(details.compared_to)),
@@ -40,12 +40,12 @@ pub(crate) fn details_panel(
         Shown::Loading(_) => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.weak("Caricamento dei file cambiati…");
+                ui.weak(tr!("details-loading-files"));
             });
         }
         Shown::Failed(_, error) => {
             ui.colored_label(ui.visuals().error_fg_color, error);
-            if ui.button("Riprova").clicked() {
+            if ui.button(tr!("details-retry")).clicked() {
                 actions.push(Action::RetryDetails);
             }
         }
@@ -73,13 +73,13 @@ pub(super) fn commit_header(
         .num_columns(2)
         .spacing(vec2(12.0, 4.0))
         .show(ui, |ui| {
-            ui.weak("Commit");
+            ui.weak(tr!("details-commit"));
             ui.horizontal_wrapped(|ui| {
                 let id = commit.id.to_string();
                 ui.add(egui::Label::new(RichText::new(&id).monospace()).selectable(true));
                 if ui
-                    .small_button("Copia")
-                    .on_hover_text("Copia l'id completo")
+                    .small_button(tr!("details-copy"))
+                    .on_hover_text(tr!("details-copy-hint"))
                     .clicked()
                 {
                     ui.ctx().copy_text(id);
@@ -88,13 +88,13 @@ pub(super) fn commit_header(
             ui.end_row();
 
             ui.weak(if commit.parents.len() == 1 {
-                "Genitore"
+                tr!("details-parent")
             } else {
-                "Genitori"
+                tr!("details-parents")
             });
             ui.horizontal_wrapped(|ui| {
                 if commit.parents.is_empty() {
-                    ui.weak("nessuno");
+                    ui.weak(tr!("details-no-parents"));
                 }
                 for parent in &commit.parents {
                     oid_link(ui, *parent, actions);
@@ -102,7 +102,10 @@ pub(super) fn commit_header(
             });
             ui.end_row();
 
-            for (title, sig) in [("Autore", &commit.author), ("Committer", &commit.committer)] {
+            for (title, sig) in [
+                (tr!("details-author"), &commit.author),
+                (tr!("details-committer"), &commit.committer),
+            ] {
                 ui.weak(title);
                 ui.vertical(|ui| {
                     ui.add(egui::Label::new(signer(sig)).wrap());
@@ -111,19 +114,19 @@ pub(super) fn commit_header(
                 ui.end_row();
             }
 
-            ui.weak("Confrontato con");
+            ui.weak(tr!("details-compared-to"));
             match compared_to {
                 None => {
                     ui.weak("…");
                 }
                 Some(None) => {
-                    ui.label("commit radice (albero vuoto)");
+                    ui.label(tr!("details-root-commit"));
                 }
                 Some(Some(base)) => {
                     ui.horizontal_wrapped(|ui| {
                         oid_link(ui, base, actions);
                         if commit.is_merge() {
-                            ui.weak("(primo genitore)");
+                            ui.weak(tr!("details-first-parent"));
                         }
                     });
                 }
@@ -132,7 +135,10 @@ pub(super) fn commit_header(
         });
     if commit.is_merge() {
         ui.add_space(4.0);
-        ui.colored_label(Color32::from_rgb(0x9b, 0x6b, 0xdf), "Commit di merge");
+        ui.colored_label(
+            Color32::from_rgb(0x9b, 0x6b, 0xdf),
+            tr!("details-merge-commit"),
+        );
     }
     ui.add_space(4.0);
 }
@@ -149,11 +155,7 @@ pub(super) fn changed_files(
     open: Option<&DiffTarget>,
     actions: &mut Vec<Action>,
 ) {
-    ui.strong(match files.len() {
-        0 => "Nessun file cambiato".to_owned(),
-        1 => "1 file cambiato".to_owned(),
-        n => format!("{n} file cambiati"),
-    });
+    ui.strong(tr!("details-files-changed", n = files.len()));
     ui.add_space(2.0);
     let font = FontId::proportional(13.0);
     let mono = FontId::monospace(12.0);
@@ -195,7 +197,9 @@ pub(super) fn changed_files(
                 let mut right = rect.right() - 4.0;
                 let mut tail = file_score(file);
                 if file.is_submodule() {
-                    tail = format!("{tail} [sottomodulo]").trim_start().to_owned();
+                    tail = tr!("details-submodule-tail", tail = tail)
+                        .trim_start()
+                        .to_owned();
                 }
                 if !tail.is_empty() {
                     let galley = painter.layout_no_wrap(tail, font.clone(), weak);
@@ -225,14 +229,18 @@ pub(super) fn file_tooltip(file: &ChangedFile) -> String {
         format::change_name(file.change)
     )];
     if let Some(score) = file.score {
-        lines.push(format!("somiglianza {score}%"));
+        lines.push(tr!("details-similarity", score = score));
     }
     if file.old_mode != file.new_mode && file.old_mode != 0 && file.new_mode != 0 {
-        lines.push(format!("modo {:o} -> {:o}", file.old_mode, file.new_mode));
+        lines.push(tr!(
+            "details-mode",
+            old = format!("{:o}", file.old_mode),
+            new = format!("{:o}", file.new_mode)
+        ));
     }
     if file.is_submodule() {
-        lines.push("sottomodulo".to_owned());
+        lines.push(tr!("details-submodule"));
     }
-    lines.push("Clic: mostra il diff".to_owned());
+    lines.push(tr!("details-click-diff"));
     lines.join("\n")
 }

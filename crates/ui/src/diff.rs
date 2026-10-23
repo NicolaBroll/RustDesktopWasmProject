@@ -10,6 +10,7 @@
 use crate::format::change_name;
 use crate::lines::LineSelection;
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
+use project_i18n::tr;
 
 /// Da dove viene il diff di un file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,12 +270,12 @@ pub fn file_title(file: &FileDiff) -> String {
 
 /// Tipo di modifica, somiglianza e righe cambiate, es. `rinominato 92%  +1 -1`.
 pub fn file_summary(file: &FileDiff) -> String {
-    let mut parts = vec![change_name(file.change).to_owned()];
+    let mut parts = vec![change_name(file.change)];
     if let Some(similarity) = file.similarity {
         parts.push(format!("{similarity}%"));
     }
     if file.is_submodule() {
-        parts.push("[sottomodulo]".to_owned());
+        parts.push(tr!("diff-submodule-badge"));
     }
     let (added, removed) = file.line_counts();
     if added + removed > 0 {
@@ -287,36 +288,40 @@ pub fn file_summary(file: &FileDiff) -> String {
 pub fn file_notes(file: &FileDiff) -> Vec<String> {
     let mut notes = Vec::new();
     match (file.old_mode, file.new_mode) {
-        (Some(old), Some(new)) if old != new => notes.push(format!("modo {old:o} -> {new:o}")),
+        (Some(old), Some(new)) if old != new => notes.push(tr!(
+            "diff-note-mode",
+            old = format!("{old:o}"),
+            new = format!("{new:o}")
+        )),
         (None, Some(new)) if file.change == Change::Added => {
-            notes.push(format!("nuovo file, modo {new:o}"));
+            notes.push(tr!("diff-note-new-file", mode = format!("{new:o}")));
         }
         (Some(old), None) if file.change == Change::Deleted => {
-            notes.push(format!("file eliminato, modo {old:o}"));
+            notes.push(tr!("diff-note-deleted-file", mode = format!("{old:o}")));
         }
         _ => {}
     }
     if file.is_submodule() {
-        notes.push("sottomodulo: il diff mostra il commit a cui punta".to_owned());
+        notes.push(tr!("diff-note-submodule"));
     }
     if !file.hunks.is_empty() {
         return notes;
     }
     let reason = if file.change == Change::Unmerged {
-        "file in conflitto: il diff non è disponibile finché il conflitto non è risolto"
+        tr!("diff-reason-unmerged")
     } else if file.binary {
-        "file binario: il contenuto non si mostra"
+        tr!("diff-reason-binary")
     } else {
         match file.change {
-            Change::Renamed => "rinomina esatta: contenuto invariato",
-            Change::Copied => "copia esatta: contenuto invariato",
-            Change::Added => "file vuoto",
-            Change::Deleted => "file vuoto eliminato",
-            _ if file.old_mode != file.new_mode => "solo cambio di modo: contenuto invariato",
-            _ => "nessuna modifica al contenuto",
+            Change::Renamed => tr!("diff-reason-exact-rename"),
+            Change::Copied => tr!("diff-reason-exact-copy"),
+            Change::Added => tr!("diff-reason-empty-file"),
+            Change::Deleted => tr!("diff-reason-empty-file-deleted"),
+            _ if file.old_mode != file.new_mode => tr!("diff-reason-mode-only"),
+            _ => tr!("diff-reason-no-change"),
         }
     };
-    notes.push(reason.to_owned());
+    notes.push(reason);
     notes
 }
 

@@ -9,6 +9,7 @@ use crate::lines::{self, LineButtons, LineSelection, Partial};
 use crate::{Action, Drag};
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use project_domain::LineKind;
+use project_i18n::tr;
 
 /// Altezza di una riga del diff: tutte uguali, per `show_rows`.
 const ROW_HEIGHT: f32 = 18.0;
@@ -65,26 +66,22 @@ pub(crate) fn diff_panel(
         Pane::Loading(target) => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.weak(format!(
-                    "Caricamento del diff di {}…",
-                    target.path.to_string_lossy()
+                ui.weak(tr!(
+                    "diff-loading",
+                    path = target.path.to_string_lossy().as_ref()
                 ));
             });
         }
         Pane::Failed(_, error) => {
             ui.colored_label(ui.visuals().error_fg_color, error);
-            if ui.button("Riprova").clicked() {
+            if ui.button(tr!("diff-retry")).clicked() {
                 actions.push(Action::RetryDiff);
             }
         }
         Pane::Loaded(target, doc) if doc.diff.files.is_empty() => {
             let text = match target.source {
-                DiffSource::Worktree => {
-                    "Nessuna differenza rispetto all'indice. Un file non tracciato non ha diff \
-                     finché non è in stage: dopo lo stage il contenuto compare tra le modifiche \
-                     in stage."
-                }
-                _ => "Nessuna differenza per questo file.",
+                DiffSource::Worktree => tr!("diff-empty-worktree"),
+                _ => tr!("diff-empty"),
             };
             ui.centered_and_justified(|ui| {
                 ui.add(egui::Label::new(egui::RichText::new(text).weak()).wrap())
@@ -102,8 +99,8 @@ pub(crate) fn diff_panel(
 fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         if ui
-            .button("< Grafo")
-            .on_hover_text("Chiudi il diff e torna al grafo (Esc)")
+            .button(tr!("diff-back"))
+            .on_hover_text(tr!("diff-back-hint"))
             .clicked()
         {
             actions.push(Action::CloseDiff);
@@ -112,16 +109,16 @@ fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<A
         ui.strong(target.path.to_string_lossy());
         match target.source {
             DiffSource::Commit(id) => {
-                ui.weak(format!("nel commit {}", id.short()))
+                ui.weak(tr!("diff-in-commit", id = id.short()))
                     .on_hover_text(id.to_string());
             }
             DiffSource::Worktree => {
-                ui.weak("non in stage")
-                    .on_hover_text("Modifiche nel worktree rispetto all'indice");
+                ui.weak(tr!("diff-unstaged"))
+                    .on_hover_text(tr!("diff-unstaged-hint"));
             }
             DiffSource::Index => {
-                ui.weak("in stage")
-                    .on_hover_text("Modifiche nell'indice rispetto all'ultimo commit (HEAD)");
+                ui.weak(tr!("diff-staged"))
+                    .on_hover_text(tr!("diff-staged-hint"));
             }
         }
         if let Pane::Loaded(_, doc) = pane
@@ -141,7 +138,7 @@ fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<A
 fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
     if let Partial::Unavailable(reason) = &state.partial {
         ui.horizontal(|ui| {
-            ui.weak("Stage per hunk e per riga non disponibile")
+            ui.weak(tr!("diff-partial-unavailable"))
                 .on_hover_text(reason);
             ui.add(egui::Label::new(egui::RichText::new(format!("({reason})")).weak()).truncate())
                 .on_hover_text(reason);
@@ -151,39 +148,36 @@ fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
     let Some(b) = state.buttons else {
         return;
     };
-    let verb = lines::verb(b.direction);
     ui.horizontal(|ui| {
-        let help = match b.direction {
-            project_domain::PatchDirection::Stage => {
-                "Mette in stage solo le righe selezionate; il resto del file resta fuori"
-            }
-            project_domain::PatchDirection::Unstage => {
-                "Toglie dallo stage solo le righe selezionate; il worktree non cambia"
-            }
+        let (label, help) = match b.direction {
+            project_domain::PatchDirection::Stage => (
+                tr!("diff-stage-selected", n = b.count),
+                tr!("diff-stage-selected-hint"),
+            ),
+            project_domain::PatchDirection::Unstage => (
+                tr!("diff-unstage-selected", n = b.count),
+                tr!("diff-unstage-selected-hint"),
+            ),
         };
         let button = ui
-            .add_enabled(
-                b.selected,
-                egui::Button::new(format!("{verb} righe selezionate ({})", b.count)),
-            )
+            .add_enabled(b.selected, egui::Button::new(label))
             .on_hover_text(help)
             .on_disabled_hover_text(if b.count == 0 {
-                "Nessuna riga selezionata: clic su una riga + o - per selezionarla"
+                tr!("diff-no-lines-selected")
             } else {
-                "Attendere la fine della scrittura in corso"
+                tr!("diff-wait-write")
             });
         if button.clicked() {
             actions.push(Action::WriteSelectedLines);
         }
         let clear = ui
-            .add_enabled(b.clear, egui::Button::new("Deseleziona"))
-            .on_hover_text("Deseleziona tutte le righe (Esc)");
+            .add_enabled(b.clear, egui::Button::new(tr!("diff-clear")))
+            .on_hover_text(tr!("diff-clear-hint"));
         if clear.clicked() {
             actions.push(Action::ClearLines);
         }
-        let hint = "Clic su una riga + o - per selezionarla, Maiusc+clic per un intervallo, \
-                    trascina per più righe";
-        ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate())
+        let hint = tr!("diff-select-hint");
+        ui.add(egui::Label::new(egui::RichText::new(&hint).weak()).truncate())
             .on_hover_text(hint);
     });
 }
@@ -373,19 +367,18 @@ fn hunk_button(ui: &mut Ui, rect: Rect, hunk: usize, b: LineButtons, actions: &m
             .max_rect(cell)
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
     );
-    let verb = lines::verb(b.direction);
-    let help = match b.direction {
+    let (label, help) = match b.direction {
         project_domain::PatchDirection::Stage => {
-            "Mette in stage tutte le righe cambiate di questo hunk"
+            (tr!("diff-stage-hunk"), tr!("diff-stage-hunk-hint"))
         }
         project_domain::PatchDirection::Unstage => {
-            "Toglie dallo stage tutte le righe cambiate di questo hunk; il worktree non cambia"
+            (tr!("diff-unstage-hunk"), tr!("diff-unstage-hunk-hint"))
         }
     };
     let button = cell
-        .add_enabled(b.hunks, egui::Button::new(format!("{verb} hunk")).small())
+        .add_enabled(b.hunks, egui::Button::new(label).small())
         .on_hover_text(help)
-        .on_disabled_hover_text("Attendere la fine della scrittura in corso");
+        .on_disabled_hover_text(tr!("diff-wait-write"));
     if button.clicked() {
         actions.push(Action::WriteHunk(hunk));
     }
@@ -540,7 +533,7 @@ fn paint_text(ui: &Ui, content: &str, at: egui::Pos2, style: &Style) {
     }
     if shown.cut > 0 {
         job.append(
-            &format!(" … (altri {} caratteri)", shown.cut),
+            &tr!("diff-line-cut", n = shown.cut),
             0.0,
             format(style.weak),
         );

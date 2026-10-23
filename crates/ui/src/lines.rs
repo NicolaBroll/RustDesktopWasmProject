@@ -10,6 +10,7 @@
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
 use crate::{Action, App, Drag, Request, lines};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
+use project_i18n::tr;
 use std::collections::BTreeSet;
 
 /// Se il diff mostrato permette lo stage (o l'unstage) di hunk e righe.
@@ -43,11 +44,7 @@ pub fn partial(doc: &DiffDoc, source: DiffSource) -> Partial {
         [] => return Partial::Hidden,
         [file] => file,
         _ => {
-            return Partial::Unavailable(
-                "il file ha cambiato tipo (ad esempio da file a link): le righe non si possono \
-                 scegliere, si sposta solo il file intero dall'area di stage"
-                    .to_owned(),
-            );
+            return Partial::Unavailable(tr!("diff-lines-type-changed"));
         }
     };
     match build_patch(file, &[], direction) {
@@ -216,14 +213,6 @@ impl LineWrite {
     }
 }
 
-/// "Stage" o "Unstage".
-pub fn verb(direction: PatchDirection) -> &'static str {
-    match direction {
-        PatchDirection::Stage => "Stage",
-        PatchDirection::Unstage => "Unstage",
-    }
-}
-
 /// La scrittura per `pick` nel diff `doc` di `target`; `None` se il diff non permette la
 /// selezione parziale o non c'è niente da spostare (mai una lista di righe vuota).
 pub fn plan(doc: &DiffDoc, target: &DiffTarget, pick: Pick<'_>) -> Option<LineWrite> {
@@ -231,18 +220,42 @@ pub fn plan(doc: &DiffDoc, target: &DiffTarget, pick: Pick<'_>) -> Option<LineWr
         return None;
     };
     let file = single_file(doc)?;
-    let (lines, what) = match pick {
-        Pick::Hunk(h) => (
-            file.hunks.get(h)?.line_refs(),
-            format!("dell'hunk {}", h + 1),
-        ),
+    let path = target.path.to_string_lossy();
+    let (lines, label) = match pick {
+        Pick::Hunk(h) => {
+            let hunk = h + 1;
+            let label = match direction {
+                PatchDirection::Stage => tr!(
+                    "diff-lines-label-stage-hunk",
+                    hunk = hunk,
+                    path = path.as_ref()
+                ),
+                PatchDirection::Unstage => {
+                    tr!(
+                        "diff-lines-label-unstage-hunk",
+                        hunk = hunk,
+                        path = path.as_ref()
+                    )
+                }
+            };
+            (file.hunks.get(h)?.line_refs(), label)
+        }
         Pick::Selected(selection) => {
             let lines = selection.refs(doc);
-            let what = match lines.len() {
-                1 => "di 1 riga".to_owned(),
-                n => format!("di {n} righe"),
+            let n = lines.len();
+            let label = match direction {
+                PatchDirection::Stage => {
+                    tr!("diff-lines-label-stage-lines", n = n, path = path.as_ref())
+                }
+                PatchDirection::Unstage => {
+                    tr!(
+                        "diff-lines-label-unstage-lines",
+                        n = n,
+                        path = path.as_ref()
+                    )
+                }
             };
-            (lines, what)
+            (lines, label)
         }
     };
     if lines.is_empty() {
@@ -251,11 +264,7 @@ pub fn plan(doc: &DiffDoc, target: &DiffTarget, pick: Pick<'_>) -> Option<LineWr
     Some(LineWrite {
         direction,
         path: target.path.clone(),
-        label: format!(
-            "{} {what} di {}",
-            verb(direction),
-            target.path.to_string_lossy()
-        ),
+        label,
         lines,
         digest: project_engine::file_digest(file),
     })
@@ -629,8 +638,6 @@ mod tests {
             buttons(&Partial::Unavailable("binario".to_owned()), &s, true),
             None
         );
-        assert_eq!(verb(PatchDirection::Stage), "Stage");
-        assert_eq!(verb(PatchDirection::Unstage), "Unstage");
     }
 
     /// Il percorso completo con il repo di esempio, come lo fa la UI: `diff.worktree` di

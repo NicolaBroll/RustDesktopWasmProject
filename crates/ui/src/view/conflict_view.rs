@@ -7,6 +7,7 @@ use crate::Action;
 use crate::conflict::{BlockInfo, Column, Editor, Load, Loaded, Pending, Pick};
 use egui::{RichText, Ui};
 use project_domain::Choice;
+use project_i18n::tr;
 
 /// Altezza di una riga di pulsanti di un blocco.
 const BLOCK_ROW: f32 = 24.0;
@@ -24,21 +25,21 @@ pub(crate) fn conflict_editor(
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
-        ui.heading("Conflitto");
+        ui.heading(tr!("conflict-title"));
         ui.label(RichText::new(editor.path.to_string()).monospace().strong());
         if let Some(loaded) = editor.loaded() {
             ui.weak(conflict_name(loaded.shown.kind));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let close = ui
-                .add_enabled(!editor.sending, egui::Button::new("Chiudi"))
-                .on_hover_text("Torna alla lista: le scelte non segnate come risolte si perdono");
+                .add_enabled(!editor.sending, egui::Button::new(tr!("conflict-close")))
+                .on_hover_text(tr!("conflict-close-hint"));
             if close.clicked() {
                 actions.push(Action::CloseConflict);
             }
             let restart = ui
-                .add_enabled(!editor.sending, egui::Button::new("Ricomincia"))
-                .on_hover_text("Rilegge il file dal disco: le scelte fatte qui si perdono");
+                .add_enabled(!editor.sending, egui::Button::new(tr!("conflict-restart")))
+                .on_hover_text(tr!("conflict-restart-hint"));
             if restart.clicked() {
                 actions.push(Action::RestartConflict);
             }
@@ -49,18 +50,18 @@ pub(crate) fn conflict_editor(
         Load::Loading => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Lettura delle versioni…");
+                ui.label(tr!("conflict-loading"));
             });
         }
         Load::Failed(error) => {
             ui.add(
                 egui::Label::new(
-                    RichText::new(format!("Versioni non lette: {error}"))
+                    RichText::new(tr!("conflict-load-failed", error = error))
                         .color(ui.visuals().error_fg_color),
                 )
                 .wrap(),
             );
-            if ui.button("Riprova").clicked() {
+            if ui.button(tr!("conflict-retry")).clicked() {
                 actions.push(Action::RestartConflict);
             }
         }
@@ -79,30 +80,29 @@ fn loaded_editor(
     let footer = 64.0;
     let top = ((ui.available_height() - footer) * 0.38).max(80.0);
     let ours = loaded.ours_label.as_deref().unwrap_or("HEAD");
-    let theirs = loaded
-        .theirs_label
-        .as_deref()
-        .or(incoming)
-        .unwrap_or("in ingresso");
+    let theirs = match loaded.theirs_label.as_deref().or(incoming) {
+        Some(label) => label.to_owned(),
+        None => tr!("conflict-incoming"),
+    };
     ui.columns(3, |cols| {
         column(
             &mut cols[0],
             "base",
-            "Base (antenato comune)",
+            &tr!("conflict-column-base"),
             &loaded.base,
             top,
         );
         column(
             &mut cols[1],
             "ours",
-            &format!("Nostra ({ours})"),
+            &tr!("conflict-column-ours", label = ours),
             &loaded.ours,
             top,
         );
         column(
             &mut cols[2],
             "theirs",
-            &format!("Loro ({theirs})"),
+            &tr!("conflict-column-theirs", label = &theirs),
             &loaded.theirs,
             top,
         );
@@ -113,24 +113,20 @@ fn loaded_editor(
         Some(result) => {
             let blocks = loaded.blocks();
             ui.horizontal(|ui| {
-                ui.strong("Risultato");
-                ui.weak(match blocks.len() {
-                    0 => "nessun blocco di conflitto".to_owned(),
-                    1 => "1 blocco di conflitto".to_owned(),
-                    n => format!("{n} blocchi di conflitto"),
-                });
+                ui.strong(tr!("conflict-result"));
+                ui.weak(tr!("conflict-blocks", n = blocks.len()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let on = enabled && !blocks.is_empty();
                     if ui
-                        .add_enabled(on, egui::Button::new("Tutto loro"))
-                        .on_hover_text("Ogni blocco con le righe loro")
+                        .add_enabled(on, egui::Button::new(tr!("conflict-all-theirs")))
+                        .on_hover_text(tr!("conflict-all-theirs-hint"))
                         .clicked()
                     {
                         actions.push(Action::ChooseAll(Choice::Theirs));
                     }
                     if ui
-                        .add_enabled(on, egui::Button::new("Tutto nostra"))
-                        .on_hover_text("Ogni blocco con le righe nostre")
+                        .add_enabled(on, egui::Button::new(tr!("conflict-all-ours")))
+                        .on_hover_text(tr!("conflict-all-ours-hint"))
                         .clicked()
                     {
                         actions.push(Action::ChooseAll(Choice::Ours));
@@ -140,11 +136,8 @@ fn loaded_editor(
             if let Some(error) = loaded.parse_error() {
                 ui.add(
                     egui::Label::new(
-                        RichText::new(format!(
-                            "I marcatori non si leggono più ({error}): niente scelte per blocco, \
-                             il testo resta modificabile. «Ricomincia» rilegge il file"
-                        ))
-                        .color(ui.visuals().warn_fg_color),
+                        RichText::new(tr!("conflict-markers-unreadable", error = error))
+                            .color(ui.visuals().warn_fg_color),
                     )
                     .wrap(),
                 );
@@ -184,8 +177,8 @@ fn column(ui: &mut Ui, id: &str, title: &str, column: &Column, height: f32) {
         });
     };
     match column {
-        Column::Missing => weak(ui, "(assente)"),
-        Column::Binary(size) => weak(ui, &format!("(binario, {size} byte)")),
+        Column::Missing => weak(ui, &tr!("conflict-missing")),
+        Column::Binary(size) => weak(ui, &tr!("conflict-binary", size = *size)),
         Column::Text(lines) => {
             let row = ui.text_style_height(&egui::TextStyle::Monospace);
             egui::Frame::new()
@@ -221,7 +214,11 @@ fn block_rows(ui: &mut Ui, blocks: &[BlockInfo], enabled: bool, actions: &mut Ve
             for block in &blocks[range] {
                 ui.horizontal(|ui| {
                     ui.set_height(BLOCK_ROW - 4.0);
-                    ui.label(format!("Blocco {} (riga {}):", block.index + 1, block.line));
+                    ui.label(tr!(
+                        "conflict-block",
+                        n = block.index + 1,
+                        line = block.line
+                    ));
                     let mut choice = |ui: &mut Ui, text: &str, hint: &str, choice: Choice| {
                         if ui
                             .add_enabled(enabled, egui::Button::new(text).small())
@@ -231,16 +228,31 @@ fn block_rows(ui: &mut Ui, blocks: &[BlockInfo], enabled: bool, actions: &mut Ve
                             actions.push(Action::ChooseBlock(block.index, choice));
                         }
                     };
-                    choice(ui, "Nostra", "Tiene le righe nostre", Choice::Ours);
-                    choice(ui, "Loro", "Tiene le righe loro", Choice::Theirs);
                     choice(
                         ui,
-                        "Entrambe",
-                        "Le righe nostre e poi le loro",
+                        &tr!("conflict-choice-ours"),
+                        &tr!("conflict-choice-ours-hint"),
+                        Choice::Ours,
+                    );
+                    choice(
+                        ui,
+                        &tr!("conflict-choice-theirs"),
+                        &tr!("conflict-choice-theirs-hint"),
+                        Choice::Theirs,
+                    );
+                    choice(
+                        ui,
+                        &tr!("conflict-choice-both"),
+                        &tr!("conflict-choice-both-hint"),
                         Choice::OursThenTheirs,
                     );
                     if block.has_base {
-                        choice(ui, "Base", "Le righe dell'antenato comune", Choice::Base);
+                        choice(
+                            ui,
+                            &tr!("conflict-choice-base"),
+                            &tr!("conflict-choice-base-hint"),
+                            Choice::Base,
+                        );
                     }
                 });
             }
@@ -250,27 +262,24 @@ fn block_rows(ui: &mut Ui, blocks: &[BlockInfo], enabled: bool, actions: &mut Ve
 /// Il file non si modifica qui (binario, assente, marcatori non leggibili): solo i lati interi.
 fn sides_only(ui: &mut Ui, loaded: &Loaded, enabled: bool, actions: &mut Vec<Action>) {
     let why = match &loaded.shown.worktree {
-        None => "Il file non c'è nel worktree.".to_owned(),
-        Some(v) if v.text.is_none() => "Il file non è testo.".to_owned(),
-        Some(_) => "I marcatori di conflitto del file non si leggono.".to_owned(),
+        None => tr!("conflict-sides-missing"),
+        Some(v) if v.text.is_none() => tr!("conflict-sides-not-text"),
+        Some(_) => tr!("conflict-sides-unreadable"),
     };
-    ui.add(
-        egui::Label::new(format!(
-            "{why} Si può risolvere solo con una versione intera (il file attuale si salva prima \
-             in un backup)."
-        ))
-        .wrap(),
-    );
+    ui.add(egui::Label::new(why).wrap());
     ui.horizontal(|ui| {
-        for (pick, text) in [(Pick::Ours, "Usa nostra"), (Pick::Theirs, "Usa loro")] {
+        for (pick, text) in [
+            (Pick::Ours, tr!("conflict-use-ours")),
+            (Pick::Theirs, tr!("conflict-use-theirs")),
+        ] {
             let available = loaded.side_text(pick).is_some();
             let button = ui
                 .add_enabled(enabled && available, egui::Button::new(text))
-                .on_hover_text("Scrive quella versione nel file e la mette in stage")
+                .on_hover_text(tr!("conflict-use-side-hint"))
                 .on_disabled_hover_text(if available {
-                    "Aspettare l'operazione in corso"
+                    tr!("conflict-wait")
                 } else {
-                    "Quella versione manca o non è testo"
+                    tr!("conflict-side-unavailable")
                 });
             if button.clicked() {
                 actions.push(Action::UseSide(pick));
@@ -296,17 +305,12 @@ fn footer_row(
         ui.horizontal_wrapped(|ui| {
             let (text, button) = match pending {
                 Pending::Markers(n) => (
-                    format!(
-                        "Contiene ancora marcatori ({n} blocchi): risolvere comunque? Il file \
-                         va in stage così com'è"
-                    ),
-                    "Risolvi comunque",
+                    tr!("conflict-confirm-markers", n = n),
+                    tr!("conflict-confirm-markers-button"),
                 ),
                 Pending::Delete => (
-                    "Il file si elimina dal worktree e l'eliminazione va in stage. Il file \
-                     attuale si salva prima in un backup"
-                        .to_owned(),
-                    "Elimina il file",
+                    tr!("conflict-confirm-delete"),
+                    tr!("conflict-confirm-delete-button"),
                 ),
             };
             ui.label(RichText::new(text).color(warn));
@@ -315,7 +319,7 @@ fn footer_row(
             if ui.add_enabled(enabled, confirm).clicked() {
                 actions.push(Action::ConfirmConflict);
             }
-            if ui.button("Annulla").clicked() {
+            if ui.button(tr!("conflict-cancel")).clicked() {
                 actions.push(Action::CancelConflict);
             }
         });
@@ -326,13 +330,10 @@ fn footer_row(
             let button = ui
                 .add_enabled(
                     enabled,
-                    egui::Button::new(RichText::new("Segna come risolto").strong()),
+                    egui::Button::new(RichText::new(tr!("conflict-mark-resolved")).strong()),
                 )
-                .on_hover_text(
-                    "Scrive il risultato nel file e lo mette in stage. Il file com'era si salva \
-                     prima in un backup",
-                )
-                .on_disabled_hover_text("Aspettare l'operazione in corso (o chiudere il dialogo)");
+                .on_hover_text(tr!("conflict-mark-resolved-hint"))
+                .on_disabled_hover_text(tr!("conflict-wait-dialog"));
             if button.clicked() {
                 actions.push(Action::ResolveConflict);
             }
@@ -346,16 +347,16 @@ fn footer_row(
             let button = ui
                 .add_enabled(
                     enabled,
-                    egui::Button::new(RichText::new("Elimina il file…").color(color)),
+                    egui::Button::new(RichText::new(tr!("conflict-delete")).color(color)),
                 )
-                .on_hover_text("Risolve il conflitto eliminando il file: chiede conferma");
+                .on_hover_text(tr!("conflict-delete-hint"));
             if button.clicked() {
                 actions.push(Action::DeleteConflicted);
             }
         }
         if editor.sending {
             ui.spinner();
-            ui.label("Risoluzione…");
+            ui.label(tr!("conflict-resolving"));
         }
     });
 }

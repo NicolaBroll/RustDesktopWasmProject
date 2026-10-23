@@ -9,6 +9,7 @@ use crate::ErrorKind;
 use crate::stage::StageItem;
 use crate::{Action, App, Done, Request, discard, lowercase_first};
 use project_domain::{Change, RepoPath, Status};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -244,10 +245,10 @@ impl UndoOp {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            UndoOp::Undo => "Annulla",
-            UndoOp::Redo => "Ripeti",
+            UndoOp::Undo => tr!("undo-undo"),
+            UndoOp::Redo => tr!("undo-redo"),
         }
     }
 
@@ -270,10 +271,10 @@ impl UndoOp {
     /// Il suggerimento del pulsante.
     pub fn hint(self, history: &History) -> String {
         match (self, self.next(history)) {
-            (UndoOp::Undo, Some(next)) => format!("Annulla: {next}"),
-            (UndoOp::Redo, Some(next)) => format!("Ripeti: {next}"),
-            (UndoOp::Undo, None) => "Niente da annullare".to_owned(),
-            (UndoOp::Redo, None) => "Niente da ripetere".to_owned(),
+            (UndoOp::Undo, Some(next)) => tr!("undo-undo-hint", next = next),
+            (UndoOp::Redo, Some(next)) => tr!("undo-redo-hint", next = next),
+            (UndoOp::Undo, None) => tr!("undo-nothing-to-undo"),
+            (UndoOp::Redo, None) => tr!("undo-nothing-to-redo"),
         }
     }
 }

@@ -12,6 +12,7 @@ use super::{
     reread_warning, unexpected,
 };
 use project_domain::{Oid, RefInfo, RepoPath, Status};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -123,7 +124,12 @@ impl MergeBox {
         if let Some(mainline) = mainline {
             params["mainline"] = json!(mainline);
         }
-        let label = format!("{} di «{what}» su «{into}»", pick.kind().title());
+        let label = tr!(
+            "merge-pick-label",
+            title = pick.kind().title(),
+            what = &what,
+            into = &into
+        );
         self.failure = None;
         self.starting = Some(Starting { what, into });
         (params, label)
@@ -140,7 +146,12 @@ impl MergeBox {
             return unexpected(Op::Pick(pick));
         };
         let title = pick.kind().title();
-        let what = format!("{title} di «{}» su «{}»", starting.what, starting.into);
+        let what = tr!(
+            "merge-pick-label",
+            title = title,
+            what = &starting.what,
+            into = &starting.into
+        );
         match result {
             Err(e) => {
                 // Rifiuti del motore (modifiche locali, già applicato, HEAD staccata, mainline):
@@ -151,16 +162,13 @@ impl MergeBox {
                 );
                 let (window, explanation) = if refused {
                     (
-                        format!("{title} non possibile"),
-                        format!("{what} non possibile: {e}"),
+                        tr!("merge-refused-title", title = title),
+                        tr!("merge-refused", what = &what, error = &e),
                     )
                 } else {
                     (
-                        format!("{title} non riuscito"),
-                        format!(
-                            "{what} non riuscito: {e}. Il repo si rilegge per mostrare com'è \
-                             adesso"
-                        ),
+                        tr!("merge-failed-title", title = title),
+                        tr!("merge-failed", what = &what, error = &e),
                     )
                 };
                 let git = detail.filter(|d| kind == Some(ErrorKind::Git) && !d.trim().is_empty());
@@ -177,7 +185,7 @@ impl MergeBox {
             Ok(value) => match parse::<PickResult>(Op::Pick(pick), value) {
                 Ok(result) => {
                     let warning = reread_warning(
-                        &format!("{title} fatto"),
+                        &tr!("merge-done", title = title),
                         &result.warnings,
                         result.status_error.clone(),
                         result.refs_error.clone(),
@@ -232,33 +240,30 @@ impl PickResult {
             .strip_prefix("refs/heads/")
             .unwrap_or(&self.branch);
         if self.in_progress {
-            let files = match self.conflicts.len() {
-                0 => {
-                    return format!(
-                        "{title} di «{what}» su «{branch}» fermo prima del commit (un hook o la \
-                         firma?): concluderlo con «Continua il {name}…» nel riquadro in alto, o \
-                         annullarlo"
-                    );
-                }
-                1 => "1 file in conflitto".to_owned(),
-                n => format!("{n} file in conflitto"),
+            return match self.conflicts.len() {
+                0 => tr!(
+                    "merge-pick-stopped-before-commit",
+                    title = title,
+                    what = what,
+                    branch = branch,
+                    name = name
+                ),
+                n => tr!(
+                    "merge-pick-stopped",
+                    title = title,
+                    what = what,
+                    branch = branch,
+                    files = tr!("merge-conflict-files", n = n),
+                    name = name
+                ),
             };
-            return format!(
-                "{title} di «{what}» su «{branch}» fermo: {files}. Risolverli e segnarli come \
-                 risolti nell'area di stage, poi «Continua il {name}…» nel riquadro in alto (o \
-                 «Annulla il {name}…»)"
-            );
         }
+        let id = self.after.short();
         match pick {
-            Pick::CherryPick => format!(
-                "«{what}» applicato su «{branch}»: commit {}. «Annulla» lo annulla",
-                self.after.short()
-            ),
-            Pick::Revert => format!(
-                "Modifiche di «{what}» annullate su «{branch}» con il commit {}. «Annulla» lo \
-                 toglie",
-                self.after.short()
-            ),
+            Pick::CherryPick => {
+                tr!("merge-cherry-picked", what = what, branch = branch, id = id)
+            }
+            Pick::Revert => tr!("merge-reverted", what = what, branch = branch, id = id),
         }
     }
 }

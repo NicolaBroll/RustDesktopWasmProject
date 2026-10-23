@@ -23,6 +23,7 @@ use crate::fetch::Failure;
 use crate::{Action, App, Done, Request, merge};
 pub use pick::{MainlineDialog, Pick};
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -93,10 +94,10 @@ impl Kind {
     }
 
     /// Il commit che crea "Continua": «commit di merge» o «commit».
-    pub fn commit_noun(self) -> &'static str {
+    pub fn commit_noun(self) -> String {
         match self {
-            Kind::Merge => "commit di merge",
-            Kind::CherryPick | Kind::Revert => "commit",
+            Kind::Merge => tr!("merge-noun-merge-commit"),
+            Kind::CherryPick | Kind::Revert => tr!("merge-noun-commit"),
         }
     }
 
@@ -141,16 +142,14 @@ pub fn operation_name(operation: Operation) -> &'static str {
 }
 
 /// Come si conclude da terminale un'operazione che la UI non sa ancora concludere.
-pub fn terminal_hint(operation: Operation) -> &'static str {
+pub fn terminal_hint(operation: Operation) -> String {
     match operation {
-        Operation::Merge => "da terminale: `git merge --continue` o `git merge --abort`",
-        Operation::Rebase => "da terminale: `git rebase --continue` o `git rebase --abort`",
-        Operation::CherryPick => {
-            "da terminale: `git cherry-pick --continue` o `git cherry-pick --abort`"
-        }
-        Operation::Revert => "da terminale: `git revert --continue` o `git revert --abort`",
-        Operation::Bisect => "da terminale: `git bisect reset` quando la ricerca è finita",
-        Operation::Am => "da terminale: `git am --continue` o `git am --abort`",
+        Operation::Merge => tr!("merge-terminal-merge"),
+        Operation::Rebase => tr!("merge-terminal-rebase"),
+        Operation::CherryPick => tr!("merge-terminal-cherry-pick"),
+        Operation::Revert => tr!("merge-terminal-revert"),
+        Operation::Bisect => tr!("merge-terminal-bisect"),
+        Operation::Am => tr!("merge-terminal-am"),
     }
 }
 
@@ -200,8 +199,14 @@ impl OperationInfo {
             self.incoming
                 .iter()
                 .map(|i| match &i.summary {
-                    Some(summary) => format!("«{}» ({summary})", i.label),
-                    None => format!("«{}»", i.label),
+                    Some(summary) => {
+                        tr!(
+                            "merge-incoming-summary",
+                            label = &i.label,
+                            summary = summary
+                        )
+                    }
+                    None => tr!("merge-incoming", label = &i.label),
                 })
                 .collect::<Vec<_>>()
                 .join(", "),
@@ -215,29 +220,41 @@ impl OperationInfo {
             return String::new();
         };
         let name = operation_name(operation);
-        let mut text = format!("{name} in corso");
         match operation {
             Operation::Rebase => {
-                if let Some(branch) = &self.rebase_branch {
-                    let short = branch.strip_prefix("refs/heads/").unwrap_or(branch);
-                    text.push_str(&format!(" di «{short}»"));
-                }
-                if let Some(onto) = self.onto {
-                    text.push_str(&format!(" su {}", onto.short()));
+                let branch = self
+                    .rebase_branch
+                    .as_deref()
+                    .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
+                match (branch, self.onto.map(|o| o.short())) {
+                    (Some(branch), Some(onto)) => tr!(
+                        "merge-title-rebase-branch-onto",
+                        name = name,
+                        branch = branch,
+                        onto = onto
+                    ),
+                    (Some(branch), None) => {
+                        tr!("merge-title-rebase-branch", name = name, branch = branch)
+                    }
+                    (None, Some(onto)) => tr!("merge-title-rebase-onto", name = name, onto = onto),
+                    (None, None) => tr!("merge-title", name = name),
                 }
             }
-            Operation::Merge => {
-                if let Some(incoming) = self.incoming_text() {
-                    text.push_str(&format!(": entra {incoming}"));
+            Operation::Merge => match self.incoming_text() {
+                Some(incoming) => {
+                    tr!(
+                        "merge-title-merge-incoming",
+                        name = name,
+                        incoming = incoming
+                    )
                 }
-            }
-            _ => {
-                if let Some(incoming) = self.incoming_text() {
-                    text.push_str(&format!(": {incoming}"));
-                }
-            }
+                None => tr!("merge-title", name = name),
+            },
+            _ => match self.incoming_text() {
+                Some(incoming) => tr!("merge-title-incoming", name = name, incoming = incoming),
+                None => tr!("merge-title", name = name),
+            },
         }
-        text
     }
 }
 
@@ -247,7 +264,7 @@ pub enum Gate {
     /// Si unisce nel branch attivo con questo nome.
     Into(String),
     /// Non si può: il motivo da mostrare.
-    Blocked(&'static str),
+    Blocked(String),
 }
 
 impl Gate {
@@ -260,23 +277,18 @@ impl Gate {
                 target: Some(_),
             } => name.clone(),
             Head::Branch { target: None, .. } => {
-                return Gate::Blocked("Il branch attivo non ha ancora commit");
+                return Gate::Blocked(tr!("merge-gate-unborn"));
             }
             Head::Detached(_) => {
-                return Gate::Blocked(
-                    "HEAD è staccata: serve un branch attivo. Passare prima a un branch",
-                );
+                return Gate::Blocked(tr!("merge-gate-detached"));
             }
         };
         if let Some(status) = status {
             if status.operation.is_some() {
-                return Gate::Blocked(
-                    "C'è già un'operazione in corso: concluderla o annullarla dal riquadro in \
-                     alto",
-                );
+                return Gate::Blocked(tr!("merge-gate-operation"));
             }
             if status.has_conflicts() {
-                return Gate::Blocked("Ci sono file in conflitto: risolverli prima");
+                return Gate::Blocked(tr!("merge-gate-conflicts"));
             }
         }
         Gate::Into(branch)
@@ -399,8 +411,13 @@ impl MergeBox {
     pub fn receive_info(&mut self, result: Result<Value, String>) {
         self.reading = false;
         match result.and_then(|value| {
-            serde_json::from_value::<OperationInfo>(value)
-                .map_err(|e| format!("{OPERATION}: risultato inatteso: {e}"))
+            serde_json::from_value::<OperationInfo>(value).map_err(|e| {
+                tr!(
+                    "merge-unexpected-result",
+                    command = OPERATION,
+                    error = e.to_string()
+                )
+            })
         }) {
             Ok(info) => {
                 self.info = info.operation.is_some().then_some(info);
@@ -469,7 +486,7 @@ impl MergeBox {
         if no_ff {
             params["no_ff"] = json!(true);
         }
-        let label = format!("Merge di «{what}» in «{into}»");
+        let label = tr!("merge-start-label", what = &what, into = &into);
         self.failure = None;
         self.starting = Some(Starting { what, into });
         Some((params, label))
@@ -527,7 +544,7 @@ impl MergeBox {
         Some((
             Op::Continue(dialog.kind),
             json!({ "message": dialog.message.trim_end() }),
-            format!("Conclusione del {}", dialog.kind.name()),
+            tr!("merge-continue-label", name = dialog.kind.name()),
         ))
     }
 
@@ -544,7 +561,7 @@ impl MergeBox {
         Some((
             Op::Abort(kind),
             json!({}),
-            format!("Controllo per l'annullamento del {}", kind.name()),
+            tr!("merge-abort-check-label", name = kind.name()),
         ))
     }
 
@@ -560,7 +577,7 @@ impl MergeBox {
         Some((
             Op::Abort(*kind),
             json!({ "confirm": true }),
-            format!("Annullamento del {}", kind.name()),
+            tr!("merge-abort-label", name = kind.name()),
         ))
     }
 
@@ -602,7 +619,11 @@ impl MergeBox {
         let Some(starting) = self.starting.take() else {
             return unexpected(Op::Start);
         };
-        let what = format!("Merge di «{}» in «{}»", starting.what, starting.into);
+        let what = tr!(
+            "merge-start-label",
+            what = &starting.what,
+            into = &starting.into
+        );
         match result {
             Err(e) => {
                 // Rifiuti del motore (modifiche locali, HEAD staccata, operazione in corso,
@@ -613,16 +634,13 @@ impl MergeBox {
                 );
                 let (title, explanation) = if refused {
                     (
-                        "Merge non possibile".to_owned(),
-                        format!("{what} non possibile: {e}"),
+                        tr!("merge-refused-title", title = "Merge"),
+                        tr!("merge-refused", what = &what, error = &e),
                     )
                 } else {
                     (
-                        "Merge non riuscito".to_owned(),
-                        format!(
-                            "{what} non riuscito: {e}. Il repo si rilegge per mostrare com'è \
-                             adesso"
-                        ),
+                        tr!("merge-failed-title", title = "Merge"),
+                        tr!("merge-failed", what = &what, error = &e),
                     )
                 };
                 let git = detail.filter(|d| kind == Some(ErrorKind::Git) && !d.trim().is_empty());
@@ -640,7 +658,7 @@ impl MergeBox {
                 Ok(result) => {
                     let notice = result.notice(&starting);
                     let warning = reread_warning(
-                        "Merge fatto",
+                        &tr!("merge-done", title = "Merge"),
                         &result.warnings,
                         result.status_error.clone(),
                         result.refs_error.clone(),
@@ -682,7 +700,7 @@ impl MergeBox {
             Err(e) if kind == Some(ErrorKind::PostCommit) => {
                 self.dialog = None;
                 Received::Failed {
-                    message: format!("{title} concluso, ma: {e}"),
+                    message: tr!("merge-concluded-but", title = title, error = &e),
                     reload: true,
                 }
             }
@@ -700,22 +718,34 @@ impl MergeBox {
                 match parse::<ContinueResult>(Op::Continue(op), value) {
                     Ok(result) => {
                         let warning = reread_warning(
-                            &format!("{title} concluso"),
+                            &tr!("merge-concluded", title = title),
                             &[],
                             result.status_error.clone(),
                             result.refs_error.clone(),
                         );
-                        let into = result
+                        let noun = op.commit_noun();
+                        let id = result.commit.id.short();
+                        let notice = match result
                             .branch
                             .as_deref()
                             .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b))
-                            .map(|b| format!(" su «{b}»"))
-                            .unwrap_or_default();
-                        let notice = format!(
-                            "{title} concluso: {} {} creato{into}. «Annulla» lo annulla",
-                            op.commit_noun(),
-                            result.commit.id.short()
-                        );
+                        {
+                            Some(branch) => tr!(
+                                "merge-concluded-notice-branch",
+                                title = title,
+                                noun = noun,
+                                id = id,
+                                branch = branch
+                            ),
+                            None => {
+                                tr!(
+                                    "merge-concluded-notice",
+                                    title = title,
+                                    noun = noun,
+                                    id = id
+                                )
+                            }
+                        };
                         Received::Done(Box::new(Outcome {
                             notice,
                             status: result.status,
@@ -764,33 +794,29 @@ impl MergeBox {
             Err(e) => {
                 let refused =
                     matches!(kind, Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams));
-                let what = if refused {
-                    "non possibile"
+                let message = if refused {
+                    tr!("merge-abort-refused", name = name, error = &e)
                 } else {
-                    "non riuscito"
+                    tr!("merge-abort-failed", name = name, error = &e)
                 };
                 Received::Failed {
-                    message: format!("Annullamento del {name} {what}: {e}"),
+                    message,
                     reload: !refused,
                 }
             }
             Ok(value) => match parse::<AbortResult>(Op::Abort(op), value) {
                 Ok(result) => {
                     let warning = reread_warning(
-                        &format!("{title} annullato"),
+                        &tr!("merge-aborted", title = title),
                         &result.warnings,
                         result.status_error.clone(),
                         result.refs_error.clone(),
                     );
-                    let files = match result.files.len() {
-                        0 => String::new(),
-                        1 => " (1 file)".to_owned(),
-                        n => format!(" ({n} file)"),
-                    };
-                    let notice = format!(
-                        "{title} annullato: indice e worktree salvati prima in {}{files}; si \
-                         rimettono con `git stash apply {}`. Non si annulla con «Annulla»",
-                        result.backup, result.backup
+                    let notice = tr!(
+                        "merge-aborted-notice",
+                        title = title,
+                        backup = &result.backup,
+                        n = result.files.len()
                     );
                     Received::Done(Box::new(Outcome {
                         notice,
@@ -813,13 +839,19 @@ impl MergeBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: format!("risposta di `{}` inattesa", op.command()),
+        message: tr!("merge-unexpected-response", command = op.command()),
         reload: true,
     }
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| format!("{}: risultato inatteso: {e}", op.command()))
+    serde_json::from_value(value).map_err(|e| {
+        tr!(
+            "merge-unexpected-result",
+            command = op.command(),
+            error = e.to_string()
+        )
+    })
 }
 
 /// Gli avvisi di git e il problema dopo un'operazione riuscita: stato o ref non riletti.
@@ -831,11 +863,11 @@ fn reread_warning(
 ) -> Option<String> {
     let parts: Vec<String> = warnings
         .iter()
-        .map(|w| format!("attenzione: {w}"))
-        .chain(status.map(|e| format!("lo stato non si rilegge: {e}")))
-        .chain(refs.map(|e| format!("i ref non si rileggono: {e}")))
+        .map(|w| tr!("merge-warning", warning = w))
+        .chain(status.map(|e| tr!("merge-status-not-reloaded", error = e)))
+        .chain(refs.map(|e| tr!("merge-refs-not-reloaded", error = e)))
         .collect();
-    (!parts.is_empty()).then(|| format!("{what}, ma {}", parts.join("; ")))
+    (!parts.is_empty()).then(|| tr!("merge-done-but", what = what, problems = parts.join("; ")))
 }
 
 /// Da dove viene il commit unito.
@@ -876,38 +908,34 @@ impl StartResult {
             self.source.name.as_str()
         };
         let branch = &self.branch;
-        let commits = match self.behind {
-            1 => "1 commit".to_owned(),
-            n => format!("{n} commit"),
-        };
+        let commits = tr!("merge-commits", n = self.behind);
         if self.in_progress {
-            let files = match self.conflicts.len() {
-                0 => {
-                    return format!(
-                        "Merge di «{name}» in «{branch}» fermo prima del commit (un hook?): \
-                         concluderlo con «Continua il merge…» nel riquadro in alto, o annullarlo"
-                    );
-                }
-                1 => "1 file in conflitto".to_owned(),
-                n => format!("{n} file in conflitto"),
+            return match self.conflicts.len() {
+                0 => tr!("merge-stopped-before-commit", name = name, branch = branch),
+                n => tr!(
+                    "merge-stopped",
+                    name = name,
+                    branch = branch,
+                    files = tr!("merge-conflict-files", n = n)
+                ),
             };
-            return format!(
-                "Merge di «{name}» in «{branch}» fermo: {files}. Risolverli e segnarli come \
-                 risolti nell'area di stage, poi «Continua il merge…» nel riquadro in alto (o \
-                 «Annulla il merge…»)"
-            );
         }
+        let id = self.after.short();
         match self.strategy.as_str() {
-            "up_to_date" => format!("«{branch}» contiene già «{name}»: niente da unire"),
-            "fast_forward" => format!(
-                "Fast-forward: «{branch}» portato avanti di {commits} fino a «{name}» ({}). \
-                 «Annulla» lo riporta indietro",
-                self.after.short()
+            "up_to_date" => tr!("merge-up-to-date", branch = branch, name = name),
+            "fast_forward" => tr!(
+                "merge-fast-forward",
+                branch = branch,
+                commits = commits,
+                name = name,
+                id = id
             ),
-            _ => format!(
-                "«{name}» unito in «{branch}» ({commits}): commit di merge {}. «Annulla» lo \
-                 annulla",
-                self.after.short()
+            _ => tr!(
+                "merge-merged",
+                name = name,
+                branch = branch,
+                commits = commits,
+                id = id
             ),
         }
     }

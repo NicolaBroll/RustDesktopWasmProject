@@ -7,6 +7,7 @@ Architettura di riferimento: [impl-docs/ARCHITETTURA-rust.md](impl-docs/ARCHITET
 | Livello | Crate | Cartella |
 | --- | --- | --- |
 | L0 | `project-core` | `crates/core` — errori, parsing `id=<json>` |
+| L0 | `project-i18n` | `crates/i18n` — testi della UI in italiano e inglese (Fluent), macro `tr!` |
 | L2 | `project-domain` | `crates/domain` — tipi git e parser dell'output di git |
 | L5 | `project-engine` | `crates/engine` — `Session` (repo aperto e diario per undo/redo), `Registry`, `GitBackend`/`RepoOpener`, `MemoryBackend`, trait `Platform` |
 | L6 | `project-ui` | `crates/ui` — `App` egui, nessun `cfg(target_arch)` |
@@ -35,6 +36,8 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
   `JournalEntry` nel diario della `Session` con HEAD e i ref prima e dopo, così `edit.undo` e
   `edit.redo` lo coprono (§7 dell'architettura git).
 - L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
+- I testi visibili della UI passano da `tr!("<area>-<cosa>")` con le chiavi in
+  `crates/i18n/locales/{it,en}/`: guida in [impl-docs/i18n.md](impl-docs/i18n.md).
 
 ## Branch
 

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 fn levels() -> HashMap<&'static str, u8> {
     HashMap::from([
         ("project-core", 0),
+        ("project-i18n", 0),
         ("project-domain", 2),
         ("project-engine", 5),
         ("project-ui", 6),

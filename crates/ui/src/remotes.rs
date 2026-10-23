@@ -17,6 +17,7 @@ use crate::{Action, App, Done, Request, remotes};
 use crate::{ErrorKind, Ticket};
 use project_domain::{RefInfo, Upstream};
 use project_engine::mask_url;
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -787,25 +788,22 @@ pub fn ahead_behind(upstream: &Upstream) -> (String, String) {
             let mut long = Vec::new();
             if ahead > 0 {
                 short.push(format!("↑{ahead}"));
-                long.push(format!("{ahead} commit da pubblicare"));
+                long.push(tr!("remotes-ahead", n = ahead));
             }
             if behind > 0 {
                 short.push(format!("↓{behind}"));
-                long.push(format!("{behind} commit da scaricare"));
+                long.push(tr!("remotes-behind", n = behind));
             }
             let long = if long.is_empty() {
-                format!("Allineato con {name}")
+                tr!("remotes-in-sync", name = name)
             } else {
-                format!("{} rispetto a {name}", long.join(", "))
+                tr!("remotes-relative", counts = long.join(", "), name = name)
             };
             (short.join(" "), long)
         }
         _ => (
-            "upstream sparito".to_owned(),
-            format!(
-                "L'upstream {name} non c'è più (tolto sul remoto o il remoto non lo ha più): un \
-                 Fetch non lo riporta; Push lo ricrea"
-            ),
+            tr!("remotes-upstream-gone"),
+            tr!("remotes-upstream-gone-hint", name = name),
         ),
     }
 }

@@ -1,0 +1,36 @@
+# Barra in alto, barra di stato e schermata iniziale (view/top_bar.rs).
+
+top-bar-open = Apri…
+top-bar-refresh = Aggiorna
+top-bar-refresh-hint = Rilegge ref, stato e log
+top-bar-after-operation = Dopo l'operazione in corso
+top-bar-stash = Stash…
+top-bar-undo-in-operation = { $hint } (non durante un'operazione in corso: concluderla o annullarla dal riquadro in alto)
+top-bar-undo-after-operation = { $hint } (dopo l'operazione in corso)
+top-bar-changed-files = { $n ->
+    [one] 1 file modificato
+   *[other] { $n } file modificati
+}
+top-bar-head-unborn = { $name } (senza commit)
+top-bar-head-detached = HEAD staccata su { $id }
+top-bar-fetch = Fetch
+top-bar-fetch-hint = Scarica commit, branch remoti e tag dal remoto dell'upstream del branch attivo (altrimenti origin, o l'unico remoto). Non tocca branch locali, indice né file
+top-bar-fetch-from-menu = Da…
+top-bar-fetch-from = Fetch da «{ $remote }»
+top-bar-fetch-from-hint = Sceglie il remoto da cui fare il fetch
+top-bar-pull = Pull
+top-bar-push = Push
+top-bar-detached-hint = HEAD è staccata (o il branch non ha commit): passare a un branch
+top-bar-pull-hint = Scarica { $upstream } e lo integra in «{ $branch }»: fast-forward se può, altrimenti merge o rebase secondo pull.rebase (senza configurazione: merge). Con modifiche locali il merge non parte. «Annulla» riporta il branch dov'era
+top-bar-push-hint = Pubblica «{ $branch }» su { $upstream }. Mai forzato: se il remoto ha commit che non hai il push è rifiutato e si propone il Pull. Un push non si annulla
+top-bar-pull-no-upstream-hint = «{ $branch }» non ha un upstream: il pull spiega come impostarlo (oppure fare Push, che lo imposta)
+top-bar-push-first-hint = Primo push di «{ $branch }»: lo pubblica su origin (o sull'unico remoto) con lo stesso nome e imposta l'upstream. Un push non si annulla
+top-bar-connecting = Connessione al remoto…
+top-bar-stop = Interrompi
+top-bar-stopping = Interruzione in corso…
+top-bar-running = { $what } in corso…
+top-bar-running-queued = { $what } in corso… (+{ $n } in coda)
+top-bar-opening = Apertura del repository…
+top-bar-no-repo = Nessun repository aperto
+top-bar-open-repo = Apri un repository…
+top-bar-lang-hint = Lingua dell'interfaccia

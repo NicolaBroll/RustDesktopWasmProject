@@ -21,6 +21,7 @@ use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
 use project_engine::Progress;
+use project_i18n::{Lang, tr};
 
 mod branches;
 mod commits;
@@ -70,7 +71,7 @@ pub(crate) struct Network {
 pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
     if let Some(git) = git.filter(|g| !g.trim().is_empty()) {
         ui.add_space(6.0);
-        ui.label("Messaggio di git:");
+        ui.label(tr!("common-git-message"));
         egui::ScrollArea::vertical()
             .id_salt("testo-git")
             .max_height(140.0)
@@ -81,13 +82,19 @@ pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
 }
 
 /// Quando una voce che scrive è spenta perché si aspetta: il motivo.
+fn wait() -> String {
+    tr!("common-wait")
+}
+
+/// Il testo di [`wait`] ancora scritto nel codice, per i moduli non ancora tradotti: si toglie
+/// quando nessuno lo usa più (vedi `impl-docs/i18n.md`).
 const WAIT: &str = "Aspettare l'operazione in corso (o chiudere il dialogo aperto)";
 
 /// Id breve cliccabile: seleziona il commit nella lista.
 fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
     let response = ui
         .link(RichText::new(id.short()).monospace())
-        .on_hover_text(format!("{id}\nClic: seleziona il commit"));
+        .on_hover_text(tr!("common-oid-hint", id = id.to_string()));
     if response.clicked() {
         actions.push(Action::SelectCommit(id));
     }

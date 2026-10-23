@@ -1,0 +1,44 @@
+//! Genera l'elenco dei file `.ftl` (`locales/<lingua>/<area>.ftl`), inclusi con `include_str!`
+//! così le traduzioni stanno nel binario (anche in wasm). Un'area nuova è solo un file nuovo:
+//! nessun elenco da toccare a mano, nessun conflitto tra chi lavora su aree diverse.
+
+use std::fmt::Write as _;
+use std::path::Path;
+
+fn main() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
+    println!("cargo:rerun-if-changed={}", root.display());
+    let mut out = String::new();
+    for lang in ["it", "en"] {
+        let dir = root.join(lang);
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let mut areas: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .filter_map(|entry| {
+                let path = entry.expect("voce della cartella").path();
+                (path.extension()? == "ftl")
+                    .then(|| path.file_stem()?.to_str().map(str::to_owned))?
+            })
+            .collect();
+        areas.sort();
+        writeln!(
+            out,
+            "pub(crate) const {}: &[(&str, &str)] = &[",
+            lang.to_uppercase()
+        )
+        .unwrap();
+        for area in areas {
+            let file = dir.join(format!("{area}.ftl"));
+            println!("cargo:rerun-if-changed={}", file.display());
+            writeln!(
+                out,
+                "    ({area:?}, include_str!({:?})),",
+                file.display().to_string()
+            )
+            .unwrap();
+        }
+        writeln!(out, "];").unwrap();
+    }
+    let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("areas.rs");
+    std::fs::write(dest, out).unwrap();
+}

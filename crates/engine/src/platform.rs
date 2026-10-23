@@ -33,4 +33,9 @@ pub trait Platform: Send + Sync {
     /// Esegue `job` fuori dal thread della UI (vedi `impl-docs/ARCHITETTURA-git.md` §6): un
     /// thread sul desktop. Sul web non ci sono thread e il job gira subito, prima del ritorno.
     fn spawn(&self, job: Box<dyn FnOnce() + Send>);
+    /// La lingua del sistema (`it-IT`, `en-US`...), per scegliere quella della UI; `None` se
+    /// non si sa (CLI, test).
+    fn locale(&self) -> Option<String> {
+        None
+    }
 }

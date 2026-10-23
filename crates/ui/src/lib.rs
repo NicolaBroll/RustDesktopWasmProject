@@ -48,6 +48,7 @@ use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
+use project_i18n::Lang;
 use remotes::{AddFields, RemotesBox};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -62,6 +63,8 @@ use sync::SyncBox;
 enum Action {
     /// Dialogo per scegliere la cartella del repo.
     PickFolder,
+    /// La lingua scelta nella barra: vale subito e si salva.
+    SetLang(Lang),
     Open(String),
     /// Rilegge ref, stato e log del repo aperto.
     Refresh,
@@ -557,6 +560,7 @@ impl App {
         opener: Arc<dyn RepoOpener>,
         repo: Option<String>,
     ) -> Self {
+        project_i18n::set_lang(start_lang(cc.storage, platform.as_ref()));
         let ctx = cc.egui_ctx.clone();
         let wake: Wake = Arc::new(move || ctx.request_repaint());
         let mut app = Self {
@@ -588,6 +592,10 @@ impl App {
 
     fn apply(&mut self, ctx: &egui::Context, action: Action) {
         match action {
+            Action::SetLang(lang) => {
+                project_i18n::set_lang(lang);
+                ctx.request_repaint();
+            }
             Action::PickFolder => {
                 let picked = Arc::clone(&self.picked);
                 let ctx = ctx.clone();
@@ -1209,7 +1217,24 @@ impl App {
     }
 }
 
+/// Dove si salva la lingua scelta (`eframe::Storage`).
+const LANG_KEY: &str = "lingua";
+
+/// La lingua all'avvio: quella scelta l'ultima volta, altrimenti quella del sistema (italiano se
+/// è italiana, inglese se no); senza nessuna delle due l'italiano.
+fn start_lang(storage: Option<&dyn eframe::Storage>, platform: &dyn Platform) -> Lang {
+    storage
+        .and_then(|s| s.get_string(LANG_KEY))
+        .and_then(|code| Lang::from_code(&code))
+        .or_else(|| platform.locale().map(|l| Lang::from_locale(&l)))
+        .unwrap_or_default()
+}
+
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(LANG_KEY, project_i18n::lang().code().to_owned());
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive(&ctx);

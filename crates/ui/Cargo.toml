@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 project-domain.workspace = true
 project-engine.workspace = true
+project-i18n.workspace = true
 eframe.workspace = true
 egui.workspace = true
 log.workspace = true

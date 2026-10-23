@@ -15,6 +15,7 @@ all = { level = "warn", priority = -1 }
 [workspace.dependencies]
 # Livelli interni
 project-core   = { path = "crates/core" }
+project-i18n   = { path = "crates/i18n" }
 project-domain = { path = "crates/domain" }
 project-engine = { path = "crates/engine" }
 project-ui     = { path = "crates/ui" }
@@ -28,6 +29,12 @@ thiserror = "2"
 log = "0.4"
 libc = "0.2"
 anyhow = "1"
+
+# Lingue
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+unic-langid = "0.9"
+sys-locale = "0.3"
 
 # UI
 egui = "0.37"

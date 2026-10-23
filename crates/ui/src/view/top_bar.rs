@@ -11,9 +11,9 @@ pub(super) fn repo_name(path: &str) -> &str {
 
 pub(super) fn head_text(head: &Head) -> String {
     match head {
-        Head::Branch { name, target: None } => format!("{name} (senza commit)"),
+        Head::Branch { name, target: None } => tr!("top-bar-head-unborn", name = name),
         Head::Branch { name, .. } => name.clone(),
-        Head::Detached(id) => format!("HEAD staccata su {}", id.short()),
+        Head::Detached(id) => tr!("top-bar-head-detached", id = id.short()),
     }
 }
 
@@ -35,7 +35,8 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
 }
 
 /// `writing`: c'è una scrittura in corso, Annulla, Ripeti, Aggiorna, Fetch, Pull e Push
-/// aspettano. `network`: il fetch, pull o push in corso con il suo ultimo avanzamento.
+/// aspettano. `network`: il fetch, pull o push in corso con il suo ultimo avanzamento. A
+/// destra, sempre, la scelta della lingua.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
@@ -45,16 +46,53 @@ pub(crate) fn top_bar(
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
-        if can_pick && ui.button("Apri…").clicked() {
+        repo_bar(ui, repo, can_pick, writing, network, actions);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            lang_picker(ui, actions);
+        });
+    });
+}
+
+/// Il menu della lingua: ogni lingua con il suo nome, la scelta vale subito.
+fn lang_picker(ui: &mut Ui, actions: &mut Vec<Action>) {
+    let current = project_i18n::lang();
+    egui::ComboBox::from_id_salt("lingua")
+        .selected_text(current.native_name())
+        .width(90.0)
+        .show_ui(ui, |ui| {
+            for lang in Lang::ALL {
+                if ui
+                    .selectable_label(lang == current, lang.native_name())
+                    .clicked()
+                    && lang != current
+                {
+                    actions.push(Action::SetLang(lang));
+                }
+            }
+        })
+        .response
+        .on_hover_text(tr!("top-bar-lang-hint"));
+}
+
+fn repo_bar(
+    ui: &mut Ui,
+    repo: Option<&RepoView>,
+    can_pick: bool,
+    writing: bool,
+    network: Option<Network>,
+    actions: &mut Vec<Action>,
+) {
+    {
+        if can_pick && ui.button(tr!("top-bar-open")).clicked() {
             actions.push(Action::PickFolder);
         }
         let Some(repo) = repo else {
             return;
         };
         let button = ui
-            .add_enabled(!writing, egui::Button::new("Aggiorna"))
-            .on_hover_text("Rilegge ref, stato e log")
-            .on_disabled_hover_text("Dopo l'operazione in corso");
+            .add_enabled(!writing, egui::Button::new(tr!("top-bar-refresh")))
+            .on_hover_text(tr!("top-bar-refresh-hint"))
+            .on_disabled_hover_text(tr!("top-bar-after-operation"));
         if button.clicked() {
             actions.push(Action::Refresh);
         }
@@ -65,7 +103,7 @@ pub(crate) fn top_bar(
                 let enabled = !writing && !repo.modal_open();
                 fetch_buttons(ui, repo, enabled, actions);
                 sync_buttons(ui, repo, enabled, actions);
-                stash_push_button(ui, repo, enabled, "Stash…", actions);
+                stash_push_button(ui, repo, enabled, &tr!("top-bar-stash"), actions);
             }
         }
         ui.separator();
@@ -77,12 +115,9 @@ pub(crate) fn top_bar(
             let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
             let hint = op.hint(&repo.history);
             let button = if available && in_operation {
-                button.on_disabled_hover_text(format!(
-                    "{hint} (non durante un'operazione in corso: concluderla o annullarla dal \
-                     riquadro in alto)"
-                ))
+                button.on_disabled_hover_text(tr!("top-bar-undo-in-operation", hint = &hint))
             } else if available && !enabled {
-                button.on_disabled_hover_text(format!("{hint} (dopo l'operazione in corso)"))
+                button.on_disabled_hover_text(tr!("top-bar-undo-after-operation", hint = &hint))
             } else {
                 button.on_hover_text(&hint).on_disabled_hover_text(&hint)
             };
@@ -101,10 +136,10 @@ pub(crate) fn top_bar(
             let changes = status.entries.len();
             if changes > 0 {
                 ui.separator();
-                ui.label(format!("{changes} file modificati"));
+                ui.label(tr!("top-bar-changed-files", n = changes));
             }
         }
-    });
+    }
 }
 
 /// Il pulsante "Fetch" e, con più remoti, il menu per sceglierne uno.
@@ -115,28 +150,28 @@ pub(super) fn fetch_buttons(
     actions: &mut Vec<Action>,
 ) {
     let button = ui
-        .add_enabled(enabled, egui::Button::new("Fetch"))
-        .on_hover_text(
-            "Scarica commit, branch remoti e tag dal remoto dell'upstream del branch attivo \
-             (altrimenti origin, o l'unico remoto). Non tocca branch locali, indice né file",
-        )
-        .on_disabled_hover_text(WAIT);
+        .add_enabled(enabled, egui::Button::new(tr!("top-bar-fetch")))
+        .on_hover_text(tr!("top-bar-fetch-hint"))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::Fetch(None));
     }
     let remotes = repo.remotes.names();
     if remotes.len() > 1 {
         ui.add_enabled_ui(enabled, |ui| {
-            ui.menu_button("Da…", |ui| {
+            ui.menu_button(tr!("top-bar-fetch-from-menu"), |ui| {
                 for remote in remotes {
-                    if ui.button(format!("Fetch da «{remote}»")).clicked() {
+                    if ui
+                        .button(tr!("top-bar-fetch-from", remote = &remote))
+                        .clicked()
+                    {
                         actions.push(Action::Fetch(Some(remote)));
                         ui.close();
                     }
                 }
             })
             .response
-            .on_hover_text("Sceglie il remoto da cui fare il fetch");
+            .on_hover_text(tr!("top-bar-fetch-from-hint"));
         });
     }
 }
@@ -157,38 +192,22 @@ pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions:
         .and_then(|s| s.upstream.as_ref())
         .map(|u| u.name.as_str());
     let (pull_hint, push_hint) = match (branch, upstream) {
-        (None, _) => (
-            "HEAD è staccata (o il branch non ha commit): passare a un branch".to_owned(),
-            "HEAD è staccata (o il branch non ha commit): passare a un branch".to_owned(),
-        ),
+        (None, _) => (tr!("top-bar-detached-hint"), tr!("top-bar-detached-hint")),
         (Some(b), Some(up)) => (
-            format!(
-                "Scarica {up} e lo integra in «{b}»: fast-forward se può, altrimenti merge o \
-                 rebase secondo pull.rebase (senza configurazione: merge). Con modifiche locali \
-                 il merge non parte. «Annulla» riporta il branch dov'era"
-            ),
-            format!(
-                "Pubblica «{b}» su {up}. Mai forzato: se il remoto ha commit che non hai il push \
-                 è rifiutato e si propone il Pull. Un push non si annulla"
-            ),
+            tr!("top-bar-pull-hint", upstream = up, branch = b),
+            tr!("top-bar-push-hint", upstream = up, branch = b),
         ),
         (Some(b), None) => (
-            format!(
-                "«{b}» non ha un upstream: il pull spiega come impostarlo (oppure fare Push, che \
-                 lo imposta)"
-            ),
-            format!(
-                "Primo push di «{b}»: lo pubblica su origin (o sull'unico remoto) con lo stesso \
-                 nome e imposta l'upstream. Un push non si annulla"
-            ),
+            tr!("top-bar-pull-no-upstream-hint", branch = b),
+            tr!("top-bar-push-first-hint", branch = b),
         ),
     };
     let enabled = enabled && branch.is_some();
     let pull = ui
-        .add_enabled(enabled, egui::Button::new("Pull"))
+        .add_enabled(enabled, egui::Button::new(tr!("top-bar-pull")))
         .on_hover_text(&pull_hint);
     let pull = if branch.is_some() {
-        pull.on_disabled_hover_text(WAIT)
+        pull.on_disabled_hover_text(wait())
     } else {
         pull.on_disabled_hover_text(&pull_hint)
     };
@@ -196,10 +215,10 @@ pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions:
         actions.push(Action::Pull(None, None));
     }
     let push = ui
-        .add_enabled(enabled, egui::Button::new("Push"))
+        .add_enabled(enabled, egui::Button::new(tr!("top-bar-push")))
         .on_hover_text(&push_hint);
     let push = if branch.is_some() {
-        push.on_disabled_hover_text(WAIT)
+        push.on_disabled_hover_text(wait())
     } else {
         push.on_disabled_hover_text(&push_hint)
     };
@@ -216,7 +235,7 @@ pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<
     let progress = network.progress.as_ref();
     let (text, fraction) = match progress {
         Some(p) => fetch::describe(p),
-        None => ("Connessione al remoto…".to_owned(), None),
+        None => (tr!("top-bar-connecting"), None),
     };
     let label = ui.label(text);
     if let Some(p) = progress {
@@ -230,9 +249,9 @@ pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<
         );
     }
     let stop = ui
-        .add_enabled(!network.cancelling, egui::Button::new("Interrompi"))
+        .add_enabled(!network.cancelling, egui::Button::new(tr!("top-bar-stop")))
         .on_hover_text(network.stop_hint)
-        .on_disabled_hover_text("Interruzione in corso…");
+        .on_disabled_hover_text(tr!("top-bar-stopping"));
     if stop.clicked() {
         actions.push(network.cancel);
     }
@@ -250,12 +269,12 @@ pub(crate) fn status_bar(
     ui.horizontal(|ui| {
         if let Some(write) = write {
             ui.spinner();
-            ui.label(format!("{write} in corso…"));
+            ui.label(tr!("top-bar-running", what = write));
         } else if let Some(job) = running.first() {
             ui.spinner();
             let text = match running.len() - 1 {
-                0 => format!("{} in corso…", job.command),
-                n => format!("{} in corso… (+{n} in coda)", job.command),
+                0 => tr!("top-bar-running", what = &job.command),
+                n => tr!("top-bar-running-queued", what = &job.command, n = n),
             };
             ui.label(text);
         } else if !error.is_empty() {
@@ -274,15 +293,15 @@ pub(crate) fn welcome(ui: &mut Ui, can_pick: bool, busy: bool, actions: &mut Vec
         ui.add_space(ui.available_height() / 3.0);
         if busy {
             ui.spinner();
-            ui.label("Apertura del repository…");
+            ui.label(tr!("top-bar-opening"));
         } else if can_pick {
-            ui.heading("Nessun repository aperto");
+            ui.heading(tr!("top-bar-no-repo"));
             ui.add_space(8.0);
-            if ui.button("Apri un repository…").clicked() {
+            if ui.button(tr!("top-bar-open-repo")).clicked() {
                 actions.push(Action::PickFolder);
             }
         } else {
-            ui.heading("Nessun repository aperto");
+            ui.heading(tr!("top-bar-no-repo"));
         }
     });
 }

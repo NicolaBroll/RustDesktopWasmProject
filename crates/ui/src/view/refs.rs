@@ -242,7 +242,7 @@ pub(super) fn merge_items(
     ui.separator();
     let (into, blocked) = match gate {
         merge::Gate::Into(branch) => (branch.as_str(), None),
-        merge::Gate::Blocked(reason) => ("branch attivo", Some(*reason)),
+        merge::Gate::Blocked(reason) => ("branch attivo", Some(reason.as_str())),
     };
     let items = [
         (

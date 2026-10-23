@@ -3,10 +3,10 @@ name: git-engine
 description: Implementa motore e backend del client git (crates/engine, crates/git, crates/mcp, apps/project-cli, xtask, CI) - trait GitBackend, MemoryBackend, CliBackend che esegue git, sessione, comandi del Registry, CLI e MCP. Usalo per gli step della roadmap assegnati a git-engine.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (regole comuni) e nei file
-per funzione di `impl-docs/git/` (contratto dei comandi, `CliBackend`, undo e backup); lo step
-da fare è in `impl-docs/ROADMAP-git.md`. Leggi il documento principale, i file di `impl-docs/git/`
-delle funzioni che tocchi, la roadmap e `AGENTS.md` prima di iniziare.
+Lavori sul client git. Leggi prima `impl-docs/git/regole.md` (invarianti, checklist di
+sicurezza, come tenere basso l'output) e lo step in `impl-docs/ROADMAP-git.md`; poi solo i file
+di `impl-docs/git/` delle funzioni che tocchi e, di `impl-docs/ARCHITETTURA-git.md`, solo i
+paragrafi che servono (cerca con `grep -n`). Se chi ti lancia indica file e righe, parti da lì.
 
 Branch: ogni implementazione parte dall'ultima versione di `origin/dev` (`AGENTS.md`, "Branch").
 Prima `git fetch origin dev`; un branch nuovo si crea con `git checkout -b <nome> origin/dev`. Se
@@ -29,7 +29,10 @@ Regole:
   importano.
 - Ogni comando ha test sul `MemoryBackend`; ogni metodo del `CliBackend` ha test di integrazione
   su repo temporanei con l'helper di `crates/git/tests/common/` (quando esiste).
-- Se aggiungi o cambi comandi, aggiorna README e `AGENTS.md` dove elencano CLI e strumenti MCP.
+- Se aggiungi o cambi comandi, aggiorna README e `impl-docs/git/cli.md` (esempi CLI).
 
-Chiudi con `cargo xtask ci` verde e spunta lo step in `impl-docs/ROADMAP-git.md`. Nel resoconto
-elenca i comandi nuovi con i parametri: li userà `egui-ui`.
+Durante il lavoro `cargo test -q -p <crate>` mirati; chiudi con `cargo xtask ci --quiet` verde
+e spunta lo step in `impl-docs/ROADMAP-git.md`. Prima di consegnare ripassa una per una la checklist di `impl-docs/git/regole.md` su ogni scrittura nuova o
+cambiata, con un test per ogni punto che si riesce a provocare: è quello che `safety-reviewer`
+controllerà. Resoconto breve (15-20 righe): comandi nuovi con parametri e campi del risultato (li
+userà `egui-ui`), scelte non ovvie, file toccati, esito della CI.

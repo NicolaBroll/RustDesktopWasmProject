@@ -9,6 +9,8 @@
 //! committate" apre a destra l'area di stage. Il diff di un file si apre al posto del grafo,
 //! con il pannello a destra accanto per passare da un file all'altro. Sotto le liste dell'area
 //! di stage c'è la casella del messaggio di commit.
+//! Con un'operazione in corso (merge, rebase, ...) sotto la barra c'è il suo riquadro
+//! (`merge_view`), con i file in conflitto e i comandi per concluderla o annullarla.
 
 mod branch;
 mod commit;
@@ -22,6 +24,8 @@ mod format;
 mod graph;
 mod lines;
 mod list;
+mod merge;
+mod merge_view;
 mod remotes;
 mod stage;
 mod stash;
@@ -40,6 +44,7 @@ use fetch::FetchBox;
 use graph::RefLabel;
 use lines::{LineWrite, Pick};
 use list::{CommitList, PageRequest, Seek};
+use merge::MergeBox;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use remotes::{AddFields, RemotesBox};
@@ -200,6 +205,29 @@ enum Action {
     CloseStashDialog,
     /// Chiude la finestra dei conflitti di apply o pop.
     DismissStashConflicts,
+    /// Unisce `rev` (mostrato come `what`) nel branch attivo; `no_ff`: sempre un commit di
+    /// merge.
+    Merge {
+        rev: String,
+        what: String,
+        no_ff: bool,
+    },
+    /// Apre il dialogo "Continua il merge".
+    ContinueMerge,
+    /// Il messaggio del dialogo "Continua il merge" è cambiato.
+    MergeMessage(String),
+    /// Conclude il merge con il messaggio del dialogo (`merge.continue`).
+    SubmitContinueMerge,
+    /// Comincia l'annullamento del merge: il motore risponde con la conferma.
+    AbortMerge,
+    /// L'utente ha confermato l'annullamento.
+    ConfirmAbortMerge,
+    /// Chiude il dialogo del merge aperto.
+    CloseMergeDialog,
+    /// Chiude la finestra di un merge rifiutato.
+    DismissMergeError,
+    /// Apre l'area di stage con il diff del file in conflitto.
+    OpenConflict(RepoPath),
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -258,6 +286,10 @@ enum Request {
     Stashes(u64),
     /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (lo stato è in [`StashBox`]).
     Stash(u64, stash::Op),
+    /// `repo.operation`: l'operazione in corso per il riquadro.
+    Operation(u64),
+    /// `merge.start`/`merge.continue`/`merge.abort` (lo stato è in [`MergeBox`]).
+    Merge(u64, merge::Op),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -299,6 +331,10 @@ struct RepoView {
     remotes: RemotesBox,
     /// Gli stash (`stash.list`), lo stash selezionato, i dialoghi di push e drop.
     stash: StashBox,
+    /// Il merge avviato, l'operazione in corso (riquadro) e i dialoghi Continua e Annulla.
+    merge: MergeBox,
+    /// Cresce a ogni stato nuovo: l'operazione in corso si rilegge una volta per stato.
+    status_seq: u64,
     /// Cosa farebbero Annulla e Ripeti.
     history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
@@ -333,6 +369,8 @@ impl RepoView {
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
+            merge: MergeBox::default(),
+            status_seq: 0,
             history: History::default(),
             select_after_load,
         };
@@ -354,6 +392,7 @@ impl RepoView {
     fn set_status(&mut self, status: Status) {
         self.head = status.head.clone();
         self.stage = StageLists::new(&status);
+        self.status_seq += 1;
         self.status = Some(status);
         if self.stage.is_empty() {
             self.worktree_selected = false;
@@ -373,6 +412,7 @@ impl RepoView {
             || self.sync.modal_open()
             || self.remotes.modal_open()
             || self.stash.modal_open()
+            || self.merge.modal_open()
     }
 
     /// L'ultimo commit (HEAD), se è tra quelli caricati.
@@ -1034,6 +1074,109 @@ impl App {
                     repo.stash.dismiss();
                 }
             }
+            Action::Merge { rev, what, no_ff } => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
+                else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.start(rev, what, into, no_ff) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Start;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::ContinueMerge => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.merge.open_continue();
+                }
+            }
+            Action::MergeMessage(message) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.set_message(message);
+                }
+            }
+            Action::SubmitContinueMerge => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.submit_continue() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Continue;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::AbortMerge => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                if let Some((params, label)) = repo.merge.start_abort() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Abort;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::ConfirmAbortMerge => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.confirm_abort() {
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Abort;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::CloseMergeDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.close();
+                }
+            }
+            Action::DismissMergeError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.dismiss();
+                }
+            }
+            Action::OpenConflict(path) => {
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                repo.stash.select(None);
+                repo.select_worktree(true);
+                if !repo.worktree_selected {
+                    return;
+                }
+                let target = DiffTarget {
+                    source: DiffSource::Worktree,
+                    path,
+                };
+                if let Some(seq) = repo.diff.open(target.clone()) {
+                    self.request_diff(&target, seq);
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -1315,6 +1458,21 @@ impl App {
         }
     }
 
+    /// Chiede `repo.operation` se lo stato arrivato dice che c'è un'operazione in corso e per
+    /// quello stato non si è ancora chiesto (uno alla volta).
+    fn request_operation(&mut self) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let Some(operation) = repo.status.as_ref().map(|s| s.operation) else {
+            return;
+        };
+        if repo.merge.want_info(operation, repo.status_seq) {
+            self.submit(merge::OPERATION, json!({}), Request::Operation(generation));
+        }
+    }
+
     /// Rilegge l'elenco dei remoti (quanti branch remoti, quale è il predefinito).
     fn request_remotes(&mut self, generation: u64) {
         self.submit(remotes::LIST, json!({}), Request::Remotes(generation));
@@ -1438,6 +1596,20 @@ impl App {
             }
             if let Request::Stash(generation, op) = request {
                 self.receive_stash(generation, op, done);
+                continue;
+            }
+            // Anche l'operazione in corso ha il suo errore, nel riquadro.
+            if let Request::Operation(generation) = request {
+                if let Some(repo) = self.current(generation) {
+                    if let Err(e) = &done.result {
+                        log::warn!("{}: {e}", done.command);
+                    }
+                    repo.merge.receive_info(done.result);
+                }
+                continue;
+            }
+            if let Request::Merge(generation, op) = request {
+                self.receive_merge(generation, op, done);
                 continue;
             }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
@@ -1908,6 +2080,71 @@ impl App {
         }
     }
 
+    /// Risposta di `merge.*`: stato, ref e diario dalla risposta (il riquadro si rilegge con lo
+    /// stato nuovo), poi il log riletto se il branch si è spostato, con il nuovo HEAD
+    /// selezionato. Un merge fermo in conflitto apre l'area di stage; un avvio rifiutato apre la
+    /// sua finestra, un rifiuto di "Continua" resta nel dialogo.
+    fn receive_merge(&mut self, generation: u64, op: merge::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .merge
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            merge::Received::Inline | merge::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            merge::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                repo.history = outcome.history.clone();
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                let status_read = outcome.status.is_some();
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                if outcome.show_changes {
+                    repo.stash.select(None);
+                    repo.select_worktree(true);
+                } else if outcome.moved && !repo.worktree_selected {
+                    repo.select_after_load = repo.head.target();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                self.follow_diff();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if !status_read {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
+                }
+                if outcome.moved
+                    && let Some(repo) = self.current(generation)
+                {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            merge::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
+                    self.submit("edit.history", json!({}), Request::History(generation));
+                }
+            }
+        }
+    }
+
     /// Dopo un fetch: lo stato (avanti/indietro rispetto all'upstream) e il log (i commit
     /// nuovi dei branch remoti).
     fn reload_after_fetch(&mut self, generation: u64) {
@@ -1989,7 +2226,9 @@ impl App {
             | Request::Remotes(..)
             | Request::Remote(..)
             | Request::Stashes(..)
-            | Request::Stash(..) => {}
+            | Request::Stash(..)
+            | Request::Operation(..)
+            | Request::Merge(..) => {}
         }
         Ok(())
     }
@@ -1999,6 +2238,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
+        self.request_operation();
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
         let can_pick = self.platform.capabilities().open_folder;
@@ -2071,6 +2311,15 @@ impl eframe::App for App {
                 &self.notice,
             );
         });
+        // L'operazione in corso (merge, rebase, ...) sotto la barra, per tutta la larghezza.
+        if let Some(repo) = &self.repo
+            && let Some(operation) = repo.status.as_ref().and_then(|s| s.operation)
+        {
+            let can_write = !writing && !repo.modal_open() && !repo.merge.busy();
+            egui::Panel::top("operazione").show(ui, |ui| {
+                merge_view::banner(ui, repo, operation, can_write, &mut actions);
+            });
+        }
         // I pannelli laterali non superano un terzo della finestra: il contenuto va a capo.
         let side_max = (ui.available_width() / 3.0).max(200.0);
         match &self.repo {
@@ -2145,6 +2394,18 @@ impl eframe::App for App {
                 }
                 if let Some(dialog) = repo.branch.dialog() {
                     view::branch_dialog(&ctx, dialog, &mut actions);
+                }
+                if let Some(dialog) = repo.merge.dialog() {
+                    merge_view::merge_dialog(&ctx, repo, dialog, &mut actions);
+                }
+                if let Some(failure) = repo.merge.failure() {
+                    view::failure_window(
+                        &ctx,
+                        "errore-merge",
+                        failure,
+                        Action::DismissMergeError,
+                        &mut actions,
+                    );
                 }
                 if let Some(confirm) = repo.commit.confirm() {
                     let branch = match &repo.head {

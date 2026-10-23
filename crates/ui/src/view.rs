@@ -10,6 +10,7 @@ use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
+use crate::merge;
 use crate::remotes::{self, AddDialog, AddFields, Remote, RemoveDialog};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
@@ -104,12 +105,19 @@ pub(crate) fn top_bar(
             }
         }
         ui.separator();
+        // Con un'operazione in corso (merge, rebase...) il motore rifiuta undo e redo.
+        let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
         for op in [UndoOp::Undo, UndoOp::Redo] {
             let available = op.available(&repo.history);
-            let enabled = available && !writing && !repo.modal_open();
+            let enabled = available && !in_operation && !writing && !repo.modal_open();
             let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
             let hint = op.hint(&repo.history);
-            let button = if available && !enabled {
+            let button = if available && in_operation {
+                button.on_disabled_hover_text(format!(
+                    "{hint} (non durante un'operazione in corso: concluderla o annullarla dal \
+                     riquadro in alto)"
+                ))
+            } else if available && !enabled {
                 button.on_disabled_hover_text(format!("{hint} (dopo l'operazione in corso)"))
             } else {
                 button.on_hover_text(&hint).on_disabled_hover_text(&hint)
@@ -262,7 +270,7 @@ fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
 }
 
 /// Il testo di git in una finestra, se c'è.
-fn git_text(ui: &mut Ui, git: Option<&str>) {
+pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
     if let Some(git) = git.filter(|g| !g.trim().is_empty()) {
         ui.add_space(6.0);
         ui.label("Messaggio di git:");
@@ -628,6 +636,7 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
         Head::Detached(_) => None,
     };
     let can_write = !writing && !repo.modal_open();
+    let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
     egui::ScrollArea::vertical().show(ui, |ui| {
         let sections = [
             (RefKind::LocalBranch, "Branch locali"),
@@ -648,7 +657,7 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
                 .show(ui, |ui| {
                     for info in refs {
                         let is_head = current.as_deref() == Some(&info.name);
-                        ref_row(ui, info, is_head, can_write, actions);
+                        ref_row(ui, info, is_head, can_write, &merge, actions);
                     }
                 });
         }
@@ -1316,11 +1325,19 @@ fn remote_menu(ui: &mut Ui, remote: &Remote, can_write: bool, actions: &mut Vec<
 }
 
 /// `can_write`: le voci che scrivono sono attive (nessuna scrittura in corso, nessun dialogo).
-fn ref_row(ui: &mut Ui, info: &RefInfo, is_head: bool, can_write: bool, actions: &mut Vec<Action>) {
+/// `merge`: in quale branch "Unisci" unirebbe, o perché non si può.
+fn ref_row(
+    ui: &mut Ui,
+    info: &RefInfo,
+    is_head: bool,
+    can_write: bool,
+    merge: &merge::Gate,
+    actions: &mut Vec<Action>,
+) {
     // L'id della riga viene dal nome del ref, non dalla posizione: se i ref si rileggono fra
     // i due clic, un doppio clic non finisce su un altro branch.
     ui.push_id(&info.name, |ui| {
-        ref_row_inner(ui, info, is_head, can_write, actions);
+        ref_row_inner(ui, info, is_head, can_write, merge, actions);
     });
 }
 
@@ -1329,6 +1346,7 @@ fn ref_row_inner(
     info: &RefInfo,
     is_head: bool,
     can_write: bool,
+    merge: &merge::Gate,
     actions: &mut Vec<Action>,
 ) {
     let local = info.kind == RefKind::LocalBranch;
@@ -1343,7 +1361,7 @@ fn ref_row_inner(
             actions.push(Action::SelectCommit(info.target));
         }
         if info.kind != RefKind::Stash {
-            response.context_menu(|ui| ref_menu(ui, info, is_head, can_write, actions));
+            response.context_menu(|ui| ref_menu(ui, info, is_head, can_write, merge, actions));
         }
         if let Some(upstream) = &info.upstream {
             upstream_label(ui, upstream);
@@ -1358,7 +1376,9 @@ fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
     match info.kind {
         RefKind::LocalBranch if is_head => text.push_str("\nClic destro: altre azioni"),
         RefKind::LocalBranch => text.push_str("\nDoppio clic: checkout\nClic destro: altre azioni"),
-        RefKind::RemoteBranch | RefKind::Tag => text.push_str("\nClic destro: nuovo branch da qui"),
+        RefKind::RemoteBranch | RefKind::Tag => {
+            text.push_str("\nClic destro: nuovo branch da qui, unisci nel branch attivo");
+        }
         RefKind::Stash => {}
     }
     text
@@ -1367,13 +1387,14 @@ fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
 /// Quando una voce che scrive è spenta perché si aspetta: il motivo.
 const WAIT: &str = "Aspettare l'operazione in corso (o chiudere il dialogo aperto)";
 
-/// Il menu contestuale di un ref: sui branch locali checkout, nuovo branch, rinomina ed
-/// eliminazione; su branch remoti e tag solo il nuovo branch.
+/// Il menu contestuale di un ref: sui branch locali checkout, nuovo branch, merge nel branch
+/// attivo, rinomina, pull, push ed eliminazione; su branch remoti e tag nuovo branch e merge.
 fn ref_menu(
     ui: &mut Ui,
     info: &RefInfo,
     is_head: bool,
     can_write: bool,
+    merge: &merge::Gate,
     actions: &mut Vec<Action>,
 ) {
     let name = info.short_name();
@@ -1406,8 +1427,14 @@ fn ref_menu(
         actions.push(Action::NewBranch(start, proposed));
         ui.close();
     }
+    if !is_head {
+        merge_items(ui, name, name, merge, can_write, actions);
+    }
     if info.kind != RefKind::LocalBranch {
         return;
+    }
+    if !is_head {
+        ui.separator();
     }
     let button = ui
         .add_enabled(can_write, egui::Button::new("Rinomina…"))
@@ -1493,6 +1520,56 @@ fn ref_menu(
     }
 }
 
+/// Le voci "Unisci in «branch»" (fast-forward se basta) e "… con commit di merge" (`no_ff`) per
+/// `rev`, mostrato come `what`; spente con il motivo se il branch attivo non lo permette.
+fn merge_items(
+    ui: &mut Ui,
+    rev: &str,
+    what: &str,
+    gate: &merge::Gate,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    ui.separator();
+    let (into, blocked) = match gate {
+        merge::Gate::Into(branch) => (branch.as_str(), None),
+        merge::Gate::Blocked(reason) => ("branch attivo", Some(*reason)),
+    };
+    let items = [
+        (
+            format!("Unisci in «{into}»"),
+            false,
+            format!(
+                "Unisce «{what}» in «{into}»: fast-forward se «{into}» non ha commit propri, \
+                 altrimenti un commit di merge. Con conflitti il merge resta in corso (si \
+                 risolve o si annulla dal riquadro in alto). «Annulla» annulla un merge concluso"
+            ),
+        ),
+        (
+            format!("Unisci in «{into}» con commit di merge"),
+            true,
+            format!(
+                "Unisce «{what}» in «{into}» sempre con un commit di merge, anche dove \
+                 basterebbe il fast-forward (--no-ff)"
+            ),
+        ),
+    ];
+    for (label, no_ff, hint) in items {
+        let button = ui
+            .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
+            .on_hover_text(hint)
+            .on_disabled_hover_text(blocked.unwrap_or(WAIT));
+        if button.clicked() {
+            actions.push(Action::Merge {
+                rev: rev.to_owned(),
+                what: what.to_owned(),
+                no_ff,
+            });
+            ui.close();
+        }
+    }
+}
+
 /// Altezza di una riga della lista dei commit.
 const ROW_HEIGHT: f32 = 22.0;
 
@@ -1505,6 +1582,7 @@ pub(crate) fn commit_list(
     actions: &mut Vec<Action>,
 ) {
     let can_write = !writing && !repo.modal_open();
+    let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
     let list = &repo.list;
     // La riga "Modifiche non committate" è la riga 0: i commit partono da `offset`.
     let header = repo.has_changes();
@@ -1605,6 +1683,8 @@ pub(crate) fn commit_list(
                     actions.push(Action::NewBranch(Start::from_commit(id), String::new()));
                     ui.close();
                 }
+                let what = merge::commit_name(id, &repo.refs);
+                merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
             });
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);

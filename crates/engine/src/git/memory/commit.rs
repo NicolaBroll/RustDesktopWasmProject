@@ -36,13 +36,18 @@ impl MemoryBackend {
         let status = self.status()?;
         let previous = self.head_target();
         check_commit_state(&status, previous.is_some(), request.amend)?;
-        if self.operation == Some(Operation::Merge) {
-            return Err(EngineError::NotAllowed(
-                "il repo in memoria non registra `MERGE_HEAD`: il commit di un merge non è \
-                 supportato, niente committato"
-                    .to_owned(),
-            ));
-        }
+        // Con un merge in corso il commit è il commit di merge: genitori HEAD e `MERGE_HEAD`.
+        let merge_heads = match (&self.operation, &self.merge_state) {
+            (Some(Operation::Merge), Some(merge)) => Some(merge.heads.clone()),
+            (Some(Operation::Merge), None) => {
+                return Err(EngineError::NotAllowed(
+                    "il repo in memoria non ha `MERGE_HEAD` per questo merge (impostato con \
+                     `set_operation`): il commit di merge non è supportato, niente committato"
+                        .to_owned(),
+                ));
+            }
+            _ => None,
+        };
         let current_branch = match &self.head {
             HeadRef::Branch(name) => Some(format!("{HEADS}{name}")),
             HeadRef::Detached(_) => None,
@@ -91,13 +96,16 @@ impl MemoryBackend {
                 old.author.clone(),
             ),
             None => (
-                previous.into_iter().collect(),
+                previous
+                    .into_iter()
+                    .chain(merge_heads.iter().flatten().copied())
+                    .collect(),
                 self.head_tree(),
                 now.clone(),
             ),
         };
         let changes = tree_changes(&parent_tree, &tree);
-        if changes.is_empty() {
+        if changes.is_empty() && merge_heads.is_none() {
             return Err(if request.amend {
                 EngineError::NotAllowed(
                     "`amend` renderebbe vuoto l'ultimo commit (stesso contenuto del genitore), \
@@ -146,6 +154,10 @@ impl MemoryBackend {
             }
         };
         self.commit_entries();
+        if merge_heads.is_some() {
+            self.operation = None;
+            self.merge_state = None;
+        }
         Ok(CommitOutcome {
             commit,
             previous,

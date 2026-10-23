@@ -3,6 +3,9 @@
 //! Compilato per un target diverso da wasm32 produce un eseguibile vuoto,
 //! così `cargo build --workspace` funziona anche sul desktop.
 
+// Fuori da wasm32 serve solo ai test.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod demo;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

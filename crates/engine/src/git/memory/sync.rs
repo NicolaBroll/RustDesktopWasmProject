@@ -141,7 +141,7 @@ impl MemoryBackend {
     }
 
     /// Il miglior antenato comune di `a` e `b` (il più recente, se sono più d'uno).
-    fn merge_base(&self, a: Oid, b: Oid) -> Option<Oid> {
+    pub(super) fn merge_base(&self, a: Oid, b: Oid) -> Option<Oid> {
         let common: BTreeSet<Oid> = self
             .reachable(a)
             .intersection(&self.reachable(b))
@@ -160,7 +160,7 @@ impl MemoryBackend {
 
     /// Un commit nuovo con l'albero `tree` (i file cambiati sono calcolati rispetto al primo
     /// genitore); autore `author`, o chi committa.
-    fn make_commit(
+    pub(super) fn make_commit(
         &mut self,
         parents: Vec<Oid>,
         tree: &Tree,

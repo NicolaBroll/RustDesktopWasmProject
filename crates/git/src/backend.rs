@@ -3,6 +3,7 @@
 mod branch;
 mod commit;
 mod discard;
+mod merge;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -20,11 +21,11 @@ use project_domain::{
 use project_engine::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
     DiscardOutcome, DiscardedFile, EngineError, FetchOutcome, FetchRequest, GitBackend, HeadState,
-    JobContext, LinePatch, LineSelection, LogQuery, PullOutcome, PullRequest, PullSettings,
-    PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
-    versions_at_risk_hidden,
+    JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
+    OperationState, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore,
+    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
+    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore, apply_patch,
+    backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1297,6 +1298,18 @@ impl GitBackend for CliBackend {
 
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         self.store_stash(id, message)
+    }
+
+    fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError> {
+        self.merge_into_head(request)
+    }
+
+    fn merge_abort(&mut self) -> Result<MergeAborted, EngineError> {
+        self.abort_merge()
+    }
+
+    fn operation_state(&self) -> Result<OperationState, EngineError> {
+        Ok(self.read_operation_state())
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

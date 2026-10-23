@@ -47,7 +47,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Un file temporaneo nella cartella git (il messaggio del merge), cancellato all'uscita dallo
 /// scope.
-struct TempFile(PathBuf);
+pub(super) struct TempFile(pub(super) PathBuf);
 
 impl Drop for TempFile {
     fn drop(&mut self) {
@@ -141,11 +141,12 @@ impl CliBackend {
     /// modificato da un commit locale ma tolto dall'upstream (conflitto modify/delete, poi
     /// `rebase --abort`), verrebbe scritto e poi cancellato, portandosi via quello ignorato al
     /// suo posto.
-    fn check_incoming_paths(
+    pub(super) fn check_incoming_paths(
         &self,
         head: &Oid,
         upstream: &Oid,
         replay: bool,
+        what: &str,
     ) -> Result<(), EngineError> {
         let (from, to) = (head.to_string(), upstream.to_string());
         let args = [
@@ -217,7 +218,7 @@ impl CliBackend {
             return Ok(());
         }
         Err(EngineError::NotAllowed(format!(
-            "il pull porterebbe file che ora esistono nel worktree come non tracciati o ignorati \
+            "{what} porterebbe file che ora esistono nel worktree come non tracciati o ignorati \
              ({}): git li sovrascriverebbe. Il branch non è stato toccato; spostarli o \
              rinominarli e riprovare",
             hit.join(", ")
@@ -302,7 +303,7 @@ impl CliBackend {
         if request.current {
             self.check_assume_unchanged(&Some(request.expected), &request.upstream)?;
             let replay = matches!(request.mode, PullMode::Rebase { .. });
-            self.check_incoming_paths(&request.expected, &request.upstream, replay)?;
+            self.check_incoming_paths(&request.expected, &request.upstream, replay, "il pull")?;
         }
         let expected = request.expected.to_string();
         let upstream = request.upstream.to_string();
@@ -389,11 +390,13 @@ impl CliBackend {
                 let out = self.run_input(&args, b"", &env).err();
                 match out {
                     None => Ok(()),
-                    Some(EngineError::Git { stderr, .. }) => Err(overwrite_error(&stderr)
-                        .unwrap_or(EngineError::Git {
-                            command: "merge".to_owned(),
-                            stderr,
-                        })),
+                    Some(EngineError::Git { stderr, .. }) => Err(overwrite_error(
+                        &stderr, "il pull",
+                    )
+                    .unwrap_or(EngineError::Git {
+                        command: "merge".to_owned(),
+                        stderr,
+                    })),
                     Some(other) => Err(other),
                 }
             }
@@ -479,7 +482,7 @@ impl CliBackend {
         if !in_progress {
             // Niente è partito (es. un file non tracciato che verrebbe sovrascritto): git non ha
             // scritto niente.
-            if let Some(error) = overwrite_error(&text) {
+            if let Some(error) = overwrite_error(&text, "il pull") {
                 return Err(error);
             }
             return Err(EngineError::Git {
@@ -657,7 +660,7 @@ fn invalid(request: &RefRestore) -> EngineError {
 
 /// [`EngineError::NotAllowed`] se git ha rifiutato perché sovrascriverebbe modifiche locali o
 /// file non tracciati (prima di scrivere: niente è cambiato), con i file (righe con il tab).
-fn overwrite_error(stderr: &str) -> Option<EngineError> {
+pub(super) fn overwrite_error(stderr: &str, what: &str) -> Option<EngineError> {
     if !(stderr.contains("would be overwritten by")
         || stderr.contains("would be removed by")
         || stderr.contains("would lose untracked files"))
@@ -670,7 +673,7 @@ fn overwrite_error(stderr: &str) -> Option<EngineError> {
         .map(|f| format!("`{f}`"))
         .collect();
     Some(EngineError::NotAllowed(format!(
-        "il pull sovrascriverebbe modifiche locali o file non tracciati ({}): committarli, \
+        "{what} sovrascriverebbe modifiche locali o file non tracciati ({}): committarli, \
          metterli da parte o spostarli e riprovare; il branch non è stato toccato",
         files.join(", ")
     )))

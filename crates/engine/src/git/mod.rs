@@ -11,6 +11,7 @@ mod discard;
 mod line_diff;
 mod lines;
 mod memory;
+mod merge;
 mod pull;
 mod push;
 mod remote;
@@ -42,6 +43,11 @@ pub use discard::{
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub use merge::{
+    MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
+    OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
+    merge_source,
+};
 pub use pull::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode,
@@ -452,6 +458,31 @@ pub trait GitBackend: Send {
     /// Rimette il commit `id` in cima all'elenco degli stash con il messaggio `message`
     /// (`git stash store`): l'undo di `stash.drop`. Indice e worktree non si toccano.
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError>;
+
+    // --- Merge (S29). Il comando risolve la rev, sceglie il modo e controlla lo stato
+    // ([`check_merge_state`]); il backend ricontrolla prima di scrivere.
+
+    /// Unisce `request.target` nel branch di HEAD (`merge.start`): fast-forward (`git merge
+    /// --ff-only`) o commit di merge con `request.message`. Prima di scrivere:
+    /// [`check_merge_state`] sullo stato letto ora, HEAD sul branch `request.branch` con valore
+    /// `request.expected`, nessun file che il merge porta al posto di un non tracciato o
+    /// ignorato, e un ref di backup `refs/project/backup/merge-...` sul valore di prima (nel
+    /// risultato; tolto se niente cambia). Mai `--autostash`. Se git rifiuta perché
+    /// sovrascriverebbe modifiche o non tracciati → [`EngineError::NotAllowed`] con i file, niente
+    /// cambia. **Un merge che si ferma (conflitti, hook `pre-merge-commit`) resta in corso**:
+    /// non è un errore, [`MergeOutcome::in_progress`] e i file in [`MergeOutcome::conflicts`].
+    fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
+
+    /// Annulla il merge in corso (`merge.abort`, `git merge --abort`): indice e worktree tornano
+    /// come HEAD per i file del merge. Prima salva indice e worktree (conflitti e risoluzioni
+    /// comprese) in un ref nuovo `refs/project/backup/merge-abort-...` ([`MergeAborted`]); se il
+    /// backup non riesce non si annulla niente. Senza un merge in corso
+    /// ([`check_merging`]) → [`EngineError::NotAllowed`]. La conferma la chiede il comando.
+    fn merge_abort(&mut self) -> Result<MergeAborted, EngineError>;
+
+    /// L'operazione in corso con i suoi dati (commit in ingresso, `MERGE_MSG`, base del
+    /// rebase), per `repo.operation`. Lettura.
+    fn operation_state(&self) -> Result<OperationState, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

@@ -192,7 +192,16 @@ pub trait GitBackend: Send {
     fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError>;
     fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError>;
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError>;
-    // poi merge, rebase, ...
+    // Merge (S29): `MergeRequest` (branch, expected, target, target_name, mode = FastForward |
+    // Merge { no_ff }, message); `MergeOutcome` (after, backup, in_progress, conflicts, message,
+    // warnings): un merge fermo in conflitto resta in corso. L'abort salva prima indice e
+    // worktree (`MergeAborted`: backup, files). `OperationState` (operation, incoming =
+    // MERGE_HEAD / CHERRY_PICK_HEAD / REVERT_HEAD, message = MERGE_MSG, onto, rebase_branch)
+    // per `repo.operation`. `merge.continue` usa `commit`.
+    fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
+    fn merge_abort(&mut self) -> Result<MergeAborted, EngineError>;
+    fn operation_state(&self) -> Result<OperationState, EngineError>;
+    // poi rebase, ...
 }
 
 pub trait RepoOpener: Send + Sync {
@@ -219,7 +228,10 @@ pub trait RepoOpener: Send + Sync {
   cambiato dallo stash e da HEAD rispetto alla base è sempre un conflitto (senza marcatori), e
   con `paths` lo stash contiene solo i file scelti (git ci mette tutto l'indice, vedi
   `stash.push`). Gli stash eliminati restano da parte per id, per l'undo del drop;
-  `fail_stash_drop` simula un drop che fallisce (per il pop applicato e non tolto).
+  `fail_stash_drop` simula un drop che fallisce (per il pop applicato e non tolto). Merge (S29):
+  lo stesso merge file per file del pull, ma un conflitto lascia il merge in corso (voci `u`
+  con i marcatori nel worktree, `MERGE_HEAD` e `MERGE_MSG` in memoria) e il commit con un merge in
+  corso fa il commit di merge; vedi [git/merge.md](git/merge.md).
 - `CliBackend` (in `project-git`): esegue `git` (§5).
 
 ### Sessione
@@ -249,6 +261,7 @@ sua funzione (o a un file nuovo in `impl-docs/git/`, elencato qui).
 | `remote.fetch`, `remote.pull`, `remote.push` | [git/sync.md](git/sync.md) |
 | `remote.list`, `remote.add`, `remote.remove` | [git/remoti.md](git/remoti.md) |
 | `stash.list`, `stash.push`, `stash.apply` / `stash.pop`, `stash.drop` | [git/stash.md](git/stash.md) |
+| `merge.start`, `merge.continue`, `merge.abort`, `repo.operation` | [git/merge.md](git/merge.md) |
 | `edit.undo` / `edit.redo`, `edit.history` | qui sotto e §7 |
 
 | Id | Parametri | Note |
@@ -287,7 +300,7 @@ Regole per ogni chiamata a git:
   configurazione dell'utente e si rispetta, come in ogni client che usa git di sistema; aprire
   un repo non fidato è come eseguire git in quel repo. `index.stage` di una cartella che è un
   repo annidato aggiunge un gitlink (come `git add`, che lo segnala solo con un avviso).
-- Fetch, pull e push: [git/sync.md](git/sync.md); remoti: [git/remoti.md](git/remoti.md); stash: [git/stash.md](git/stash.md).
+- Fetch, pull e push: [git/sync.md](git/sync.md); remoti: [git/remoti.md](git/remoti.md); stash: [git/stash.md](git/stash.md); merge: [git/merge.md](git/merge.md).
 - Un comando che modifica il repo è segnato in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), così la UI lo disabilita durante un job e un agente sa cosa scrive.
 - All'apertura del repo si verifica la versione di git (minimo 2.30) e si dà un errore chiaro se
@@ -369,7 +382,7 @@ non esisteva / è stato cancellato: più ref per voce, per branch, rinomine, mer
 futuri), il backup salvato dall'operazione (es. quello di `amend`) e i backup creati da undo e
 redo. Oggi la registrano `commit.create` (normale e `amend`; con HEAD staccata nessun ref, si
 sposta HEAD; un `amend` che produce lo stesso commit e un `PostCommit` non entrano), i comandi
-`branch.*` (vedi [git/branch.md](git/branch.md)), `stash.push` e `stash.drop` (vedi [git/stash.md](git/stash.md)) e `worktree.discard` (nessun ref, HEAD uguale prima e dopo, il backup del worktree nel campo
+`branch.*` (vedi [git/branch.md](git/branch.md)), `stash.push` e `stash.drop` (vedi [git/stash.md](git/stash.md)), il merge concluso (`merge.start`, `merge.continue`: vedi [git/merge.md](git/merge.md); un merge fermo in conflitto e `merge.abort` no) e `worktree.discard` (nessun ref, HEAD uguale prima e dopo, il backup del worktree nel campo
 `"worktree"`, vedi [git/discard.md](git/discard.md)). Stage e unstage non spostano ref e non entrano nel diario: il loro recupero è il
 backup dell'indice. Una nuova voce svuota le voci annullate (il redo); il diario tiene al
 massimo 100 voci.
@@ -441,7 +454,8 @@ Scelte:
 Undo e backup dei singoli comandi stanno nel file della funzione: scartare le modifiche
 ([git/discard.md](git/discard.md)), backup dell'indice di stage e unstage ([git/stage.md](git/stage.md)),
 backup di `amend` ([git/commit.md](git/commit.md)), branch ([git/branch.md](git/branch.md)), stash
-([git/stash.md](git/stash.md)), pull e fetch ([git/sync.md](git/sync.md)), remoti ([git/remoti.md](git/remoti.md)).
+([git/stash.md](git/stash.md)), pull e fetch ([git/sync.md](git/sync.md)), remoti ([git/remoti.md](git/remoti.md)), merge
+e il backup di `merge.abort` ([git/merge.md](git/merge.md)).
 
 L'undo non copre le operazioni sul remoto: un push non si annulla da qui (il pull sì, per la parte locale: vedi [git/sync.md](git/sync.md); `remote.add` e `remote.remove` cambiano solo la configurazione e i branch remoti locali: vedi [git/remoti.md](git/remoti.md)).
 
@@ -461,6 +475,25 @@ Layout come GitKraken:
 Ogni interazione produce un `Action` che passa da `Registry::run`, come oggi.
 
 La sezione Stash e il suo pannello: [git/stash.md](git/stash.md).
+
+**Operazione in corso** (S29, [git/merge.md](git/merge.md)): quando `repo.status` ha `operation`
+(merge, rebase, cherry-pick, revert, bisect, `git am`) sotto la barra compare un riquadro per tutta
+la larghezza, con i dettagli di `repo.operation` (riletto a ogni stato nuovo, uno alla volta): cosa
+sta entrando, i file in conflitto (i primi otto; un clic apre l'area di stage con il loro diff) e
+i pulsanti dei comandi `continue`/`abort` quando non sono `null`. "Continua il merge…" (attivo solo
+con `ready`) apre un dialogo con il messaggio del commit di merge precompilato da `message`;
+"Annulla il merge…" va in due tempi (senza `confirm` il motore risponde `ConfirmRequired`, il
+dialogo rosso mostra il motivo, poi `"confirm": true`). Per le operazioni che la UI non conclude
+ancora il riquadro dice come farlo da terminale. Durante un'operazione la casella del commit è
+spenta (il merge si conclude con `merge.continue`, che entra nel diario come merge; durante un
+bisect si committa normalmente). Il merge si avvia dal menu contestuale di un branch (locale non
+attivo, remoto), di un tag o di un commit: "Unisci in «branch»" e "… con commit di merge"
+(`no_ff`), spente con il motivo se HEAD è staccata o c'è già un'operazione in corso. L'esito va
+nella barra di stato (fast-forward, commit di merge, già aggiornato); un merge fermo in conflitto
+apre l'area di stage e il riquadro; un rifiuto (modifiche locali, rev sconosciuta) apre una
+finestra. La demo web aggiunge al repo di esempio il branch `esperimento`, in conflitto con `main`
+su `src/lib.rs` (`apps/project-web/src/demo.rs`): «Stash…», poi «Unisci in «main»» su
+`esperimento`.
 
 ## 9. Test
 

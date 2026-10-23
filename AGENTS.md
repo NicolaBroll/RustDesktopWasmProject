@@ -36,6 +36,12 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
 - `remote.pull` è fetch e poi integrazione guidata dal motore (mai `git pull`, mai
   `--autostash`); `remote.push` usa solo un refspec esplicito e, per il force,
   `--force-with-lease` con l'oid atteso (mai `--force`). Il pull entra nel diario, il push no.
+- `merge.start` unisce una rev nel branch attivo (fast-forward o commit di merge, mai
+  `--autostash`, rifiutato con modifiche ai file tracciati per un commit di merge); con conflitti
+  il merge **resta in corso** (al contrario del pull, che lo annulla) e si esce solo con
+  `merge.continue` (nessun file in conflitto rimasto) o `merge.abort` (sempre `"confirm": true`,
+  backup di indice e worktree prima). Entra nel diario solo il merge concluso; `repo.operation` è
+  la lettura per il banner dell'operazione in corso (`impl-docs/git/merge.md`).
 - Un comando che sposta ref (commit, e poi branch, checkout, merge, reset...) registra una
   `JournalEntry` nel diario della `Session` con HEAD e i ref prima e dopo, così `edit.undo` e
   `edit.redo` lo coprono (§7 dell'architettura git).
@@ -106,6 +112,14 @@ cargo run -p project-cli -- --repo . run --cmd 'stash.pop={"index":0,"expected":
 cargo run -p project-cli -- --repo . run --cmd 'stash.drop={"index":0,"confirm":true,"expected":"<id dalla conferma>"}' --cmd edit.undo
 # grafo con anche i commit su cui sono stati creati gli stash
 cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"stashes":true,"limit":20}'
+# merge di un branch nel branch attivo (fast-forward o commit di merge; annullabile con edit.undo)
+cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"prova"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"origin/main","no_ff":true,"message":"Unisci main"}'
+# con conflitti il merge resta in corso: banner (tipo, file in conflitto, commit in ingresso), poi
+# risolvere i file, metterli in stage e concludere; oppure annullare ("confirm":true, backup)
+cargo run -p project-cli -- --repo . run --cmd repo.operation
+cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["a.txt"]}' --cmd merge.continue
+cargo run -p project-cli -- --repo . run --cmd 'merge.abort={"confirm":true}'
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

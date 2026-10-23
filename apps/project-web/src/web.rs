@@ -18,8 +18,9 @@ pub fn start() {
                 canvas,
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
-                    // Il browser non vede i repo locali: repo di esempio in memoria.
-                    let opener = Arc::new(MemoryOpener::sample());
+                    // Il browser non vede i repo locali: repo di esempio in memoria, con un
+                    // branch che va in conflitto con `main` per provare il merge.
+                    let opener = Arc::new(crate::demo::opener());
                     let repo = Some(MemoryOpener::SAMPLE_PATH.to_owned());
                     Ok(Box::new(project_ui::App::new(
                         cc,

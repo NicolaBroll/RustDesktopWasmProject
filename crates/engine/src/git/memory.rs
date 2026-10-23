@@ -3,6 +3,7 @@
 mod branch;
 mod commit;
 mod discard;
+mod merge;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -11,6 +12,7 @@ mod sync;
 mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
+use merge::MemoryMerge;
 pub use remote::FetchFailure;
 use remote::MemoryRemote;
 use stash::MemoryStash;
@@ -19,9 +21,10 @@ use super::line_diff;
 use super::{
     BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
     DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HeadState, LineSelection, LogQuery,
-    PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot,
-    RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped,
-    StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
+    MergeAborted, MergeOutcome, MergeRequest, OperationState, PullOutcome, PullRequest,
+    PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext};
 use project_domain::{
@@ -103,6 +106,8 @@ pub struct MemoryBackend {
     /// Se c'è, ogni `stash_drop` fallisce con questo messaggio
     /// ([`MemoryBackend::fail_stash_drop`]).
     stash_drop_failure: Option<String>,
+    /// Il merge in corso (`MERGE_HEAD`, `MERGE_MSG`), con `operation` = `Merge`.
+    merge_state: Option<MemoryMerge>,
 }
 
 impl Default for MemoryBackend {
@@ -139,6 +144,7 @@ impl MemoryBackend {
             stashes: Vec::new(),
             dropped_stashes: BTreeMap::new(),
             stash_drop_failure: None,
+            merge_state: None,
         }
     }
 
@@ -247,9 +253,12 @@ impl MemoryBackend {
         self.entries = entries;
     }
 
-    /// Operazione in corso (merge, rebase, ...), `None` se nessuna.
+    /// Operazione in corso (merge, rebase, ...), `None` se nessuna. Un merge impostato così
+    /// non ha `MERGE_HEAD` (il commit lo rifiuta); un merge vero lo lascia `merge.start` fermo
+    /// in conflitto.
     pub fn set_operation(&mut self, operation: Option<Operation>) {
         self.operation = operation;
+        self.merge_state = None;
     }
 
     fn set_ref(&mut self, name: String, target: Oid, tag_object: Option<Oid>) {
@@ -876,6 +885,18 @@ impl GitBackend for MemoryBackend {
 
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         self.store_stash(id, message)
+    }
+
+    fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError> {
+        self.merge_commit(request)
+    }
+
+    fn merge_abort(&mut self) -> Result<MergeAborted, EngineError> {
+        self.abort_merge()
+    }
+
+    fn operation_state(&self) -> Result<OperationState, EngineError> {
+        Ok(self.operation_info())
     }
 }
 

@@ -100,7 +100,7 @@ impl MemoryBackend {
     /// indice (`index`, l'albero dell'indice prima dello spostamento) e lo stesso worktree. I
     /// file in conflitto, non tracciati e ignorati restano com'erano; un file `intent-to-add`
     /// (nessuna versione nell'indice) anche.
-    fn rebase_entries(&mut self, index: &BTreeMap<RepoPath, TreeEntry>) {
+    pub(super) fn rebase_entries(&mut self, index: &BTreeMap<RepoPath, TreeEntry>) {
         let head = self.head_tree();
         let mut tracked = BTreeMap::new();
         let mut next = Vec::new();

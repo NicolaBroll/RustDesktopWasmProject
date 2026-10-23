@@ -1,5 +1,6 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
+mod branch;
 mod commit;
 mod discard;
 mod restore;
@@ -9,9 +10,9 @@ pub use discard::{StashedFile, WorktreeStash};
 
 use super::line_diff;
 use super::{
-    CommitOutcome, CommitRequest, DiffSpec, DiscardOutcome, DiscardedFile, GitBackend,
-    LineSelection, LogQuery, RefRestore, RepoOpener, RestoreOutcome, StagedVersion,
-    WorktreeRestore,
+    BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
+    DiscardedFile, GitBackend, HeadState, LineSelection, LogQuery, RefRestore, RepoOpener,
+    RestoreOutcome, StagedVersion, WorktreeRestore,
 };
 use crate::EngineError;
 use project_domain::{
@@ -677,6 +678,39 @@ impl GitBackend for MemoryBackend {
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)?;
         Ok(RestoreOutcome::default())
+    }
+    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
+        Ok(self.unmerged(tip, into))
+    }
+
+    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
+        self.create_local_branch(name, target)
+    }
+
+    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
+        self.checkout_head(target)
+    }
+
+    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError> {
+        self.delete_local_branch(name, expected)
+    }
+
+    fn rename_branch(
+        &mut self,
+        from: &str,
+        to: &str,
+        expected: &Oid,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.rename_local_branch(from, to, expected)
+    }
+
+    fn restore_branch_config(
+        &mut self,
+        name: &str,
+        entries: &[ConfigEntry],
+        remove: bool,
+    ) -> Vec<String> {
+        self.set_branch_config(name, entries, remove)
     }
 }
 

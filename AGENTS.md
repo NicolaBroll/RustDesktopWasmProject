@@ -70,6 +70,9 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Titolo corretto","amend":true}'
 # scarta le modifiche non in stage (worktree come l'indice): vuole "confirm":true, salva un backup
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
+# branch: crea, passa, rinomina, elimina (non unito: "confirm":true; backup in refs/project/backup/delete-...)
+cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"prova"}' --cmd 'branch.checkout={"name":"prova"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"prova","new_name":"prova2"}' --cmd 'branch.delete={"name":"prova2"}'
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

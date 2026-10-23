@@ -1,5 +1,7 @@
 //! Catalogo dei comandi predefiniti.
 
+mod branch;
+
 use crate::commands::parse_params;
 use crate::{
     CommandSpec, CommitRequest, DiffSpec, EngineError, HeadState, Journal, JournalEntry,
@@ -101,6 +103,30 @@ impl Registry {
             r#"{"paths": [percorso, ...], "confirm": true}"#,
             worktree_discard,
         );
+        add(
+            "branch.create",
+            "Crea un branch",
+            r#"{"name": string, "start"?: string (rev, HEAD)}"#,
+            branch::branch_create,
+        );
+        add(
+            "branch.checkout",
+            "Passa a un branch",
+            r#"{"name": string}"#,
+            branch::branch_checkout,
+        );
+        add(
+            "branch.delete",
+            "Elimina un branch",
+            r#"{"name": string, "confirm"?: bool (branch non unito), "expected"?: oid completo (il branch deve puntare lì)}"#,
+            branch::branch_delete,
+        );
+        add(
+            "branch.rename",
+            "Rinomina un branch",
+            r#"{"name": string, "new_name": string}"#,
+            branch::branch_rename,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -115,6 +141,10 @@ impl Registry {
 
 /// I comandi che modificano il repository ([`CommandSpec::writes`]).
 const WRITES: &[&str] = &[
+    "branch.checkout",
+    "branch.create",
+    "branch.delete",
+    "branch.rename",
     "commit.create",
     "edit.redo",
     "edit.undo",
@@ -579,6 +609,10 @@ mod tests {
         assert_eq!(
             ids,
             [
+                "branch.checkout",
+                "branch.create",
+                "branch.delete",
+                "branch.rename",
                 "commit.create",
                 "commit.show",
                 "diff.commit",
@@ -604,6 +638,10 @@ mod tests {
         assert_eq!(
             writes,
             [
+                "branch.checkout",
+                "branch.create",
+                "branch.delete",
+                "branch.rename",
                 "commit.create",
                 "edit.redo",
                 "edit.undo",

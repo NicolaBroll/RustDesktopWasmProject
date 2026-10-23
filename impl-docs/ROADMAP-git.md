@@ -195,7 +195,7 @@ Regole valide per tutti gli step:
   succede nulla; revisione di `safety-reviewer`; CI verde.
 
 ### S24 — Branch
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `branch.create`, `branch.checkout` (errore chiaro con modifiche in conflitto),
   `branch.delete` (`confirm` se non unito), `branch.rename`; menu contestuale nella colonna dei
   ref.

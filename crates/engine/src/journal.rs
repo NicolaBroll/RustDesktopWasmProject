@@ -1,7 +1,7 @@
 //! Diario delle operazioni per `edit.undo` e `edit.redo` (`impl-docs/ARCHITETTURA-git.md` §7).
 //!
-//! Ogni comando che sposta ref (oggi `commit.create`, normale e `amend`; poi branch, checkout,
-//! merge, rebase, reset) lascia una [`JournalEntry`] con HEAD e i ref coinvolti prima e dopo.
+//! Ogni comando che sposta ref o HEAD (oggi `commit.create`, normale e `amend`, e i comandi
+//! `branch.*`; poi merge, rebase, reset) lascia una [`JournalEntry`] con HEAD e i ref coinvolti prima e dopo.
 //! `edit.undo` riporta i ref ai valori "prima" e `edit.redo` ai valori "dopo", **solo** se
 //! adesso valgono ancora quello che l'operazione (o l'undo) ha lasciato: il backend lo
 //! controlla in modo atomico ([`GitBackend::restore_refs`]) e altrimenti dà
@@ -20,6 +20,11 @@
 //!   worktree ([`JournalEntry::worktree`], il commit di `git stash create`) e `edit.undo` rimette
 //!   i file com'erano ([`GitBackend::restore_worktree`]), solo se nel frattempo non sono
 //!   cambiati; `edit.redo` li scarta di nuovo, solo se sono ancora come li ha lasciati l'undo.
+//! - **Branch.** `branch.create` e `branch.delete` si annullano spostando il ref (eliminato o
+//!   ricreato sul commit di prima, solo se nessuno l'ha toccato). `branch.checkout` e
+//!   `branch.rename` invece si annullano con un altro checkout ([`GitBackend::checkout`]: mai
+//!   forzato, rifiutato se sovrascriverebbe modifiche) e un'altra rinomina
+//!   ([`GitBackend::rename_branch`]), che aggiornano anche worktree, reflog e configurazione.
 //! - **Stage e unstage non entrano nel diario**: non spostano ref. Il loro recupero è il backup
 //!   dell'indice (§7). Nemmeno una nuova voce del genere svuota il redo.
 //! - **Undo di un commit = `git reset --soft`.** Si sposta solo il ref: indice e worktree non si
@@ -32,8 +37,9 @@
 
 use crate::git::short;
 use crate::{
-    CommitOutcome, DiscardOutcome, EngineError, GitBackend, HeadState, RefMove, RefRestore,
-    RestoreOutcome, WorktreeBackup, WorktreeRestore, discard_description,
+    CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, RefMove,
+    RefRestore, RestoreOutcome, WorktreeBackup, WorktreeRestore, branch_short, check_no_operation,
+    discard_description,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
@@ -80,6 +86,10 @@ pub struct JournalEntry {
     /// file scartati. Con questo campo undo e redo rimettono i file, non spostano ref.
     #[serde(default)]
     pub worktree: Option<WorktreeBackup>,
+    /// Solo per `branch.delete`: la configurazione `branch.<nome>.*` tolta con il branch, che
+    /// l'undo riscrive (se nel frattempo il repo non ne ha una nuova) e il redo toglie di nuovo.
+    #[serde(default)]
+    pub branch_config: Vec<ConfigEntry>,
 }
 
 impl JournalEntry {
@@ -125,6 +135,7 @@ impl JournalEntry {
             backup: outcome.backup.clone(),
             undo_backups: Vec::new(),
             worktree: None,
+            branch_config: Vec::new(),
         })
     }
 
@@ -146,6 +157,129 @@ impl JournalEntry {
                 files: outcome.files.clone(),
                 raw: outcome.raw,
             }),
+            branch_config: Vec::new(),
+        }
+    }
+
+    /// La voce di un `branch.create` riuscito: il branch `branch` (nome completo) creato su
+    /// `target`, HEAD com'era. L'undo lo elimina (solo se vale ancora `target`), il redo lo
+    /// ricrea (solo se non esiste).
+    pub fn branch_create(branch: &str, target: Oid, head: HeadState) -> Self {
+        Self::branch_entry(
+            "branch.create",
+            format!(
+                "Crea branch `{}` su {}",
+                branch_short(branch),
+                short(&target)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: branch.to_owned(),
+                before: None,
+                after: Some(target),
+            }],
+            None,
+        )
+    }
+
+    /// La voce di un `branch.delete` riuscito: il branch `branch` (nome completo) che valeva
+    /// `target`, con il ref di backup. L'undo lo ricrea su `target` (solo se nel frattempo
+    /// nessuno ha creato un branch con lo stesso nome), il redo lo elimina di nuovo (solo se
+    /// vale ancora `target`).
+    pub fn branch_delete(
+        branch: &str,
+        target: Oid,
+        head: HeadState,
+        backup: String,
+        config: Vec<ConfigEntry>,
+    ) -> Self {
+        let mut entry = Self::branch_entry(
+            "branch.delete",
+            format!(
+                "Elimina branch `{}` (era {})",
+                branch_short(branch),
+                short(&target)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: branch.to_owned(),
+                before: Some(target),
+                after: None,
+            }],
+            Some(backup),
+        );
+        entry.branch_config = config;
+        entry
+    }
+
+    /// La voce di un `branch.rename` riuscito: `from` diventato `to` (nomi completi) su
+    /// `target`; HEAD prima e dopo (cambia se era il branch di HEAD). Undo e redo rinominano
+    /// di nuovo ([`GitBackend::rename_branch`]), così reflog e configurazione seguono il branch.
+    pub fn branch_rename(from: &str, to: &str, target: Oid, head: HeadChange) -> Self {
+        Self::branch_entry(
+            "branch.rename",
+            format!(
+                "Rinomina branch `{}` in `{}`",
+                branch_short(from),
+                branch_short(to)
+            ),
+            head,
+            vec![
+                RefChange {
+                    name: from.to_owned(),
+                    before: Some(target),
+                    after: None,
+                },
+                RefChange {
+                    name: to.to_owned(),
+                    before: None,
+                    after: Some(target),
+                },
+            ],
+            None,
+        )
+    }
+
+    /// La voce di un `branch.checkout` riuscito: HEAD da `before` a `after`, nessun ref
+    /// spostato. Undo e redo rifanno un checkout sicuro ([`GitBackend::checkout`]), che non
+    /// sovrascrive mai modifiche locali.
+    pub fn checkout(before: HeadState, after: HeadState) -> Self {
+        let name = |h: &HeadState| match h {
+            HeadState::Branch(b) => format!("`{}`", branch_short(b)),
+            HeadState::Detached(oid) => format!("{} (HEAD staccata)", short(oid)),
+        };
+        Self::branch_entry(
+            "branch.checkout",
+            format!("Checkout di {} (da {})", name(&after), name(&before)),
+            HeadChange { before, after },
+            Vec::new(),
+            None,
+        )
+    }
+
+    fn branch_entry(
+        command: &str,
+        description: String,
+        head: HeadChange,
+        refs: Vec<RefChange>,
+        backup: Option<String>,
+    ) -> Self {
+        Self {
+            id: 0,
+            command: command.to_owned(),
+            description,
+            head,
+            refs,
+            backup,
+            undo_backups: Vec::new(),
+            worktree: None,
+            branch_config: Vec::new(),
         }
     }
 
@@ -169,24 +303,89 @@ impl JournalEntry {
     /// appartiene a quello stato del repo; con HEAD spostata (un checkout, un commit da
     /// terminale) [`EngineError::UndoConflict`] e niente cambia.
     fn apply(&self, repo: &mut dyn GitBackend, redo: bool) -> Result<RestoreOutcome, EngineError> {
-        match self.worktree_request(redo) {
-            Some(request) => {
-                let expected = if redo {
-                    &self.head.before
-                } else {
-                    &self.head.after
-                };
-                let now = HeadState::from_head(&repo.head()?);
-                if now != *expected {
-                    return Err(EngineError::UndoConflict {
-                        command: request.command,
-                        refs: vec![format!("HEAD: doveva essere {expected}, ora è {now}")],
-                    });
-                }
-                repo.restore_worktree(&request)
+        if let Some(request) = self.worktree_request(redo) {
+            let expected = if redo {
+                &self.head.before
+            } else {
+                &self.head.after
+            };
+            let now = HeadState::from_head(&repo.head()?);
+            if now != *expected {
+                return Err(EngineError::UndoConflict {
+                    command: request.command,
+                    refs: vec![format!("HEAD: doveva essere {expected}, ora è {now}")],
+                });
             }
-            None if redo => repo.restore_refs(&self.redo_request()),
-            None => repo.restore_refs(&self.undo_request()),
+            return repo.restore_worktree(&request);
+        }
+        let request = if redo {
+            self.redo_request()
+        } else {
+            self.undo_request()
+        };
+        match self.command.as_str() {
+            "branch.checkout" => {
+                Self::check_unchanged(repo, &request, "cambierebbe branch")?;
+                repo.checkout(&request.head_target)
+            }
+            "branch.rename" => {
+                Self::check_unchanged(repo, &request, "rinominerebbe un branch")?;
+                // Da chi esiste ora (expected) a chi deve esistere dopo (target).
+                let from = request.refs.iter().find(|r| r.target.is_none());
+                let to = request.refs.iter().find(|r| r.expected.is_none());
+                match (from, to) {
+                    (
+                        Some(RefMove {
+                            name: from,
+                            expected: Some(oid),
+                            ..
+                        }),
+                        Some(RefMove { name: to, .. }),
+                    ) => repo.rename_branch(branch_short(from), branch_short(to), oid),
+                    _ => Err(EngineError::NotAllowed(format!(
+                        "voce del diario non valida: `{}`, niente modificato",
+                        self.description
+                    ))),
+                }
+            }
+            "branch.delete" => {
+                let mut outcome = repo.restore_refs(&request)?;
+                // Il ref è già ricreato / eliminato: la configurazione dà solo avvisi.
+                if let Some(r) = self.refs.first() {
+                    outcome.warnings.extend(repo.restore_branch_config(
+                        branch_short(&r.name),
+                        &self.branch_config,
+                        redo,
+                    ));
+                }
+                Ok(outcome)
+            }
+            _ => repo.restore_refs(&request),
+        }
+    }
+
+    /// Per undo e redo di checkout e rinomina, che non passano da
+    /// [`GitBackend::restore_refs`]: gli stessi controlli ([`check_no_operation`], HEAD e i ref
+    /// come li ha lasciati l'operazione, altrimenti [`EngineError::UndoConflict`]) prima di
+    /// chiamare il backend, che ricontrolla i ref subito prima di scrivere.
+    fn check_unchanged(
+        repo: &dyn GitBackend,
+        request: &RefRestore,
+        what: &str,
+    ) -> Result<(), EngineError> {
+        check_no_operation(request.command, what, repo.status()?.operation)?;
+        let refs = repo.refs()?;
+        let head = HeadState::from_head(&repo.head()?);
+        let conflicts = request.conflicts(&head, |name| {
+            Ok(refs.iter().find(|r| r.name == name).map(|r| r.target))
+        })?;
+        if conflicts.is_empty() {
+            Ok(())
+        } else {
+            Err(EngineError::UndoConflict {
+                command: request.command,
+                refs: conflicts,
+            })
         }
     }
 
@@ -351,6 +550,7 @@ mod tests {
             backup: None,
             undo_backups: Vec::new(),
             worktree: None,
+            branch_config: Vec::new(),
         }
     }
 
@@ -438,7 +638,8 @@ mod tests {
                 "refs": [],
                 "backup": null,
                 "undo_backups": [],
-                "worktree": null
+                "worktree": null,
+                "branch_config": []
             })
         );
     }

@@ -435,6 +435,10 @@ fn commands_lists_the_catalog() {
     assert_eq!(
         ids,
         [
+            "branch.checkout",
+            "branch.create",
+            "branch.delete",
+            "branch.rename",
             "commit.create",
             "commit.show",
             "diff.commit",
@@ -463,6 +467,10 @@ fn commands_lists_the_catalog() {
     assert_eq!(
         marked,
         [
+            "branch.checkout",
+            "branch.create",
+            "branch.delete",
+            "branch.rename",
             "commit.create",
             "edit.redo",
             "edit.undo",

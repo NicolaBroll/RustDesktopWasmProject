@@ -86,8 +86,29 @@ redo di uno scarto sono rifiutati anche se HEAD è cambiata. Risultato: `{"files
 "mode", "oid"}], "backup", "stash", "status", "can_undo", "can_redo", "next_undo",
 "next_redo"}`.
 
-`edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`, e
-`worktree.discard`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+`branch.create {"name", "start"?}` crea il branch `name` (nome breve) su `start` (una rev; HEAD se
+manca) senza cambiare branch; un branch esistente non si sovrascrive mai, e un nome nuovo che git
+non accetta (anche uno che inizia con `-`) è un errore. Risultato: `{"branch", "target", "refs"}`
+più lo stato del diario. `branch.checkout {"name"}` passa al branch con `git switch`, mai forzato:
+se una modifica locale, un file non tracciato o un ignorato verrebbero sovrascritti dà un errore
+che elenca i file, e niente cambia; le altre modifiche restano. Rifiutato durante merge, rebase,
+ecc. e con file in conflitto. Risultato: `{"branch", "previous", "changed", "warnings",
+"status"}`. `branch.delete {"name", "confirm"?, "expected"?}` elimina un branch (con `expected`, l'id completo del
+commit visto, rifiuta senza toccare niente se il branch nel frattempo punta altrove): il branch attivo o aperto in un
+altro worktree è rifiutato; se ha commit che non sono né in HEAD né nel suo upstream serve
+`"confirm": true`. Prima salva sempre il commit in `refs/project/backup/delete-...`; come `git
+branch -d` toglie anche la configurazione `branch.<nome>.*` (riportata in `removed_config` e
+salvata per l'undo). Risultato: `{"branch", "target", "unmerged", "backup", "removed_config",
+"warnings", "refs"}`. `branch.rename {"name", "new_name"}` rinomina con `git
+branch -m` (mai sopra un branch esistente): reflog, upstream e HEAD seguono. Risultato:
+`{"branch", "previous", "target", "head", "warnings", "refs"}`. Tutti e quattro entrano nel
+diario: l'undo elimina il branch creato, ricrea quello eliminato sullo stesso commit con la sua
+configurazione (se nel frattempo non ne è comparsa una nuova; il reflog del branch eliminato non
+torna), rinomina all'indietro e torna al branch (o commit) di prima con un altro checkout
+sicuro; sempre solo se nel frattempo nessuno ha toccato quei ref o HEAD.
+
+`edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
+`branch.*` e `worktree.discard`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
 frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
 Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un

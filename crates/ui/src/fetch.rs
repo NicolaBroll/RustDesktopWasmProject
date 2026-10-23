@@ -6,6 +6,7 @@
 //! così la UI spegne le altre scritture e "Aggiorna" finché non è finito. Gli errori di
 //! autenticazione e di rete si spiegano in una finestra con il testo di git.
 
+use crate::{Action, App, Done, Request, fetch};
 use crate::{ErrorKind, Ticket};
 use project_domain::{Oid, RefInfo};
 use project_engine::Progress;
@@ -344,6 +345,105 @@ pub fn describe(progress: &Progress) -> (String, Option<f32>) {
     }
     let fraction = progress.percent.map(|p| f32::from(p.min(100)) / 100.0);
     (text, fraction)
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_fetch(&mut self, action: Action) {
+        match action {
+            Action::Fetch(remote) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let Some(params) = repo.fetch.request(remote.as_deref()) else {
+                    return;
+                };
+                repo.write_error = None;
+                repo.write_label = Some(fetch::label(remote.as_deref()));
+                let ticket = self.executor.submit(fetch::COMMAND, params);
+                self.pending.insert(ticket, Request::Fetch(generation));
+                if let Some(repo) = &mut self.repo {
+                    repo.fetch.started(ticket, remote);
+                }
+            }
+            Action::CancelFetch => {
+                if let Some(ticket) = self.repo.as_mut().and_then(|r| r.fetch.cancel()) {
+                    self.executor.cancel(ticket);
+                }
+            }
+            Action::DismissFetchError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.fetch.dismiss();
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Risposta di `remote.fetch`: i ref dalla risposta (la colonna mostra i branch remoti
+    /// nuovi e quanto i branch locali sono indietro), poi log e stato riletti se qualcosa è
+    /// cambiato; l'avviso con i ref aggiornati, o l'errore.
+    pub(crate) fn receive_fetch(&mut self, generation: u64, done: Done) {
+        // Quanti branch remoti ha ogni remoto: un fetch ne porta di nuovi o ne toglie.
+        if self.current(generation).is_some() {
+            self.request_remotes(generation);
+        }
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        let received =
+            repo.fetch
+                .receive(done.ticket, done.result, done.error_kind, done.error_detail);
+        match received {
+            fetch::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if outcome.changed {
+                    self.reload_after_fetch(generation);
+                }
+            }
+            fetch::Received::Cancelled { notice } => {
+                self.notice = notice;
+                self.error.clear();
+                // Qualche branch remoto può essere già aggiornato.
+                self.submit("repo.refs", json!({}), Request::Refs(generation));
+                self.reload_after_fetch(generation);
+            }
+            fetch::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    self.reload_after_fetch(generation);
+                }
+            }
+        }
+    }
+
+    /// Dopo un fetch: lo stato (avanti/indietro rispetto all'upstream) e il log (i commit
+    /// nuovi dei branch remoti).
+    pub(crate) fn reload_after_fetch(&mut self, generation: u64) {
+        self.submit("repo.status", json!({}), Request::Status(generation));
+        if let Some(repo) = self.current(generation) {
+            let first = repo.list.reset();
+            self.request_page(first);
+        }
+    }
 }
 
 #[cfg(test)]

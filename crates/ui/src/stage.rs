@@ -2,7 +2,9 @@
 //! da mandare a `index.stage`/`index.unstage` e cosa fare del diff aperto dopo una scrittura.
 //! Solo dati, senza egui: si prova con test unitari.
 
+use crate::{Action, App, Request, stage};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
+use serde_json::json;
 
 /// Una delle due liste dell'area di stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -217,6 +219,60 @@ pub fn follow(lists: &StageLists, side: Side, path: &RepoPath) -> Follow {
         Follow::Switch(side.other())
     } else {
         Follow::Close
+    }
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_stage(&mut self, action: Action) {
+        match action {
+            Action::Write(op, paths) => {
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                if let Some(write) = stage::plan_write(&repo.stage, op, paths) {
+                    if write.needs_confirm() {
+                        repo.confirm = Some(write);
+                    } else {
+                        self.send_write(write);
+                    }
+                }
+            }
+            Action::ConfirmWrite => {
+                if let Some(write) = self.repo.as_mut().and_then(|r| r.confirm.take()) {
+                    self.send_write(write);
+                }
+            }
+            Action::CancelWrite => {
+                if let Some(repo) = &mut self.repo {
+                    repo.confirm = None;
+                }
+            }
+            Action::DismissWriteError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.write_error = None;
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Manda una scrittura sull'indice, se non ce n'è già una in corso: mai due insieme.
+    pub(crate) fn send_write(&mut self, write: PendingWrite) {
+        if self.executor.writing().is_some() || write.paths.is_empty() {
+            return;
+        }
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(write.op.describe(&write.paths));
+        let params = json!({ "paths": write.paths });
+        self.submit(write.op.command(), params, Request::Write(generation));
     }
 }
 

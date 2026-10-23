@@ -21,6 +21,7 @@
 use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
+use crate::{Action, App, Done, sync};
 use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{PullOperation, PushRejection};
 use serde::Deserialize;
@@ -762,6 +763,141 @@ impl PushResult {
             moved_head: false,
             show_changes: false,
             warning,
+        }
+    }
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_sync(&mut self, action: Action) {
+        match action {
+            Action::Pull(branch, strategy) => {
+                self.send_sync(sync::Request::pull(branch, strategy), false);
+            }
+            Action::Push(branch) => self.send_sync(sync::Request::push(branch), false),
+            Action::ForcePush => {
+                if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.force()) {
+                    self.send_sync(request, false);
+                }
+            }
+            Action::ConfirmForcePush => {
+                if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.confirm_force()) {
+                    self.send_sync(request, true);
+                }
+            }
+            Action::CancelSync => {
+                if let Some(ticket) = self.repo.as_mut().and_then(|r| r.sync.cancel()) {
+                    self.executor.cancel(ticket);
+                }
+            }
+            Action::DismissSync => {
+                if let Some(repo) = &mut self.repo {
+                    repo.sync.dismiss();
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Manda un pull o un push, se non c'è un'altra scrittura in corso (fetch compreso: una
+    /// operazione di rete alla volta) né un dialogo aperto; `confirmed`: è il clic nella
+    /// conferma del force, che è lei il dialogo aperto.
+    pub(crate) fn send_sync(&mut self, request: sync::Request, confirmed: bool) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || (repo.modal_open() && !confirmed) {
+            return;
+        }
+        let Some(request) = repo.sync.request(request, &repo.head) else {
+            return;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(request.label());
+        let ticket = self.executor.submit(request.op.command(), request.params());
+        self.pending
+            .insert(ticket, crate::Request::Sync(generation));
+        if let Some(repo) = &mut self.repo {
+            repo.sync.started(ticket, request);
+        }
+    }
+
+    /// Risposta di `remote.pull`/`remote.push`: ref, stato e diario dalla risposta, poi il log
+    /// riletto (tutti i ref: i commit arrivati, il branch spostato, il branch remoto
+    /// aggiornato); dopo un pull del branch attivo si seleziona il nuovo HEAD. Un rifiuto apre
+    /// la sua finestra.
+    pub(crate) fn receive_sync(&mut self, generation: u64, done: Done) {
+        // Un push può creare un branch remoto, un pull ne scarica.
+        if self.current(generation).is_some() {
+            self.request_remotes(generation);
+        }
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        let received = repo.sync.receive(
+            done.ticket,
+            done.result,
+            done.error_kind,
+            done.error_detail,
+            done.confirm_expected,
+        );
+        match received {
+            sync::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                if let Some(history) = outcome.history {
+                    repo.history = history;
+                }
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                let status_read = outcome.status.is_some();
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                if outcome.show_changes {
+                    // Merge del pull fermo in conflitto: l'area di stage con i file da risolvere.
+                    repo.stash.select(None);
+                    repo.select_worktree(true);
+                } else if outcome.moved_head && !repo.worktree_selected {
+                    repo.select_after_load = repo.head.target();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                self.follow_diff();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), crate::Request::Refs(generation));
+                }
+                if !status_read {
+                    self.submit("repo.status", json!({}), crate::Request::Status(generation));
+                }
+                if let Some(repo) = self.current(generation) {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            sync::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            sync::Received::Cancelled { notice, reload } => {
+                self.notice = notice;
+                self.error.clear();
+                if reload {
+                    self.load();
+                }
+            }
+            sync::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                }
+            }
         }
     }
 }

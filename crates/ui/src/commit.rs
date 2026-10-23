@@ -7,6 +7,7 @@
 //! fallisce. Si svuota solo dopo un commit riuscito.
 
 use crate::executor::ErrorKind;
+use crate::{Action, App, Done, Request};
 use project_domain::{Commit, Oid, Operation, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -435,6 +436,126 @@ fn error(kind: Option<ErrorKind>, message: &str, detail: Option<String>) -> Comm
             message: format!("Commit non riuscito: {message} {kept}"),
             output: None,
         },
+    }
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_commit(&mut self, action: Action) {
+        match action {
+            Action::SetAmend(on) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if repo.commit.sending().is_some() {
+                    return;
+                }
+                let last = repo.head_commit().cloned();
+                let ask = repo.commit.draft.set_amend(on, last.as_ref());
+                if ask && let Some(head) = repo.head.target() {
+                    let params = json!({ "id": head.to_string() });
+                    self.submit("commit.show", params, Request::HeadMessage(generation));
+                }
+            }
+            Action::Commit => self.send_commit(false),
+            Action::ConfirmCommit => self.send_commit(true),
+            Action::CancelCommit => {
+                if let Some(repo) = &mut self.repo {
+                    repo.commit.cancel_confirm();
+                }
+            }
+            Action::DismissCommitError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.commit.dismiss_error();
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Manda il commit della bozza (`confirmed`: quello in attesa di conferma, con
+    /// `"confirm": true`), se il pulsante è attivo: mai insieme a un'altra scrittura.
+    pub(crate) fn send_commit(&mut self, confirmed: bool) {
+        let writing = self.executor.writing().is_some();
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let request = if confirmed {
+            if writing {
+                return;
+            }
+            repo.commit.confirmed()
+        } else {
+            if repo.commit_gate(writing).check().is_err() {
+                return;
+            }
+            repo.commit.start()
+        };
+        let Some((send, params)) = request else {
+            return;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(send.label().to_owned());
+        self.submit(send.command(), params, Request::Commit(generation));
+    }
+
+    /// Risultato di `commit.create`: stato dalla risposta, log e ref riletti; oppure l'errore
+    /// (o la conferma) nella casella, con il messaggio scritto conservato.
+    pub(crate) fn receive_commit(&mut self, generation: u64, done: Done) {
+        let result = done.result.and_then(|value| {
+            serde_json::from_value::<CommitResult>(value)
+                .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+        });
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match result {
+            Ok(result) => {
+                repo.commit.succeeded();
+                let notice = result.notice();
+                let id = result.commit.id;
+                repo.set_status(result.status);
+                // Con altre modifiche si resta sulla riga delle modifiche; se è sparita si
+                // seleziona il nuovo commit appena arriva il log.
+                if !repo.worktree_selected {
+                    repo.select_after_load = Some(id);
+                }
+                self.error.clear();
+                self.notice = notice;
+                self.follow_diff();
+                // Il nuovo commit in cima (con amend il vecchio sparisce) e le etichette dei
+                // ref spostate.
+                self.submit("repo.refs", json!({}), Request::Refs(generation));
+                // Il commit è nel diario: Annulla ora lo propone.
+                self.submit("edit.history", json!({}), Request::History(generation));
+                if let Some(repo) = self.current(generation) {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            Err(e) if done.error_kind == Some(ErrorKind::PostCommit) => {
+                // Il commit c'è: si rilegge tutto, e non si ripropone il messaggio.
+                log::warn!("{}: {e}", done.command);
+                repo.commit.done_with_error(&e);
+                self.error = e;
+                self.notice.clear();
+                self.load();
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", done.command);
+                repo.commit
+                    .failed(done.error_kind, &e, done.error_detail.clone());
+                if done.error_kind == Some(ErrorKind::ConfirmRequired) {
+                    self.error.clear();
+                } else {
+                    self.error = format!("Commit non riuscito: {e}");
+                }
+                self.notice.clear();
+            }
+        }
     }
 }
 

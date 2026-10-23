@@ -13,6 +13,7 @@
 
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
+use crate::{Action, App, Done, Request, remotes};
 use crate::{ErrorKind, Ticket};
 use project_domain::{RefInfo, Upstream};
 use project_engine::mask_url;
@@ -806,6 +807,147 @@ pub fn ahead_behind(upstream: &Upstream) -> (String, String) {
                  Fetch non lo riporta; Push lo ricrea"
             ),
         ),
+    }
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_remotes(&mut self, action: Action) {
+        match action {
+            Action::AddRemote => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.remotes.open_add();
+                }
+            }
+            Action::AddRemoteFields(fields) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.set_fields(fields);
+                }
+            }
+            Action::HideRemoteUrl(hide) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.hide_url(hide);
+                }
+            }
+            Action::SubmitAddRemote => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let Some((params, label)) = repo.remotes.submit_add() else {
+                    return;
+                };
+                repo.write_error = None;
+                repo.write_label = Some(label);
+                let op = remotes::Op::Add;
+                let ticket = self.executor.submit(op.command(), params);
+                self.pending.insert(ticket, Request::Remote(generation, op));
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.add_started(ticket);
+                }
+            }
+            Action::CancelAddRemote => {
+                if let Some(ticket) = self.repo.as_mut().and_then(|r| r.remotes.cancel()) {
+                    self.executor.cancel(ticket);
+                }
+            }
+            Action::RemoveRemote(name) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = format!("Controllo per la rimozione di «{name}»");
+                if let Some(params) = repo.remotes.start_remove(name) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = remotes::Op::Remove;
+                    self.submit(op.command(), params, Request::Remote(generation, op));
+                }
+            }
+            Action::ConfirmRemoveRemote => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.remotes.confirm_remove() {
+                    repo.write_label = Some(label);
+                    let op = remotes::Op::Remove;
+                    self.submit(op.command(), params, Request::Remote(generation, op));
+                }
+            }
+            Action::CloseRemoteDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.close();
+                }
+            }
+            Action::DismissRemoteError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.dismiss();
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Risposta di `remote.add`/`remote.remove`: elenco dei remoti, ref e diario dalla
+    /// risposta, poi lo stato e il log riletti (i branch remoti scaricati o tolti cambiano il
+    /// grafo e l'upstream del branch attivo). Un nome o URL rifiutato resta nel dialogo.
+    pub(crate) fn receive_remote(&mut self, generation: u64, op: remotes::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .remotes
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            remotes::Received::Inline | remotes::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            remotes::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                repo.history = outcome.history.clone();
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                let remotes_read = outcome.remotes.is_some();
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if !remotes_read {
+                    self.request_remotes(generation);
+                }
+                self.reload_after_fetch(generation);
+            }
+            remotes::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    self.request_remotes(generation);
+                    self.submit("edit.history", json!({}), Request::History(generation));
+                }
+            }
+        }
     }
 }
 

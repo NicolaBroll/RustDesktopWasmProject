@@ -10,8 +10,8 @@ pub(super) fn remotes_section(
 ) {
     let list = repo.remotes.list();
     let title = match list {
-        Some(list) => format!("Remoti ({})", list.len()),
-        None => "Remoti".to_owned(),
+        Some(list) => tr!("remotes-section-count", n = list.len()),
+        None => tr!("remotes-section"),
     };
     egui::CollapsingHeader::new(title)
         .id_salt("sezione-remoti")
@@ -19,7 +19,7 @@ pub(super) fn remotes_section(
         .show(ui, |ui| {
             match list {
                 Some([]) => {
-                    ui.weak("Nessun remoto configurato");
+                    ui.weak(tr!("remotes-none"));
                 }
                 Some(list) => {
                     for remote in list {
@@ -31,7 +31,7 @@ pub(super) fn remotes_section(
                 None if repo.remotes.list_error().is_none() => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.weak("Lettura dei remoti…");
+                        ui.weak(tr!("remotes-loading"));
                     });
                 }
                 None => {}
@@ -39,7 +39,7 @@ pub(super) fn remotes_section(
             if let Some(error) = repo.remotes.list_error() {
                 ui.add(
                     egui::Label::new(
-                        RichText::new(format!("Remoti non letti: {error}"))
+                        RichText::new(tr!("remotes-list-error", error = error))
                             .color(ui.visuals().error_fg_color)
                             .small(),
                     )
@@ -47,12 +47,9 @@ pub(super) fn remotes_section(
                 );
             }
             let button = ui
-                .add_enabled(can_write, egui::Button::new("Aggiungi remoto…"))
-                .on_hover_text(
-                    "Aggiunge un remoto (nome e URL) e, se scelto, ne scarica subito i branch. \
-                     «Annulla» lo toglie",
-                )
-                .on_disabled_hover_text(WAIT);
+                .add_enabled(can_write, egui::Button::new(tr!("remotes-add-button")))
+                .on_hover_text(tr!("remotes-add-button-hint"))
+                .on_disabled_hover_text(wait());
             if button.clicked() {
                 actions.push(Action::AddRemote);
             }
@@ -66,7 +63,7 @@ pub(super) fn remote_row(ui: &mut Ui, remote: &Remote, can_write: bool, actions:
     ui.horizontal(|ui| {
         let name = ui
             .add(egui::Label::new(RichText::new(&remote.name).strong()).sense(Sense::click()))
-            .on_hover_text(format!("{tooltip}\nClic destro: fetch, rimozione"));
+            .on_hover_text(tr!("remotes-row-hint", tooltip = &tooltip));
         name.context_menu(|ui| remote_menu(ui, remote, can_write, actions));
         for (badge, hint) in remote.badges() {
             let text = RichText::new(badge)
@@ -78,7 +75,7 @@ pub(super) fn remote_row(ui: &mut Ui, remote: &Remote, can_write: bool, actions:
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.menu_button("…", |ui| remote_menu(ui, remote, can_write, actions))
                 .response
-                .on_hover_text("Fetch, rimozione");
+                .on_hover_text(tr!("remotes-menu-hint"));
         });
     });
     ui.horizontal(|ui| {
@@ -105,12 +102,9 @@ pub(super) fn remote_menu(
 ) {
     let name = &remote.name;
     let button = ui
-        .add_enabled(can_write, egui::Button::new("Fetch"))
-        .on_hover_text(format!(
-            "Scarica commit, branch remoti e tag da «{name}». Non tocca branch locali, indice né \
-             file"
-        ))
-        .on_disabled_hover_text(WAIT);
+        .add_enabled(can_write, egui::Button::new(tr!("remotes-fetch-button")))
+        .on_hover_text(tr!("remotes-fetch-button-hint", name = name))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::Fetch(Some(name.clone())));
         ui.close();
@@ -124,14 +118,10 @@ pub(super) fn remote_menu(
     let button = ui
         .add_enabled(
             can_write,
-            egui::Button::new(RichText::new("Rimuovi…").color(color)),
+            egui::Button::new(RichText::new(tr!("remotes-remove-button")).color(color)),
         )
-        .on_hover_text(
-            "Toglie il remoto da questo repo, con i suoi branch remoti scaricati e gli upstream \
-             che lo usano; prima chiede conferma. Il repository sul server non cambia; «Annulla» \
-             lo rimette",
-        )
-        .on_disabled_hover_text(WAIT);
+        .on_hover_text(tr!("remotes-remove-button-hint"))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::RemoveRemote(name.clone()));
         ui.close();
@@ -169,16 +159,9 @@ pub(super) fn add_remote_dialog(
     progress: Option<&Progress>,
     actions: &mut Vec<Action>,
 ) {
-    ui.heading("Aggiungi remoto");
+    ui.heading(tr!("remotes-add-title"));
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Un remoto è un altro repository (sul server o in una cartella) da cui scaricare e \
-             su cui pubblicare. Si aggiunge con i branch remoti nome/* e niente cambia nei \
-             branch locali; «Annulla» lo toglie.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("remotes-add-explanation")).wrap());
     ui.add_space(8.0);
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let mut fields: AddFields = dialog.fields.clone();
@@ -187,11 +170,11 @@ pub(super) fn add_remote_dialog(
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Nome");
+            ui.label(tr!("remotes-add-name"));
             let name = ui.add(
                 egui::TextEdit::singleline(&mut fields.name)
                     .id(ui.make_persistent_id("nome-remoto"))
-                    .hint_text("es. origin, upstream")
+                    .hint_text(tr!("remotes-add-name-hint"))
                     .desired_width(320.0)
                     .interactive(!dialog.sending),
             );
@@ -200,7 +183,7 @@ pub(super) fn add_remote_dialog(
             }
             changed |= name.changed();
             ui.end_row();
-            ui.label("URL");
+            ui.label(tr!("remotes-add-url"));
             if dialog.url_masked() {
                 // Durante l'invio, o dopo "Nascondi": l'URL mascherato, in sola lettura.
                 let mut shown = dialog.shown_url();
@@ -214,7 +197,7 @@ pub(super) fn add_remote_dialog(
                 let url = ui.add(
                     egui::TextEdit::singleline(&mut fields.url)
                         .id(ui.make_persistent_id("url-remoto"))
-                        .hint_text("https://host/progetto.git, git@host:utente/progetto.git")
+                        .hint_text(tr!("remotes-add-url-hint"))
                         .desired_width(320.0)
                         .interactive(!dialog.sending),
                 );
@@ -227,14 +210,11 @@ pub(super) fn add_remote_dialog(
         ui.add(egui::Label::new(RichText::new(warning).color(ui.visuals().warn_fg_color)).wrap());
         if !dialog.sending {
             let (label, hint) = if dialog.hide_url {
-                (
-                    "Mostra l'URL",
-                    "Mostra l'URL com'è scritto, per correggerlo",
-                )
+                (tr!("remotes-show-url"), tr!("remotes-show-url-hint"))
             } else {
                 (
-                    "Nascondi le credenziali",
-                    "Mostra l'URL con le credenziali mascherate",
+                    tr!("remotes-hide-credentials"),
+                    tr!("remotes-hide-credentials-hint"),
                 )
             };
             if ui.small_button(label).on_hover_text(hint).clicked() {
@@ -246,12 +226,9 @@ pub(super) fn add_remote_dialog(
     let check = ui
         .add_enabled(
             !dialog.sending,
-            egui::Checkbox::new(&mut fields.fetch, "Scarica subito (fetch)"),
+            egui::Checkbox::new(&mut fields.fetch, tr!("remotes-add-fetch")),
         )
-        .on_hover_text(
-            "Dopo l'aggiunta scarica commit, branch remoti e tag. Se il fetch non riesce (o lo \
-             si interrompe) il remoto resta aggiunto",
-        );
+        .on_hover_text(tr!("remotes-add-fetch-hint"));
     changed |= check.changed();
     if changed {
         actions.push(Action::AddRemoteFields(fields));
@@ -263,13 +240,16 @@ pub(super) fn add_remote_dialog(
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let clicked = ui
-            .add_enabled(dialog.can_submit(), egui::Button::new("Aggiungi"))
+            .add_enabled(
+                dialog.can_submit(),
+                egui::Button::new(tr!("remotes-add-submit")),
+            )
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::SubmitAddRemote);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new("Chiudi"))
+            .add_enabled(!dialog.sending, egui::Button::new(tr!("remotes-close")))
             .clicked()
         {
             actions.push(Action::CloseRemoteDialog);
@@ -277,7 +257,7 @@ pub(super) fn add_remote_dialog(
         if dialog.sending {
             ui.spinner();
             if !dialog.fetching {
-                ui.label("Aggiunta…");
+                ui.label(tr!("remotes-adding"));
             }
         }
     });
@@ -286,7 +266,7 @@ pub(super) fn add_remote_dialog(
         ui.horizontal(|ui| {
             let (text, fraction) = match progress {
                 Some(p) => fetch::describe(p),
-                None => ("Connessione al remoto…".to_owned(), None),
+                None => (tr!("remotes-connecting"), None),
             };
             ui.label(text);
             if let Some(fraction) = fraction {
@@ -297,12 +277,9 @@ pub(super) fn add_remote_dialog(
                 );
             }
             let stop = ui
-                .add_enabled(!dialog.cancelling, egui::Button::new("Interrompi"))
-                .on_hover_text(
-                    "Ferma il fetch: il remoto resta aggiunto, i branch remoti già scaricati \
-                     restano",
-                )
-                .on_disabled_hover_text("Interruzione in corso…");
+                .add_enabled(!dialog.cancelling, egui::Button::new(tr!("remotes-cancel")))
+                .on_hover_text(tr!("remotes-cancel-hint"))
+                .on_disabled_hover_text(tr!("remotes-cancelling"));
             if stop.clicked() {
                 actions.push(Action::CancelAddRemote);
             }
@@ -317,41 +294,26 @@ pub(super) fn remove_remote_dialog(
     actions: &mut Vec<Action>,
 ) {
     ui.heading(
-        RichText::new(format!("Rimuovere il remoto «{}»?", remove.name))
+        RichText::new(tr!("remotes-remove-title", name = &remove.name))
             .color(ui.visuals().error_fg_color),
     );
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Si tolgono da questo repo la configurazione del remoto e i suoi branch remoti \
-             scaricati; i branch locali che lo seguono restano, ma senza upstream. Il \
-             repository sul server non cambia e i tag scaricati restano.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("remotes-remove-explanation")).wrap());
     ui.add_space(6.0);
-    ui.strong("Cosa succede:");
+    ui.strong(tr!("remotes-remove-what"));
     ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Con «Annulla» nella barra in alto il remoto torna com'era (URL, branch remoti, \
-             upstream), finché l'app resta aperta: il diario delle operazioni è in memoria. \
-             Dopo la chiusura restano solo i backup dei commit in refs/project/backup/remote-…: \
-             il remoto si riaggiunge a mano e un Fetch riscarica i branch.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("remotes-remove-undo")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let button = egui::Button::new(
-            RichText::new("Rimuovi il remoto").color(ui.visuals().strong_text_color()),
+            RichText::new(tr!("remotes-remove-confirm")).color(ui.visuals().strong_text_color()),
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
             actions.push(Action::ConfirmRemoveRemote);
         }
-        if ui.button("Non rimuovere").clicked() {
+        if ui.button(tr!("remotes-remove-cancel")).clicked() {
             actions.push(Action::CloseRemoteDialog);
         }
     });

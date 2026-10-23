@@ -67,42 +67,40 @@ pub struct Remote {
 
 impl Remote {
     /// L'URL da mostrare.
-    pub fn url_text(&self) -> &str {
-        self.url.as_deref().unwrap_or("(senza URL)")
+    pub fn url_text(&self) -> String {
+        match &self.url {
+            Some(url) => url.clone(),
+            None => tr!("remotes-no-url"),
+        }
     }
 
     /// `nessun branch scaricato`, `1 branch`, `3 branch`.
     pub fn branches_text(&self) -> String {
         match self.branches {
-            0 => "nessun branch".to_owned(),
-            n => format!("{n} branch"),
+            0 => tr!("remotes-no-branches"),
+            n => tr!("remotes-branches", n = n),
         }
     }
 
     /// Le etichette accanto al nome, con la loro spiegazione.
-    pub fn badges(&self) -> Vec<(&'static str, String)> {
+    pub fn badges(&self) -> Vec<(String, String)> {
         let mut badges = Vec::new();
         if self.default {
             badges.push((
-                "predefinito",
-                "«Fetch» nella barra scarica da qui (upstream del branch attivo, origin o \
-                 l'unico remoto)"
-                    .to_owned(),
+                tr!("remotes-badge-default"),
+                tr!("remotes-badge-default-hint"),
             ));
         }
         if self.push_default {
             badges.push((
-                "push",
-                format!(
-                    "remote.pushDefault: i push dei branch senza pushRemote vanno su «{}»",
-                    self.name
-                ),
+                tr!("remotes-badge-push"),
+                tr!("remotes-badge-push-hint", name = &self.name),
             ));
         }
         if self.mirror {
             badges.push((
-                "mirror",
-                "remote.<nome>.mirror: un push rispecchia tutti i ref locali".to_owned(),
+                tr!("remotes-badge-mirror"),
+                tr!("remotes-badge-mirror-hint"),
             ));
         }
         badges
@@ -110,16 +108,16 @@ impl Remote {
 
     /// Il testo del suggerimento della riga.
     pub fn tooltip(&self) -> String {
-        let mut text = format!("Remoto «{}»\nURL: {}", self.name, self.url_text());
+        let mut text = tr!("remotes-tooltip", name = &self.name, url = self.url_text());
         for url in &self.push_urls {
-            text.push_str(&format!("\nPush: {url}"));
+            text.push('\n');
+            text.push_str(&tr!("remotes-tooltip-push-url", url = url));
         }
-        text.push_str(&format!("\n{}", self.branches_text()));
+        text.push('\n');
+        text.push_str(&self.branches_text());
         if self.credentials {
-            text.push_str(
-                "\nL'URL contiene credenziali, salvate in chiaro nella configurazione del repo \
-                 (qui mascherate): meglio un credential helper",
-            );
+            text.push('\n');
+            text.push_str(&tr!("remotes-tooltip-credentials"));
         }
         text
     }
@@ -189,20 +187,17 @@ impl AddDialog {
     }
 
     /// L'avviso da mostrare sotto l'URL, se contiene credenziali.
-    pub fn credentials_warning(&self) -> Option<&'static str> {
-        looks_like_credentials(&self.fields.url).then_some(
-            "L'URL contiene credenziali: git le salva in chiaro nella configurazione del repo \
-             (.git/config). Meglio un URL senza e un credential helper (o una chiave SSH).",
-        )
+    pub fn credentials_warning(&self) -> Option<String> {
+        looks_like_credentials(&self.fields.url).then(|| tr!("remotes-credentials-warning"))
     }
 
     /// Il remoto che si sta aggiungendo, per la barra di stato.
     pub fn label(&self) -> String {
         let name = self.fields.name.trim();
         if self.fetching {
-            format!("Aggiunta del remoto «{name}» e fetch")
+            tr!("remotes-add-label-fetch", name = name)
         } else {
-            format!("Aggiunta del remoto «{name}»")
+            tr!("remotes-add-label", name = name)
         }
     }
 }
@@ -278,8 +273,13 @@ impl RemotesBox {
     /// La risposta di `remote.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
         match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value)
-                .map_err(|e| format!("{LIST}: risultato inatteso: {e}"))
+            serde_json::from_value::<ListResult>(value).map_err(|e| {
+                tr!(
+                    "remotes-unexpected-result",
+                    command = LIST,
+                    error = e.to_string()
+                )
+            })
         }) {
             Ok(list) => {
                 self.list = Some(list.remotes);
@@ -434,7 +434,7 @@ impl RemotesBox {
         remove.phase = Phase::Sending;
         Some((
             json!({ "name": remove.name, "confirm": true }),
-            format!("Rimozione del remoto «{}»", remove.name),
+            tr!("remotes-remove-label", name = &remove.name),
         ))
     }
 
@@ -491,7 +491,7 @@ impl RemotesBox {
                 let name = dialog.fields.name.trim().to_owned();
                 self.dialog = None;
                 Received::Failed {
-                    message: format!("Aggiunta del remoto «{name}» non riuscita: {e}"),
+                    message: tr!("remotes-add-failed", name = name, error = e),
                     reload: true,
                 }
             }
@@ -535,13 +535,13 @@ impl RemotesBox {
             }
             Err(e) => {
                 let refused = kind == Some(ErrorKind::NotAllowed);
-                let what = if refused {
-                    "non possibile"
+                let message = if refused {
+                    tr!("remotes-remove-refused", name = &remove.name, error = e)
                 } else {
-                    "non riuscita"
+                    tr!("remotes-remove-failed", name = &remove.name, error = e)
                 };
                 Received::Failed {
-                    message: format!("Rimozione del remoto «{}» {what}: {e}", remove.name),
+                    message,
                     reload: !refused,
                 }
             }
@@ -558,33 +558,45 @@ impl RemotesBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: format!("risposta di `{}` inattesa", op.command()),
+        message: tr!("remotes-unexpected-response", command = op.command()),
         reload: true,
     }
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| format!("{}: risultato inatteso: {e}", op.command()))
+    serde_json::from_value(value).map_err(|e| {
+        tr!(
+            "remotes-unexpected-result",
+            command = op.command(),
+            error = e.to_string()
+        )
+    })
 }
 
 /// `; attenzione: …` per ogni avviso.
 fn warnings_text(warnings: &[String]) -> String {
     warnings
         .iter()
-        .map(|w| format!("; attenzione: {w}"))
+        .map(|w| tr!("remotes-warning", warning = w))
         .collect()
 }
 
 /// Il problema dopo un'operazione riuscita: ref o remoti non riletti.
 fn reread_warning(what: &str, refs: Option<String>, remotes: Option<String>) -> Option<String> {
     let parts: Vec<String> = [
-        refs.map(|e| format!("i ref non si rileggono: {e}")),
-        remotes.map(|e| format!("i remoti non si rileggono: {e}")),
+        refs.map(|e| tr!("remotes-refs-not-reread", error = e)),
+        remotes.map(|e| tr!("remotes-remotes-not-reread", error = e)),
     ]
     .into_iter()
     .flatten()
     .collect();
-    (!parts.is_empty()).then(|| format!("{what}, ma {}", parts.join("; ")))
+    (!parts.is_empty()).then(|| {
+        tr!(
+            "remotes-reread-warning",
+            what = what,
+            problems = parts.join("; ")
+        )
+    })
 }
 
 /// Il fetch fatto dopo l'aggiunta.
@@ -622,14 +634,14 @@ struct AddResult {
 }
 
 /// Cosa dire nella finestra quando il fetch dopo l'aggiunta non riesce: il remoto c'è.
-const ADDED_ANYWAY: &str = "Il remoto è stato aggiunto comunque, senza branch scaricati: \
-                            riprovare con «Fetch» nella sezione Remoti, oppure «Annulla» per \
-                            toglierlo.";
+fn added_anyway() -> String {
+    tr!("remotes-added-anyway")
+}
 
 impl AddResult {
     fn outcome(self) -> (Outcome, Option<Failure>) {
         let name = &self.remote;
-        let mut notice = format!("Remoto «{name}» aggiunto ({})", self.url);
+        let mut notice = tr!("remotes-added", name = name, url = &self.url);
         let mut failure = None;
         if let Some(fetch) = self.fetch {
             let summary = FetchResult {
@@ -646,44 +658,45 @@ impl AddResult {
             notice.push_str(&format!("; {}", crate::lowercase_first(&summary)));
         }
         if let Some(error) = self.fetch_error {
-            let who = format!("Il remoto «{name}»");
+            let who = fetch::who(Some(name));
             let detail = Some(error.message.clone());
             let window = |mut f: Failure| {
                 f.explanation = f
                     .explanation
-                    .replace("Niente è stato modificato.", ADDED_ANYWAY);
+                    .replace(&fetch::nothing_changed(), &added_anyway());
                 f
             };
             match error.kind.as_str() {
-                "cancelled" => notice.push_str(
-                    "; fetch interrotto: i branch remoti già scaricati restano, «Fetch» nella \
-                     sezione Remoti lo riprende",
-                ),
+                "cancelled" => notice.push_str(&tr!("remotes-added-fetch-cancelled")),
                 "auth" => {
                     failure = Some(window(fetch::auth_failure(&who, detail)));
-                    notice.push_str("; fetch non riuscito: autenticazione rifiutata o richiesta");
+                    notice.push_str(&tr!("remotes-added-fetch-auth"));
                 }
                 "unreachable" => {
                     failure = Some(window(fetch::unreachable_failure(&who, detail)));
-                    notice.push_str("; fetch non riuscito: remoto non raggiungibile");
+                    notice.push_str(&tr!("remotes-added-fetch-unreachable"));
                 }
                 _ => {
                     failure = Some(Failure {
-                        title: "Fetch non riuscito".to_owned(),
-                        explanation: format!("{} {ADDED_ANYWAY}", error.message),
+                        title: tr!("remotes-fetch-failed-title"),
+                        explanation: format!("{} {}", error.message, added_anyway()),
                         git: None,
                     });
-                    notice.push_str("; fetch non riuscito");
+                    notice.push_str(&tr!("remotes-added-fetch-failed"));
                 }
             }
         }
-        notice.push_str(". «Annulla» lo toglie");
+        notice.push_str(&tr!("remotes-added-undo"));
         notice.push_str(&warnings_text(&self.warnings));
         let outcome = Outcome {
             notice,
             refs: self.refs,
             remotes: self.remotes,
-            warning: reread_warning("Remoto aggiunto", self.refs_error, self.remotes_error),
+            warning: reread_warning(
+                &tr!("remotes-added-short"),
+                self.refs_error,
+                self.remotes_error,
+            ),
             history: self.history,
         };
         (outcome, failure)
@@ -724,47 +737,49 @@ struct RemoveResult {
 fn quoted(names: &[String]) -> String {
     names
         .iter()
-        .map(|n| format!("«{n}»"))
+        .map(|n| tr!("remotes-quoted", name = n))
         .collect::<Vec<_>>()
         .join(", ")
 }
 
 impl RemoveResult {
     fn outcome(self) -> Outcome {
-        let mut notice = format!("Remoto «{}» rimosso", self.remote);
-        let branches = match self.removed.refs.len() {
-            0 => "nessun branch remoto da togliere".to_owned(),
-            1 => "tolto 1 branch remoto".to_owned(),
-            n => format!("tolti {n} branch remoti"),
-        };
-        notice.push_str(&format!(" ({branches})"));
+        let mut notice = tr!(
+            "remotes-removed",
+            name = &self.remote,
+            n = self.removed.refs.len()
+        );
         if !self.upstreams_removed.is_empty() {
-            notice.push_str(&format!(
-                "; senza upstream: {}",
-                quoted(&self.upstreams_removed)
+            notice.push_str(&tr!(
+                "remotes-removed-upstreams",
+                names = quoted(&self.upstreams_removed)
             ));
         }
         if !self.push_remotes_removed.is_empty() {
-            notice.push_str(&format!(
-                "; tolto il pushRemote di {}",
-                quoted(&self.push_remotes_removed)
+            notice.push_str(&tr!(
+                "remotes-removed-push-remotes",
+                names = quoted(&self.push_remotes_removed)
             ));
         }
         if self.push_default_removed {
-            notice.push_str("; tolto remote.pushDefault");
+            notice.push_str(&tr!("remotes-removed-push-default"));
         }
         match self.backups.len() {
             0 => {}
-            1 => notice.push_str(&format!("; backup in {}", self.backups[0])),
-            n => notice.push_str(&format!("; {n} backup in refs/project/backup/remote-…")),
+            1 => notice.push_str(&tr!("remotes-removed-backup", backup = &self.backups[0])),
+            n => notice.push_str(&tr!("remotes-removed-backups", n = n)),
         }
-        notice.push_str(". «Annulla» lo rimette");
+        notice.push_str(&tr!("remotes-removed-undo"));
         notice.push_str(&warnings_text(&self.warnings));
         Outcome {
             notice,
             refs: self.refs,
             remotes: self.remotes,
-            warning: reread_warning("Remoto rimosso", self.refs_error, self.remotes_error),
+            warning: reread_warning(
+                &tr!("remotes-removed-short"),
+                self.refs_error,
+                self.remotes_error,
+            ),
             history: self.history,
         }
     }
@@ -863,7 +878,7 @@ impl App {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let label = format!("Controllo per la rimozione di «{name}»");
+                let label = tr!("remotes-remove-check-label", name = name.as_str());
                 if let Some(params) = repo.remotes.start_remove(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);

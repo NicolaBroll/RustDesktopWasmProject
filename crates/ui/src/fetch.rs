@@ -10,6 +10,7 @@ use crate::{Action, App, Done, Request, fetch};
 use crate::{ErrorKind, Ticket};
 use project_domain::{Oid, RefInfo};
 use project_engine::Progress;
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -19,8 +20,8 @@ pub const COMMAND: &str = "remote.fetch";
 /// La descrizione del fetch per la barra di stato.
 pub fn label(remote: Option<&str>) -> String {
     match remote {
-        Some(remote) => format!("Fetch da «{remote}»"),
-        None => "Fetch".to_owned(),
+        Some(remote) => tr!("fetch-label-remote", remote = remote),
+        None => tr!("fetch-label"),
     }
 }
 
@@ -133,21 +134,23 @@ impl FetchBox {
             other => {
                 self.running = other;
                 return Received::Failed {
-                    message: format!("risposta di `{COMMAND}` inattesa"),
+                    message: tr!("fetch-unexpected-response", command = COMMAND),
                     reload: true,
                 };
             }
         };
-        let who = remote
-            .as_deref()
-            .map_or_else(|| "Il remoto".to_owned(), |r| format!("Il remoto «{r}»"));
+        let who = who(remote.as_deref());
         let label = label(remote.as_deref());
         let error = match result {
             Ok(value) => {
                 return match serde_json::from_value::<FetchResult>(value) {
                     Ok(result) => Received::Done(Box::new(result.outcome())),
                     Err(e) => Received::Failed {
-                        message: format!("{COMMAND}: risultato inatteso: {e}"),
+                        message: tr!(
+                            "fetch-unexpected-result",
+                            command = COMMAND,
+                            error = e.to_string()
+                        ),
                         reload: true,
                     },
                 };
@@ -156,40 +159,37 @@ impl FetchBox {
         };
         match kind {
             Some(ErrorKind::Cancelled) => Received::Cancelled {
-                notice: format!(
-                    "{label} interrotto: i branch remoti già aggiornati restano, nessun branch \
-                     locale né file è stato toccato"
-                ),
+                notice: tr!("fetch-cancelled", label = label),
             },
             Some(ErrorKind::Auth) => {
                 self.failure = Some(auth_failure(&who, detail));
                 Received::Failed {
-                    message: format!("{label} non riuscito: autenticazione rifiutata o richiesta"),
+                    message: tr!("fetch-failed-auth", label = label),
                     reload: false,
                 }
             }
             Some(ErrorKind::RemoteUnreachable) => {
                 self.failure = Some(unreachable_failure(&who, detail));
                 Received::Failed {
-                    message: format!("{label} non riuscito: remoto non raggiungibile"),
+                    message: tr!("fetch-failed-unreachable", label = label),
                     reload: false,
                 }
             }
             // Rifiutato prima di cominciare (remoto sconosciuto, nessun remoto): niente è
             // cambiato.
             Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams) => Received::Failed {
-                message: format!("{label} non possibile: {error}"),
+                message: tr!("fetch-not-possible", label = label, error = error),
                 reload: false,
             },
             _ => {
                 self.failure = Some(Failure {
-                    title: "Fetch non riuscito".to_owned(),
+                    title: tr!("fetch-failed-title"),
                     explanation: error.clone(),
                     git: detail,
                 });
                 // Git potrebbe aver aggiornato qualche branch remoto prima di fallire.
                 Received::Failed {
-                    message: format!("{label} non riuscito: {error}"),
+                    message: tr!("fetch-failed", label = label, error = error),
                     reload: true,
                 }
             }
@@ -197,18 +197,28 @@ impl FetchBox {
     }
 }
 
+/// Il soggetto delle finestre di errore: «Il remoto "origin"», o «Il remoto» senza nome.
+pub fn who(remote: Option<&str>) -> String {
+    match remote {
+        Some(remote) => tr!("fetch-who-remote", remote = remote),
+        None => tr!("fetch-who"),
+    }
+}
+
+/// La frase che chiude le spiegazioni di [`auth_failure`] e [`unreachable_failure`].
+pub fn nothing_changed() -> String {
+    tr!("fetch-nothing-changed")
+}
+
 /// La finestra per un remoto (`who`: «Il remoto "origin"») che rifiuta le credenziali o
 /// servirebbe chiederle; `detail` è il testo di git. Vale per fetch, pull e push.
 pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
     Failure {
-        title: "Autenticazione non riuscita".to_owned(),
+        title: tr!("fetch-auth-title"),
         explanation: format!(
-            "{who} ha rifiutato le credenziali, oppure servirebbe chiederle (nome utente, \
-             password, passphrase della chiave SSH, conferma della chiave dell'host). Questa app \
-             non chiede mai credenziali: configurare un credential helper (git config \
-             credential.helper) oppure caricare la chiave in ssh-agent (ssh-add); per un host SSH \
-             nuovo, aggiungerlo a known_hosts con un primo fetch da terminale. Poi riprovare. \
-             Niente è stato modificato."
+            "{} {}",
+            tr!("fetch-auth-explanation", who = who),
+            nothing_changed()
         ),
         git: detail,
     }
@@ -217,10 +227,11 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
 /// La finestra per un remoto che non si raggiunge (vedi [`auth_failure`]).
 pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
     Failure {
-        title: "Remoto non raggiungibile".to_owned(),
+        title: tr!("fetch-unreachable-title"),
         explanation: format!(
-            "{who} non risponde: controllare l'indirizzo del remoto (git remote -v), la rete e \
-             che il repository esista sul server. Niente è stato modificato."
+            "{} {}",
+            tr!("fetch-unreachable-explanation", who = who),
+            nothing_changed()
         ),
         git: detail,
     }
@@ -256,7 +267,7 @@ fn ref_text(name: &str) -> String {
     if let Some(remote) = name.strip_prefix("refs/remotes/") {
         remote.to_owned()
     } else if let Some(tag) = name.strip_prefix("refs/tags/") {
-        format!("tag {tag}")
+        tr!("fetch-ref-tag", tag = tag)
     } else {
         name.to_owned()
     }
@@ -270,12 +281,12 @@ impl FetchResult {
             log::info!("{COMMAND}: {line}");
         }
         let what = match &self.branch {
-            Some(branch) => format!("Fetch di «{branch}» da «{}»", self.remote),
-            None => format!("Fetch da «{}»", self.remote),
+            Some(branch) => tr!("fetch-what-branch", branch = branch, remote = &self.remote),
+            None => tr!("fetch-label-remote", remote = &self.remote),
         };
         let summary = match &self.updated {
-            None => format!("{what} fatto"),
-            Some(updated) if updated.is_empty() => format!("{what}: niente di nuovo"),
+            None => tr!("fetch-done", what = what),
+            Some(updated) if updated.is_empty() => tr!("fetch-nothing-new", what = what),
             Some(updated) => {
                 let mut names: Vec<String> = updated
                     .iter()
@@ -283,26 +294,27 @@ impl FetchResult {
                     .map(|u| {
                         let name = ref_text(&u.name);
                         match (u.before, u.after) {
-                            (None, Some(_)) => format!("{name} nuovo"),
-                            (Some(_), None) => format!("{name} tolto"),
+                            (None, Some(_)) => tr!("fetch-ref-new", name = name),
+                            (Some(_), None) => tr!("fetch-ref-removed", name = name),
                             _ => name,
                         }
                     })
                     .collect();
                 if updated.len() > NAMES_SHOWN {
-                    names.push(format!("e altri {}", updated.len() - NAMES_SHOWN));
+                    names.push(tr!("fetch-and-more", n = updated.len() - NAMES_SHOWN));
                 }
-                let count = match updated.len() {
-                    1 => "1 ref aggiornato".to_owned(),
-                    n => format!("{n} ref aggiornati"),
-                };
-                format!("{what}: {count} ({})", names.join(", "))
+                tr!(
+                    "fetch-updated",
+                    what = what,
+                    n = updated.len(),
+                    names = names.join(", ")
+                )
             }
         };
         let warnings: String = self
             .warnings
             .iter()
-            .map(|w| format!("; attenzione: {w}"))
+            .map(|w| tr!("fetch-warning", warning = w))
             .collect();
         Outcome {
             notice: summary + &warnings,
@@ -310,34 +322,35 @@ impl FetchResult {
             refs: self.refs,
             warning: self
                 .refs_error
-                .map(|e| format!("Fetch fatto, ma i ref non si rileggono: {e}")),
+                .map(|e| tr!("fetch-refs-not-reread", error = e)),
         }
     }
 }
 
-/// Il nome italiano di una fase di git, se è una di quelle note.
-fn phase_name(phase: &str) -> &str {
+/// Il nome tradotto di una fase di git, se è una di quelle note.
+fn phase_name(phase: &str) -> String {
     match phase {
-        "Enumerating objects" => "Enumerazione oggetti",
-        "Counting objects" => "Conteggio oggetti",
-        "Compressing objects" => "Compressione oggetti",
-        "Receiving objects" => "Ricezione oggetti",
-        "Unpacking objects" => "Estrazione oggetti",
-        "Resolving deltas" => "Risoluzione delta",
-        "Writing objects" => "Scrittura oggetti",
-        "Total" => "Totale",
-        other => other,
+        "Enumerating objects" => tr!("fetch-phase-enumerating"),
+        "Counting objects" => tr!("fetch-phase-counting"),
+        "Compressing objects" => tr!("fetch-phase-compressing"),
+        "Receiving objects" => tr!("fetch-phase-receiving"),
+        "Unpacking objects" => tr!("fetch-phase-unpacking"),
+        "Resolving deltas" => tr!("fetch-phase-resolving"),
+        "Writing objects" => tr!("fetch-phase-writing"),
+        "Total" => tr!("fetch-phase-total"),
+        other => other.to_owned(),
     }
 }
 
 /// Come mostrare un passo di avanzamento: il testo (fase e conteggio) e la frazione per la
 /// barra, se git dà la percentuale.
 pub fn describe(progress: &Progress) -> (String, Option<f32>) {
-    let mut text = String::new();
-    if progress.remote {
-        text.push_str("remoto: ");
-    }
-    text.push_str(phase_name(&progress.phase));
+    let phase = phase_name(&progress.phase);
+    let mut text = if progress.remote {
+        tr!("fetch-progress-remote", phase = phase)
+    } else {
+        phase
+    };
     match (progress.current, progress.total) {
         (Some(current), Some(total)) => text.push_str(&format!(" {current}/{total}")),
         (Some(current), None) => text.push_str(&format!(" {current}")),

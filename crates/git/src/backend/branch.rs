@@ -522,7 +522,7 @@ fn describe(entries: &[ConfigEntry]) -> String {
 }
 
 /// `name` con i caratteri speciali delle espressioni regolari estese preceduti da `\`.
-fn regex_escape(name: &str) -> String {
+pub(super) fn regex_escape(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
         if r"\.^$|?*+()[]{}".contains(c) {

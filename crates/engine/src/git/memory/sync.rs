@@ -73,11 +73,19 @@ impl MemoryBackend {
     }
 
     /// [`GitBackend::config_values`]: le chiavi impostate con [`MemoryBackend::set_config`];
+    /// `remote.<nome>.url` è l'URL del remoto ([`MemoryBackend::add_remote`]) e
     /// `remote.<nome>.fetch` di un remoto senza valori ha il refspec di default
     /// (`+refs/heads/*:refs/remotes/<nome>/*`).
     pub(super) fn config_of(&self, key: &str) -> Vec<String> {
         if let Some(values) = self.config.get(key) {
             return values.clone();
+        }
+        if let Some(remote) = key
+            .strip_prefix("remote.")
+            .and_then(|rest| rest.strip_suffix(".url"))
+            .and_then(|name| self.remotes.get(name))
+        {
+            return vec![remote.url.clone()];
         }
         key.strip_prefix("remote.")
             .and_then(|rest| rest.strip_suffix(".fetch"))

@@ -235,6 +235,15 @@ pub trait GitBackend: Send {
     fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
     fn push(&mut self, request: &PushRequest, job: &JobContext)
         -> Result<PushOutcome, EngineError>;
+    // Gestione dei remoti (S27): cosa c'è di un remoto (`RemoteSnapshot`: `remote.<r>.*` del
+    // file del repo, branch remoti con i commit, `refs/remotes/<r>/HEAD`, upstream/pushRemote
+    // che lo usano, `remote.pushDefault`), `git remote add`, e la configurazione tolta o
+    // rimessa da `remove_remote`/`restore_remote` del motore (i branch remoti passano da
+    // `restore_refs`).
+    fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError>;
+    fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError>;
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
     // poi merge, rebase, ...
 }
 
@@ -252,7 +261,11 @@ pub trait RepoOpener: Send + Sync {
   commit rispetto a `origin/main` (un push lo pubblica). Pull e push (S26): merge file per file
   (un file cambiato dai due lati è un conflitto), rebase dei commit senza merge, push che copia
   i commit nel remoto in memoria; `set_pull_settings` dà `pull.rebase`/`pull.ff`,
-  `fail_pre_push` simula un hook `pre-push` che rifiuta, `branch_on_remote` legge il remoto.
+  `fail_pre_push` simula un hook `pre-push` che rifiuta, `branch_on_remote` legge il remoto. Remoti (S27):
+  `remote.<r>.url`/`.fetch` vengono dal remoto in memoria, le altre chiavi da `set_config`,
+  gli upstream da `set_upstream`; nessun ref simbolico. Togliendo un remoto il suo "server"
+  (branch e commit del remoto) resta da parte per URL, e un remoto aggiunto o rimesso con lo
+  stesso URL lo ritrova.
 - `CliBackend` (in `project-git`): esegue `git` (§5).
 
 ### Sessione
@@ -300,6 +313,9 @@ due diff con lo stesso digest.
 | `remote.fetch` | `{"remote"?, "branch"?}` | lento (§6), scrive (`writes`: branch remoti, tag, `FETCH_HEAD`). `remote`: il **nome** di un remoto configurato (`GitBackend::remotes`, cioè `git remote`), controllato con `check_remote_name` (come git: `refs/remotes/<nome>/x` dev'essere un nome di ref valido; un `-` iniziale è ammesso) e cercato fra i configurati prima di chiamare il backend: un nome che non c'è → `NotAllowed` con l'elenco dei remoti (mai passato a git, che lo userebbe come URL o percorso). Senza `remote`: quello dell'upstream del branch attivo, altrimenti `origin`, altrimenti l'unico remoto (`default_remote`; nessuno o ambiguo → `NotAllowed`). `branch`: nome breve di un branch **del remoto** (`check_branch_name`), scaricato da solo come `refs/heads/<branch>`; il remoto non lo ha → `NotAllowed`. Errori: credenziali rifiutate o da chiedere → `Auth { remote, message }`; remoto non raggiungibile (cartella che non c'è, host, rete, repository inesistente sul server) → `RemoteUnreachable { remote, message }`; annullato → `Cancelled`; altro → `Git`. Risultato: `{"remote", "branch": string \| null, "updated": [{"name", "before": oid \| null, "after": oid \| null}] \| null, "messages": [string], "warnings": [string], "refs": [RefInfo] \| null, "refs_error"?}`: `updated` sono i ref cambiati (confronto di `refs()` prima e dopo, un tag annotato con il commit puntato; `null` con `refs_error` se i ref non si rileggono: il fetch è fatto), `messages` le righe di git che non sono avanzamento (`From <url>`, ` * [new branch] ...`), `warnings` i ref fuori da `refs/remotes/` e `refs/tags/` spostati da un refspec configurato (es. un mirror verso `refs/heads/`). Non va nel diario (§7). Dettagli del `CliBackend` in §5 |
 | `remote.pull` | `{"remote"?, "branch"?, "strategy"?}` | lento (§6), scrive (`writes`), entra nel diario (§7). Fetch del solo branch dell'upstream con `GitBackend::fetch` (avanzamento e annullamento come `remote.fetch`; annullato durante il fetch → `Cancelled { command: "remote.pull" }` anche se il fetch è finito, prima di integrare), poi l'integrazione in locale con `GitBackend::pull`, che non si interrompe. **Scelta: non `git pull`**, ma fetch + merge/rebase guidati dal motore: così il comando sa cosa è arrivato prima di scrivere, sceglie la strategia, controlla lo stato e salva il backup. `branch`: nome breve del branch locale (HEAD se manca; HEAD staccata senza `branch` → `NotAllowed`); un branch che non è quello di HEAD si può solo portare avanti (fast-forward del ref con `update-ref` e il valore vecchio, senza toccare il worktree; divergente → `NotAllowed` che chiede di passarci; aperto in un altro worktree → `NotAllowed`). `remote`: se c'è dev'essere quello dell'upstream (`NotAllowed` altrimenti): il pull integra sempre l'upstream. Upstream da `branch.<nome>.remote`/`.merge` (`GitBackend::upstream`); senza → `NotAllowed` che dice come impostarlo (`git branch --set-upstream-to=<remoto>/<branch>`) o di pubblicare il branch con `remote.push`; upstream locale (`.`), `merge` che non è un branch, nessun refspec che lo mappa in `refs/remotes/` → `NotAllowed`, niente scaricato. **Strategia** (`PullSettings::policy`, letta prima del fetch): `strategy` (`merge`, `rebase`, `ff_only`) sostituisce la configurazione; altrimenti `branch.<nome>.rebase`, poi `pull.rebase` (`true` → rebase, `merges` → `--rebase-merges`, `false` → merge, `interactive` → `NotAllowed`) e `pull.ff` (`only` → solo fast-forward, `false` → sempre un commit di merge); **senza configurazione merge** (scelta: git ≥ 2.33 rifiuterebbe i branch divergenti; un merge non riscrive niente e si annulla). Poi (`pull_mode`, da `ahead`/`behind` con `unmerged_count`): niente da fare se il branch contiene l'upstream (`up_to_date`, niente nel diario), fast-forward se può, altrimenti merge o rebase (`ff_only` divergente → `NotAllowed`). **Controlli** (`check_pull_state`, prima del fetch per HEAD e di nuovo nel backend): operazione in corso o file in conflitto → `NotAllowed`; merge e rebase con qualunque modifica ai file tracciati → `NotAllowed` (mai `--autostash`; i non tracciati vanno bene); il fast-forward accetta modifiche che non toccano i file cambiati, e se git rifiuta perché sovrascriverebbe modifiche o non tracciati → `NotAllowed` con i file. **Backup**: prima di scrivere `refs/project/backup/pull-...` sul branch com'era (tolto se poi niente cambia). **Conflitti** (scelta): il merge o il rebase fermo in conflitto si **annulla subito** (`--abort`: il worktree era pulito, quindi torna identico) e l'errore è `PullConflict { branch, upstream, operation: merge \| rebase, files, message }`; lasciare il repo nel merge/rebase in corso non avrebbe uscita dal client finché non ci sono `merge.abort`/`merge.continue` (S29), l'editor dei conflitti (S30) e `rebase.abort`/`rebase.continue` (S32); allora si potrà aggiungere un'opzione per tenerlo. Errori del fetch: `Auth`, `RemoteUnreachable`, `Cancelled`. Risultato: `{"branch", "remote", "upstream", "strategy": "fast_forward" \| "merge" \| "rebase" \| "up_to_date", "strategy_source": "param" \| "config" \| "default", "before", "after", "ahead", "behind", "backup": string \| null, "fetch": {"updated", "messages"}, "warnings", "status" \| null, "refs" \| null, "can_undo", "can_redo", "next_undo", "next_redo"}`. Dettagli del `CliBackend` in §5, undo in §7 |
 | `remote.push` | `{"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}` | lento (§6), scrive (`writes`), **non** entra nel diario (un push non si annulla: il remoto è di altri; il risultato dice cosa è cambiato). Pubblica solo `refs/heads/<branch>:refs/heads/<remote_branch>` (refspec esplicito: mai tag, `--all`, `--mirror`, `--tags`, qualunque sia `push.default`, `remote.<nome>.push`, `push.followTags`). `branch`: HEAD se manca (staccata → `NotAllowed`). **Remoto** come lo sceglie `git push` (risultato `remote_source`): `remote` (`param`), altrimenti `branch.<nome>.pushRemote` (`push_remote`), `remote.pushDefault` (`push_default`), il remoto dell'upstream (`upstream`), `origin` (`origin`) o l'unico remoto (`only`); più remoti senza `origin` → `NotAllowed`; un remoto della configurazione che non è configurato → `NotAllowed` che nomina la chiave; un remoto con `remote.<r>.mirror=true` → `NotAllowed` (un mirror pubblica tutti i ref insieme). **Destinazione**: se il remoto è quello dell'upstream, il branch dell'upstream (con un nome diverso dal branch → `NotAllowed`, come `push.default=simple`) e il branch remoto locale dell'upstream; altrimenti lo stesso nome, e il branch remoto locale si ricava dai refspec di fetch del remoto (`tracking_ref` su `remote.<r>.fetch`, anche con refspec non standard e negativi; nessuno → nessun branch remoto locale). **Primo push** (nessun upstream): `--set-upstream` verso il remoto scelto (l'upstream si imposta solo se il push riesce); con un upstream l'upstream non cambia mai (es. pubblicando su `fork` per `remote.pushDefault`). **Force**: solo con `"force": true`, sempre e solo `--force-with-lease=refs/heads/<b>:<oid>` con l'oid del branch remoto locale letto prima (vuoto se non c'è: il branch non deve esistere), mai `--force` né `+refspec`; se il remoto perderebbe commit che il branch non ha (`unmerged_count` del branch remoto locale) serve `"confirm": true` **con `"expected"`**, l'id completo (40 cifre) del branch remoto locale mostrato nella conferma: senza, `ConfirmRequired` con i commit (`missing_commits`, al più 10), l'id letto ora e la frase fissa `"expected": "<id>"` da ripetere. La conferma vale solo per quel commit: se `expected` non è il branch remoto locale letto ora (un fetch nel frattempo) → di nuovo `ConfirmRequired` con l'id nuovo, niente pubblicato; il lease usa `expected`. Prima del push il branch remoto locale si salva in `refs/project/backup/push-...` (tolto se il push è rifiutato). `confirm` senza `expected`, `confirm`/`expected` senza `force`, `expected` non completo → `InvalidParams`. `--force-if-includes` non serve: con un oid esplicito git lo ignora. Errori: `PushRejected { remote, branch, reason: non_fast_forward \| stale_lease \| remote_rejected \| hook \| other, message }` (non fast-forward suggerisce `remote.pull`; lease: il remoto si è spostato, fare fetch), niente cambia in locale; `Auth`, `RemoteUnreachable`, `Cancelled` (annullato a metà: il remoto potrebbe aver già aggiornato il branch, rileggere con un fetch). Risultato: `{"remote", "remote_source": "param" \| "push_remote" \| "push_default" \| "upstream" \| "origin" \| "only", "branch", "remote_branch", "kind": "new" \| "fast_forward" \| "forced" \| "up_to_date", "summary", "before": oid \| null, "after", "set_upstream", "forced", "lost": [Commit], "backup": string \| null, "updated" \| null, "messages", "warnings", "status" \| null, "refs" \| null}` |
+| `remote.list` | `{}` | sola lettura. Risultato: `{"remotes": [{"name", "url": string \| null, "push_urls": [string], "fetch": [string], "mirror": bool, "branches": n, "default": bool, "push_default": bool, "credentials": bool}], "default": string \| null, "push_default": string \| null}`, in ordine di nome (`git remote`). `url`: il primo `remote.<r>.url` come scritto (senza `insteadOf`); `push_urls`: i `pushurl`, o tutti gli `url` se più di uno; vuoto = il push va a `url`. `branches`: i branch remoti `refs/remotes/<r>/...` (esclusi quelli di un remoto `<r>/...`, senza i simbolici); `default`: il remoto di `remote.fetch` senza parametri (`default_remote`; `null` se ambiguo); `push_default`: l'ultimo `remote.pushDefault`. **Credenziali mascherate** (`mask_url`, ovunque un URL esca dal motore: `remote.list`, `remote.add`, `remote.remove`, la voce del diario in `edit.history`, i messaggi d'errore sugli URL): `schema://utente:password@host` → `utente:***`; in `http(s)`/`ftp(s)` anche un utente senza password diventa `***` (spesso è un token); un utente in `ssh://`/`git://` o alla scp (`git@host:r`) resta; vale dentro un helper (`<x>::<url>`). `credentials`: l'URL ne aveva. Ahead/behind dei branch rispetto all'upstream non sono qui: sono in `RefInfo::upstream` (`repo.refs`, da `%(upstream:track)`), riletti nei `refs` di `remote.fetch`, `remote.pull` e `remote.push` |
+| `remote.add` | `{"name", "url", "fetch"?}` | scrive (`writes`), entra nel diario (§7). Nome nuovo (`check_new_remote_name`: `check_remote_name` e niente `-` iniziale) → `InvalidParams`; nome già configurato (`git remote`), voci `remote.<name>.*` nel file del repo o branch remoti `refs/remotes/<name>/...` rimasti da prima (l'undo li cancellerebbe) → `NotAllowed`. **Politica degli URL** (`check_remote_url`, prima di git): non vuoto, senza caratteri di controllo né spazi in testa o in coda, non inizia con `-` (`--upload-pack=...`, `-oProxyCommand=...`), niente trasporti `ext::`/`ext://`/`fd::`/`fd://` (eseguono comandi o usano descrittori; anche dentro un altro helper e in qualsiasi maiuscolo: da qui mai, qualunque sia `protocol.allow`), niente utente o host che inizia con `-` (`ssh://-x/r`, `ssh://-oX@h/r`, `ssh://[-x]/r`, `u@-x:r`); gli altri helper `<x>::` e i percorsi locali vanno bene. Poi `git remote add --end-of-options <name> <url>` (URL e refspec di default; un nome che git rifiuta → `InvalidParams`, uno che esiste → `NotAllowed`). Un URL con credenziali si accetta con un avviso in `warnings` (git lo salva in chiaro). `"fetch": true`: poi un fetch di tutto il remoto come `remote.fetch` (lento, §6: avanzamento e annullamento dal `JobContext`); un fetch fallito o annullato **non** annulla l'aggiunta: il remoto resta (ed è nel diario) e l'errore va in `fetch_error` (`kind`: `auth`, `unreachable`, `cancelled`, `other`). Risultato: `{"remote", "url" (mascherato), "credentials", "fetched", "fetch": {"updated", "messages", "warnings"} \| null, "fetch_error": {"kind", "message"} \| null, "warnings", "remotes": [come remote.list], "refs", ...diario}` |
+| `remote.remove` | `{"name", "confirm"?}` | scrive (`writes`), entra nel diario (§7). `name`: un remoto configurato (`check_remote_name`, `-` iniziale ammesso; altrimenti `NotAllowed` con l'elenco). Rifiutati (`NotAllowed`, niente cambia): un remoto definito **anche solo in parte** fuori dal file del repo (`GitBackend::remote_config_elsewhere`: configurazione globale o di sistema, `include`, `config.worktree`, `.git/remotes/`; l'errore elenca chiave, ambito e file), perché ne resterebbe una parte che git vede ancora; il remoto promisor di un clone parziale (`remote.<name>.promisor` vero o `extensions.partialClone` = `<name>`: senza, gli oggetti mancanti non si scaricherebbero più e checkout, log e diff fallirebbero); un'operazione in corso. Se dopo la rimozione `git remote` elenca ancora il remoto (`ensure_remote_gone`), tutto si rimette subito com'era e il risultato è `NotAllowed`; se il ripristino riesce solo in parte (es. un branch remoto ricreato nel frattempo: la configurazione si riscrive comunque, con un avviso) o l'elenco dei remoti non si rilegge, la rimozione entra comunque nel diario, così `edit.undo` e i backup restano disponibili (l'errore lo dice). Chiede **sempre** `"confirm": true`: senza, `ConfirmRequired` che dice quanti branch remoti spariscono e quali branch perdono l'upstream o il `pushRemote`, e se `remote.pushDefault` lo nomina; niente cambia. Toglie (`remove_remote`, §7) i branch remoti `refs/remotes/<name>/...` (non quelli di un remoto `<name>/...`; a differenza di `git remote remove`, i ref scritti fuori da `refs/remotes/<name>/` da un refspec personalizzato restano), `refs/remotes/<name>/HEAD`, la sezione `remote.<name>`, `branch.<b>.remote`/`merge` dei branch con quell'upstream, i `branch.<b>.pushRemote` e `remote.pushDefault` che lo nominano (tutto del file del repo); i tag scaricati restano, il remoto vero non cambia. Risultato: `{"remote", "removed": RemoteSnapshot (URL mascherati), "upstreams_removed": [branch], "push_remotes_removed": [branch], "push_default_removed": bool, "backups": [string], "warnings", "remotes", "refs", ...diario}` |
 | `edit.undo` / `edit.redo` | `{}` | sul diario delle operazioni (§7). Scritture. `undo` annulla l'ultima voce fatta, `redo` rifà l'ultima annullata; senza voci `NotAllowed`. I ref devono valere ancora quello che l'operazione (o l'undo) ha lasciato, altrimenti `UndoConflict { command, refs }` e niente cambia (la voce resta). Undo e redo di `branch.checkout` sono checkout sicuri: con modifiche locali in conflitto `CheckoutConflict` (la voce resta). Merge, rebase, cherry-pick, revert, bisect o `git am` in corso (anche un sequencer fermo, `.git/sequencer` senza `CHERRY_PICK_HEAD`/`REVERT_HEAD`): `NotAllowed`. Risultato: `{"undone" \| "redone": JournalEntry, "backups": [string], "warnings": [string], "status": Status \| null, "can_undo": bool, "can_redo": bool, "next_undo": string \| null, "next_redo": string \| null}` (`warnings`: avvisi scoperti dopo uno spostamento riuscito, es. HEAD cambiata da un altro processo in quell'istante; di solito vuoto. `status` `null`, con `status_error`, se non si rilegge: l'operazione è fatta, non va ripetuta) |
 | `edit.history` | `{}` | sola lettura: `{"done": [JournalEntry], "undone": [JournalEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`; in tutte e due le liste l'ultima voce è la prossima per `undo` / `redo` |
 
@@ -453,6 +469,30 @@ Regole per ogni chiamata a git:
   `stale info`, `remote rejected`). Uscita non zero senza quella riga: `Auth`/`RemoteUnreachable`
   dal testo come il fetch, altrimenti con "failed to push some refs" un hook `pre-push` (o il
   controllo dei sottomoduli): `PushRejected` con l'output dell'hook.
+- **Remoti** (`remote.list`, `remote.add`, `remote.remove`, S27). Lettura di un remoto
+  (`remote_snapshot`): un solo `git config --local -z --get-regexp
+  '^(remote\.<nome>\.[^.]+|remote\.pushdefault|branch\..+\.(remote|merge|pushremote))$'`
+  (solo il file del repo, niente `include` né globale; un valore non UTF-8 → `NotAllowed`), `git
+  for-each-ref --format=%(refname)%00%(objectname)%00%(symref) refs/remotes/<nome>/` e `git
+  symbolic-ref -q --end-of-options refs/remotes/<nome>/HEAD` (un simbolico che punta a un ref
+  che non c'è non compare in `for-each-ref`). `remote.list` legge con `config_values` (tutte le
+  fonti, come `git remote`). Le voci fuori dal file del repo (`remote_config_elsewhere`): `git
+  config -z --show-scope --show-origin --includes --get-regexp '^remote\.<nome>\.[^.]+$'` meno
+  le provenienze di `git config -z --local --show-origin` (un file incluso ha ambito `local` ma
+  un'altra provenienza), più i file del formato vecchio `remotes/<nome>` e `branches/<nome>` (`git rev-parse --git-path`), che git legge come remoti. L'URL nello stderr di `git remote add` si sostituisce con quello
+  mascherato prima di farne l'errore. Fetch e push girano con `-c protocol.ext.allow=never -c
+  protocol.fd.allow=never`: un remoto `ext::`/`fd::` configurato a mano non esegue niente.
+  Aggiunta: `git remote add --end-of-options <nome> <url>`, mai
+  `-f`/`--mirror`/`-t`. **Rimozione senza `git remote remove`**: i branch remoti con la
+  transazione di `restore_refs` (valori attesi, backup), poi esattamente le voci salvate: `git
+  config --local --remove-section --end-of-options remote.<nome>`, `git config --local
+  --fixed-value --unset-all --end-of-options <chiave> <valore>` per upstream, `pushRemote` e
+  `remote.pushdefault` (codice 5, niente da togliere, va bene), `git symbolic-ref --delete
+  --end-of-options refs/remotes/<nome>/HEAD`. Così niente sparisce senza essere nel diario
+  (`git remote remove` sceglierebbe da sé i ref da togliere dai refspec, e toglierebbe
+  `remote.pushDefault` anche da altri file). Ripristino: `git config --local --add
+  --end-of-options <chiave> <valore>` per ogni voce e `git symbolic-ref -m <reflog>
+  refs/remotes/<nome>/HEAD <ref>`.
 - Un comando che modifica il repo è segnato in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), così la UI lo disabilita durante un job e un agente sa cosa scrive.
 - All'apertura del repo si verifica la versione di git (minimo 2.30) e si dà un errore chiaro se
@@ -869,7 +909,7 @@ file, una cartella di un file o un file al posto di una cartella della destinazi
 configurazione ha solo l'upstream (`branch.<nome>.remote`/`merge`), e registra i backup delle eliminazioni in
 `commit_backups` (`refs/project/backup/delete-<n>`).
 
-L'undo non copre le operazioni sul remoto: un push non si annulla da qui (il pull sì, per la parte locale: vedi "Pull (S26)").
+L'undo non copre le operazioni sul remoto: un push non si annulla da qui (il pull sì, per la parte locale: vedi "Pull (S26)"; `remote.add` e `remote.remove` cambiano solo la configurazione e i branch remoti locali: vedi "Remoti (S27)").
 
 ### Pull (S26)
 
@@ -899,6 +939,49 @@ fatto dal pull no, come `remote.fetch`.
 
 Il `MemoryBackend` fa lo stesso con i suoi controlli del checkout; registra i backup dei pull in
 `commit_backups` (`refs/project/backup/pull-<n>`) e quelli dei force push (`push-<n>`).
+
+### Remoti (S27)
+
+`remote.add` e `remote.remove` entrano nel diario con il remoto fotografato
+(`JournalEntry::remote`, un `RemoteSnapshot`: configurazione `remote.<r>.*` del file del repo,
+branch remoti nome → commit, dove punta `refs/remotes/<r>/HEAD`, le voci
+`branch.<b>.remote`/`merge`/`pushRemote` che lo usano e `remote.pushDefault`; nel JSON del diario
+gli URL sono mascherati, in memoria no). I `refs` della voce sono i branch remoti, solo da
+mostrare. Due operazioni del motore, uguali per i backend:
+
+- **`remove_remote`** (il comando, undo di `remote.add`, redo di `remote.remove`): rifiutato
+  durante un'operazione in corso; il remoto deve essere **esattamente** come nella fotografia
+  (`RemoteSnapshot::differences`, configurazione e upstream come insiemi), altrimenti
+  `UndoConflict` (per il comando, che l'ha appena letta, `NotAllowed`) e niente cambia. Poi i
+  branch remoti si tolgono con `restore_refs` (una transazione con i valori attesi; HEAD non si
+  tocca) e i commit che non resterebbero raggiungibili da nessun altro ref (branch locali, tag,
+  altri remoti, backup) vanno prima in un ref di backup per commit di punta,
+  `refs/project/backup/remote-<s>-<ns>` (`RefRestore::backup_kind` di `remote.remove`; `undo-`
+  e `redo-` per undo/redo): **scelta**: niente copia di tutti i branch remoti sotto un prefisso
+  di backup, perché quasi sempre i loro commit sono anche in branch locali e il nome → commit
+  è già nella voce del diario; basta che il gc non tolga quelli che erano solo lì. Infine la
+  configurazione (`remove_remote_config`): sezione, `HEAD` simbolico e, solo per
+  `remote.remove`, upstream, `pushRemote` e `remote.pushDefault` salvati; un problema qui va in
+  `warnings` (i ref sono già tolti).
+- **`restore_remote`** (undo di `remote.remove`, redo di `remote.add`): solo se del remoto non
+  c'è niente (non è fra i remoti configurati, nessuna voce `remote.<r>.*`, nessun branch remoto),
+  altrimenti `UndoConflict` (un remoto ricreato con lo stesso nome non si sovrascrive). Prima i
+  branch remoti (`restore_refs`, creati solo se non esistono), poi la configurazione
+  (`write_remote_config`). Per `remote.remove` anche gli upstream, ma **solo** per i branch che
+  esistono ancora e non hanno nel frattempo un altro upstream (`GitBackend::upstream`) o un
+  altro `pushRemote`, e `remote.pushDefault` solo se ora non c'è: gli altri restano come sono,
+  con un avviso in `warnings`. La voce del diario si aggiorna con quello che è stato davvero
+  rimesso, così il redo confronta e toglie solo quello (l'upstream reimpostato altrove resta).
+  Nel confronto una chiave senza valore vale `true` (si riscrive così).
+
+La fotografia nel JSON ha le credenziali mascherate in ogni valore (anche `remote.<r>.proxy`) e
+per questo non si deserializza (`JournalEntry::remote` è `skip_deserializing`).
+
+`remote.add` non tocca gli upstream: la sua voce li fotografa com'erano (di solito nessuno) e
+l'undo è rifiutato se un branch nel frattempo ha preso il remoto come upstream (es. con il primo
+`remote.push`), o se un fetch ha cambiato i branch remoti; l'undo non toglie mai i tag scaricati
+(potrebbero essere arrivati anche da altri remoti). Un remoto aggiunto con branch remoti già
+presenti sotto `refs/remotes/<nome>/` è rifiutato prima, perché l'undo li cancellerebbe.
 
 **Il fetch non entra nel diario** (scelta, S25): sposta solo branch remoti e tag, che
 rispecchiano il remoto. Riportarli indietro farebbe vedere un remoto che non esiste più (e il

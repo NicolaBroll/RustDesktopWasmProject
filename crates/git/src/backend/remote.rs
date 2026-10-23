@@ -5,6 +5,8 @@
 //!   `--end-of-options`, così un remoto che si chiama `-x` o `--upload-pack=...` non diventa
 //!   un'opzione. Il branch va come `refs/heads/<branch>`, senza `:` né `+`: nessun ref locale
 //!   come destinazione, e il branch remoto si aggiorna con il refspec configurato;
+//! - `-c protocol.ext.allow=never -c protocol.fd.allow=never` (anche per il push): un remoto
+//!   configurato a mano con `ext::`/`fd::` non esegue comandi, qualunque sia `protocol.allow`;
 //! - niente `--prune`, `--force`, `--tags`, `--update-head-ok`: tag e pulizia come dice la
 //!   configurazione (`fetch.prune`, `remote.<nome>.tagOpt`, ...);
 //! - stdin chiuso, `GIT_TERMINAL_PROMPT=0` e nessun terminale di controllo (`setsid`): il fetch
@@ -54,7 +56,16 @@ impl CliBackend {
         job: &JobContext,
     ) -> Result<FetchOutcome, EngineError> {
         let refspec = request.branch.as_ref().map(|b| format!("refs/heads/{b}"));
-        let mut args = vec!["fetch", "--progress", "--end-of-options", &request.remote];
+        let mut args = vec![
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
+            "fetch",
+            "--progress",
+            "--end-of-options",
+            &request.remote,
+        ];
         args.extend(refspec.as_deref());
 
         let mut lines = Vec::new();
@@ -113,6 +124,10 @@ impl CliBackend {
             )
         });
         let mut args = vec![
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
             "push",
             "--porcelain",
             "--progress",

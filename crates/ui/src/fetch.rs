@@ -7,29 +7,13 @@
 //! autenticazione e di rete si spiegano in una finestra con il testo di git.
 
 use crate::{ErrorKind, Ticket};
-use project_domain::{Oid, RefInfo, RefKind};
+use project_domain::{Oid, RefInfo};
 use project_engine::Progress;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// L'id del comando del Registry.
 pub const COMMAND: &str = "remote.fetch";
-
-/// I remoti che hanno almeno un branch remoto in `refs`, in ordine: il primo componente di
-/// `refs/remotes/<remoto>/...`. È un'approssimazione (non c'è ancora `remote.list`, S27): un
-/// remoto senza branch scaricati non compare, e un nome di remoto con `/` si vede tagliato.
-pub fn remotes(refs: &[RefInfo]) -> Vec<String> {
-    let mut names: Vec<String> = refs
-        .iter()
-        .filter(|r| r.kind == RefKind::RemoteBranch)
-        .filter_map(|r| r.short_name().split_once('/').map(|(remote, _)| remote))
-        .filter(|remote| !remote.is_empty())
-        .map(str::to_owned)
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    names
-}
 
 /// La descrizione del fetch per la barra di stato.
 pub fn label(remote: Option<&str>) -> String {
@@ -278,7 +262,8 @@ fn ref_text(name: &str) -> String {
 }
 
 impl FetchResult {
-    fn outcome(self) -> Outcome {
+    /// L'avviso per la barra di stato (anche per il fetch di `remote.add`).
+    pub(crate) fn outcome(self) -> Outcome {
         // Le righe di git (`From ...`, `* [new branch] ...`) vanno solo nel log.
         for line in &self.messages {
             log::info!("{COMMAND}: {line}");
@@ -389,31 +374,6 @@ mod tests {
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();
         }
-    }
-
-    fn remote_ref(name: &str) -> RefInfo {
-        RefInfo {
-            name: format!("refs/remotes/{name}"),
-            kind: RefKind::RemoteBranch,
-            target: Oid::from_bytes([7; 20]),
-            tag_object: None,
-            upstream: None,
-        }
-    }
-
-    #[test]
-    fn remotes_come_from_the_remote_branches() {
-        let mut tag = remote_ref("x");
-        tag.name = "refs/tags/v1/a".to_owned();
-        tag.kind = RefKind::Tag;
-        let refs = [
-            remote_ref("upstream/main"),
-            remote_ref("origin/main"),
-            remote_ref("origin/feature/x"),
-            tag,
-        ];
-        assert_eq!(remotes(&refs), ["origin", "upstream"]);
-        assert!(remotes(&[]).is_empty());
     }
 
     #[test]

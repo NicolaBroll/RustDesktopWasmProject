@@ -86,6 +86,10 @@ cargo run -p project-cli -- --repo . run --cmd 'remote.pull={"branch":"main","st
 # push del branch attivo (remoto: pushRemote/pushDefault/upstream/origin; primo push: imposta l'upstream);
 # force solo con lease e, se il remoto perde commit, "confirm":true con "expected" (l'id mostrato dalla conferma)
 cargo run -p project-cli -- --repo . run --cmd remote.push --cmd 'remote.push={"force":true,"confirm":true,"expected":"<id dalla conferma>"}'
+# remoti: elenco (credenziali negli URL mascherate), aggiunta (con fetch), rimozione ("confirm":true) e undo
+cargo run -p project-cli -- --repo . run --cmd remote.list
+cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'remote.remove={"name":"fork","confirm":true}' --cmd edit.undo
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

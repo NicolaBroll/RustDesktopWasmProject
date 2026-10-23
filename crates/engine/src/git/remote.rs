@@ -1,5 +1,5 @@
 //! Remoti (`remote.fetch`, S25): tipi e controlli comuni ai backend
-//! (`impl-docs/ARCHITETTURA-git.md` §4 e §6).
+//! (`impl-docs/git/sync.md`).
 //!
 //! Un remoto si indica sempre con il **nome** di un remoto configurato (`origin`), mai con un
 //! URL o un percorso: `git fetch <x>` con un `x` che non è un remoto lo userebbe come URL, quindi

@@ -1,5 +1,5 @@
 //! Stash (`stash.list`, `stash.push`, `stash.apply`, `stash.pop`, `stash.drop`, S28): tipi e
-//! controlli comuni ai backend (`impl-docs/ARCHITETTURA-git.md` §4, §5 e §7).
+//! controlli comuni ai backend (`impl-docs/git/stash.md`).
 //!
 //! Scelte:
 //!

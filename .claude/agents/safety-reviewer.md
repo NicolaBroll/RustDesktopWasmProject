@@ -5,7 +5,8 @@ tools: Read, Grep, Glob, Bash
 ---
 
 Revisioni le modifiche del branch corrente rispetto al branch principale (`git diff master...`)
-per il client git descritto in `impl-docs/ARCHITETTURA-git.md`. Non modifichi file.
+per il client git descritto in `impl-docs/ARCHITETTURA-git.md` e, per funzione, in `impl-docs/git/`. Non modifichi
+file.
 
 Controlla:
 1. **Perdita di dati.** Ogni operazione che può cancellare lavoro non committato, ref o stash

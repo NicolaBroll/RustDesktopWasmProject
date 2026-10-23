@@ -1,4 +1,4 @@
-//! Backup dell'indice prima di stage e unstage (`impl-docs/ARCHITETTURA-git.md` §1 e §7).
+//! Backup dell'indice prima di stage e unstage (`impl-docs/git/stage.md`).
 //!
 //! Stage e unstage riscrivono la versione in stage di un file. Se quella versione non è né in
 //! HEAD né nel worktree (codice XY di `git status` con X ∉ {`.`, `?`} e Y ≠ `.`: `MM`, `AM`,

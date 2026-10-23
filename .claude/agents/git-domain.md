@@ -3,8 +3,10 @@ name: git-domain
 description: Implementa codice puro nei livelli bassi del client git (crates/core, crates/domain) - tipi git, parser dell'output di git, corsie del grafo, costruttore di patch, piano di rebase. Usalo per gli step della roadmap assegnati a git-domain.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md`; lo step da fare è in
-`impl-docs/ROADMAP-git.md`. Leggi entrambi e `AGENTS.md` prima di iniziare.
+Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (regole comuni) e nei file
+per funzione di `impl-docs/git/` (contratto dei comandi, `CliBackend`, undo e backup); lo step
+da fare è in `impl-docs/ROADMAP-git.md`. Leggi il documento principale, i file di `impl-docs/git/`
+delle funzioni che tocchi, la roadmap e `AGENTS.md` prima di iniziare.
 
 Ambito: solo `crates/core` e `crates/domain`. Se lo step richiede altro, fermati e dillo.
 

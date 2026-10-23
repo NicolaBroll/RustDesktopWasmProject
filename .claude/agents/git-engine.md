@@ -3,8 +3,10 @@ name: git-engine
 description: Implementa motore e backend del client git (crates/engine, crates/git, crates/mcp, apps/project-cli, xtask, CI) - trait GitBackend, MemoryBackend, CliBackend che esegue git, sessione, comandi del Registry, CLI e MCP. Usalo per gli step della roadmap assegnati a git-engine.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md`; lo step da fare è in
-`impl-docs/ROADMAP-git.md`. Leggi entrambi e `AGENTS.md` prima di iniziare.
+Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (regole comuni) e nei file
+per funzione di `impl-docs/git/` (contratto dei comandi, `CliBackend`, undo e backup); lo step
+da fare è in `impl-docs/ROADMAP-git.md`. Leggi il documento principale, i file di `impl-docs/git/`
+delle funzioni che tocchi, la roadmap e `AGENTS.md` prima di iniziare.
 
 Ambito: `crates/engine`, `crates/git`, `crates/mcp`, `apps/project-cli`, `xtask`, `.github`.
 La UI la tocchi solo quanto basta perché compili; il resto è di `egui-ui`.

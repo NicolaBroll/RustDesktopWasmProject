@@ -1,5 +1,5 @@
 //! Commit (`commit.create`): parametri, risultato e controlli comuni ai backend
-//! (`impl-docs/ARCHITETTURA-git.md` §4 e §7).
+//! (`impl-docs/git/commit.md`).
 //!
 //! I backend chiamano gli stessi controlli prima di scrivere, così `MemoryBackend` e
 //! `CliBackend` rifiutano gli stessi casi con gli stessi errori: messaggio vuoto, conflitti

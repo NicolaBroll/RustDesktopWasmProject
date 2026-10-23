@@ -1,5 +1,5 @@
 //! Scartare le modifiche non in stage, con backup (`worktree.discard`,
-//! `impl-docs/ARCHITETTURA-git.md` §7).
+//! `impl-docs/git/discard.md`).
 //!
 //! Scartare riporta i file del worktree alla versione in stage (come `git restore --worktree`):
 //! quello che c'era nel worktree non esiste più da nessun'altra parte. Prima di scrivere i

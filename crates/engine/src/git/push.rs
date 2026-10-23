@@ -1,4 +1,4 @@
-//! Push (`remote.push`, S26): tipi comuni ai backend (`impl-docs/ARCHITETTURA-git.md` §4–§7).
+//! Push (`remote.push`, S26): tipi comuni ai backend (`impl-docs/git/sync.md`).
 //!
 //! Il comando decide remoto, branch di destinazione e upstream; il backend pubblica **solo**
 //! `refs/heads/<branch>:refs/heads/<remote_branch>` (refspec esplicito: niente tag, niente altri

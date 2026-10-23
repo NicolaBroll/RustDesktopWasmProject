@@ -1,5 +1,5 @@
 //! `remote.pull` (S26): fetch del branch dell'upstream, poi fast-forward, merge o rebase in
-//! locale, guidati dal motore (`impl-docs/ARCHITETTURA-git.md` §4, §6, §7).
+//! locale, guidati dal motore (`impl-docs/git/sync.md`).
 //!
 //! Perché non `git pull`: con due passi separati il comando sa cosa è arrivato prima di
 //! scrivere, decide la strategia con la configurazione dell'utente, controlla lo stato del repo

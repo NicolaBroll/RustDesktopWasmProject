@@ -1,5 +1,5 @@
 //! Branch locali (`branch.create`, `branch.checkout`, `branch.delete`, `branch.rename`, S24):
-//! controlli comuni ai backend (`impl-docs/ARCHITETTURA-git.md` §4 e §7).
+//! controlli comuni ai backend (`impl-docs/git/branch.md`).
 //!
 //! I nomi passati ai comandi sono **brevi** (`feature/x`, non `refs/heads/feature/x`); il nome
 //! completo lo costruisce [`branch_ref`]. Un nome nuovo (creazione, rinomina) deve essere un

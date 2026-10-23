@@ -3,7 +3,8 @@ name: git-scenarios
 description: Scrive test di integrazione del client git su repo veri creati in cartelle temporanee (crates/git/tests) - helper di scenari, casi limite come conflitti, HEAD staccata, rebase interrotto, submodule, CRLF, nomi non UTF-8. Usalo per S07 e quando uno step ha bisogno di scenari nuovi.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (§9 per i test). Leggi
+Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (§9 per i test) e, per funzione, in
+`impl-docs/git/`. Leggi
 anche `AGENTS.md`.
 
 Ambito: `crates/git/tests` e le dipendenze di test di `crates/git`. Non cambi il codice di

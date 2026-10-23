@@ -205,6 +205,11 @@ pub trait GitBackend: Send {
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
     fn merge_abort(&mut self) -> Result<MergeAborted, EngineError>;
     fn operation_state(&self) -> Result<OperationState, EngineError>;
+    // Cherry-pick e revert di un commit (S31, git/cherry-pick.md): `PickRequest` (kind, branch,
+    // expected, commit, parent, mainline, message) → `MergeOutcome`; l'abort come il merge.
+    // `*.continue` usa `commit` con `CommitRequest::concluding`.
+    fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError>;
+    fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError>;
     // poi rebase, ...
 }
 
@@ -266,6 +271,7 @@ sua funzione (o a un file nuovo in `impl-docs/git/`, elencato qui).
 | `remote.list`, `remote.add`, `remote.remove` | [git/remoti.md](git/remoti.md) |
 | `stash.list`, `stash.push`, `stash.apply` / `stash.pop`, `stash.drop` | [git/stash.md](git/stash.md) |
 | `merge.start`, `merge.continue`, `merge.abort`, `repo.operation` | [git/merge.md](git/merge.md) |
+| `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue` / `abort`, `revert.continue` / `abort` | [git/cherry-pick.md](git/cherry-pick.md) |
 | `conflict.show`, `conflict.resolve` | [git/conflitti.md](git/conflitti.md) |
 | `edit.undo` / `edit.redo`, `edit.history` | qui sotto e §7 |
 
@@ -387,7 +393,7 @@ non esisteva / è stato cancellato: più ref per voce, per branch, rinomine, mer
 futuri), il backup salvato dall'operazione (es. quello di `amend`) e i backup creati da undo e
 redo. Oggi la registrano `commit.create` (normale e `amend`; con HEAD staccata nessun ref, si
 sposta HEAD; un `amend` che produce lo stesso commit e un `PostCommit` non entrano), i comandi
-`branch.*` (vedi [git/branch.md](git/branch.md)), `stash.push` e `stash.drop` (vedi [git/stash.md](git/stash.md)), il merge concluso (`merge.start`, `merge.continue`: vedi [git/merge.md](git/merge.md); un merge fermo in conflitto e `merge.abort` no) e `worktree.discard` (nessun ref, HEAD uguale prima e dopo, il backup del worktree nel campo
+`branch.*` (vedi [git/branch.md](git/branch.md)), `stash.push` e `stash.drop` (vedi [git/stash.md](git/stash.md)), il merge concluso (`merge.start`, `merge.continue`: vedi [git/merge.md](git/merge.md); un merge fermo in conflitto e `merge.abort` no), cherry-pick e revert conclusi (vedi [git/cherry-pick.md](git/cherry-pick.md)) e `worktree.discard` (nessun ref, HEAD uguale prima e dopo, il backup del worktree nel campo
 `"worktree"`, vedi [git/discard.md](git/discard.md)). Stage e unstage non spostano ref e non entrano nel diario: il loro recupero è il
 backup dell'indice. Una nuova voce svuota le voci annullate (il redo); il diario tiene al
 massimo 100 voci.

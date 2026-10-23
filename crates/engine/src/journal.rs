@@ -55,6 +55,18 @@
 //! - Il diario tiene al massimo [`Journal::MAX_ENTRIES`] voci: le più vecchie escono.
 
 use crate::git::short;
+
+/// I comandi le cui voci spostano il branch di HEAD con indice e worktree
+/// ([`JournalEntry::moves_worktree`]).
+const WORKTREE_COMMANDS: &[&str] = &[
+    "remote.pull",
+    "merge.start",
+    "merge.continue",
+    "commit.cherry_pick",
+    "commit.revert",
+    "cherry_pick.continue",
+    "revert.continue",
+];
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
     RefMove, RefRestore, RemoteSnapshot, RestoreOutcome, StashDrop, StashEntry, StashPush,
@@ -383,13 +395,50 @@ impl JournalEntry {
         )
     }
 
+    /// La voce di un cherry-pick o revert concluso (`commit.cherry_pick`, `commit.revert`,
+    /// `cherry_pick.continue`, `revert.continue`): il branch `branch` (nome completo) da
+    /// `before` ad `after` (un commit nuovo sopra `before`), HEAD uguale prima e dopo; `source`
+    /// il commit applicato o annullato, `backup` il ref del branch prima (se salvato). Undo e
+    /// redo come il merge: [`GitBackend::reset_branch`] (come `git reset --keep`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn pick(
+        command: &str,
+        kind: crate::PickKind,
+        branch: &str,
+        before: Oid,
+        after: Oid,
+        head: HeadState,
+        source: &str,
+        backup: Option<String>,
+    ) -> Self {
+        Self::branch_entry(
+            command,
+            format!(
+                "{} di {source} su `{}` (da {} a {})",
+                kind.title(),
+                branch_short(branch),
+                short(&before),
+                short(&after)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: branch.to_owned(),
+                before: Some(before),
+                after: Some(after),
+            }],
+            backup,
+        )
+    }
+
     /// Vero se la voce sposta il branch di HEAD con indice e worktree (un pull del branch
-    /// attivo, un merge): undo e redo usano [`GitBackend::reset_branch`].
+    /// attivo, un merge, un cherry-pick o revert): undo e redo usano
+    /// [`GitBackend::reset_branch`].
     fn moves_worktree(&self) -> bool {
-        matches!(
-            self.command.as_str(),
-            "remote.pull" | "merge.start" | "merge.continue"
-        ) && matches!(&self.head.after, HeadState::Branch(b) if self.refs.len() == 1 && self.refs[0].name == *b)
+        WORKTREE_COMMANDS.contains(&self.command.as_str())
+            && matches!(&self.head.after, HeadState::Branch(b) if self.refs.len() == 1 && self.refs[0].name == *b)
     }
 
     fn branch_entry(
@@ -783,7 +832,7 @@ impl JournalEntry {
                     Ok(outcome)
                 }
             }
-            "remote.pull" | "merge.start" | "merge.continue" if self.moves_worktree() => {
+            _ if self.moves_worktree() => {
                 Self::check_unchanged(repo, &request, "sposterebbe il branch")?;
                 repo.reset_branch(&request)
             }

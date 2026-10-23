@@ -17,7 +17,7 @@ use super::{HEADS, HeadRef, MemoryBackend};
 use crate::EngineError;
 use crate::git::{
     BACKUP_PREFIX, GitBackend, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState,
-    check_merge_state, check_merging, short, split_message,
+    PickKind, check_merge_state, check_merging, check_picking, short, split_message,
 };
 use project_domain::{
     Change, Commit, Conflict, EntryKind, Oid, Operation, RepoPath, Signature, StatusEntry,
@@ -32,16 +32,16 @@ pub(super) struct MemoryMerge {
 }
 
 /// Un file in conflitto: le versioni della base, nostra e loro (assenti se il file non c'è).
-struct Conflicted {
-    path: RepoPath,
+pub(super) struct Conflicted {
+    pub(super) path: RepoPath,
     base: Option<TreeEntry>,
-    ours: Option<TreeEntry>,
-    theirs: Option<TreeEntry>,
+    pub(super) ours: Option<TreeEntry>,
+    pub(super) theirs: Option<TreeEntry>,
 }
 
 /// Il merge a tre vie file per file: l'albero unito (nei file in conflitto la versione nostra)
 /// e i conflitti.
-fn merge_partial(base: &Tree, ours: &Tree, theirs: &Tree) -> (Tree, Vec<Conflicted>) {
+pub(super) fn merge_partial(base: &Tree, ours: &Tree, theirs: &Tree) -> (Tree, Vec<Conflicted>) {
     let mut paths: Vec<&RepoPath> = base
         .keys()
         .chain(ours.keys())
@@ -241,7 +241,7 @@ impl MemoryBackend {
     /// Una voce `u` per il conflitto `c`, con il contenuto del worktree come lo lascia git: i
     /// marcatori se i due lati hanno il file (e i contenuti sono noti), altrimenti il lato che
     /// c'è.
-    fn add_conflict(&mut self, c: &Conflicted, theirs_label: &str) {
+    pub(super) fn add_conflict(&mut self, c: &Conflicted, theirs_label: &str) {
         let (conflict, x, y) = match (c.base, c.ours, c.theirs) {
             (None, Some(_), Some(_)) => (Conflict::BothAdded, Change::Added, Change::Added),
             (_, None, Some(_)) => (Conflict::DeletedByUs, Change::Deleted, Change::Unmerged),
@@ -309,6 +309,24 @@ impl MemoryBackend {
     /// [`GitBackend::merge_abort`].
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         check_merging("merge.abort", &self.status()?)?;
+        self.abort_operation("merge", "merge.abort")
+    }
+
+    /// [`GitBackend::pick_abort`](crate::GitBackend::pick_abort).
+    pub(super) fn abort_pick(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
+        check_picking(
+            kind.abort_command(),
+            kind,
+            &self.status()?,
+            &self.operation_info(),
+        )?;
+        self.abort_operation(kind.git(), kind.abort_command())
+    }
+
+    /// L'annullamento dell'operazione in corso (già controllata) di `merge.abort`,
+    /// `cherry_pick.abort` e `revert.abort`: `what` è il nome nel backup
+    /// (`refs/project/backup/<what>-abort-<n>`), `command` l'id del comando.
+    fn abort_operation(&mut self, what: &str, command: &str) -> Result<MergeAborted, EngineError> {
         // Come `git merge --abort` (`reset --merge`): rifiutato se un file in stage ha anche
         // modifiche fuori stage.
         let mixed: Vec<String> = self
@@ -319,9 +337,10 @@ impl MemoryBackend {
             .collect();
         if !mixed.is_empty() {
             return Err(EngineError::NotAllowed(format!(
-                "git non annulla il merge: file in stage con anche modifiche fuori stage ({}). \
-                 Metterle in stage (`index.stage`) o scartarle (`worktree.discard`) e \
-                 riprovare; niente modificato, il merge è ancora in corso",
+                "git non annulla l'operazione in corso: file in stage con anche modifiche fuori \
+                 stage ({}). Metterle in stage (`index.stage`) o scartarle \
+                 (`worktree.discard`) e riprovare; niente modificato, `{command}` non ha \
+                 annullato niente",
                 mixed.join(", ")
             )));
         }
@@ -357,7 +376,7 @@ impl MemoryBackend {
             }
         }
         let message = format!(
-            "project: backup di indice e worktree prima di merge.abort (merge di {})",
+            "project: backup di indice e worktree prima di {command} (di {})",
             self.merge_state
                 .as_ref()
                 .map(|m| m.heads.iter().map(short).collect::<Vec<_>>().join(", "))
@@ -372,7 +391,7 @@ impl MemoryBackend {
         // Come uno stash (e come il `CliBackend`): un commit con l'indice sopra HEAD, e il
         // backup con il worktree che ha per genitori HEAD e quel commit.
         let first = self.tree_at(head);
-        let index_message = "project: indice prima di merge.abort".to_owned();
+        let index_message = format!("project: indice prima di {command}");
         let index_id = self.new_commit_id(&[head], &index_message, &index_tree, backup_sig.time);
         self.insert_commit(Commit {
             id: index_id,
@@ -394,7 +413,7 @@ impl MemoryBackend {
             body,
         });
         self.set_changes(id, super::commit::tree_changes(&first, &tree));
-        let prefix = format!("{BACKUP_PREFIX}merge-abort-");
+        let prefix = format!("{BACKUP_PREFIX}{what}-abort-");
         let n = self
             .commit_backups
             .iter()
@@ -428,16 +447,19 @@ impl MemoryBackend {
 
     /// [`GitBackend::operation_state`].
     pub(super) fn operation_info(&self) -> OperationState {
-        let merge = self
-            .merge_state
-            .as_ref()
-            .filter(|_| self.operation == Some(Operation::Merge));
+        let merge = self.merge_state.as_ref().filter(|_| {
+            matches!(
+                self.operation,
+                Some(Operation::Merge | Operation::CherryPick | Operation::Revert)
+            )
+        });
         OperationState {
             operation: self.operation,
             incoming: merge.map(|m| m.heads.clone()).unwrap_or_default(),
             message: merge.map(|m| m.message.clone()),
             onto: None,
             rebase_branch: None,
+            sequencer: false,
         }
     }
 }

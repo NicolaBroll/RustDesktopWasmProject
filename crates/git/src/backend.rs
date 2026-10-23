@@ -5,6 +5,7 @@ mod commit;
 mod conflict;
 mod discard;
 mod merge;
+mod pick;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -23,11 +24,11 @@ use project_engine::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution,
     ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
     FetchOutcome, FetchRequest, GitBackend, HeadState, JobContext, LinePatch, LineSelection,
-    LogQuery, MergeAborted, MergeOutcome, MergeRequest, OperationState, PullOutcome, PullRequest,
-    PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
-    versions_at_risk_hidden,
+    LogQuery, MergeAborted, MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest,
+    PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot,
+    RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped,
+    StashEntry, StashPush, UpstreamConfig, WorktreeRestore, apply_patch, backup_message,
+    line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1338,6 +1339,14 @@ impl GitBackend for CliBackend {
 
     fn operation_state(&self) -> Result<OperationState, EngineError> {
         Ok(self.read_operation_state())
+    }
+
+    fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError> {
+        self.pick_onto_head(request)
+    }
+
+    fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
+        self.abort_pick(kind)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

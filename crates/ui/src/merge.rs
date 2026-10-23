@@ -5,7 +5,7 @@
 //! - **Riquadro**: quando lo stato del repo (`repo.status`) dice che c'è un'operazione in corso
 //!   (merge, rebase, cherry-pick, revert, bisect, `git am`) si legge `repo.operation`: cosa sta
 //!   entrando, i file in conflitto, il messaggio preparato da git e i comandi che concludono o
-//!   annullano l'operazione da qui (oggi solo per il merge). Si rilegge a ogni stato nuovo
+//!   annullano l'operazione da qui (merge, cherry-pick e revert; `pick.rs`). Si rilegge a ogni stato nuovo
 //!   (dopo ogni comando e con "Aggiorna"), così i conflitti risolti spariscono dall'elenco.
 //! - **Avvio**: `merge.start` con il nome del branch (o l'id del commit) scelto. Un merge
 //!   concluso (fast-forward o commit di merge) entra nel diario: «Annulla» lo annulla. Un merge
@@ -21,9 +21,13 @@ use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
 use crate::{Action, App, Done, Request, merge};
+pub use pick::{MainlineDialog, Pick};
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+#[path = "pick.rs"]
+mod pick;
 
 /// L'id del comando che legge l'operazione in corso.
 pub const OPERATION: &str = "repo.operation";
@@ -31,12 +35,85 @@ pub const OPERATION: &str = "repo.operation";
 /// Quanti file in conflitto si elencano nel riquadro; gli altri si vedono nell'area di stage.
 pub const BANNER_FILES: usize = 8;
 
-/// Un comando del merge.
+/// L'operazione che si conclude o si annulla dal riquadro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Merge,
+    CherryPick,
+    Revert,
+}
+
+impl Kind {
+    const ALL: [Kind; 3] = [Kind::Merge, Kind::CherryPick, Kind::Revert];
+
+    /// L'id del comando che conclude l'operazione.
+    pub fn continue_command(self) -> &'static str {
+        match self {
+            Kind::Merge => "merge.continue",
+            Kind::CherryPick => "cherry_pick.continue",
+            Kind::Revert => "revert.continue",
+        }
+    }
+
+    /// L'id del comando che annulla l'operazione.
+    pub fn abort_command(self) -> &'static str {
+        match self {
+            Kind::Merge => "merge.abort",
+            Kind::CherryPick => "cherry_pick.abort",
+            Kind::Revert => "revert.abort",
+        }
+    }
+
+    /// Dall'id `continue` di `repo.operation`.
+    pub fn from_continue(id: &str) -> Option<Kind> {
+        Kind::ALL.into_iter().find(|k| k.continue_command() == id)
+    }
+
+    /// Dall'id `abort` di `repo.operation`.
+    pub fn from_abort(id: &str) -> Option<Kind> {
+        Kind::ALL.into_iter().find(|k| k.abort_command() == id)
+    }
+
+    /// Il nome nei testi: «merge», «cherry-pick», «revert».
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Merge => "merge",
+            Kind::CherryPick => "cherry-pick",
+            Kind::Revert => "revert",
+        }
+    }
+
+    /// Il nome con la maiuscola, a inizio frase.
+    pub fn title(self) -> &'static str {
+        match self {
+            Kind::Merge => "Merge",
+            Kind::CherryPick => "Cherry-pick",
+            Kind::Revert => "Revert",
+        }
+    }
+
+    /// Il commit che crea "Continua": «commit di merge» o «commit».
+    pub fn commit_noun(self) -> &'static str {
+        match self {
+            Kind::Merge => "commit di merge",
+            Kind::CherryPick | Kind::Revert => "commit",
+        }
+    }
+
+    /// Il prefisso del backup dell'annullamento: `refs/project/backup/merge-abort-…`.
+    pub fn abort_backup(self) -> String {
+        format!("refs/project/backup/{}-abort-…", self.name())
+    }
+}
+
+/// Un comando del merge, del cherry-pick o del revert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Start,
-    Continue,
-    Abort,
+    /// `commit.cherry_pick` o `commit.revert`.
+    Pick(Pick),
+    Continue(Kind),
+    Abort(Kind),
 }
 
 impl Op {
@@ -44,8 +121,9 @@ impl Op {
     pub fn command(self) -> &'static str {
         match self {
             Op::Start => "merge.start",
-            Op::Continue => "merge.continue",
-            Op::Abort => "merge.abort",
+            Op::Pick(pick) => pick.command(),
+            Op::Continue(kind) => kind.continue_command(),
+            Op::Abort(kind) => kind.abort_command(),
         }
     }
 }
@@ -186,7 +264,7 @@ impl Gate {
             }
             Head::Detached(_) => {
                 return Gate::Blocked(
-                    "HEAD è staccata: il merge va fatto su un branch. Passare prima a un branch",
+                    "HEAD è staccata: serve un branch attivo. Passare prima a un branch",
                 );
             }
         };
@@ -205,9 +283,11 @@ impl Gate {
     }
 }
 
-/// Il dialogo "Continua il merge": il messaggio del commit di merge.
+/// Il dialogo "Continua": il messaggio del commit che conclude l'operazione.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinueDialog {
+    /// L'operazione che si conclude.
+    pub kind: Kind,
     pub message: String,
     /// L'errore del motore all'ultimo invio (restano conflitti, un hook), nel dialogo.
     pub error: Option<String>,
@@ -229,15 +309,17 @@ impl ContinueDialog {
 pub enum Dialog {
     Continue(ContinueDialog),
     /// L'annullamento: controllo, conferma con il motivo del motore, invio.
-    Abort(Phase),
+    Abort(Kind, Phase),
+    /// Il genitore (`mainline`) per il cherry-pick o il revert di un commit di merge.
+    Mainline(MainlineDialog),
 }
 
-/// Il merge avviato e non ancora risposto.
+/// Il merge, cherry-pick o revert avviato e non ancora risposto.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Starting {
-    /// Cosa si unisce, come mostrato (nome del branch o id abbreviato).
+    /// Cosa si unisce o si applica, come mostrato (nome del branch o id abbreviato).
     what: String,
-    /// Il branch in cui si unisce.
+    /// Il branch in cui si unisce o su cui si applica.
     into: String,
 }
 
@@ -299,7 +381,7 @@ impl MergeBox {
             self.asked_for = Some(seq);
             // Senza operazione non ci sono né Continua né Annulla da mostrare.
             if matches!(self.dialog, Some(Dialog::Continue(ref d)) if !d.sending)
-                || matches!(self.dialog, Some(Dialog::Abort(Phase::Confirm { .. })))
+                || matches!(self.dialog, Some(Dialog::Abort(_, Phase::Confirm { .. })))
             {
                 self.dialog = None;
             }
@@ -351,8 +433,8 @@ impl MergeBox {
     /// Il dialogo da disegnare: l'annullamento si vede solo quando chiede la conferma.
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref().filter(|d| match d {
-            Dialog::Abort(phase) => matches!(phase, Phase::Confirm { .. }),
-            Dialog::Continue(_) => true,
+            Dialog::Abort(_, phase) => matches!(phase, Phase::Confirm { .. }),
+            Dialog::Continue(_) | Dialog::Mainline(_) => true,
         })
     }
 
@@ -366,8 +448,8 @@ impl MergeBox {
         self.starting.is_some()
             || match &self.dialog {
                 Some(Dialog::Continue(d)) => d.sending,
-                Some(Dialog::Abort(phase)) => !matches!(phase, Phase::Confirm { .. }),
-                None => false,
+                Some(Dialog::Abort(_, phase)) => !matches!(phase, Phase::Confirm { .. }),
+                Some(Dialog::Mainline(_)) | None => false,
             }
     }
 
@@ -393,8 +475,9 @@ impl MergeBox {
         Some((params, label))
     }
 
-    /// Apre il dialogo "Continua il merge" con il messaggio preparato da git. `false` se non
-    /// c'è un merge da concludere da qui o se un altro dialogo è aperto.
+    /// Apre il dialogo "Continua" con il messaggio preparato da git, per l'operazione che
+    /// `repo.operation` dice di concludere da qui (merge, cherry-pick, revert). `false` se non
+    /// ce n'è una o se un altro dialogo è aperto.
     pub fn open_continue(&mut self) -> bool {
         if self.dialog.is_some() || self.busy() {
             return false;
@@ -402,11 +485,16 @@ impl MergeBox {
         let Some(info) = &self.info else {
             return false;
         };
-        if info.continue_command.as_deref() != Some(Op::Continue.command()) {
+        let Some(kind) = info
+            .continue_command
+            .as_deref()
+            .and_then(Kind::from_continue)
+        else {
             return false;
-        }
+        };
         let message = info.message.clone().unwrap_or_default();
         self.dialog = Some(Dialog::Continue(ContinueDialog {
+            kind,
             message: message.trim_end().to_owned(),
             error: None,
             git: None,
@@ -424,9 +512,9 @@ impl MergeBox {
         }
     }
 
-    /// Invio del dialogo "Continua": parametri e descrizione. `None` se non si può (messaggio
-    /// vuoto, invio già in corso).
-    pub fn submit_continue(&mut self) -> Option<(Value, String)> {
+    /// Invio del dialogo "Continua": comando, parametri e descrizione. `None` se non si può
+    /// (messaggio vuoto, invio già in corso).
+    pub fn submit_continue(&mut self) -> Option<(Op, Value, String)> {
         let Some(Dialog::Continue(dialog)) = &mut self.dialog else {
             return None;
         };
@@ -437,31 +525,32 @@ impl MergeBox {
         dialog.error = None;
         dialog.git = None;
         Some((
+            Op::Continue(dialog.kind),
             json!({ "message": dialog.message.trim_end() }),
-            "Conclusione del merge".to_owned(),
+            format!("Conclusione del {}", dialog.kind.name()),
         ))
     }
 
-    /// Comincia l'annullamento: i parametri del primo invio, senza `confirm` (il motore
-    /// risponde con cosa si perderebbe). `None` se non c'è un merge da annullare da qui.
-    pub fn start_abort(&mut self) -> Option<(Value, String)> {
+    /// Comincia l'annullamento: comando e parametri del primo invio, senza `confirm` (il
+    /// motore risponde con cosa si perderebbe). `None` se non c'è un'operazione da annullare
+    /// da qui.
+    pub fn start_abort(&mut self) -> Option<(Op, Value, String)> {
         if self.dialog.is_some() || self.busy() {
             return None;
         }
         let info = self.info.as_ref()?;
-        if info.abort_command.as_deref() != Some(Op::Abort.command()) {
-            return None;
-        }
-        self.dialog = Some(Dialog::Abort(Phase::Checking));
+        let kind = info.abort_command.as_deref().and_then(Kind::from_abort)?;
+        self.dialog = Some(Dialog::Abort(kind, Phase::Checking));
         Some((
+            Op::Abort(kind),
             json!({}),
-            "Controllo per l'annullamento del merge".to_owned(),
+            format!("Controllo per l'annullamento del {}", kind.name()),
         ))
     }
 
-    /// L'utente ha confermato l'annullamento: i parametri con `"confirm": true`.
-    pub fn confirm_abort(&mut self) -> Option<(Value, String)> {
-        let Some(Dialog::Abort(phase)) = &mut self.dialog else {
+    /// L'utente ha confermato l'annullamento: comando e parametri con `"confirm": true`.
+    pub fn confirm_abort(&mut self) -> Option<(Op, Value, String)> {
+        let Some(Dialog::Abort(kind, phase)) = &mut self.dialog else {
             return None;
         };
         if !matches!(phase, Phase::Confirm { .. }) {
@@ -469,8 +558,9 @@ impl MergeBox {
         }
         *phase = Phase::Sending;
         Some((
+            Op::Abort(*kind),
             json!({ "confirm": true }),
-            "Annullamento del merge".to_owned(),
+            format!("Annullamento del {}", kind.name()),
         ))
     }
 
@@ -478,7 +568,8 @@ impl MergeBox {
     pub fn close(&mut self) {
         let closable = match &self.dialog {
             Some(Dialog::Continue(dialog)) => !dialog.sending,
-            Some(Dialog::Abort(phase)) => matches!(phase, Phase::Confirm { .. }),
+            Some(Dialog::Abort(_, phase)) => matches!(phase, Phase::Confirm { .. }),
+            Some(Dialog::Mainline(_)) => true,
             None => false,
         };
         if closable {
@@ -496,8 +587,9 @@ impl MergeBox {
     ) -> Received {
         match op {
             Op::Start => self.receive_start(result, kind, detail),
-            Op::Continue => self.receive_continue(result, kind, detail),
-            Op::Abort => self.receive_abort(result, kind, detail),
+            Op::Pick(pick) => self.receive_pick(pick, result, kind, detail),
+            Op::Continue(op) => self.receive_continue(op, result, kind, detail),
+            Op::Abort(op) => self.receive_abort(op, result, kind, detail),
         }
     }
 
@@ -573,22 +665,24 @@ impl MergeBox {
 
     fn receive_continue(
         &mut self,
+        op: Kind,
         result: Result<Value, String>,
         kind: Option<ErrorKind>,
         detail: Option<String>,
     ) -> Received {
         let Some(Dialog::Continue(dialog)) = &mut self.dialog else {
-            return unexpected(Op::Continue);
+            return unexpected(Op::Continue(op));
         };
-        if !dialog.sending {
-            return unexpected(Op::Continue);
+        if !dialog.sending || dialog.kind != op {
+            return unexpected(Op::Continue(op));
         }
+        let title = op.title();
         match result {
             // Il commit è fatto ma dopo qualcosa non torna: non va ripetuto, si rilegge tutto.
             Err(e) if kind == Some(ErrorKind::PostCommit) => {
                 self.dialog = None;
                 Received::Failed {
-                    message: format!("Merge concluso, ma: {e}"),
+                    message: format!("{title} concluso, ma: {e}"),
                     reload: true,
                 }
             }
@@ -603,10 +697,10 @@ impl MergeBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<ContinueResult>(Op::Continue, value) {
+                match parse::<ContinueResult>(Op::Continue(op), value) {
                     Ok(result) => {
                         let warning = reread_warning(
-                            "Merge concluso",
+                            &format!("{title} concluso"),
                             &[],
                             result.status_error.clone(),
                             result.refs_error.clone(),
@@ -618,7 +712,8 @@ impl MergeBox {
                             .map(|b| format!(" su «{b}»"))
                             .unwrap_or_default();
                         let notice = format!(
-                            "Merge concluso: commit di merge {} creato{into}. «Annulla» lo annulla",
+                            "{title} concluso: {} {} creato{into}. «Annulla» lo annulla",
+                            op.commit_noun(),
                             result.commit.id.short()
                         );
                         Received::Done(Box::new(Outcome {
@@ -642,18 +737,28 @@ impl MergeBox {
 
     fn receive_abort(
         &mut self,
+        op: Kind,
         result: Result<Value, String>,
         kind: Option<ErrorKind>,
         detail: Option<String>,
     ) -> Received {
-        let Some(Dialog::Abort(phase)) = self.dialog.take() else {
-            return unexpected(Op::Abort);
+        let phase = match self.dialog.take() {
+            Some(Dialog::Abort(k, phase)) if k == op => phase,
+            other => {
+                self.dialog = other;
+                return unexpected(Op::Abort(op));
+            }
         };
+        let name = op.name();
+        let title = op.title();
         match result {
             Err(_) if kind == Some(ErrorKind::ConfirmRequired) && phase == Phase::Checking => {
-                self.dialog = Some(Dialog::Abort(Phase::Confirm {
-                    reason: detail.unwrap_or_default(),
-                }));
+                self.dialog = Some(Dialog::Abort(
+                    op,
+                    Phase::Confirm {
+                        reason: detail.unwrap_or_default(),
+                    },
+                ));
                 Received::Confirm
             }
             Err(e) => {
@@ -665,14 +770,14 @@ impl MergeBox {
                     "non riuscito"
                 };
                 Received::Failed {
-                    message: format!("Annullamento del merge {what}: {e}"),
+                    message: format!("Annullamento del {name} {what}: {e}"),
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<AbortResult>(Op::Abort, value) {
+            Ok(value) => match parse::<AbortResult>(Op::Abort(op), value) {
                 Ok(result) => {
                     let warning = reread_warning(
-                        "Merge annullato",
+                        &format!("{title} annullato"),
                         &result.warnings,
                         result.status_error.clone(),
                         result.refs_error.clone(),
@@ -683,7 +788,7 @@ impl MergeBox {
                         n => format!(" ({n} file)"),
                     };
                     let notice = format!(
-                        "Merge annullato: indice e worktree salvati prima in {}{files}; si \
+                        "{title} annullato: indice e worktree salvati prima in {}{files}; si \
                          rimettono con `git stash apply {}`. Non si annulla con «Annulla»",
                         result.backup, result.backup
                     );
@@ -893,10 +998,9 @@ impl App {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                if let Some((params, label)) = repo.merge.submit_continue() {
+                if let Some((op, params, label)) = repo.merge.submit_continue() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = merge::Op::Continue;
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
@@ -908,10 +1012,9 @@ impl App {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                if let Some((params, label)) = repo.merge.start_abort() {
+                if let Some((op, params, label)) = repo.merge.start_abort() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = merge::Op::Abort;
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
@@ -923,9 +1026,66 @@ impl App {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                if let Some((params, label)) = repo.merge.confirm_abort() {
+                if let Some((op, params, label)) = repo.merge.confirm_abort() {
                     repo.write_label = Some(label);
-                    let op = merge::Op::Abort;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::Pick {
+                pick,
+                rev,
+                what,
+                parents,
+            } => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
+                else {
+                    return;
+                };
+                // I genitori di un commit di merge, con il nome e l'oggetto se si conoscono.
+                let parents = parents
+                    .into_iter()
+                    .map(|id| {
+                        let name = merge::commit_name(id, &repo.refs);
+                        let summary = repo
+                            .list
+                            .commits()
+                            .iter()
+                            .find(|c| c.id == id)
+                            .map(|c| c.summary.clone());
+                        (id, name, summary)
+                    })
+                    .collect();
+                if let Some((params, label)) = repo.merge.start_pick(pick, rev, what, into, parents)
+                {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Pick(pick);
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::Mainline(n) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.set_mainline(n);
+                }
+            }
+            Action::SubmitMainline => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((op, params, label)) = repo.merge.submit_mainline() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
@@ -1164,9 +1324,9 @@ mod tests {
             "{}",
             dialog.message
         );
-        let (params, _) = b.submit_continue().unwrap();
+        let (_, params, _) = b.submit_continue().unwrap();
         assert!(matches!(
-            run(&r, &mut s, &mut b, Op::Continue, params),
+            run(&r, &mut s, &mut b, Op::Continue(Kind::Merge), params),
             Received::Inline
         ));
         let Some(Dialog::Continue(dialog)) = b.dialog() else {
@@ -1185,10 +1345,11 @@ mod tests {
 
         assert!(b.open_continue());
         b.set_message("Unisci altro\n\nCon la versione nostra".into());
-        let (params, label) = b.submit_continue().unwrap();
+        let (op, params, label) = b.submit_continue().unwrap();
+        assert_eq!(op, Op::Continue(Kind::Merge));
         assert_eq!(params["message"], "Unisci altro\n\nCon la versione nostra");
         assert_eq!(label, "Conclusione del merge");
-        let outcome = done(run(&r, &mut s, &mut b, Op::Continue, params));
+        let outcome = done(run(&r, &mut s, &mut b, Op::Continue(Kind::Merge), params));
         assert!(outcome.moved);
         assert!(outcome.history.can_undo);
         assert!(
@@ -1211,25 +1372,25 @@ mod tests {
         done(run(&r, &mut s, &mut b, Op::Start, params));
         refresh(&r, &mut s, &mut b, 1);
 
-        let (params, _) = b.start_abort().unwrap();
+        let (_, params, _) = b.start_abort().unwrap();
         assert_eq!(params, json!({}));
         // Mentre controlla non si vede niente e non si può ricominciare.
         assert!(b.dialog().is_none());
         assert!(b.start_abort().is_none());
         assert!(matches!(
-            run(&r, &mut s, &mut b, Op::Abort, params),
+            run(&r, &mut s, &mut b, Op::Abort(Kind::Merge), params),
             Received::Confirm
         ));
-        let Some(Dialog::Abort(Phase::Confirm { reason })) = b.dialog() else {
+        let Some(Dialog::Abort(Kind::Merge, Phase::Confirm { reason })) = b.dialog() else {
             panic!("conferma dell'annullamento");
         };
         assert!(reason.contains("a.txt"), "{reason}");
         assert!(b.modal_open());
 
-        let (params, label) = b.confirm_abort().unwrap();
+        let (_, params, label) = b.confirm_abort().unwrap();
         assert_eq!(params, json!({ "confirm": true }));
         assert_eq!(label, "Annullamento del merge");
-        let outcome = done(run(&r, &mut s, &mut b, Op::Abort, params));
+        let outcome = done(run(&r, &mut s, &mut b, Op::Abort(Kind::Merge), params));
         assert!(
             outcome.notice.contains("refs/project/backup/merge-abort-"),
             "{}",
@@ -1248,8 +1409,8 @@ mod tests {
         let params = start(&mut b, "altro");
         done(run(&r, &mut s, &mut b, Op::Start, params));
         refresh(&r, &mut s, &mut b, 1);
-        let (params, _) = b.start_abort().unwrap();
-        run(&r, &mut s, &mut b, Op::Abort, params);
+        let (_, params, _) = b.start_abort().unwrap();
+        run(&r, &mut s, &mut b, Op::Abort(Kind::Merge), params);
         b.close();
         assert!(b.dialog().is_none());
         assert!(b.confirm_abort().is_none());

@@ -109,6 +109,10 @@ pub struct OperationState {
     /// Rebase: il branch che si sta riscrivendo (`head-name`, nome completo), `None` se il
     /// rebase è partito da HEAD staccata.
     pub rebase_branch: Option<String>,
+    /// Vero se c'è una sequenza di cherry-pick o revert di più commit avviata da terminale
+    /// (`.git/sequencer`): i comandi di S31 la lasciano al terminale (`check_picking`).
+    #[serde(default)]
+    pub sequencer: bool,
 }
 
 /// Da dove viene il commit da unire, per il messaggio di default.
@@ -266,22 +270,39 @@ pub fn check_merge_state(status: &Status, mode: &MergeMode) -> Result<(), Engine
 
 /// Il controllo comune a `merge.abort` e `merge.continue`: deve essere in corso un merge.
 pub fn check_merging(command: &str, status: &Status) -> Result<(), EngineError> {
+    check_in_progress(command, Operation::Merge, status)
+}
+
+/// Il nome di un'operazione per i messaggi (`un merge`, `un cherry-pick`, ...).
+pub(crate) fn operation_name(op: Operation) -> &'static str {
+    match op {
+        Operation::Rebase => "un rebase",
+        Operation::CherryPick => "un cherry-pick",
+        Operation::Revert => "un revert",
+        Operation::Bisect => "un bisect",
+        Operation::Am => "un `git am`",
+        Operation::Merge => "un merge",
+    }
+}
+
+/// Deve essere in corso l'operazione `expected` (per i comandi che la concludono o la
+/// annullano), altrimenti [`EngineError::NotAllowed`].
+pub(crate) fn check_in_progress(
+    command: &str,
+    expected: Operation,
+    status: &Status,
+) -> Result<(), EngineError> {
     match status.operation {
-        Some(Operation::Merge) => Ok(()),
+        Some(op) if op == expected => Ok(()),
         None => Err(EngineError::NotAllowed(format!(
-            "non c'è un merge in corso: `{command}` non ha niente da fare, niente modificato"
+            "non c'è {} in corso: `{command}` non ha niente da fare, niente modificato",
+            operation_name(expected)
         ))),
         Some(other) => Err(EngineError::NotAllowed(format!(
-            "è in corso {}, non un merge: `{command}` non lo tocca, niente modificato. \
+            "è in corso {}, non {}: `{command}` non lo tocca, niente modificato. \
              Concluderlo o annullarlo con i suoi comandi (o da terminale)",
-            match other {
-                Operation::Rebase => "un rebase",
-                Operation::CherryPick => "un cherry-pick",
-                Operation::Revert => "un revert",
-                Operation::Bisect => "un bisect",
-                Operation::Am => "un `git am`",
-                Operation::Merge => "un merge",
-            }
+            operation_name(other),
+            operation_name(expected)
         ))),
     }
 }

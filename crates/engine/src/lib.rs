@@ -40,6 +40,10 @@ pub use git::{
     merge_source,
 };
 pub use git::{
+    PickKind, PickRequest, check_pick_state, check_picking, pick_empty_error, pick_message,
+    pick_parent,
+};
+pub use git::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     PushKind, PushOutcome, PushRejection, PushRequest, StrategySource, UpstreamConfig,
     check_pull_state, merge_message, pull_mode, tracking_ref,

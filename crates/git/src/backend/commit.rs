@@ -44,7 +44,7 @@ impl CliBackend {
             // ref rotto (sarebbe un commit radice al posto della storia).
             self.index_source()?;
         }
-        check_commit_state(&status, previous.is_some(), request.amend)?;
+        check_commit_state(&status, previous.is_some(), request)?;
         let branch = self.head_ref_name()?;
 
         let mut backup = None;

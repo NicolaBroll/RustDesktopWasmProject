@@ -13,6 +13,7 @@ mod line_diff;
 mod lines;
 mod memory;
 mod merge;
+mod pick;
 mod pull;
 mod push;
 mod remote;
@@ -52,6 +53,10 @@ pub use merge::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
     OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
     merge_source,
+};
+pub use pick::{
+    PickKind, PickRequest, check_pick_state, check_picking, pick_empty_error, pick_message,
+    pick_parent,
 };
 pub use pull::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
@@ -490,6 +495,27 @@ pub trait GitBackend: Send {
     /// L'operazione in corso con i suoi dati (commit in ingresso, `MERGE_MSG`, base del
     /// rebase), per `repo.operation`. Lettura.
     fn operation_state(&self) -> Result<OperationState, EngineError>;
+
+    // --- Cherry-pick e revert (S31, `impl-docs/git/cherry-pick.md`). Il comando risolve la
+    // rev e il genitore e controlla lo stato ([`check_pick_state`]); il backend ricontrolla.
+
+    /// Applica (cherry-pick) o annulla (revert) il commit `request.commit` sul branch di HEAD
+    /// con un commit nuovo. Prima di scrivere: [`check_pick_state`] sullo stato letto ora, HEAD
+    /// sul branch `request.branch` con valore `request.expected`, nessun file che l'operazione
+    /// porta al posto di un non tracciato o ignorato, nessun file `--assume-unchanged` che
+    /// cambia, e un ref di backup `refs/project/backup/<cherry-pick|revert>-...` sul valore di
+    /// prima (nel risultato; tolto se niente cambia). Risultato vuoto (commit già applicato) →
+    /// [`EngineError::NotAllowed`], niente in corso e il backup tolto. **Un conflitto (o un hook
+    /// che rifiuta il commit) lascia l'operazione in corso**: non è un errore,
+    /// [`MergeOutcome::in_progress`] e i file in [`MergeOutcome::conflicts`].
+    fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError>;
+
+    /// Annulla il cherry-pick o il revert in corso (`git cherry-pick --abort`, `git revert
+    /// --abort`) come [`GitBackend::merge_abort`]: prima salva indice e worktree in un ref
+    /// nuovo `refs/project/backup/<cherry-pick|revert>-abort-...`; se il backup non riesce non
+    /// si annulla niente. Rifiuta ([`check_picking`]) un'altra operazione o una sequenza di più
+    /// commit avviata da terminale. La conferma la chiede il comando.
+    fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError>;
 
     // --- Editor dei conflitti (S30, `impl-docs/git/conflitti.md`).
 

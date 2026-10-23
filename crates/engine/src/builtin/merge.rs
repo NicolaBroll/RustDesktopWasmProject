@@ -54,7 +54,7 @@ struct NoParams {}
 
 /// Il messaggio facoltativo di `merge.start`/`merge.continue`: non vuoto e senza NUL (come
 /// `commit.create`), altrimenti [`EngineError::InvalidParams`] con l'id del comando.
-fn check_message(id: &'static str, message: &Option<String>) -> Result<(), EngineError> {
+pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Result<(), EngineError> {
     let Some(message) = message else {
         return Ok(());
     };
@@ -68,7 +68,7 @@ fn check_message(id: &'static str, message: &Option<String>) -> Result<(), Engin
 
 /// Aggiunge a `out` lo stato e i ref riletti (`null` con `*_error` se non si rileggono:
 /// l'operazione è fatta e non va ripetuta) e lo stato del diario.
-fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
+pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
     let state = journal_state(journal);
     for key in ["can_undo", "can_redo", "next_undo", "next_redo"] {
         out[key] = state[key].clone();
@@ -91,7 +91,7 @@ fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
 
 /// Il nome breve del primo branch locale, branch remoto o tag che punta a `oid` (in
 /// quest'ordine), altrimenti l'id abbreviato: per descrivere un commit in ingresso.
-fn label(oid: &Oid, refs: &[RefInfo]) -> String {
+pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
     for (kind, prefix) in [
         (RefKind::LocalBranch, "refs/heads/"),
         (RefKind::RemoteBranch, "refs/remotes/"),
@@ -284,45 +284,7 @@ pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
     let status = repo.status()?;
     check_merging(ID, &status)?;
     if !confirm {
-        let conflicts = conflicted_paths(&status);
-        let changed: Vec<String> = status
-            .entries
-            .iter()
-            .filter(|e| e.is_staged() || e.is_unstaged())
-            .map(|e| format!("`{}`", e.path))
-            .collect();
-        let mut what = Vec::new();
-        if !conflicts.is_empty() {
-            what.push(format!(
-                "i file in conflitto ({}) tornerebbero come in HEAD, con le risoluzioni fatte \
-                 finora",
-                conflicts
-                    .iter()
-                    .map(|p| format!("`{p}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if !changed.is_empty() {
-            what.push(format!(
-                "le modifiche del merge e quelle fatte dopo, in stage o no, andrebbero perse \
-                 ({})",
-                changed.join(", ")
-            ));
-        }
-        if what.is_empty() {
-            what.push("il merge in corso verrebbe annullato".to_owned());
-        }
-        return Err(EngineError::ConfirmRequired {
-            command: ID,
-            reason: format!(
-                "{}. Prima si salverebbero indice e worktree in \
-                 `refs/project/backup/merge-abort-...` (si rimettono con `git stash apply \
-                 <ref>`); l'annullamento non entra nel diario",
-                what.join("; ")
-            ),
-            expected: None,
-        });
+        return Err(abort_confirm(ID, &status, "merge", "merge"));
     }
     let aborted = repo.merge_abort()?;
     let mut out = json!({
@@ -332,6 +294,55 @@ pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
     });
     finish(&mut out, repo, journal);
     Ok(out)
+}
+
+/// L'errore [`EngineError::ConfirmRequired`] di `merge.abort`, `cherry_pick.abort` e
+/// `revert.abort` senza `"confirm": true`: cosa andrebbe perso (i file in conflitto e quelli
+/// cambiati) e il backup che si salverebbe prima (`refs/project/backup/<backup>-abort-...`).
+/// `what` è il nome dell'operazione (`merge`, `cherry-pick`, `revert`).
+pub(super) fn abort_confirm(
+    id: &'static str,
+    status: &project_domain::Status,
+    what: &str,
+    backup: &str,
+) -> EngineError {
+    let conflicts = conflicted_paths(status);
+    let changed: Vec<String> = status
+        .entries
+        .iter()
+        .filter(|e| e.is_staged() || e.is_unstaged())
+        .map(|e| format!("`{}`", e.path))
+        .collect();
+    let mut lost = Vec::new();
+    if !conflicts.is_empty() {
+        lost.push(format!(
+            "i file in conflitto ({}) tornerebbero come in HEAD, con le risoluzioni fatte finora",
+            conflicts
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !changed.is_empty() {
+        lost.push(format!(
+            "le modifiche del {what} e quelle fatte dopo, in stage o no, andrebbero perse ({})",
+            changed.join(", ")
+        ));
+    }
+    if lost.is_empty() {
+        lost.push(format!("il {what} in corso verrebbe annullato"));
+    }
+    EngineError::ConfirmRequired {
+        command: id,
+        reason: format!(
+            "{}. Prima si salverebbero indice e worktree in \
+             `refs/project/backup/{backup}-abort-...` (si rimettono con `git stash apply \
+             <ref>`); l'annullamento non entra nel diario",
+            lost.join("; ")
+        ),
+        expected: None,
+    }
 }
 
 /// Conclude il merge in corso con il commit di merge (genitori HEAD e `MERGE_HEAD`, `git commit`
@@ -420,7 +431,8 @@ pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
 /// `incoming`: i commit in ingresso (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) con i ref
 /// che ci puntano; `message`: il messaggio che `merge.continue` userebbe (`MERGE_MSG` senza il
 /// blocco dei conflitti); `ready`: niente più file in conflitto; `continue`/`abort`: i comandi
-/// che concludono o annullano l'operazione da qui (per ora solo il merge; `null` altrimenti).
+/// che concludono o annullano l'operazione da qui (merge, cherry-pick e revert; `null` per le
+/// altre e per una sequenza di più commit avviata da terminale).
 pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
     let NoParams {} = parse_params("repo.operation", p)?;
     let repo = s.repo()?;
@@ -450,7 +462,18 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
         })
         .collect();
     let operation = status.operation;
-    let merging = operation == Some(Operation::Merge);
+    // I comandi che concludono o annullano l'operazione da qui: il merge, e cherry-pick e
+    // revert di un commit solo (una sequenza avviata da terminale resta al terminale).
+    let (continue_id, abort_id) = match operation {
+        Some(Operation::Merge) => (Some("merge.continue"), Some("merge.abort")),
+        Some(op) => match crate::PickKind::from_operation(op) {
+            Some(kind) if !state.sequencer => {
+                (Some(kind.continue_command()), Some(kind.abort_command()))
+            }
+            _ => (None, None),
+        },
+        None => (None, None),
+    };
     Ok(json!({
         "operation": to_json(operation),
         "head": to_json(&status.head),
@@ -460,8 +483,8 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
         "onto": state.onto.map(|o| o.to_string()),
         "rebase_branch": state.rebase_branch,
         "ready": operation.is_some() && conflicts.is_empty(),
-        "continue": merging.then_some("merge.continue"),
-        "abort": merging.then_some("merge.abort"),
+        "continue": continue_id,
+        "abort": abort_id,
     }))
 }
 

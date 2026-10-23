@@ -5,6 +5,10 @@ GitKraken: grafo dei commit, diff con stage per hunk e per riga, branch, remoti,
 rebase interattivo. Si costruisce **dentro questo workspace**, trasformando l'esempio "lista di
 voci" passo dopo passo. Gli step sono in [ROADMAP-git.md](ROADMAP-git.md).
 
+**In breve**: invarianti e checklist di sicurezza in [git/regole.md](git/regole.md), da leggere
+sempre; questo documento e i file per funzione si aprono per la parte che si tocca. Esempi CLI di
+ogni comando in [git/cli.md](git/cli.md).
+
 Restano valide le regole generali di [ARCHITETTURA-rust.md](ARCHITETTURA-rust.md) e di
 [AGENTS.md](../AGENTS.md): livelli con dipendenze solo verso il basso, ogni modifica è un comando
 del `Registry`, niente logica nei callback grafici, `cargo xtask ci` verde prima di consegnare.
@@ -512,7 +516,10 @@ su `src/lib.rs` (`apps/project-web/src/demo.rs`): «Stash…», poi «Unisci in 
 
 ## 10. Agenti
 
-Definiti in `.claude/agents/`. Ognuno lavora sul proprio livello e chiude con `cargo xtask ci`.
+Definiti in `.claude/agents/`. Ognuno lavora sul proprio livello, parte da
+[git/regole.md](git/regole.md) e chiude con `cargo xtask ci --quiet`. I ricontrolli di
+`safety-reviewer` dopo le correzioni guardano solo il diff delle correzioni e possono usare un
+modello più leggero (parametro `model` dell'agente).
 
 | Agente | Lavora su | Quando usarlo |
 | --- | --- | --- |

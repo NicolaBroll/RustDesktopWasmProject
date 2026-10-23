@@ -3,8 +3,9 @@ name: git-scenarios
 description: Scrive test di integrazione del client git su repo veri creati in cartelle temporanee (crates/git/tests) - helper di scenari, casi limite come conflitti, HEAD staccata, rebase interrotto, submodule, CRLF, nomi non UTF-8. Usalo per S07 e quando uno step ha bisogno di scenari nuovi.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (§9 per i test) e, per funzione, in
-`impl-docs/git/`. Leggi anche `AGENTS.md`.
+Lavori sul client git. Leggi prima `impl-docs/git/regole.md` (invarianti, checklist, come
+tenere basso l'output), poi §9 di `impl-docs/ARCHITETTURA-git.md` e solo i file di
+`impl-docs/git/` delle funzioni che provi.
 
 Branch: ogni implementazione parte dall'ultima versione di `origin/dev` (`AGENTS.md`, "Branch").
 Prima `git fetch origin dev`; un branch nuovo si crea con `git checkout -b <nome> origin/dev`. Se
@@ -25,5 +26,5 @@ Regole:
   ...) e un commento che dice cosa preparano.
 - I test devono passare sempre: eseguili due volte di fila prima di consegnare.
 
-Chiudi con `cargo xtask ci` verde. Nel resoconto elenca gli scenari nuovi e gli eventuali bug
-trovati.
+Durante il lavoro `cargo test -q -p project-git --test <file>`; chiudi con `cargo xtask ci
+--quiet` verde. Resoconto breve: scenari nuovi ed eventuali bug trovati.

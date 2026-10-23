@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>BinariGit</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22325A"/>
+      <stop offset="1" stop-color="#141C33"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <!-- traversine del binario principale -->
+  <g stroke="#5B6B91" stroke-width="14" stroke-linecap="round">
+    <line x1="146" y1="96" x2="226" y2="96"/>
+    <line x1="146" y1="152" x2="226" y2="152"/>
+    <line x1="146" y1="208" x2="226" y2="208"/>
+    <line x1="146" y1="264" x2="226" y2="264"/>
+    <line x1="146" y1="320" x2="226" y2="320"/>
+    <line x1="146" y1="376" x2="226" y2="376"/>
+    <line x1="146" y1="432" x2="226" y2="432"/>
+  </g>
+  <!-- traversine del ramo -->
+  <g stroke="#5B6B91" stroke-width="14" stroke-linecap="round">
+    <line x1="292" y1="96" x2="372" y2="96"/>
+    <line x1="292" y1="152" x2="372" y2="152"/>
+  </g>
+  <!-- binari: il ramo devia con uno scambio -->
+  <g fill="none" stroke="#E9EEF8" stroke-width="12" stroke-linecap="round">
+    <line x1="166" y1="70" x2="166" y2="458"/>
+    <line x1="206" y1="70" x2="206" y2="458"/>
+  </g>
+  <g fill="none" stroke="#FFB547" stroke-width="12" stroke-linecap="round">
+    <path d="M166 330 C166 262 312 268 312 196 L312 70"/>
+    <path d="M206 330 C206 282 352 288 352 214 L352 70"/>
+  </g>
+  <!-- commit -->
+  <circle cx="186" cy="320" r="34" fill="#141C33" stroke="#E9EEF8" stroke-width="14"/>
+  <circle cx="186" cy="152" r="34" fill="#141C33" stroke="#E9EEF8" stroke-width="14"/>
+  <circle cx="332" cy="124" r="34" fill="#141C33" stroke="#FFB547" stroke-width="14"/>
+</svg>

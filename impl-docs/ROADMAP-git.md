@@ -262,6 +262,15 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test del parser dei marcatori di conflitto; risoluzione completa di un
   conflitto dalla UI; CI verde.
 
+### S30b — Nome e identità visiva
+- [x] **Agente:** nessuno (piccolo, fatto in sessione)
+- **Obiettivo:** l'app si chiama **BinariGit**: nome visibile nella finestra desktop, nel
+  `<title>` web, nella CLI e nel README; icona, logo e banner in `assets/` (SVG sorgenti, PNG
+  generati con `assets/render.sh`); icona della finestra (`viewport.icon`) e favicon web.
+  I nomi tecnici restano: crate e binari `project-*`, ref `refs/project/backup/...`, identità
+  dei backup, id dei comandi.
+- **Fatto quando:** l'app desktop e quella web mostrano nome e icona; CI verde.
+
 ### S31 — Cherry-pick e revert
 - [ ] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `commit.cherry_pick`, `commit.revert` dal menu contestuale del commit, con

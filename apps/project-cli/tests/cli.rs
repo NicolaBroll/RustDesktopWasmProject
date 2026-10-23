@@ -301,6 +301,44 @@ fn run_undo_and_redo_in_one_invocation() {
 }
 
 #[test]
+fn run_discard_needs_confirm_and_undo_restores() {
+    let repo = temp_repo(1);
+    let file = repo.path().join("a.txt");
+    std::fs::write(&file, "da non perdere\n").unwrap();
+    // Senza `confirm`: errore e niente cambia.
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args(["--cmd", r#"worktree.discard={"paths":["a.txt"]}"#])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("\"confirm\": true"), "{stderr}");
+    assert_eq!(std::fs::read(&file).unwrap(), b"da non perdere\n");
+
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run"])
+        .args([
+            "--cmd",
+            r#"worktree.discard={"paths":["a.txt"],"confirm":true}"#,
+        ])
+        .args(["--cmd", "edit.undo"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    assert_eq!(lines[0]["files"][0]["path"], "a.txt");
+    assert!(
+        lines[0]["backup"]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/discard-")
+    );
+    assert_eq!(lines[1]["undone"]["command"], "worktree.discard");
+    assert_eq!(std::fs::read(&file).unwrap(), b"da non perdere\n");
+}
+
+#[test]
 fn run_stage_and_unstage_lines() {
     let repo = temp_repo(3);
     std::fs::write(repo.path().join("a.txt"), "riga 1\nDUE\nriga 3\nquattro\n").unwrap();
@@ -412,7 +450,8 @@ fn commands_lists_the_catalog() {
             "repo.log",
             "repo.open",
             "repo.refs",
-            "repo.status"
+            "repo.status",
+            "worktree.discard"
         ]
     );
     // I comandi che modificano il repo sono segnati.
@@ -430,7 +469,8 @@ fn commands_lists_the_catalog() {
             "index.stage",
             "index.stage_lines",
             "index.unstage",
-            "index.unstage_lines"
+            "index.unstage_lines",
+            "worktree.discard"
         ]
     );
 

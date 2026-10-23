@@ -191,7 +191,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`, `commit.create`, `edit.undo`), quelli che possono far perdere dati o riscrivere commit pubblicati chiedono `\"confirm\": true` (passarlo solo se l'utente lo ha chiesto).",
+            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`, `commit.create`, `edit.undo`), quelli che possono far perdere dati o riscrivere commit pubblicati (es. `worktree.discard`, `amend` di un commit pubblicato) chiedono `\"confirm\": true` (passarlo solo se l'utente lo ha chiesto).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

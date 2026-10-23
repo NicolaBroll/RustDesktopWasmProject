@@ -69,12 +69,32 @@ un errore che dice di non ripetere il commit e nomina il backup. Risultato: `{"c
 "previous", "branch", "backup", "also_on", "status"}` (il commit come in `repo.log`, HEAD prima,
 il branch spostato, il backup o `null`, i ref rimasti sul commit riscritto, il nuovo stato).
 
-`edit.undo {}` annulla l'ultima operazione che ha spostato ref (oggi `commit.create`, anche con
-`amend`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+`worktree.discard {"paths", "confirm"}` scarta le modifiche non in stage dei file `paths` (file o
+cartelle, presi alla lettera): il worktree torna come l'indice, l'indice non si tocca (un file
+`MM` resta con la sua modifica in stage). Senza `"confirm": true` dà un errore che elenca i file
+che si perderebbero, e niente cambia. Prima di scrivere salva il worktree con `git stash create`
+in un ref `refs/project/backup/discard-...` (`git show <ref>:<percorso>` lo recupera; se il
+backup non riesce niente si scarta) e registra lo scarto nel diario: `edit.undo` rimette i file
+identici, solo se nel frattempo non sono cambiati. I file non tracciati non si toccano mai
+(chiesti per nome: errore; il backup non li coprirebbe); rifiutati anche i sottomoduli chiesti per
+nome e, perché `git stash create` non salverebbe il backup, un branch senza commit e un repo con
+file in conflitto o `intent-to-add` (`git add -N`). Rifiutato anche se al posto di una cartella del
+percorso di un file c'è un file o un link (non tracciato o ignorato, che `git restore`
+cancellerebbe). Se i byte di un file non sono quelli che git ricreerebbe (es. CRLF con
+`core.autocrlf=input`) il backup li salva così come sono, e l'undo li rimette identici. Undo e
+redo di uno scarto sono rifiutati anche se HEAD è cambiata. Risultato: `{"files": [{"path", "change",
+"mode", "oid"}], "backup", "stash", "status", "can_undo", "can_redo", "next_undo",
+"next_redo"}`.
+
+`edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`, e
+`worktree.discard`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
 frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
-Indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un commit le sue
-modifiche sono di nuovo in stage. Il commit annullato, se non è più raggiungibile, resta in un
+Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un
+commit le sue modifiche sono di nuovo in stage. L'undo di uno scarto rimette i file del backup
+(`git restore --source=<stash> --worktree`) solo se sono ancora come li ha lasciati lo scarto e
+con la stessa versione in stage; il redo li scarta di nuovo solo se sono ancora come li ha
+lasciati l'undo. Il commit annullato, se non è più raggiungibile, resta in un
 ref `refs/project/backup/undo-...`. Stage e unstage non entrano nel diario. Il diario è in
 memoria e vale per il repo aperto: nella CLI più `--cmd` della stessa invocazione lo
 condividono, invocazioni diverse no (`edit.undo` da solo dice che non c'è niente da annullare).

@@ -1,6 +1,7 @@
 //! [`CliBackend`] e [`CliOpener`]: lettura di un repository eseguendo `git`.
 
 mod commit;
+mod discard;
 mod restore;
 
 use crate::GitVersion;
@@ -12,9 +13,10 @@ use project_domain::{
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, EngineError, GitBackend, LinePatch,
-    LineSelection, LogQuery, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, apply_patch,
-    backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, CommitOutcome, CommitRequest, DiffSpec, DiscardOutcome, DiscardedFile,
+    EngineError, GitBackend, LinePatch, LineSelection, LogQuery, RefRestore, RepoOpener,
+    RestoreOutcome, StagedVersion, WorktreeRestore, apply_patch, backup_message, line_patch,
+    path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1131,6 +1133,21 @@ impl GitBackend for CliBackend {
 
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         self.restore(request)
+    }
+
+    fn discard(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[DiscardedFile],
+    ) -> Result<DiscardOutcome, EngineError> {
+        self.discard_paths(paths, expected)
+    }
+
+    fn restore_worktree(
+        &mut self,
+        request: &WorktreeRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_discarded(request)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

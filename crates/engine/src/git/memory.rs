@@ -1,13 +1,17 @@
 //! Repository finto in memoria: per i test dei comandi e per la versione web.
 
 mod commit;
+mod discard;
 mod restore;
 mod write;
 
+pub use discard::{StashedFile, WorktreeStash};
+
 use super::line_diff;
 use super::{
-    CommitOutcome, CommitRequest, DiffSpec, GitBackend, LineSelection, LogQuery, RefRestore,
-    RepoOpener, RestoreOutcome, StagedVersion,
+    CommitOutcome, CommitRequest, DiffSpec, DiscardOutcome, DiscardedFile, GitBackend,
+    LineSelection, LogQuery, RefRestore, RepoOpener, RestoreOutcome, StagedVersion,
+    WorktreeRestore,
 };
 use crate::EngineError;
 use project_domain::{
@@ -60,6 +64,8 @@ pub struct MemoryBackend {
     backups: Vec<(String, Vec<StagedVersion>)>,
     /// Ref di backup dei commit (riscritti da `amend`, abbandonati da undo/redo): nome e commit.
     commit_backups: Vec<(String, Oid)>,
+    /// Backup del worktree salvati da `worktree.discard`.
+    worktree_backups: Vec<WorktreeStash>,
     /// Nome ed email di chi committa (`user.name`/`user.email`); `None` = non configurata.
     identity: Option<(String, String)>,
 }
@@ -85,6 +91,7 @@ impl MemoryBackend {
             worktree: BTreeMap::new(),
             backups: Vec::new(),
             commit_backups: Vec::new(),
+            worktree_backups: Vec::new(),
             identity: None,
         }
     }
@@ -654,6 +661,22 @@ impl GitBackend for MemoryBackend {
             backups: self.restore(request)?,
             warnings: Vec::new(),
         })
+    }
+
+    fn discard(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[DiscardedFile],
+    ) -> Result<DiscardOutcome, EngineError> {
+        self.discard_paths(paths, expected)
+    }
+
+    fn restore_worktree(
+        &mut self,
+        request: &WorktreeRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_discarded(request)?;
+        Ok(RestoreOutcome::default())
     }
 }
 

@@ -16,6 +16,10 @@
 //!   gestire più istanze dell'app sullo stesso repo e voci scritte da versioni diverse; non
 //!   serve per non perdere dati: i commit annullati restano in ref di backup e ogni
 //!   spostamento è nel reflog di git (`project: undo ...`).
+//! - **`worktree.discard` entra nel diario** anche se non sposta ref: la voce ha il backup del
+//!   worktree ([`JournalEntry::worktree`], il commit di `git stash create`) e `edit.undo` rimette
+//!   i file com'erano ([`GitBackend::restore_worktree`]), solo se nel frattempo non sono
+//!   cambiati; `edit.redo` li scarta di nuovo, solo se sono ancora come li ha lasciati l'undo.
 //! - **Stage e unstage non entrano nel diario**: non spostano ref. Il loro recupero è il backup
 //!   dell'indice (§7). Nemmeno una nuova voce del genere svuota il redo.
 //! - **Undo di un commit = `git reset --soft`.** Si sposta solo il ref: indice e worktree non si
@@ -28,7 +32,8 @@
 
 use crate::git::short;
 use crate::{
-    CommitOutcome, EngineError, GitBackend, HeadState, RefMove, RefRestore, RestoreOutcome,
+    CommitOutcome, DiscardOutcome, EngineError, GitBackend, HeadState, RefMove, RefRestore,
+    RestoreOutcome, WorktreeBackup, WorktreeRestore, discard_description,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
@@ -53,7 +58,7 @@ pub struct HeadChange {
 ///
 /// JSON: `{"id": n, "command": "commit.create", "description": "Commit a0744b4 «...»",
 /// "head": {"before": HeadState, "after": HeadState}, "refs": [{"name", "before", "after"}],
-/// "backup": string | null, "undo_backups": [string]}`.
+/// "backup": string | null, "undo_backups": [string], "worktree": WorktreeBackup | null}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEntry {
     /// Progressivo nella sessione (dal primo repo aperto), per riconoscere la voce.
@@ -71,6 +76,10 @@ pub struct JournalEntry {
     /// sarebbero più raggiungibili.
     #[serde(default)]
     pub undo_backups: Vec<String>,
+    /// Solo per `worktree.discard`: il backup del worktree (commit di `git stash create`) e i
+    /// file scartati. Con questo campo undo e redo rimettono i file, non spostano ref.
+    #[serde(default)]
+    pub worktree: Option<WorktreeBackup>,
 }
 
 impl JournalEntry {
@@ -115,7 +124,70 @@ impl JournalEntry {
             refs,
             backup: outcome.backup.clone(),
             undo_backups: Vec::new(),
+            worktree: None,
         })
+    }
+
+    /// La voce di un `worktree.discard` riuscito, con HEAD com'era (non si sposta) e il backup.
+    pub fn discard(outcome: &DiscardOutcome, head: HeadState) -> Self {
+        Self {
+            id: 0,
+            command: "worktree.discard".to_owned(),
+            description: discard_description(&outcome.files),
+            head: HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs: Vec::new(),
+            backup: Some(outcome.backup.clone()),
+            undo_backups: Vec::new(),
+            worktree: Some(WorktreeBackup {
+                stash: outcome.stash,
+                files: outcome.files.clone(),
+                raw: outcome.raw,
+            }),
+        }
+    }
+
+    /// La richiesta al backend per annullare (`redo == false`) o rifare uno scarto; `None` se
+    /// la voce non è di `worktree.discard`.
+    pub fn worktree_request(&self, redo: bool) -> Option<WorktreeRestore> {
+        let backup = self.worktree.as_ref()?;
+        Some(WorktreeRestore {
+            command: if redo { "edit.redo" } else { "edit.undo" },
+            redo,
+            stash: backup.stash,
+            files: backup.files.clone(),
+            raw: backup.raw,
+        })
+    }
+
+    /// Esegue undo o redo della voce sul backend: i file per uno scarto, i ref altrimenti.
+    ///
+    /// Per uno scarto HEAD deve essere quella registrata (`head.after` per l'undo,
+    /// `head.before` per il redo): i file si confrontano con l'indice, ma l'operazione
+    /// appartiene a quello stato del repo; con HEAD spostata (un checkout, un commit da
+    /// terminale) [`EngineError::UndoConflict`] e niente cambia.
+    fn apply(&self, repo: &mut dyn GitBackend, redo: bool) -> Result<RestoreOutcome, EngineError> {
+        match self.worktree_request(redo) {
+            Some(request) => {
+                let expected = if redo {
+                    &self.head.before
+                } else {
+                    &self.head.after
+                };
+                let now = HeadState::from_head(&repo.head()?);
+                if now != *expected {
+                    return Err(EngineError::UndoConflict {
+                        command: request.command,
+                        refs: vec![format!("HEAD: doveva essere {expected}, ora è {now}")],
+                    });
+                }
+                repo.restore_worktree(&request)
+            }
+            None if redo => repo.restore_refs(&self.redo_request()),
+            None => repo.restore_refs(&self.undo_request()),
+        }
     }
 
     /// La richiesta al backend per annullare la voce: da "dopo" a "prima".
@@ -222,7 +294,8 @@ impl Journal {
     }
 
     /// Annulla l'ultima voce fatta: chiede al backend di riportare i ref ai valori "prima"
-    /// ([`JournalEntry::undo_request`]). Se riesce la voce passa fra quelle annullate, con i
+    /// ([`JournalEntry::undo_request`]) o, per uno scarto, di rimettere i file del backup
+    /// ([`JournalEntry::worktree_request`]). Se riesce la voce passa fra quelle annullate, con i
     /// ref di backup eventualmente creati in `undo_backups`; se no (anche per
     /// [`EngineError::UndoConflict`]) resta dov'è e niente è cambiato. Senza voci,
     /// [`EngineError::NotAllowed`]. Restituisce la voce e l'esito (backup creati ora, avvisi).
@@ -236,7 +309,7 @@ impl Journal {
                     .to_owned(),
             )
         })?;
-        let outcome = repo.restore_refs(&entry.undo_request())?;
+        let outcome = entry.apply(repo, false)?;
         let mut entry = self.done.pop().expect("c'è almeno una voce");
         entry.undo_backups.extend(outcome.backups.iter().cloned());
         self.undone.push(entry.clone());
@@ -252,7 +325,7 @@ impl Journal {
         let entry = self.undone.last().ok_or_else(|| {
             EngineError::NotAllowed("niente da rifare: nessuna operazione annullata".to_owned())
         })?;
-        let outcome = repo.restore_refs(&entry.redo_request())?;
+        let outcome = entry.apply(repo, true)?;
         let mut entry = self.undone.pop().expect("c'è almeno una voce");
         entry.undo_backups.extend(outcome.backups.iter().cloned());
         self.done.push(entry.clone());
@@ -277,6 +350,7 @@ mod tests {
             refs: Vec::new(),
             backup: None,
             undo_backups: Vec::new(),
+            worktree: None,
         }
     }
 
@@ -363,7 +437,8 @@ mod tests {
                 },
                 "refs": [],
                 "backup": null,
-                "undo_backups": []
+                "undo_backups": [],
+                "worktree": null
             })
         );
     }

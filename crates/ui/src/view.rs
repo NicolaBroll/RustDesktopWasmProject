@@ -4,6 +4,7 @@
 use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
 use crate::details::Shown;
 use crate::diff::{DiffSource, DiffTarget};
+use crate::discard::{self, Discard, UndoOp};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::CommitList;
@@ -46,10 +47,12 @@ fn ahead_behind(upstream: &Upstream) -> String {
     }
 }
 
+/// `writing`: c'è una scrittura in corso, Annulla e Ripeti aspettano.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
+    writing: bool,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
@@ -61,6 +64,21 @@ pub(crate) fn top_bar(
         };
         if ui.button("Aggiorna").clicked() {
             actions.push(Action::Refresh);
+        }
+        ui.separator();
+        for op in [UndoOp::Undo, UndoOp::Redo] {
+            let available = op.available(&repo.history);
+            let enabled = available && !writing && !repo.modal_open();
+            let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
+            let hint = op.hint(&repo.history);
+            let button = if available && !enabled {
+                button.on_disabled_hover_text(format!("{hint} (dopo l'operazione in corso)"))
+            } else {
+                button.on_hover_text(&hint).on_disabled_hover_text(&hint)
+            };
+            if button.clicked() {
+                actions.push(Action::Undo(op));
+            }
         }
         ui.separator();
         ui.strong(repo_name(&repo.path)).on_hover_text(&repo.path);
@@ -1083,6 +1101,24 @@ fn stage_section(
             {
                 actions.push(Action::Write(op, paths));
             }
+            if side == Side::Unstaged {
+                let paths = discard::discardable_paths(items);
+                let button = ui
+                    .add_enabled(
+                        enabled && paths.is_some(),
+                        egui::Button::new("Scarta tutto…").small(),
+                    )
+                    .on_hover_text(
+                        "Scarta le modifiche fuori stage di tutti i file tracciati di questa \
+                         lista (chiede conferma, si può annullare). I file non tracciati non si \
+                         toccano",
+                    );
+                if button.clicked()
+                    && let Some(paths) = paths
+                {
+                    actions.push(Action::Discard(paths));
+                }
+            }
         });
     });
     if items.is_empty() {
@@ -1166,10 +1202,65 @@ fn stage_section(
                 if (button.clicked() || response.double_clicked()) && enabled {
                     actions.push(Action::Write(op, vec![item.path.clone()]));
                 } else if response.clicked() {
-                    actions.push(Action::OpenDiff(target));
+                    actions.push(Action::OpenDiff(target.clone()));
                 }
+                response.context_menu(|ui| {
+                    file_menu(ui, op, item, &target, enabled, actions);
+                });
             }
         });
+}
+
+/// Il menu contestuale di un file dell'area di stage: diff, stage/unstage e, fuori stage,
+/// "Scarta modifiche…".
+fn file_menu(
+    ui: &mut Ui,
+    op: StageOp,
+    item: &StageItem,
+    target: &DiffTarget,
+    enabled: bool,
+    actions: &mut Vec<Action>,
+) {
+    if ui.button("Mostra il diff").clicked() {
+        actions.push(Action::OpenDiff(target.clone()));
+        ui.close();
+    }
+    let label = match op {
+        StageOp::Stage if item.is_conflict() => "Segna come risolto…",
+        StageOp::Stage => "Stage",
+        StageOp::Unstage => "Unstage",
+    };
+    let button = ui
+        .add_enabled(enabled, egui::Button::new(label))
+        .on_hover_text(row_action_help(op, item));
+    if button.clicked() {
+        actions.push(Action::Write(op, vec![item.path.clone()]));
+        ui.close();
+    }
+    if op == StageOp::Stage {
+        ui.separator();
+        let reason = discard::not_discardable_reason(item);
+        let button = ui
+            .add_enabled(
+                enabled && reason.is_none(),
+                egui::Button::new(RichText::new("Scarta modifiche…").color(
+                    if reason.is_none() && enabled {
+                        ui.visuals().error_fg_color
+                    } else {
+                        ui.visuals().weak_text_color()
+                    },
+                )),
+            )
+            .on_hover_text(
+                "Riporta il file alla versione in stage (o dell'ultimo commit): chiede conferma, \
+                 si può annullare",
+            )
+            .on_disabled_hover_text(reason.unwrap_or("Aspettare l'operazione in corso"));
+        if button.clicked() {
+            actions.push(Action::Discard(vec![item.path.clone()]));
+            ui.close();
+        }
+    }
 }
 
 fn stage_path_job(
@@ -1240,6 +1331,11 @@ fn stage_tooltip(op: StageOp, item: &StageItem) -> String {
         }
         .to_owned(),
     );
+    if op == StageOp::Stage && discard::discardable(item) {
+        lines.push("Clic destro: altre azioni, anche scartare le modifiche".to_owned());
+    } else {
+        lines.push("Clic destro: altre azioni".to_owned());
+    }
     lines.join("\n")
 }
 
@@ -1303,6 +1399,74 @@ pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: 
     });
     if modal.should_close() {
         actions.push(Action::CancelWrite);
+    }
+}
+
+/// Altezza massima dell'elenco dei file nella conferma dello scarto; oltre si scorre.
+const DISCARD_LIST_HEIGHT: f32 = 160.0;
+
+/// Conferma prima di scartare le modifiche fuori stage: elenca i file e spiega come si
+/// annulla.
+pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &mut Vec<Action>) {
+    let modal = egui::Modal::new(egui::Id::unique("conferma-scarto")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        let n = pending.paths.len();
+        ui.heading("Scartare le modifiche?");
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                "Le modifiche non in stage vengono tolte dal worktree: ogni file torna come è \
+                 nell'indice, cioè alla versione in stage, o a quella dell'ultimo commit se non \
+                 ha niente in stage. Quello che è in stage resta com'è; i file non tracciati non \
+                 vengono toccati.",
+            )
+            .wrap(),
+        );
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(
+                "Prima di scartare si salva un backup (refs/project/backup/discard-…): con \
+                 «Annulla» nella barra in alto i file tornano come sono adesso, finché non \
+                 vengono modificati di nuovo.",
+            )
+            .wrap(),
+        );
+        ui.add_space(6.0);
+        ui.strong(if n == 1 {
+            "File:".to_owned()
+        } else {
+            format!("{n} file:")
+        });
+        let row = ui.text_style_height(&egui::TextStyle::Monospace);
+        egui::ScrollArea::vertical()
+            .id_salt("scarto-file")
+            .max_height(DISCARD_LIST_HEIGHT)
+            .auto_shrink([false, true])
+            .show_rows(ui, row, n, |ui, range| {
+                for path in &pending.paths[range] {
+                    ui.monospace(path.to_string_lossy());
+                }
+            });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let label = if n == 1 {
+                "Scarta le modifiche"
+            } else {
+                "Scarta le modifiche di tutti"
+            };
+            let button =
+                egui::Button::new(RichText::new(label).color(ui.visuals().strong_text_color()))
+                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            if ui.add(button).clicked() {
+                actions.push(Action::ConfirmDiscard);
+            }
+            if ui.button("Non scartare").clicked() {
+                actions.push(Action::CancelDiscard);
+            }
+        });
+    });
+    if modal.should_close() {
+        actions.push(Action::CancelDiscard);
     }
 }
 

@@ -296,23 +296,23 @@ Regole valide per tutti gli step:
   Crate nuovo `project-i18n` (L0, nessuna dipendenza dai crate del progetto): file `.ftl` per
   lingua e per area (`crates/i18n/locales/{it,en}/<area>.ftl`, inclusi con `include_str!`, così
   funziona anche in wasm), `Lang` (`It`, `En`), traduzione con chiave e parametri (plurali di
-  Fluent: "1 file" / "3 file"). Lingua iniziale da quella del sistema (`Platform`: `sys-locale`
-  sul desktop, `navigator.language` sul web), inglese se non è italiana; scelta della lingua nella
-  UI, che cambia subito senza riavvio. Tutti i testi della UI egui passano dalle chiavi.
+  Fluent: "1 file" / "3 file"). Lingua dell'app: **inglese**, non si sceglie; l'italiano resta
+  (già tradotto) per i test della UI. Tutti i testi della UI egui passano dalle chiavi.
   Restano come sono: CLI, MCP, descrizioni dei comandi del catalogo, documenti, testo di git.
 - **Fatto quando:** test che le due lingue hanno le stesse chiavi e che ogni chiave usata nel
-  codice esiste; nessun testo visibile scritto nel codice della UI; screenshot in inglese e in
-  italiano; CI verde.
+  codice esiste; nessun testo visibile scritto nel codice della UI; screenshot in inglese; CI
+  verde.
 - [x] UI migrata: crate `project-i18n` (Fluent, `tr!`), un'area `.ftl` per funzione in
-  `crates/i18n/locales/{it,en}/` (comprese `app` e `common`), lingua dal sistema o salvata, menu
-  nella barra in alto ([i18n.md](i18n.md)). Restano in italiano gli errori del motore (S31c).
+  `crates/i18n/locales/{it,en}/` (comprese `app` e `common`), app sempre in inglese, italiano
+  solo nei test della UI (feature `test-italiano`) ([i18n.md](i18n.md)). Restano in italiano
+  gli errori del motore (S31c).
 
 ### S31c — Lingue (i18n): messaggi di errore del motore
 - [ ] **Agente:** `git-engine`
 - **Obiettivo:** gli errori di `EngineError` mostrati all'utente (`NotAllowed`,
   `ConfirmRequired`, `InvalidParams`... ) portano una chiave e i parametri invece del testo
   già composto; `Display` resta il testo italiano di oggi (CLI, MCP e test non cambiano), la UI
-  li mostra nella lingua scelta. Il testo di git (`stderr`) resta com'è.
+  li mostra in inglese come il resto. Il testo di git (`stderr`) resta com'è.
 - **Fatto quando:** nessun messaggio di errore composto con `format!` nel motore e nei backend;
   test che ogni chiave esiste nelle due lingue; CI verde.
 

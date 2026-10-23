@@ -35,8 +35,7 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
 }
 
 /// `writing`: c'è una scrittura in corso, Annulla, Ripeti, Aggiorna, Fetch, Pull e Push
-/// aspettano. `network`: il fetch, pull o push in corso con il suo ultimo avanzamento. A
-/// destra, sempre, la scelta della lingua.
+/// aspettano. `network`: il fetch, pull o push in corso con il suo ultimo avanzamento.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
@@ -47,31 +46,7 @@ pub(crate) fn top_bar(
 ) {
     ui.horizontal(|ui| {
         repo_bar(ui, repo, can_pick, writing, network, actions);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            lang_picker(ui, actions);
-        });
     });
-}
-
-/// Il menu della lingua: ogni lingua con il suo nome, la scelta vale subito.
-fn lang_picker(ui: &mut Ui, actions: &mut Vec<Action>) {
-    let current = project_i18n::lang();
-    egui::ComboBox::from_id_salt("lingua")
-        .selected_text(current.native_name())
-        .width(90.0)
-        .show_ui(ui, |ui| {
-            for lang in Lang::ALL {
-                if ui
-                    .selectable_label(lang == current, lang.native_name())
-                    .clicked()
-                    && lang != current
-                {
-                    actions.push(Action::SetLang(lang));
-                }
-            }
-        })
-        .response
-        .on_hover_text(tr!("top-bar-lang-hint"));
 }
 
 fn repo_bar(

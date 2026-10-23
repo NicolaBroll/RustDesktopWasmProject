@@ -64,11 +64,6 @@ impl Platform for WebPlatform {
         on_done(None);
     }
 
-    /// `navigator.language`, es. `it-IT`.
-    fn locale(&self) -> Option<String> {
-        web_sys::window()?.navigator().language()
-    }
-
     /// Il browser non ha thread: il job gira subito (il `MemoryBackend` è istantaneo).
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         job();

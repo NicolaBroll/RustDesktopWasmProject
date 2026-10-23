@@ -23,49 +23,24 @@ mod areas {
 }
 
 /// Una lingua della UI.
+/// L'app è in inglese; l'italiano resta per i test della UI, che confrontano i testi italiani
+/// di sempre, e non si sceglie dall'app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Lang {
-    #[default]
     It,
+    #[default]
     En,
 }
 
 impl Lang {
     pub const ALL: [Lang; 2] = [Lang::It, Lang::En];
 
-    /// Dalla lingua del sistema (`it`, `it-IT`, `it_CH.UTF-8`...): italiano se è italiana,
-    /// altrimenti inglese.
-    pub fn from_locale(locale: &str) -> Lang {
-        let lang = locale
-            .split(['-', '_', '.', '@'])
-            .next()
-            .unwrap_or_default();
-        if lang.eq_ignore_ascii_case("it") {
-            Lang::It
-        } else {
-            Lang::En
-        }
-    }
-
-    /// Il codice ISO 639-1: `it`, `en` (per salvare la scelta).
+    /// Il codice ISO 639-1: `it`, `en`.
     pub fn code(self) -> &'static str {
         match self {
             Lang::It => "it",
             Lang::En => "en",
         }
-    }
-
-    /// Il nome della lingua nella lingua stessa, per il selettore.
-    pub fn native_name(self) -> &'static str {
-        match self {
-            Lang::It => "Italiano",
-            Lang::En => "English",
-        }
-    }
-
-    /// Dal codice di [`Lang::code`].
-    pub fn from_code(code: &str) -> Option<Lang> {
-        Lang::ALL.into_iter().find(|l| l.code() == code)
     }
 
     fn index(self) -> usize {
@@ -186,8 +161,13 @@ impl I18n {
     }
 }
 
-/// La lingua attiva, come indice di [`Lang`]. All'avvio l'italiano.
-static CURRENT: AtomicU8 = AtomicU8::new(0);
+/// La lingua attiva, come indice di [`Lang`]. All'avvio l'inglese (l'italiano con la feature
+/// `test-italiano`, solo per i test della UI).
+static CURRENT: AtomicU8 = AtomicU8::new(if cfg!(feature = "test-italiano") {
+    0
+} else {
+    1
+});
 
 /// Cambia la lingua di tutta l'app, subito.
 pub fn set_lang(lang: Lang) {

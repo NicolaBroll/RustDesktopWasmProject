@@ -21,7 +21,7 @@ use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
 use project_engine::Progress;
-use project_i18n::{Lang, tr};
+use project_i18n::tr;
 
 mod branches;
 mod commits;

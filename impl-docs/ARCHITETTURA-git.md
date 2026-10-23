@@ -266,6 +266,7 @@ sua funzione (o a un file nuovo in `impl-docs/git/`, elencato qui).
 | `remote.list`, `remote.add`, `remote.remove` | [git/remoti.md](git/remoti.md) |
 | `stash.list`, `stash.push`, `stash.apply` / `stash.pop`, `stash.drop` | [git/stash.md](git/stash.md) |
 | `merge.start`, `merge.continue`, `merge.abort`, `repo.operation` | [git/merge.md](git/merge.md) |
+| `conflict.show`, `conflict.resolve` | [git/conflitti.md](git/conflitti.md) |
 | `edit.undo` / `edit.redo`, `edit.history` | qui sotto e §7 |
 
 | Id | Parametri | Note |

@@ -26,6 +26,10 @@ pub use git::{
     split_message, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
+    ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
+    check_conflict, check_digest, marker_size, worktree_digest,
+};
+pub use git::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,

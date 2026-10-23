@@ -9,8 +9,8 @@ use egui::{RichText, Ui};
 use project_domain::{Operation, RepoPath};
 
 /// Il riquadro sotto la barra quando il repo è in merge, rebase, cherry-pick, revert, bisect o
-/// `git am`: cosa sta entrando, i file in conflitto (un clic apre il loro diff nell'area di
-/// stage) e, se l'operazione si conclude da qui, "Continua" (attivo solo senza conflitti) e
+/// `git am`: cosa sta entrando, i file in conflitto (un clic apre l'editor dei
+/// conflitti) e, se l'operazione si conclude da qui, "Continua" (attivo solo senza conflitti) e
 /// "Annulla" (chiede conferma). `operation`: quella dello stato, sempre aggiornata; i dettagli
 /// arrivano da `repo.operation`. `can_write`: nessuna scrittura né dialogo in corso.
 pub(crate) fn banner(
@@ -140,7 +140,7 @@ fn buttons(
     }
 }
 
-/// La riga dei conflitti: i primi file (un clic apre il diff nell'area di stage), quanti altri
+/// La riga dei conflitti: i primi file (un clic apre l'editor dei conflitti), quanti altri
 /// ce ne sono, oppure che si può concludere.
 fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &mut Vec<Action>) {
     let n = info.conflicts.len();
@@ -158,11 +158,7 @@ fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &
             1 => "1 file in conflitto:".to_owned(),
             n => format!("{n} file in conflitto:"),
         });
-        let open = repo
-            .diff
-            .target()
-            .filter(|_| repo.worktree_selected)
-            .map(|t| &t.path);
+        let open = repo.conflict.editor().map(|e| &e.path);
         for path in info.conflicts.iter().take(merge::BANNER_FILES) {
             file_link(ui, path, open == Some(path), actions);
         }
@@ -176,7 +172,7 @@ fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &
                 actions.push(Action::SelectWorktree);
             }
         }
-        ui.weak("— risolverli e segnarli come risolti nell'area delle modifiche");
+        ui.weak("— un clic apre l'editor per risolverli");
     });
 }
 
@@ -184,7 +180,7 @@ fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>
     let text = RichText::new(path.to_string()).monospace();
     let response = ui
         .selectable_label(open, text)
-        .on_hover_text("Mostra il diff del file nell'area di stage");
+        .on_hover_text("Apre l'editor dei conflitti del file");
     if response.clicked() {
         actions.push(Action::OpenConflict(path.clone()));
     }

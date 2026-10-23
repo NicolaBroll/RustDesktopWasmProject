@@ -2,6 +2,7 @@
 
 mod branch;
 mod commit;
+mod conflict;
 mod discard;
 mod merge;
 mod remote;
@@ -19,13 +20,14 @@ use project_domain::{
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, EngineError, FetchOutcome, FetchRequest, GitBackend, HeadState,
-    JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
-    OperationState, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore,
-    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
-    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore, apply_patch,
-    backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution,
+    ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
+    FetchOutcome, FetchRequest, GitBackend, HeadState, JobContext, LinePatch, LineSelection,
+    LogQuery, MergeAborted, MergeOutcome, MergeRequest, OperationState, PullOutcome, PullRequest,
+    PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -495,6 +497,14 @@ impl CliBackend {
         operation: &str,
         versions: &[StagedVersion],
     ) -> Result<String, EngineError> {
+        let tree = self.backup_tree(versions)?;
+        let message = backup_message(operation, versions);
+        self.save_backup_commit(operation, &tree, &message)
+    }
+
+    /// L'albero che contiene solo `versions` (modo e id ai loro percorsi), costruito in un
+    /// indice temporaneo: l'indice vero non si tocca (funziona anche con conflitti).
+    pub(super) fn backup_tree(&self, versions: &[StagedVersion]) -> Result<String, EngineError> {
         let index = TempIndex::new(&self.git_dir);
         let index_env = [("GIT_INDEX_FILE", index.0.as_os_str())];
         let mut info = Vec::new();
@@ -517,15 +527,22 @@ impl CliBackend {
         self.run_input(&update, &info, &index_env)?;
         let write = [&plain[..], &["write-tree"]].concat();
         let tree = self.run_input(&write, b"", &index_env)?;
-        let tree = String::from_utf8_lossy(tree.trim_ascii_end()).into_owned();
+        Ok(String::from_utf8_lossy(tree.trim_ascii_end()).into_owned())
+    }
 
-        let message = backup_message(operation, versions);
+    /// Prosegue [`Self::save_backup`]: crea il commit e il ref.
+    fn save_backup_commit(
+        &self,
+        operation: &str,
+        tree: &str,
+        message: &str,
+    ) -> Result<String, EngineError> {
         let head = self.resolve("HEAD")?.map(|h| h.to_string());
         let mut args = vec!["commit-tree", "--no-gpg-sign"];
         if let Some(head) = &head {
             args.extend(["-p", head]);
         }
-        args.extend(["-F", "-", &tree]);
+        args.extend(["-F", "-", tree]);
         let identity: Vec<(&str, &OsStr)> = BACKUP_IDENTITY
             .iter()
             .map(|(k, v)| (*k, OsStr::new(v)))
@@ -1306,6 +1323,17 @@ impl GitBackend for CliBackend {
 
     fn merge_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.abort_merge()
+    }
+
+    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
+        self.conflict_files(path)
+    }
+
+    fn resolve_conflict(
+        &mut self,
+        request: &ConflictResolution,
+    ) -> Result<ConflictResolved, EngineError> {
+        self.resolve_file(request)
     }
 
     fn operation_state(&self) -> Result<OperationState, EngineError> {

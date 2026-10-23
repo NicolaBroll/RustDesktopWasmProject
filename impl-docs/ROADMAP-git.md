@@ -256,7 +256,7 @@ Regole valide per tutti gli step:
   ([git/sync.md](git/sync.md)).
 
 ### S30 — Editor dei conflitti
-- [ ] **Agente:** `egui-ui`, con `git-domain` per il parser dei marcatori
+- [x] **Agente:** `egui-ui`, con `git-domain` per il parser dei marcatori
 - **Obiettivo:** vista a tre parti (base, nostra, loro) e risultato modificabile; scelta per
   blocco; segna come risolto con `index.stage`.
 - **Fatto quando:** test del parser dei marcatori di conflitto; risoluzione completa di un

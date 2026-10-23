@@ -7,13 +7,14 @@
 pub mod git;
 
 pub use git::{
-    APPLY_ARGS, ByteText, Change, ChangedFile, Commit, CommitDetails, Conflict, DIFF_ARGS,
-    DIFF_TREE_ARGS, Diff, EntryKind, FileDiff, GraphLayout, GraphRow, GraphSegment, Head, Hunk,
-    LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Line, LineKind, LineRef, NO_NEWLINE_MARKER, Oid, Operation,
-    PatchDirection, REFS_ARGS, REFS_FIELDS, REFS_FORMAT, RefInfo, RefKind, RepoPath, STATUS_ARGS,
-    Signature, Status, StatusEntry, SubmoduleStatus, TrackedInfo, UnmergedInfo, Upstream,
-    build_patch, layout_graph, layout_graph_nodes, parse_diff, parse_diff_tree, parse_log,
-    parse_refs, parse_status,
+    APPLY_ARGS, ByteText, Change, ChangedFile, Choice, Commit, CommitDetails, Conflict,
+    ConflictBlock, ConflictText, DIFF_ARGS, DIFF_TREE_ARGS, Diff, EntryKind, FileDiff, GraphLayout,
+    GraphRow, GraphSegment, Head, Hunk, LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Line, LineKind, LineRef,
+    NO_NEWLINE_MARKER, Oid, Operation, PatchDirection, REFS_ARGS, REFS_FIELDS, REFS_FORMAT,
+    RefInfo, RefKind, RepoPath, STATUS_ARGS, Segment, Signature, Status, StatusEntry,
+    SubmoduleStatus, TrackedInfo, UnmergedInfo, Upstream, build_patch, layout_graph,
+    layout_graph_nodes, parse_conflicts, parse_diff, parse_diff_tree, parse_log, parse_refs,
+    parse_status, resolve_all, resolve_block,
 };
 
 /// Errori di dominio.
@@ -44,4 +45,8 @@ pub enum DomainError {
         path: String,
         reason: String,
     },
+    /// I marcatori di conflitto di un file non formano blocchi validi (blocco non chiuso,
+    /// marcatori fuori ordine), o una risoluzione non si applica al blocco.
+    #[error("conflitto non valido: {reason}")]
+    InvalidConflict { reason: String },
 }

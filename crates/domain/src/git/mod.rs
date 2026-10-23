@@ -3,8 +3,10 @@
 //! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
 //! (il log, [`parse_log`], lo stato, [`parse_status`], i ref, [`parse_refs`], i file cambiati
 //! da un commit, [`parse_diff_tree`], e il diff, [`parse_diff`]); [`build_patch`] costruisce le
-//! patch per lo stage di singole righe.
+//! patch per lo stage di singole righe; [`parse_conflicts`] legge i marcatori di conflitto di un
+//! file e [`resolve_block`]/[`resolve_all`] li risolvono.
 
+mod conflict;
 mod diff;
 mod diff_tree;
 mod graph;
@@ -17,6 +19,8 @@ mod refs;
 mod status;
 mod text;
 
+#[cfg(test)]
+mod conflict_tests;
 #[cfg(test)]
 mod diff_tests;
 #[cfg(test)]
@@ -34,6 +38,9 @@ mod status_tests;
 #[cfg(test)]
 mod tests;
 
+pub use conflict::{
+    Choice, ConflictBlock, ConflictText, Segment, parse_conflicts, resolve_all, resolve_block,
+};
 pub use diff::{DIFF_ARGS, Diff, FileDiff, Hunk, Line, LineKind, NO_NEWLINE_MARKER, parse_diff};
 pub use diff_tree::{ChangedFile, CommitDetails, DIFF_TREE_ARGS, parse_diff_tree};
 pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};

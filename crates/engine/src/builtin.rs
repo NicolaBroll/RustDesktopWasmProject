@@ -1,6 +1,7 @@
 //! Catalogo dei comandi predefiniti.
 
 mod branch;
+mod conflict;
 mod merge;
 mod pull;
 mod push;
@@ -218,6 +219,18 @@ impl Registry {
             r#"{"confirm": true}"#,
             merge::merge_abort,
         );
+        add(
+            "conflict.show",
+            "Versioni di un file in conflitto (base, nostra, loro, worktree)",
+            r#"{"path": percorso}"#,
+            conflict::conflict_show,
+        );
+        add(
+            "conflict.resolve",
+            "Risolvi un file in conflitto e mettilo in stage",
+            r#"{"path": percorso, "digest": string (da conflict.show), "content"?: string (il testo risolto), "delete"?: bool (cancella il file; al posto di content)}"#,
+            conflict::conflict_resolve,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -237,6 +250,7 @@ const WRITES: &[&str] = &[
     "branch.delete",
     "branch.rename",
     "commit.create",
+    "conflict.resolve",
     "edit.redo",
     "edit.undo",
     "index.stage",
@@ -719,6 +733,8 @@ mod tests {
                 "branch.rename",
                 "commit.create",
                 "commit.show",
+                "conflict.resolve",
+                "conflict.show",
                 "diff.commit",
                 "diff.index",
                 "diff.worktree",
@@ -762,6 +778,7 @@ mod tests {
                 "branch.delete",
                 "branch.rename",
                 "commit.create",
+                "conflict.resolve",
                 "edit.redo",
                 "edit.undo",
                 "index.stage",

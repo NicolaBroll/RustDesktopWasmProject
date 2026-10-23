@@ -244,6 +244,15 @@ dell'operazione in corso: `{"operation", "head", "conflicts", "incoming": [{"id"
 "summary", "refs"}], "message", "onto", "rebase_branch", "ready", "continue", "abort"}`
 (`continue`/`abort` sono i comandi da usare, oggi solo per il merge).
 
+`conflict.show {"path"}` (sola lettura) dà le versioni di un file in conflitto: `{"path", "kind",
+"base", "ours", "theirs", "worktree", "marker_size", "digest"}`, ogni versione `{"text", "binary",
+"size"}` o `null` se manca (`text` `null` e `binary` per byte non UTF-8 o con NUL); un file non in
+conflitto, un sottomodulo, un link o una cartella sono rifiutati. `conflict.resolve {"path",
+"digest", "content"? | "delete"?: true}` scrive `content` nel worktree (o cancella il file) e lo
+mette in stage come `index.stage`; rifiutato con `StaleDiff` se il file non è più quello del
+`digest` letto. Prima salva i byte del worktree in `refs/project/backup/conflict-...` (`git show
+<ref>:<percorso>`). Risultato: `{"status", "backup", "index_backup"}`. Non entra nel diario.
+
 `edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
 `branch.*`, `worktree.discard`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
 `stash.drop` e il merge concluso, `merge.start` e `merge.continue`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo

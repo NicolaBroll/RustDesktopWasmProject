@@ -1,5 +1,5 @@
 //! Pull (`remote.pull`, S26): tipi e controlli comuni ai backend
-//! (`impl-docs/ARCHITETTURA-git.md` §4, §6 e §7).
+//! (`impl-docs/git/sync.md`).
 //!
 //! Il pull è guidato dal motore in due tempi: prima il fetch del solo branch dell'upstream
 //! ([`GitBackend::fetch`](super::GitBackend::fetch), lento e annullabile), poi l'integrazione

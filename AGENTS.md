@@ -43,15 +43,20 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
 
 ## Branch
 
-- Si lavora sempre su `dev`, non su `master`: ogni nuovo branch parte dall'ultimo `origin/dev`
-  e le pull request vanno verso `dev`.
-- Prima di iniziare uno step, `git fetch origin dev` e controllare lo stato della roadmap su
-  `origin/dev`.
+- Si lavora sempre su `dev`, non su `master`: le pull request vanno verso `dev`.
+- **Ogni implementazione parte dall'ultima versione di `origin/dev`**: prima `git fetch origin
+  dev`, poi il branch nuovo con `git checkout -b <nome> origin/dev` (mai da `master`, da un
+  `dev` locale non aggiornato o da un altro branch di step). Chi continua su un branch già
+  creato controlla che contenga l'ultimo `origin/dev` (`git merge-base --is-ancestor origin/dev
+  HEAD`); se no si ferma e lo dice.
+- Prima di iniziare uno step, controllare lo stato della roadmap su `origin/dev`.
 
 ## Client git (in sviluppo)
 
 Il progetto sta diventando un client git grafico: architettura in
-[impl-docs/ARCHITETTURA-git.md](impl-docs/ARCHITETTURA-git.md), step in
+[impl-docs/ARCHITETTURA-git.md](impl-docs/ARCHITETTURA-git.md) (regole comuni) e in
+[impl-docs/git/](impl-docs/git/) (un file per funzione: contratto dei comandi, `CliBackend`, undo
+e backup; un comando nuovo va nel file della sua funzione), step in
 [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md). Ogni step indica l'agente da usare
 (`.claude/agents/`): `git-domain`, `git-engine`, `egui-ui`, `git-scenarios`; gli step che
 scrivono nel repo dell'utente passano anche da `safety-reviewer`.

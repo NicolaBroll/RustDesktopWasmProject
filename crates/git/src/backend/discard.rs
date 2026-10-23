@@ -1,5 +1,5 @@
-//! `worktree.discard` e il suo undo/redo sul [`CliBackend`] (§7 di
-//! `impl-docs/ARCHITETTURA-git.md`, che descrive passi e garanzie).
+//! `worktree.discard` e il suo undo/redo sul [`CliBackend`] (passi e garanzie
+//! in `impl-docs/git/discard.md`).
 //!
 //! Scarto, in quest'ordine, e niente si scrive nel worktree se un passo fallisce:
 //!

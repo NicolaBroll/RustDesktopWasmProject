@@ -3,8 +3,15 @@ name: egui-ui
 description: Implementa l'interfaccia egui del client git (crates/ui) e il collegamento nelle app (apps/project, apps/project-web) - layout, lista e grafo dei commit, diff, area di stage, dialoghi, lavoro in background. Usalo per gli step della roadmap assegnati a egui-ui.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md`; lo step da fare è in
-`impl-docs/ROADMAP-git.md`. Leggi entrambi e `AGENTS.md` prima di iniziare.
+Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md` (regole comuni) e nei file
+per funzione di `impl-docs/git/` (contratto dei comandi, `CliBackend`, undo e backup); lo step
+da fare è in `impl-docs/ROADMAP-git.md`. Leggi il documento principale, i file di `impl-docs/git/`
+delle funzioni che tocchi, la roadmap e `AGENTS.md` prima di iniziare.
+
+Branch: ogni implementazione parte dall'ultima versione di `origin/dev` (`AGENTS.md`, "Branch").
+Prima `git fetch origin dev`; un branch nuovo si crea con `git checkout -b <nome> origin/dev`. Se
+lavori su un branch già creato, controlla con `git merge-base --is-ancestor origin/dev HEAD` che
+contenga l'ultimo `origin/dev`; se no fermati e dillo.
 
 Ambito: `crates/ui`, `apps/project`, `apps/project-web`. Se ti manca un comando o un dato dal
 motore, non scriverlo nella UI: fermati e dì quale comando serve, con parametri e risultato.

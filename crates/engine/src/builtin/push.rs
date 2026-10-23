@@ -1,5 +1,4 @@
-//! `remote.push` (S26): pubblica un branch locale sul remoto (`impl-docs/ARCHITETTURA-git.md`
-//! §4–§7).
+//! `remote.push` (S26): pubblica un branch locale sul remoto (`impl-docs/git/sync.md`).
 
 use super::remote::{changes, unexpected};
 use super::{Out, to_json};

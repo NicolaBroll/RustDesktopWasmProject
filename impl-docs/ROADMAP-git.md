@@ -1,6 +1,6 @@
 # Client git: roadmap a step
 
-Architettura in [ARCHITETTURA-git.md](ARCHITETTURA-git.md). Ogni step è piccolo, si chiude con
+Architettura in [ARCHITETTURA-git.md](ARCHITETTURA-git.md) e, per funzione, in [git/](git/). Ogni step è piccolo, si chiude con
 `cargo xtask ci` verde e lascia il progetto funzionante. Il campo **Obiettivo** si può usare così
 com'è come obiettivo di una sessione; **Fatto quando** dice come verificarlo. I rimandi `§` sono alle sezioni dell'architettura.
 

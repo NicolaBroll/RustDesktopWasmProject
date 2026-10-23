@@ -1,6 +1,6 @@
 //! Gestione dei remoti (`remote.list`, `remote.add`, `remote.remove`, S27): tipi e controlli
 //! comuni ai backend, e l'eliminazione/ripristino di un remoto usati dai comandi e dal diario
-//! (`impl-docs/ARCHITETTURA-git.md` §4 e §7).
+//! (`impl-docs/git/remoti.md`).
 //!
 //! Un remoto è fatto di tre parti, che [`RemoteSnapshot`] fotografa:
 //!

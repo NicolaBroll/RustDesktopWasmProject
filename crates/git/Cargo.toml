@@ -10,6 +10,11 @@ publish.workspace = true
 project-domain.workspace = true
 project-engine.workspace = true
 
+# `setsid` e i segnali per i comandi lenti (fetch): niente terminale di controllo, annullamento
+# con SIGTERM al gruppo di processi.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true

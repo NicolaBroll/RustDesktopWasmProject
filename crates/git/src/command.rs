@@ -3,9 +3,11 @@
 
 use project_engine::EngineError;
 use std::ffi::{OsStr, OsString};
-use std::io::Write as _;
+use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 /// Variabili che dicono a git quale repo usare: ereditate (es. da un hook git che avvia l'app)
 /// prevarrebbero su `-C` e farebbero leggere un altro repo. Si tolgono sempre.
@@ -201,6 +203,197 @@ impl Git {
     }
 }
 
+/// Un pezzo dello stderr di un comando lento: il testo fino a un `\r` o un `\n`, e se finiva
+/// con `\n` (riga finita) o no (riga di avanzamento che git riscrive al prossimo `\r`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Segment {
+    pub(crate) text: String,
+    pub(crate) newline: bool,
+}
+
+/// Come è finito un comando lento ([`Git::run_streaming`]).
+#[derive(Debug)]
+pub(crate) struct Streamed {
+    pub(crate) status: ExitStatus,
+    /// Vero se il processo è stato fermato perché annullato.
+    pub(crate) cancelled: bool,
+}
+
+/// Dopo l'uscita di git, quanto aspettare che stderr si chiuda: un processo figlio rimasto in
+/// background (es. un master SSH con `ControlPersist`) può tenerlo aperto per minuti.
+const PIPE_GRACE: Duration = Duration::from_secs(1);
+/// Dopo SIGTERM, quanto aspettare prima di SIGKILL.
+const TERM_GRACE: Duration = Duration::from_secs(3);
+/// Ogni quanto controllare annullamento e uscita mentre non arriva output.
+const POLL: Duration = Duration::from_millis(50);
+
+impl Git {
+    /// Esegue un comando lento (`git fetch --progress`) leggendo stderr mentre gira: ogni
+    /// pezzo separato da `\r` o `\n` va a `on_segment`, sul thread di chi chiama. stdin è
+    /// chiuso (`/dev/null`), `GIT_TERMINAL_PROMPT=0` e, su Unix, il processo parte in una
+    /// sessione nuova (`setsid`) **senza terminale di controllo**: né git né ssh né un
+    /// credential helper possono aprire `/dev/tty` per chiedere qualcosa, quindi il comando
+    /// non resta mai ad aspettare input (le richieste grafiche, `SSH_ASKPASS`/`GIT_ASKPASS`,
+    /// restano possibili). stdout si scarta.
+    ///
+    /// Se `cancelled()` diventa vero il comando si ferma: SIGTERM al gruppo di processi (git,
+    /// ssh, `git-remote-http`, `index-pack`: git toglie i propri file `.lock` quando lo
+    /// riceve), dopo [`TERM_GRACE`] SIGKILL; su altri sistemi `kill`.
+    pub(crate) fn run_streaming(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        mut on_segment: impl FnMut(Segment),
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Streamed, EngineError> {
+        let not_found = |e: std::io::Error| {
+            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+        };
+        let mut cmd = self.command(Some(dir), args, &[]);
+        cmd.stdout(Stdio::null());
+        detach_from_terminal(&mut cmd);
+        let mut child = cmd.spawn().map_err(not_found)?;
+        let stderr = child
+            .stderr
+            .take()
+            .expect("stderr è stato chiesto con `Stdio::piped`");
+        let (sender, receiver) = mpsc::channel();
+        // Il thread finisce quando stderr si chiude; se un processo rimasto in background lo
+        // tiene aperto, resta bloccato senza che il comando lo aspetti.
+        std::thread::spawn(move || split_segments(stderr, |segment| sender.send(segment).is_ok()));
+
+        let mut exited: Option<(ExitStatus, Instant)> = None;
+        let mut terminated: Option<Instant> = None;
+        let mut killed = false;
+        loop {
+            match receiver.recv_timeout(POLL) {
+                Ok(segment) => on_segment(segment),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            if terminated.is_none() && exited.is_none() && cancelled() {
+                terminate(&mut child);
+                terminated = Some(Instant::now());
+            }
+            if let Some(since) = terminated
+                && !killed
+                && exited.is_none()
+                && since.elapsed() > TERM_GRACE
+            {
+                kill(&mut child);
+                killed = true;
+            }
+            if exited.is_none()
+                && let Some(status) = child.try_wait().map_err(not_found)?
+            {
+                exited = Some((status, Instant::now()));
+            }
+            if let Some((_, at)) = exited
+                && at.elapsed() > PIPE_GRACE
+            {
+                break;
+            }
+        }
+        let status = match exited {
+            Some((status, _)) => status,
+            None => child.wait().map_err(not_found)?,
+        };
+        Ok(Streamed {
+            status,
+            cancelled: terminated.is_some(),
+        })
+    }
+}
+
+/// Legge `input` fino alla fine e lo divide in pezzi a ogni `\r` o `\n` (i pezzi vuoti si
+/// saltano); `emit` restituisce `false` per smettere.
+pub(crate) fn split_segments(mut input: impl Read, mut emit: impl FnMut(Segment) -> bool) {
+    let mut pending = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = match input.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        for &b in &buf[..n] {
+            if b == b'\r' || b == b'\n' {
+                if !pending.is_empty() {
+                    let text = String::from_utf8_lossy(&pending).into_owned();
+                    pending.clear();
+                    if !emit(Segment {
+                        text,
+                        newline: b == b'\n',
+                    }) {
+                        return;
+                    }
+                }
+            } else {
+                pending.push(b);
+            }
+        }
+    }
+    if !pending.is_empty() {
+        emit(Segment {
+            text: String::from_utf8_lossy(&pending).into_owned(),
+            newline: true,
+        });
+    }
+}
+
+/// Su Unix il processo parte in una sessione nuova, senza terminale di controllo (`setsid`):
+/// non può aprire `/dev/tty`, ed è capo del suo gruppo di processi, che [`terminate`] ferma
+/// tutto insieme.
+#[cfg(unix)]
+fn detach_from_terminal(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt as _;
+    // SAFETY: fra `fork` ed `exec` si chiama solo `setsid`, che è async-signal-safe e non
+    // alloca.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn detach_from_terminal(_cmd: &mut Command) {}
+
+/// SIGTERM al gruppo di processi di `child` (git e i suoi figli: ssh, helper, `index-pack`).
+#[cfg(unix)]
+fn terminate(child: &mut Child) {
+    signal_group(child, libc::SIGTERM);
+}
+
+/// SIGKILL al gruppo di processi di `child`.
+#[cfg(unix)]
+fn kill(child: &mut Child) {
+    signal_group(child, libc::SIGKILL);
+}
+
+#[cfg(unix)]
+fn signal_group(child: &mut Child, signal: libc::c_int) {
+    if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+        // SAFETY: `kill` non tocca la memoria; con `setsid` il gruppo ha l'id del processo.
+        // Se il gruppo non c'è più l'errore si ignora.
+        unsafe {
+            libc::kill(-pid, signal);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate(child: &mut Child) {
+    let _ = child.kill();
+}
+
+#[cfg(not(unix))]
+fn kill(child: &mut Child) {
+    let _ = child.kill();
+}
+
 /// [`EngineError::Git`] per un comando non riuscito, con il sottocomando e stderr; se git non ha
 /// potuto prendere il lock dell'indice, [`EngineError::IndexLocked`].
 pub(crate) fn failure(args: &[&str], output: &Output) -> EngineError {
@@ -370,6 +563,46 @@ mod tests {
         // `printf 'ciao\n' | git hash-object --stdin`
         assert!(out.status.success());
         assert_eq!(out.stdout, b"887ae9333d92a1d72400c210546e28baa1050e44\n");
+    }
+
+    #[test]
+    fn stderr_is_split_at_carriage_returns_and_newlines() {
+        let input: &[u8] = b"Receiving objects:  50% (1/2)\rReceiving objects: 100% (2/2), done.\n\
+            From /r\n\r\nultima";
+        let mut seen = Vec::new();
+        split_segments(input, |s| {
+            seen.push((s.text, s.newline));
+            true
+        });
+        assert_eq!(
+            seen,
+            [
+                ("Receiving objects:  50% (1/2)".to_owned(), false),
+                ("Receiving objects: 100% (2/2), done.".to_owned(), true),
+                ("From /r".to_owned(), true),
+                ("ultima".to_owned(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn streaming_reads_stderr() {
+        let git = Git::new("git");
+        let mut lines = Vec::new();
+        let out = git
+            .run_streaming(
+                Path::new("."),
+                &["hash-object", "--stdin", "--no-such-option"],
+                |s| lines.push(s.text),
+                &|| false,
+            )
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(!out.cancelled);
+        assert!(
+            lines.iter().any(|l| l.contains("no-such-option")),
+            "{lines:?}"
+        );
     }
 
     #[test]

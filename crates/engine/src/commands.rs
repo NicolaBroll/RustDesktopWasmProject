@@ -1,4 +1,4 @@
-use crate::{EngineError, Session};
+use crate::{EngineError, JobContext, Session};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -45,12 +45,27 @@ impl Registry {
         self.map.get(id).map(|(spec, _)| spec)
     }
 
-    /// Esegue un comando. `null` come parametri equivale a `{}`.
+    /// Esegue un comando. `null` come parametri equivale a `{}`. Il comando riceve un
+    /// [`JobContext`] vuoto: nessun avanzamento, mai annullato (vedi [`Registry::run_with`]).
     pub fn run(
         &self,
         id: &str,
         session: &mut Session,
         params: Value,
+    ) -> Result<Value, EngineError> {
+        self.run_with(id, session, params, JobContext::new())
+    }
+
+    /// Come [`Registry::run`], con `job` per l'avanzamento e l'annullamento (§6): il comando
+    /// lo trova in [`Session::job`] per tutta la sua durata. I comandi lenti (`remote.fetch`)
+    /// mandano l'avanzamento a `job` e si fermano se è annullato; gli altri lo ignorano. Dopo
+    /// il comando la sessione torna a un contesto vuoto.
+    pub fn run_with(
+        &self,
+        id: &str,
+        session: &mut Session,
+        params: Value,
+        job: JobContext,
     ) -> Result<Value, EngineError> {
         let (_, handler) = self
             .map
@@ -61,7 +76,10 @@ impl Registry {
         } else {
             params
         };
-        handler(session, params)
+        session.set_job(job);
+        let result = handler(session, params);
+        session.set_job(JobContext::new());
+        result
     }
 }
 

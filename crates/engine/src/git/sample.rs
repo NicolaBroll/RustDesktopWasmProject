@@ -330,7 +330,9 @@ impl MemoryBackend {
     /// ```
     ///
     /// `main` segue `origin/main` ed è avanti di 1; `feature/grafo` segue
-    /// `origin/feature/grafo`, allineato. Il worktree non è pulito: `README.md` modificato in
+    /// `origin/feature/grafo`, allineato. Il remoto `origin` (in memoria) ha `main` sul commit
+    /// 11 e `feature/grafo` su un commit 13 «Corsie: un colore per branch» (figlio del 9) che il
+    /// repo non ha ancora: `remote.fetch` lo scarica. Il worktree non è pulito: `README.md` modificato in
     /// stage e fuori, `docs/guida.md` aggiunto in stage, `src/lib.rs` modificato fuori stage,
     /// `note.txt` non tracciato (con un contenuto nel worktree, così si può mettere in stage).
     /// Chi committa è Ada Rossi (`ada@example.com`).
@@ -370,6 +372,21 @@ impl MemoryBackend {
         repo.set_remote_branch("origin/feature/grafo", oid(9));
         repo.set_upstream("main", "origin/main");
         repo.set_upstream("feature/grafo", "origin/feature/grafo");
+        repo.add_remote("origin", "https://example.com/progetto.git");
+        let fetched = START + 12 * HOUR;
+        repo.insert_remote_commit(
+            "origin",
+            Commit {
+                id: oid(13),
+                parents: vec![oid(9)],
+                author: signature(&BRUNO, fetched),
+                committer: signature(&BRUNO, fetched),
+                summary: "Corsie: un colore per branch".to_owned(),
+                body: String::new(),
+            },
+        );
+        repo.set_branch_on_remote("origin", "main", oid(11));
+        repo.set_branch_on_remote("origin", "feature/grafo", oid(13));
         repo.set_tag("v0.1.0", oid(10), Some(oid(TAG_SEED)));
         repo.set_head_branch("main");
         repo.set_identity(ADA.name, ADA.email);

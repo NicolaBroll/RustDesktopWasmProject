@@ -2216,6 +2216,7 @@ dependencies = [
 name = "project-git"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "project-domain",
  "project-engine",
  "serde_json",

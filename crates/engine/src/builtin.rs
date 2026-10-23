@@ -1,6 +1,7 @@
 //! Catalogo dei comandi predefiniti.
 
 mod branch;
+mod remote;
 
 use crate::commands::parse_params;
 use crate::{
@@ -127,6 +128,12 @@ impl Registry {
             r#"{"name": string, "new_name": string}"#,
             branch::branch_rename,
         );
+        add(
+            "remote.fetch",
+            "Scarica dal remoto (fetch)",
+            r#"{"remote"?: string (remoto configurato; upstream, origin o l'unico), "branch"?: string (solo quel branch)}"#,
+            remote::remote_fetch,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -152,6 +159,7 @@ const WRITES: &[&str] = &[
     "index.unstage",
     "index.stage_lines",
     "index.unstage_lines",
+    "remote.fetch",
     "worktree.discard",
 ];
 
@@ -625,6 +633,7 @@ mod tests {
                 "index.stage_lines",
                 "index.unstage",
                 "index.unstage_lines",
+                "remote.fetch",
                 "repo.log",
                 "repo.open",
                 "repo.refs",
@@ -649,6 +658,7 @@ mod tests {
                 "index.stage_lines",
                 "index.unstage",
                 "index.unstage_lines",
+                "remote.fetch",
                 "worktree.discard"
             ]
         );

@@ -6,6 +6,7 @@ use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
 use crate::details::Shown;
 use crate::diff::{DiffSource, DiffTarget};
 use crate::discard::{self, Discard, UndoOp};
+use crate::fetch::{self, Failure, Running};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::CommitList;
@@ -15,6 +16,7 @@ use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
+use project_engine::Progress;
 
 /// Ultimo componente del percorso, per il titolo.
 fn repo_name(path: &str) -> &str {
@@ -48,12 +50,14 @@ fn ahead_behind(upstream: &Upstream) -> String {
     }
 }
 
-/// `writing`: c'è una scrittura in corso, Annulla e Ripeti aspettano.
+/// `writing`: c'è una scrittura in corso, Annulla, Ripeti, Aggiorna e Fetch aspettano.
+/// `fetching`: il fetch in corso con il suo ultimo avanzamento.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
     writing: bool,
+    fetching: Option<(&Running, Option<Progress>)>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
@@ -63,8 +67,17 @@ pub(crate) fn top_bar(
         let Some(repo) = repo else {
             return;
         };
-        if ui.button("Aggiorna").clicked() {
+        let button = ui
+            .add_enabled(!writing, egui::Button::new("Aggiorna"))
+            .on_hover_text("Rilegge ref, stato e log")
+            .on_disabled_hover_text("Dopo l'operazione in corso");
+        if button.clicked() {
             actions.push(Action::Refresh);
+        }
+        ui.separator();
+        match fetching {
+            Some((running, progress)) => fetch_progress(ui, running, progress.as_ref(), actions),
+            None => fetch_buttons(ui, repo, !writing && !repo.modal_open(), actions),
         }
         ui.separator();
         for op in [UndoOp::Undo, UndoOp::Redo] {
@@ -102,6 +115,102 @@ pub(crate) fn top_bar(
             }
         }
     });
+}
+
+/// Il pulsante "Fetch" e, con più remoti, il menu per sceglierne uno.
+fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
+    let button = ui
+        .add_enabled(enabled, egui::Button::new("Fetch"))
+        .on_hover_text(
+            "Scarica commit, branch remoti e tag dal remoto dell'upstream del branch attivo \
+             (altrimenti origin, o l'unico remoto). Non tocca branch locali, indice né file",
+        )
+        .on_disabled_hover_text(WAIT);
+    if button.clicked() {
+        actions.push(Action::Fetch(None));
+    }
+    let remotes = fetch::remotes(&repo.refs);
+    if remotes.len() > 1 {
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.menu_button("Da…", |ui| {
+                for remote in remotes {
+                    if ui.button(format!("Fetch da «{remote}»")).clicked() {
+                        actions.push(Action::Fetch(Some(remote)));
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Sceglie il remoto da cui fare il fetch");
+        });
+    }
+}
+
+/// Il fetch in corso: fase, barra (se git dà la percentuale) e "Interrompi".
+fn fetch_progress(
+    ui: &mut Ui,
+    running: &Running,
+    progress: Option<&Progress>,
+    actions: &mut Vec<Action>,
+) {
+    ui.spinner();
+    let (text, fraction) = match progress {
+        Some(p) => fetch::describe(p),
+        None => ("Connessione al remoto…".to_owned(), None),
+    };
+    let label = ui.label(text);
+    if let Some(p) = progress {
+        label.on_hover_text(&p.text);
+    }
+    if let Some(fraction) = fraction {
+        ui.add(
+            egui::ProgressBar::new(fraction)
+                .desired_width(120.0)
+                .show_percentage(),
+        );
+    }
+    let stop = ui
+        .add_enabled(!running.cancelling, egui::Button::new("Interrompi"))
+        .on_hover_text(
+            "Ferma il fetch: i branch remoti già aggiornati restano, i branch locali e i file \
+             non sono toccati",
+        )
+        .on_disabled_hover_text("Interruzione in corso…");
+    if stop.clicked() {
+        actions.push(Action::CancelFetch);
+    }
+}
+
+/// La finestra di un fetch non riuscito: cosa è successo, cosa fare, il testo di git. Non
+/// blocca il resto della finestra.
+pub(crate) fn fetch_failure(ctx: &egui::Context, failure: &Failure, actions: &mut Vec<Action>) {
+    let mut open = true;
+    egui::Window::new(&failure.title)
+        .id(egui::Id::unique("errore-fetch"))
+        .collapsible(false)
+        .resizable(false)
+        .default_width(420.0)
+        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(&failure.explanation);
+            if let Some(git) = failure.git.as_deref().filter(|g| !g.trim().is_empty()) {
+                ui.add_space(6.0);
+                ui.label("Messaggio di git:");
+                egui::ScrollArea::vertical()
+                    .max_height(140.0)
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(RichText::new(git.trim_end()).monospace()).wrap());
+                    });
+            }
+            ui.add_space(6.0);
+            if ui.button("Chiudi").clicked() {
+                actions.push(Action::DismissFetchError);
+            }
+        });
+    if !open {
+        actions.push(Action::DismissFetchError);
+    }
 }
 
 /// `write` è la scrittura in corso, descritta: ha la precedenza sugli altri comandi. `notice`

@@ -3,18 +3,21 @@
 mod branch;
 mod commit;
 mod discard;
+mod remote;
 mod restore;
 mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
+pub use remote::FetchFailure;
+use remote::MemoryRemote;
 
 use super::line_diff;
 use super::{
     BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
-    DiscardedFile, GitBackend, HeadState, LineSelection, LogQuery, RefRestore, RepoOpener,
-    RestoreOutcome, StagedVersion, WorktreeRestore,
+    DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HeadState, LineSelection, LogQuery,
+    RefRestore, RepoOpener, RestoreOutcome, StagedVersion, WorktreeRestore,
 };
-use crate::EngineError;
+use crate::{EngineError, JobContext};
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
     RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
@@ -69,6 +72,8 @@ pub struct MemoryBackend {
     worktree_backups: Vec<WorktreeStash>,
     /// Nome ed email di chi committa (`user.name`/`user.email`); `None` = non configurata.
     identity: Option<(String, String)>,
+    /// Remoti configurati, per nome.
+    remotes: BTreeMap<String, MemoryRemote>,
 }
 
 impl Default for MemoryBackend {
@@ -94,6 +99,7 @@ impl MemoryBackend {
             commit_backups: Vec::new(),
             worktree_backups: Vec::new(),
             identity: None,
+            remotes: BTreeMap::new(),
         }
     }
 
@@ -681,6 +687,18 @@ impl GitBackend for MemoryBackend {
     }
     fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
         Ok(self.unmerged(tip, into))
+    }
+
+    fn remotes(&self) -> Result<Vec<String>, EngineError> {
+        Ok(self.remote_names())
+    }
+
+    fn fetch(
+        &mut self,
+        request: &FetchRequest,
+        job: &JobContext,
+    ) -> Result<FetchOutcome, EngineError> {
+        self.fetch_remote(request, job)
     }
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {

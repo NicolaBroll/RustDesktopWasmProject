@@ -1936,7 +1936,11 @@ impl App {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                if outcome.moved_head && !repo.worktree_selected {
+                if outcome.show_changes {
+                    // Merge del pull fermo in conflitto: l'area di stage con i file da risolvere.
+                    repo.stash.select(None);
+                    repo.select_worktree(true);
+                } else if outcome.moved_head && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
                 self.notice = outcome.notice;

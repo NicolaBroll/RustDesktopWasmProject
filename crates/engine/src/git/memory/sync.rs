@@ -3,8 +3,9 @@
 //!
 //! Il merge in memoria lavora file per file (un file cambiato in modo diverso dai due lati è un
 //! conflitto, anche se git saprebbe unire le righe); il rebase riapplica i commit locali senza
-//! merge, dal più vecchio, saltando quelli che non cambiano più niente. Un conflitto non cambia
-//! niente (come il `CliBackend`, che annulla merge e rebase). L'undo di un pull del branch
+//! merge, dal più vecchio, saltando quelli che non cambiano più niente. Un conflitto del merge lo
+//! lascia in corso come `merge.start` ([`MemoryBackend::merge_three_way`]); un conflitto del
+//! rebase non cambia niente (come il `CliBackend`, che annulla il rebase). L'undo di un pull del branch
 //! attivo ([`MemoryBackend::reset_keep`]) aggiorna indice e worktree come il checkout, con gli
 //! stessi rifiuti. Il push copia i commit nel remoto in memoria e aggiorna il branch remoto
 //! locale; [`MemoryBackend::fail_pre_push`] simula un hook `pre-push` che rifiuta.
@@ -14,7 +15,7 @@ use super::{HEADS, HeadRef, MemoryBackend, REMOTES, RefEntry};
 use crate::git::{
     BACKUP_PREFIX, LogQuery, PullMode, PullOperation, PullOutcome, PullRequest, PullSettings,
     PushKind, PushOutcome, PushRejection, PushRequest, RefRestore, RestoreOutcome, UpstreamConfig,
-    check_pull_state, short, split_message,
+    check_pull_state, short,
 };
 use crate::{EngineError, FetchFailure, GitBackend, JobContext, Progress};
 use project_domain::{Commit, Oid, Signature};
@@ -250,24 +251,29 @@ impl MemoryBackend {
         let target = match request.mode {
             PullMode::FastForward => request.upstream,
             PullMode::Merge { .. } => {
-                let base = work
-                    .merge_base(request.expected, request.upstream)
-                    .map(|b| work.tree_at(b))
-                    .unwrap_or_default();
-                let merged = merge_trees(
-                    &base,
-                    &work.tree_at(request.expected),
-                    &work.tree_at(request.upstream),
-                )
-                .map_err(|files| Self::pull_conflict(request, PullOperation::Merge, files))?;
-                let (summary, body) = split_message(&request.message);
-                work.make_commit(
-                    vec![request.expected, request.upstream],
-                    &merged,
-                    None,
-                    summary,
-                    body,
-                )?
+                // Come `merge.start`: un conflitto lascia il merge in corso.
+                let short_name = request
+                    .upstream_name
+                    .strip_prefix(REMOTES)
+                    .unwrap_or(&request.upstream_name);
+                let merged = work.merge_three_way(
+                    &full,
+                    request.expected,
+                    request.upstream,
+                    short_name,
+                    &request.message,
+                    "il pull",
+                )?;
+                let backup = Self::pull_backup(&mut work, request.expected);
+                *self = work;
+                return Ok(PullOutcome {
+                    after: merged.after,
+                    backup,
+                    in_progress: merged.in_progress,
+                    conflicts: merged.conflicts,
+                    message: merged.message,
+                    warnings: Vec::new(),
+                });
             }
             PullMode::Rebase { .. } => {
                 let theirs = work.reachable(request.upstream);
@@ -349,6 +355,20 @@ impl MemoryBackend {
         } else {
             work.set_ref(full, target, None);
         }
+        let backup = Self::pull_backup(&mut work, request.expected);
+        *self = work;
+        Ok(PullOutcome {
+            after: target,
+            backup,
+            in_progress: false,
+            conflicts: Vec::new(),
+            message: String::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    /// Il backup `refs/project/backup/pull-<n>` del branch com'era.
+    fn pull_backup(work: &mut Self, expected: Oid) -> String {
         let prefix = format!("{BACKUP_PREFIX}pull-");
         let n = work
             .commit_backups
@@ -357,13 +377,8 @@ impl MemoryBackend {
             .count()
             + 1;
         let backup = format!("{prefix}{n}");
-        work.commit_backups.push((backup.clone(), request.expected));
-        *self = work;
-        Ok(PullOutcome {
-            after: target,
-            backup,
-            warnings: Vec::new(),
-        })
+        work.commit_backups.push((backup.clone(), expected));
+        backup
     }
 
     /// [`GitBackend::reset_branch`]: undo e redo di un pull del branch attivo.

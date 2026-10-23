@@ -250,6 +250,10 @@ Regole valide per tutti gli step:
 - [x] Parte `egui-ui`: riquadro dell'operazione in corso con i file in conflitto, "Continua il
   merge…" e "Annulla il merge…" (con conferma), "Unisci in «branch»" dai menu di branch, tag e
   commit; demo web con un branch in conflitto (§8 dell'architettura).
+- [x] Seguito (`git-engine`): `remote.pull` in merge che si ferma in conflitto lascia il merge in
+  corso come `merge.start` (`in_progress`, `conflicts`; si esce con `merge.continue` o
+  `merge.abort`) invece di annullarlo; in rebase resta annullato fino a S32
+  ([git/sync.md](git/sync.md)).
 
 ### S30 — Editor dei conflitti
 - [ ] **Agente:** `egui-ui`, con `git-domain` per il parser dei marcatori
@@ -268,6 +272,8 @@ Regole valide per tutti gli step:
 - [ ] **Agente:** `git-domain` (piano), `git-engine` (esecuzione)
 - **Obiettivo:** piano di rebase (pick, reword, squash, fixup, drop, riordino) come dati puri;
   esecuzione con `GIT_SEQUENCE_EDITOR` che scrive il piano; `rebase.abort` e `rebase.continue`.
+  Con questi, anche `remote.pull` in rebase fermo in conflitto resterà in corso invece di
+  annullarsi (come già il merge, [git/sync.md](git/sync.md)).
 - **Fatto quando:** test di integrazione per ogni azione del piano; revisione di
   `safety-reviewer`; CI verde.
 

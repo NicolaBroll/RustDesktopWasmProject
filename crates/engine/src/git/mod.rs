@@ -365,8 +365,10 @@ pub trait GitBackend: Send {
     /// `refs/project/backup/pull-...` sul valore di prima (nel risultato). Fast-forward del
     /// branch attivo: `git merge --ff-only`, che non sovrascrive modifiche locali
     /// ([`EngineError::NotAllowed`] con i file, niente cambia); di un altro branch:
-    /// `update-ref` con il valore vecchio. Merge e rebase: mai `--autostash`; se si fermano in
-    /// conflitto vengono annullati (`--abort`) e il risultato è
+    /// `update-ref` con il valore vecchio. Merge e rebase: mai `--autostash`. Un **merge**
+    /// fermo (conflitti, hook, firma) **resta in corso** come con [`GitBackend::merge`]:
+    /// [`PullOutcome::in_progress`] con i file in conflitto, il branch com'era e il backup
+    /// tenuto. Un **rebase** fermo si annulla (`--abort`) e il risultato è
     /// [`EngineError::PullConflict`] con i file (niente cambia, il backup si toglie). Non si
     /// annulla a metà: il fetch, che si può annullare, è già fatto.
     fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError>;

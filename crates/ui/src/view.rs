@@ -336,7 +336,8 @@ pub(crate) fn sync_window(
 /// Altezza massima dell'elenco dei file in conflitto; oltre si scorre.
 const CONFLICT_LIST_HEIGHT: f32 = 160.0;
 
-/// Pull fermo in conflitto: il motore ha già annullato merge o rebase.
+/// Pull fermo in conflitto e già annullato dal motore (oggi solo il rebase: il merge fermo resta
+/// in corso e si risolve dal riquadro dell'operazione).
 fn conflict_window(
     ctx: &egui::Context,
     conflict: &sync::Conflict,
@@ -365,10 +366,10 @@ fn conflict_window(
             ui.add_space(4.0);
             ui.add(
                 egui::Label::new(format!(
-                    "La risoluzione dei conflitti dall'app arriverà più avanti. Per ora si può \
-                     provare il pull con {} (a volte i conflitti cambiano), oppure continuare a \
-                     lavorare e committare sul branch e integrare dopo; o risolvere da \
-                     terminale.",
+                    "Un rebase fermo non si continua ancora dall'app. Si può fare il pull con \
+                     {}: se va in conflitto il merge resta in corso e i file si risolvono qui \
+                     (poi «Continua il merge…» o «Annulla il merge…»); oppure continuare a \
+                     lavorare sul branch e integrare dopo, o risolvere da terminale.",
                     conflict.other().name()
                 ))
                 .wrap(),

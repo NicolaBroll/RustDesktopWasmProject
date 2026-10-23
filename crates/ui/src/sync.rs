@@ -5,8 +5,11 @@
 //! ([`CommandSpec::writes`](project_engine::CommandSpec)), e la UI non ne manda una mentre
 //! un'altra è in corso. I rifiuti da spiegare aprono una finestra:
 //!
-//! - pull fermo in conflitto ([`ErrorKind::PullConflict`]): il motore ha già annullato merge o
-//!   rebase, il repo è come prima; la finestra elenca i file e propone l'altra strategia;
+//! - pull in merge fermo in conflitto: non è un errore, il merge **resta in corso** come con
+//!   `merge.start` (`in_progress` nel risultato). Lo stato riletto fa comparire il riquadro
+//!   dell'operazione in corso (Continua/Annulla il merge) e si apre l'area di stage con i file;
+//! - pull in rebase fermo in conflitto ([`ErrorKind::PullConflict`]): il motore ha già annullato
+//!   il rebase, il repo è come prima; la finestra elenca i file e propone l'altra strategia;
 //! - push rifiutato ([`ErrorKind::PushRejected`]): non fast-forward propone "Pull" e, come
 //!   seconda scelta, "Forza (con lease)…"; lease scaduto propone "Fetch"; un hook mostra il suo
 //!   output.
@@ -18,7 +21,7 @@
 use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
-use project_domain::{Commit, Head, Oid, RefInfo, Status};
+use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{PullOperation, PushRejection};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -155,7 +158,8 @@ pub struct Running {
     pub cancelling: bool,
 }
 
-/// Un pull fermo in conflitto: merge o rebase già annullati dal motore.
+/// Un pull fermo in conflitto e già annullato dal motore: oggi solo il rebase (il merge fermo
+/// resta in corso, [`Outcome::show_changes`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
     /// Il branch del pull (`None`: quello di HEAD).
@@ -268,6 +272,9 @@ pub struct Outcome {
     pub history: Option<History>,
     /// Vero se il branch attivo si è spostato: dopo il log si seleziona il nuovo HEAD.
     pub moved_head: bool,
+    /// Il merge del pull è fermo con file in conflitto e resta in corso: si apre l'area di
+    /// stage con i file da risolvere (il riquadro dell'operazione compare dallo stato riletto).
+    pub show_changes: bool,
     /// Un problema dopo l'operazione riuscita (ref o stato non riletti).
     pub warning: Option<String>,
 }
@@ -571,6 +578,11 @@ struct PullResult {
     after: Oid,
     ahead: u64,
     behind: u64,
+    /// Il merge si è fermato (conflitti, hook, firma) e resta in corso.
+    #[serde(default)]
+    in_progress: bool,
+    #[serde(default)]
+    conflicts: Vec<RepoPath>,
     backup: Option<String>,
     fetch: Option<PullFetch>,
     #[serde(default)]
@@ -592,6 +604,18 @@ impl PullResult {
         let what = format!("Pull di «{}»", self.branch);
         let range = format!("{} → {}", self.before.short(), self.after.short());
         let mut notice = match self.strategy.as_str() {
+            _ if self.in_progress => match self.conflicts.len() {
+                0 => format!(
+                    "{what}: merge di {upstream} fermo prima del commit (un hook o la firma?): \
+                     concluderlo con «Continua il merge…» nel riquadro in alto, o annullarlo"
+                ),
+                n => format!(
+                    "{what}: merge di {upstream} fermo: {}. Risolverli e segnarli come risolti \
+                     nell'area di stage, poi «Continua il merge…» nel riquadro in alto (o \
+                     «Annulla il merge…», che riporta il branch com'era)",
+                    plural(n as u64, "file in conflitto", "file in conflitto")
+                ),
+            },
             "up_to_date" => {
                 let mut text = format!("{what}: già aggiornato con {upstream}");
                 if self.ahead > 0 {
@@ -619,10 +643,14 @@ impl PullResult {
                  il rebase)",
             );
         }
-        if let Some(backup) = &self.backup {
-            notice.push_str(&format!(
+        match &self.backup {
+            Some(backup) if self.in_progress => {
+                notice.push_str(&format!("; il branch com'era è in {backup}"));
+            }
+            Some(backup) => notice.push_str(&format!(
                 "; backup in {backup}, «Annulla» lo riporta indietro"
-            ));
+            )),
+            None => {}
         }
         for warning in &self.warnings {
             notice.push_str(&format!("; attenzione: {warning}"));
@@ -642,6 +670,7 @@ impl PullResult {
             status: self.status,
             history: Some(self.history),
             moved_head,
+            show_changes: self.in_progress && !self.conflicts.is_empty(),
             warning,
         }
     }
@@ -731,6 +760,7 @@ impl PushResult {
             status: self.status,
             history: None,
             moved_head: false,
+            show_changes: false,
             warning,
         }
     }
@@ -1028,10 +1058,52 @@ mod tests {
     }
 
     #[test]
-    fn pull_conflict_opens_the_window_with_the_files() {
+    fn pull_merge_conflict_stays_in_progress_without_a_window() {
         let (r, mut s) = open(diverged(Some("src/bin/app.rs")));
         let mut sync = SyncBox::default();
         let received = run(&r, &mut s, &mut sync, Request::pull(None, None));
+        let Received::Done(outcome) = received else {
+            panic!("{received:?}")
+        };
+        // Non è un errore: niente finestra, l'area di stage con i file e lo stato riletto (con
+        // l'operazione in corso, da cui il riquadro Continua/Annulla).
+        assert_eq!(sync.window(), None);
+        assert!(outcome.show_changes);
+        assert!(!outcome.moved_head);
+        assert!(
+            outcome
+                .notice
+                .starts_with("Pull di «main»: merge di origin/main fermo: 1 file in conflitto"),
+            "{}",
+            outcome.notice
+        );
+        assert!(
+            outcome.notice.contains("Continua il merge"),
+            "{}",
+            outcome.notice
+        );
+        assert!(
+            outcome.notice.contains("refs/project/backup/pull-1"),
+            "{}",
+            outcome.notice
+        );
+        assert_eq!(
+            outcome.status.unwrap().operation,
+            Some(project_domain::Operation::Merge)
+        );
+        assert!(!outcome.history.unwrap().can_undo);
+    }
+
+    #[test]
+    fn pull_rebase_conflict_opens_the_window_with_the_files() {
+        let (r, mut s) = open(diverged(Some("src/bin/app.rs")));
+        let mut sync = SyncBox::default();
+        let received = run(
+            &r,
+            &mut s,
+            &mut sync,
+            Request::pull(None, Some(Strategy::Rebase)),
+        );
         let Received::Failed { message, reload } = received else {
             panic!("{received:?}")
         };
@@ -1040,20 +1112,9 @@ mod tests {
         let Some(Window::Conflict(conflict)) = sync.window() else {
             panic!("{:?}", sync.window())
         };
-        assert_eq!(conflict.operation, PullOperation::Merge);
-        assert_eq!(conflict.files, ["src/bin/app.rs"]);
-        assert_eq!(conflict.other(), Strategy::Rebase);
-        // L'altra strategia si chiede dalla finestra: la richiesta la chiude.
-        let retry = Request::pull(conflict.branch.clone(), Some(conflict.other()));
-        let received = run(&r, &mut s, &mut sync, retry);
-        assert!(
-            matches!(received, Received::Failed { .. }),
-            "anche il rebase ha conflitti: {received:?}"
-        );
-        let Some(Window::Conflict(conflict)) = sync.window() else {
-            panic!("{:?}", sync.window())
-        };
         assert_eq!(conflict.operation, PullOperation::Rebase);
+        assert_eq!(conflict.files, ["src/bin/app.rs"]);
+        assert_eq!(conflict.other(), Strategy::Merge);
         let refs = r.run("repo.refs", &mut s, json!({})).unwrap();
         let main = refs
             .as_array()
@@ -1062,6 +1123,14 @@ mod tests {
             .find(|x| x["name"] == "refs/heads/main")
             .unwrap();
         assert_eq!(main["target"], oid(12).to_string(), "repo com'era");
+        // L'altra strategia si chiede dalla finestra: il merge resta in corso.
+        let retry = Request::pull(conflict.branch.clone(), Some(conflict.other()));
+        let received = run(&r, &mut s, &mut sync, retry);
+        let Received::Done(outcome) = received else {
+            panic!("{received:?}")
+        };
+        assert!(outcome.show_changes);
+        assert_eq!(sync.window(), None);
     }
 
     #[test]

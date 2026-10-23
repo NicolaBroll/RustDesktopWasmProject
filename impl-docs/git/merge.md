@@ -44,8 +44,8 @@ dopo `--end-of-options` (un branch `-x` non diventa un'opzione). Vuota o con NUL
   sovrascriverebbe senza dirlo) e file `--assume-unchanged` diversi fra i due commit.
 - **Backup**: prima di scrivere `refs/project/backup/merge-...` sul branch com'era (tolto se poi
   niente cambia).
-- **Conflitti** (scelta): il merge **resta in corso** (`MERGE_HEAD`), non si annulla come nel
-  pull: non è un errore, il risultato ha `in_progress: true`, i file in `conflicts` (quelli ancora
+- **Conflitti** (scelta): il merge **resta in corso** (`MERGE_HEAD`), come in `remote.pull` con
+  strategia merge ([sync.md](sync.md); il rebase del pull invece si annulla): non è un errore, il risultato ha `in_progress: true`, i file in `conflicts` (quelli ancora
   non uniti e quelli che git dice in conflitto, anche se `rerere` li ha già risolti) e il testo di
   git in `message`. Il branch non si è mosso (`after == before`) e il backup resta. Si esce con
   `merge.continue` (dopo aver risolto e messo in stage i file con `index.stage`) o con
@@ -219,7 +219,12 @@ commit di merge e toglie lo stato del merge.
   backup `refs/project/backup/merge-abort-...` (sopra). `can_undo` dopo un abort riguarda la voce
   precedente.
 - `refs/project/backup/merge-...` di un merge rimasto in corso resta anche dopo `merge.abort`: è
-  il branch prima del merge, uguale a HEAD; una futura pulizia dei backup può toglierlo.
+  il branch prima del merge, uguale a HEAD; una futura pulizia dei backup può toglierlo. Lo stesso
+  per `refs/project/backup/pull-...` di un pull in merge rimasto in corso.
+- **Merge avviato da `remote.pull`**: `merge.continue` e `merge.abort` funzionano allo stesso modo
+  (il merge in corso è un normale `MERGE_HEAD`); il messaggio di `merge.continue` è quello del pull
+  (`Merge remote-tracking branch 'origin/main'`) e la voce del diario `Merge di origin/main in
+  `main``.
 
 Il `MemoryBackend` fa lo stesso merge file per file del pull in memoria (un file cambiato in modo
 diverso dai due lati è un conflitto), ma **lascia il merge in corso**: i file uniti in stage, i

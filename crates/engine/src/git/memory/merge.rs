@@ -2,8 +2,8 @@
 //! stessi controlli del `CliBackend`.
 //!
 //! Come il pull in memoria, il merge lavora file per file: un file cambiato in modo diverso
-//! dai due lati è un conflitto (anche se git saprebbe unire le righe). Al contrario del pull,
-//! **un conflitto lascia il merge in corso**: i file uniti senza conflitti sono in stage, quelli
+//! dai due lati è un conflitto (anche se git saprebbe unire le righe). Come nel pull in merge
+//! (al contrario del pull in rebase, che si annulla), **un conflitto lascia il merge in corso**: i file uniti senza conflitti sono in stage, quelli
 //! in conflitto diventano voci `u` dello stato (con i marcatori nel worktree se i contenuti
 //! sono noti), `MERGE_HEAD` e `MERGE_MSG` sono tenuti in [`MemoryMerge`]. Il commit
 //! ([`GitBackend::commit`](crate::GitBackend::commit)) con un merge in corso crea il commit di
@@ -131,63 +131,18 @@ impl MemoryBackend {
                 outcome.after = request.target;
             }
             MergeMode::Merge { .. } => {
-                let base = work
-                    .merge_base(request.expected, request.target)
-                    .map(|b| work.tree_at(b))
-                    .unwrap_or_default();
-                let (merged, conflicts) = merge_partial(
-                    &base,
-                    &work.tree_at(request.expected),
-                    &work.tree_at(request.target),
-                );
-                // Nel worktree vanno anche i file in conflitto presenti solo da loro: non devono
-                // essere al posto di un non tracciato.
-                let mut written = merged.clone();
-                for c in &conflicts {
-                    if let Some(entry) = c.ours.or(c.theirs) {
-                        written.insert(c.path.clone(), entry);
-                    }
-                }
-                let (_, files) = work.switch_plan(&written);
-                if !files.is_empty() {
-                    return Err(overwritten(files));
-                }
-                let (differing, _) = work.switch_plan(&merged);
-                let index = work.switch_index(&differing, &merged);
-                if conflicts.is_empty() {
-                    let (summary, body) = split_message(&request.message);
-                    let id = work.make_commit(
-                        vec![request.expected, request.target],
-                        &merged,
-                        None,
-                        summary,
-                        body,
-                    )?;
-                    work.set_ref(full, id, None);
-                    work.rebase_entries(&index);
-                    outcome.after = id;
-                } else {
-                    let mut text = Vec::new();
-                    let mut message = format!("{}\n\n# Conflicts:\n", request.message);
-                    for c in &conflicts {
-                        work.add_conflict(c, &request.target_name);
-                        text.push(format!("CONFLICT (content): Merge conflict in {}", c.path));
-                        message.push_str(&format!("#\t{}\n", c.path));
-                        outcome.conflicts.push(c.path.clone());
-                    }
-                    work.rebase_entries(&index);
-                    work.operation = Some(Operation::Merge);
-                    work.merge_state = Some(MemoryMerge {
-                        heads: vec![request.target],
-                        message,
-                    });
-                    text.push(
-                        "Automatic merge failed; fix conflicts and then commit the result."
-                            .to_owned(),
-                    );
-                    outcome.in_progress = true;
-                    outcome.message = text.join("\n");
-                }
+                let merged = work.merge_three_way(
+                    &full,
+                    request.expected,
+                    request.target,
+                    &request.target_name,
+                    &request.message,
+                    "il merge",
+                )?;
+                outcome.after = merged.after;
+                outcome.in_progress = merged.in_progress;
+                outcome.conflicts = merged.conflicts;
+                outcome.message = merged.message;
             }
         }
         let prefix = format!("{BACKUP_PREFIX}merge-");
@@ -201,6 +156,85 @@ impl MemoryBackend {
         work.commit_backups
             .push((outcome.backup.clone(), request.expected));
         *self = work;
+        Ok(outcome)
+    }
+
+    /// Il commit di merge di `target` in HEAD (il branch `full`, che vale `expected`), file per
+    /// file: senza conflitti il commit con `message` e il branch spostato; con conflitti il
+    /// merge **resta in corso** (file uniti in stage, voci `u` con i marcatori, `MERGE_HEAD` e
+    /// `MERGE_MSG` con il blocco `# Conflicts:`), il branch com'era. `what` per l'errore se il
+    /// merge scriverebbe sopra modifiche locali o non tracciati ([`EngineError::NotAllowed`],
+    /// niente cambia). Usato da `merge.start` e da `remote.pull`.
+    pub(super) fn merge_three_way(
+        &mut self,
+        full: &str,
+        expected: Oid,
+        target: Oid,
+        target_name: &str,
+        message: &str,
+        what: &str,
+    ) -> Result<MergeOutcome, EngineError> {
+        let base = self
+            .merge_base(expected, target)
+            .map(|b| self.tree_at(b))
+            .unwrap_or_default();
+        let (merged, conflicts) =
+            merge_partial(&base, &self.tree_at(expected), &self.tree_at(target));
+        // Nel worktree vanno anche i file in conflitto presenti solo da loro: non devono essere
+        // al posto di un non tracciato.
+        let mut written = merged.clone();
+        for c in &conflicts {
+            if let Some(entry) = c.ours.or(c.theirs) {
+                written.insert(c.path.clone(), entry);
+            }
+        }
+        let (_, files) = self.switch_plan(&written);
+        if !files.is_empty() {
+            return Err(EngineError::NotAllowed(format!(
+                "{what} sovrascriverebbe modifiche locali o file non tracciati ({}): \
+                 committarli, metterli da parte o spostarli e riprovare; niente modificato",
+                files
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let (differing, _) = self.switch_plan(&merged);
+        let index = self.switch_index(&differing, &merged);
+        let mut outcome = MergeOutcome {
+            after: expected,
+            backup: String::new(),
+            in_progress: false,
+            conflicts: Vec::new(),
+            message: String::new(),
+            warnings: Vec::new(),
+        };
+        if conflicts.is_empty() {
+            let (summary, body) = split_message(message);
+            let id = self.make_commit(vec![expected, target], &merged, None, summary, body)?;
+            self.set_ref(full.to_owned(), id, None);
+            self.rebase_entries(&index);
+            outcome.after = id;
+            return Ok(outcome);
+        }
+        let mut text = Vec::new();
+        let mut merge_msg = format!("{message}\n\n# Conflicts:\n");
+        for c in &conflicts {
+            self.add_conflict(c, target_name);
+            text.push(format!("CONFLICT (content): Merge conflict in {}", c.path));
+            merge_msg.push_str(&format!("#\t{}\n", c.path));
+            outcome.conflicts.push(c.path.clone());
+        }
+        self.rebase_entries(&index);
+        self.operation = Some(Operation::Merge);
+        self.merge_state = Some(MemoryMerge {
+            heads: vec![target],
+            message: merge_msg,
+        });
+        text.push("Automatic merge failed; fix conflicts and then commit the result.".to_owned());
+        outcome.in_progress = true;
+        outcome.message = text.join("\n");
         Ok(outcome)
     }
 

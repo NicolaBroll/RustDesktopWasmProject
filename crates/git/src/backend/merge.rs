@@ -18,10 +18,10 @@
 //! commit dell'indice, costruiti in indici temporanei), il ref
 //! `refs/project/backup/merge-abort-...`, poi `git merge --abort`.
 
-use super::sync::{TempFile, conflicted_in_output, overwrite_error};
+use super::sync::{TempFile, overwrite_error};
 use super::{BACKUP_IDENTITY, CliBackend, TempIndex};
 use crate::command::os_from_bytes;
-use project_domain::{EntryKind, Oid, Operation, RepoPath};
+use project_domain::{Oid, Operation, RepoPath};
 use project_engine::{
     EngineError, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState, branch_ref,
     check_merge_state, check_merging,
@@ -187,22 +187,7 @@ impl CliBackend {
         if operation == Some(Operation::Merge) {
             // Fermo: resta in corso. I file in conflitto sono quelli ancora non uniti e quelli
             // che git ha detto in conflitto (anche se `rerere` li ha già risolti).
-            let mut conflicts: Vec<RepoPath> = self
-                .status_for_write()
-                .map(|s| {
-                    s.entries
-                        .iter()
-                        .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
-                        .map(|e| e.path.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            for file in conflicted_in_output(&text) {
-                let path = RepoPath::from(file);
-                if !conflicts.contains(&path) {
-                    conflicts.push(path);
-                }
-            }
+            let conflicts = self.stopped_conflicts(&text);
             return Ok(MergeOutcome {
                 after: request.expected,
                 backup,

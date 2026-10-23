@@ -36,7 +36,7 @@ use discard::{DiscardBox, History, Received, UndoOp, UndoResult};
 use fetch::FetchBox;
 use graph::RefLabel;
 use lines::{LineWrite, Pick};
-use list::{CommitList, PageRequest};
+use list::{CommitList, PageRequest, Seek};
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use serde::Deserialize;
@@ -231,6 +231,9 @@ struct RepoView {
 
 impl RepoView {
     fn new(path: String, head: Head) -> Self {
+        // All'apertura si seleziona HEAD: con tutti i ref nel grafo può non essere il primo
+        // commit (un branch remoto appena scaricato è più recente).
+        let select_after_load = head.target();
         let mut view = Self {
             path,
             head,
@@ -251,7 +254,7 @@ impl RepoView {
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
             history: History::default(),
-            select_after_load: None,
+            select_after_load,
         };
         view.update_labels();
         view
@@ -440,15 +443,7 @@ impl App {
                     repo.select_worktree(true);
                 }
             }
-            Action::SelectCommit(id) => {
-                if let Some(repo) = &mut self.repo {
-                    if repo.list.select_id(id) {
-                        repo.select_worktree(false);
-                    } else {
-                        self.error = format!("il commit {} non è tra quelli caricati", id.short());
-                    }
-                }
-            }
+            Action::SelectCommit(id) => self.seek(id),
             Action::Move(delta) => {
                 if let Some(repo) = &mut self.repo {
                     repo.move_selection(delta);
@@ -761,8 +756,27 @@ impl App {
     }
 
     fn request_page(&mut self, page: PageRequest) {
-        let params = json!({ "skip": page.skip, "limit": page.limit });
-        self.submit("repo.log", params, Request::Log(self.generation, page));
+        self.submit(
+            "repo.log",
+            page.params(),
+            Request::Log(self.generation, page),
+        );
+    }
+
+    /// Seleziona il commit di un ref; se non è ancora caricato chiede le pagine seguenti
+    /// finché non arriva (fino a [`list::SEEK_LIMIT`] commit).
+    fn seek(&mut self, id: Oid) {
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        match repo.list.seek(id) {
+            Seek::Selected => repo.select_worktree(false),
+            Seek::Loading(Some(page)) => self.request_page(page),
+            Seek::Loading(None) => {}
+            Seek::Missing => {
+                self.error = format!("il commit {} non è tra quelli caricati", id.short());
+            }
+        }
     }
 
     fn request_diff(&mut self, target: &DiffTarget, seq: u64) {
@@ -1374,12 +1388,19 @@ impl App {
             Request::Log(generation, page) => {
                 if let Some(repo) = self.current(generation) {
                     let LogPage { commits, has_more } = serde_json::from_value(value)?;
-                    if repo.list.receive(page, commits, has_more)
-                        && page.skip == 0
+                    if !repo.list.receive(page, commits, has_more) {
+                        return Ok(());
+                    }
+                    if page.skip == 0
                         && let Some(id) = repo.select_after_load.take()
                         && !repo.worktree_selected
                     {
                         repo.list.select_id(id);
+                    }
+                    // Un ref cliccato il cui commit non era ancora caricato: si guarda nella
+                    // pagina arrivata e, se non c'è, si chiede la seguente.
+                    if let Some(id) = repo.list.seeking() {
+                        self.seek(id);
                     }
                 }
             }

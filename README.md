@@ -26,8 +26,10 @@ project-cli mcp [--root <dir>]                               # server MCP su std
 
 `--repo` apre il repository prima dei comandi (equivale a `repo.open` come primo comando).
 
-Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?}`
-(pagine da 200 commit se manca `limit`, con `has_more`), `commit.show {"id"}` (metadati e file
+Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?}`
+(pagine da 200 commit se manca `limit`, con `has_more`; da HEAD, da `rev`, oppure con
+`"all": true` da tutti i branch locali e remoti, i tag e HEAD, senza stash né backup; `rev` e
+`all` insieme sono un errore), `commit.show {"id"}` (metadati e file
 cambiati rispetto al primo genitore), `diff.worktree {"path"?}` (modifiche non in stage),
 `diff.index {"path"?}` (modifiche in stage) e `diff.commit {"id", "path"?}` (commit rispetto al
 primo genitore). I diff restituiscono `{"files": [...]}` con hunk e righe (in `diff.worktree` e

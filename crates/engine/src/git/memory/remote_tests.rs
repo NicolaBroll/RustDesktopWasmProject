@@ -2,7 +2,7 @@
 //! `builtin/remote.rs`).
 
 use super::*;
-use crate::{CancelToken, GitBackend};
+use crate::{CancelToken, GitBackend, LogQuery};
 
 fn oid(n: u64) -> Oid {
     MemoryBackend::fake_oid(n)
@@ -35,6 +35,13 @@ fn sample_has_origin_with_one_commit_to_fetch() {
     );
     // Branch locali intatti.
     assert_eq!(repo.refs["refs/heads/feature/grafo"].target, oid(9));
+    // Il commit scaricato è solo su `origin/feature/grafo`: il log di HEAD non lo ha, quello
+    // di tutti i ref sì, in cima (è il più recente).
+    let ids = |q: LogQuery| -> Vec<Oid> { repo.log(&q).unwrap().iter().map(|c| c.id).collect() };
+    assert!(!ids(LogQuery::all()).contains(&oid(13)));
+    let all = ids(LogQuery::all().from_all_refs());
+    assert_eq!(all.len(), 13);
+    assert!(all.contains(&oid(13)));
 }
 
 #[test]

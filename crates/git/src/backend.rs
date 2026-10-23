@@ -943,29 +943,37 @@ impl GitBackend for CliBackend {
     }
 
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError> {
+        query.check()?;
         let start = match &query.rev {
-            Some(rev) => self
-                .resolve(rev)?
-                .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?,
-            // Branch senza commit: log vuoto.
-            None => match self.resolve("HEAD")? {
-                Some(oid) => oid,
-                None => return Ok(Vec::new()),
-            },
+            Some(rev) => Some(
+                self.resolve(rev)?
+                    .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?,
+            ),
+            // Branch senza commit: log vuoto (con `all` restano gli altri ref).
+            None => self.resolve("HEAD")?,
         };
-        if query.limit == Some(0) {
+        if query.limit == Some(0) || (start.is_none() && !query.all) {
             return Ok(Vec::new());
         }
         let skip = format!("--skip={}", query.skip);
         let max_count = query.limit.map(|n| format!("--max-count={n}"));
-        let start = start.to_string();
+        let start = start.map(|oid| oid.to_string());
 
         let mut args = vec!["log"];
         args.extend_from_slice(LOG_ARGS);
-        // Figli prima dei genitori, poi per data del committer, come `MemoryBackend`.
+        // Figli prima dei genitori, poi per data del committer, come `MemoryBackend`; vale anche
+        // con più punti di partenza.
         args.extend(["--date-order", &skip]);
         args.extend(max_count.as_deref());
-        args.extend(["--end-of-options", &start, "--"]);
+        if query.all {
+            // Solo questi spazi: `refs/stash`, i backup in `refs/project/` e le note restano
+            // fuori. Senza alcun ref il log è vuoto (git non ripiega su HEAD).
+            args.extend(["--branches", "--remotes", "--tags"]);
+        }
+        // HEAD come id, così una HEAD staccata compare anche con `all`.
+        args.push("--end-of-options");
+        args.extend(start.as_deref());
+        args.push("--");
         Ok(parse_log(&self.run(&args)?)?)
     }
 

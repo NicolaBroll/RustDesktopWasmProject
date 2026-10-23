@@ -210,6 +210,14 @@ Regole valide per tutti gli step:
   di autenticazione riconosciuti; pulsante nella barra.
 - **Fatto quando:** test con un remoto locale (`git init --bare` in cartella temporanea); CI verde.
 
+### S25b — Grafo di tutti i ref
+- [x] **Agente:** `git-engine`, poi `egui-ui`
+- **Obiettivo:** il grafo mostra anche i commit dei branch non uniti e quelli appena scaricati
+  su `origin/*`: `repo.log {"all": true}` parte da branch locali e remoti, tag e HEAD (anche
+  staccata), senza stash né backup; la UI lo usa per il grafo.
+- **Fatto quando:** test di integrazione (branch non unito, branch remoto dopo un fetch, stash e
+  backup esclusi, HEAD staccata, pagine contigue) e sul `MemoryBackend`; CI verde.
+
 ### S26 — Pull e push
 - [ ] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `remote.pull` (strategia secondo la configurazione: merge o rebase) e

@@ -212,6 +212,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(log["commits"][0]["summary"], "Corsie: un colore per branch");
+        // Solo su `origin/feature/grafo`: il grafo lo mostra con `all`, non da HEAD.
+        let mut summary = |params: Value| {
+            r.run("repo.log", &mut s, params).unwrap()["commits"][0]["summary"].clone()
+        };
+        assert_eq!(
+            summary(json!({ "all": true, "limit": 1 })),
+            "Corsie: un colore per branch"
+        );
+        assert_eq!(summary(json!({ "limit": 1 })), "Pannello dei commit");
         let local = out["refs"]
             .as_array()
             .unwrap()

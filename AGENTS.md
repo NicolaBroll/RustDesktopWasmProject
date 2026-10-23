@@ -59,6 +59,8 @@ cargo xtask ci   # fmt, clippy -D warnings, test, layering, clippy wasm
 ```sh
 cargo run -p project-cli -- commands
 cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"limit":5}'
+# grafo di tutti i branch (locali e remoti), tag e HEAD; senza stash e backup
+cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}'
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
 # scrivono nell'indice del repo (segnati `[modifica]` in `commands`, `writes` in MCP)

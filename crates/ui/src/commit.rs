@@ -9,6 +9,7 @@
 use crate::executor::ErrorKind;
 use crate::{Action, App, Done, Request};
 use project_domain::{Commit, Oid, Operation, Status};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -131,35 +132,19 @@ pub enum Blocked {
 }
 
 impl Blocked {
-    pub fn hint(self) -> &'static str {
+    pub fn hint(self) -> String {
         match self {
-            Blocked::Busy => "Attendere la fine dell'operazione in corso",
-            Blocked::Conflicts => {
-                "Ci sono file in conflitto: risolverli e metterli in stage prima di committare"
-            }
-            Blocked::Operation(Operation::Merge) => {
-                "Merge in corso: si conclude con «Continua il merge…» nel riquadro in alto (o si \
-                 annulla con «Annulla il merge…»)"
-            }
-            Blocked::Operation(Operation::Rebase) => {
-                "Rebase in corso: si conclude con i comandi del rebase, non con un commit"
-            }
-            Blocked::Operation(Operation::CherryPick) => {
-                "Cherry-pick in corso: si conclude con i comandi del cherry-pick, non con un commit"
-            }
-            Blocked::Operation(Operation::Revert) => {
-                "Revert in corso: si conclude con i comandi del revert, non con un commit"
-            }
-            Blocked::Operation(Operation::Am) => {
-                "`git am` in corso: si conclude con `git am --continue`, non con un commit"
-            }
-            Blocked::Operation(_) => "Un'operazione in corso impedisce il commit",
-            Blocked::NoCommitToAmend => "Non c'è ancora un commit da modificare",
-            Blocked::NothingStaged => {
-                "Niente in stage: mettere in stage le modifiche da committare (oppure attivare \
-                 amend per cambiare solo il messaggio dell'ultimo commit)"
-            }
-            Blocked::NoMessage => "Scrivere il messaggio del commit",
+            Blocked::Busy => tr!("commit-blocked-busy"),
+            Blocked::Conflicts => tr!("commit-blocked-conflicts"),
+            Blocked::Operation(Operation::Merge) => tr!("commit-blocked-merge"),
+            Blocked::Operation(Operation::Rebase) => tr!("commit-blocked-rebase"),
+            Blocked::Operation(Operation::CherryPick) => tr!("commit-blocked-cherry-pick"),
+            Blocked::Operation(Operation::Revert) => tr!("commit-blocked-revert"),
+            Blocked::Operation(Operation::Am) => tr!("commit-blocked-am"),
+            Blocked::Operation(_) => tr!("commit-blocked-operation"),
+            Blocked::NoCommitToAmend => tr!("commit-blocked-no-commit"),
+            Blocked::NothingStaged => tr!("commit-blocked-nothing-staged"),
+            Blocked::NoMessage => tr!("commit-blocked-no-message"),
         }
     }
 }
@@ -241,11 +226,11 @@ impl CommitSend {
     }
 
     /// Nome dell'operazione per la barra di stato: "Commit in corso…".
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> String {
         if self.amend {
-            "Amend dell'ultimo commit"
+            tr!("commit-amend-label")
         } else {
-            "Commit"
+            tr!("commit-label")
         }
     }
 }
@@ -269,23 +254,21 @@ impl CommitResult {
     pub fn notice(&self) -> String {
         // Amend che ha prodotto lo stesso commit: il motore non ha cambiato niente.
         if self.previous == Some(self.commit.id) && self.backup.is_none() {
-            return format!(
-                "Nessun cambiamento: l'ultimo commit {} è rimasto uguale",
-                self.commit.id.short()
-            );
+            return tr!("commit-unchanged", id = self.commit.id.short());
         }
-        let mut text = format!("Commit {} creato", self.commit.id.short());
-        if let Some(previous) = self.previous.filter(|_| self.backup.is_some()) {
-            text.push_str(&format!(" al posto di {}", previous.short()));
-        }
-        if let Some(backup) = &self.backup {
-            text.push_str(&format!("; backup del commit precedente in {backup}"));
-        }
+        let id = self.commit.id.short();
+        let mut text = match (self.previous, &self.backup) {
+            (Some(previous), Some(backup)) => tr!(
+                "commit-amended",
+                id = id,
+                previous = previous.short(),
+                backup = backup
+            ),
+            (None, Some(backup)) => tr!("commit-created-backup", id = id, backup = backup),
+            (_, None) => tr!("commit-created", id = id),
+        };
         if !self.also_on.is_empty() {
-            text.push_str(&format!(
-                "; il commit precedente resta su {}",
-                self.also_on.join(", ")
-            ));
+            text.push_str(&tr!("commit-also-on", refs = self.also_on.join(", ")));
         }
         text
     }
@@ -419,21 +402,17 @@ impl CommitBox {
 
 /// Il testo dell'errore per l'utente; il messaggio scritto non si perde mai.
 fn error(kind: Option<ErrorKind>, message: &str, detail: Option<String>) -> CommitError {
-    let kept = "Il messaggio scritto è conservato.";
     match kind {
         Some(ErrorKind::Git) => CommitError {
-            message: format!(
-                "git commit non riuscito: un hook (pre-commit, commit-msg…), la firma o \
-                 l'identità (user.name, user.email) hanno fermato il commit. {kept} Output di git:"
-            ),
+            message: tr!("commit-git-failed"),
             output: Some(
                 detail
                     .filter(|out| !out.trim().is_empty())
-                    .unwrap_or_else(|| "(nessun output)".to_owned()),
+                    .unwrap_or_else(|| tr!("commit-no-output")),
             ),
         },
         _ => CommitError {
-            message: format!("Commit non riuscito: {message} {kept}"),
+            message: tr!("commit-failed-kept", error = message),
             output: None,
         },
     }
@@ -497,7 +476,7 @@ impl App {
             return;
         };
         repo.write_error = None;
-        repo.write_label = Some(send.label().to_owned());
+        repo.write_label = Some(send.label());
         self.submit(send.command(), params, Request::Commit(generation));
     }
 
@@ -505,8 +484,13 @@ impl App {
     /// (o la conferma) nella casella, con il messaggio scritto conservato.
     pub(crate) fn receive_commit(&mut self, generation: u64, done: Done) {
         let result = done.result.and_then(|value| {
-            serde_json::from_value::<CommitResult>(value)
-                .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+            serde_json::from_value::<CommitResult>(value).map_err(|e| {
+                tr!(
+                    "commit-unexpected-result",
+                    command = &done.command,
+                    error = e.to_string()
+                )
+            })
         });
         let Some(repo) = self.current(generation) else {
             return;
@@ -551,7 +535,7 @@ impl App {
                 if done.error_kind == Some(ErrorKind::ConfirmRequired) {
                     self.error.clear();
                 } else {
-                    self.error = format!("Commit non riuscito: {e}");
+                    self.error = tr!("commit-failed", error = &e);
                 }
                 self.notice.clear();
             }

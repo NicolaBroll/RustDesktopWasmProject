@@ -19,9 +19,9 @@ pub(crate) fn commit_list(
     let offset = usize::from(header);
     if list.commits().is_empty() && !header {
         let text = if list.is_loading() {
-            "Caricamento dei commit…"
+            tr!("commit-list-loading")
         } else {
-            "Nessun commit."
+            tr!("commit-list-empty")
         };
         ui.centered_and_justified(|ui| ui.weak(text));
         return;
@@ -81,8 +81,8 @@ pub(crate) fn commit_list(
             let index = row - offset;
             let Some(commit) = list.commits().get(index) else {
                 let text = match list.seeking() {
-                    Some(id) => format!("Ricerca del commit {} nei commit più vecchi…", id.short()),
-                    None => "Caricamento di altri commit…".to_owned(),
+                    Some(id) => tr!("commit-list-seeking", id = id.short()),
+                    None => tr!("commit-list-loading-more"),
                 };
                 ui.painter().text(
                     rect.left_center() + vec2(graph_w + 8.0, 0.0),
@@ -106,9 +106,9 @@ pub(crate) fn commit_list(
             let id = commit.id;
             response.context_menu(|ui| {
                 let button = ui
-                    .add_enabled(can_write, egui::Button::new("Nuovo branch da qui…"))
-                    .on_hover_text(format!("Crea un branch su {} senza passarci", id.short()))
-                    .on_disabled_hover_text(WAIT);
+                    .add_enabled(can_write, egui::Button::new(tr!("commit-new-branch")))
+                    .on_hover_text(tr!("commit-new-branch-hint", id = id.short()))
+                    .on_disabled_hover_text(wait());
                 if button.clicked() {
                     actions.push(Action::NewBranch(Start::from_commit(id), String::new()));
                     ui.close();
@@ -198,11 +198,7 @@ pub(super) fn changes_row(
     );
     let painter = ui.painter_at(rect);
     let x = rect.left() + graph_w.max(graph::graph_width(1)) + 8.0;
-    let title = painter.layout_no_wrap(
-        "Modifiche non committate".to_owned(),
-        style.font.clone(),
-        style.text,
-    );
+    let title = painter.layout_no_wrap(tr!("commit-list-changes"), style.font.clone(), style.text);
     let width = title.size().x;
     painter.galley(
         egui::pos2(x, rect.center().y - title.size().y / 2.0),
@@ -211,13 +207,11 @@ pub(super) fn changes_row(
     );
     let count = repo.status.as_ref().map_or(0, stage::change_count);
     let staged = repo.stage.staged.len();
-    let mut detail = match count {
-        1 => "1 file".to_owned(),
-        n => format!("{n} file"),
+    let detail = if staged > 0 {
+        tr!("commit-list-changes-staged", n = count, staged = staged)
+    } else {
+        tr!("commit-list-changes-count", n = count)
     };
-    if staged > 0 {
-        detail.push_str(&format!(", {staged} in stage"));
-    }
     painter.text(
         egui::pos2(x + width + 10.0, rect.center().y),
         Align2::LEFT_CENTER,
@@ -227,7 +221,7 @@ pub(super) fn changes_row(
     );
     response
         .clone()
-        .on_hover_text("Clic: mostra l'area di stage");
+        .on_hover_text(tr!("commit-list-changes-hint"));
 }
 
 /// Archi e pallini del grafo per le righe `rows` (indice e rettangolo), nella colonna larga
@@ -445,41 +439,44 @@ fn pick_items(
     actions: &mut Vec<Action>,
 ) {
     ui.separator();
+    let active = tr!("commit-current-branch");
     let (into, blocked) = match gate {
         merge::Gate::Into(branch) => (branch.as_str(), None),
-        merge::Gate::Blocked(reason) => ("branch attivo", Some(reason.as_str())),
+        merge::Gate::Blocked(reason) => (active.as_str(), Some(reason.as_str())),
     };
-    let is_merge = commit.parents.len() > 1;
-    let choose = if is_merge {
-        " È un commit di merge: si sceglie prima il genitore di riferimento."
+    let items = if commit.parents.len() > 1 {
+        [
+            (
+                merge::Pick::CherryPick,
+                tr!("commit-cherry-pick-merge-item", into = into),
+                tr!("commit-cherry-pick-merge-hint", into = into, what = what),
+            ),
+            (
+                merge::Pick::Revert,
+                tr!("commit-revert-merge-item"),
+                tr!("commit-revert-merge-hint", into = into, what = what),
+            ),
+        ]
     } else {
-        ""
+        [
+            (
+                merge::Pick::CherryPick,
+                tr!("commit-cherry-pick-item", into = into),
+                tr!("commit-cherry-pick-hint", into = into, what = what),
+            ),
+            (
+                merge::Pick::Revert,
+                tr!("commit-revert-item"),
+                tr!("commit-revert-hint", into = into, what = what),
+            ),
+        ]
     };
-    let items = [
-        (
-            merge::Pick::CherryPick,
-            format!("Cherry-pick su «{into}»{}", if is_merge { "…" } else { "" }),
-            format!(
-                "Applica le modifiche di «{what}» sopra «{into}» con un commit nuovo (autore e \
-                 messaggio originali).{choose} Servono file senza modifiche; con conflitti resta \
-                 in corso (si risolve o si annulla dal riquadro in alto). «Annulla» lo toglie"
-            ),
-        ),
-        (
-            merge::Pick::Revert,
-            format!("Revert{}", if is_merge { "…" } else { "" }),
-            format!(
-                "Crea su «{into}» un commit che annulla le modifiche di «{what}».{choose} Servono \
-                 file senza modifiche; con conflitti resta in corso (si risolve o si annulla dal \
-                 riquadro in alto). «Annulla» lo toglie"
-            ),
-        ),
-    ];
     for (pick, label, hint) in items {
         let button = ui
             .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
             .on_hover_text(hint)
-            .on_disabled_hover_text(blocked.unwrap_or(WAIT));
+            .on_disabled_hover_text(blocked.map_or_else(wait, str::to_owned));
+
         if button.clicked() {
             actions.push(Action::Pick {
                 pick,

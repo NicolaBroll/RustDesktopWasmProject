@@ -8,6 +8,7 @@
 //! ricarica o un altro file). Solo le righe aggiunte e tolte si selezionano, mai il contesto.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
+use crate::{Action, App, Drag, Request, lines};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
 use std::collections::BTreeSet;
 
@@ -297,6 +298,72 @@ pub fn buttons(
 /// Messaggio per una scrittura di righe rifiutata perché il file è cambiato.
 pub const STALE_MESSAGE: &str =
     "il file è cambiato: rileggi il diff e rifai la selezione (il diff è stato riletto)";
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_lines(&mut self, action: Action) {
+        match action {
+            Action::SelectLine { row, shift } => {
+                if let Some((_, doc, selection)) = self.selectable_diff() {
+                    selection.click(doc, row, shift);
+                }
+            }
+            Action::DragLines(step) => {
+                if let Some((_, doc, selection)) = self.selectable_diff() {
+                    match step {
+                        Drag::Start(row) => selection.drag_start(doc, row),
+                        Drag::Over(row) => selection.drag_over(doc, row),
+                        Drag::End => selection.drag_end(),
+                    }
+                }
+            }
+            Action::ClearLines => {
+                if let Some((_, _, selection)) =
+                    self.repo.as_mut().and_then(|r| r.diff.loaded_mut())
+                {
+                    selection.clear();
+                }
+            }
+            Action::WriteHunk(h) => {
+                let write = self.repo.as_ref().and_then(|r| {
+                    let (target, doc, _) = r.diff.loaded()?;
+                    lines::plan(doc, target, Pick::Hunk(h))
+                });
+                if let Some(write) = write {
+                    self.send_line_write(write);
+                }
+            }
+            Action::WriteSelectedLines => {
+                let write = self.repo.as_ref().and_then(|r| {
+                    let (target, doc, selection) = r.diff.loaded()?;
+                    lines::plan(doc, target, Pick::Selected(selection))
+                });
+                if let Some(write) = write {
+                    self.send_line_write(write);
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Manda lo stage o l'unstage di righe, come [`App::send_write`]: mai due scritture
+    /// insieme, né con una conferma aperta.
+    pub(crate) fn send_line_write(&mut self, write: LineWrite) {
+        if self.executor.writing().is_some() || write.lines.is_empty() {
+            return;
+        }
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if repo.modal_open() {
+            return;
+        }
+        repo.write_error = None;
+        repo.write_label = Some(write.label.clone());
+        self.submit(write.command(), write.params(), Request::Write(generation));
+    }
+}
 
 #[cfg(test)]
 mod tests {

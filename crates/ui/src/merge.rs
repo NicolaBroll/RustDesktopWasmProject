@@ -20,6 +20,7 @@
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
+use crate::{Action, App, DiffSource, DiffTarget, Done, Request, merge};
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -846,6 +847,183 @@ pub fn commit_name(id: Oid, refs: &[RefInfo]) -> String {
         }
     }
     id.short()
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_merge(&mut self, action: Action) {
+        match action {
+            Action::Merge { rev, what, no_ff } => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
+                else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.start(rev, what, into, no_ff) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Start;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::ContinueMerge => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.merge.open_continue();
+                }
+            }
+            Action::MergeMessage(message) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.set_message(message);
+                }
+            }
+            Action::SubmitContinueMerge => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.submit_continue() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Continue;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::AbortMerge => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                if let Some((params, label)) = repo.merge.start_abort() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Abort;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::ConfirmAbortMerge => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.confirm_abort() {
+                    repo.write_label = Some(label);
+                    let op = merge::Op::Abort;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::CloseMergeDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.close();
+                }
+            }
+            Action::DismissMergeError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.dismiss();
+                }
+            }
+            Action::OpenConflict(path) => {
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                repo.stash.select(None);
+                repo.select_worktree(true);
+                if !repo.worktree_selected {
+                    return;
+                }
+                let target = DiffTarget {
+                    source: DiffSource::Worktree,
+                    path,
+                };
+                if let Some(seq) = repo.diff.open(target.clone()) {
+                    self.request_diff(&target, seq);
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Risposta di `merge.*`: stato, ref e diario dalla risposta (il riquadro si rilegge con lo
+    /// stato nuovo), poi il log riletto se il branch si è spostato, con il nuovo HEAD
+    /// selezionato. Un merge fermo in conflitto apre l'area di stage; un avvio rifiutato apre la
+    /// sua finestra, un rifiuto di "Continua" resta nel dialogo.
+    pub(crate) fn receive_merge(&mut self, generation: u64, op: merge::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .merge
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            merge::Received::Inline | merge::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            merge::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                repo.history = outcome.history.clone();
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                let status_read = outcome.status.is_some();
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                if outcome.show_changes {
+                    repo.stash.select(None);
+                    repo.select_worktree(true);
+                } else if outcome.moved && !repo.worktree_selected {
+                    repo.select_after_load = repo.head.target();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                self.follow_diff();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if !status_read {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
+                }
+                if outcome.moved
+                    && let Some(repo) = self.current(generation)
+                {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            merge::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
+                    self.submit("edit.history", json!({}), Request::History(generation));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

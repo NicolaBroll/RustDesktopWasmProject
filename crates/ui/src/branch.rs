@@ -10,6 +10,7 @@
 
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
+use crate::{Action, App, Done, Request, branch};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -645,6 +646,171 @@ impl RenameResult {
 
 fn refs_warning(error: String) -> String {
     format!("Fatto, ma i ref non si rileggono: {error}")
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_branch(&mut self, action: Action) {
+        match action {
+            Action::NewBranch(start, name) => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.branch.open_create(start, name);
+                }
+            }
+            Action::RenameBranch(name) => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.branch.open_rename(name);
+                }
+            }
+            Action::BranchName(name) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.set_name(name);
+                }
+            }
+            Action::SubmitBranchName => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((op, params, label)) = repo.branch.submit_name() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::Checkout(name) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = format!("Checkout di «{name}»");
+                if let Some(params) = repo.branch.start_checkout(name) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = branch::Op::Checkout;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::DeleteBranch(name, target) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = format!("Eliminazione di «{name}»");
+                if let Some(params) = repo.branch.start_delete(name, target) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = branch::Op::Delete;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::ConfirmDeleteBranch => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let label = match repo.branch.dialog() {
+                    Some(branch::Dialog::Delete(d)) => format!("Eliminazione di «{}»", d.name),
+                    _ => return,
+                };
+                if let Some(params) = repo.branch.confirm_delete() {
+                    repo.write_label = Some(label);
+                    let op = branch::Op::Delete;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::CloseBranchDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.close();
+                }
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Risposta di `branch.*`: ref e diario dalla risposta, poi il log riletto (un branch
+    /// eliminato può portarsi via dei commit); dopo un checkout si rilegge tutto (HEAD, grafo,
+    /// area di stage). Un nome rifiutato resta nel suo dialogo.
+    pub(crate) fn receive_branch(&mut self, generation: u64, op: branch::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .branch
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            branch::Received::Inline | branch::Received::Confirm | branch::Received::Refused => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            branch::Received::Done(outcome) => {
+                repo.history = outcome.history.clone();
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                let checkout = outcome.op == branch::Op::Checkout;
+                // Dopo un checkout il nuovo HEAD si seleziona appena arriva il log.
+                if checkout && !repo.worktree_selected {
+                    repo.select_after_load = repo.head.target();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                if checkout {
+                    self.follow_diff();
+                    self.load();
+                } else {
+                    // Di solito i ref arrivano con la risposta: basta il log.
+                    if !refs_read {
+                        self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    }
+                    if let Some(repo) = self.current(generation) {
+                        let first = repo.list.reset();
+                        self.request_page(first);
+                    }
+                }
+            }
+            branch::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    // Un'eliminazione rifiutata (es. il branch non è più sul commit visto): i
+                    // ref si rileggono, così la colonna mostra dov'è adesso.
+                    if op == branch::Op::Delete {
+                        self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    }
+                    // Il diario si rilegge comunque: costa poco e resta allineato.
+                    self.submit("edit.history", json!({}), Request::History(generation));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

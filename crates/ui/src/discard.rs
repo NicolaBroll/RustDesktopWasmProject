@@ -7,6 +7,7 @@
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
+use crate::{Action, App, Done, Request, discard, lowercase_first};
 use project_domain::{Change, RepoPath, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -313,6 +314,144 @@ impl UndoResult {
             text.push_str(&format!("; attenzione: {warning}"));
         }
         text
+    }
+}
+
+impl App {
+    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    pub(crate) fn apply_discard(&mut self, action: Action) {
+        match action {
+            Action::Discard(paths) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = discard::describe(&paths);
+                if let Some(params) = repo.discard.start(paths) {
+                    repo.write_error = None;
+                    repo.write_label = Some(format!("Controllo per {}", lowercase_first(&label)));
+                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                }
+            }
+            Action::ConfirmDiscard => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let label = repo.discard.confirm().map(|d| discard::describe(&d.paths));
+                if let Some(params) = repo.discard.confirmed() {
+                    repo.write_label = label;
+                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                }
+            }
+            Action::CancelDiscard => {
+                if let Some(repo) = &mut self.repo {
+                    repo.discard.cancel();
+                }
+            }
+            Action::Undo(op) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some()
+                    || repo.modal_open()
+                    || !op.available(&repo.history)
+                {
+                    return;
+                }
+                repo.write_error = None;
+                repo.write_label = Some(op.hint(&repo.history));
+                self.submit(op.command(), json!({}), Request::Undo(generation));
+            }
+            _ => unreachable!("azione smistata alla funzione sbagliata"),
+        }
+    }
+
+    /// Risposta di `worktree.discard`: il controllo apre il dialogo di conferma, lo scarto
+    /// fatto porta il nuovo stato e i pulsanti Annulla/Ripeti; un rifiuto va nell'area di stage.
+    pub(crate) fn receive_discard(&mut self, generation: u64, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .discard
+            .receive(done.result, done.error_kind, done.error_detail)
+        {
+            Received::Confirm => {}
+            Received::Done(result) => {
+                repo.history = result.history.clone();
+                let notice = result.notice();
+                match result.status {
+                    Some(status) => {
+                        repo.set_status(status);
+                        self.error.clear();
+                        self.follow_diff();
+                    }
+                    None => {
+                        let reason = result.status_error.unwrap_or_default();
+                        self.error =
+                            format!("Modifiche scartate, ma lo stato non si rilegge: {reason}");
+                        self.submit("repo.status", json!({}), Request::Status(generation));
+                    }
+                }
+                self.notice = notice;
+            }
+            Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                repo.write_error = Some(message.clone());
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                }
+            }
+        }
+    }
+
+    /// Risposta di `edit.undo`/`edit.redo`: il diario aggiornato, poi si rilegge tutto (un
+    /// undo può spostare branch o rimettere file).
+    pub(crate) fn receive_undo(&mut self, generation: u64, done: Done) {
+        let result = done.result.and_then(|value| {
+            serde_json::from_value::<UndoResult>(value)
+                .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+        });
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        let label = repo
+            .write_label
+            .take()
+            .unwrap_or_else(|| done.command.clone());
+        match result {
+            Ok(result) => {
+                repo.history = result.history.clone();
+                if let Some(status) = result.status.clone() {
+                    repo.set_status(status);
+                }
+                self.notice = result.notice();
+                self.error = result
+                    .status_error
+                    .map(|e| format!("Fatto, ma lo stato non si rilegge: {e}"))
+                    .unwrap_or_default();
+                self.follow_diff();
+                self.load();
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", done.command);
+                self.error = format!("{label} non riuscito: {e}");
+                self.notice.clear();
+                // Il diario si rilegge: una voce potrebbe non essere più annullabile.
+                self.submit("edit.history", json!({}), Request::History(generation));
+            }
+        }
     }
 }
 

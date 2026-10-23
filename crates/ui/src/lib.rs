@@ -24,6 +24,7 @@ mod lines;
 mod list;
 mod remotes;
 mod stage;
+mod stash;
 mod sync;
 mod view;
 
@@ -45,6 +46,7 @@ use remotes::{AddFields, RemotesBox};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
+use stash::{PushFields, StashBox};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use sync::SyncBox;
@@ -176,6 +178,28 @@ enum Action {
     CloseRemoteDialog,
     /// Chiude la finestra dell'errore del fetch dopo l'aggiunta.
     DismissRemoteError,
+    /// Apre il dialogo "Stash" per mettere da parte le modifiche.
+    OpenStash,
+    /// I campi del dialogo "Stash" sono cambiati.
+    StashFields(PushFields),
+    /// Manda il dialogo "Stash" (`stash.push`).
+    SubmitStash,
+    /// Seleziona lo stash con questo id: a destra i suoi file, nel grafo la sua base.
+    SelectStash(Oid),
+    /// Applica lo stash con questo id (`true`: pop, cioè applica e se va tutto bene lo
+    /// elimina), con `index` ed `expected` dall'elenco visto.
+    ApplyStash(Oid, bool),
+    /// "Rimetti anche lo stage" per apply e pop.
+    StashRestoreIndex(bool),
+    /// Elimina lo stash con questo id: prima senza conferma, il motore la chiede sempre e si
+    /// apre il dialogo.
+    DropStash(Oid),
+    /// Conferma l'eliminazione in attesa: reinvia con `"confirm": true`.
+    ConfirmDropStash,
+    /// Chiude il dialogo degli stash aperto senza mandare niente.
+    CloseStashDialog,
+    /// Chiude la finestra dei conflitti di apply o pop.
+    DismissStashConflicts,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -230,6 +254,10 @@ enum Request {
     Remotes(u64),
     /// `remote.add`/`remote.remove` (lo stato del dialogo è in [`RemotesBox`]).
     Remote(u64, remotes::Op),
+    /// `stash.list`.
+    Stashes(u64),
+    /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (lo stato è in [`StashBox`]).
+    Stash(u64, stash::Op),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -269,6 +297,8 @@ struct RepoView {
     sync: SyncBox,
     /// I remoti configurati (`remote.list`) e i dialoghi per aggiungerli e rimuoverli.
     remotes: RemotesBox,
+    /// Gli stash (`stash.list`), lo stash selezionato, i dialoghi di push e drop.
+    stash: StashBox,
     /// Cosa farebbero Annulla e Ripeti.
     history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
@@ -302,6 +332,7 @@ impl RepoView {
             fetch: FetchBox::default(),
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
+            stash: StashBox::default(),
             history: History::default(),
             select_after_load,
         };
@@ -311,6 +342,11 @@ impl RepoView {
 
     fn update_labels(&mut self) {
         self.labels = graph::ref_labels(&self.refs, &self.head);
+        let stashes = self.stash.list().unwrap_or_default();
+        graph::add_stash_labels(
+            &mut self.labels,
+            stashes.iter().map(|s| (s.base, s.name.as_str())),
+        );
     }
 
     /// Nuovo stato del repo, da `repo.status` o da una scrittura. Senza modifiche la riga
@@ -336,6 +372,7 @@ impl RepoView {
             || self.branch.modal_open()
             || self.sync.modal_open()
             || self.remotes.modal_open()
+            || self.stash.modal_open()
     }
 
     /// L'ultimo commit (HEAD), se è tra quelli caricati.
@@ -363,6 +400,9 @@ impl RepoView {
     /// Seleziona la riga delle modifiche (`true`) o torna ai commit.
     fn select_worktree(&mut self, on: bool) {
         self.worktree_selected = on && self.has_changes();
+        if self.worktree_selected {
+            self.stash.select(None);
+        }
         if self.worktree_selected {
             self.scroll_header = true;
         }
@@ -485,6 +525,7 @@ impl App {
             }
             Action::Select(index) => {
                 if let Some(repo) = &mut self.repo {
+                    repo.stash.select(None);
                     repo.select_worktree(false);
                     repo.list.select(index);
                 }
@@ -494,14 +535,21 @@ impl App {
                     repo.select_worktree(true);
                 }
             }
-            Action::SelectCommit(id) => self.seek(id),
+            Action::SelectCommit(id) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.stash.select(None);
+                }
+                self.seek(id);
+            }
             Action::Move(delta) => {
                 if let Some(repo) = &mut self.repo {
+                    repo.stash.select(None);
                     repo.move_selection(delta);
                 }
             }
             Action::Edge(first) => {
                 if let Some(repo) = &mut self.repo {
+                    repo.stash.select(None);
                     if first && repo.has_changes() {
                         repo.select_worktree(true);
                     } else {
@@ -881,6 +929,111 @@ impl App {
                     repo.remotes.dismiss();
                 }
             }
+            Action::OpenStash => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.stash.open_push();
+                }
+            }
+            Action::StashFields(fields) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.stash.set_fields(fields);
+                }
+            }
+            Action::SubmitStash => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.stash.submit_push() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = stash::Op::Push;
+                    self.submit(op.command(), params, Request::Stash(generation, op));
+                }
+            }
+            Action::SelectStash(id) => {
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let Some(base) = repo.stash.find(id).map(|s| s.base) else {
+                    return;
+                };
+                // La base si seleziona nel grafo (portata in vista), lo stash a destra.
+                self.seek(base);
+                if let Some(repo) = &mut self.repo {
+                    repo.worktree_selected = false;
+                    repo.stash.select(Some(id));
+                }
+            }
+            Action::ApplyStash(id, pop) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                if let Some((params, label)) = repo.stash.start_apply(id, pop) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = if pop {
+                        stash::Op::Pop
+                    } else {
+                        stash::Op::Apply
+                    };
+                    self.submit(op.command(), params, Request::Stash(generation, op));
+                }
+            }
+            Action::StashRestoreIndex(on) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.stash.restore_index = on;
+                }
+            }
+            Action::DropStash(id) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                if let Some((params, label)) = repo.stash.start_drop(id) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = stash::Op::Drop;
+                    self.submit(op.command(), params, Request::Stash(generation, op));
+                }
+            }
+            Action::ConfirmDropStash => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.stash.confirm_drop() {
+                    repo.write_label = Some(label);
+                    let op = stash::Op::Drop;
+                    self.submit(op.command(), params, Request::Stash(generation, op));
+                }
+            }
+            Action::CloseStashDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.stash.close();
+                }
+            }
+            Action::DismissStashConflicts => {
+                if let Some(repo) = &mut self.repo {
+                    repo.stash.dismiss();
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -1073,7 +1226,10 @@ impl App {
     /// delle modifiche.
     fn close_stale_diff(&mut self) {
         if let Some(repo) = &mut self.repo {
-            let selected = repo.list.selected_commit().map(|c| c.id);
+            let selected = match repo.stash.selected() {
+                Some(stash) => Some(stash.id),
+                None => repo.list.selected_commit().map(|c| c.id),
+            };
             let stale = repo.diff.target().is_some_and(|t| match t.source {
                 DiffSource::Commit(id) => repo.worktree_selected || Some(id) != selected,
                 DiffSource::Worktree | DiffSource::Index => !repo.worktree_selected,
@@ -1089,11 +1245,12 @@ impl App {
         let Some(repo) = &mut self.repo else {
             return;
         };
-        let selected = repo
-            .list
-            .selected_commit()
-            .map(|c| c.id)
-            .filter(|_| !repo.worktree_selected);
+        // Uno stash selezionato si mostra come il suo commit: i file rispetto alla base.
+        let selected = match repo.stash.selected() {
+            Some(stash) => Some(stash.id),
+            None => repo.list.selected_commit().map(|c| c.id),
+        }
+        .filter(|_| !repo.worktree_selected);
         if let Some(id) = repo.details.want(selected) {
             let request = Request::Show(self.generation, id);
             self.submit("commit.show", json!({ "id": id.to_string() }), request);
@@ -1151,6 +1308,7 @@ impl App {
         self.submit("repo.status", json!({}), Request::Status(generation));
         self.submit("edit.history", json!({}), Request::History(generation));
         self.request_remotes(generation);
+        self.submit(stash::LIST, json!({}), Request::Stashes(generation));
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
@@ -1265,6 +1423,21 @@ impl App {
             }
             if let Request::Remote(generation, op) = request {
                 self.receive_remote(generation, op, done);
+                continue;
+            }
+            // Anche l'elenco degli stash ha il suo errore, nella sua sezione.
+            if let Request::Stashes(generation) = request {
+                if let Some(repo) = self.current(generation) {
+                    if let Err(e) = &done.result {
+                        log::warn!("{}: {e}", done.command);
+                    }
+                    repo.stash.receive_list(done.result);
+                    repo.update_labels();
+                }
+                continue;
+            }
+            if let Request::Stash(generation, op) = request {
+                self.receive_stash(generation, op, done);
                 continue;
             }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
@@ -1679,6 +1852,62 @@ impl App {
         }
     }
 
+    /// Risposta di `stash.*`: elenco, stato e diario dalla risposta, le etichette degli stash
+    /// nel grafo rifatte e, se le basi sono cambiate, il log riletto. Un push rifiutato resta
+    /// nel suo dialogo; i conflitti di apply e pop aprono la loro finestra.
+    fn receive_stash(&mut self, generation: u64, op: stash::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .stash
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            stash::Received::Inline | stash::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            stash::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                repo.update_labels();
+                if let Some(history) = outcome.history {
+                    repo.history = history;
+                }
+                let status_read = outcome.status.is_some();
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                self.follow_diff();
+                // Il drop non tocca i file; gli altri sì, e se lo stato non è arrivato si
+                // rilegge.
+                if !status_read && outcome.op != stash::Op::Drop {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
+                }
+                if outcome.reload_log
+                    && let Some(repo) = self.current(generation)
+                {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            stash::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    // L'elenco può essere cambiato (lo stash visto si è spostato): si rilegge.
+                    self.submit(stash::LIST, json!({}), Request::Stashes(generation));
+                    self.submit("edit.history", json!({}), Request::History(generation));
+                }
+            }
+        }
+    }
+
     /// Dopo un fetch: lo stato (avanti/indietro rispetto all'upstream) e il log (i commit
     /// nuovi dei branch remoti).
     fn reload_after_fetch(&mut self, generation: u64) {
@@ -1758,7 +1987,9 @@ impl App {
             | Request::Fetch(..)
             | Request::Sync(..)
             | Request::Remotes(..)
-            | Request::Remote(..) => {}
+            | Request::Remote(..)
+            | Request::Stashes(..)
+            | Request::Stash(..) => {}
         }
         Ok(())
     }
@@ -1858,6 +2089,8 @@ impl eframe::App for App {
                     .show(ui, |ui| {
                         if repo.worktree_selected {
                             view::stage_panel(ui, repo, &mut draft, writing, &mut actions);
+                        } else if let Some(stash) = repo.stash.selected() {
+                            view::stash_panel(ui, repo, stash, writing, &mut actions);
                         } else {
                             view::details_panel(
                                 ui,
@@ -1899,6 +2132,12 @@ impl eframe::App for App {
                         .and_then(|d| d.ticket)
                         .and_then(|t| self.executor.progress(t));
                     view::remote_dialog(&ctx, dialog, progress.as_ref(), &mut actions);
+                }
+                if let Some(dialog) = repo.stash.dialog() {
+                    view::stash_dialog(&ctx, repo, dialog, &mut actions);
+                }
+                if let Some(conflicts) = repo.stash.conflicts() {
+                    view::stash_conflicts_window(&ctx, conflicts, &mut actions);
                 }
                 if let Some(window) = repo.sync.window() {
                     let can_write = !writing && !repo.modal_open();

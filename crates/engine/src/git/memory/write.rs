@@ -98,7 +98,7 @@ impl MemoryBackend {
     }
 
     /// Salva `content` come blob e ne restituisce l'id.
-    fn store_blob(&mut self, content: Vec<u8>) -> Oid {
+    pub(super) fn store_blob(&mut self, content: Vec<u8>) -> Oid {
         let id = content_oid(&content);
         self.blobs.insert(id, content);
         id

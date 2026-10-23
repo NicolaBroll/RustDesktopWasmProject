@@ -26,6 +26,11 @@ pub use git::{
     split_message, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
+    INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
+    StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
+    pop_stash, stash_blocked, stash_branch, stash_local_changes,
+};
+pub use git::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     PushKind, PushOutcome, PushRejection, PushRequest, StrategySource, UpstreamConfig,
     check_pull_state, merge_message, pull_mode, tracking_ref,
@@ -110,9 +115,9 @@ pub enum EngineError {
     ConfirmRequired {
         command: &'static str,
         reason: String,
-        /// L'id completo (40 cifre) da ripetere in `"expected"` per confermare: solo per il
-        /// force di `remote.push` (il branch remoto locale letto ora, che è anche nel testo di
-        /// `reason`); `None` per tutti gli altri comandi.
+        /// L'id completo (40 cifre) da ripetere in `"expected"` per confermare: per il force di
+        /// `remote.push` (il branch remoto locale letto ora) e per `stash.drop` (lo stash da
+        /// eliminare), che è anche nel testo di `reason`; `None` per gli altri comandi.
         expected: Option<String>,
     },
     /// Il commit è **riuscito**, ma dopo qualcosa non torna: HEAD spostato da un hook

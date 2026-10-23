@@ -628,7 +628,7 @@ impl CliBackend {
 /// I file che l'output di merge/rebase dice in conflitto: `CONFLICT (...): Merge conflict in
 /// <file>` e, con `rerere`, `Resolved '<file>' using previous resolution.` / `Staged '<file>'
 /// using previous resolution.`.
-fn conflicted_in_output(text: &str) -> Vec<String> {
+pub(super) fn conflicted_in_output(text: &str) -> Vec<String> {
     let mut files = Vec::new();
     for line in text.lines() {
         let file = if let Some((_, f)) = line.split_once("Merge conflict in ") {

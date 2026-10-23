@@ -26,9 +26,10 @@ pub struct PageRequest {
 
 impl PageRequest {
     /// I parametri di `repo.log`: il grafo parte da tutti i ref (branch locali e remoti, tag,
-    /// HEAD), così si vedono anche i branch non uniti e quelli appena scaricati.
+    /// HEAD), così si vedono anche i branch non uniti e quelli appena scaricati, e dalle basi
+    /// degli stash, così ogni stash ha la sua riga anche se nessun branch la contiene più.
     pub fn params(&self) -> Value {
-        json!({ "skip": self.skip, "limit": self.limit, "all": true })
+        json!({ "skip": self.skip, "limit": self.limit, "all": true, "stashes": true })
     }
 }
 

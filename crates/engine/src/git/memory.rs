@@ -6,19 +6,22 @@ mod discard;
 mod remote;
 mod remote_admin;
 mod restore;
+mod stash;
 mod sync;
 mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
 pub use remote::FetchFailure;
 use remote::MemoryRemote;
+use stash::MemoryStash;
 
 use super::line_diff;
 use super::{
     BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
     DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HeadState, LineSelection, LogQuery,
     PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot,
-    RepoOpener, RestoreOutcome, StagedVersion, UpstreamConfig, WorktreeRestore,
+    RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped,
+    StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext};
 use project_domain::{
@@ -93,6 +96,13 @@ pub struct MemoryBackend {
     /// Quante `restore_refs` riescono ancora prima di fallire
     /// ([`MemoryBackend::fail_restore_refs_after`]); `None`: sempre.
     restore_budget: Option<usize>,
+    /// Gli stash, dal più recente (`stash@{0}`); `refs/stash` punta al primo.
+    stashes: Vec<MemoryStash>,
+    /// Gli stash eliminati, per id: `stash_store` (l'undo di un drop) li ritrova interi.
+    dropped_stashes: BTreeMap<Oid, MemoryStash>,
+    /// Se c'è, ogni `stash_drop` fallisce con questo messaggio
+    /// ([`MemoryBackend::fail_stash_drop`]).
+    stash_drop_failure: Option<String>,
 }
 
 impl Default for MemoryBackend {
@@ -126,6 +136,9 @@ impl MemoryBackend {
             remote_elsewhere: BTreeMap::new(),
             listed_anyway: BTreeSet::new(),
             restore_budget: None,
+            stashes: Vec::new(),
+            dropped_stashes: BTreeMap::new(),
+            stash_drop_failure: None,
         }
     }
 
@@ -212,11 +225,6 @@ impl MemoryBackend {
         self.set_ref(format!("{TAGS}{name}"), target, tag_object);
     }
 
-    /// Imposta lo stash (`refs/stash`) sul commit `target`.
-    pub fn set_stash(&mut self, target: Oid) {
-        self.set_ref("refs/stash".to_owned(), target, None);
-    }
-
     /// Il branch locale `branch` segue il branch remoto `remote` (nomi brevi, es. `main` e
     /// `origin/main`). Il remoto può anche non esistere: l'upstream risulta sparito.
     pub fn set_upstream(&mut self, branch: &str, remote: &str) {
@@ -271,6 +279,10 @@ impl MemoryBackend {
         ];
         if let Some(entry) = candidates.iter().find_map(|name| self.refs.get(name)) {
             return Ok(entry.target);
+        }
+        // I backup dei commit sono ref anche loro (`refs/project/backup/...`).
+        if let Some((_, id)) = self.commit_backups.iter().find(|(name, _)| name == rev) {
+            return Ok(*id);
         }
         let hex = rev.to_ascii_lowercase();
         if (4..=Oid::HEX_LEN).contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -590,12 +602,19 @@ impl GitBackend for MemoryBackend {
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError> {
         query.check()?;
         let starts: Vec<Oid> = if query.all {
-            // Come `--branches --remotes --tags HEAD`: niente stash né backup.
+            // Come `--branches --remotes --tags HEAD`: niente stash né backup (con `stashes` le
+            // basi degli stash, non gli stash).
             self.refs
                 .iter()
                 .filter(|(name, _)| [HEADS, REMOTES, TAGS].iter().any(|p| name.starts_with(p)))
                 .map(|(_, entry)| entry.target)
                 .chain(self.head_target())
+                .chain(
+                    self.stashes
+                        .iter()
+                        .filter(|_| query.stashes)
+                        .filter_map(|s| s.parents.first().copied()),
+                )
                 .collect()
         } else {
             match &query.rev {
@@ -837,6 +856,26 @@ impl GitBackend for MemoryBackend {
 
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         Ok(self.remote_elsewhere.get(name).cloned().unwrap_or_default())
+    }
+
+    fn stashes(&self) -> Result<Vec<StashEntry>, EngineError> {
+        Ok(self.stash_list())
+    }
+
+    fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
+        self.push_stash(request)
+    }
+
+    fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError> {
+        self.apply_stash(request)
+    }
+
+    fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
+        self.drop_stash(request)
+    }
+
+    fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
+        self.store_stash(id, message)
     }
 }
 

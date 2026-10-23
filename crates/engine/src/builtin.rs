@@ -5,6 +5,7 @@ mod pull;
 mod push;
 mod remote;
 mod remotes;
+mod stash;
 
 use crate::commands::parse_params;
 use crate::{
@@ -44,7 +45,7 @@ impl Registry {
         add(
             "repo.log",
             "Cronologia dei commit",
-            r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool}"#,
+            r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (con all: anche le basi degli stash)}"#,
             repo_log,
         );
         add(
@@ -167,6 +168,31 @@ impl Registry {
             r#"{"name": string, "confirm": true}"#,
             remotes::remote_remove,
         );
+        add("stash.list", "Stash", "{}", stash::stash_list);
+        add(
+            "stash.push",
+            "Metti da parte le modifiche (stash)",
+            r#"{"message"?: string (una riga), "include_untracked"?: bool, "keep_index"?: bool, "paths"?: [percorso, ...]}"#,
+            stash::stash_push,
+        );
+        add(
+            "stash.apply",
+            "Applica uno stash",
+            r#"{"index"?: number (stash@{n}, 0), "expected"?: oid completo (lo stash visto), "restore_index"?: bool}"#,
+            stash::stash_apply,
+        );
+        add(
+            "stash.pop",
+            "Applica uno stash e toglilo dall'elenco",
+            r#"{"index"?: number (stash@{n}, 0), "expected"?: oid completo (lo stash visto), "restore_index"?: bool}"#,
+            stash::stash_pop,
+        );
+        add(
+            "stash.drop",
+            "Elimina uno stash",
+            r#"{"index"?: number (stash@{n}, 0), "expected": oid completo (lo stash da eliminare; obbligatorio con confirm), "confirm": true}"#,
+            stash::stash_drop,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -197,6 +223,10 @@ const WRITES: &[&str] = &[
     "remote.pull",
     "remote.push",
     "remote.remove",
+    "stash.apply",
+    "stash.drop",
+    "stash.pop",
+    "stash.push",
     "worktree.discard",
 ];
 
@@ -681,6 +711,11 @@ mod tests {
                 "repo.open",
                 "repo.refs",
                 "repo.status",
+                "stash.apply",
+                "stash.drop",
+                "stash.list",
+                "stash.pop",
+                "stash.push",
                 "worktree.discard"
             ]
         );
@@ -706,6 +741,10 @@ mod tests {
                 "remote.pull",
                 "remote.push",
                 "remote.remove",
+                "stash.apply",
+                "stash.drop",
+                "stash.pop",
+                "stash.push",
                 "worktree.discard"
             ]
         );

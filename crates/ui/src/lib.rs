@@ -48,7 +48,7 @@ use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
-use project_i18n::Lang;
+use project_i18n::{Lang, tr};
 use remotes::{AddFields, RemotesBox};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -778,7 +778,7 @@ impl App {
             Seek::Loading(Some(page)) => self.request_page(page),
             Seek::Loading(None) => {}
             Seek::Missing => {
-                self.error = format!("il commit {} non è tra quelli caricati", id.short());
+                self.error = tr!("app-commit-not-loaded", id = id.short());
             }
         }
     }
@@ -965,8 +965,13 @@ impl App {
             // I dettagli hanno il loro stato, errori compresi: li mostra il pannello.
             if let Request::Show(generation, id) = request {
                 let result = done.result.and_then(|value| {
-                    serde_json::from_value::<CommitDetails>(value)
-                        .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+                    serde_json::from_value::<CommitDetails>(value).map_err(|e| {
+                        tr!(
+                            "common-unexpected-result",
+                            command = &done.command,
+                            error = e.to_string()
+                        )
+                    })
                 });
                 if let Some(repo) = self.current(generation) {
                     repo.details.receive(id, result);
@@ -976,8 +981,13 @@ impl App {
             // Le scritture: il nuovo stato, oppure l'errore nell'area di stage.
             if let Request::Write(generation) = request {
                 let result = done.result.and_then(|value| {
-                    serde_json::from_value::<WriteResult>(value)
-                        .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+                    serde_json::from_value::<WriteResult>(value).map_err(|e| {
+                        tr!(
+                            "common-unexpected-result",
+                            command = &done.command,
+                            error = e.to_string()
+                        )
+                    })
                 });
                 let Some(repo) = self.current(generation) else {
                     continue;
@@ -993,7 +1003,7 @@ impl App {
                         // Versioni in stage che esistevano solo nell'indice: salvate prima di
                         // scrivere, lo si dice nella barra di stato.
                         self.notice = backup
-                            .map(|r| format!("Backup dell'indice salvato in {r}"))
+                            .map(|r| tr!("app-index-backup", backup = r))
                             .unwrap_or_default();
                         self.follow_diff();
                     }
@@ -1001,9 +1011,9 @@ impl App {
                         log::warn!("{}: {e}", done.command);
                         let stale = done.error_kind == Some(ErrorKind::StaleDiff);
                         let message = if stale {
-                            format!("{label} non riuscito: {}", lines::STALE_MESSAGE)
+                            tr!("app-write-stale", label = &label)
                         } else {
-                            format!("{label} non riuscito: {e}")
+                            tr!("common-failed", label = &label, error = &e)
                         };
                         repo.write_error = Some(message.clone());
                         // Il diff visto non è più quello attuale: si rileggono stato e diff
@@ -1104,8 +1114,13 @@ impl App {
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
-                    serde_json::from_value::<Diff>(value)
-                        .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+                    serde_json::from_value::<Diff>(value).map_err(|e| {
+                        tr!(
+                            "common-unexpected-result",
+                            command = &done.command,
+                            error = e.to_string()
+                        )
+                    })
                 });
                 if let Some(repo) = self.current(generation) {
                     repo.diff.receive(seq, result);
@@ -1123,7 +1138,11 @@ impl App {
                 Ok(value) => {
                     if let Err(e) = self.store(request, value) {
                         log::error!("{}: risultato inatteso: {e}", done.command);
-                        self.error = format!("{}: risultato inatteso: {e}", done.command);
+                        self.error = tr!(
+                            "common-unexpected-result",
+                            command = &done.command,
+                            error = e.to_string()
+                        );
                     } else {
                         self.error.clear();
                     }
@@ -1258,8 +1277,7 @@ impl eframe::App for App {
                     what: fetch::label(running.remote.as_deref()),
                     cancelling: running.cancelling,
                     progress: self.executor.progress(running.ticket),
-                    stop_hint: "Ferma il fetch: i branch remoti già aggiornati restano, i branch \
-                                locali e i file non sono toccati",
+                    stop_hint: tr!("app-stop-fetch-hint"),
                     cancel: Action::CancelFetch,
                 });
             }
@@ -1268,8 +1286,7 @@ impl eframe::App for App {
                     what: adding.label(),
                     cancelling: adding.cancelling,
                     progress: adding.ticket.and_then(|t| self.executor.progress(t)),
-                    stop_hint: "Ferma il fetch: il remoto resta aggiunto, i branch remoti già \
-                                scaricati restano",
+                    stop_hint: tr!("app-stop-add-remote-hint"),
                     cancel: Action::CancelAddRemote,
                 });
             }
@@ -1279,14 +1296,8 @@ impl eframe::App for App {
                 cancelling: running.cancelling,
                 progress: self.executor.progress(running.ticket),
                 stop_hint: match running.request.op {
-                    sync::Op::Pull => {
-                        "Ferma il pull durante il fetch: il branch non viene toccato. Se \
-                         l'integrazione è già partita finisce comunque"
-                    }
-                    sync::Op::Push => {
-                        "Ferma il push: se l'invio era già finito il remoto potrebbe essere \
-                         aggiornato (un Fetch lo mostra)"
-                    }
+                    sync::Op::Pull => tr!("app-stop-pull-hint"),
+                    sync::Op::Push => tr!("app-stop-push-hint"),
                 },
                 cancel: Action::CancelSync,
             })

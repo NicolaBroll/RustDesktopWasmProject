@@ -438,8 +438,13 @@ impl App {
     /// undo può spostare branch o rimettere file).
     pub(crate) fn receive_undo(&mut self, generation: u64, done: Done) {
         let result = done.result.and_then(|value| {
-            serde_json::from_value::<UndoResult>(value)
-                .map_err(|e| format!("{}: risultato inatteso: {e}", done.command))
+            serde_json::from_value::<UndoResult>(value).map_err(|e| {
+                tr!(
+                    "common-unexpected-result",
+                    command = &done.command,
+                    error = e.to_string()
+                )
+            })
         });
         let Some(repo) = self.current(generation) else {
             return;
@@ -457,14 +462,14 @@ impl App {
                 self.notice = result.notice();
                 self.error = result
                     .status_error
-                    .map(|e| format!("Fatto, ma lo stato non si rilegge: {e}"))
+                    .map(|e| tr!("app-done-status-unread", error = e))
                     .unwrap_or_default();
                 self.follow_diff();
                 self.load();
             }
             Err(e) => {
                 log::warn!("{}: {e}", done.command);
-                self.error = format!("{label} non riuscito: {e}");
+                self.error = tr!("common-failed", label = &label, error = &e);
                 self.notice.clear();
                 // Il diario si rilegge: una voce potrebbe non essere più annullabile.
                 self.submit("edit.history", json!({}), Request::History(generation));

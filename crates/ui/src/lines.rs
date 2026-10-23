@@ -304,10 +304,6 @@ pub fn buttons(
     })
 }
 
-/// Messaggio per una scrittura di righe rifiutata perché il file è cambiato.
-pub const STALE_MESSAGE: &str =
-    "il file è cambiato: rileggi il diff e rifai la selezione (il diff è stato riletto)";
-
 impl App {
     /// Le azioni di questa funzione, smistate da [`App::apply`].
     pub(crate) fn apply_lines(&mut self, action: Action) {

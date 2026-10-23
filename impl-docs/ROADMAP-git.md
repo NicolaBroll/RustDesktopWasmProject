@@ -290,7 +290,7 @@ Regole valide per tutti gli step:
   `repo.operation` per merge, cherry-pick e revert (`crates/ui/src/pick.rs`).
 
 ### S31b — Lingue (i18n): infrastruttura e UI
-- [ ] **Agente:** `egui-ui` (infrastruttura e primi moduli), poi più `egui-ui` in parallelo sui
+- [x] **Agente:** `egui-ui` (infrastruttura e primi moduli), poi più `egui-ui` in parallelo sui
   moduli restanti
 - **Obiettivo:** l'app in **italiano e inglese** con [Fluent](https://projectfluent.org/).
   Crate nuovo `project-i18n` (L0, nessuna dipendenza dai crate del progetto): file `.ftl` per
@@ -303,6 +303,9 @@ Regole valide per tutti gli step:
 - **Fatto quando:** test che le due lingue hanno le stesse chiavi e che ogni chiave usata nel
   codice esiste; nessun testo visibile scritto nel codice della UI; screenshot in inglese e in
   italiano; CI verde.
+- [x] UI migrata: crate `project-i18n` (Fluent, `tr!`), un'area `.ftl` per funzione in
+  `crates/i18n/locales/{it,en}/` (comprese `app` e `common`), lingua dal sistema o salvata, menu
+  nella barra in alto ([i18n.md](i18n.md)). Restano in italiano gli errori del motore (S31c).
 
 ### S31c — Lingue (i18n): messaggi di errore del motore
 - [ ] **Agente:** `git-engine`

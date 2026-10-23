@@ -5,3 +5,5 @@ common-git-message = Messaggio di git:
 common-oid-hint =
     { $id }
     Clic: seleziona il commit
+common-unexpected-result = { $command }: risultato inatteso: { $error }
+common-failed = { $label } non riuscito: { $error }

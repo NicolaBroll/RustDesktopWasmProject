@@ -6,3 +6,95 @@ remotes-in-sync = Allineato con { $name }
 remotes-relative = { $counts } rispetto a { $name }
 remotes-upstream-gone = upstream sparito
 remotes-upstream-gone-hint = L'upstream { $name } non c'è più (tolto sul remoto o il remoto non lo ha più): un Fetch non lo riporta; Push lo ricrea
+
+# Sezione «Remoti», aggiunta e rimozione (remotes.rs, view/remotes_view.rs).
+remotes-no-url = (senza URL)
+remotes-no-branches = nessun branch
+remotes-branches = { $n } branch
+remotes-badge-default = predefinito
+remotes-badge-default-hint = «Fetch» nella barra scarica da qui (upstream del branch attivo, origin o l'unico remoto)
+remotes-badge-push = push
+remotes-badge-push-hint = remote.pushDefault: i push dei branch senza pushRemote vanno su «{ $name }»
+remotes-badge-mirror = mirror
+remotes-badge-mirror-hint = remote.<nome>.mirror: un push rispecchia tutti i ref locali
+remotes-tooltip =
+    Remoto «{ $name }»
+    URL: { $url }
+remotes-tooltip-push-url = Push: { $url }
+remotes-tooltip-credentials = L'URL contiene credenziali, salvate in chiaro nella configurazione del repo (qui mascherate): meglio un credential helper
+remotes-credentials-warning = L'URL contiene credenziali: git le salva in chiaro nella configurazione del repo (.git/config). Meglio un URL senza e un credential helper (o una chiave SSH).
+remotes-add-label = Aggiunta del remoto «{ $name }»
+remotes-add-label-fetch = Aggiunta del remoto «{ $name }» e fetch
+remotes-unexpected-result = { $command }: risultato inatteso: { $error }
+remotes-unexpected-response = risposta di `{ $command }` inattesa
+remotes-remove-label = Rimozione del remoto «{ $name }»
+remotes-remove-check-label = Controllo per la rimozione di «{ $name }»
+remotes-add-failed = Aggiunta del remoto «{ $name }» non riuscita: { $error }
+remotes-remove-refused = Rimozione del remoto «{ $name }» non possibile: { $error }
+remotes-remove-failed = Rimozione del remoto «{ $name }» non riuscita: { $error }
+remotes-warning = ; attenzione: { $warning }
+remotes-refs-not-reread = i ref non si rileggono: { $error }
+remotes-remotes-not-reread = i remoti non si rileggono: { $error }
+remotes-reread-warning = { $what }, ma { $problems }
+remotes-added-anyway = Il remoto è stato aggiunto comunque, senza branch scaricati: riprovare con «Fetch» nella sezione Remoti, oppure «Annulla» per toglierlo.
+remotes-added = Remoto «{ $name }» aggiunto ({ $url })
+remotes-added-fetch-cancelled = ; fetch interrotto: i branch remoti già scaricati restano, «Fetch» nella sezione Remoti lo riprende
+remotes-added-fetch-auth = ; fetch non riuscito: autenticazione rifiutata o richiesta
+remotes-added-fetch-unreachable = ; fetch non riuscito: remoto non raggiungibile
+remotes-added-fetch-failed = ; fetch non riuscito
+remotes-fetch-failed-title = Fetch non riuscito
+remotes-added-undo = . «Annulla» lo toglie
+remotes-added-short = Remoto aggiunto
+remotes-quoted = «{ $name }»
+remotes-removed = Remoto «{ $name }» rimosso ({ $n ->
+    [0] nessun branch remoto da togliere
+    [one] tolto 1 branch remoto
+   *[other] tolti { $n } branch remoti
+})
+remotes-removed-upstreams = ; senza upstream: { $names }
+remotes-removed-push-remotes = ; tolto il pushRemote di { $names }
+remotes-removed-push-default = ; tolto remote.pushDefault
+remotes-removed-backup = ; backup in { $backup }
+remotes-removed-backups = ; { $n } backup in refs/project/backup/remote-…
+remotes-removed-undo = . «Annulla» lo rimette
+remotes-removed-short = Remoto rimosso
+remotes-section = Remoti
+remotes-section-count = Remoti ({ $n })
+remotes-none = Nessun remoto configurato
+remotes-loading = Lettura dei remoti…
+remotes-list-error = Remoti non letti: { $error }
+remotes-add-button = Aggiungi remoto…
+remotes-add-button-hint = Aggiunge un remoto (nome e URL) e, se scelto, ne scarica subito i branch. «Annulla» lo toglie
+remotes-row-hint =
+    { $tooltip }
+    Clic destro: fetch, rimozione
+remotes-menu-hint = Fetch, rimozione
+remotes-fetch-button = Fetch
+remotes-fetch-button-hint = Scarica commit, branch remoti e tag da «{ $name }». Non tocca branch locali, indice né file
+remotes-remove-button = Rimuovi…
+remotes-remove-button-hint = Toglie il remoto da questo repo, con i suoi branch remoti scaricati e gli upstream che lo usano; prima chiede conferma. Il repository sul server non cambia; «Annulla» lo rimette
+remotes-add-title = Aggiungi remoto
+remotes-add-explanation = Un remoto è un altro repository (sul server o in una cartella) da cui scaricare e su cui pubblicare. Si aggiunge con i branch remoti nome/* e niente cambia nei branch locali; «Annulla» lo toglie.
+remotes-add-name = Nome
+remotes-add-name-hint = es. origin, upstream
+remotes-add-url = URL
+remotes-add-url-hint = https://host/progetto.git, git@host:utente/progetto.git
+remotes-show-url = Mostra l'URL
+remotes-show-url-hint = Mostra l'URL com'è scritto, per correggerlo
+remotes-hide-credentials = Nascondi le credenziali
+remotes-hide-credentials-hint = Mostra l'URL con le credenziali mascherate
+remotes-add-fetch = Scarica subito (fetch)
+remotes-add-fetch-hint = Dopo l'aggiunta scarica commit, branch remoti e tag. Se il fetch non riesce (o lo si interrompe) il remoto resta aggiunto
+remotes-add-submit = Aggiungi
+remotes-close = Chiudi
+remotes-adding = Aggiunta…
+remotes-connecting = Connessione al remoto…
+remotes-cancel = Interrompi
+remotes-cancel-hint = Ferma il fetch: il remoto resta aggiunto, i branch remoti già scaricati restano
+remotes-cancelling = Interruzione in corso…
+remotes-remove-title = Rimuovere il remoto «{ $name }»?
+remotes-remove-explanation = Si tolgono da questo repo la configurazione del remoto e i suoi branch remoti scaricati; i branch locali che lo seguono restano, ma senza upstream. Il repository sul server non cambia e i tag scaricati restano.
+remotes-remove-what = Cosa succede:
+remotes-remove-undo = Con «Annulla» nella barra in alto il remoto torna com'era (URL, branch remoti, upstream), finché l'app resta aperta: il diario delle operazioni è in memoria. Dopo la chiusura restano solo i backup dei commit in refs/project/backup/remote-…: il remoto si riaggiunge a mano e un Fetch riscarica i branch.
+remotes-remove-confirm = Rimuovi il remoto
+remotes-remove-cancel = Non rimuovere

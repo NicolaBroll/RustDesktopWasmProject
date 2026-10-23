@@ -23,23 +23,21 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
 
 pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mut Vec<Action>) {
     let (title, button) = match &dialog.kind {
-        NameKind::Create(_) => ("Nuovo branch", "Crea il branch"),
-        NameKind::Rename(_) => ("Rinomina il branch", "Rinomina"),
+        NameKind::Create(_) => (tr!("branch-new-title"), tr!("branch-create-button")),
+        NameKind::Rename(_) => (tr!("branch-rename-title"), tr!("branch-rename-button")),
     };
     ui.heading(title);
     ui.add_space(6.0);
     match &dialog.kind {
         NameKind::Create(start) => {
-            ui.label(format!(
-                "Il branch parte da {} ({}). Si crea senza passarci: il branch attivo non cambia.",
-                start.label,
-                start.target.short()
+            ui.label(tr!(
+                "branch-create-text",
+                start = &start.label,
+                id = start.target.short()
             ));
         }
         NameKind::Rename(old) => {
-            ui.label(format!(
-                "Nuovo nome per «{old}». Reflog e upstream seguono il branch."
-            ));
+            ui.label(tr!("branch-rename-text", name = old));
         }
     }
     ui.add_space(6.0);
@@ -50,7 +48,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     let mut name = dialog.name.clone();
     let edit = egui::TextEdit::singleline(&mut name)
         .id(id)
-        .hint_text("es. feature/nuova")
+        .hint_text(tr!("branch-name-hint"))
         .desired_width(f32::INFINITY)
         .interactive(!dialog.sending);
     let response = ui.add(edit);
@@ -74,7 +72,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             actions.push(Action::SubmitBranchName);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new("Chiudi"))
+            .add_enabled(!dialog.sending, egui::Button::new(tr!("branch-close")))
             .clicked()
         {
             actions.push(Action::CloseBranchDialog);
@@ -91,43 +89,28 @@ pub(super) fn delete_dialog(
     reason: &str,
     actions: &mut Vec<Action>,
 ) {
-    ui.heading(format!(
-        "Eliminare «{}» ({})?",
-        delete.name,
-        delete.target.short()
+    ui.heading(tr!(
+        "branch-delete-heading",
+        name = &delete.name,
+        id = delete.target.short()
     ));
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Il branch non è unito: ha commit che non sono nel branch attivo (né nel suo \
-             upstream). Eliminandolo quei commit non sono più raggiungibili da nessun branch.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("branch-delete-unmerged")).wrap());
     ui.add_space(6.0);
-    ui.strong("Motivo:");
+    ui.strong(tr!("branch-reason"));
     ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Prima di eliminare si salva un backup del commit (refs/project/backup/delete-…): \
-             con «Annulla» nella barra in alto il branch torna sullo stesso commit, con la \
-             sua configurazione (upstream compreso), finché l'app resta aperta: il diario delle \
-             operazioni è in memoria. Dopo la chiusura resta solo il backup del commit in \
-             refs/project/backup/, da cui il branch si ricrea a mano.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("branch-delete-backup")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let button = egui::Button::new(
-            RichText::new("Elimina il branch").color(ui.visuals().strong_text_color()),
+            RichText::new(tr!("branch-delete-button")).color(ui.visuals().strong_text_color()),
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
             actions.push(Action::ConfirmDeleteBranch);
         }
-        if ui.button("Non eliminare").clicked() {
+        if ui.button(tr!("branch-dont-delete")).clicked() {
             actions.push(Action::CloseBranchDialog);
         }
     });
@@ -137,25 +120,12 @@ pub(super) fn delete_dialog(
 pub(super) const REFUSED_LIST_HEIGHT: f32 = 160.0;
 
 pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &mut Vec<Action>) {
-    ui.heading(format!("Checkout di «{}» non possibile", refused.name));
+    ui.heading(tr!("branch-refused-heading", name = &refused.name));
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Il checkout sovrascriverebbe modifiche locali: questi percorsi sono modificati (in \
-             stage o no) o non tracciati (anche dentro una cartella che nel branch è un file, o \
-             in un submodule), e nel branch di destinazione sono diversi. Niente è stato \
-             modificato. Committare, scartare o mettere da parte queste modifiche e \
-             riprovare.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("branch-refused-text")).wrap());
     ui.add_space(6.0);
     let n = refused.files.len();
-    ui.strong(match n {
-        0 => "Git non ha indicato i file.".to_owned(),
-        1 => "File:".to_owned(),
-        n => format!("{n} file:"),
-    });
+    ui.strong(tr!("branch-refused-files", n = n));
     let row = ui.text_style_height(&egui::TextStyle::Monospace);
     egui::ScrollArea::vertical()
         .id_salt("checkout-file")
@@ -167,7 +137,7 @@ pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &m
             }
         });
     ui.add_space(10.0);
-    if ui.button("Chiudi").clicked() {
+    if ui.button(tr!("branch-close")).clicked() {
         actions.push(Action::CloseBranchDialog);
     }
 }

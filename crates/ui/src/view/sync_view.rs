@@ -21,7 +21,7 @@ pub(crate) fn failure_window(
             ui.add(egui::Label::new(&failure.explanation).wrap());
             git_text(ui, failure.git.as_deref());
             ui.add_space(6.0);
-            if ui.button("Chiudi").clicked() {
+            if ui.button(tr!("sync-close")).clicked() {
                 actions.push(dismiss.clone());
             }
         });
@@ -63,7 +63,7 @@ pub(super) fn conflict_window(
 ) {
     let mut open = true;
     let operation = conflict.operation.to_string();
-    egui::Window::new("Pull annullato: conflitti")
+    egui::Window::new(tr!("sync-conflict-title"))
         .id(egui::Id::unique("conflitto-pull"))
         .collapsible(false)
         .resizable(false)
@@ -72,31 +72,17 @@ pub(super) fn conflict_window(
         .open(&mut open)
         .show(ctx, |ui| {
             ui.add(
-                egui::Label::new(format!(
-                    "Il {operation} con l'upstream si è fermato in conflitto ed è stato \
-                     annullato: il repo è com'era prima del pull (branch, indice e file non sono \
-                     cambiati). Il fetch invece è fatto: il branch remoto mostra i commit \
-                     arrivati."
-                ))
-                .wrap(),
+                egui::Label::new(tr!("sync-conflict-explanation", operation = &operation)).wrap(),
             );
             ui.add_space(4.0);
             ui.add(
-                egui::Label::new(format!(
-                    "Un rebase fermo non si continua ancora dall'app. Si può fare il pull con \
-                     {}: se va in conflitto il merge resta in corso e i file si risolvono qui \
-                     (poi «Continua il merge…» o «Annulla il merge…»); oppure continuare a \
-                     lavorare sul branch e integrare dopo, o risolvere da terminale.",
-                    conflict.other().name()
-                ))
-                .wrap(),
+                egui::Label::new(tr!("sync-conflict-hint", other = conflict.other().name())).wrap(),
             );
             ui.add_space(6.0);
             let n = conflict.files.len();
             ui.strong(match n {
-                0 => "Git non ha indicato i file.".to_owned(),
-                1 => "File in conflitto:".to_owned(),
-                n => format!("{n} file in conflitto:"),
+                0 => tr!("sync-conflict-no-files"),
+                n => tr!("sync-conflict-files", n = n),
             });
             let row = ui.text_style_height(&egui::TextStyle::Monospace);
             egui::ScrollArea::vertical()
@@ -109,7 +95,7 @@ pub(super) fn conflict_window(
                     }
                 });
             ui.add_space(6.0);
-            ui.collapsing("Messaggio del motore", |ui| {
+            ui.collapsing(tr!("sync-engine-message"), |ui| {
                 ui.add(egui::Label::new(RichText::new(&conflict.message).monospace()).wrap());
             });
             ui.add_space(10.0);
@@ -118,18 +104,18 @@ pub(super) fn conflict_window(
                 let button = ui
                     .add_enabled(
                         can_write,
-                        egui::Button::new(format!("Pull con {}", other.name())),
+                        egui::Button::new(tr!("sync-pull-with", other = other.name())),
                     )
-                    .on_hover_text(format!(
-                        "Riprova il pull con {} invece di {operation}, solo per questa volta \
-                         (la configurazione non cambia)",
-                        other.name()
+                    .on_hover_text(tr!(
+                        "sync-pull-with-hint",
+                        other = other.name(),
+                        operation = &operation
                     ))
-                    .on_disabled_hover_text(WAIT);
+                    .on_disabled_hover_text(wait());
                 if button.clicked() {
                     actions.push(Action::Pull(conflict.branch.clone(), Some(other)));
                 }
-                if ui.button("Chiudi").clicked() {
+                if ui.button(tr!("sync-close")).clicked() {
                     actions.push(Action::DismissSync);
                 }
             });
@@ -148,7 +134,7 @@ pub(super) fn rejected_window(
     actions: &mut Vec<Action>,
 ) {
     let mut open = true;
-    egui::Window::new("Push rifiutato")
+    egui::Window::new(tr!("sync-rejected-title"))
         .id(egui::Id::unique("push-rifiutato"))
         .collapsible(false)
         .resizable(false)
@@ -157,7 +143,7 @@ pub(super) fn rejected_window(
         .open(&mut open)
         .show(ctx, |ui| {
             if let Some(branch) = &rejected.branch {
-                ui.strong(format!("Branch: «{branch}»"));
+                ui.strong(tr!("sync-rejected-branch", branch = branch));
                 ui.add_space(4.0);
             }
             ui.add(egui::Label::new(&rejected.explanation).wrap());
@@ -166,26 +152,24 @@ pub(super) fn rejected_window(
             ui.horizontal(|ui| {
                 if rejected.non_fast_forward() {
                     let pull = ui
-                        .add_enabled(can_write, egui::Button::new("Pull"))
-                        .on_hover_text(
-                            "Scarica e integra i commit del remoto, poi si potrà ripetere il push",
-                        )
-                        .on_disabled_hover_text(WAIT);
+                        .add_enabled(can_write, egui::Button::new(tr!("sync-pull-button")))
+                        .on_hover_text(tr!("sync-pull-button-hint"))
+                        .on_disabled_hover_text(wait());
                     if pull.clicked() {
                         actions.push(Action::Pull(rejected.branch.clone(), None));
                     }
                 }
                 if rejected.stale() {
                     let fetch = ui
-                        .add_enabled(can_write, egui::Button::new("Fetch"))
-                        .on_hover_text("Scarica i commit arrivati sul remoto per controllarli")
-                        .on_disabled_hover_text(WAIT);
+                        .add_enabled(can_write, egui::Button::new(tr!("sync-fetch-button")))
+                        .on_hover_text(tr!("sync-fetch-button-hint"))
+                        .on_disabled_hover_text(wait());
                     if fetch.clicked() {
                         actions.push(Action::DismissSync);
                         actions.push(Action::Fetch(None));
                     }
                 }
-                if ui.button("Chiudi").clicked() {
+                if ui.button(tr!("sync-close")).clicked() {
                     actions.push(Action::DismissSync);
                 }
                 if rejected.non_fast_forward() {
@@ -194,17 +178,13 @@ pub(super) fn rejected_window(
                         .add_enabled(
                             can_write,
                             egui::Button::new(
-                                RichText::new("Forza (con lease)…")
+                                RichText::new(tr!("sync-force-button"))
                                     .color(ui.visuals().error_fg_color),
                             )
                             .frame(false),
                         )
-                        .on_hover_text(
-                            "Sovrascrive il branch sul remoto con il tuo (force-with-lease: \
-                             rifiutato se il remoto si è spostato dall'ultimo fetch). Se il \
-                             remoto perderebbe commit chiede conferma e li elenca",
-                        )
-                        .on_disabled_hover_text(WAIT);
+                        .on_hover_text(tr!("sync-force-button-hint"))
+                        .on_disabled_hover_text(wait());
                     if force.clicked() {
                         actions.push(Action::ForcePush);
                     }
@@ -227,45 +207,28 @@ pub(super) fn confirm_force(
         ui.set_max_width(480.0);
         ui.heading(
             RichText::new(match &confirm.branch {
-                Some(b) => format!("Push forzato di «{b}»: sovrascrivere il branch sul remoto?"),
-                None => "Sovrascrivere il branch sul remoto?".to_owned(),
+                Some(b) => tr!("sync-force-confirm-title-branch", branch = b),
+                None => tr!("sync-force-confirm-title"),
             })
             .color(ui.visuals().error_fg_color),
         );
         ui.add_space(6.0);
-        ui.add(
-            egui::Label::new(
-                "Il push forzato sostituisce il branch sul remoto con il tuo: i commit qui sotto \
-                 spariscono dal remoto, anche per chi li ha già scaricati o ci sta lavorando. Un \
-                 push non si annulla da qui.",
-            )
-            .wrap(),
-        );
+        ui.add(egui::Label::new(tr!("sync-force-confirm-explanation")).wrap());
         ui.add_space(4.0);
-        ui.add(
-            egui::Label::new(
-                "Prima del push il branch remoto com'era si salva in un backup \
-                 (refs/project/backup/push-…), da cui si può ripubblicare a mano. Con il lease, \
-                 se nel frattempo il remoto si è spostato il push è rifiutato.",
-            )
-            .wrap(),
-        );
+        ui.add(egui::Label::new(tr!("sync-force-confirm-backup")).wrap());
         if confirm.changed {
             ui.add_space(6.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new(
-                        "Il branch remoto è cambiato da quando hai visto questa conferma: \
-                         niente è stato pubblicato. Controlla di nuovo i commit qui sotto.",
-                    )
-                    .strong()
-                    .color(ui.visuals().warn_fg_color),
+                    RichText::new(tr!("sync-force-confirm-changed"))
+                        .strong()
+                        .color(ui.visuals().warn_fg_color),
                 )
                 .wrap(),
             );
         }
         ui.add_space(6.0);
-        ui.strong("Cosa si perde sul remoto:");
+        ui.strong(tr!("sync-force-confirm-lost"));
         egui::ScrollArea::vertical()
             .id_salt("force-motivo")
             .max_height(160.0)
@@ -275,20 +238,21 @@ pub(super) fn confirm_force(
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let button = egui::Button::new(
-                RichText::new("Forza il push").color(ui.visuals().strong_text_color()),
+                RichText::new(tr!("sync-force-confirm-button"))
+                    .color(ui.visuals().strong_text_color()),
             )
             .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
             let response = ui
                 .add_enabled(!writing && confirm.can_confirm(), button)
                 .on_disabled_hover_text(if confirm.can_confirm() {
-                    WAIT
+                    wait()
                 } else {
-                    "Il branch remoto locale non c'è più: chiudere, fare Fetch e riprovare"
+                    tr!("sync-force-confirm-gone")
                 });
             if response.clicked() {
                 actions.push(Action::ConfirmForcePush);
             }
-            if ui.button("Non forzare").clicked() {
+            if ui.button(tr!("sync-force-confirm-cancel")).clicked() {
                 actions.push(Action::DismissSync);
             }
         });

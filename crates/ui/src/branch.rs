@@ -12,6 +12,7 @@ use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::{Action, App, Done, Request, branch};
 use project_domain::{Oid, RefInfo, RefKind, Status};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -77,7 +78,7 @@ impl Start {
     pub fn from_commit(id: Oid) -> Self {
         Start {
             target: id,
-            label: format!("commit {}", id.short()),
+            label: tr!("branch-start-commit", id = id.short()),
         }
     }
 }
@@ -138,8 +139,8 @@ impl NameDialog {
     /// La descrizione dell'operazione per la barra di stato.
     pub fn label(&self) -> String {
         match &self.kind {
-            NameKind::Create(_) => format!("Creazione del branch «{}»", self.trimmed()),
-            NameKind::Rename(old) => format!("Rinomina di «{old}»"),
+            NameKind::Create(_) => tr!("branch-create-label", name = self.trimmed()),
+            NameKind::Rename(old) => tr!("branch-rename-label", name = old),
         }
     }
 }
@@ -394,13 +395,13 @@ impl BranchBox {
                 // potrebbe aver lasciato il checkout a metà: si rilegge tutto.
                 let refused =
                     matches!(kind, Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams));
-                let what = if refused {
-                    "non possibile"
+                let message = if refused {
+                    tr!("branch-checkout-refused", name = &name, error = &e)
                 } else {
-                    "non riuscito"
+                    tr!("branch-checkout-failed", name = &name, error = &e)
                 };
                 Received::Failed {
-                    message: format!("Checkout di «{name}» {what}: {e}"),
+                    message,
                     reload: !refused,
                 }
             }
@@ -431,13 +432,13 @@ impl BranchBox {
                 Received::Confirm
             }
             Err(e) => {
-                let what = if kind == Some(ErrorKind::NotAllowed) {
-                    "non possibile"
+                let message = if kind == Some(ErrorKind::NotAllowed) {
+                    tr!("branch-delete-refused", name = &delete.name, error = &e)
                 } else {
-                    "non riuscita"
+                    tr!("branch-delete-failed", name = &delete.name, error = &e)
                 };
                 Received::Failed {
-                    message: format!("Eliminazione di «{}» {what}: {e}", delete.name),
+                    message,
                     reload: false,
                 }
             }
@@ -448,13 +449,19 @@ impl BranchBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: format!("risposta di `{}` inattesa", op.command()),
+        message: tr!("branch-unexpected-response", command = op.command()),
         reload: true,
     }
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| format!("{}: risultato inatteso: {e}", op.command()))
+    serde_json::from_value(value).map_err(|e| {
+        tr!(
+            "branch-unexpected-result",
+            command = op.command(),
+            error = e.to_string()
+        )
+    })
 }
 
 /// Un risultato che non si legge: l'operazione è probabilmente fatta, si rilegge tutto.
@@ -472,7 +479,7 @@ fn done(outcome: Result<Outcome, String>) -> Received {
 fn warnings_text(warnings: &[String]) -> String {
     warnings
         .iter()
-        .map(|w| format!("; attenzione: {w}"))
+        .map(|w| tr!("branch-warning", warning = w))
         .collect()
 }
 
@@ -491,10 +498,10 @@ impl CreateResult {
     fn outcome(self) -> Outcome {
         Outcome {
             op: Op::Create,
-            notice: format!(
-                "Branch «{}» creato su {}. «Annulla» lo elimina",
-                short(&self.branch),
-                self.target.short()
+            notice: tr!(
+                "branch-created",
+                branch = short(&self.branch),
+                id = self.target.short()
             ),
             refs: self.refs,
             status: None,
@@ -521,9 +528,9 @@ impl CheckoutResult {
     fn outcome(self) -> Outcome {
         let name = short(&self.branch);
         let notice = if self.changed {
-            format!("Passato al branch «{name}». «Annulla» torna a quello di prima")
+            tr!("branch-checked-out", branch = name)
         } else {
-            format!("«{name}» è già il branch attivo")
+            tr!("branch-already-active", branch = name)
         };
         Outcome {
             op: Op::Checkout,
@@ -532,7 +539,7 @@ impl CheckoutResult {
             status: self.status,
             warning: self
                 .status_error
-                .map(|e| format!("Checkout fatto, ma lo stato non si rilegge: {e}")),
+                .map(|e| tr!("branch-checkout-status-error", error = e)),
             history: self.history,
         }
     }
@@ -565,46 +572,48 @@ pub struct ConfigEntry {
 }
 
 impl DeleteResult {
-    /// Cosa dire della configurazione tolta: l'upstream se c'era, altrimenti le chiavi.
-    fn config_text(&self) -> String {
-        if self.removed_config.is_empty() {
-            return String::new();
-        }
+    /// L'avviso: con la configurazione tolta dice l'upstream se c'era, altrimenti le chiavi.
+    fn notice(&self) -> String {
+        let branch = short(&self.branch);
+        let id = self.target.short();
+        let (unmerged, backup) = (self.unmerged, &self.backup);
         let upstream = self
             .removed_config
             .iter()
             .any(|c| c.key.ends_with(".merge") || c.key.ends_with(".remote"));
-        let what = if upstream {
-            "tolta anche l'impostazione dell'upstream".to_owned()
+        if self.removed_config.is_empty() {
+            tr!(
+                "branch-deleted",
+                branch = branch,
+                id = id,
+                unmerged = unmerged,
+                backup = backup
+            )
+        } else if upstream {
+            tr!(
+                "branch-deleted-upstream",
+                branch = branch,
+                id = id,
+                unmerged = unmerged,
+                backup = backup
+            )
         } else {
             let keys: Vec<&str> = self.removed_config.iter().map(|c| c.key.as_str()).collect();
-            format!("tolta anche la configurazione {}", keys.join(", "))
-        };
-        format!("; {what}")
+            tr!(
+                "branch-deleted-config",
+                branch = branch,
+                id = id,
+                unmerged = unmerged,
+                backup = backup,
+                keys = keys.join(", ")
+            )
+        }
     }
 
     fn outcome(self) -> Outcome {
-        let unmerged = match self.unmerged {
-            0 => String::new(),
-            1 => ", con 1 commit non unito".to_owned(),
-            n => format!(", con {n} commit non uniti"),
-        };
         Outcome {
             op: Op::Delete,
-            notice: format!(
-                "Branch «{}» eliminato (era su {}{unmerged}); backup in {}{}. «Annulla» lo \
-                 ricrea{}{}",
-                short(&self.branch),
-                self.target.short(),
-                self.backup,
-                self.config_text(),
-                if self.removed_config.is_empty() {
-                    ""
-                } else {
-                    " con la sua configurazione"
-                },
-                warnings_text(&self.warnings)
-            ),
+            notice: self.notice() + &warnings_text(&self.warnings),
             refs: self.refs,
             status: None,
             warning: self.refs_error.map(refs_warning),
@@ -630,12 +639,11 @@ impl RenameResult {
     fn outcome(self) -> Outcome {
         Outcome {
             op: Op::Rename,
-            notice: format!(
-                "Branch «{}» rinominato in «{}». «Annulla» gli rimette il nome di prima{}",
-                short(&self.previous),
-                short(&self.branch),
-                warnings_text(&self.warnings)
-            ),
+            notice: tr!(
+                "branch-renamed",
+                previous = short(&self.previous),
+                branch = short(&self.branch)
+            ) + &warnings_text(&self.warnings),
             refs: self.refs,
             status: None,
             warning: self.refs_error.map(refs_warning),
@@ -645,7 +653,7 @@ impl RenameResult {
 }
 
 fn refs_warning(error: String) -> String {
-    format!("Fatto, ma i ref non si rileggono: {error}")
+    tr!("branch-refs-warning", error = error)
 }
 
 impl App {
@@ -695,7 +703,7 @@ impl App {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let label = format!("Checkout di «{name}»");
+                let label = tr!("branch-checkout-label", name = &name);
                 if let Some(params) = repo.branch.start_checkout(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
@@ -711,7 +719,7 @@ impl App {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let label = format!("Eliminazione di «{name}»");
+                let label = tr!("branch-delete-label", name = &name);
                 if let Some(params) = repo.branch.start_delete(name, target) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
@@ -728,7 +736,8 @@ impl App {
                     return;
                 };
                 let label = match repo.branch.dialog() {
-                    Some(branch::Dialog::Delete(d)) => format!("Eliminazione di «{}»", d.name),
+                    Some(branch::Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
+
                     _ => return,
                 };
                 if let Some(params) = repo.branch.confirm_delete() {

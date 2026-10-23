@@ -10,9 +10,9 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
     let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
     egui::ScrollArea::vertical().show(ui, |ui| {
         let sections = [
-            (RefKind::LocalBranch, "Branch locali"),
-            (RefKind::RemoteBranch, "Branch remoti"),
-            (RefKind::Tag, "Tag"),
+            (RefKind::LocalBranch, tr!("refs-local-branches")),
+            (RefKind::RemoteBranch, tr!("refs-remote-branches")),
+            (RefKind::Tag, tr!("refs-tags")),
         ];
         for (kind, title) in sections {
             // I remoti configurati sotto i loro branch, prima dei tag.
@@ -23,7 +23,8 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
             if refs.is_empty() {
                 continue;
             }
-            egui::CollapsingHeader::new(format!("{title} ({})", refs.len()))
+            egui::CollapsingHeader::new(tr!("refs-section", title = &title, n = refs.len()))
+                .id_salt(kind_salt(kind))
                 .default_open(kind != RefKind::Tag)
                 .show(ui, |ui| {
                     for info in refs {
@@ -83,17 +84,28 @@ pub(super) fn ref_row_inner(
     .on_hover_text(ref_tooltip(info, is_head));
 }
 
-pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
-    let mut text = format!("{}\n{}\nClic: seleziona il commit", info.name, info.target);
-    match info.kind {
-        RefKind::LocalBranch if is_head => text.push_str("\nClic destro: altre azioni"),
-        RefKind::LocalBranch => text.push_str("\nDoppio clic: checkout\nClic destro: altre azioni"),
-        RefKind::RemoteBranch | RefKind::Tag => {
-            text.push_str("\nClic destro: nuovo branch da qui, unisci nel branch attivo");
-        }
-        RefKind::Stash => {}
+/// L'id dell'intestazione di una sezione: non cambia con la lingua né con il numero di ref.
+fn kind_salt(kind: RefKind) -> &'static str {
+    match kind {
+        RefKind::LocalBranch => "ref-locali",
+        RefKind::RemoteBranch => "ref-remoti",
+        RefKind::Tag => "ref-tag",
+        RefKind::Stash => "ref-stash",
     }
-    text
+}
+
+pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
+    let (name, target) = (&info.name, info.target.to_string());
+    match info.kind {
+        RefKind::LocalBranch if is_head => {
+            tr!("refs-tooltip-head", name = name, target = &target)
+        }
+        RefKind::LocalBranch => tr!("refs-tooltip-local", name = name, target = &target),
+        RefKind::RemoteBranch | RefKind::Tag => {
+            tr!("refs-tooltip-other", name = name, target = &target)
+        }
+        RefKind::Stash => tr!("refs-tooltip-stash", name = name, target = &target),
+    }
 }
 
 /// Il menu contestuale di un ref: sui branch locali checkout, nuovo branch, merge nel branch
@@ -109,15 +121,15 @@ pub(super) fn ref_menu(
     let name = info.short_name();
     if info.kind == RefKind::LocalBranch {
         let button = ui
-            .add_enabled(can_write && !is_head, egui::Button::new("Checkout"))
-            .on_hover_text(format!(
-                "Passa a «{name}»: le modifiche locali restano, se non toccano file diversi nel \
-                 branch (altrimenti niente cambia)"
-            ))
+            .add_enabled(
+                can_write && !is_head,
+                egui::Button::new(tr!("refs-checkout")),
+            )
+            .on_hover_text(tr!("refs-checkout-hint", name = name))
             .on_disabled_hover_text(if is_head {
-                "È già il branch attivo"
+                tr!("refs-already-active")
             } else {
-                WAIT
+                wait()
             });
         if button.clicked() {
             actions.push(Action::Checkout(name.to_owned()));
@@ -125,12 +137,9 @@ pub(super) fn ref_menu(
         }
     }
     let button = ui
-        .add_enabled(can_write, egui::Button::new("Nuovo branch da qui…"))
-        .on_hover_text(format!(
-            "Crea un branch su {} senza passarci",
-            info.target.short()
-        ))
-        .on_disabled_hover_text(WAIT);
+        .add_enabled(can_write, egui::Button::new(tr!("refs-new-branch")))
+        .on_hover_text(tr!("refs-new-branch-hint", id = info.target.short()))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         let (start, proposed) = Start::from_ref(info);
         actions.push(Action::NewBranch(start, proposed));
@@ -146,31 +155,29 @@ pub(super) fn ref_menu(
         ui.separator();
     }
     let button = ui
-        .add_enabled(can_write, egui::Button::new("Rinomina…"))
-        .on_disabled_hover_text(WAIT);
+        .add_enabled(can_write, egui::Button::new(tr!("refs-rename")))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::RenameBranch(name.to_owned()));
         ui.close();
     }
     ui.separator();
     let pull_hint = match (&info.upstream, is_head) {
-        (None, _) => {
-            format!("«{name}» non ha un upstream: fare prima Push, che lo imposta al primo push")
-        }
-        (Some(up), true) => format!(
-            "Scarica {} e lo integra: fast-forward, merge o rebase secondo la configurazione",
-            up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+        (None, _) => tr!("refs-pull-no-upstream", name = name),
+        (Some(up), true) => tr!(
+            "refs-pull-head-hint",
+            upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
         ),
-        (Some(up), false) => format!(
-            "Scarica {} e porta avanti «{name}» senza passarci (solo fast-forward: se è \
-             divergente bisogna passarci)",
-            up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+        (Some(up), false) => tr!(
+            "refs-pull-other-hint",
+            upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name),
+            name = name
         ),
     };
     let label = if is_head {
-        "Pull"
+        tr!("refs-pull")
     } else {
-        "Pull (fast-forward)"
+        tr!("refs-pull-ff")
     };
     let button = ui
         .add_enabled(
@@ -179,24 +186,25 @@ pub(super) fn ref_menu(
         )
         .on_hover_text(&pull_hint)
         .on_disabled_hover_text(if info.upstream.is_some() {
-            WAIT
+            wait()
         } else {
-            &pull_hint
+            pull_hint.clone()
         });
     if button.clicked() {
         actions.push(Action::Pull(Some(name.to_owned()), None));
         ui.close();
     }
     let button = ui
-        .add_enabled(can_write, egui::Button::new("Push"))
+        .add_enabled(can_write, egui::Button::new(tr!("refs-push")))
         .on_hover_text(match &info.upstream {
-            Some(up) => format!(
-                "Pubblica «{name}» su {}. Mai forzato",
-                up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+            Some(up) => tr!(
+                "refs-push-hint",
+                name = name,
+                upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
             ),
-            None => format!("Primo push di «{name}»: lo pubblica e imposta l'upstream"),
+            None => tr!("refs-push-first-hint", name = name),
         })
-        .on_disabled_hover_text(WAIT);
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::Push(Some(name.to_owned())));
         ui.close();
@@ -211,17 +219,13 @@ pub(super) fn ref_menu(
     let button = ui
         .add_enabled(
             enabled,
-            egui::Button::new(RichText::new("Elimina").color(color)),
+            egui::Button::new(RichText::new(tr!("refs-delete")).color(color)),
         )
-        .on_hover_text(
-            "Elimina il branch. Se è unito si elimina subito; se ha commit che non sono altrove \
-             chiede conferma. In ogni caso il commit resta in un backup \
-             (refs/project/backup/delete-…) e «Annulla» ricrea il branch",
-        )
+        .on_hover_text(tr!("refs-delete-hint"))
         .on_disabled_hover_text(if is_head {
-            "È il branch attivo: passare prima a un altro branch per eliminarlo"
+            tr!("refs-delete-head")
         } else {
-            WAIT
+            wait()
         });
     if button.clicked() {
         actions.push(Action::DeleteBranch(name.to_owned(), info.target));
@@ -240,34 +244,29 @@ pub(super) fn merge_items(
     actions: &mut Vec<Action>,
 ) {
     ui.separator();
+    let active = tr!("refs-current-branch");
     let (into, blocked) = match gate {
         merge::Gate::Into(branch) => (branch.as_str(), None),
-        merge::Gate::Blocked(reason) => ("branch attivo", Some(reason.as_str())),
+        merge::Gate::Blocked(reason) => (active.as_str(), Some(reason.as_str())),
     };
     let items = [
         (
-            format!("Unisci in «{into}»"),
+            tr!("refs-merge-item", into = into),
             false,
-            format!(
-                "Unisce «{what}» in «{into}»: fast-forward se «{into}» non ha commit propri, \
-                 altrimenti un commit di merge. Con conflitti il merge resta in corso (si \
-                 risolve o si annulla dal riquadro in alto). «Annulla» annulla un merge concluso"
-            ),
+            tr!("refs-merge-hint", what = what, into = into),
         ),
         (
-            format!("Unisci in «{into}» con commit di merge"),
+            tr!("refs-merge-no-ff-item", into = into),
             true,
-            format!(
-                "Unisce «{what}» in «{into}» sempre con un commit di merge, anche dove \
-                 basterebbe il fast-forward (--no-ff)"
-            ),
+            tr!("refs-merge-no-ff-hint", what = what, into = into),
         ),
     ];
     for (label, no_ff, hint) in items {
         let button = ui
             .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
             .on_hover_text(hint)
-            .on_disabled_hover_text(blocked.unwrap_or(WAIT));
+            .on_disabled_hover_text(blocked.map_or_else(wait, str::to_owned));
+
         if button.clicked() {
             actions.push(Action::Merge {
                 rev: rev.to_owned(),

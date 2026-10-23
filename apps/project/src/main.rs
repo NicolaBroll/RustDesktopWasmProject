@@ -75,10 +75,6 @@ impl Platform for NativePlatform {
         on_done(folder);
     }
 
-    fn locale(&self) -> Option<String> {
-        sys_locale::get_locale()
-    }
-
     /// Un thread per job: i comandi lenti sono pochi e brevi (fetch, push, log grandi).
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         if let Err(e) = std::thread::Builder::new()

@@ -15,7 +15,6 @@ egui.workspace = true
 env_logger.workspace = true
 log.workspace = true
 rfd.workspace = true
-sys-locale.workspace = true
 
 [lints]
 workspace = true

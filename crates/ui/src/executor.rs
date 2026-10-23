@@ -13,6 +13,7 @@ use project_engine::{
     CancelToken, EngineError, JobContext, Platform, Progress, PullOperation, PushRejection,
     Registry, Session,
 };
+use project_i18n::tr;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -358,7 +359,7 @@ impl Drop for Reply {
             self.deliver(Err(Failure {
                 kind: ErrorKind::Other,
                 detail: None,
-                message: format!("`{}` è terminato senza risultato", self.command),
+                message: tr!("app-no-result", command = &self.command),
                 expected: None,
             }));
         }

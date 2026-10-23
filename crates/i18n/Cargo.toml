@@ -10,6 +10,10 @@ publish.workspace = true
 fluent-bundle.workspace = true
 unic-langid.workspace = true
 
+[features]
+# Solo per i test della UI, che confrontano i testi italiani: si parte in italiano.
+test-italiano = []
+
 [dev-dependencies]
 fluent-syntax.workspace = true
 

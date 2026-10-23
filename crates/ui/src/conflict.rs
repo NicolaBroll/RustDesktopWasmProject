@@ -18,6 +18,7 @@ use crate::{Action, App, Done, Request};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
 };
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -127,10 +128,7 @@ impl Loaded {
         let (result, parsed) = match (worktree_text, parsed_worktree) {
             (Some(text), Some(Ok(parsed))) => (Some(text), Ok(parsed)),
             (_, Some(Err(e))) => (None, Err(e)),
-            _ => (
-                None,
-                Err("il file del worktree non è testo o non c'è".to_owned()),
-            ),
+            _ => (None, Err(tr!("conflict-worktree-not-text"))),
         };
         let label = |pick: fn(&project_domain::ConflictBlock) -> &Vec<u8>| {
             parsed
@@ -212,7 +210,7 @@ impl Loaded {
         f: impl FnOnce(&[u8], &ConflictText) -> Result<Vec<u8>, project_domain::DomainError>,
     ) -> Result<(), String> {
         let (Some(text), Ok(parsed)) = (&self.result, &self.parsed) else {
-            return Err("il risultato non ha blocchi da scegliere".to_owned());
+            return Err(tr!("conflict-no-blocks"));
         };
         let bytes = f(text.as_bytes(), parsed).map_err(|e| e.to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
@@ -348,8 +346,13 @@ impl ConflictBox {
             return;
         };
         editor.load = match result.and_then(|value| {
-            serde_json::from_value::<Shown>(value)
-                .map_err(|e| format!("{SHOW}: risultato inatteso: {e}"))
+            serde_json::from_value::<Shown>(value).map_err(|e| {
+                tr!(
+                    "conflict-unexpected-result",
+                    command = SHOW,
+                    error = e.to_string()
+                )
+            })
         }) {
             Ok(shown) => Load::Ready(Box::new(Loaded::new(shown))),
             Err(e) => Load::Failed(e),
@@ -438,11 +441,11 @@ impl ConflictBox {
         let editor = self.editor.as_mut().filter(|e| !e.sending)?;
         let loaded = editor.loaded()?;
         let content = loaded.side_text(pick)?.to_owned();
-        let side = match pick {
-            Pick::Ours => "nostra",
-            Pick::Theirs => "loro",
+        let path = editor.path.to_string();
+        let label = match pick {
+            Pick::Ours => tr!("conflict-label-use-ours", path = path),
+            Pick::Theirs => tr!("conflict-label-use-theirs", path = path),
         };
-        let label = format!("Risoluzione di {} con la versione {side}", editor.path);
         let params = json!({
             "path": editor.path,
             "digest": loaded.shown.digest,
@@ -472,7 +475,7 @@ impl ConflictBox {
                     "digest": loaded.shown.digest,
                     "delete": true,
                 });
-                let label = format!("Eliminazione di {} per risolvere il conflitto", editor.path);
+                let label = tr!("conflict-label-delete", path = editor.path.to_string());
                 Some(self.sending(params, label))
             }
         }
@@ -493,7 +496,7 @@ impl ConflictBox {
             "digest": loaded.shown.digest,
             "content": loaded.result.as_ref()?,
         });
-        let label = format!("Risoluzione del conflitto di {}", editor.path);
+        let label = tr!("conflict-label-resolve", path = editor.path.to_string());
         Some(self.sending(params, label))
     }
 
@@ -517,21 +520,26 @@ impl ConflictBox {
         }
         let path = self.editor.as_ref().map(|e| e.path.to_string());
         let result = result.and_then(|value| {
-            serde_json::from_value::<Resolved>(value)
-                .map_err(|e| format!("{RESOLVE}: risultato inatteso: {e}"))
+            serde_json::from_value::<Resolved>(value).map_err(|e| {
+                tr!(
+                    "conflict-unexpected-result",
+                    command = RESOLVE,
+                    error = e.to_string()
+                )
+            })
         });
         match result {
             Ok(resolved) => {
                 self.editor = None;
                 let mut notice = match &path {
-                    Some(path) => format!("Conflitto di {path} risolto e in stage"),
-                    None => "Conflitto risolto e in stage".to_owned(),
+                    Some(path) => tr!("conflict-resolved-path", path = path),
+                    None => tr!("conflict-resolved"),
                 };
                 if let Some(backup) = &resolved.backup {
-                    notice.push_str(&format!("; il file com'era è salvato in {backup}"));
+                    notice.push_str(&tr!("conflict-resolved-backup", backup = backup));
                 }
                 if let Some(backup) = &resolved.index_backup {
-                    notice.push_str(&format!("; backup dell'indice in {backup}"));
+                    notice.push_str(&tr!("conflict-resolved-index-backup", backup = backup));
                 }
                 Received::Done {
                     status: Box::new(resolved.status),
@@ -541,9 +549,9 @@ impl ConflictBox {
             Err(e) => {
                 let stale = kind == Some(ErrorKind::StaleDiff);
                 let message = if stale {
-                    "Il file è cambiato dopo la lettura: riletto, rifare le scelte".to_owned()
+                    tr!("conflict-stale")
                 } else {
-                    format!("Risoluzione non riuscita: {e}")
+                    tr!("conflict-resolve-failed", error = &e)
                 };
                 let reread = if stale { self.restart() } else { None };
                 if let Some(editor) = &mut self.editor {

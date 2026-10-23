@@ -68,23 +68,20 @@ fn parameters_have_no_unicode_isolation_marks() {
 }
 
 #[test]
-fn locale_picks_italian_only_for_italian() {
-    for it in ["it", "it-IT", "it_CH.UTF-8", "IT", "it@euro"] {
-        assert_eq!(Lang::from_locale(it), Lang::It, "{it}");
-    }
-    for en in ["en-US", "de", "", "C", "POSIX", "iu"] {
-        assert_eq!(Lang::from_locale(en), Lang::En, "{en}");
-    }
-    for lang in Lang::ALL {
-        assert_eq!(Lang::from_code(lang.code()), Some(lang));
-    }
-}
-
-#[test]
 fn the_macro_uses_the_current_language() {
     // Il resto dei test usa `get`: solo qui si tocca la lingua globale.
-    assert_eq!(lang(), Lang::It);
-    assert_eq!(tr!("merge-conflict-files", n = 2), "2 file in conflitto");
+    // Con `cargo test --workspace` la feature `test-italiano` di `project-ui` vale anche qui.
+    let start = if cfg!(feature = "test-italiano") {
+        Lang::It
+    } else {
+        Lang::En
+    };
+    assert_eq!(lang(), start);
+    let expected = match start {
+        Lang::It => "2 file in conflitto",
+        Lang::En => "2 conflicted files",
+    };
+    assert_eq!(tr!("merge-conflict-files", n = 2), expected);
     assert!(current().has("merge-conflict-files"));
     assert!(!current().has("merge-nope"));
 }

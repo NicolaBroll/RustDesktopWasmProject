@@ -11,8 +11,8 @@ pub(super) fn stash_section(
 ) {
     let list = repo.stash.list();
     let title = match list {
-        Some(list) => format!("Stash ({})", list.len()),
-        None => "Stash".to_owned(),
+        Some(list) => tr!("stash-section-title", n = list.len()),
+        None => tr!("stash-section-title-loading"),
     };
     egui::CollapsingHeader::new(title)
         .id_salt("sezione-stash")
@@ -20,7 +20,7 @@ pub(super) fn stash_section(
         .show(ui, |ui| {
             match list {
                 Some([]) => {
-                    ui.weak("Nessuno stash");
+                    ui.weak(tr!("stash-none"));
                 }
                 Some(list) => {
                     let selected = repo.stash.selected().map(|s| s.id);
@@ -41,7 +41,7 @@ pub(super) fn stash_section(
                 None if repo.stash.list_error().is_none() => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.weak("Lettura degli stash…");
+                        ui.weak(tr!("stash-loading"));
                     });
                 }
                 None => {}
@@ -49,14 +49,14 @@ pub(super) fn stash_section(
             if let Some(error) = repo.stash.list_error() {
                 ui.add(
                     egui::Label::new(
-                        RichText::new(format!("Stash non letti: {error}"))
+                        RichText::new(tr!("stash-list-error", error = error))
                             .color(ui.visuals().error_fg_color)
                             .small(),
                     )
                     .wrap(),
                 );
             }
-            stash_push_button(ui, repo, can_write, "Nuovo stash…", actions);
+            stash_push_button(ui, repo, can_write, &tr!("stash-new-button"), actions);
         });
 }
 
@@ -71,13 +71,11 @@ pub(super) fn stash_push_button(
     let changes = repo.has_changes();
     let button = ui
         .add_enabled(can_write && changes, egui::Button::new(label))
-        .on_hover_text(
-            "Mette da parte le modifiche (in stage e no; a scelta anche i file non tracciati) e riporta i file come l'ultimo commit. «Annulla» le rimette",
-        )
+        .on_hover_text(tr!("stash-push-help"))
         .on_disabled_hover_text(if changes {
-            WAIT
+            wait()
         } else {
-            "Nessuna modifica da mettere da parte"
+            tr!("stash-no-changes")
         });
     if button.clicked() {
         actions.push(Action::OpenStash);
@@ -110,7 +108,7 @@ pub(super) fn stash_row(ui: &mut Ui, row: &StashRow<'_>, actions: &mut Vec<Actio
     ui.horizontal(|ui| {
         let mut origin = stash.origin();
         if stash.untracked {
-            origin.push_str(" · con non tracciati");
+            origin = tr!("stash-origin-untracked", origin = origin);
         }
         ui.add(egui::Label::new(RichText::new(origin).small().weak()).truncate())
             .on_hover_text(tooltip);
@@ -156,11 +154,9 @@ pub(super) fn stash_actions(
     } = flags;
     let name = &stash.name;
     let button = ui
-        .add_enabled(can_write, egui::Button::new("Applica"))
-        .on_hover_text(format!(
-            "Rimette nei file le modifiche di {name}; lo stash resta nell'elenco. Mai sopra file con modifiche locali: in quel caso niente cambia. Non si annulla con «Annulla»"
-        ))
-        .on_disabled_hover_text(WAIT);
+        .add_enabled(can_write, egui::Button::new(tr!("stash-apply-button")))
+        .on_hover_text(tr!("stash-apply-help", name = name))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::ApplyStash(stash.id, false));
         if menu {
@@ -168,15 +164,15 @@ pub(super) fn stash_actions(
         }
     }
     let button = ui
-        .add_enabled(can_write && !pop_blocked, egui::Button::new("Pop"))
-        .on_hover_text(format!(
-            "Applica {name} e, se non ci sono conflitti, lo toglie dall'elenco (il suo commit resta in un backup refs/project/backup/stash-…). Con conflitti lo stash resta. Non si annulla con «Annulla»"
-        ))
+        .add_enabled(
+            can_write && !pop_blocked,
+            egui::Button::new(tr!("stash-pop-button")),
+        )
+        .on_hover_text(tr!("stash-pop-help", name = name))
         .on_disabled_hover_text(if pop_blocked {
-            "Già applicato da un pop che non è riuscito a toglierlo dall'elenco: le modifiche \
-             sono nei file, non va ripetuto. Per toglierlo, Elimina…"
+            tr!("stash-pop-blocked")
         } else {
-            WAIT
+            wait()
         });
     if button.clicked() {
         actions.push(Action::ApplyStash(stash.id, true));
@@ -188,11 +184,9 @@ pub(super) fn stash_actions(
     let check = ui
         .add_enabled(
             can_write,
-            egui::Checkbox::new(&mut restore, "Rimetti anche lo stage"),
+            egui::Checkbox::new(&mut restore, tr!("stash-restore-index")),
         )
-        .on_hover_text(
-            "Rimette in stage quello che era in stage quando lo stash è stato creato (--index); senza, tutto torna fuori stage tranne i file nuovi",
-        );
+        .on_hover_text(tr!("stash-restore-index-help"));
     if check.changed() {
         actions.push(Action::StashRestoreIndex(restore));
     }
@@ -207,12 +201,10 @@ pub(super) fn stash_actions(
     let button = ui
         .add_enabled(
             can_write,
-            egui::Button::new(RichText::new("Elimina…").color(color)),
+            egui::Button::new(RichText::new(tr!("stash-drop-button")).color(color)),
         )
-        .on_hover_text(
-            "Toglie lo stash dall'elenco; prima chiede conferma. Il suo commit resta in un backup (refs/project/backup/stash-…) e «Annulla» lo rimette in cima all'elenco",
-        )
-        .on_disabled_hover_text(WAIT);
+        .on_hover_text(tr!("stash-drop-help"))
+        .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::DropStash(stash.id));
         if menu {
@@ -239,35 +231,35 @@ pub(crate) fn stash_panel(
         .num_columns(2)
         .spacing(vec2(12.0, 4.0))
         .show(ui, |ui| {
-            ui.weak("Stash");
+            ui.weak(tr!("stash-field-stash"));
             ui.monospace(&stash.name);
             ui.end_row();
-            ui.weak("Commit");
+            ui.weak(tr!("stash-field-commit"));
             ui.horizontal_wrapped(|ui| {
                 let id = stash.id.to_string();
                 ui.add(egui::Label::new(RichText::new(&id).monospace()).selectable(true));
                 if ui
-                    .small_button("Copia")
-                    .on_hover_text("Copia l'id completo")
+                    .small_button(tr!("stash-copy"))
+                    .on_hover_text(tr!("stash-copy-help"))
                     .clicked()
                 {
                     ui.ctx().copy_text(id);
                 }
             });
             ui.end_row();
-            ui.weak("Creato su");
+            ui.weak(tr!("stash-field-created-on"));
             ui.horizontal_wrapped(|ui| {
                 oid_link(ui, stash.base, actions);
                 match &stash.branch {
-                    Some(branch) => ui.weak(format!("(branch {branch})")),
-                    None => ui.weak("(HEAD staccata)"),
+                    Some(branch) => ui.weak(tr!("stash-branch", branch = branch)),
+                    None => ui.weak(tr!("stash-detached")),
                 };
             });
             ui.end_row();
-            ui.weak("Data");
-            ui.label(format!("{} UTC", stash.date()));
+            ui.weak(tr!("stash-field-date"));
+            ui.label(tr!("stash-date-utc", date = stash.date()));
             ui.end_row();
-            ui.weak("Messaggio");
+            ui.weak(tr!("stash-field-message"));
             ui.add(egui::Label::new(&stash.message).wrap());
             ui.end_row();
         });
@@ -275,10 +267,7 @@ pub(crate) fn stash_panel(
         ui.add_space(4.0);
         ui.add(
             egui::Label::new(
-                RichText::new(
-                    "Contiene anche file non tracciati: non sono nell'elenco qui sotto, ma applicando lo stash tornano.",
-                )
-                .color(ui.visuals().warn_fg_color),
+                RichText::new(tr!("stash-untracked-note")).color(ui.visuals().warn_fg_color),
             )
             .wrap(),
         );
@@ -294,18 +283,18 @@ pub(crate) fn stash_panel(
         stash_actions(ui, stash, flags, actions);
     });
     ui.separator();
-    ui.weak("File tracciati cambiati rispetto alla base:");
+    ui.weak(tr!("stash-changed-files"));
     match repo.details.shown() {
         Shown::Nothing => {}
         Shown::Loading(_) => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.weak("Caricamento dei file dello stash…");
+                ui.weak(tr!("stash-files-loading"));
             });
         }
         Shown::Failed(_, error) => {
             ui.colored_label(ui.visuals().error_fg_color, error);
-            if ui.button("Riprova").clicked() {
+            if ui.button(tr!("stash-retry")).clicked() {
                 actions.push(Action::RetryDetails);
             }
         }
@@ -351,7 +340,7 @@ pub(super) fn push_stash_dialog(
     dialog: &PushDialog,
     actions: &mut Vec<Action>,
 ) {
-    ui.heading("Stash delle modifiche");
+    ui.heading(tr!("stash-dialog-title"));
     ui.add_space(6.0);
     let untracked = repo
         .stage
@@ -359,22 +348,17 @@ pub(super) fn push_stash_dialog(
         .iter()
         .filter(|item| item.change == Change::Untracked)
         .count();
-    ui.add(
-        egui::Label::new(
-            "Le modifiche ai file tracciati (in stage e no) si mettono da parte in uno stash e i file tornano come l'ultimo commit. Si riprendono con Applica o Pop dalla sezione Stash; «Annulla» nella barra le rimette subito.",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("stash-dialog-body")).wrap());
     ui.add_space(8.0);
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let mut fields: PushFields = dialog.fields.clone();
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Messaggio");
+        ui.label(tr!("stash-dialog-message"));
         let message = ui.add(
             egui::TextEdit::singleline(&mut fields.message)
                 .id(ui.make_persistent_id("messaggio-stash"))
-                .hint_text("facoltativo (es. a metà del parser)")
+                .hint_text(tr!("stash-dialog-message-hint"))
                 .desired_width(320.0)
                 .interactive(!dialog.sending),
         );
@@ -385,26 +369,22 @@ pub(super) fn push_stash_dialog(
     });
     ui.add_space(4.0);
     let label = match untracked {
-        0 => "Includi i file non tracciati".to_owned(),
-        n => format!("Includi i file non tracciati ({n})"),
+        0 => tr!("stash-include-untracked"),
+        n => tr!("stash-include-untracked-count", n = n),
     };
     let check = ui
         .add_enabled(
             !dialog.sending,
             egui::Checkbox::new(&mut fields.include_untracked, label),
         )
-        .on_hover_text(
-            "Mette nello stash anche i file nuovi non ancora aggiunti (e li toglie dal disco); mai quelli ignorati. Senza, restano dove sono",
-        );
+        .on_hover_text(tr!("stash-include-untracked-help"));
     changed |= check.changed();
     let check = ui
         .add_enabled(
             !dialog.sending,
-            egui::Checkbox::new(&mut fields.keep_index, "Tieni lo stage"),
+            egui::Checkbox::new(&mut fields.keep_index, tr!("stash-keep-index")),
         )
-        .on_hover_text(
-            "Quello che è in stage resta in stage (e nei file), ma è salvato anche nello stash; il resto si mette da parte",
-        );
+        .on_hover_text(tr!("stash-keep-index-help"));
     changed |= check.changed();
     if changed {
         actions.push(Action::StashFields(fields));
@@ -416,20 +396,20 @@ pub(super) fn push_stash_dialog(
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let clicked = ui
-            .add_enabled(!dialog.sending, egui::Button::new("Stash"))
+            .add_enabled(!dialog.sending, egui::Button::new(tr!("stash-submit")))
             .clicked();
         if (clicked || enter) && !dialog.sending {
             actions.push(Action::SubmitStash);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new("Chiudi"))
+            .add_enabled(!dialog.sending, egui::Button::new(tr!("stash-close")))
             .clicked()
         {
             actions.push(Action::CloseStashDialog);
         }
         if dialog.sending {
             ui.spinner();
-            ui.label("Stash…");
+            ui.label(tr!("stash-sending"));
         }
     });
 }
@@ -441,36 +421,26 @@ pub(super) fn drop_stash_dialog(
     actions: &mut Vec<Action>,
 ) {
     ui.heading(
-        RichText::new(format!("Eliminare {}?", drop.stash.name)).color(ui.visuals().error_fg_color),
+        RichText::new(tr!("stash-drop-title", name = &drop.stash.name))
+            .color(ui.visuals().error_fg_color),
     );
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(format!(
-            "Lo stash «{}» esce dall'elenco: le modifiche che contiene non si potranno più applicare da qui. I file del repo non cambiano.",
-            drop.stash.title()
-        ))
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("stash-drop-body", title = drop.stash.title())).wrap());
     ui.add_space(6.0);
-    ui.strong("Cosa succede:");
+    ui.strong(tr!("stash-drop-what-happens"));
     ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
     ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(
-            "Con «Annulla» nella barra in alto lo stash torna in cima all'elenco (stash@{0}), finché l'app resta aperta: il diario delle operazioni è in memoria. Dopo la chiusura resta il backup del suo commit in refs/project/backup/stash-….",
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(tr!("stash-drop-undo")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let button = egui::Button::new(
-            RichText::new("Elimina lo stash").color(ui.visuals().strong_text_color()),
+            RichText::new(tr!("stash-drop-confirm")).color(ui.visuals().strong_text_color()),
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
             actions.push(Action::ConfirmDropStash);
         }
-        if ui.button("Non eliminare").clicked() {
+        if ui.button(tr!("stash-drop-keep")).clicked() {
             actions.push(Action::CloseStashDialog);
         }
     });
@@ -484,11 +454,14 @@ pub(crate) fn stash_conflicts_window(
     actions: &mut Vec<Action>,
 ) {
     let mut open = true;
-    let what = match conflicts.op {
-        stash::Op::Pop => "Pop",
-        _ => "Applicazione",
+    let pop = conflicts.op == stash::Op::Pop;
+    let name = &conflicts.stash;
+    let title = if pop {
+        tr!("stash-conflicts-title-pop", name = name)
+    } else {
+        tr!("stash-conflicts-title-apply", name = name)
     };
-    egui::Window::new(format!("{what} di {}: conflitti", conflicts.stash))
+    egui::Window::new(title)
         .id(egui::Id::unique("conflitti-stash"))
         .collapsible(false)
         .resizable(false)
@@ -497,30 +470,18 @@ pub(crate) fn stash_conflicts_window(
         .open(&mut open)
         .show(ctx, |ui| {
             ui.add(
-                egui::Label::new(format!(
-                    "Lo stash è stato applicato, ma dall'ultimo commit su cui era stato creato gli stessi file sono cambiati: quelli qui sotto sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: quei file non avevano modifiche locali e {} resta nell'elenco{}.",
-                    conflicts.stash,
-                    if conflicts.op == stash::Op::Pop {
-                        " (il pop non lo elimina)"
-                    } else {
-                        ""
-                    }
-                ))
+                egui::Label::new(if pop {
+                    tr!("stash-conflicts-body-pop", name = name)
+                } else {
+                    tr!("stash-conflicts-body-apply", name = name)
+                })
                 .wrap(),
             );
             ui.add_space(4.0);
-            ui.add(
-                egui::Label::new(
-                    "Per risolverli: correggere ogni file e metterlo in stage dall'area delle modifiche. Poi, se non serve più, eliminare lo stash. Finché restano conflitti né Stash né Applica sono possibili.",
-                )
-                .wrap(),
-            );
+            ui.add(egui::Label::new(tr!("stash-conflicts-how")).wrap());
             ui.add_space(6.0);
             let n = conflicts.files.len();
-            ui.strong(match n {
-                1 => "File in conflitto:".to_owned(),
-                n => format!("{n} file in conflitto:"),
-            });
+            ui.strong(tr!("stash-conflicts-files", n = n));
             let row = ui.text_style_height(&egui::TextStyle::Monospace);
             egui::ScrollArea::vertical()
                 .id_salt("conflitti-stash-file")
@@ -534,14 +495,14 @@ pub(crate) fn stash_conflicts_window(
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 if ui
-                    .button("Vai alle modifiche")
-                    .on_hover_text("Apre l'area di stage con i file in conflitto")
+                    .button(tr!("stash-go-to-changes"))
+                    .on_hover_text(tr!("stash-go-to-changes-help"))
                     .clicked()
                 {
                     actions.push(Action::SelectWorktree);
                     actions.push(Action::DismissStashConflicts);
                 }
-                if ui.button("Chiudi").clicked() {
+                if ui.button(tr!("stash-close")).clicked() {
                     actions.push(Action::DismissStashConflicts);
                 }
             });

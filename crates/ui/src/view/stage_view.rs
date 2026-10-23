@@ -17,21 +17,34 @@ pub(crate) fn stage_panel(
         .show(ui, |ui| commit_box(ui, repo, draft, writing, actions));
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.heading("Modifiche non committate");
+        ui.heading(tr!("stage-heading"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            stash_push_button(ui, repo, !writing && !repo.modal_open(), "Stash…", actions);
+            stash_push_button(
+                ui,
+                repo,
+                !writing && !repo.modal_open(),
+                &tr!("stage-stash-button"),
+                actions,
+            );
         });
     });
     if writing {
         ui.horizontal(|ui| {
             ui.spinner();
-            let label = repo.write_label.as_deref().unwrap_or("Scrittura");
-            ui.weak(format!("{label} in corso…"));
+            let label = repo
+                .write_label
+                .clone()
+                .unwrap_or_else(|| tr!("stage-writing-fallback"));
+            ui.weak(tr!("stage-in-progress", label = label));
         });
     }
     if let Some(error) = &repo.write_error {
         ui.horizontal_top(|ui| {
-            if ui.small_button("x").on_hover_text("Nascondi").clicked() {
+            if ui
+                .small_button("x")
+                .on_hover_text(tr!("stage-hide"))
+                .clicked()
+            {
                 actions.push(Action::DismissWriteError);
             }
             ui.add(
@@ -88,19 +101,20 @@ pub(super) fn commit_box(
     }
 
     ui.horizontal(|ui| {
-        ui.strong("Messaggio di commit");
+        ui.strong(tr!("stage-commit-message"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let len = draft.subject_len();
             let text = format!("{len}/{}", commit::SUBJECT_LIMIT);
             if draft.subject_too_long() {
-                ui.label(RichText::new(text).small().color(ui.visuals().warn_fg_color))
-                    .on_hover_text(format!(
-                        "L'oggetto supera {} caratteri: nel log e in molti strumenti viene tagliato. Il resto può andare nel corpo.",
-                        commit::SUBJECT_LIMIT
-                    ));
+                ui.label(
+                    RichText::new(text)
+                        .small()
+                        .color(ui.visuals().warn_fg_color),
+                )
+                .on_hover_text(tr!("stage-subject-too-long", limit = commit::SUBJECT_LIMIT));
             } else {
                 ui.label(RichText::new(text).small().weak())
-                    .on_hover_text("Caratteri dell'oggetto");
+                    .on_hover_text(tr!("stage-subject-count-hint"));
             }
         });
     });
@@ -108,14 +122,14 @@ pub(super) fn commit_box(
         !sending,
         egui::TextEdit::singleline(&mut draft.subject)
             .id_salt("oggetto-commit")
-            .hint_text("Oggetto (una riga breve)")
+            .hint_text(tr!("stage-subject-hint"))
             .desired_width(f32::INFINITY),
     );
     ui.add_enabled(
         !sending,
         egui::TextEdit::multiline(&mut draft.body)
             .id_salt("corpo-commit")
-            .hint_text("Descrizione (facoltativa)")
+            .hint_text(tr!("stage-body-hint"))
             .desired_rows(BODY_ROWS)
             .desired_width(f32::INFINITY),
     );
@@ -124,25 +138,27 @@ pub(super) fn commit_box(
     let toggle = ui
         .add_enabled(
             !sending && !writing,
-            egui::Checkbox::new(&mut amend, "Amend (modifica l'ultimo commit)"),
+            egui::Checkbox::new(&mut amend, tr!("stage-amend-checkbox")),
         )
-        .on_hover_text(
-            "Sostituisce l'ultimo commit con uno nuovo: stesso autore e genitori, il messaggio scritto qui e le modifiche in stage aggiunte. Il commit sostituito resta salvato in un ref di backup.",
-        );
+        .on_hover_text(tr!("stage-amend-help"));
     if toggle.changed() {
         actions.push(Action::SetAmend(amend));
     }
     if draft.amend() {
-        let what = match repo.head_commit() {
-            Some(c) => format!("l'ultimo commit {} «{}»", c.id.short(), c.summary),
+        let mut text = match repo.head_commit() {
+            Some(c) => tr!(
+                "stage-amend-warning-summary",
+                id = c.id.short(),
+                summary = &c.summary
+            ),
             None => match repo.head.target() {
-                Some(id) => format!("l'ultimo commit {}", id.short()),
-                None => "l'ultimo commit".to_owned(),
+                Some(id) => tr!("stage-amend-warning-id", id = id.short()),
+                None => tr!("stage-amend-warning"),
             },
         };
-        let mut text = format!("Cambierà {what}: verrà sostituito da un commit nuovo.");
         if draft.is_proposed() {
-            text.push_str(" Il messaggio è quello attuale: modificarlo se serve.");
+            text.push(' ');
+            text.push_str(&tr!("stage-amend-proposed"));
         }
         ui.add(
             egui::Label::new(
@@ -157,13 +173,13 @@ pub(super) fn commit_box(
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         let label = if draft.amend() {
-            "Commit (amend)"
+            tr!("stage-commit-amend-button")
         } else {
-            "Commit"
+            tr!("stage-commit-button")
         };
         let button = ui.add_enabled(gate.is_ok(), egui::Button::new(label));
         let button = match gate {
-            Ok(()) => button.on_hover_text("Crea il commit (Ctrl+Invio)"),
+            Ok(()) => button.on_hover_text(tr!("stage-commit-help")),
             Err(blocked) => button.on_disabled_hover_text(blocked.hint()),
         };
         if button.clicked() {
@@ -171,10 +187,13 @@ pub(super) fn commit_box(
         }
         if sending {
             ui.spinner();
-            let label = repo.write_label.as_deref().unwrap_or("Commit");
-            ui.weak(format!("{label} in corso…"));
+            let label = repo
+                .write_label
+                .clone()
+                .unwrap_or_else(|| tr!("stage-commit-button"));
+            ui.weak(tr!("stage-in-progress", label = label));
         } else {
-            ui.weak("Ctrl+Invio");
+            ui.weak(tr!("stage-commit-shortcut"));
         }
     });
     // Perché il pulsante è spento, senza dover passare il mouse (non durante il lavoro).
@@ -187,7 +206,11 @@ pub(super) fn commit_box(
     if let Some(error) = repo.commit.error() {
         ui.add_space(4.0);
         ui.horizontal_top(|ui| {
-            if ui.small_button("x").on_hover_text("Nascondi").clicked() {
+            if ui
+                .small_button("x")
+                .on_hover_text(tr!("stage-hide"))
+                .clicked()
+            {
                 actions.push(Action::DismissCommitError);
             }
             ui.add(
@@ -211,8 +234,8 @@ pub(super) fn commit_box(
                     );
                 });
             if ui
-                .small_button("Copia l'output")
-                .on_hover_text("Copia negli appunti tutto l'output di git")
+                .small_button(tr!("stage-copy-output"))
+                .on_hover_text(tr!("stage-copy-output-help"))
                 .clicked()
             {
                 ui.ctx().copy_text(output.clone());
@@ -238,20 +261,20 @@ pub(super) fn stage_section(
 ) {
     let (title, op, all_label, all_help) = match side {
         Side::Staged => (
-            "In stage",
+            tr!("stage-staged-title"),
             StageOp::Unstage,
-            "Unstage di tutto",
-            "Toglie dallo stage tutti i file di questa lista; il worktree non cambia",
+            tr!("stage-unstage-all"),
+            tr!("stage-unstage-all-help"),
         ),
         Side::Unstaged => (
-            "Non in stage",
+            tr!("stage-unstaged-title"),
             StageOp::Stage,
-            "Stage di tutto",
-            "Mette in stage tutti i file di questa lista",
+            tr!("stage-stage-all"),
+            tr!("stage-stage-all-help"),
         ),
     };
     ui.horizontal(|ui| {
-        ui.strong(format!("{title} ({})", items.len()));
+        ui.strong(tr!("stage-section-title", title = &title, n = items.len()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let button = ui
                 .add_enabled(
@@ -269,13 +292,9 @@ pub(super) fn stage_section(
                 let button = ui
                     .add_enabled(
                         enabled && paths.is_some(),
-                        egui::Button::new("Scarta tutto…").small(),
+                        egui::Button::new(tr!("stage-discard-all")).small(),
                     )
-                    .on_hover_text(
-                        "Scarta le modifiche fuori stage di tutti i file tracciati di questa \
-                         lista (chiede conferma, si può annullare). I file non tracciati non si \
-                         toccano",
-                    );
+                    .on_hover_text(tr!("stage-discard-all-help"));
                 if button.clicked()
                     && let Some(paths) = paths
                 {
@@ -286,8 +305,8 @@ pub(super) fn stage_section(
     });
     if items.is_empty() {
         let text = match side {
-            Side::Staged => "Nessun file in stage.",
-            Side::Unstaged => "Nessuna modifica fuori dallo stage.",
+            Side::Staged => tr!("stage-empty-staged"),
+            Side::Unstaged => tr!("stage-empty-unstaged"),
         };
         ui.weak(text);
         return;
@@ -301,8 +320,8 @@ pub(super) fn stage_section(
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     let button_label = match op {
-        StageOp::Stage => "Stage",
-        StageOp::Unstage => "Unstage",
+        StageOp::Stage => tr!("stage-stage"),
+        StageOp::Unstage => tr!("stage-unstage"),
     };
     egui::ScrollArea::vertical()
         .id_salt(("area-stage", side == Side::Staged))
@@ -351,7 +370,7 @@ pub(super) fn stage_section(
                         .layout(egui::Layout::right_to_left(egui::Align::Center)),
                 );
                 let button = cell
-                    .add_enabled(enabled, egui::Button::new(button_label).small())
+                    .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
                     .on_hover_text(row_action_help(op, item));
 
                 let left = badge.right() + 6.0;
@@ -388,18 +407,21 @@ pub(super) fn file_menu(
     enabled: bool,
     actions: &mut Vec<Action>,
 ) {
-    if item.is_conflict() && op == StageOp::Stage && ui.button("Risolvi nell'editor…").clicked() {
+    if item.is_conflict()
+        && op == StageOp::Stage
+        && ui.button(tr!("stage-resolve-in-editor")).clicked()
+    {
         actions.push(Action::OpenConflict(item.path.clone()));
         ui.close();
     }
-    if ui.button("Mostra il diff").clicked() {
+    if ui.button(tr!("stage-show-diff")).clicked() {
         actions.push(Action::OpenDiff(target.clone()));
         ui.close();
     }
     let label = match op {
-        StageOp::Stage if item.is_conflict() => "Segna come risolto…",
-        StageOp::Stage => "Stage",
-        StageOp::Unstage => "Unstage",
+        StageOp::Stage if item.is_conflict() => tr!("stage-mark-resolved"),
+        StageOp::Stage => tr!("stage-stage"),
+        StageOp::Unstage => tr!("stage-unstage"),
     };
     let button = ui
         .add_enabled(enabled, egui::Button::new(label))
@@ -414,7 +436,7 @@ pub(super) fn file_menu(
         let button = ui
             .add_enabled(
                 enabled && reason.is_none(),
-                egui::Button::new(RichText::new("Scarta modifiche…").color(
+                egui::Button::new(RichText::new(tr!("stage-discard-file")).color(
                     if reason.is_none() && enabled {
                         ui.visuals().error_fg_color
                     } else {
@@ -422,11 +444,8 @@ pub(super) fn file_menu(
                     },
                 )),
             )
-            .on_hover_text(
-                "Riporta il file alla versione in stage (o dell'ultimo commit): chiede conferma, \
-                 si può annullare",
-            )
-            .on_disabled_hover_text(reason.unwrap_or("Aspettare l'operazione in corso"));
+            .on_hover_text(tr!("stage-discard-file-help"))
+            .on_disabled_hover_text(reason.unwrap_or_else(|| tr!("stage-wait")));
         if button.clicked() {
             actions.push(Action::Discard(vec![item.path.clone()]));
             ui.close();
@@ -458,23 +477,23 @@ pub(super) fn stage_path_job(
     job
 }
 
-pub(super) fn conflict_name(conflict: Conflict) -> &'static str {
+pub(super) fn conflict_name(conflict: Conflict) -> String {
     match conflict {
-        Conflict::BothDeleted => "eliminato da entrambi",
-        Conflict::AddedByUs => "aggiunto da noi",
-        Conflict::DeletedByThem => "eliminato da loro",
-        Conflict::AddedByThem => "aggiunto da loro",
-        Conflict::DeletedByUs => "eliminato da noi",
-        Conflict::BothAdded => "aggiunto da entrambi",
-        Conflict::BothModified => "modificato da entrambi",
+        Conflict::BothDeleted => tr!("stage-conflict-both-deleted"),
+        Conflict::AddedByUs => tr!("stage-conflict-added-by-us"),
+        Conflict::DeletedByThem => tr!("stage-conflict-deleted-by-them"),
+        Conflict::AddedByThem => tr!("stage-conflict-added-by-them"),
+        Conflict::DeletedByUs => tr!("stage-conflict-deleted-by-us"),
+        Conflict::BothAdded => tr!("stage-conflict-both-added"),
+        Conflict::BothModified => tr!("stage-conflict-both-modified"),
     }
 }
 
-pub(super) fn row_action_help(op: StageOp, item: &StageItem) -> &'static str {
+pub(super) fn row_action_help(op: StageOp, item: &StageItem) -> String {
     match op {
-        StageOp::Stage if item.is_conflict() => "Segna il conflitto come risolto (chiede conferma)",
-        StageOp::Stage => "Metti in stage questo file",
-        StageOp::Unstage => "Togli dallo stage questo file; il worktree non cambia",
+        StageOp::Stage if item.is_conflict() => tr!("stage-row-mark-resolved-help"),
+        StageOp::Stage => tr!("stage-row-stage-help"),
+        StageOp::Unstage => tr!("stage-row-unstage-help"),
     }
 }
 
@@ -485,27 +504,23 @@ pub(super) fn stage_tooltip(op: StageOp, item: &StageItem) -> String {
         None => item.path.to_string(),
     };
     match item.conflict {
-        Some(conflict) => lines.push(format!(
-            "{path} (in conflitto: {})",
-            conflict_name(conflict)
+        Some(conflict) => lines.push(tr!(
+            "stage-tooltip-conflict",
+            path = &path,
+            conflict = conflict_name(conflict)
         )),
         None => lines.push(format!("{path} ({})", format::change_name(item.change))),
     }
-    lines.push("Clic: mostra il diff".to_owned());
-    lines.push(
-        match op {
-            StageOp::Stage if item.is_conflict() => {
-                "Doppio clic: segna il conflitto come risolto (chiede conferma)"
-            }
-            StageOp::Stage => "Doppio clic: metti in stage",
-            StageOp::Unstage => "Doppio clic: togli dallo stage",
-        }
-        .to_owned(),
-    );
+    lines.push(tr!("stage-tooltip-click"));
+    lines.push(match op {
+        StageOp::Stage if item.is_conflict() => tr!("stage-tooltip-double-resolve"),
+        StageOp::Stage => tr!("stage-tooltip-double-stage"),
+        StageOp::Unstage => tr!("stage-tooltip-double-unstage"),
+    });
     if op == StageOp::Stage && discard::discardable(item) {
-        lines.push("Clic destro: altre azioni, anche scartare le modifiche".to_owned());
+        lines.push(tr!("stage-tooltip-right-discard"));
     } else {
-        lines.push("Clic destro: altre azioni".to_owned());
+        lines.push(tr!("stage-tooltip-right"));
     }
     lines.join("\n")
 }

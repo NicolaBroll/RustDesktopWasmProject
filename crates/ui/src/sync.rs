@@ -24,6 +24,7 @@ use crate::fetch::{self, Failure};
 use crate::{Action, App, Done, sync};
 use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{PullOperation, PushRejection};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -138,14 +139,13 @@ impl Request {
 
     /// La descrizione per la barra: `Pull di «main»`, `Push forzato di «main»`, `Pull`.
     pub fn label(&self) -> String {
-        let what = match (self.op, self.force) {
-            (Op::Pull, _) => "Pull",
-            (Op::Push, false) => "Push",
-            (Op::Push, true) => "Push forzato",
-        };
-        match &self.branch {
-            Some(branch) => format!("{what} di «{branch}»"),
-            None => what.to_owned(),
+        match (self.op, self.force, &self.branch) {
+            (Op::Pull, _, Some(branch)) => tr!("sync-label-pull-branch", branch = branch),
+            (Op::Pull, _, None) => tr!("sync-label-pull"),
+            (Op::Push, false, Some(branch)) => tr!("sync-label-push-branch", branch = branch),
+            (Op::Push, false, None) => tr!("sync-label-push"),
+            (Op::Push, true, Some(branch)) => tr!("sync-label-force-branch", branch = branch),
+            (Op::Push, true, None) => tr!("sync-label-force"),
         }
     }
 }
@@ -378,7 +378,7 @@ impl SyncBox {
             other => {
                 self.running = other;
                 return Received::Failed {
-                    message: "risposta di pull o push inattesa".to_owned(),
+                    message: tr!("sync-unexpected-response"),
                     reload: true,
                 };
             }
@@ -398,7 +398,11 @@ impl SyncBox {
                 return match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
                     Err(e) => Received::Failed {
-                        message: format!("{command}: risultato inatteso: {e}"),
+                        message: tr!(
+                            "sync-unexpected-result",
+                            command = command,
+                            error = e.to_string()
+                        ),
                         reload: true,
                     },
                 };
@@ -409,31 +413,28 @@ impl SyncBox {
         match kind {
             Some(ErrorKind::Cancelled) => Received::Cancelled {
                 notice: match request.op {
-                    Op::Pull => format!(
-                        "{label} interrotto: il branch non è stato toccato (i branch remoti già \
-                         scaricati restano)"
-                    ),
-                    Op::Push => format!(
-                        "{label} interrotto: se l'invio era già finito il remoto potrebbe \
-                         essere aggiornato; fare Fetch per controllare"
-                    ),
+                    Op::Pull => tr!("sync-pull-cancelled", label = &label),
+                    Op::Push => tr!("sync-push-cancelled", label = &label),
                 },
                 reload: true,
             },
             Some(ErrorKind::Auth) => {
-                self.window = Some(Window::Failure(fetch::auth_failure("Il remoto", detail)));
+                self.window = Some(Window::Failure(fetch::auth_failure(
+                    &fetch::who(None),
+                    detail,
+                )));
                 Received::Failed {
-                    message: format!("{label} non riuscito: autenticazione rifiutata o richiesta"),
+                    message: tr!("sync-failed-auth", label = &label),
                     reload: false,
                 }
             }
             Some(ErrorKind::RemoteUnreachable) => {
                 self.window = Some(Window::Failure(fetch::unreachable_failure(
-                    "Il remoto",
+                    &fetch::who(None),
                     detail,
                 )));
                 Received::Failed {
-                    message: format!("{label} non riuscito: remoto non raggiungibile"),
+                    message: tr!("sync-failed-unreachable", label = &label),
                     reload: false,
                 }
             }
@@ -453,8 +454,10 @@ impl SyncBox {
                 }));
                 // Il fetch è fatto: il branch remoto si rilegge.
                 Received::Failed {
-                    message: format!(
-                        "{label} annullato: il {operation} ha conflitti, il repo è com'era"
+                    message: tr!(
+                        "sync-pull-conflict",
+                        label = &label,
+                        operation = operation.to_string()
                     ),
                     reload: true,
                 }
@@ -463,11 +466,15 @@ impl SyncBox {
                 self.window = Some(Window::Rejected(Rejected {
                     branch,
                     reason,
-                    explanation: rejection_text(reason).to_owned(),
+                    explanation: rejection_text(reason),
                     git: detail,
                 }));
                 Received::Failed {
-                    message: format!("{label} rifiutato: {}", rejection_short(reason)),
+                    message: tr!(
+                        "sync-rejected",
+                        label = &label,
+                        reason = rejection_short(reason)
+                    ),
                     reload: false,
                 }
             }
@@ -488,23 +495,23 @@ impl SyncBox {
             // Il pull può aver già fatto il fetch: si rilegge.
             Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams) => {
                 self.window = Some(Window::Failure(Failure {
-                    title: format!("{label} non possibile"),
+                    title: tr!("sync-not-possible-title", label = &label),
                     explanation: error.clone(),
                     git: None,
                 }));
                 Received::Failed {
-                    message: format!("{label} non possibile: {error}"),
+                    message: tr!("sync-not-possible", label = &label, error = error),
                     reload: request.op == Op::Pull,
                 }
             }
             _ => {
                 self.window = Some(Window::Failure(Failure {
-                    title: format!("{label} non riuscito"),
+                    title: tr!("sync-failed-title", label = &label),
                     explanation: error.clone(),
                     git: detail,
                 }));
                 Received::Failed {
-                    message: format!("{label} non riuscito: {error}"),
+                    message: tr!("sync-failed", label = &label, error = error),
                     reload: true,
                 }
             }
@@ -513,52 +520,30 @@ impl SyncBox {
 }
 
 /// Cosa spiegare nella finestra di un push rifiutato.
-fn rejection_text(reason: PushRejection) -> &'static str {
+fn rejection_text(reason: PushRejection) -> String {
     match reason {
-        PushRejection::NonFastForward => {
-            "Il remoto ha commit che non hai: fai Pull per integrarli, poi ripeti il push. Niente \
-             è cambiato, né sul remoto né in locale."
-        }
-        PushRejection::StaleLease => {
-            "Il branch sul remoto si è spostato dall'ultimo fetch: il push forzato (con lease) è \
-             stato rifiutato per non cancellare commit che non hai visto. Fai Fetch e controlla \
-             i commit arrivati prima di decidere di nuovo. Niente è cambiato."
-        }
-        PushRejection::RemoteRejected => {
-            "Il remoto ha rifiutato l'aggiornamento (un branch protetto, un hook pre-receive o \
-             update sul server). Il motivo, se il server lo dà, è nel messaggio di git. Niente è \
-             cambiato."
-        }
-        PushRejection::Hook => {
-            "Un hook pre-push (o un controllo locale di git, come i sottomoduli non pubblicati) \
-             ha fermato il push prima che partisse. Il suo output è qui sotto. Niente è cambiato."
-        }
-        PushRejection::Other => "Git ha rifiutato il push. Niente è cambiato.",
+        PushRejection::NonFastForward => tr!("sync-rejection-non-fast-forward"),
+        PushRejection::StaleLease => tr!("sync-rejection-stale-lease"),
+        PushRejection::RemoteRejected => tr!("sync-rejection-remote"),
+        PushRejection::Hook => tr!("sync-rejection-hook"),
+        PushRejection::Other => tr!("sync-rejection-other"),
     }
 }
 
 /// Il motivo del rifiuto in breve, per la barra di stato.
-fn rejection_short(reason: PushRejection) -> &'static str {
+fn rejection_short(reason: PushRejection) -> String {
     match reason {
-        PushRejection::NonFastForward => "il remoto ha commit che non hai: fai Pull",
-        PushRejection::StaleLease => "il remoto si è spostato dall'ultimo fetch: fai Fetch",
-        PushRejection::RemoteRejected => "il remoto ha rifiutato l'aggiornamento",
-        PushRejection::Hook => "un hook pre-push l'ha fermato",
-        PushRejection::Other => "rifiutato da git",
+        PushRejection::NonFastForward => tr!("sync-rejection-short-non-fast-forward"),
+        PushRejection::StaleLease => tr!("sync-rejection-short-stale-lease"),
+        PushRejection::RemoteRejected => tr!("sync-rejection-short-remote"),
+        PushRejection::Hook => tr!("sync-rejection-short-hook"),
+        PushRejection::Other => tr!("sync-rejection-short-other"),
     }
 }
 
 /// `refs/remotes/origin/main` → `origin/main`.
 fn remote_short(name: &str) -> &str {
     name.strip_prefix("refs/remotes/").unwrap_or(name)
-}
-
-fn plural(n: u64, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
-    }
 }
 
 /// La parte di `fetch` nel risultato del pull.
@@ -602,67 +587,67 @@ impl PullResult {
             log::info!("{PULL}: {line}");
         }
         let upstream = remote_short(&self.upstream);
-        let what = format!("Pull di «{}»", self.branch);
+        let what = tr!("sync-label-pull-branch", branch = &self.branch);
         let range = format!("{} → {}", self.before.short(), self.after.short());
         let mut notice = match self.strategy.as_str() {
             _ if self.in_progress => match self.conflicts.len() {
-                0 => format!(
-                    "{what}: merge di {upstream} fermo prima del commit (un hook o la firma?): \
-                     concluderlo con «Continua il merge…» nel riquadro in alto, o annullarlo"
-                ),
-                n => format!(
-                    "{what}: merge di {upstream} fermo: {}. Risolverli e segnarli come risolti \
-                     nell'area di stage, poi «Continua il merge…» nel riquadro in alto (o \
-                     «Annulla il merge…», che riporta il branch com'era)",
-                    plural(n as u64, "file in conflitto", "file in conflitto")
+                0 => tr!("sync-pull-stopped", what = what, upstream = upstream),
+                n => tr!(
+                    "sync-pull-stopped-conflicts",
+                    what = what,
+                    upstream = upstream,
+                    n = n
                 ),
             },
-            "up_to_date" => {
-                let mut text = format!("{what}: già aggiornato con {upstream}");
-                if self.ahead > 0 {
-                    text.push_str(&format!(
-                        " ({} da pubblicare con Push)",
-                        plural(self.ahead, "commit locale", "commit locali")
-                    ));
-                }
-                text
-            }
-            "fast_forward" => format!(
-                "{what}: fast-forward a {upstream} ({range}, {})",
-                plural(self.behind, "commit nuovo", "commit nuovi")
+            "up_to_date" if self.ahead > 0 => tr!(
+                "sync-pull-up-to-date-ahead",
+                what = what,
+                upstream = upstream,
+                n = self.ahead
             ),
-            "merge" => format!("{what}: merge di {upstream} ({range})"),
-            "rebase" => format!(
-                "{what}: rebase di {} su {upstream} ({range})",
-                plural(self.ahead, "commit locale", "commit locali")
+            "up_to_date" => tr!("sync-pull-up-to-date", what = what, upstream = upstream),
+            "fast_forward" => tr!(
+                "sync-pull-fast-forward",
+                what = what,
+                upstream = upstream,
+                range = range,
+                n = self.behind
             ),
-            other => format!("{what}: {other} ({range})"),
+            "merge" => tr!(
+                "sync-pull-merge",
+                what = what,
+                upstream = upstream,
+                range = range
+            ),
+            "rebase" => tr!(
+                "sync-pull-rebase",
+                what = what,
+                upstream = upstream,
+                range = range,
+                n = self.ahead
+            ),
+            other => tr!("sync-pull-other", what = what, kind = other, range = range),
         };
         if self.strategy == "merge" && self.strategy_source == "default" {
-            notice.push_str(
-                "; merge perché pull.rebase non è configurato (git config pull.rebase true per \
-                 il rebase)",
-            );
+            notice.push_str(&tr!("sync-pull-merge-default"));
         }
         match &self.backup {
             Some(backup) if self.in_progress => {
-                notice.push_str(&format!("; il branch com'era è in {backup}"));
+                notice.push_str(&tr!("sync-pull-backup-in-progress", backup = backup));
             }
-            Some(backup) => notice.push_str(&format!(
-                "; backup in {backup}, «Annulla» lo riporta indietro"
-            )),
+            Some(backup) => notice.push_str(&tr!("sync-pull-backup", backup = backup)),
             None => {}
         }
         for warning in &self.warnings {
-            notice.push_str(&format!("; attenzione: {warning}"));
+            notice.push_str(&tr!("sync-warning", warning = warning));
         }
         let moved_head = self.after != self.before
             && self.status.as_ref().is_some_and(
                 |s| matches!(&s.head, Head::Branch { name, .. } if *name == self.branch),
             );
         let warning = match (self.status_error, self.refs_error) {
-            (Some(e), _) => Some(format!("Pull fatto, ma lo stato non si rilegge: {e}")),
-            (None, Some(e)) => Some(format!("Pull fatto, ma i ref non si rileggono: {e}")),
+            (Some(e), _) => Some(tr!("sync-pull-status-not-reread", error = e)),
+            (None, Some(e)) => Some(tr!("sync-pull-refs-not-reread", error = e)),
             (None, None) => None,
         };
         Outcome {
@@ -715,44 +700,60 @@ impl PushResult {
         } else {
             format!(" ({})", self.summary)
         };
+        let branch = &self.branch;
         let mut notice = match self.kind.as_str() {
-            "new" => format!(
-                "Push di «{}»: creato {target} sul remoto{summary}",
-                self.branch
+            "new" => tr!(
+                "sync-push-new",
+                branch = branch,
+                target = &target,
+                summary = &summary
             ),
-            "fast_forward" => format!("Push di «{}» su {target}{summary}", self.branch),
-            "forced" => format!(
-                "Push forzato di «{}» su {target}{summary}: {} dal remoto",
-                self.branch,
-                plural(self.lost.len() as u64, "commit tolto", "commit tolti")
+            "fast_forward" => tr!(
+                "sync-push-fast-forward",
+                branch = branch,
+                target = &target,
+                summary = &summary
             ),
-            "up_to_date" => format!("Push di «{}»: {target} è già aggiornato", self.branch),
-            other => format!("Push di «{}» su {target}: {other}", self.branch),
+            "forced" => tr!(
+                "sync-push-forced",
+                branch = branch,
+                target = &target,
+                summary = &summary,
+                n = self.lost.len()
+            ),
+            "up_to_date" => tr!("sync-push-up-to-date", branch = branch, target = &target),
+            other => tr!(
+                "sync-push-other",
+                branch = branch,
+                target = &target,
+                kind = other
+            ),
         };
         // Un remoto scelto dalla configurazione di push non è quello che ci si aspetta: lo si
         // dice.
         match self.remote_source.as_deref() {
-            Some("push_remote") => notice.push_str(&format!(
-                "; su «{}» (branch.{}.pushRemote)",
-                self.remote, self.branch
+            Some("push_remote") => notice.push_str(&tr!(
+                "sync-push-to-push-remote",
+                remote = &self.remote,
+                branch = &self.branch
             )),
             Some("push_default") => {
-                notice.push_str(&format!("; su «{}» (remote.pushDefault)", self.remote));
+                notice.push_str(&tr!("sync-push-to-push-default", remote = &self.remote));
             }
             _ => {}
         }
         if let Some(backup) = &self.backup {
-            notice.push_str(&format!("; il remoto com'era è salvato in {backup}"));
+            notice.push_str(&tr!("sync-push-backup", backup = backup));
         }
         if self.set_upstream {
-            notice.push_str(&format!("; upstream impostato su {target}"));
+            notice.push_str(&tr!("sync-push-set-upstream", target = &target));
         }
         for warning in &self.warnings {
-            notice.push_str(&format!("; attenzione: {warning}"));
+            notice.push_str(&tr!("sync-warning", warning = warning));
         }
         let warning = match (self.status_error, self.refs_error) {
-            (Some(e), _) => Some(format!("Push fatto, ma lo stato non si rilegge: {e}")),
-            (None, Some(e)) => Some(format!("Push fatto, ma i ref non si rileggono: {e}")),
+            (Some(e), _) => Some(tr!("sync-push-status-not-reread", error = e)),
+            (None, Some(e)) => Some(tr!("sync-push-refs-not-reread", error = e)),
             (None, None) => None,
         };
         Outcome {

@@ -21,7 +21,7 @@ use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
 use project_engine::Progress;
-use project_i18n::{Lang, tr};
+use project_i18n::tr;
 
 mod branches;
 mod commits;
@@ -62,7 +62,7 @@ pub(crate) struct Network {
     /// L'ultimo avanzamento ricevuto.
     pub progress: Option<Progress>,
     /// Cosa succede interrompendo.
-    pub stop_hint: &'static str,
+    pub stop_hint: String,
     /// L'azione di "Interrompi".
     pub cancel: Action,
 }
@@ -85,10 +85,6 @@ pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
 fn wait() -> String {
     tr!("common-wait")
 }
-
-/// Il testo di [`wait`] ancora scritto nel codice, per i moduli non ancora tradotti: si toglie
-/// quando nessuno lo usa più (vedi `impl-docs/i18n.md`).
-const WAIT: &str = "Aspettare l'operazione in corso (o chiudere il dialogo aperto)";
 
 /// Id breve cliccabile: seleziona il commit nella lista.
 fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {

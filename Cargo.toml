@@ -34,7 +34,6 @@ anyhow = "1"
 fluent-bundle = "0.16"
 fluent-syntax = "0.12"
 unic-langid = "0.9"
-sys-locale = "0.3"
 
 # UI
 egui = "0.37"

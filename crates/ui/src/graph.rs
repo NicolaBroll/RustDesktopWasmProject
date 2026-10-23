@@ -73,6 +73,8 @@ pub enum LabelKind {
     Branch,
     Remote,
     Tag,
+    /// Uno stash, sul commit su cui è stato creato (la sua base).
+    Stash,
 }
 
 /// Un'etichetta da mostrare sulla riga di un commit.
@@ -83,7 +85,8 @@ pub struct RefLabel {
 }
 
 /// Etichette per commit: branch locali (quello corrente per primo), remoti, tag, e `HEAD` se
-/// è staccata. Gli stash non hanno etichetta (stanno nella colonna dei ref).
+/// è staccata. `refs/stash` non ha etichetta: gli stash si aggiungono con [`add_stash_labels`],
+/// sulla loro base.
 pub fn ref_labels(refs: &[RefInfo], head: &Head) -> HashMap<Oid, Vec<RefLabel>> {
     let mut labels: HashMap<Oid, Vec<RefLabel>> = HashMap::new();
     let current = match head {
@@ -127,6 +130,21 @@ pub fn ref_labels(refs: &[RefInfo], head: &Head) -> HashMap<Oid, Vec<RefLabel>> 
         list.sort_by(|a, b| (a.kind, &a.text).cmp(&(b.kind, &b.text)));
     }
     labels
+}
+
+/// Aggiunge in fondo alle etichette di ogni commit gli stash creati lì sopra: `(base, nome)`,
+/// dal più recente (come `stash.list`). Più stash sulla stessa base restano nell'ordine
+/// dell'elenco.
+pub fn add_stash_labels<'a>(
+    labels: &mut HashMap<Oid, Vec<RefLabel>>,
+    stashes: impl IntoIterator<Item = (Oid, &'a str)>,
+) {
+    for (base, name) in stashes {
+        labels.entry(base).or_default().push(RefLabel {
+            kind: LabelKind::Stash,
+            text: name.to_owned(),
+        });
+    }
 }
 
 /// Quante etichette larghe `widths` (spazio tra l'una e l'altra compreso) stanno in
@@ -249,8 +267,41 @@ mod tests {
         assert_eq!(texts(2), [(LabelKind::Branch, "feature")]);
         assert!(
             !labels.contains_key(&oid(3)),
-            "niente etichetta per lo stash"
+            "niente etichetta per refs/stash"
         );
+    }
+
+    #[test]
+    fn stash_labels_go_last_on_their_base() {
+        let refs = vec![info("refs/heads/main", RefKind::LocalBranch, 1)];
+        let head = Head::Branch {
+            name: "main".to_owned(),
+            target: Some(oid(1)),
+        };
+        let mut labels = ref_labels(&refs, &head);
+        add_stash_labels(
+            &mut labels,
+            [
+                (oid(1), "stash@{0}"),
+                (oid(2), "stash@{1}"),
+                (oid(1), "stash@{2}"),
+            ],
+        );
+        let texts = |n: u8| -> Vec<(LabelKind, &str)> {
+            labels[&oid(n)]
+                .iter()
+                .map(|l| (l.kind, l.text.as_str()))
+                .collect()
+        };
+        assert_eq!(
+            texts(1),
+            [
+                (LabelKind::CurrentBranch, "main"),
+                (LabelKind::Stash, "stash@{0}"),
+                (LabelKind::Stash, "stash@{2}"),
+            ]
+        );
+        assert_eq!(texts(2), [(LabelKind::Stash, "stash@{1}")]);
     }
 
     #[test]

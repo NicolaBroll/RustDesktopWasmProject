@@ -33,6 +33,13 @@
 //!   [`JournalEntry::remote_remove`]): la voce tiene il remoto ([`RemoteSnapshot`]:
 //!   configurazione, branch remoti, upstream che lo usano); undo e redo lo tolgono o lo
 //!   rimettono, solo se nel frattempo non è cambiato o non è stato ricreato.
+//! - **`stash.push` e `stash.drop` entrano nel diario** ([`JournalEntry::stash_push`],
+//!   [`JournalEntry::stash_drop`], con lo stash in [`JournalEntry::stash`]): l'undo di un push è
+//!   il `pop` di quello stash (stessa HEAD, stash ancora nell'elenco), il redo un altro push con
+//!   gli stessi parametri; l'undo di un drop rimette lo stash in cima all'elenco
+//!   (`git stash store`), il redo lo elimina di nuovo. `stash.apply` e `stash.pop` no: cambiano
+//!   solo indice e worktree, e lo stash applicato resta nell'elenco o in un backup (vedi
+//!   [`StashRecord`]).
 //! - **Stage e unstage non entrano nel diario**: non spostano ref. Il loro recupero è il backup
 //!   dell'indice (§7). Nemmeno una nuova voce del genere svuota il redo.
 //! - **Undo di un commit = `git reset --soft`.** Si sposta solo il ref: indice e worktree non si
@@ -45,9 +52,10 @@
 
 use crate::git::short;
 use crate::{
-    CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, RefMove,
-    RefRestore, RemoteSnapshot, RestoreOutcome, WorktreeBackup, WorktreeRestore, branch_short,
-    check_no_operation, discard_description, remove_remote, restore_remote,
+    CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
+    RefMove, RefRestore, RemoteSnapshot, RestoreOutcome, StashDrop, StashEntry, StashPush,
+    StashRecord, WorktreeBackup, WorktreeRestore, branch_short, check_no_operation,
+    discard_description, find_stash, pop_stash, remove_remote, restore_remote,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
@@ -106,6 +114,11 @@ pub struct JournalEntry {
     /// (reimpostati altrove) la voce tiene solo quello che è stato rimesso.
     #[serde(default, skip_deserializing)]
     pub remote: Option<RemoteSnapshot>,
+    /// Solo per `stash.push` e `stash.drop`: lo stash (id, messaggio, base e, per il push, i
+    /// parametri). Undo e redo lo rimettono o lo tolgono dall'elenco ([`StashRecord`]); dopo il
+    /// redo di un push la voce ha l'id dello stash nuovo.
+    #[serde(default)]
+    pub stash: Option<StashRecord>,
 }
 
 impl JournalEntry {
@@ -153,6 +166,7 @@ impl JournalEntry {
             worktree: None,
             branch_config: Vec::new(),
             remote: None,
+            stash: None,
         })
     }
 
@@ -176,6 +190,7 @@ impl JournalEntry {
             }),
             branch_config: Vec::new(),
             remote: None,
+            stash: None,
         }
     }
 
@@ -347,6 +362,7 @@ impl JournalEntry {
             worktree: None,
             branch_config: Vec::new(),
             remote: None,
+            stash: None,
         }
     }
 
@@ -419,6 +435,189 @@ impl JournalEntry {
         entry
     }
 
+    /// La voce di un `stash.push` riuscito: lo stash creato (`stash`), HEAD (non cambia) e i
+    /// parametri, per il redo. Undo = `pop` dello stash con l'indice, redo = un altro push.
+    pub fn stash_push(stash: &StashEntry, head: HeadState, request: StashPush) -> Self {
+        let mut entry = Self::branch_entry(
+            "stash.push",
+            format!(
+                "Metti da parte le modifiche (stash {} «{}»)",
+                short(&stash.id),
+                stash.message
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            Vec::new(),
+            None,
+        );
+        entry.stash = Some(StashRecord {
+            id: stash.id,
+            message: stash.message.clone(),
+            base: stash.base,
+            push: Some(request),
+        });
+        entry
+    }
+
+    /// La voce di uno `stash.drop` riuscito: lo stash eliminato, con il ref di backup che ne
+    /// tiene il commit. Undo = di nuovo nell'elenco, in cima (`git stash store`); redo = drop.
+    pub fn stash_drop(stash: &StashEntry, head: HeadState, backup: Option<String>) -> Self {
+        let mut entry = Self::branch_entry(
+            "stash.drop",
+            format!(
+                "Elimina {} ({} «{}»)",
+                stash.name,
+                short(&stash.id),
+                stash.message
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            Vec::new(),
+            backup,
+        );
+        entry.stash = Some(StashRecord {
+            id: stash.id,
+            message: stash.message.clone(),
+            base: stash.base,
+            push: None,
+        });
+        entry
+    }
+
+    /// Undo e redo di `stash.push` e `stash.drop` (vedi [`StashRecord`]). Prima i controlli,
+    /// che senza scrivere niente danno [`EngineError::UndoConflict`] se lo stash o HEAD non
+    /// sono più come li ha lasciati l'operazione (o l'undo).
+    fn apply_stash(
+        &mut self,
+        repo: &mut dyn GitBackend,
+        redo: bool,
+    ) -> Result<RestoreOutcome, EngineError> {
+        let command = if redo { "edit.redo" } else { "edit.undo" };
+        let Some(record) = self.stash.clone() else {
+            return Err(EngineError::NotAllowed(format!(
+                "voce del diario non valida: `{}`, niente modificato",
+                self.description
+            )));
+        };
+        let conflict = |what: String| EngineError::UndoConflict {
+            command,
+            refs: vec![what],
+        };
+        let present = find_stash(&repo.stashes()?, &record.id).is_some();
+        let short_id = short(&record.id);
+        if self.command == "stash.drop" {
+            if redo {
+                if !present {
+                    return Err(conflict(format!(
+                        "lo stash {short_id} non è più nell'elenco"
+                    )));
+                }
+                // Il backup del drop di solito c'è già; se non tiene più lo stash (tolto o
+                // spostato a mano), uno nuovo prima di eliminarlo.
+                let kept = self.backup.as_deref().is_some_and(|b| {
+                    repo.log(&LogQuery::page(0, 1).from_rev(b))
+                        .ok()
+                        .and_then(|c| c.first().map(|c| c.id))
+                        == Some(record.id)
+                });
+                let dropped = repo.stash_drop(&StashDrop {
+                    command,
+                    id: record.id,
+                    backup: (!kept).then_some("redo"),
+                })?;
+                return Ok(RestoreOutcome {
+                    backups: dropped.backup.into_iter().collect(),
+                    warnings: dropped.warnings,
+                });
+            }
+            if present {
+                return Err(conflict(format!("lo stash {short_id} è già nell'elenco")));
+            }
+            repo.stash_store(&record.id, &record.message)?;
+            return Ok(RestoreOutcome::default());
+        }
+
+        // `stash.push`: la HEAD della voce, sul commit su cui lo stash è stato creato (così
+        // il `pop` dell'undo non può andare in conflitto e il redo mette da parte rispetto
+        // allo stesso commit).
+        check_no_operation(command, "cambierebbe gli stash", repo.status()?.operation)?;
+        let head = repo.head()?;
+        let state = HeadState::from_head(&head);
+        let expected = if redo {
+            &self.head.before
+        } else {
+            &self.head.after
+        };
+        if state != *expected || head.target() != Some(record.base) {
+            return Err(conflict(format!(
+                "HEAD: doveva essere {expected} sul commit {}, ora è {state}{}",
+                short(&record.base),
+                head.target()
+                    .map(|t| format!(" sul commit {}", short(&t)))
+                    .unwrap_or_default()
+            )));
+        }
+        if redo {
+            let push = record.push.clone().unwrap_or_default();
+            let stash = repo.stash_push(&push)?;
+            self.stash = Some(StashRecord {
+                id: stash.id,
+                message: stash.message,
+                ..record
+            });
+            return Ok(RestoreOutcome::default());
+        }
+        if !present {
+            return Err(conflict(format!(
+                "lo stash {short_id} non è più nell'elenco"
+            )));
+        }
+        let popped = pop_stash(repo, command, record.id, true, Some("undo")).map_err(|e| match e {
+            // L'undo usa sempre `restore_index`: non può "riprovare senza".
+            EngineError::NotAllowed(m) if m.starts_with(crate::INDEX_NOT_RESTORED) => {
+                EngineError::NotAllowed(format!(
+                    "l'undo non può rimettere lo stash {short_id} con la divisione fra in stage e \
+                     no: l'indice attuale non è più quello da cui è partito (succede con un push \
+                     con `paths` quando anche altri file erano in stage: git mette nello stash \
+                     tutto l'indice). Niente modificato, la voce resta nel diario; per riavere le \
+                     modifiche, `stash.pop` senza `restore_index` (tutto torna fuori stage)"
+                ))
+            }
+            other => other,
+        })?;
+        let applied = popped.applied;
+        if let Some(e) = popped.drop_error {
+            return Err(EngineError::Git {
+                command: "stash".to_owned(),
+                stderr: format!(
+                    "l'undo ha applicato lo stash {short_id} (le modifiche sono di nuovo nei \
+                     file) ma non è riuscito a toglierlo dall'elenco ({e}): non ripetere l'undo; \
+                     eliminare lo stash con `stash.drop`. La voce resta nel diario"
+                ),
+            });
+        }
+        let Some(dropped) = popped.dropped else {
+            return Err(EngineError::Git {
+                command: "stash".to_owned(),
+                stderr: format!(
+                    "l'undo ha applicato lo stash {short_id} ma restano file in conflitto ({}): \
+                     lo stash resta nell'elenco; risolvere i conflitti con `index.stage`",
+                    applied.conflicts.join(", ")
+                ),
+            });
+        };
+        let mut warnings = applied.warnings;
+        warnings.extend(dropped.warnings);
+        Ok(RestoreOutcome {
+            backups: dropped.backup.into_iter().collect(),
+            warnings,
+        })
+    }
+
     /// La richiesta al backend per annullare (`redo == false`) o rifare uno scarto; `None` se
     /// la voce non è di `worktree.discard`.
     pub fn worktree_request(&self, redo: bool) -> Option<WorktreeRestore> {
@@ -457,6 +656,9 @@ impl JournalEntry {
                 });
             }
             return repo.restore_worktree(&request);
+        }
+        if self.stash.is_some() {
+            return self.apply_stash(repo, redo);
         }
         let request = if redo {
             self.redo_request()
@@ -723,6 +925,7 @@ mod tests {
             worktree: None,
             branch_config: Vec::new(),
             remote: None,
+            stash: None,
         }
     }
 
@@ -812,7 +1015,8 @@ mod tests {
                 "undo_backups": [],
                 "worktree": null,
                 "branch_config": [],
-                "remote": null
+                "remote": null,
+                "stash": null
             })
         );
     }

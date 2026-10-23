@@ -235,7 +235,7 @@ Regole valide per tutti gli step:
 ## Fase 5 — Funzioni avanzate
 
 ### S28 — Stash
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `stash.push`, `stash.apply`, `stash.pop`, `stash.drop` (`confirm`); stash nella
   colonna sinistra e nel grafo.
 - **Fatto quando:** test di integrazione; revisione di `safety-reviewer`; CI verde.

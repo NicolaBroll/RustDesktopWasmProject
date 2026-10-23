@@ -461,6 +461,11 @@ fn commands_lists_the_catalog() {
             "repo.open",
             "repo.refs",
             "repo.status",
+            "stash.apply",
+            "stash.drop",
+            "stash.list",
+            "stash.pop",
+            "stash.push",
             "worktree.discard"
         ]
     );
@@ -489,6 +494,10 @@ fn commands_lists_the_catalog() {
             "remote.pull",
             "remote.push",
             "remote.remove",
+            "stash.apply",
+            "stash.drop",
+            "stash.pop",
+            "stash.push",
             "worktree.discard"
         ]
     );

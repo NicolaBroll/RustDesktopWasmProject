@@ -244,6 +244,16 @@ pub trait GitBackend: Send {
     fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError>;
     fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
     fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
+    // Stash (S28): l'elenco dal reflog di `refs/stash` (`StashEntry`: index, name, id, base,
+    // message, branch, time, untracked); push (`StashPush`: message, include_untracked,
+    // keep_index, paths), apply (`StashApply`: id, restore_index; `StashApplied`: conflicts),
+    // drop (`StashDrop`: id, tipo del backup) e store (l'undo di un drop). Uno stash arriva
+    // sempre come id: la posizione la ricalcola il backend.
+    fn stashes(&self) -> Result<Vec<StashEntry>, EngineError>;
+    fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError>;
+    fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError>;
+    fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError>;
+    fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError>;
     // poi merge, rebase, ...
 }
 
@@ -265,7 +275,13 @@ pub trait RepoOpener: Send + Sync {
   `remote.<r>.url`/`.fetch` vengono dal remoto in memoria, le altre chiavi da `set_config`,
   gli upstream da `set_upstream`; nessun ref simbolico. Togliendo un remoto il suo "server"
   (branch e commit del remoto) resta da parte per URL, e un remoto aggiunto o rimesso con lo
-  stesso URL lo ritrova.
+  stesso URL lo ritrova. Stash (S28): ogni stash tiene le voci dello stato e il contenuto dei
+  file messi da parte, più un commit (con i file cambiati rispetto alla base, così `commit.show`
+  sull'id funziona); `set_stash` aggiunge uno stash senza file. Più severo di git: un file
+  cambiato dallo stash e da HEAD rispetto alla base è sempre un conflitto (senza marcatori), e
+  con `paths` lo stash contiene solo i file scelti (git ci mette tutto l'indice, vedi
+  `stash.push`). Gli stash eliminati restano da parte per id, per l'undo del drop;
+  `fail_stash_drop` simula un drop che fallisce (per il pop applicato e non tolto).
 - `CliBackend` (in `project-git`): esegue `git` (§5).
 
 ### Sessione
@@ -288,7 +304,7 @@ come JSON, così CLI e MCP li usano direttamente. Catalogo iniziale:
 | `repo.open` | `{"path"}` | usa il `RepoOpener` iniettato |
 | `repo.status` | `{}` | |
 | `repo.refs` | `{}` | |
-| `repo.log` | `{"skip"?, "limit"?, "rev"?, "all"?}` | paginato (`limit` 200 se manca, risultato `{"commits", "has_more"}`). `git log --date-order` (figli prima dei genitori, poi il più recente per data del committer; vale anche con più punti di partenza, e le corsie del grafo §3 gestiscono più punte e più radici). Da HEAD, oppure da `rev` (ref, `HEAD` o id, dopo `--end-of-options`); HEAD senza commit dà un log vuoto. `"all": true`: da tutti i branch locali, i branch remoti, i tag e HEAD (`--branches --remotes --tags` e l'id di HEAD, così una HEAD staccata compare; una HEAD senza commit si salta): mostra i commit dei branch non uniti e quelli appena scaricati su `origin/*`. Restano fuori `refs/stash`, i backup in `refs/project/backup/` e ogni altro ref fuori da `refs/heads/`, `refs/remotes/`, `refs/tags/` (es. le note); un tag su un albero o un blob si ignora. `rev` e `all` insieme → `InvalidParams`. `skip`/`limit` paginano nello stesso ordine, quindi le pagine sono contigue |
+| `repo.log` | `{"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}` | paginato (`limit` 200 se manca, risultato `{"commits", "has_more"}`). `git log --date-order` (figli prima dei genitori, poi il più recente per data del committer; vale anche con più punti di partenza, e le corsie del grafo §3 gestiscono più punte e più radici). Da HEAD, oppure da `rev` (ref, `HEAD` o id, dopo `--end-of-options`); HEAD senza commit dà un log vuoto. `"all": true`: da tutti i branch locali, i branch remoti, i tag e HEAD (`--branches --remotes --tags` e l'id di HEAD, così una HEAD staccata compare; una HEAD senza commit si salta): mostra i commit dei branch non uniti e quelli appena scaricati su `origin/*`. Restano fuori `refs/stash`, i backup in `refs/project/backup/` e ogni altro ref fuori da `refs/heads/`, `refs/remotes/`, `refs/tags/` (es. le note); un tag su un albero o un blob si ignora. `"stashes": true` (solo con `all`, altrimenti `InvalidParams`): parte anche dalle basi degli stash (`StashEntry::base`, il primo genitore), così il commit a cui la UI aggancia uno stash è sempre nel grafo, anche se nessun branch lo contiene più; i commit degli stash (e quelli dell'indice e dei non tracciati che hanno per genitori) restano fuori, l'elenco è `stash.list`. `rev` e `all` insieme → `InvalidParams`. `skip`/`limit` paginano nello stesso ordine, quindi le pagine sono contigue |
 | `commit.show` | `{"id"}` | metadati e file cambiati rispetto al primo genitore |
 | `diff.worktree` / `diff.index` / `diff.commit` | `{"path"?}` / `{"path"?}` / `{"id", "path"?}` | worktree rispetto all'indice (senza i non tracciati), indice rispetto a HEAD (albero vuoto se non ci sono commit), commit rispetto al primo genitore (albero vuoto per un commit radice, come `commit.show`). Risultato: il `Diff` (`{"files": [...]}`). `path` (stringa o array di byte, come `RepoPath`) limita al file con quel percorso esatto, vecchio o nuovo: una rinomina resta tale (il backend cerca prima l'altro percorso con `--diff-filter=R`) e i percorsi vanno a git dopo `--` con `--literal-pathspecs`. Nessun limite di dimensione |
 | `index.stage` / `index.unstage` | `{"paths"}` | `paths`: lista non vuota di `RepoPath` validati come in `diff.*`, presi alla lettera (una cartella comprende i suoi file). Risultato: `{"status": Status, "backup": string \| null}`, con il nuovo stato (come `repo.status`) e il ref del backup dell'indice salvato prima di scrivere, se c'erano versioni in stage che esistevano solo nell'indice (§7). `stage` = `git add` (modifiche, file nuovi, cancellazioni; una rinomina fatta nel worktree si mette in stage con i due percorsi; una cancellazione già in stage si salta); prima una prova a vuoto (`--dry-run`), così un file ignorato chiesto per nome (`NotAllowed`, mai `-f`) o un percorso inesistente non lasciano niente a metà. Stage di un file in conflitto = risoluzione, solo se il file è chiesto per nome: dentro una cartella richiesta è rifiutato (`NotAllowed`). `unstage` = `git restore --staged --no-overlay --source=<HEAD>` (albero vuoto senza commit): solo l'indice, mai il worktree; un file in conflitto è rifiutato (`NotAllowed`), perché perderebbe gli stadi del conflitto. Indice bloccato da un altro git: `IndexLocked`, senza riprovare né cancellare il lock |
@@ -316,6 +332,10 @@ due diff con lo stesso digest.
 | `remote.list` | `{}` | sola lettura. Risultato: `{"remotes": [{"name", "url": string \| null, "push_urls": [string], "fetch": [string], "mirror": bool, "branches": n, "default": bool, "push_default": bool, "credentials": bool}], "default": string \| null, "push_default": string \| null}`, in ordine di nome (`git remote`). `url`: il primo `remote.<r>.url` come scritto (senza `insteadOf`); `push_urls`: i `pushurl`, o tutti gli `url` se più di uno; vuoto = il push va a `url`. `branches`: i branch remoti `refs/remotes/<r>/...` (esclusi quelli di un remoto `<r>/...`, senza i simbolici); `default`: il remoto di `remote.fetch` senza parametri (`default_remote`; `null` se ambiguo); `push_default`: l'ultimo `remote.pushDefault`. **Credenziali mascherate** (`mask_url`, ovunque un URL esca dal motore: `remote.list`, `remote.add`, `remote.remove`, la voce del diario in `edit.history`, i messaggi d'errore sugli URL): `schema://utente:password@host` → `utente:***`; in `http(s)`/`ftp(s)` anche un utente senza password diventa `***` (spesso è un token); un utente in `ssh://`/`git://` o alla scp (`git@host:r`) resta; vale dentro un helper (`<x>::<url>`). `credentials`: l'URL ne aveva. Ahead/behind dei branch rispetto all'upstream non sono qui: sono in `RefInfo::upstream` (`repo.refs`, da `%(upstream:track)`), riletti nei `refs` di `remote.fetch`, `remote.pull` e `remote.push` |
 | `remote.add` | `{"name", "url", "fetch"?}` | scrive (`writes`), entra nel diario (§7). Nome nuovo (`check_new_remote_name`: `check_remote_name` e niente `-` iniziale) → `InvalidParams`; nome già configurato (`git remote`), voci `remote.<name>.*` nel file del repo o branch remoti `refs/remotes/<name>/...` rimasti da prima (l'undo li cancellerebbe) → `NotAllowed`. **Politica degli URL** (`check_remote_url`, prima di git): non vuoto, senza caratteri di controllo né spazi in testa o in coda, non inizia con `-` (`--upload-pack=...`, `-oProxyCommand=...`), niente trasporti `ext::`/`ext://`/`fd::`/`fd://` (eseguono comandi o usano descrittori; anche dentro un altro helper e in qualsiasi maiuscolo: da qui mai, qualunque sia `protocol.allow`), niente utente o host che inizia con `-` (`ssh://-x/r`, `ssh://-oX@h/r`, `ssh://[-x]/r`, `u@-x:r`); gli altri helper `<x>::` e i percorsi locali vanno bene. Poi `git remote add --end-of-options <name> <url>` (URL e refspec di default; un nome che git rifiuta → `InvalidParams`, uno che esiste → `NotAllowed`). Un URL con credenziali si accetta con un avviso in `warnings` (git lo salva in chiaro). `"fetch": true`: poi un fetch di tutto il remoto come `remote.fetch` (lento, §6: avanzamento e annullamento dal `JobContext`); un fetch fallito o annullato **non** annulla l'aggiunta: il remoto resta (ed è nel diario) e l'errore va in `fetch_error` (`kind`: `auth`, `unreachable`, `cancelled`, `other`). Risultato: `{"remote", "url" (mascherato), "credentials", "fetched", "fetch": {"updated", "messages", "warnings"} \| null, "fetch_error": {"kind", "message"} \| null, "warnings", "remotes": [come remote.list], "refs", ...diario}` |
 | `remote.remove` | `{"name", "confirm"?}` | scrive (`writes`), entra nel diario (§7). `name`: un remoto configurato (`check_remote_name`, `-` iniziale ammesso; altrimenti `NotAllowed` con l'elenco). Rifiutati (`NotAllowed`, niente cambia): un remoto definito **anche solo in parte** fuori dal file del repo (`GitBackend::remote_config_elsewhere`: configurazione globale o di sistema, `include`, `config.worktree`, `.git/remotes/`; l'errore elenca chiave, ambito e file), perché ne resterebbe una parte che git vede ancora; il remoto promisor di un clone parziale (`remote.<name>.promisor` vero o `extensions.partialClone` = `<name>`: senza, gli oggetti mancanti non si scaricherebbero più e checkout, log e diff fallirebbero); un'operazione in corso. Se dopo la rimozione `git remote` elenca ancora il remoto (`ensure_remote_gone`), tutto si rimette subito com'era e il risultato è `NotAllowed`; se il ripristino riesce solo in parte (es. un branch remoto ricreato nel frattempo: la configurazione si riscrive comunque, con un avviso) o l'elenco dei remoti non si rilegge, la rimozione entra comunque nel diario, così `edit.undo` e i backup restano disponibili (l'errore lo dice). Chiede **sempre** `"confirm": true`: senza, `ConfirmRequired` che dice quanti branch remoti spariscono e quali branch perdono l'upstream o il `pushRemote`, e se `remote.pushDefault` lo nomina; niente cambia. Toglie (`remove_remote`, §7) i branch remoti `refs/remotes/<name>/...` (non quelli di un remoto `<name>/...`; a differenza di `git remote remove`, i ref scritti fuori da `refs/remotes/<name>/` da un refspec personalizzato restano), `refs/remotes/<name>/HEAD`, la sezione `remote.<name>`, `branch.<b>.remote`/`merge` dei branch con quell'upstream, i `branch.<b>.pushRemote` e `remote.pushDefault` che lo nominano (tutto del file del repo); i tag scaricati restano, il remoto vero non cambia. Risultato: `{"remote", "removed": RemoteSnapshot (URL mascherati), "upstreams_removed": [branch], "push_remotes_removed": [branch], "push_default_removed": bool, "backups": [string], "warnings", "remotes", "refs", ...diario}` |
+| `stash.list` | `{}` | sola lettura. Risultato: `{"stashes": [{"index": n, "name": "stash@{n}", "id", "base", "message", "branch": string \| null, "time", "untracked": bool}]}`, dal più recente, dal reflog di `refs/stash` (vuoto se non c'è). `base`: il primo genitore, il commit di HEAD quando lo stash è stato creato (la UI disegna lo stash accanto a questo commit; con `repo.log {"all": true, "stashes": true}` è sempre nel grafo); `message`: il messaggio del reflog come in `git stash list` (`On <branch>: <msg>` o `WIP on <branch>: <id> <oggetto>`); `branch` letto da lì (`null` con HEAD staccata o un altro formato); `time`: data del commit dello stash; `untracked`: ha il terzo genitore con i non tracciati. I file tracciati di uno stash si leggono con `commit.show`/`diff.commit` sull'`id` (confronto con `base`: il worktree salvato, in stage o no); i non tracciati non ci sono. `refs/stash` resta anche in `repo.refs` (`kind: "Stash"`, lo stash più recente) |
+| `stash.push` | `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}` | scrive (`writes`), entra nel diario (§7). `git stash push` (§5): salva le modifiche ai file tracciati (in stage e no) e, con `include_untracked`, i non tracciati (mai gli ignorati: niente `--all`), poi riporta indice e worktree come HEAD (con `keep_index` l'indice resta e il worktree diventa come l'indice). `paths`: lista non vuota di percorsi alla lettera, come `index.stage` (**git mette comunque nello stash tutto l'indice**: le modifiche in stage degli altri file restano nel worktree ma sono anche nello stash, e applicarlo le riporta). `message`: una riga, senza caratteri di controllo (`InvalidParams`); vuoto = assente (git scrive `WIP on ...`). Rifiutati prima di git (`check_stash_push`, `NotAllowed`, niente cambia): operazione in corso, file in conflitto, branch senza commit, file `intent-to-add` (git non riesce a salvarli), file `--assume-unchanged` fra quelli scelti (solo `CliBackend`, §5: git non ne salverebbe le modifiche e poi le cancellerebbe con il reset del worktree), niente da mettere da parte fra i file scelti (anche se git non crea lo stash: `refs/stash` invariato). Risultato: `{"stash": StashEntry, "stashes": [StashEntry], "status", ...diario}` |
+| `stash.apply` / `stash.pop` | `{"index"?, "expected"?, "restore_index"?}` | scrivono (`writes`), **non** entrano nel diario (§7). Lo stash è `stash@{index}` (0 se manca; non c'è → `NotAllowed` che dice quanti sono); `expected`: l'id **completo** dello stash visto (altrimenti `InvalidParams`), se l'elenco è cambiato → `NotAllowed` che dice dov'è ora (consigliato: la UI lo passa sempre). Al backend arriva l'id. `restore_index`: rimette anche la divisione fra in stage e no (`--index`); senza, tutto torna fuori stage tranne i file nuovi, che git lascia in stage. **Mai sopra modifiche locali** (controlli prima di git, `NotAllowed` e niente cambia): operazione in corso, file in conflitto, una modifica (in stage o no) a un file che lo stash cambia (rispetto alla base, nel worktree o nell'indice salvati), un non tracciato o ignorato al posto di un file che lo stash aggiunge o di un non tracciato che rimette (anche al posto di una sua cartella), file `--assume-unchanged` che lo stash cambia. **Eccezione**: un file senza modifiche fuori stage la cui voce dell'indice è la stessa nell'indice e nel worktree salvati dallo stash (`<id>^2` e `<id>`; modo 0: assente da tutti e due) ha già la versione dello stash e non blocca: è il caso dei file rimasti in stage dopo un push con `keep_index`, o con `paths` (git salva comunque tutto l'indice); senza, l'undo di quei push e il pop dopo un `keep_index` sarebbero sempre rifiutati. Un file `MM` rimasto con `keep_index` resta bloccato (il worktree dello stash è diverso: git andrebbe in conflitto). Servono perché `git stash apply` non controlla tutto prima di scrivere: con un non tracciato dello stash già presente rimette i file tracciati e poi fallisce, e rifiutando per una modifica locale ha già rimesso i non tracciati. `restore_index` che non si applica sopra l'indice attuale (HEAD cambiato dalla base) → `NotAllowed` che suggerisce di riprovare senza. **Conflitti** (scelta): se HEAD ha cambiato gli stessi file dalla base il merge si ferma e i file restano in conflitto come li lascia git (`conflicts`; nessuna operazione in corso, solo voci `U` nell'indice); niente si perde, perché quei file non avevano modifiche locali (controllo sopra) e lo stash resta nell'elenco: `pop` non lo elimina (`dropped: false`, con un avviso). Si risolvono con `index.stage` del file (poi l'editor dei conflitti, S30); finché ci sono, apply e push sono rifiutati. `pop` senza conflitti: drop come `stash.drop` (backup `refs/project/backup/stash-...` prima). Un drop che fallisce **dopo** l'apply non è un errore del pop (`StashPopped::drop_error`): l'apply è fatto e non va ripetuto, il risultato ha `dropped: false` e un avviso "applicato ma non tolto dall'elenco". Risultato: `{"stash": StashEntry, "conflicts": [percorso], "dropped": bool, "backup": string \| null, "warnings", "stashes", "status"}` |
+| `stash.drop` | `{"index"?, "expected", "confirm"}` | scrive (`writes`), entra nel diario (§7). Stash scelto come `stash.apply`. Chiede **sempre** `"confirm": true` **con `"expected"`**, l'id completo dello stash: senza `confirm`, `ConfirmRequired` con posizione, id, messaggio, numero di file tracciati e se ha non tracciati, e l'id in `expected` (come per il force di `remote.push`); `confirm` senza `expected` → `InvalidParams`; niente cambia. La conferma vale solo per lo stash visto (`expected` diverso da `stash@{index}` → `NotAllowed`). Prima un backup del commit in `refs/project/backup/stash-<s>-<ns>` (se non riesce non si elimina niente). Risultato: `{"stash": StashEntry, "backup": string, "warnings", "stashes", ...diario}` |
 | `edit.undo` / `edit.redo` | `{}` | sul diario delle operazioni (§7). Scritture. `undo` annulla l'ultima voce fatta, `redo` rifà l'ultima annullata; senza voci `NotAllowed`. I ref devono valere ancora quello che l'operazione (o l'undo) ha lasciato, altrimenti `UndoConflict { command, refs }` e niente cambia (la voce resta). Undo e redo di `branch.checkout` sono checkout sicuri: con modifiche locali in conflitto `CheckoutConflict` (la voce resta). Merge, rebase, cherry-pick, revert, bisect o `git am` in corso (anche un sequencer fermo, `.git/sequencer` senza `CHERRY_PICK_HEAD`/`REVERT_HEAD`): `NotAllowed`. Risultato: `{"undone" \| "redone": JournalEntry, "backups": [string], "warnings": [string], "status": Status \| null, "can_undo": bool, "can_redo": bool, "next_undo": string \| null, "next_redo": string \| null}` (`warnings`: avvisi scoperti dopo uno spostamento riuscito, es. HEAD cambiata da un altro processo in quell'istante; di solito vuoto. `status` `null`, con `status_error`, se non si rilegge: l'operazione è fatta, non va ripetuta) |
 | `edit.history` | `{}` | sola lettura: `{"done": [JournalEntry], "undone": [JournalEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`; in tutte e due le liste l'ultima voce è la prossima per `undo` / `redo` |
 
@@ -493,6 +513,46 @@ Regole per ogni chiamata a git:
   `remote.pushDefault` anche da altri file). Ripristino: `git config --local --add
   --end-of-options <chiave> <valore>` per ogni voce e `git symbolic-ref -m <reflog>
   refs/remotes/<nome>/HEAD <ref>`.
+- **Stash** (`stash.*`, S28). Elenco: `git log --walk-reflogs -z --no-show-signature
+  --no-color --format=tformat:%H%x00%P%x00%ct%x00%gs --end-of-options refs/stash --` (4 campi
+  per record, ognuno terminato da NUL; solo se `refs/stash` esiste). Push: prima `ls-files -v`: un file
+  `--assume-unchanged` (lettera minuscola) fra quelli scelti → `NotAllowed`, sempre, senza
+  guardare il contenuto (`git stash push` non ne vede le modifiche e poi riporta il worktree a
+  HEAD con un reset: le perderebbe), prima degli altri controlli. Poi `git -c
+  core.fsmonitor=false [--literal-pathspecs] stash push [--include-untracked]
+  --keep-index|--no-keep-index [--message=<msg>] [--pathspec-from-file=- --pathspec-file-nul]`
+  (percorsi su stdin). **Eccezione alla regola dei messaggi via stdin**: `git stash` non legge il
+  messaggio da stdin né da un file, quindi va in un solo argomento `--message=<testo>` (una riga
+  senza caratteri di controllo, controllata dal motore), che git non può leggere come un'altra
+  opzione. Lo stash nuovo si riconosce da `refs/stash` prima e dopo (git esce con 0 anche con
+  "No local changes to save"); se git fallisce dopo aver creato lo stash, l'errore lo nomina.
+  Apply: i file che lo stash tocca (`diff-tree -r -z --name-only --no-renames <base> <id>` e
+  `<base> <id>^2`) e i non tracciati che rimette (`ls-tree -r -z --name-only --full-tree
+  --end-of-options <id>^3`, **senza `--` finale**: `ls-tree` lo prenderebbe per un percorso)
+  confrontati con lo stato e con il file system (`symlink_metadata`: un file che lo stash
+  aggiunge non deve esistere, nemmeno ignorato, e le sue cartelle devono essere cartelle vere),
+  con l'eccezione dei file che hanno già la versione dello stash (voci di `ls-tree -r -z
+  --full-tree <id>^2` e `<id>` uguali alla voce dell'indice), poi `git -c core.fsmonitor=false
+  -c merge.directoryRenames=false stash apply [--index] --end-of-options <id>` (l'id, mai
+  `stash@{n}`). `merge.directoryRenames=false`: con la rilevazione delle cartelle rinominate un
+  file che lo stash aggiunge in `old/` finirebbe in `new/` se HEAD ha rinominato la cartella, e
+  sovrascriverebbe un ignorato che c'è lì, che i controlli non vedono (guardano `old/`). Uscita non zero con voci `U` nello stato o `CONFLICT` nell'output: i conflitti
+  (risultato, non errore); "conflicts in index" (`--index`): `NotAllowed`, niente modificato.
+  Solo se il repo cambia fra i controlli e git, che allora ha già scritto una parte: "already
+  exists, no checkout" → `NotAllowed` che dice che l'apply è **rimasto a metà** (git ha già fatto
+  il merge dei tracciati, i non tracciati elencati non sono stati rimessi); "would be
+  overwritten" → `NotAllowed` con i soli file del blocco subito dopo il messaggio (non il
+  riepilogo dello stato che git stampa dopo), "niente modificato" solo se lo stash non ha non
+  tracciati, altrimenti avvisa che git potrebbe averli già rimessi. I non tracciati da rimettere
+  si controllano sul file system sempre, anche se lo stato li mostra (es. `D.` con il file
+  ignorato nel worktree), e l'eccezione dei file che hanno già la versione dello stash vale solo
+  per i tracciati. Drop: backup
+  `update-ref <ref> <id> ""`, ricontrollo che `stash@{n}` sia ancora l'id, `git stash drop
+  --quiet --end-of-options stash@{n}` (se fallisce il backup si toglie); git non ha un drop con
+  il valore atteso, quindi resta l'istante fra il ricontrollo e `drop`, e dopo l'elenco si
+  confronta con quello atteso (diverso → `warnings`). Store (undo di un drop): `git stash store
+  --quiet --message=<msg> <id>` (`store` rifiuta `--end-of-options`; l'id è esadecimale), poi lo
+  stash dev'essere in cima.
 - Un comando che modifica il repo è segnato in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), così la UI lo disabilita durante un job e un agente sa cosa scrive.
 - All'apertura del repo si verifica la versione di git (minimo 2.30) e si dà un errore chiaro se
@@ -566,7 +626,7 @@ frattempo non sono cambiati (altrimenti errore chiaro, nessuna sovrascrittura).
 
 Ogni voce (`JournalEntry`, JSON `{"id", "command", "description", "head": {"before",
 "after"}, "refs": [{"name", "before", "after"}], "backup", "undo_backups", "worktree",
-"branch_config"}`) ha l'id del
+"branch_config", "remote", "stash"}`) ha l'id del
 comando, una descrizione per le persone (`Commit a0744b4 «oggetto»`, `Amend b12c3d4 «oggetto»
 (era a0744b4)`), HEAD prima e dopo (`HeadState`: `{"branch": "refs/heads/main"}` o
 `{"detached": oid}`), i ref spostati con il nome completo e l'oid prima e dopo (`null` = il ref
@@ -574,7 +634,7 @@ non esisteva / è stato cancellato: più ref per voce, per branch, rinomine, mer
 futuri), il backup salvato dall'operazione (es. quello di `amend`) e i backup creati da undo e
 redo. Oggi la registrano `commit.create` (normale e `amend`; con HEAD staccata nessun ref, si
 sposta HEAD; un `amend` che produce lo stesso commit e un `PostCommit` non entrano), i comandi
-`branch.*` (vedi "Branch (S24)" sotto) e `worktree.discard` (nessun ref, HEAD uguale prima e dopo, il backup del worktree nel campo
+`branch.*` (vedi "Branch (S24)" sotto), `stash.push` e `stash.drop` (vedi "Stash (S28)") e `worktree.discard` (nessun ref, HEAD uguale prima e dopo, il backup del worktree nel campo
 `"worktree"`, vedi sotto). Stage e unstage non spostano ref e non entrano nel diario: il loro recupero è il
 backup dell'indice. Una nuova voce svuota le voci annullate (il redo); il diario tiene al
 massimo 100 voci.
@@ -909,6 +969,54 @@ file, una cartella di un file o un file al posto di una cartella della destinazi
 configurazione ha solo l'upstream (`branch.<nome>.remote`/`merge`), e registra i backup delle eliminazioni in
 `commit_backups` (`refs/project/backup/delete-<n>`).
 
+### Stash (S28)
+
+`stash.push` e `stash.drop` entrano nel diario con lo stash (`JournalEntry::stash`, uno
+`StashRecord`: `{"id", "message", "base", "push": StashPush | null}`); la voce non ha `refs`
+(l'elenco degli stash è il reflog di `refs/stash`, e spostare quel ref non basterebbe).
+
+- **Undo di `stash.push` = `pop` di quello stash con `restore_index`** (come `git stash pop
+  --index`): solo se non c'è un'operazione in corso, HEAD è quella della voce **e sul commit
+  `base`** (così il merge non può andare in conflitto: lo stash si riapplica sullo stesso
+  commit) e lo stash è ancora nell'elenco (in qualunque posizione), altrimenti `UndoConflict` e
+  niente cambia. Valgono i controlli di `stash.apply`: se nel frattempo un file dello stash ha
+  modifiche locali, `NotAllowed` e la voce resta. Prima del drop il commit dello stash va in
+  `refs/project/backup/undo-...` (in `backups`). Se l'apply riesce ma il drop no, l'undo dà un
+  errore che dice che lo stash è stato applicato (non va ripetuto; la voce resta nel diario e lo
+  stash va eliminato con `stash.drop`). **Limite**: dopo un push con `paths` mentre anche altri
+  file erano in stage, git ha messo nello stash tutto l'indice, e `pop --index` non si applica
+  sopra l'indice che ha ancora quei file ("conflicts in index"): l'undo è rifiutato (`NotAllowed`,
+  niente cambia, la voce resta) con un messaggio suo che indica la via d'uscita, `stash.pop`
+  senza `restore_index`. Redo = di nuovo `stash.push` con gli stessi
+  parametri, con la stessa HEAD: lo stash nuovo ha di solito un altro id (la voce si aggiorna) e
+  contiene quello che c'è da mettere da parte al momento del redo (di solito quello che l'undo ha
+  rimesso; se nel frattempo sono cambiati altri file, anche quelli, che restano comunque nello
+  stash).
+- **Undo di `stash.drop` = `git stash store`** dello stesso commit (lo tiene il backup del drop),
+  solo se non è già nell'elenco (`UndoConflict`): torna **in cima** (`stash@{0}`), non nella
+  posizione di prima, perché `git stash store` non sa inserire altrove (scelta: riscrivere il
+  reflog di `refs/stash` a mano sarebbe più fragile). Il messaggio è quello del reflog. Redo =
+  di nuovo il drop, ovunque sia ora lo stash; il backup del drop di solito c'è già, ma se non
+  punta più allo stash (tolto o spostato a mano) se ne fa uno nuovo, `refs/project/backup/redo-...`,
+  prima di eliminarlo.
+- **`stash.apply` e `stash.pop` non entrano nel diario** (scelta): cambiano solo indice e
+  worktree, e annullarli vorrebbe dire togliere dai file quello che lo stash ha aggiunto,
+  mescolato alle modifiche che c'erano già (apply e pop sono ammessi con modifiche ad altri file)
+  o fatte dopo: non c'è un modo sicuro. Niente si perde comunque: dopo `apply` lo stash resta
+  nell'elenco, dopo `pop` il suo commit è in `refs/project/backup/stash-...` (e l'undo di uno
+  `stash.push` precedente, con lo stash ormai tolto, è rifiutato con `UndoConflict`). `can_undo`
+  dopo un apply o un pop riguarda quindi la voce di prima, e la UI non deve presentare l'undo
+  come annullamento dell'apply.
+- Un conflitto lasciato da apply/pop non ha uscite automatiche per ora: si risolve file per file
+  con `index.stage` (poi con l'editor dei conflitti, S30). Grazie ai controlli di `stash.apply`
+  i file in conflitto non avevano modifiche locali: la versione "nostra" è quella di HEAD.
+- `refs/stash` è una protezione **volatile** dei commit (vedi sopra "Backup dei commit
+  annullati"): i backup `refs/project/backup/stash-...` e `undo-...` di drop e pop sono invece
+  ref veri e propri, che una futura pulizia dei backup deve trattare come gli altri.
+
+Il `MemoryBackend` registra i backup degli stash in `commit_backups`
+(`refs/project/backup/stash-<n>`, `undo-<n>`, `redo-<n>`) e li risolve come ref.
+
 L'undo non copre le operazioni sul remoto: un push non si annulla da qui (il pull sì, per la parte locale: vedi "Pull (S26)"; `remote.add` e `remote.remove` cambiano solo la configurazione e i branch remoti locali: vedi "Remoti (S27)").
 
 ### Pull (S26)
@@ -996,7 +1104,7 @@ mirror): il valore di prima resta nel reflog del ref e il risultato lo segnala i
 Layout come GitKraken:
 
 - **Barra in alto**: repo aperto, pulsanti fetch/pull/push, undo/redo, stato del job in corso.
-- **Colonna sinistra**: branch locali, remoti, tag, stash.
+- **Colonna sinistra**: branch locali, remoti, tag, stash (sotto, "Stash (S28)").
 - **Centro**: grafo e lista dei commit, con riga "modifiche non committate" in cima. Lista
   virtualizzata (`ScrollArea::show_rows`): si disegnano solo le righe visibili, il log si carica
   a pagine mentre si scorre.
@@ -1005,6 +1113,29 @@ Layout come GitKraken:
 - **Diff**: sotto o al posto del grafo, con selezione di hunk e righe.
 
 Ogni interazione produce un `Action` che passa da `Registry::run`, come oggi.
+
+**Stash (S28, `crates/ui/src/stash.rs`)**. La sezione "Stash" della colonna sinistra viene da
+`stash.list` (letto con ref e stato, riletto dopo undo/redo e preso dalle risposte dei comandi),
+non da `refs/stash`: una riga per stash (`stash@{n}`, messaggio senza il prefisso `On <branch>:`,
+branch e base, "con non tracciati"). Clic: seleziona lo stash (per id, la posizione cambia) e la
+sua base nel grafo; a destra, al posto dei dettagli del commit, il pannello dello stash con le
+azioni e i file tracciati (`commit.show` sull'id; un file apre `diff.commit` sull'id, cioè il
+confronto con la base); i non tracciati si segnalano solo, perché `commit.show` non li vede.
+Menu contestuale e pannello: Applica, Pop, la casella "Rimetti anche lo stage"
+(`restore_index`), Elimina…. Apply, pop e drop mandano sempre `index` ed `expected` dall'elenco
+visto; un `NotAllowed` va nella barra di stato e l'elenco si rilegge. **Apply e pop non entrano
+nel diario**: l'avviso dice "Non si annulla con «Annulla»" e il pulsante Annulla resta quello
+della voce precedente (il suo suggerimento ne mostra la descrizione). `conflicts` non vuoto apre
+una finestra (non modale) con i file e "Vai alle modifiche": si risolvono con lo stage del file. Un pop riuscito con `dropped: false` e senza conflitti (applicato, ma il drop non è
+riuscito) si segnala in rosso con l'avviso del motore, e per quello stash Pop resta spento (le
+modifiche sono già nei file): resta Elimina.
+Elimina va in due tempi come la rimozione di un remoto: senza `confirm` il motore risponde con
+`ConfirmRequired` e il motivo, il dialogo rosso lo mostra, e solo il clic manda `"confirm":
+true`. "Stash…" (barra in alto, testa dell'area di stage, sezione Stash; attivo solo con
+modifiche) apre un dialogo con messaggio facoltativo (una riga: gli a capo diventano spazi),
+"Includi i file non tracciati" e "Tieni lo stage"; un rifiuto resta nel dialogo. Nel grafo ogni
+stash è un'etichetta sulla riga della base, dopo branch e tag, con solo il bordo grigio: il log
+della lista chiede `"all": true, "stashes": true`, e dopo push, drop e pop riuscito si rilegge.
 
 ## 9. Test
 

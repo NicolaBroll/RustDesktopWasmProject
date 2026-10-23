@@ -6,6 +6,7 @@ mod discard;
 mod remote;
 mod remote_admin;
 mod restore;
+mod stash;
 mod sync;
 
 use crate::GitVersion;
@@ -21,8 +22,9 @@ use project_engine::{
     DiscardOutcome, DiscardedFile, EngineError, FetchOutcome, FetchRequest, GitBackend, HeadState,
     JobContext, LinePatch, LineSelection, LogQuery, PullOutcome, PullRequest, PullSettings,
     PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
-    path_matches, versions_at_risk_hidden,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -958,6 +960,15 @@ impl GitBackend for CliBackend {
         if query.limit == Some(0) || (start.is_none() && !query.all) {
             return Ok(Vec::new());
         }
+        // Con `stashes` anche le basi degli stash (non gli stash stessi).
+        let bases: Vec<String> = if query.stashes {
+            self.stash_entries()?
+                .iter()
+                .map(|s| s.base.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
         let skip = format!("--skip={}", query.skip);
         let max_count = query.limit.map(|n| format!("--max-count={n}"));
         let start = start.map(|oid| oid.to_string());
@@ -976,6 +987,7 @@ impl GitBackend for CliBackend {
         // HEAD come id, così una HEAD staccata compare anche con `all`.
         args.push("--end-of-options");
         args.extend(start.as_deref());
+        args.extend(bases.iter().map(String::as_str));
         args.push("--");
         Ok(parse_log(&self.run(&args)?)?)
     }
@@ -1265,6 +1277,26 @@ impl GitBackend for CliBackend {
 
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         self.remote_elsewhere(name)
+    }
+
+    fn stashes(&self) -> Result<Vec<StashEntry>, EngineError> {
+        self.stash_entries()
+    }
+
+    fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
+        self.push_stash(request)
+    }
+
+    fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError> {
+        self.apply_stash(request)
+    }
+
+    fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
+        self.drop_stash(request)
+    }
+
+    fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
+        self.store_stash(id, message)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

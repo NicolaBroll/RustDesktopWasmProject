@@ -28,6 +28,11 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
   e non scrive se il backup fallisce (§1 e §7
   dell'architettura git). Chi riscrive un commit (`commit.create` con `amend`) salva sempre un
   ref di backup del commit riscritto e chiede `confirm` se quel commit è già pubblicato.
+- Gli stash (`stash.*`) si indicano con la posizione `index` e l'id `expected`; `apply`/`pop`
+  non scrivono mai sopra file con modifiche locali (controllo prima di git) e i conflitti
+  restano con lo stash tenuto. `stash.push` e `stash.drop` entrano nel diario, `apply` e `pop`
+  no; `drop` (e il drop di `pop`) salva prima un backup e vuole `confirm` con `expected`.
+  `stash.push` rifiuta i file `--assume-unchanged` (git ne perderebbe le modifiche).
 - `remote.pull` è fetch e poi integrazione guidata dal motore (mai `git pull`, mai
   `--autostash`); `remote.push` usa solo un refspec esplicito e, per il force,
   `--force-with-lease` con l'oid atteso (mai `--force`). Il pull entra nel diario, il push no.
@@ -90,6 +95,12 @@ cargo run -p project-cli -- --repo . run --cmd remote.push --cmd 'remote.push={"
 cargo run -p project-cli -- --repo . run --cmd remote.list
 cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'remote.remove={"name":"fork","confirm":true}' --cmd edit.undo
+# stash: elenco, push (con i non tracciati), apply/pop (index ed expected dall'elenco), drop ("confirm":true con "expected", backup) e undo
+cargo run -p project-cli -- --repo . run --cmd 'stash.push={"message":"a metà","include_untracked":true}' --cmd stash.list --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'stash.pop={"index":0,"expected":"<id da stash.list>","restore_index":true}'
+cargo run -p project-cli -- --repo . run --cmd 'stash.drop={"index":0,"confirm":true,"expected":"<id dalla conferma>"}' --cmd edit.undo
+# grafo con anche i commit su cui sono stati creati gli stash
+cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"stashes":true,"limit":20}'
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

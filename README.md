@@ -26,10 +26,11 @@ project-cli mcp [--root <dir>]                               # server MCP su std
 
 `--repo` apre il repository prima dei comandi (equivale a `repo.open` come primo comando).
 
-Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?}`
+Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
 (pagine da 200 commit se manca `limit`, con `has_more`; da HEAD, da `rev`, oppure con
-`"all": true` da tutti i branch locali e remoti, i tag e HEAD, senza stash né backup; `rev` e
-`all` insieme sono un errore), `commit.show {"id"}` (metadati e file
+`"all": true` da tutti i branch locali e remoti, i tag e HEAD, senza stash né backup, e con in
+più `"stashes": true` anche dai commit su cui sono stati creati gli stash; `rev` e
+`all` insieme, o `stashes` senza `all`, sono un errore), `commit.show {"id"}` (metadati e file
 cambiati rispetto al primo genitore), `diff.worktree {"path"?}` (modifiche non in stage),
 `diff.index {"path"?}` (modifiche in stage) e `diff.commit {"id", "path"?}` (commit rispetto al
 primo genitore). I diff restituiscono `{"files": [...]}` con hunk e righe (in `diff.worktree` e
@@ -194,8 +195,34 @@ ricreato un remoto con quel nome; un upstream reimpostato nel frattempo resta, c
 Ahead/behind dei branch rispetto all'upstream sono in `repo.refs` (`upstream.ahead`/`behind`) e
 nei `refs` dei risultati di fetch, pull e push.
 
+`stash.list {}` (sola lettura) elenca gli stash dal più recente: `{"stashes": [{"index",
+"name": "stash@{n}", "id", "base", "message", "branch", "time", "untracked"}]}` (`base` è il
+commit su cui lo stash è stato creato, `untracked` dice se ha anche file non tracciati; il
+contenuto si legge con `commit.show`/`diff.commit` sull'`id`). `stash.push {"message"?,
+"include_untracked"?, "keep_index"?, "paths"?}` mette da parte le modifiche (`git stash push`;
+mai gli ignorati; un messaggio di una riga; rifiutato con un merge o un rebase in corso, file in
+conflitto o `intent-to-add`, file `--assume-unchanged` fra quelli scelti, di cui git perderebbe
+le modifiche, o niente da mettere da parte) e restituisce `{"stash", "stashes",
+"status"}`; entra nel diario: l'undo riapplica lo stash con la divisione fra in stage e no e lo
+toglie dall'elenco (solo se HEAD è ancora sullo stesso commit), il redo lo rifà. `stash.apply
+{"index"?, "expected"?, "restore_index"?}` applica lo stash `stash@{index}` (0 se manca;
+`expected`, l'id completo visto, protegge da un elenco cambiato nel frattempo) senza toglierlo,
+`stash.pop` con gli stessi parametri lo toglie anche, dopo averne salvato il commit in
+`refs/project/backup/stash-...`. Tutti e due sono rifiutati, senza cambiare niente, se lo stash
+toccherebbe file con modifiche locali, non tracciati o ignorati (`git stash apply` in questi casi
+scriverebbe a metà; un file in stage che ha già la versione dello stash, come dopo un push con
+`keep_index`, non conta); se il merge con HEAD va in conflitto i file restano in conflitto come li
+lascia git (`conflicts`) e `pop` tiene lo stash. Risultato: `{"stash", "conflicts", "dropped",
+"backup", "warnings", "stashes", "status"}`; non entrano nel diario. Se dopo l'apply il drop di
+`pop` non riesce, il pop non è un errore: `dropped: false` e un avviso (lo stash va eliminato
+con `stash.drop`, il pop non va ripetuto). `stash.drop {"index"?, "expected", "confirm": true}`
+elimina uno stash (senza `confirm` l'errore dice cosa si perderebbe e dà l'id da ripetere in
+`expected`; `confirm` senza `expected` è un errore), con il backup in `refs/project/backup/stash-...`: entra nel diario e l'undo lo
+rimette in cima all'elenco. Risultato: `{"stash", "backup", "warnings", "stashes"}`.
+
 `edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
-`branch.*`, `worktree.discard`, `remote.pull`, `remote.add` e `remote.remove`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+`branch.*`, `worktree.discard`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push` e
+`stash.drop`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
 frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
 Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un

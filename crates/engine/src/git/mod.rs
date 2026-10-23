@@ -17,6 +17,7 @@ mod remote;
 mod remote_admin;
 mod restore;
 mod sample;
+mod stash;
 
 #[cfg(test)]
 mod memory_diff_tests;
@@ -54,6 +55,11 @@ pub use remote_admin::{
 };
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
+pub use stash::{
+    INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
+    StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
+    pop_stash, stash_blocked, stash_branch, stash_local_changes,
+};
 
 use crate::{EngineError, JobContext};
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
@@ -413,6 +419,39 @@ pub trait GitBackend: Send {
     /// provenienza: `remote.remove` le rifiuta, perché toglierebbe solo una parte del remoto.
     /// Lettura.
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError>;
+
+    // --- Stash (S28). Uno stash arriva sempre come id: la posizione `stash@{n}` cambia a ogni
+    // push e drop, e il backend la ricalcola subito prima di scrivere.
+
+    /// L'elenco degli stash, dal più recente (`stash@{0}`), dal reflog di `refs/stash`. Vuoto
+    /// se non ce ne sono. Lettura.
+    fn stashes(&self) -> Result<Vec<StashEntry>, EngineError>;
+
+    /// Mette da parte le modifiche (`git stash push`): le salva in un nuovo stash in cima
+    /// all'elenco e riporta indice e worktree come HEAD (con `keep_index` l'indice resta, e il
+    /// worktree come l'indice), per i file scelti. Prima: [`check_stash_push`]. Niente da
+    /// mettere da parte (git non crea lo stash) → [`EngineError::NotAllowed`]. Restituisce il
+    /// nuovo stash.
+    fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError>;
+
+    /// Applica lo stash `request.id` a indice e worktree (`git stash apply`), senza toglierlo
+    /// dall'elenco. Prima: [`check_stash_apply`] e i file che lo stash cambia o rimette non
+    /// devono avere modifiche locali né essere occupati ([`stash_local_changes`], più i file
+    /// del worktree che lo stato non mostra): altrimenti [`EngineError::NotAllowed`] e niente
+    /// cambia. Uno stash che non è più nell'elenco → [`EngineError::NotAllowed`]. Un merge che
+    /// si ferma in conflitto non è un errore: i file in conflitto restano (come li lascia git)
+    /// e sono in [`StashApplied::conflicts`].
+    fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError>;
+
+    /// Elimina lo stash `request.id` dall'elenco (`git stash drop stash@{n}`, con `n` letto
+    /// subito prima), dopo averne salvato il commit in un ref di backup nuovo se
+    /// `request.backup` (se il backup non riesce non si elimina niente). Uno stash che non è
+    /// più nell'elenco → [`EngineError::NotAllowed`]. Indice e worktree non si toccano.
+    fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError>;
+
+    /// Rimette il commit `id` in cima all'elenco degli stash con il messaggio `message`
+    /// (`git stash store`): l'undo di `stash.drop`. Indice e worktree non si toccano.
+    fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e
@@ -448,7 +487,8 @@ pub trait RepoOpener: Send + Sync {
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;
 }
 
-/// Una pagina del log: parametri di `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?}`.
+/// Una pagina del log: parametri di `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,
+/// "stashes"?}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogQuery {
@@ -463,16 +503,29 @@ pub struct LogQuery {
     /// `git log --branches --remotes --tags HEAD`. Gli altri ref (`refs/stash`, i backup in
     /// `refs/project/backup/`, le note) non ci sono. Esclude `rev`.
     pub all: bool,
+    /// Solo con `all`: parte anche dalle basi degli stash ([`StashEntry::base`], il commit su
+    /// cui ognuno è stato creato), così il grafo ha sempre il commit a cui la UI aggancia uno
+    /// stash, anche se nessun branch lo contiene più. I commit degli stash (e quelli dell'indice
+    /// e dei non tracciati che hanno per genitori) restano fuori: l'elenco è `stash.list`.
+    pub stashes: bool,
 }
 
 impl LogQuery {
-    /// Errore se i parametri si contraddicono: `rev` e `all` insieme.
+    /// Errore se i parametri si contraddicono: `rev` e `all` insieme, `stashes` senza `all`.
     pub fn check(&self) -> Result<(), EngineError> {
         if self.all && self.rev.is_some() {
             return Err(EngineError::InvalidParams {
                 id: "repo.log",
                 reason: "`rev` e `all` sono alternativi: `all` parte già da tutti i branch, i \
                          tag e HEAD"
+                    .to_owned(),
+            });
+        }
+        if self.stashes && !self.all {
+            return Err(EngineError::InvalidParams {
+                id: "repo.log",
+                reason: "`stashes` aggiunge le basi degli stash al grafo di tutti i ref: va \
+                         insieme ad `\"all\": true`"
                     .to_owned(),
             });
         }
@@ -497,7 +550,14 @@ impl LogQuery {
             limit: Some(limit),
             rev: None,
             all: false,
+            stashes: false,
         }
+    }
+
+    /// Stessa pagina, con anche le basi degli stash (va con [`LogQuery::from_all_refs`]).
+    pub fn with_stashes(mut self) -> Self {
+        self.stashes = true;
+        self
     }
 
     /// Stessa pagina, a partire da `rev`.

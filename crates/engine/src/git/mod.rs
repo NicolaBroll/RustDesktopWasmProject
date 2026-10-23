@@ -7,6 +7,7 @@
 mod backup;
 mod branch;
 mod commit;
+mod conflict;
 mod discard;
 mod line_diff;
 mod lines;
@@ -36,6 +37,10 @@ pub use branch::{
 pub use commit::{
     CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
     cleanup_message, split_message,
+};
+pub use conflict::{
+    ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
+    check_conflict, check_digest, marker_size, worktree_digest,
 };
 pub use discard::{
     DiscardOutcome, DiscardedFile, WorktreeBackup, WorktreeRestore, check_same_plan,
@@ -485,6 +490,26 @@ pub trait GitBackend: Send {
     /// L'operazione in corso con i suoi dati (commit in ingresso, `MERGE_MSG`, base del
     /// rebase), per `repo.operation`. Lettura.
     fn operation_state(&self) -> Result<OperationState, EngineError>;
+
+    // --- Editor dei conflitti (S30, `impl-docs/git/conflitti.md`).
+
+    /// Le versioni del file in conflitto `path` per `conflict.show`: stadi 1/2/3 dell'indice
+    /// (byte senza filtri, `None` se lo stadio manca), byte del file del worktree (`None` se
+    /// non c'è) e `conflict-marker-size`. Lettura. `path` non in conflitto, sottomodulo, link o
+    /// cartella nel worktree → [`EngineError::NotAllowed`] ([`check_conflict`]).
+    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError>;
+
+    /// Risolve il conflitto di `request.path` (`conflict.resolve`): scrive `request.content`
+    /// nel worktree (o cancella il file se `None`) e lo mette in stage come
+    /// [`GitBackend::stage`] di quel solo percorso. Prima di scrivere, senza cambiare niente:
+    /// [`check_conflict`], [`check_digest`] sui byte del worktree letti ora
+    /// ([`EngineError::StaleDiff`]), indice bloccato ([`EngineError::IndexLocked`]); poi il
+    /// backup dei byte del worktree (se c'è il file) in `refs/project/backup/conflict-...`: se
+    /// non riesce non si scrive. Un errore dopo il backup lo nomina.
+    fn resolve_conflict(
+        &mut self,
+        request: &ConflictResolution,
+    ) -> Result<ConflictResolved, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

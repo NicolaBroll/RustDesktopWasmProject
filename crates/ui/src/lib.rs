@@ -14,6 +14,7 @@
 
 mod branch;
 mod commit;
+mod conflict;
 mod details;
 mod diff;
 mod diff_view;
@@ -36,6 +37,7 @@ pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
 use branch::{BranchBox, Start};
 use commit::{CommitBox, Gate};
+use conflict::ConflictBox;
 use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
@@ -225,8 +227,28 @@ enum Action {
     CloseMergeDialog,
     /// Chiude la finestra di un merge rifiutato.
     DismissMergeError,
-    /// Apre l'area di stage con il diff del file in conflitto.
+    /// Apre l'area di stage e, al centro, l'editor dei conflitti del file.
     OpenConflict(RepoPath),
+    /// Chiude l'editor dei conflitti (le scelte non segnate si perdono).
+    CloseConflict,
+    /// "Ricomincia": rilegge il file in conflitto.
+    RestartConflict,
+    /// Il risultato dell'editor dei conflitti modificato a mano.
+    ConflictText(String),
+    /// Sostituisce il blocco di conflitto con questo indice con la scelta.
+    ChooseBlock(usize, project_domain::Choice),
+    /// Sostituisce tutti i blocchi di conflitto con la stessa scelta.
+    ChooseAll(project_domain::Choice),
+    /// "Segna come risolto" con il risultato (chiede conferma se restano marcatori).
+    ResolveConflict,
+    /// Risolve con la versione intera di un lato.
+    UseSide(conflict::Pick),
+    /// "Elimina il file": apre la conferma.
+    DeleteConflicted,
+    /// Conferma la risoluzione in attesa (marcatori rimasti o eliminazione).
+    ConfirmConflict,
+    /// Rinuncia alla risoluzione in attesa di conferma.
+    CancelConflict,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -289,6 +311,10 @@ enum Request {
     Operation(u64),
     /// `merge.start`/`merge.continue`/`merge.abort` (lo stato è in [`MergeBox`]).
     Merge(u64, merge::Op),
+    /// `conflict.show` con il numero di lettura di [`ConflictBox`].
+    ConflictShow(u64, u64),
+    /// `conflict.resolve` (lo stato è in [`ConflictBox`]).
+    ConflictResolve(u64),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -332,6 +358,8 @@ struct RepoView {
     stash: StashBox,
     /// Il merge avviato, l'operazione in corso (riquadro) e i dialoghi Continua e Annulla.
     merge: MergeBox,
+    /// L'editor dei conflitti, al posto del grafo quando è aperto.
+    conflict: ConflictBox,
     /// Cresce a ogni stato nuovo: l'operazione in corso si rilegge una volta per stato.
     status_seq: u64,
     /// Cosa farebbero Annulla e Ripeti.
@@ -369,6 +397,7 @@ impl RepoView {
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
             merge: MergeBox::default(),
+            conflict: ConflictBox::default(),
             status_seq: 0,
             history: History::default(),
             select_after_load,
@@ -391,6 +420,7 @@ impl RepoView {
     fn set_status(&mut self, status: Status) {
         self.head = status.head.clone();
         self.stage = StageLists::new(&status);
+        self.conflict.follow_status(&status);
         self.status_seq += 1;
         self.status = Some(status);
         if self.stage.is_empty() {
@@ -603,6 +633,9 @@ impl App {
                 }
             }
             Action::OpenDiff(target) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.conflict.close();
+                }
                 if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
                     self.request_diff(&target, seq);
                 }
@@ -687,8 +720,18 @@ impl App {
             | Action::AbortMerge
             | Action::ConfirmAbortMerge
             | Action::CloseMergeDialog
-            | Action::DismissMergeError
-            | Action::OpenConflict(..) => self.apply_merge(action),
+            | Action::DismissMergeError => self.apply_merge(action),
+            Action::OpenConflict(..)
+            | Action::CloseConflict
+            | Action::RestartConflict
+            | Action::ConflictText(..)
+            | Action::ChooseBlock(..)
+            | Action::ChooseAll(..)
+            | Action::ResolveConflict
+            | Action::UseSide(..)
+            | Action::DeleteConflicted
+            | Action::ConfirmConflict
+            | Action::CancelConflict => self.apply_conflict(action),
         }
     }
 
@@ -780,6 +823,10 @@ impl App {
             if stale {
                 repo.diff.close();
             }
+            // L'editor dei conflitti vale finché è selezionata la riga delle modifiche.
+            if !repo.worktree_selected {
+                repo.conflict.close();
+            }
         }
     }
 
@@ -809,6 +856,10 @@ impl App {
         };
         // Con la conferma aperta i tasti vanno solo a lei.
         if ctx.egui_wants_keyboard_input() || repo.modal_open() {
+            return;
+        }
+        // Con l'editor dei conflitti aperto la lista non è in vista.
+        if repo.conflict.editor().is_some() {
             return;
         }
         if repo.diff.target().is_some() {
@@ -1012,6 +1063,20 @@ impl App {
                 self.receive_merge(generation, op, done);
                 continue;
             }
+            // L'editor dei conflitti mostra da sé gli errori di lettura.
+            if let Request::ConflictShow(generation, seq) = request {
+                if let Some(repo) = self.current(generation) {
+                    if let Err(e) = &done.result {
+                        log::warn!("{}: {e}", done.command);
+                    }
+                    repo.conflict.receive_show(seq, done.result);
+                }
+                continue;
+            }
+            if let Request::ConflictResolve(generation) = request {
+                self.receive_conflict(generation, done);
+                continue;
+            }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1120,7 +1185,9 @@ impl App {
             | Request::Stashes(..)
             | Request::Stash(..)
             | Request::Operation(..)
-            | Request::Merge(..) => {}
+            | Request::Merge(..)
+            | Request::ConflictShow(..)
+            | Request::ConflictResolve(..) => {}
         }
         Ok(())
     }
@@ -1309,7 +1376,24 @@ impl eframe::App for App {
                     view::confirm_amend(&ctx, confirm, &left_behind, &mut actions);
                 }
                 let viewport = &mut self.viewport;
+                let incoming = repo
+                    .merge
+                    .info()
+                    .and_then(|i| i.incoming.first())
+                    .map(|i| i.label.as_str());
+                let conflict_write = !writing && !repo.modal_open();
                 egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
+                    _ if repo.conflict.editor().is_some() => {
+                        if let Some(editor) = repo.conflict.editor() {
+                            view::conflict_editor(
+                                ui,
+                                editor,
+                                incoming,
+                                conflict_write,
+                                &mut actions,
+                            );
+                        }
+                    }
                     Pane::Closed => view::commit_list(ui, repo, viewport, writing, &mut actions),
                     pane => {
                         let lines = diff_view::LinesUi {

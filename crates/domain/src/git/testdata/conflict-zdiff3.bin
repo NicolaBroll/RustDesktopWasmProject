@@ -1,0 +1,22 @@
+uno
+<<<<<<< ours
+DUE main
+||||||| base
+due
+=======
+DUE altro
+>>>>>>> theirs
+tre
+quattro
+cinque
+sei
+sette
+<<<<<<< ours
+OTTO main
+OTTO bis
+||||||| base
+otto
+=======
+OTTO altro
+>>>>>>> theirs
+nove

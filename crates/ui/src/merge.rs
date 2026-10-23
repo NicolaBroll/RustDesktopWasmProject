@@ -20,7 +20,7 @@
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
-use crate::{Action, App, DiffSource, DiffTarget, Done, Request, merge};
+use crate::{Action, App, Done, Request, merge};
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -937,23 +937,6 @@ impl App {
             Action::DismissMergeError => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.dismiss();
-                }
-            }
-            Action::OpenConflict(path) => {
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                repo.stash.select(None);
-                repo.select_worktree(true);
-                if !repo.worktree_selected {
-                    return;
-                }
-                let target = DiffTarget {
-                    source: DiffSource::Worktree,
-                    path,
-                };
-                if let Some(seq) = repo.diff.open(target.clone()) {
-                    self.request_diff(&target, seq);
                 }
             }
             _ => unreachable!("azione smistata alla funzione sbagliata"),

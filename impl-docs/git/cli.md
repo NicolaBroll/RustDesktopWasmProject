@@ -49,6 +49,12 @@ cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"origin/main"
 cargo run -p project-cli -- --repo . run --cmd repo.operation
 cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["a.txt"]}' --cmd merge.continue
 cargo run -p project-cli -- --repo . run --cmd 'merge.abort={"confirm":true}'
+# editor dei conflitti: versioni di un file in conflitto (base, nostra, loro, worktree; testo o
+# binary), poi la risoluzione con il "digest" letto (testo nel worktree + stage, backup del
+# worktree in refs/project/backup/conflict-...); "delete":true al posto di "content" lo cancella
+cargo run -p project-cli -- --repo . run --cmd 'conflict.show={"path":"a.txt"}'
+cargo run -p project-cli -- --repo . run --cmd 'conflict.resolve={"path":"a.txt","digest":"<da conflict.show>","content":"unita\n"}' --cmd repo.operation
+cargo run -p project-cli -- --repo . run --cmd 'conflict.resolve={"path":"a.txt","digest":"<da conflict.show>","delete":true}'
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

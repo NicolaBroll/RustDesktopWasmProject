@@ -2,6 +2,7 @@
 
 mod branch;
 mod commit;
+mod conflict;
 mod discard;
 mod merge;
 mod remote;
@@ -19,12 +20,12 @@ use stash::MemoryStash;
 
 use super::line_diff;
 use super::{
-    BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
-    DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HeadState, LineSelection, LogQuery,
-    MergeAborted, MergeOutcome, MergeRequest, OperationState, PullOutcome, PullRequest,
-    PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    UpstreamConfig, WorktreeRestore,
+    BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
+    ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest,
+    GitBackend, HeadState, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
+    OperationState, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore,
+    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
+    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext};
 use project_domain::{
@@ -727,6 +728,17 @@ impl GitBackend for MemoryBackend {
 
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError> {
         self.create_commit(request)
+    }
+
+    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
+        self.conflict_files(path)
+    }
+
+    fn resolve_conflict(
+        &mut self,
+        request: &ConflictResolution,
+    ) -> Result<ConflictResolved, EngineError> {
+        self.resolve_file(request)
     }
 
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {

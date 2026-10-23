@@ -365,7 +365,11 @@ pub(super) fn stage_section(
                 if (button.clicked() || response.double_clicked()) && enabled {
                     actions.push(Action::Write(op, vec![item.path.clone()]));
                 } else if response.clicked() {
-                    actions.push(Action::OpenDiff(target.clone()));
+                    actions.push(if item.is_conflict() && op == StageOp::Stage {
+                        Action::OpenConflict(item.path.clone())
+                    } else {
+                        Action::OpenDiff(target.clone())
+                    });
                 }
                 response.context_menu(|ui| {
                     file_menu(ui, op, item, &target, enabled, actions);
@@ -384,6 +388,10 @@ pub(super) fn file_menu(
     enabled: bool,
     actions: &mut Vec<Action>,
 ) {
+    if item.is_conflict() && op == StageOp::Stage && ui.button("Risolvi nell'editor…").clicked() {
+        actions.push(Action::OpenConflict(item.path.clone()));
+        ui.close();
+    }
     if ui.button("Mostra il diff").clicked() {
         actions.push(Action::OpenDiff(target.clone()));
         ui.close();

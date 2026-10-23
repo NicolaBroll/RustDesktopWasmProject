@@ -16,6 +16,12 @@ Regole valide per tutti gli step:
   merge. La CI di GitHub per ora gira solo sulle pull request verso `master`, non su quelle verso
   `dev`. Lo step successivo riparte dal `dev` aggiornato; `dev` andrà in `master` con una pull
   request.
+- **Il web è una demo, non un prodotto** (scelta del 2026-10-23): l'app wasm gira solo sul
+  `MemoryBackend` con un repo finto e serve come demo da un link e come banco di prova della UI
+  (clic e screenshot con Playwright). Niente funzioni pensate solo per il web, niente backend git
+  per il browser. Il vincolo che engine, dominio e UI compilino per wasm resta finché costa
+  poco; se diventa un ostacolo, prima si aggiungono test di interazione sulla UI desktop
+  (`egui_kittest`), poi si può togliere.
 
 ## Fase 0 — Preparazione
 

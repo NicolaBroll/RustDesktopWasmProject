@@ -9,10 +9,12 @@ sudo chown -R "$(id -u):$(id -g)" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 npx -y playwright@latest install --with-deps chrome
 
 # Display virtuale e librerie per avviare l'app desktop eframe/glow senza schermo
-# (es. `xvfb-run cargo run -p project` per uno screenshot); python3 serve a `make web-preview`.
+# (`make desktop-shot`): xvfb + xauth per `xvfb-run`, x11-utils (xwininfo, xprop) per
+# controllare la finestra, imagemagick (`import`) per lo screenshot; python3 serve a
+# `make web-preview`.
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-    xvfb libxkbcommon-x11-0 libgl1-mesa-dri libegl1 python3
+    xvfb xauth x11-utils imagemagick libxkbcommon-x11-0 libgl1-mesa-dri libegl1 python3
 
 # Pre-fetch the Playwright MCP server so the first Claude session doesn't wait for it.
 npm install -g @playwright/mcp@latest

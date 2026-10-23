@@ -2,9 +2,12 @@ WASM_TARGET := wasm32-unknown-unknown
 # Porta del server web: è quella inoltrata dal devcontainer (forwardPorts in
 # .devcontainer/devcontainer.json). Se la cambi, aggiornala anche lì.
 PORT        ?= 8080
+SHOT        ?= target/desktop.png
+REPO        ?= .
+WAIT        ?= 6
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run cli build release web-serve web-build web-release web-preview \
+.PHONY: help setup run desktop-shot cli build release web-serve web-build web-release web-preview \
         check fmt fmt-check clippy test layers ci clean
 
 help: ## Mostra questo elenco
@@ -20,6 +23,12 @@ setup: ## Installa target wasm e trunk
 
 run: ## Avvia l'app desktop (debug)
 	cargo run -p project
+
+desktop-shot: ## Screenshot dell'app desktop senza schermo -> $(SHOT) (REPO=. da aprire, WAIT=6 secondi)
+	cargo build -q -p project
+	env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x800x24" sh -c \
+		'target/debug/project "$(REPO)" & pid=$$!; sleep $(WAIT); import -window root "$(SHOT)"; kill $$pid'
+	@echo "screenshot: $(SHOT)"
 
 cli: ## Esegue la CLI (es. make cli ARGS="commands")
 	cargo run -q -p project-cli -- $(or $(ARGS),--help)

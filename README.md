@@ -14,6 +14,7 @@ e [AGENTS.md](AGENTS.md).
 ```sh
 make setup        # target wasm32 e trunk
 make run          # app desktop
+make desktop-shot # screenshot dell'app desktop senza schermo -> target/desktop.png
 make web-serve    # app web su http://localhost:8080
 make cli ARGS="commands --search repo"
 ```

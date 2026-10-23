@@ -72,3 +72,15 @@ cargo run -p project-cli -- mcp --root .                  # list_commands, execu
 ```
 
 Esempi per ogni comando: [impl-docs/git/cli.md](impl-docs/git/cli.md).
+
+## Vedere l'app
+
+```sh
+make desktop-shot                      # app desktop su Xvfb -> target/desktop.png (REPO=, WAIT=, SHOT=)
+make web-serve                         # app web su :8080, poi screenshot con Playwright
+```
+
+Strumenti (installati da `.devcontainer/post-create.sh`): `xvfb` + `xauth` (`xvfb-run`),
+`x11-utils` (`xwininfo`, `xprop`), `imagemagick` (`import`); Chrome per Playwright e per
+`assets/render.sh`. `WAYLAND_DISPLAY` di VS Code va tolto, altrimenti winit usa Wayland e lo
+schermo resta nero (il target lo fa da solo).

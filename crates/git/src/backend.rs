@@ -5,6 +5,7 @@ mod commit;
 mod discard;
 mod remote;
 mod restore;
+mod sync;
 
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
@@ -17,8 +18,9 @@ use project_domain::{
 use project_engine::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
     DiscardOutcome, DiscardedFile, EngineError, FetchOutcome, FetchRequest, GitBackend, HeadState,
-    JobContext, LinePatch, LineSelection, LogQuery, RefRestore, RepoOpener, RestoreOutcome,
-    StagedVersion, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    JobContext, LinePatch, LineSelection, LogQuery, PullOutcome, PullRequest, PullSettings,
+    PushOutcome, PushRequest, RefRestore, RepoOpener, RestoreOutcome, StagedVersion,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
     versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -1175,6 +1177,43 @@ impl GitBackend for CliBackend {
 
     fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
         self.count_unmerged(tip, into)
+    }
+
+    fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
+        self.upstream_of(branch)
+    }
+
+    fn pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError> {
+        self.read_pull_settings(branch)
+    }
+
+    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
+        self.config_all(key)
+    }
+
+    fn missing_commits(
+        &self,
+        tip: &Oid,
+        exclude: &[Oid],
+        limit: usize,
+    ) -> Result<Vec<Commit>, EngineError> {
+        self.commits_missing(tip, exclude, limit)
+    }
+
+    fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError> {
+        self.pull_upstream(request)
+    }
+
+    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        self.reset_keep(request)
+    }
+
+    fn push(
+        &mut self,
+        request: &PushRequest,
+        job: &JobContext,
+    ) -> Result<PushOutcome, EngineError> {
+        self.push_branch(request, job)
     }
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {

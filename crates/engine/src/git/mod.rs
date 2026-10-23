@@ -11,6 +11,8 @@ mod discard;
 mod line_diff;
 mod lines;
 mod memory;
+mod pull;
+mod push;
 mod remote;
 mod restore;
 mod sample;
@@ -38,6 +40,11 @@ pub use discard::{
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub use pull::{
+    PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
+    StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode,
+};
+pub use push::{PushKind, PushOutcome, PushRejection, PushRequest, tracking_ref};
 pub use remote::{FetchOutcome, FetchRequest, check_remote_name, default_remote, unknown_remote};
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
@@ -305,6 +312,65 @@ pub trait GitBackend: Send {
         request: &FetchRequest,
         job: &JobContext,
     ) -> Result<FetchOutcome, EngineError>;
+
+    // --- Pull e push (S26). I nomi arrivano già controllati dal comando.
+
+    /// L'upstream configurato del branch locale `branch` (nome breve): `branch.<nome>.remote`,
+    /// `branch.<nome>.merge` e il branch remoto locale che lo rispecchia. `None` se il branch
+    /// non ha un upstream. Lettura.
+    fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError>;
+
+    /// La configurazione della strategia di pull per il branch `branch` (`branch.<nome>.rebase`
+    /// o `pull.rebase`, `pull.ff`), con i valori com'erano scritti. Lettura.
+    fn pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError>;
+
+    /// Tutti i valori della chiave `key` della configurazione (tutte le fonti, come la legge
+    /// git: `git config --get-all`), nell'ordine; vuoto se non c'è. Lettura. Le chiavi le
+    /// costruisce il motore da nomi già controllati (es. `branch.<nome>.pushRemote`,
+    /// `remote.<nome>.fetch`).
+    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError>;
+
+    /// Al più `limit` commit raggiungibili da `tip` ma da nessuno di `exclude`, dal più recente
+    /// (`git log <tip> --not <exclude>...`). Lettura: per la conferma di un force push (i
+    /// commit che il remoto perderebbe).
+    fn missing_commits(
+        &self,
+        tip: &Oid,
+        exclude: &[Oid],
+        limit: usize,
+    ) -> Result<Vec<Commit>, EngineError>;
+
+    /// Integra l'upstream nel branch dopo il fetch (`remote.pull`): fast-forward, merge o
+    /// rebase secondo `request.mode`. Prima di scrivere: [`check_pull_state`] sullo stato letto
+    /// ora, il branch deve valere `request.expected` (e, con `request.current`, essere il branch
+    /// di HEAD; altrimenti non deve essere aperto in un altro worktree) e un ref di backup
+    /// `refs/project/backup/pull-...` sul valore di prima (nel risultato). Fast-forward del
+    /// branch attivo: `git merge --ff-only`, che non sovrascrive modifiche locali
+    /// ([`EngineError::NotAllowed`] con i file, niente cambia); di un altro branch:
+    /// `update-ref` con il valore vecchio. Merge e rebase: mai `--autostash`; se si fermano in
+    /// conflitto vengono annullati (`--abort`) e il risultato è
+    /// [`EngineError::PullConflict`] con i file (niente cambia, il backup si toglie). Non si
+    /// annulla a metà: il fetch, che si può annullare, è già fatto.
+    fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError>;
+
+    /// Undo e redo di un pull sul branch attivo: come [`GitBackend::restore_refs`] (un solo ref,
+    /// il branch di HEAD, da `expected` a `target`, con gli stessi controlli e i backup dei
+    /// commit abbandonati), ma aggiorna anche indice e worktree come `git reset --keep`: i
+    /// file diversi fra i due commit tornano come in `target`, solo se non hanno modifiche
+    /// locali (altrimenti [`EngineError::NotAllowed`] e niente cambia); le altre modifiche
+    /// restano. Non sovrascrive mai un file non tracciato o ignorato.
+    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
+
+    /// Pubblica il branch sul remoto (`remote.push`, lento come il fetch: avanzamento e
+    /// annullamento da `job`): solo `refs/heads/<branch>:refs/heads/<remote_branch>`, mai tag
+    /// o altri ref, con `--set-upstream` se chiesto e `--force-with-lease` con l'oid atteso se
+    /// `request.lease` (mai `--force`). Prima di un force, il backup di `request.backup`.
+    /// Errori: rifiutato (non fast-forward, lease, hook `pre-push`, remoto) →
+    /// [`EngineError::PushRejected`] e niente cambia; credenziali → [`EngineError::Auth`];
+    /// remoto non raggiungibile → [`EngineError::RemoteUnreachable`]; annullato →
+    /// [`EngineError::Cancelled`].
+    fn push(&mut self, request: &PushRequest, job: &JobContext)
+    -> Result<PushOutcome, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

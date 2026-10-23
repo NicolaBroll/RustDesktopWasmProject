@@ -9,7 +9,10 @@
 //! [`Progress`] ricevuto si legge con [`Executor::progress`], e [`Executor::cancel`] lo
 //! annulla (S25, `remote.fetch`). I comandi che non sono lenti ignorano entrambi.
 
-use project_engine::{CancelToken, EngineError, JobContext, Platform, Progress, Registry, Session};
+use project_engine::{
+    CancelToken, EngineError, JobContext, Platform, Progress, PullOperation, PushRejection,
+    Registry, Session,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -49,6 +52,9 @@ pub struct Done {
     /// Il dettaglio strutturato dell'errore, se il tipo ne ha uno: il motivo di
     /// [`ErrorKind::ConfirmRequired`], l'output completo di git (stderr) per [`ErrorKind::Git`].
     pub error_detail: Option<String>,
+    /// L'id completo da rimandare come `"expected"` con `"confirm": true`, se il comando l'ha
+    /// dato con [`ErrorKind::ConfirmRequired`] (il force di `remote.push`).
+    pub confirm_expected: Option<String>,
 }
 
 /// Il tipo di un errore del motore, per le reazioni della UI che non dipendono dal testo.
@@ -84,6 +90,13 @@ pub enum ErrorKind {
     RemoteUnreachable,
     /// [`EngineError::Cancelled`]: annullato con [`Executor::cancel`].
     Cancelled,
+    /// [`EngineError::PullConflict`]: il merge o il rebase del pull si è fermato in conflitto
+    /// ed è stato annullato (il repo è come prima, il fetch resta fatto); i file in conflitto
+    /// sono in [`Done::error_detail`], uno per riga.
+    PullConflict(PullOperation),
+    /// [`EngineError::PushRejected`]: il push è stato rifiutato e niente è cambiato; il testo
+    /// di git (anche l'output di un hook) è in [`Done::error_detail`].
+    PushRejected(PushRejection),
     /// Tutti gli altri errori.
     Other,
 }
@@ -103,28 +116,56 @@ impl ErrorKind {
             EngineError::Auth { .. } => ErrorKind::Auth,
             EngineError::RemoteUnreachable { .. } => ErrorKind::RemoteUnreachable,
             EngineError::Cancelled { .. } => ErrorKind::Cancelled,
+            EngineError::PullConflict { operation, .. } => ErrorKind::PullConflict(*operation),
+            EngineError::PushRejected { reason, .. } => ErrorKind::PushRejected(*reason),
             _ => ErrorKind::Other,
+        }
+    }
+
+    /// L'id da mettere in [`Done::confirm_expected`]: l'`expected` di una conferma.
+    pub fn expected(error: &EngineError) -> Option<String> {
+        match error {
+            EngineError::ConfirmRequired { expected, .. } => expected.clone(),
+            _ => None,
         }
     }
 
     /// Il dettaglio da mettere in [`Done::error_detail`]: il motivo di una conferma, lo stderr
     /// di git, i file che un checkout sovrascriverebbe (uno per riga), il testo di git per un
-    /// remoto che rifiuta le credenziali o non si raggiunge.
+    /// remoto che rifiuta le credenziali o non si raggiunge, i file in conflitto di un pull (uno
+    /// per riga), il testo di git di un push rifiutato.
     pub fn detail(error: &EngineError) -> Option<String> {
         match error {
             EngineError::ConfirmRequired { reason, .. } => Some(reason.clone()),
             EngineError::Git { stderr, .. } => Some(stderr.clone()),
-            EngineError::Auth { message, .. } | EngineError::RemoteUnreachable { message, .. } => {
-                Some(message.clone())
-            }
+            EngineError::Auth { message, .. }
+            | EngineError::RemoteUnreachable { message, .. }
+            | EngineError::PushRejected { message, .. } => Some(message.clone()),
+            EngineError::PullConflict { files, .. } => Some(files.join("\n")),
             EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
             _ => None,
         }
     }
 }
 
-/// Un errore del comando, come arriva dal job: tipo, dettaglio e messaggio.
-type Failure = (ErrorKind, Option<String>, String);
+/// Un errore del comando, come arriva dal job.
+struct Failure {
+    kind: ErrorKind,
+    detail: Option<String>,
+    message: String,
+    expected: Option<String>,
+}
+
+impl Failure {
+    fn of(error: &EngineError) -> Self {
+        Self {
+            kind: ErrorKind::of(error),
+            detail: ErrorKind::detail(error),
+            message: error.to_string(),
+            expected: ErrorKind::expected(error),
+        }
+    }
+}
 
 /// Chiamata quando arriva un risultato, da qualunque thread: nella UI chiede un nuovo frame.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -212,7 +253,7 @@ impl Executor {
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run_with(&reply.command, &mut session, params, job)
-                .map_err(|e| (ErrorKind::of(&e), ErrorKind::detail(&e), e.to_string()));
+                .map_err(|e| Failure::of(&e));
             drop(session);
             reply.send(result);
         }));
@@ -291,17 +332,18 @@ impl Reply {
 
     fn deliver(&mut self, result: Result<Value, Failure>) {
         self.sent = true;
-        let (error_kind, error_detail) = match &result {
-            Ok(_) => (None, None),
-            Err((kind, detail, _)) => (Some(*kind), detail.clone()),
+        let (error_kind, error_detail, confirm_expected) = match &result {
+            Ok(_) => (None, None, None),
+            Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone()),
         };
         // Se la UI è già chiusa nessuno aspetta il risultato.
         let _ = self.sender.send(Done {
             ticket: self.ticket,
             command: self.command.clone(),
-            result: result.map_err(|(_, _, message)| message),
+            result: result.map_err(|f| f.message),
             error_kind,
             error_detail,
+            confirm_expected,
         });
         (self.wake)();
     }
@@ -310,11 +352,12 @@ impl Reply {
 impl Drop for Reply {
     fn drop(&mut self) {
         if !self.sent {
-            self.deliver(Err((
-                ErrorKind::Other,
-                None,
-                format!("`{}` è terminato senza risultato", self.command),
-            )));
+            self.deliver(Err(Failure {
+                kind: ErrorKind::Other,
+                detail: None,
+                message: format!("`{}` è terminato senza risultato", self.command),
+                expected: None,
+            }));
         }
     }
 }
@@ -516,12 +559,20 @@ mod tests {
         let confirm = EngineError::ConfirmRequired {
             command: "commit.create",
             reason: "il commit è su refs/remotes/origin/main".to_owned(),
+            expected: None,
         };
         assert_eq!(ErrorKind::of(&confirm), ErrorKind::ConfirmRequired);
         assert_eq!(
             ErrorKind::detail(&confirm).as_deref(),
             Some("il commit è su refs/remotes/origin/main")
         );
+        assert_eq!(ErrorKind::expected(&confirm), None);
+        let force = EngineError::ConfirmRequired {
+            command: "remote.push",
+            reason: "il remoto perderebbe 1 commit".to_owned(),
+            expected: Some("a".repeat(40)),
+        };
+        assert_eq!(ErrorKind::expected(&force), Some("a".repeat(40)));
         let git = EngineError::Git {
             command: "commit".to_owned(),
             stderr: "pre-commit: riga 1\nriga 2".to_owned(),
@@ -622,6 +673,35 @@ mod tests {
         };
         assert_eq!(ErrorKind::of(&cancelled), ErrorKind::Cancelled);
         assert_eq!(ErrorKind::detail(&cancelled), None);
+        let conflict = EngineError::PullConflict {
+            branch: "main".into(),
+            upstream: "origin/main".into(),
+            operation: PullOperation::Rebase,
+            files: vec!["a.txt".into(), "b/c.rs".into()],
+            message: "CONFLICT (content): ...".into(),
+        };
+        assert_eq!(
+            ErrorKind::of(&conflict),
+            ErrorKind::PullConflict(PullOperation::Rebase)
+        );
+        assert_eq!(
+            ErrorKind::detail(&conflict).as_deref(),
+            Some("a.txt\nb/c.rs")
+        );
+        let rejected = EngineError::PushRejected {
+            remote: "origin".into(),
+            branch: "main".into(),
+            reason: PushRejection::Hook,
+            message: "pre-push: no".into(),
+        };
+        assert_eq!(
+            ErrorKind::of(&rejected),
+            ErrorKind::PushRejected(PushRejection::Hook)
+        );
+        assert_eq!(
+            ErrorKind::detail(&rejected).as_deref(),
+            Some("pre-push: no")
+        );
     }
 
     #[test]

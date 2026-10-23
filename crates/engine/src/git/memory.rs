@@ -5,6 +5,7 @@ mod commit;
 mod discard;
 mod remote;
 mod restore;
+mod sync;
 mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
@@ -15,7 +16,8 @@ use super::line_diff;
 use super::{
     BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
     DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HeadState, LineSelection, LogQuery,
-    RefRestore, RepoOpener, RestoreOutcome, StagedVersion, WorktreeRestore,
+    PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore, RepoOpener,
+    RestoreOutcome, StagedVersion, UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext};
 use project_domain::{
@@ -74,6 +76,12 @@ pub struct MemoryBackend {
     identity: Option<(String, String)>,
     /// Remoti configurati, per nome.
     remotes: BTreeMap<String, MemoryRemote>,
+    /// La configurazione di pull (`pull.rebase`, `pull.ff`), uguale per tutti i branch.
+    pull_settings: PullSettings,
+    /// Se c'è, un hook `pre-push` che rifiuta ogni push con questo messaggio.
+    pre_push_failure: Option<String>,
+    /// Altre chiavi della configurazione ([`GitBackend::config_values`]).
+    config: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for MemoryBackend {
@@ -100,6 +108,9 @@ impl MemoryBackend {
             worktree_backups: Vec::new(),
             identity: None,
             remotes: BTreeMap::new(),
+            pull_settings: PullSettings::default(),
+            pre_push_failure: None,
+            config: BTreeMap::new(),
         }
     }
 
@@ -715,6 +726,43 @@ impl GitBackend for MemoryBackend {
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
         self.create_local_branch(name, target)
+    }
+
+    fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
+        Ok(self.upstream_config(branch))
+    }
+
+    fn pull_settings(&self, _branch: &str) -> Result<PullSettings, EngineError> {
+        Ok(self.pull_settings.clone())
+    }
+
+    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
+        Ok(self.config_of(key))
+    }
+
+    fn missing_commits(
+        &self,
+        tip: &Oid,
+        exclude: &[Oid],
+        limit: usize,
+    ) -> Result<Vec<Commit>, EngineError> {
+        self.commits_missing(tip, exclude, limit)
+    }
+
+    fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError> {
+        self.pull_upstream(request)
+    }
+
+    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        self.reset_keep(request)
+    }
+
+    fn push(
+        &mut self,
+        request: &PushRequest,
+        job: &JobContext,
+    ) -> Result<PushOutcome, EngineError> {
+        self.push_branch(request, job)
     }
 
     fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {

@@ -25,6 +25,11 @@ pub use git::{
     default_remote, discard_description, discard_plan, file_digest, line_patch, path_matches,
     split_message, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
+pub use git::{
+    PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
+    PushKind, PushOutcome, PushRejection, PushRequest, StrategySource, UpstreamConfig,
+    check_pull_state, merge_message, pull_mode, tracking_ref,
+};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use platform::{Capabilities, Picked, Platform};
@@ -100,6 +105,10 @@ pub enum EngineError {
     ConfirmRequired {
         command: &'static str,
         reason: String,
+        /// L'id completo (40 cifre) da ripetere in `"expected"` per confermare: solo per il
+        /// force di `remote.push` (il branch remoto locale letto ora, che è anche nel testo di
+        /// `reason`); `None` per tutti gli altri comandi.
+        expected: Option<String>,
     },
     /// Il commit è **riuscito**, ma dopo qualcosa non torna: HEAD spostato da un hook
     /// `post-commit` o da un altro processo, `previous` non verificabile, stato non rileggibile.
@@ -163,6 +172,38 @@ pub enum EngineError {
     /// locale toccato).
     #[error("`{command}` annullato")]
     Cancelled { command: &'static str },
+    /// `remote.pull`: il merge o il rebase dell'upstream si è fermato in conflitto. Il backend
+    /// l'ha **annullato** (`git merge --abort` / `git rebase --abort`): branch, indice e
+    /// worktree sono come prima del pull (che partiva da un worktree pulito), il fetch resta
+    /// fatto. `files` sono i file in conflitto, `message` il testo di git. Per integrare le
+    /// modifiche risolvendo i conflitti, per ora, git da terminale.
+    #[error(
+        "pull di `{branch}` interrotto: il {operation} con `{upstream}` ha conflitti in {}. Il \
+         {operation} è stato annullato e il branch è com'era (il fetch è fatto): per integrare \
+         `{upstream}` risolvendo i conflitti, `git {operation} {upstream}` da terminale, oppure \
+         usare l'altra strategia (`strategy`)",
+        list(.files)
+    )]
+    PullConflict {
+        branch: String,
+        /// Il branch remoto (nome breve, es. `origin/main`).
+        upstream: String,
+        operation: PullOperation,
+        files: Vec<String>,
+        message: String,
+    },
+    /// `remote.push` rifiutato: niente è cambiato, né sul remoto né in locale (il branch remoto
+    /// locale resta com'era). `branch` è il branch sul remoto, `message` il testo di git.
+    #[error(
+        "push di `{branch}` su `{remote}` rifiutato: {}. Niente modificato ({message})",
+        .reason.advice()
+    )]
+    PushRejected {
+        remote: String,
+        branch: String,
+        reason: PushRejection,
+        message: String,
+    },
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error(transparent)]

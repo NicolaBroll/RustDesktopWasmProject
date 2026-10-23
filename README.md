@@ -121,8 +121,47 @@ verso una cartella che non c'è) un errore a parte. Risultato: `{"remote", "bran
 il nuovo elenco dei ref). Non entra nel diario. Nella CLI, su un terminale, l'avanzamento va su
 stderr; la UI lo mostra mentre il fetch gira e può annullarlo.
 
+`remote.pull {"remote"?, "branch"?, "strategy"?}` scarica il branch dell'upstream (come
+`remote.fetch`, annullabile) e lo integra nel branch `branch` (HEAD se manca): fast-forward, merge
+o rebase secondo `branch.<nome>.rebase`/`pull.rebase` e `pull.ff` (`strategy` = `"merge"`,
+`"rebase"` o `"ff_only"` li sostituisce; senza configurazione merge). Un branch che non è quello
+attivo si può solo portare avanti, senza toccare il worktree. Mai `--autostash`: merge e rebase
+vogliono il worktree pulito (file tracciati), il fast-forward rifiuta solo se sovrascriverebbe
+modifiche locali o file non tracciati. Rifiutato (e niente scaricato) con HEAD staccata, un branch
+senza upstream (l'errore dice come impostarlo, o di pubblicarlo con `remote.push`), un merge o
+rebase in corso, file in conflitto, `pull.rebase=interactive`; rifiutato anche se il pull
+porterebbe un file che esiste già nel worktree come non tracciato o ignorato (git lo
+sovrascriverebbe). Prima di scrivere salva il branch in
+`refs/project/backup/pull-...`. Se il merge o il rebase si ferma in conflitto viene annullato:
+il branch resta com'era e l'errore elenca i file in conflitto (per risolverli, per ora, git da
+terminale). Entra nel diario: `edit.undo` riporta il branch al commit di prima con indice e
+worktree (come `git reset --keep`: rifiutato se un file da ripristinare ha modifiche locali o se
+un file da ricreare c'è già). Risultato: `{"branch", "remote", "upstream", "strategy":
+"fast_forward"|"merge"|"rebase"|"up_to_date", "strategy_source", "before", "after", "ahead",
+"behind", "backup", "fetch": {"updated", "messages"}, "warnings", "status", "refs"}` più lo stato
+del diario.
+
+`remote.push {"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}` pubblica il branch (HEAD se manca)
+con un refspec esplicito `refs/heads/<b>:refs/heads/<b>`: mai tag o altri branch, qualunque sia
+`push.default`, `remote.<nome>.push` o `push.followTags`. Il remoto si sceglie come `git push`:
+`remote`, poi `branch.<nome>.pushRemote`, `remote.pushDefault`, il remoto dell'upstream, `origin`
+o l'unico remoto (`remote_source` nel risultato); un remoto mirror è rifiutato. Sul remoto
+dell'upstream va al branch dell'upstream, altrove allo stesso nome; al primo push (nessun
+upstream) imposta l'upstream. Un
+upstream con un altro nome è rifiutato (come `push.default=simple`). Un push non fast-forward è
+rifiutato (errore che suggerisce il pull) e niente cambia. `"force": true` usa solo
+`--force-with-lease` con l'id del branch remoto locale letto prima (mai `--force`); se il remoto
+perderebbe commit serve anche `"confirm": true` con `"expected"`, l'id del branch remoto locale
+che l'errore di conferma mostra (senza, l'errore li elenca; se nel frattempo è cambiato si chiede
+di nuovo la conferma e niente si pubblica) e prima si salvano
+in `refs/project/backup/push-...`; se il remoto si è spostato nel frattempo il push è rifiutato.
+Un hook `pre-push` che rifiuta dà un errore con il suo output. Non entra nel diario (un push non
+si annulla). Risultato: `{"remote", "remote_source", "branch", "remote_branch", "kind":
+"new"|"fast_forward"|"forced"|"up_to_date", "summary", "before", "after", "set_upstream",
+"forced", "lost", "backup", "updated", "messages", "warnings", "status", "refs"}`.
+
 `edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
-`branch.*` e `worktree.discard`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+`branch.*`, `worktree.discard` e `remote.pull`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
 frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
 Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un

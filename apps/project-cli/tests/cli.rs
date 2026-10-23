@@ -452,6 +452,8 @@ fn commands_lists_the_catalog() {
             "index.unstage",
             "index.unstage_lines",
             "remote.fetch",
+            "remote.pull",
+            "remote.push",
             "repo.log",
             "repo.open",
             "repo.refs",
@@ -480,6 +482,8 @@ fn commands_lists_the_catalog() {
             "index.unstage",
             "index.unstage_lines",
             "remote.fetch",
+            "remote.pull",
+            "remote.push",
             "worktree.discard"
         ]
     );
@@ -661,4 +665,56 @@ fn run_fetch_from_a_local_remote() {
         stderr.contains("non esiste un remoto `nessuno`"),
         "{stderr}"
     );
+}
+
+#[test]
+fn run_push_and_pull_with_a_local_remote() {
+    // `source` pubblica (primo push: l'upstream si imposta), `work` scarica con il pull.
+    let source = temp_repo(1);
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--quiet", "--bare"]);
+    git(
+        source.path(),
+        &["remote", "add", "origin", path_str(remote.path())],
+    );
+    let run = |repo: &Path, cmds: &[&str]| {
+        let mut cmd = cli();
+        cmd.args(["--repo", path_str(repo), "run"]);
+        for c in cmds {
+            cmd.args(["--cmd", c]);
+        }
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        json_lines(&output.stdout)
+    };
+    let lines = run(source.path(), &["remote.push"]);
+    assert_eq!(lines[0]["kind"], "new");
+    assert_eq!(lines[0]["set_upstream"], true);
+
+    let work = temp_repo(0);
+    git(
+        work.path(),
+        &["remote", "add", "origin", path_str(remote.path())],
+    );
+    git(work.path(), &["fetch", "--quiet", "origin"]);
+    git(work.path(), &["reset", "--quiet", "--hard", "origin/main"]);
+    git(
+        work.path(),
+        &["branch", "--quiet", "--set-upstream-to=origin/main", "main"],
+    );
+    git(
+        source.path(),
+        &["commit", "--quiet", "--allow-empty", "-m", "secondo"],
+    );
+    let lines = run(source.path(), &[r#"remote.push={"remote":"origin"}"#]);
+    assert_eq!(lines[0]["kind"], "fast_forward");
+
+    let lines = run(work.path(), &["remote.pull", "edit.undo", "remote.pull"]);
+    assert_eq!(lines[0]["strategy"], "fast_forward");
+    assert_eq!(lines[1]["undone"]["command"], "remote.pull");
+    assert_eq!(lines[2]["after"], lines[0]["after"]);
 }

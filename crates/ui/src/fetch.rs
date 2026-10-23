@@ -177,34 +177,14 @@ impl FetchBox {
                 ),
             },
             Some(ErrorKind::Auth) => {
-                self.failure = Some(Failure {
-                    title: "Autenticazione non riuscita".to_owned(),
-                    explanation: format!(
-                        "{who} ha rifiutato le credenziali, oppure servirebbe chiederle (nome \
-                         utente, password, passphrase della chiave SSH, conferma della chiave \
-                         dell'host). Questa app non chiede mai credenziali: configurare un \
-                         credential helper (git config credential.helper) oppure caricare la \
-                         chiave in ssh-agent (ssh-add); per un host SSH nuovo, aggiungerlo a \
-                         known_hosts con un primo fetch da terminale. Poi riprovare. Niente è \
-                         stato modificato."
-                    ),
-                    git: detail,
-                });
+                self.failure = Some(auth_failure(&who, detail));
                 Received::Failed {
                     message: format!("{label} non riuscito: autenticazione rifiutata o richiesta"),
                     reload: false,
                 }
             }
             Some(ErrorKind::RemoteUnreachable) => {
-                self.failure = Some(Failure {
-                    title: "Remoto non raggiungibile".to_owned(),
-                    explanation: format!(
-                        "{who} non risponde: controllare l'indirizzo del remoto (git remote -v), \
-                         la rete e che il repository esista sul server. Niente è stato \
-                         modificato."
-                    ),
-                    git: detail,
-                });
+                self.failure = Some(unreachable_failure(&who, detail));
                 Received::Failed {
                     message: format!("{label} non riuscito: remoto non raggiungibile"),
                     reload: false,
@@ -229,6 +209,35 @@ impl FetchBox {
                 }
             }
         }
+    }
+}
+
+/// La finestra per un remoto (`who`: «Il remoto "origin"») che rifiuta le credenziali o
+/// servirebbe chiederle; `detail` è il testo di git. Vale per fetch, pull e push.
+pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
+    Failure {
+        title: "Autenticazione non riuscita".to_owned(),
+        explanation: format!(
+            "{who} ha rifiutato le credenziali, oppure servirebbe chiederle (nome utente, \
+             password, passphrase della chiave SSH, conferma della chiave dell'host). Questa app \
+             non chiede mai credenziali: configurare un credential helper (git config \
+             credential.helper) oppure caricare la chiave in ssh-agent (ssh-add); per un host SSH \
+             nuovo, aggiungerlo a known_hosts con un primo fetch da terminale. Poi riprovare. \
+             Niente è stato modificato."
+        ),
+        git: detail,
+    }
+}
+
+/// La finestra per un remoto che non si raggiunge (vedi [`auth_failure`]).
+pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
+    Failure {
+        title: "Remoto non raggiungibile".to_owned(),
+        explanation: format!(
+            "{who} non risponde: controllare l'indirizzo del remoto (git remote -v), la rete e \
+             che il repository esista sul server. Niente è stato modificato."
+        ),
+        git: detail,
     }
 }
 
@@ -329,6 +338,7 @@ fn phase_name(phase: &str) -> &str {
         "Receiving objects" => "Ricezione oggetti",
         "Unpacking objects" => "Estrazione oggetti",
         "Resolving deltas" => "Risoluzione delta",
+        "Writing objects" => "Scrittura oggetti",
         "Total" => "Totale",
         other => other,
     }

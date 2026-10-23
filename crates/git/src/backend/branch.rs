@@ -76,7 +76,7 @@ impl CliBackend {
     }
 
     /// [`EngineError::NotAllowed`] se `full` non vale `expected`.
-    fn check_branch_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
+    pub(super) fn check_branch_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
         match self.ref_value(full)? {
             Some(now) if now == *expected => Ok(()),
             Some(now) => Err(EngineError::NotAllowed(format!(
@@ -238,7 +238,11 @@ impl CliBackend {
     /// Git non controlla i file `--assume-unchanged` (lettera minuscola in `ls-files -v`): un
     /// checkout ne sovrascriverebbe le modifiche senza avviso. Rifiuta se uno di loro è
     /// diverso fra HEAD (`head`, `None` senza commit) e `target`.
-    fn check_assume_unchanged(&self, head: &Option<Oid>, target: &Oid) -> Result<(), EngineError> {
+    pub(super) fn check_assume_unchanged(
+        &self,
+        head: &Option<Oid>,
+        target: &Oid,
+    ) -> Result<(), EngineError> {
         let listing = self.index_listing()?;
         let hidden: BTreeSet<&RepoPath> = listing
             .iter()

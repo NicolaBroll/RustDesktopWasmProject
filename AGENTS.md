@@ -28,6 +28,9 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
   e non scrive se il backup fallisce (§1 e §7
   dell'architettura git). Chi riscrive un commit (`commit.create` con `amend`) salva sempre un
   ref di backup del commit riscritto e chiede `confirm` se quel commit è già pubblicato.
+- `remote.pull` è fetch e poi integrazione guidata dal motore (mai `git pull`, mai
+  `--autostash`); `remote.push` usa solo un refspec esplicito e, per il force,
+  `--force-with-lease` con l'oid atteso (mai `--force`). Il pull entra nel diario, il push no.
 - Un comando che sposta ref (commit, e poi branch, checkout, merge, reset...) registra una
   `JournalEntry` nel diario della `Session` con HEAD e i ref prima e dopo, così `edit.undo` e
   `edit.redo` lo coprono (§7 dell'architettura git).
@@ -77,6 +80,12 @@ cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"prova"}' 
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"prova","new_name":"prova2"}' --cmd 'branch.delete={"name":"prova2"}'
 # fetch da un remoto configurato (solo branch remoti e tag; avanzamento su stderr se è un terminale)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
+# pull (fetch + fast-forward/merge/rebase secondo pull.rebase/pull.ff, o "strategy"; annullabile con edit.undo)
+cargo run -p project-cli -- --repo . run --cmd remote.pull --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'remote.pull={"branch":"main","strategy":"rebase"}'
+# push del branch attivo (remoto: pushRemote/pushDefault/upstream/origin; primo push: imposta l'upstream);
+# force solo con lease e, se il remoto perde commit, "confirm":true con "expected" (l'id mostrato dalla conferma)
+cargo run -p project-cli -- --repo . run --cmd remote.push --cmd 'remote.push={"force":true,"confirm":true,"expected":"<id dalla conferma>"}'
 # diario delle operazioni: vale solo dentro la stessa invocazione (o sessione MCP)
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"prova"}' --cmd edit.undo --cmd edit.history
 echo 'repo.refs' | cargo run -p project-cli -- --repo . eval

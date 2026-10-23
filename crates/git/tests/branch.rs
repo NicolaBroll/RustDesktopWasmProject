@@ -352,7 +352,10 @@ fn delete_unmerged_needs_confirm_and_undo_recreates() {
     let err = r
         .run("branch.delete", &mut s, json!({ "name": "altro" }))
         .unwrap_err();
-    let EngineError::ConfirmRequired { command, reason } = &err else {
+    let EngineError::ConfirmRequired {
+        command, reason, ..
+    } = &err
+    else {
         panic!("{err}");
     };
     assert_eq!(*command, "branch.delete");

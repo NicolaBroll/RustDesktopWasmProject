@@ -24,7 +24,7 @@ const START: i64 = 1_700_000_000;
 /// Secondi fra un commit e il successivo.
 const STEP: i64 = 60;
 
-type Tree = BTreeMap<RepoPath, TreeEntry>;
+pub(super) type Tree = BTreeMap<RepoPath, TreeEntry>;
 
 impl MemoryBackend {
     /// [`GitBackend::commit`] sulle voci dello stato. Un errore non cambia niente.
@@ -191,7 +191,7 @@ impl MemoryBackend {
     }
 
     /// Un minuto dopo il commit più recente (o [`START`] in un repo vuoto).
-    fn next_time(&self) -> i64 {
+    pub(super) fn next_time(&self) -> i64 {
         self.commits
             .values()
             .map(|c| c.committer.time)
@@ -200,7 +200,13 @@ impl MemoryBackend {
     }
 
     /// Un id finto che dipende dal contenuto del commit e non è già usato.
-    fn new_commit_id(&self, parents: &[Oid], message: &str, tree: &Tree, time: i64) -> Oid {
+    pub(super) fn new_commit_id(
+        &self,
+        parents: &[Oid],
+        message: &str,
+        tree: &Tree,
+        time: i64,
+    ) -> Oid {
         let mut seed = Vec::new();
         for p in parents {
             seed.extend_from_slice(p.as_bytes());
@@ -255,7 +261,7 @@ impl MemoryBackend {
 }
 
 /// I file cambiati da `old` a `new`, per percorso (senza riconoscere le rinomine).
-fn tree_changes(old: &Tree, new: &Tree) -> Vec<ChangedFile> {
+pub(super) fn tree_changes(old: &Tree, new: &Tree) -> Vec<ChangedFile> {
     let mut paths: Vec<&RepoPath> = old.keys().chain(new.keys()).collect();
     paths.sort();
     paths.dedup();

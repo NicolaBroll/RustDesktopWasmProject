@@ -217,6 +217,7 @@ pub fn check_amend_published(
              di backup",
             names.join(", ")
         ),
+        expected: None,
     })
 }
 

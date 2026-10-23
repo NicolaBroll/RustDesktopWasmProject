@@ -23,6 +23,7 @@ mod graph;
 mod lines;
 mod list;
 mod stage;
+mod sync;
 mod view;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
@@ -44,6 +45,7 @@ use serde_json::{Value, json};
 use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use sync::SyncBox;
 
 /// Ciò che l'utente ha chiesto durante il frame.
 #[derive(Debug, Clone)]
@@ -139,6 +141,20 @@ enum Action {
     CancelFetch,
     /// Chiude la finestra dell'errore del fetch.
     DismissFetchError,
+    /// Pull del branch indicato (`None`: quello di HEAD), con la strategia indicata (`None`:
+    /// quella della configurazione).
+    Pull(Option<String>, Option<sync::Strategy>),
+    /// Push del branch indicato (`None`: quello di HEAD), mai forzato.
+    Push(Option<String>),
+    /// "Forza (con lease)…" nella finestra del push rifiutato: `"force": true` senza
+    /// `confirm`.
+    ForcePush,
+    /// "Forza il push" nella conferma: `"force": true, "confirm": true`.
+    ConfirmForcePush,
+    /// "Interrompi" il pull o push in corso.
+    CancelSync,
+    /// Chiude la finestra di pull e push (anche la conferma del force, senza forzare).
+    DismissSync,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -187,6 +203,8 @@ enum Request {
     Branch(u64, branch::Op),
     /// `remote.fetch` (lo stato è in [`FetchBox`]).
     Fetch(u64),
+    /// `remote.pull`/`remote.push` (lo stato è in [`SyncBox`]).
+    Sync(u64),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -222,6 +240,8 @@ struct RepoView {
     branch: BranchBox,
     /// Il fetch in corso e l'ultimo errore da spiegare.
     fetch: FetchBox,
+    /// Il pull o push in corso e la finestra aperta (conflitto, rifiuto, conferma del force).
+    sync: SyncBox,
     /// Cosa farebbero Annulla e Ripeti.
     history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
@@ -253,6 +273,7 @@ impl RepoView {
             discard: DiscardBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
+            sync: SyncBox::default(),
             history: History::default(),
             select_after_load,
         };
@@ -285,6 +306,7 @@ impl RepoView {
             || self.commit.confirm().is_some()
             || self.discard.confirm().is_some()
             || self.branch.modal_open()
+            || self.sync.modal_open()
     }
 
     /// L'ultimo commit (HEAD), se è tra quelli caricati.
@@ -723,6 +745,30 @@ impl App {
                     repo.fetch.dismiss();
                 }
             }
+            Action::Pull(branch, strategy) => {
+                self.send_sync(sync::Request::pull(branch, strategy), false);
+            }
+            Action::Push(branch) => self.send_sync(sync::Request::push(branch), false),
+            Action::ForcePush => {
+                if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.force()) {
+                    self.send_sync(request, false);
+                }
+            }
+            Action::ConfirmForcePush => {
+                if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.confirm_force()) {
+                    self.send_sync(request, true);
+                }
+            }
+            Action::CancelSync => {
+                if let Some(ticket) = self.repo.as_mut().and_then(|r| r.sync.cancel()) {
+                    self.executor.cancel(ticket);
+                }
+            }
+            Action::DismissSync => {
+                if let Some(repo) = &mut self.repo {
+                    repo.sync.dismiss();
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -752,6 +798,29 @@ impl App {
                     self.request_page(request);
                 }
             }
+        }
+    }
+
+    /// Manda un pull o un push, se non c'è un'altra scrittura in corso (fetch compreso: una
+    /// operazione di rete alla volta) né un dialogo aperto; `confirmed`: è il clic nella
+    /// conferma del force, che è lei il dialogo aperto.
+    fn send_sync(&mut self, request: sync::Request, confirmed: bool) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || (repo.modal_open() && !confirmed) {
+            return;
+        }
+        let Some(request) = repo.sync.request(request, &repo.head) else {
+            return;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(request.label());
+        let ticket = self.executor.submit(request.op.command(), request.params());
+        self.pending.insert(ticket, Request::Sync(generation));
+        if let Some(repo) = &mut self.repo {
+            repo.sync.started(ticket, request);
         }
     }
 
@@ -1062,6 +1131,10 @@ impl App {
                 self.receive_fetch(generation, done);
                 continue;
             }
+            if let Request::Sync(generation) = request {
+                self.receive_sync(generation, done);
+                continue;
+            }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1347,6 +1420,76 @@ impl App {
         }
     }
 
+    /// Risposta di `remote.pull`/`remote.push`: ref, stato e diario dalla risposta, poi il log
+    /// riletto (tutti i ref: i commit arrivati, il branch spostato, il branch remoto
+    /// aggiornato); dopo un pull del branch attivo si seleziona il nuovo HEAD. Un rifiuto apre
+    /// la sua finestra.
+    fn receive_sync(&mut self, generation: u64, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        let received = repo.sync.receive(
+            done.ticket,
+            done.result,
+            done.error_kind,
+            done.error_detail,
+            done.confirm_expected,
+        );
+        match received {
+            sync::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                if let Some(history) = outcome.history {
+                    repo.history = history;
+                }
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                let status_read = outcome.status.is_some();
+                if let Some(status) = outcome.status {
+                    repo.set_status(status);
+                }
+                if outcome.moved_head && !repo.worktree_selected {
+                    repo.select_after_load = repo.head.target();
+                }
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                self.follow_diff();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if !status_read {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
+                }
+                if let Some(repo) = self.current(generation) {
+                    let first = repo.list.reset();
+                    self.request_page(first);
+                }
+            }
+            sync::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            sync::Received::Cancelled { notice, reload } => {
+                self.notice = notice;
+                self.error.clear();
+                if reload {
+                    self.load();
+                }
+            }
+            sync::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                }
+            }
+        }
+    }
+
     /// Dopo un fetch: lo stato (avanti/indietro rispetto all'upstream) e il log (i commit
     /// nuovi dei branch remoti).
     fn reload_after_fetch(&mut self, generation: u64) {
@@ -1423,7 +1566,8 @@ impl App {
             | Request::Discard(..)
             | Request::Undo(..)
             | Request::Branch(..)
-            | Request::Fetch(..) => {}
+            | Request::Fetch(..)
+            | Request::Sync(..) => {}
         }
         Ok(())
     }
@@ -1445,10 +1589,35 @@ impl eframe::App for App {
             .map(|r| std::mem::take(&mut r.commit.draft))
             .unwrap_or_default();
 
-        // Il fetch in corso con il suo ultimo avanzamento, per la barra.
-        let fetching = self.repo.as_ref().and_then(|r| {
-            let running = r.fetch.running()?;
-            Some((running, self.executor.progress(running.ticket)))
+        // Il fetch, pull o push in corso con il suo ultimo avanzamento, per la barra.
+        let network = self.repo.as_ref().and_then(|r| {
+            if let Some(running) = r.fetch.running() {
+                return Some(view::Network {
+                    what: fetch::label(running.remote.as_deref()),
+                    cancelling: running.cancelling,
+                    progress: self.executor.progress(running.ticket),
+                    stop_hint: "Ferma il fetch: i branch remoti già aggiornati restano, i branch \
+                                locali e i file non sono toccati",
+                    cancel: Action::CancelFetch,
+                });
+            }
+            let running = r.sync.running()?;
+            Some(view::Network {
+                what: running.request.label(),
+                cancelling: running.cancelling,
+                progress: self.executor.progress(running.ticket),
+                stop_hint: match running.request.op {
+                    sync::Op::Pull => {
+                        "Ferma il pull durante il fetch: il branch non viene toccato. Se \
+                         l'integrazione è già partita finisce comunque"
+                    }
+                    sync::Op::Push => {
+                        "Ferma il push: se l'invio era già finito il remoto potrebbe essere \
+                         aggiornato (un Fetch lo mostra)"
+                    }
+                },
+                cancel: Action::CancelSync,
+            })
         });
         egui::Panel::top("barra").show(ui, |ui| {
             view::top_bar(
@@ -1456,7 +1625,7 @@ impl eframe::App for App {
                 self.repo.as_ref(),
                 can_pick,
                 writing,
-                fetching,
+                network,
                 &mut actions,
             );
         });
@@ -1505,7 +1674,17 @@ impl eframe::App for App {
                     view::confirm_discard(&ctx, pending, &mut actions);
                 }
                 if let Some(failure) = repo.fetch.failure() {
-                    view::fetch_failure(&ctx, failure, &mut actions);
+                    view::failure_window(
+                        &ctx,
+                        "errore-fetch",
+                        failure,
+                        Action::DismissFetchError,
+                        &mut actions,
+                    );
+                }
+                if let Some(window) = repo.sync.window() {
+                    let can_write = !writing && !repo.modal_open();
+                    view::sync_window(&ctx, window, writing, can_write, &mut actions);
                 }
                 if let Some(dialog) = repo.branch.dialog() {
                     view::branch_dialog(&ctx, dialog, &mut actions);

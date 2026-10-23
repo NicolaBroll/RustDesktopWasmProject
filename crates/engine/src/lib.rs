@@ -30,6 +30,11 @@ pub use git::{
     PushKind, PushOutcome, PushRejection, PushRequest, StrategySource, UpstreamConfig,
     check_pull_state, merge_message, pull_mode, tracking_ref,
 };
+pub use git::{
+    REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
+    check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
+    remove_remote, restore_remote, split_branch_key,
+};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use platform::{Capabilities, Picked, Platform};

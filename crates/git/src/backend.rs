@@ -4,6 +4,7 @@ mod branch;
 mod commit;
 mod discard;
 mod remote;
+mod remote_admin;
 mod restore;
 mod sync;
 
@@ -19,9 +20,9 @@ use project_engine::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
     DiscardOutcome, DiscardedFile, EngineError, FetchOutcome, FetchRequest, GitBackend, HeadState,
     JobContext, LinePatch, LineSelection, LogQuery, PullOutcome, PullRequest, PullSettings,
-    PushOutcome, PushRequest, RefRestore, RepoOpener, RestoreOutcome, StagedVersion,
-    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
-    versions_at_risk_hidden,
+    PushOutcome, PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
+    StagedVersion, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
+    path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1244,6 +1245,26 @@ impl GitBackend for CliBackend {
         remove: bool,
     ) -> Vec<String> {
         self.set_branch_config(name, entries, remove)
+    }
+
+    fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError> {
+        self.snapshot_remote(name)
+    }
+
+    fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError> {
+        self.add_remote(name, url)
+    }
+
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+        self.drop_remote_config(snapshot)
+    }
+
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+        self.put_remote_config(snapshot)
+    }
+
+    fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
+        self.remote_elsewhere(name)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

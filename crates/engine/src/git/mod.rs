@@ -14,6 +14,7 @@ mod memory;
 mod pull;
 mod push;
 mod remote;
+mod remote_admin;
 mod restore;
 mod sample;
 
@@ -46,6 +47,11 @@ pub use pull::{
 };
 pub use push::{PushKind, PushOutcome, PushRejection, PushRequest, tracking_ref};
 pub use remote::{FetchOutcome, FetchRequest, check_remote_name, default_remote, unknown_remote};
+pub use remote_admin::{
+    REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
+    check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
+    remove_remote, restore_remote, split_branch_key,
+};
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
 
@@ -371,6 +377,42 @@ pub trait GitBackend: Send {
     /// [`EngineError::Cancelled`].
     fn push(&mut self, request: &PushRequest, job: &JobContext)
     -> Result<PushOutcome, EngineError>;
+
+    // --- Gestione dei remoti (S27). Il nome arriva già controllato dal comando; le scritture
+    // della configurazione toccano solo il file del repo (`git config --local`).
+
+    /// Quello che c'è del remoto `name` ([`RemoteSnapshot`]): `remote.<name>.*` del file del
+    /// repo, i branch remoti `refs/remotes/<name>/...` (non simbolici, esclusi quelli di un
+    /// remoto `<name>/...`; [`owned_by`]), dove punta `refs/remotes/<name>/HEAD` e i dipendenti
+    /// ([`remote_dependents`], `remote.pushDefault`). Tutto vuoto se il remoto non c'è.
+    /// Lettura. Un valore non UTF-8 (non si potrebbe rimettere) dà [`EngineError::NotAllowed`].
+    fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError>;
+
+    /// Aggiunge il remoto `name` con `url` (`git remote add --end-of-options <name> <url>`: URL
+    /// e refspec di default `+refs/heads/*:refs/remotes/<name>/*`), senza fetch. Nome e URL già
+    /// controllati ([`check_new_remote_name`], [`check_remote_url`]); un remoto con quel nome
+    /// che esiste già dà [`EngineError::NotAllowed`], un nome o un URL che git rifiuta
+    /// [`EngineError::InvalidParams`].
+    fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError>;
+
+    /// Toglie la configurazione del remoto di `snapshot` (dopo che [`remove_remote`] ha tolto i
+    /// branch remoti): la sezione `remote.<nome>`, il ref simbolico `refs/remotes/<nome>/HEAD`
+    /// se `snapshot.head`, e le voci di `snapshot.upstreams` e `remote.pushDefault` se
+    /// `snapshot.push_default` (solo con quei valori). Restituisce gli avvisi: i ref sono già
+    /// tolti, quindi un problema qui non è un errore dell'operazione.
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
+
+    /// Il contrario di [`GitBackend::remove_remote_config`] (dopo che [`restore_remote`] ha
+    /// rimesso i branch remoti): riscrive `snapshot.config`, il ref simbolico, le voci di
+    /// `snapshot.upstreams` e `remote.pushDefault` se `snapshot.push_default`. Restituisce gli
+    /// avvisi.
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
+
+    /// Le voci `remote.<name>.*` che git legge **fuori** dal file del repo (configurazione
+    /// globale o di sistema, `include`, `config.worktree`), una per riga con chiave e
+    /// provenienza: `remote.remove` le rifiuta, perché toglierebbe solo una parte del remoto.
+    /// Lettura.
+    fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError>;
 }
 
 /// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e

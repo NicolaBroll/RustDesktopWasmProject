@@ -8,7 +8,7 @@
 //! forma di quello di git (una fase `Receiving objects` da 0 a 100%).
 
 use super::{MemoryBackend, REMOTES, RefEntry};
-use crate::git::{FetchOutcome, FetchRequest, short};
+use crate::git::{FetchOutcome, FetchRequest, mask_url, short};
 use crate::{EngineError, JobContext, Progress};
 use project_domain::{Commit, Oid};
 use std::collections::BTreeMap;
@@ -165,7 +165,7 @@ impl MemoryBackend {
 
         let url = remote.url.clone();
         let remote_name = request.remote.clone();
-        let mut messages = vec![format!("From {url}")];
+        let mut messages = vec![format!("From {}", mask_url(&url).0)];
         for commit in new {
             self.commits.insert(commit.id, commit);
         }

@@ -4,6 +4,7 @@ mod branch;
 mod commit;
 mod discard;
 mod remote;
+mod remote_admin;
 mod restore;
 mod sync;
 mod write;
@@ -16,8 +17,8 @@ use super::line_diff;
 use super::{
     BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome,
     DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HeadState, LineSelection, LogQuery,
-    PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore, RepoOpener,
-    RestoreOutcome, StagedVersion, UpstreamConfig, WorktreeRestore,
+    PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore, RemoteSnapshot,
+    RepoOpener, RestoreOutcome, StagedVersion, UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext};
 use project_domain::{
@@ -82,6 +83,16 @@ pub struct MemoryBackend {
     pre_push_failure: Option<String>,
     /// Altre chiavi della configurazione ([`GitBackend::config_values`]).
     config: BTreeMap<String, Vec<String>>,
+    /// I "server" dei remoti tolti, per URL: un remoto aggiunto con lo stesso URL li ritrova.
+    detached_remotes: BTreeMap<String, MemoryRemote>,
+    /// Voci `remote.<nome>.*` "fuori dal file del repo" ([`MemoryBackend::set_remote_elsewhere`]).
+    remote_elsewhere: BTreeMap<String, Vec<String>>,
+    /// Remoti che `remotes()` elenca anche dopo la rimozione
+    /// ([`MemoryBackend::keep_remote_listed`]).
+    listed_anyway: BTreeSet<String>,
+    /// Quante `restore_refs` riescono ancora prima di fallire
+    /// ([`MemoryBackend::fail_restore_refs_after`]); `None`: sempre.
+    restore_budget: Option<usize>,
 }
 
 impl Default for MemoryBackend {
@@ -111,6 +122,10 @@ impl MemoryBackend {
             pull_settings: PullSettings::default(),
             pre_push_failure: None,
             config: BTreeMap::new(),
+            detached_remotes: BTreeMap::new(),
+            remote_elsewhere: BTreeMap::new(),
+            listed_anyway: BTreeSet::new(),
+            restore_budget: None,
         }
     }
 
@@ -687,6 +702,15 @@ impl GitBackend for MemoryBackend {
     }
 
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        if let Some(budget) = self.restore_budget.as_mut() {
+            if *budget == 0 {
+                return Err(EngineError::Git {
+                    command: "update-ref".to_owned(),
+                    stderr: "fallimento simulato (fail_restore_refs_after)".to_owned(),
+                });
+            }
+            *budget -= 1;
+        }
         Ok(RestoreOutcome {
             backups: self.restore(request)?,
             warnings: Vec::new(),
@@ -713,7 +737,11 @@ impl GitBackend for MemoryBackend {
     }
 
     fn remotes(&self) -> Result<Vec<String>, EngineError> {
-        Ok(self.remote_names())
+        let mut names = self.remote_names();
+        names.extend(self.listed_anyway.iter().cloned());
+        names.sort();
+        names.dedup();
+        Ok(names)
     }
 
     fn fetch(
@@ -789,6 +817,26 @@ impl GitBackend for MemoryBackend {
         remove: bool,
     ) -> Vec<String> {
         self.set_branch_config(name, entries, remove)
+    }
+
+    fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError> {
+        Ok(self.snapshot_of(name))
+    }
+
+    fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError> {
+        self.create_memory_remote(name, url)
+    }
+
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+        self.drop_remote_config(snapshot)
+    }
+
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+        self.put_remote_config(snapshot)
+    }
+
+    fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
+        Ok(self.remote_elsewhere.get(name).cloned().unwrap_or_default())
     }
 }
 

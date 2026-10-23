@@ -22,6 +22,7 @@ mod format;
 mod graph;
 mod lines;
 mod list;
+mod remotes;
 mod stage;
 mod sync;
 mod view;
@@ -40,6 +41,7 @@ use lines::{LineWrite, Pick};
 use list::{CommitList, PageRequest, Seek};
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
+use remotes::{AddFields, RemotesBox};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
@@ -155,6 +157,25 @@ enum Action {
     CancelSync,
     /// Chiude la finestra di pull e push (anche la conferma del force, senza forzare).
     DismissSync,
+    /// Apre il dialogo "Aggiungi remoto".
+    AddRemote,
+    /// I campi del dialogo "Aggiungi remoto" sono cambiati.
+    AddRemoteFields(AddFields),
+    /// "Nascondi" (`true`) o "Mostra" l'URL con credenziali nel dialogo "Aggiungi remoto".
+    HideRemoteUrl(bool),
+    /// Manda il dialogo "Aggiungi remoto".
+    SubmitAddRemote,
+    /// "Interrompi" il fetch dell'aggiunta in corso (il remoto resta aggiunto).
+    CancelAddRemote,
+    /// Rimuove il remoto indicato: prima senza conferma, il motore la chiede sempre e si apre
+    /// il dialogo.
+    RemoveRemote(String),
+    /// Conferma la rimozione in attesa: reinvia con `"confirm": true`.
+    ConfirmRemoveRemote,
+    /// Chiude il dialogo dei remoti aperto senza mandare niente.
+    CloseRemoteDialog,
+    /// Chiude la finestra dell'errore del fetch dopo l'aggiunta.
+    DismissRemoteError,
 }
 
 /// Un passo del trascinamento sulle righe del diff.
@@ -205,6 +226,10 @@ enum Request {
     Fetch(u64),
     /// `remote.pull`/`remote.push` (lo stato è in [`SyncBox`]).
     Sync(u64),
+    /// `remote.list`.
+    Remotes(u64),
+    /// `remote.add`/`remote.remove` (lo stato del dialogo è in [`RemotesBox`]).
+    Remote(u64, remotes::Op),
 }
 
 /// Il repo mostrato e i dati letti finora.
@@ -242,6 +267,8 @@ struct RepoView {
     fetch: FetchBox,
     /// Il pull o push in corso e la finestra aperta (conflitto, rifiuto, conferma del force).
     sync: SyncBox,
+    /// I remoti configurati (`remote.list`) e i dialoghi per aggiungerli e rimuoverli.
+    remotes: RemotesBox,
     /// Cosa farebbero Annulla e Ripeti.
     history: History,
     /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
@@ -274,6 +301,7 @@ impl RepoView {
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
             sync: SyncBox::default(),
+            remotes: RemotesBox::default(),
             history: History::default(),
             select_after_load,
         };
@@ -307,6 +335,7 @@ impl RepoView {
             || self.discard.confirm().is_some()
             || self.branch.modal_open()
             || self.sync.modal_open()
+            || self.remotes.modal_open()
     }
 
     /// L'ultimo commit (HEAD), se è tra quelli caricati.
@@ -769,6 +798,89 @@ impl App {
                     repo.sync.dismiss();
                 }
             }
+            Action::AddRemote => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.remotes.open_add();
+                }
+            }
+            Action::AddRemoteFields(fields) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.set_fields(fields);
+                }
+            }
+            Action::HideRemoteUrl(hide) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.hide_url(hide);
+                }
+            }
+            Action::SubmitAddRemote => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let Some((params, label)) = repo.remotes.submit_add() else {
+                    return;
+                };
+                repo.write_error = None;
+                repo.write_label = Some(label);
+                let op = remotes::Op::Add;
+                let ticket = self.executor.submit(op.command(), params);
+                self.pending.insert(ticket, Request::Remote(generation, op));
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.add_started(ticket);
+                }
+            }
+            Action::CancelAddRemote => {
+                if let Some(ticket) = self.repo.as_mut().and_then(|r| r.remotes.cancel()) {
+                    self.executor.cancel(ticket);
+                }
+            }
+            Action::RemoveRemote(name) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = format!("Controllo per la rimozione di «{name}»");
+                if let Some(params) = repo.remotes.start_remove(name) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = remotes::Op::Remove;
+                    self.submit(op.command(), params, Request::Remote(generation, op));
+                }
+            }
+            Action::ConfirmRemoveRemote => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.remotes.confirm_remove() {
+                    repo.write_label = Some(label);
+                    let op = remotes::Op::Remove;
+                    self.submit(op.command(), params, Request::Remote(generation, op));
+                }
+            }
+            Action::CloseRemoteDialog => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.close();
+                }
+            }
+            Action::DismissRemoteError => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.dismiss();
+                }
+            }
             Action::RetryDetails => {
                 if let Some(repo) = &mut self.repo {
                     repo.details.retry();
@@ -1038,10 +1150,16 @@ impl App {
         self.submit("repo.refs", json!({}), Request::Refs(generation));
         self.submit("repo.status", json!({}), Request::Status(generation));
         self.submit("edit.history", json!({}), Request::History(generation));
+        self.request_remotes(generation);
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
         }
+    }
+
+    /// Rilegge l'elenco dei remoti (quanti branch remoti, quale è il predefinito).
+    fn request_remotes(&mut self, generation: u64) {
+        self.submit(remotes::LIST, json!({}), Request::Remotes(generation));
     }
 
     fn receive(&mut self, ctx: &egui::Context) {
@@ -1133,6 +1251,20 @@ impl App {
             }
             if let Request::Sync(generation) = request {
                 self.receive_sync(generation, done);
+                continue;
+            }
+            // L'elenco dei remoti ha il suo errore, mostrato nella sua sezione.
+            if let Request::Remotes(generation) = request {
+                if let Some(repo) = self.current(generation) {
+                    if let Err(e) = &done.result {
+                        log::warn!("{}: {e}", done.command);
+                    }
+                    repo.remotes.receive_list(done.result);
+                }
+                continue;
+            }
+            if let Request::Remote(generation, op) = request {
+                self.receive_remote(generation, op, done);
                 continue;
             }
             // Anche il diff: errori nella sua vista, risposte vecchie scartate.
@@ -1377,6 +1509,10 @@ impl App {
     /// nuovi e quanto i branch locali sono indietro), poi log e stato riletti se qualcosa è
     /// cambiato; l'avviso con i ref aggiornati, o l'errore.
     fn receive_fetch(&mut self, generation: u64, done: Done) {
+        // Quanti branch remoti ha ogni remoto: un fetch ne porta di nuovi o ne toglie.
+        if self.current(generation).is_some() {
+            self.request_remotes(generation);
+        }
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1425,6 +1561,10 @@ impl App {
     /// aggiornato); dopo un pull del branch attivo si seleziona il nuovo HEAD. Un rifiuto apre
     /// la sua finestra.
     fn receive_sync(&mut self, generation: u64, done: Done) {
+        // Un push può creare un branch remoto, un pull ne scarica.
+        if self.current(generation).is_some() {
+            self.request_remotes(generation);
+        }
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1485,6 +1625,55 @@ impl App {
                 self.notice.clear();
                 if reload {
                     self.load();
+                }
+            }
+        }
+    }
+
+    /// Risposta di `remote.add`/`remote.remove`: elenco dei remoti, ref e diario dalla
+    /// risposta, poi lo stato e il log riletti (i branch remoti scaricati o tolti cambiano il
+    /// grafo e l'upstream del branch attivo). Un nome o URL rifiutato resta nel dialogo.
+    fn receive_remote(&mut self, generation: u64, op: remotes::Op, done: Done) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        repo.write_label = None;
+        match repo
+            .remotes
+            .receive(op, done.result, done.error_kind, done.error_detail)
+        {
+            remotes::Received::Inline | remotes::Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            remotes::Received::Done(outcome) => {
+                log::info!("{}: {}", done.command, outcome.notice);
+                repo.history = outcome.history.clone();
+                let refs_read = outcome.refs.is_some();
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                let remotes_read = outcome.remotes.is_some();
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                if !refs_read {
+                    self.submit("repo.refs", json!({}), Request::Refs(generation));
+                }
+                if !remotes_read {
+                    self.request_remotes(generation);
+                }
+                self.reload_after_fetch(generation);
+            }
+            remotes::Received::Failed { message, reload } => {
+                log::warn!("{}: {message}", done.command);
+                self.error = message;
+                self.notice.clear();
+                if reload {
+                    self.load();
+                } else {
+                    self.request_remotes(generation);
+                    self.submit("edit.history", json!({}), Request::History(generation));
                 }
             }
         }
@@ -1567,7 +1756,9 @@ impl App {
             | Request::Undo(..)
             | Request::Branch(..)
             | Request::Fetch(..)
-            | Request::Sync(..) => {}
+            | Request::Sync(..)
+            | Request::Remotes(..)
+            | Request::Remote(..) => {}
         }
         Ok(())
     }
@@ -1599,6 +1790,16 @@ impl eframe::App for App {
                     stop_hint: "Ferma il fetch: i branch remoti già aggiornati restano, i branch \
                                 locali e i file non sono toccati",
                     cancel: Action::CancelFetch,
+                });
+            }
+            if let Some(adding) = r.remotes.running_fetch() {
+                return Some(view::Network {
+                    what: adding.label(),
+                    cancelling: adding.cancelling,
+                    progress: adding.ticket.and_then(|t| self.executor.progress(t)),
+                    stop_hint: "Ferma il fetch: il remoto resta aggiunto, i branch remoti già \
+                                scaricati restano",
+                    cancel: Action::CancelAddRemote,
                 });
             }
             let running = r.sync.running()?;
@@ -1681,6 +1882,23 @@ impl eframe::App for App {
                         Action::DismissFetchError,
                         &mut actions,
                     );
+                }
+                if let Some(failure) = repo.remotes.failure() {
+                    view::failure_window(
+                        &ctx,
+                        "errore-remoto",
+                        failure,
+                        Action::DismissRemoteError,
+                        &mut actions,
+                    );
+                }
+                if let Some(dialog) = repo.remotes.dialog() {
+                    let progress = repo
+                        .remotes
+                        .running_fetch()
+                        .and_then(|d| d.ticket)
+                        .and_then(|t| self.executor.progress(t));
+                    view::remote_dialog(&ctx, dialog, progress.as_ref(), &mut actions);
                 }
                 if let Some(window) = repo.sync.window() {
                     let can_write = !writing && !repo.modal_open();

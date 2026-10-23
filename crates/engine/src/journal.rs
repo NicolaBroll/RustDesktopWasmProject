@@ -29,6 +29,10 @@
 //!   branch attivo undo e redo passano da [`GitBackend::reset_branch`] (come `git reset --keep`:
 //!   aggiornano indice e worktree, rifiutano se un file da ripristinare ha modifiche locali), per
 //!   un altro branch spostano solo il ref. Il fetch e il push no.
+//! - **`remote.add` e `remote.remove` entrano nel diario** ([`JournalEntry::remote_add`],
+//!   [`JournalEntry::remote_remove`]): la voce tiene il remoto ([`RemoteSnapshot`]:
+//!   configurazione, branch remoti, upstream che lo usano); undo e redo lo tolgono o lo
+//!   rimettono, solo se nel frattempo non è cambiato o non è stato ricreato.
 //! - **Stage e unstage non entrano nel diario**: non spostano ref. Il loro recupero è il backup
 //!   dell'indice (§7). Nemmeno una nuova voce del genere svuota il redo.
 //! - **Undo di un commit = `git reset --soft`.** Si sposta solo il ref: indice e worktree non si
@@ -42,8 +46,8 @@
 use crate::git::short;
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, RefMove,
-    RefRestore, RestoreOutcome, WorktreeBackup, WorktreeRestore, branch_short, check_no_operation,
-    discard_description,
+    RefRestore, RemoteSnapshot, RestoreOutcome, WorktreeBackup, WorktreeRestore, branch_short,
+    check_no_operation, discard_description, remove_remote, restore_remote,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
@@ -94,6 +98,14 @@ pub struct JournalEntry {
     /// l'undo riscrive (se nel frattempo il repo non ne ha una nuova) e il redo toglie di nuovo.
     #[serde(default)]
     pub branch_config: Vec<ConfigEntry>,
+    /// Solo per `remote.add` e `remote.remove`: il remoto com'era dopo l'aggiunta / prima
+    /// della rimozione (configurazione, branch remoti, upstream che lo usano). Undo e redo lo
+    /// tolgono o lo rimettono ([`remove_remote`], [`restore_remote`]), solo se nel frattempo non
+    /// è cambiato / non è stato ricreato. Nel JSON gli URL sono mascherati, quindi non si
+    /// rilegge dal JSON (`skip_deserializing`). Dopo un undo che ha saltato degli upstream
+    /// (reimpostati altrove) la voce tiene solo quello che è stato rimesso.
+    #[serde(default, skip_deserializing)]
+    pub remote: Option<RemoteSnapshot>,
 }
 
 impl JournalEntry {
@@ -140,6 +152,7 @@ impl JournalEntry {
             undo_backups: Vec::new(),
             worktree: None,
             branch_config: Vec::new(),
+            remote: None,
         })
     }
 
@@ -162,6 +175,7 @@ impl JournalEntry {
                 raw: outcome.raw,
             }),
             branch_config: Vec::new(),
+            remote: None,
         }
     }
 
@@ -332,7 +346,77 @@ impl JournalEntry {
             undo_backups: Vec::new(),
             worktree: None,
             branch_config: Vec::new(),
+            remote: None,
         }
+    }
+
+    /// La voce di un `remote.add` riuscito: `snapshot` è il remoto subito dopo (con i branch
+    /// remoti del fetch, se fatto), `head` HEAD (non cambia). L'undo toglie configurazione e
+    /// branch remoti solo se sono ancora esattamente così (e nessun branch ha preso il remoto
+    /// come upstream); il redo li rimette solo se il remoto non c'è.
+    pub fn remote_add(snapshot: RemoteSnapshot, head: HeadState, fetched: bool) -> Self {
+        let description = if fetched {
+            format!(
+                "Aggiungi remoto `{}` (con fetch: {} branch remoti)",
+                snapshot.name,
+                snapshot.refs.len()
+            )
+        } else {
+            format!("Aggiungi remoto `{}`", snapshot.name)
+        };
+        Self::remote_entry("remote.add", description, head, snapshot, false)
+    }
+
+    /// La voce di un `remote.remove` riuscito: `snapshot` è il remoto com'era prima, `backup`
+    /// il primo ref di backup dei commit che restavano solo nei branch remoti (gli altri in
+    /// `undo_backups`). L'undo lo rimette (branch remoti, configurazione, upstream) solo se
+    /// nessuno ha ricreato un remoto con quel nome; il redo lo toglie di nuovo solo se è ancora
+    /// com'era.
+    pub fn remote_remove(snapshot: RemoteSnapshot, head: HeadState, backups: &[String]) -> Self {
+        let upstreams = snapshot.upstream_branches().len();
+        let mut description = format!(
+            "Rimuovi remoto `{}` ({} branch remoti",
+            snapshot.name,
+            snapshot.refs.len()
+        );
+        if upstreams > 0 {
+            description.push_str(&format!(", upstream di {upstreams} branch"));
+        }
+        description.push(')');
+        let mut entry = Self::remote_entry("remote.remove", description, head, snapshot, true);
+        entry.backup = backups.first().cloned();
+        entry.undo_backups = backups.iter().skip(1).cloned().collect();
+        entry
+    }
+
+    fn remote_entry(
+        command: &str,
+        description: String,
+        head: HeadState,
+        snapshot: RemoteSnapshot,
+        removed: bool,
+    ) -> Self {
+        let refs = snapshot
+            .refs
+            .iter()
+            .map(|r| RefChange {
+                name: r.name.clone(),
+                before: removed.then_some(r.target),
+                after: (!removed).then_some(r.target),
+            })
+            .collect();
+        let mut entry = Self::branch_entry(
+            command,
+            description,
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs,
+            None,
+        );
+        entry.remote = Some(snapshot);
+        entry
     }
 
     /// La richiesta al backend per annullare (`redo == false`) o rifare uno scarto; `None` se
@@ -354,7 +438,11 @@ impl JournalEntry {
     /// `head.before` per il redo): i file si confrontano con l'indice, ma l'operazione
     /// appartiene a quello stato del repo; con HEAD spostata (un checkout, un commit da
     /// terminale) [`EngineError::UndoConflict`] e niente cambia.
-    fn apply(&self, repo: &mut dyn GitBackend, redo: bool) -> Result<RestoreOutcome, EngineError> {
+    fn apply(
+        &mut self,
+        repo: &mut dyn GitBackend,
+        redo: bool,
+    ) -> Result<RestoreOutcome, EngineError> {
         if let Some(request) = self.worktree_request(redo) {
             let expected = if redo {
                 &self.head.before
@@ -411,6 +499,33 @@ impl JournalEntry {
                     ));
                 }
                 Ok(outcome)
+            }
+            "remote.add" | "remote.remove" => {
+                let Some(snapshot) = self.remote.clone() else {
+                    return Err(EngineError::NotAllowed(format!(
+                        "voce del diario non valida: `{}`, niente modificato",
+                        self.description
+                    )));
+                };
+                let dependents = self.command == "remote.remove";
+                // Undo di un'aggiunta e redo di una rimozione tolgono il remoto.
+                if redo == dependents {
+                    remove_remote(repo, &snapshot, request.command, dependents, request.reflog)
+                } else {
+                    let (outcome, written) = restore_remote(
+                        repo,
+                        &snapshot,
+                        request.command,
+                        dependents,
+                        request.reflog,
+                    )?;
+                    // Undo di una rimozione con upstream saltati: il redo deve confrontare (e
+                    // togliere) solo quello che è stato davvero rimesso.
+                    if dependents {
+                        self.remote = Some(written);
+                    }
+                    Ok(outcome)
+                }
             }
             "remote.pull" if self.moves_worktree() => {
                 Self::check_unchanged(repo, &request, "sposterebbe il branch")?;
@@ -558,7 +673,7 @@ impl Journal {
         &mut self,
         repo: &mut dyn GitBackend,
     ) -> Result<(JournalEntry, RestoreOutcome), EngineError> {
-        let entry = self.done.last().ok_or_else(|| {
+        let entry = self.done.last_mut().ok_or_else(|| {
             EngineError::NotAllowed(
                 "niente da annullare: nessuna operazione sui ref nel diario di questa sessione"
                     .to_owned(),
@@ -577,7 +692,7 @@ impl Journal {
         &mut self,
         repo: &mut dyn GitBackend,
     ) -> Result<(JournalEntry, RestoreOutcome), EngineError> {
-        let entry = self.undone.last().ok_or_else(|| {
+        let entry = self.undone.last_mut().ok_or_else(|| {
             EngineError::NotAllowed("niente da rifare: nessuna operazione annullata".to_owned())
         })?;
         let outcome = entry.apply(repo, true)?;
@@ -607,6 +722,7 @@ mod tests {
             undo_backups: Vec::new(),
             worktree: None,
             branch_config: Vec::new(),
+            remote: None,
         }
     }
 
@@ -695,7 +811,8 @@ mod tests {
                 "backup": null,
                 "undo_backups": [],
                 "worktree": null,
-                "branch_config": []
+                "branch_config": [],
+                "remote": null
             })
         );
     }

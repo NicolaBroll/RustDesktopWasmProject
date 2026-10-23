@@ -451,9 +451,12 @@ fn commands_lists_the_catalog() {
             "index.stage_lines",
             "index.unstage",
             "index.unstage_lines",
+            "remote.add",
             "remote.fetch",
+            "remote.list",
             "remote.pull",
             "remote.push",
+            "remote.remove",
             "repo.log",
             "repo.open",
             "repo.refs",
@@ -481,9 +484,11 @@ fn commands_lists_the_catalog() {
             "index.stage_lines",
             "index.unstage",
             "index.unstage_lines",
+            "remote.add",
             "remote.fetch",
             "remote.pull",
             "remote.push",
+            "remote.remove",
             "worktree.discard"
         ]
     );

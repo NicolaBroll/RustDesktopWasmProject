@@ -83,8 +83,12 @@ pub struct RefRestore {
 
 impl RefRestore {
     /// Il tipo di backup nel nome dei ref (`refs/project/backup/undo-...`): `undo` o `redo`.
+    /// `remote` per `remote.remove` (i commit che restavano solo nei branch remoti tolti).
     pub fn backup_kind(&self) -> &'static str {
-        self.command.strip_prefix("edit.").unwrap_or("undo")
+        match self.command {
+            "remote.remove" => "remote",
+            command => command.strip_prefix("edit.").unwrap_or("undo"),
+        }
     }
 
     /// I controlli prima di toccare qualcosa, uguali per tutti i backend (`operation` è

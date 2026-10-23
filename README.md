@@ -160,8 +160,42 @@ si annulla). Risultato: `{"remote", "remote_source", "branch", "remote_branch", 
 "new"|"fast_forward"|"forced"|"up_to_date", "summary", "before", "after", "set_upstream",
 "forced", "lost", "backup", "updated", "messages", "warnings", "status", "refs"}`.
 
+`remote.list {}` (sola lettura) elenca i remoti in ordine di nome: `{"remotes": [{"name", "url",
+"push_urls", "fetch", "mirror", "branches", "default", "push_default", "credentials"}],
+"default", "push_default"}` (`push_urls` vuoto = il push va a `url`; `default` è il remoto che
+`remote.fetch` usa senza parametri). **Le credenziali negli URL non si mostrano mai**:
+`https://utente:token@host/r` diventa `https://utente:***@host/r`, `https://token@github.com/r`
+diventa `https://***@github.com/r` (in `http(s)`/`ftp(s)` l'utente da solo è spesso un token),
+`credentials: true` dice che c'erano; un utente ssh (`git@host:r`) resta. Vale anche per i
+risultati di `remote.add`/`remote.remove` e per il diario (`edit.history`).
+
+`remote.add {"name", "url", "fetch"?}` aggiunge un remoto (`git remote add --end-of-options`,
+refspec di default; `"fetch": true` poi scarica come `remote.fetch`, con avanzamento e
+annullamento: un fetch fallito non annulla l'aggiunta e finisce in `fetch_error`). Rifiutati
+prima di chiamare git: nomi che iniziano con `-` o non validi, URL vuoti, con caratteri di
+controllo, che iniziano con `-` (`--upload-pack=...`), con i trasporti `ext::`/`fd::` (eseguono
+comandi) o con un host che inizia con `-` (`ssh://-oProxyCommand=...`); un nome già usato o con
+branch remoti rimasti da prima. Un URL con credenziali è accettato con un avviso (git lo salva in
+chiaro). Risultato: `{"remote", "url", "credentials", "fetched", "fetch", "fetch_error",
+"warnings", "remotes", "refs"}`. Entra nel diario: l'undo toglie configurazione e branch remoti
+scaricati solo se sono ancora com'erano (e nessun branch ha preso il remoto come upstream).
+
+`remote.remove {"name", "confirm": true}` rimuove un remoto configurato nel file del repo
+(rifiutato se è definito anche solo in parte altrove, globale o `include`, o se è il remoto
+promisor di un clone parziale): la
+sezione `remote.<nome>`, i branch remoti `refs/remotes/<nome>/...` (con `HEAD`), l'upstream dei
+branch che lo usano, i loro `pushRemote` e `remote.pushDefault` se lo nominano. Senza `confirm`
+l'errore elenca i branch che perderebbero l'upstream e il numero di branch remoti, e niente
+cambia. Prima di scrivere tutto si salva nel diario e i commit che restavano solo nei branch
+remoti vanno in `refs/project/backup/remote-...`. Risultato: `{"remote", "removed",
+"upstreams_removed", "push_remotes_removed", "push_default_removed", "backups", "warnings",
+"remotes", "refs"}`. L'undo rimette configurazione, branch remoti e upstream, solo se nessuno ha
+ricreato un remoto con quel nome; un upstream reimpostato nel frattempo resta, con un avviso.
+Ahead/behind dei branch rispetto all'upstream sono in `repo.refs` (`upstream.ahead`/`behind`) e
+nei `refs` dei risultati di fetch, pull e push.
+
 `edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
-`branch.*`, `worktree.discard` e `remote.pull`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
+`branch.*`, `worktree.discard`, `remote.pull`, `remote.add` e `remote.remove`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
 riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
 frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
 Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un

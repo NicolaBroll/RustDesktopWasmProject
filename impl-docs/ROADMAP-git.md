@@ -227,7 +227,7 @@ Regole valide per tutti gli step:
   revisione di `safety-reviewer`; CI verde.
 
 ### S27 — Gestione dei remoti
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `remote.list`, `remote.add`, `remote.remove`; ahead/behind visibili accanto ai
   branch.
 - **Fatto quando:** test di integrazione; CI verde.

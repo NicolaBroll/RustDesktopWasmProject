@@ -4,6 +4,7 @@ mod branch;
 mod pull;
 mod push;
 mod remote;
+mod remotes;
 
 use crate::commands::parse_params;
 use crate::{
@@ -148,6 +149,24 @@ impl Registry {
             r#"{"remote"?: string (upstream, origin o l'unico), "branch"?: string (branch locale; HEAD), "force"?: bool (force-with-lease), "confirm"?: bool (force che toglie commit dal remoto)}"#,
             push::remote_push,
         );
+        add(
+            "remote.list",
+            "Remoti configurati",
+            "{}",
+            remotes::remote_list,
+        );
+        add(
+            "remote.add",
+            "Aggiungi un remoto",
+            r#"{"name": string, "url": string, "fetch"?: bool (poi scarica)}"#,
+            remotes::remote_add,
+        );
+        add(
+            "remote.remove",
+            "Rimuovi un remoto",
+            r#"{"name": string, "confirm": true}"#,
+            remotes::remote_remove,
+        );
         add("edit.undo", "Annulla l'ultima operazione", "{}", edit_undo);
         add("edit.redo", "Rifai l'operazione annullata", "{}", edit_redo);
         add(
@@ -173,9 +192,11 @@ const WRITES: &[&str] = &[
     "index.unstage",
     "index.stage_lines",
     "index.unstage_lines",
+    "remote.add",
     "remote.fetch",
     "remote.pull",
     "remote.push",
+    "remote.remove",
     "worktree.discard",
 ];
 
@@ -650,9 +671,12 @@ mod tests {
                 "index.stage_lines",
                 "index.unstage",
                 "index.unstage_lines",
+                "remote.add",
                 "remote.fetch",
+                "remote.list",
                 "remote.pull",
                 "remote.push",
+                "remote.remove",
                 "repo.log",
                 "repo.open",
                 "repo.refs",
@@ -677,9 +701,11 @@ mod tests {
                 "index.stage_lines",
                 "index.unstage",
                 "index.unstage_lines",
+                "remote.add",
                 "remote.fetch",
                 "remote.pull",
                 "remote.push",
+                "remote.remove",
                 "worktree.discard"
             ]
         );

@@ -105,12 +105,19 @@ pub(crate) fn top_bar(
             }
         }
         ui.separator();
+        // Con un'operazione in corso (merge, rebase...) il motore rifiuta undo e redo.
+        let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
         for op in [UndoOp::Undo, UndoOp::Redo] {
             let available = op.available(&repo.history);
-            let enabled = available && !writing && !repo.modal_open();
+            let enabled = available && !in_operation && !writing && !repo.modal_open();
             let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
             let hint = op.hint(&repo.history);
-            let button = if available && !enabled {
+            let button = if available && in_operation {
+                button.on_disabled_hover_text(format!(
+                    "{hint} (non durante un'operazione in corso: concluderla o annullarla dal \
+                     riquadro in alto)"
+                ))
+            } else if available && !enabled {
                 button.on_disabled_hover_text(format!("{hint} (dopo l'operazione in corso)"))
             } else {
                 button.on_hover_text(&hint).on_disabled_hover_text(&hint)

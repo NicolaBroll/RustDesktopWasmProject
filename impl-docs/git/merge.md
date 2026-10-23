@@ -87,12 +87,14 @@ conflitto, le modifiche in stage e quelle fatte dopo l'inizio del merge andrebbe
 **sempre** `"confirm": true`; senza, `ConfirmRequired` che elenca i file in conflitto e quelli
 cambiati, e niente cambia. Prima di annullare il backend salva indice e worktree in
 `refs/project/backup/merge-abort-...` (se il backup non riesce non si annulla niente; vedi sotto).
-Rifiuti (`NotAllowed`): nessun merge in corso, un'altra operazione (rebase, cherry-pick...).
-Se `git merge --abort` (cioè `reset --merge`) fallisce, l'errore è `Git` con il testo di git e
-**nomina il backup, che resta sempre**: anche quando git rifiuta, può aver già riscritto una parte
-dei file (un file che non si cancella, una cartella in sola lettura, un file aperto su Windows) con
-`MERGE_HEAD` e HEAD invariati. Il caso più comune, un file in stage con anche modifiche fuori stage
-(`not uptodate`), ha in più il suggerimento di metterle in stage o scartarle.
+Rifiuti (`NotAllowed`): nessun merge in corso, un'altra operazione (rebase, cherry-pick...), un
+file in stage con anche modifiche fuori stage (`reset --merge` lo rifiuterebbe: si controlla prima,
+senza backup né scritture, e il messaggio suggerisce di metterle in stage o scartarle; uguale nei
+due backend). Se `git merge --abort` (cioè `reset --merge`) fallisce, l'errore è `Git` con il
+testo di git e **nomina il backup, che resta sempre**: anche quando git rifiuta, può aver già
+riscritto una parte dei file (un file che non si cancella, una cartella in sola lettura, un file
+aperto su Windows) con `MERGE_HEAD` e HEAD invariati. Se lo stato cambia tra il controllo e git
+(`not uptodate`), l'errore ha in più lo stesso suggerimento.
 
 Risultato: `{"backup", "files": [percorso], "warnings", "status" | null, "refs" | null,
 "can_undo", "can_redo", "next_undo", "next_redo"}` (`files`: i file salvati perché diversi da

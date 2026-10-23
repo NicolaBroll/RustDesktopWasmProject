@@ -338,25 +338,22 @@ fn abort_needs_confirm_and_keeps_a_backup() {
 }
 
 #[test]
-fn abort_refused_by_git_keeps_the_backup() {
+fn abort_with_staged_and_unstaged_changes_is_refused_before_writing() {
     let repo = repo_with_merge_conflict();
     let (r, mut s) = open(&repo);
-    // Un file in stage con altre modifiche fuori stage: `git merge --abort` rifiuta.
+    // Un file in stage con altre modifiche fuori stage: `git merge --abort` rifiuterebbe, il
+    // backend lo controlla prima (come il `MemoryBackend`) e non scrive niente.
     repo.write("nuovo.txt", "in stage\n");
     repo.stage(&["nuovo.txt"]);
     repo.write("nuovo.txt", "dopo\n");
     let err = r
         .run("merge.abort", &mut s, json!({ "confirm": true }))
         .unwrap_err();
-    assert!(matches!(err, EngineError::Git { .. }), "{err}");
-    assert!(err.to_string().contains("not uptodate"), "{err}");
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(err.to_string().contains("`nuovo.txt`"), "{err}");
     assert!(merging(&repo));
     assert_eq!(read(&repo, "nuovo.txt").as_deref(), Some("dopo\n"));
-    // Il backup resta sempre dopo un abort fallito, e l'errore lo nomina.
-    let kept = backups(&repo, "merge-abort");
-    assert_eq!(kept.len(), 1);
-    assert!(err.to_string().contains(&kept[0]), "{err}");
-    assert!(!err.to_string().contains("niente modificato"), "{err}");
+    assert!(backups(&repo, "merge-abort").is_empty());
 }
 
 /// `git merge --abort` che fallisce a metà (una cartella in sola lettura): il backup resta e ha
@@ -379,6 +376,12 @@ fn abort_failing_halfway_keeps_the_backup() {
     repo.write("a/x.txt", "risolto ma non in stage\n");
     let z = repo.path().join("z");
     std::fs::set_permissions(&z, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Da root i permessi non bloccano la scrittura: il fallimento a metà non si riproduce.
+    if std::fs::write(z.join("prova"), "").is_ok() {
+        std::fs::set_permissions(&z, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("saltato: la cartella in sola lettura è scrivibile (root?)");
+        return;
+    }
     let (r, mut s) = open(&repo);
     let result = r.run("merge.abort", &mut s, json!({ "confirm": true }));
     std::fs::set_permissions(&z, std::fs::Permissions::from_mode(0o755)).unwrap();

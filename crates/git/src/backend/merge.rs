@@ -248,6 +248,22 @@ impl CliBackend {
             .filter(|e| e.is_conflict() || e.is_staged() || e.is_unstaged())
             .map(|e| e.path.clone())
             .collect();
+        // `git merge --abort` (`reset --merge`) rifiuta un file in stage con anche modifiche
+        // fuori stage: si controlla prima, come il `MemoryBackend`, così niente viene scritto.
+        let mixed: Vec<String> = status
+            .entries
+            .iter()
+            .filter(|e| e.is_staged() && e.is_unstaged())
+            .map(|e| format!("`{}`", e.path))
+            .collect();
+        if !mixed.is_empty() {
+            return Err(EngineError::NotAllowed(format!(
+                "git non annulla il merge: file in stage con anche modifiche fuori stage ({}). \
+                 Metterle in stage (`index.stage`) o scartarle (`worktree.discard`) e \
+                 riprovare; niente modificato, il merge è ancora in corso",
+                mixed.join(", ")
+            )));
+        }
         let backup = self.save_merge_backup(&head, &files)?;
         let env = [("GIT_REFLOG_ACTION", OsStr::new("project: merge.abort"))];
         let args = ["-c", "core.fsmonitor=false", "merge", "--abort"];

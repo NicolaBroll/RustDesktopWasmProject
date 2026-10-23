@@ -7,7 +7,7 @@
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
-use crate::{Action, App, Done, Request, discard, lowercase_first};
+use crate::{Action, App, Done, Request, discard};
 use project_domain::{Change, RepoPath, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -20,11 +20,11 @@ pub fn discardable(item: &StageItem) -> bool {
 }
 
 /// Perché le modifiche di `item` non si scartano, per il menu; `None` se si scartano.
-pub fn not_discardable_reason(item: &StageItem) -> Option<&'static str> {
+pub fn not_discardable_reason(item: &StageItem) -> Option<String> {
     if item.is_conflict() || item.change == Change::Unmerged {
-        Some("File in conflitto: va risolto prima, non si scarta da qui")
+        Some(tr!("discard-reason-conflict"))
     } else if item.change == Change::Untracked {
-        Some("File non tracciato: non si scarta (vorrebbe dire cancellarlo, senza backup)")
+        Some(tr!("discard-reason-untracked"))
     } else {
         None
     }
@@ -48,8 +48,22 @@ pub const COMMAND: &str = "worktree.discard";
 /// Nome dell'operazione per i messaggi, es. "Scarto di README.md".
 pub fn describe(paths: &[RepoPath]) -> String {
     match paths {
-        [one] => format!("Scarto delle modifiche di {}", one.to_string_lossy()),
-        many => format!("Scarto delle modifiche di {} file", many.len()),
+        [one] => tr!(
+            "discard-label-one",
+            path = one.to_string_lossy().into_owned()
+        ),
+        many => tr!("discard-label-many", n = many.len()),
+    }
+}
+
+/// Il controllo prima dello scarto, es. "Controllo per scarto delle modifiche di README.md".
+pub fn describe_check(paths: &[RepoPath]) -> String {
+    match paths {
+        [one] => tr!(
+            "discard-check-label-one",
+            path = one.to_string_lossy().into_owned()
+        ),
+        many => tr!("discard-check-label-many", n = many.len()),
     }
 }
 
@@ -151,7 +165,7 @@ impl DiscardBox {
     ) -> Received {
         let Some(discard) = self.current.take() else {
             return Received::Failed {
-                message: "risposta di `worktree.discard` inattesa".to_owned(),
+                message: tr!("discard-unexpected-response", command = COMMAND),
                 reload: true,
             };
         };
@@ -169,17 +183,21 @@ impl DiscardBox {
                 Received::Confirm
             }
             Err(e) if kind == Some(ErrorKind::NotAllowed) => Received::Failed {
-                message: format!("{label} non possibile: {e}"),
+                message: tr!("discard-not-allowed", label = &label, error = e),
                 reload: false,
             },
             Err(e) => Received::Failed {
-                message: format!("{label} non riuscito: {e}"),
+                message: tr!("discard-failed", label = &label, error = e),
                 reload: false,
             },
             Ok(value) => match serde_json::from_value::<DiscardResult>(value) {
                 Ok(result) => Received::Done(Box::new(result)),
                 Err(e) => Received::Failed {
-                    message: format!("{COMMAND}: risultato inatteso: {e}"),
+                    message: tr!(
+                        "discard-unexpected-result",
+                        command = COMMAND,
+                        error = e.to_string()
+                    ),
                     reload: true,
                 },
             },
@@ -209,14 +227,14 @@ pub struct DiscardResult {
 impl DiscardResult {
     /// Il messaggio per la barra di stato.
     pub fn notice(&self) -> String {
-        let what = match self.files.as_slice() {
-            [one] => format!("di {}", one.path.to_string_lossy()),
-            many => format!("di {} file", many.len()),
-        };
-        format!(
-            "Modifiche {what} scartate; backup in {}. «Annulla» le rimette",
-            self.backup
-        )
+        match self.files.as_slice() {
+            [one] => tr!(
+                "discard-done-one",
+                path = one.path.to_string_lossy().into_owned(),
+                backup = &self.backup
+            ),
+            many => tr!("discard-done-many", n = many.len(), backup = &self.backup),
+        }
     }
 }
 
@@ -304,15 +322,15 @@ impl UndoResult {
     /// Il messaggio per la barra di stato.
     pub fn notice(&self) -> String {
         let mut text = match (&self.undone, &self.redone) {
-            (Some(entry), _) => format!("Annullato: {}", entry.description),
-            (None, Some(entry)) => format!("Rifatto: {}", entry.description),
-            (None, None) => "Fatto".to_owned(),
+            (Some(entry), _) => tr!("undo-undone", description = &entry.description),
+            (None, Some(entry)) => tr!("undo-redone", description = &entry.description),
+            (None, None) => tr!("undo-done"),
         };
         if !self.backups.is_empty() {
-            text.push_str(&format!("; backup in {}", self.backups.join(", ")));
+            text.push_str(&tr!("undo-backups", refs = self.backups.join(", ")));
         }
         for warning in &self.warnings {
-            text.push_str(&format!("; attenzione: {warning}"));
+            text.push_str(&tr!("undo-warning", warning = warning));
         }
         text
     }
@@ -330,10 +348,10 @@ impl App {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let label = discard::describe(&paths);
+                let label = discard::describe_check(&paths);
                 if let Some(params) = repo.discard.start(paths) {
                     repo.write_error = None;
-                    repo.write_label = Some(format!("Controllo per {}", lowercase_first(&label)));
+                    repo.write_label = Some(label);
                     self.submit(discard::COMMAND, params, Request::Discard(generation));
                 }
             }
@@ -398,8 +416,7 @@ impl App {
                     }
                     None => {
                         let reason = result.status_error.unwrap_or_default();
-                        self.error =
-                            format!("Modifiche scartate, ma lo stato non si rilegge: {reason}");
+                        self.error = tr!("discard-status-not-reread", reason = reason);
                         self.submit("repo.status", json!({}), Request::Status(generation));
                     }
                 }

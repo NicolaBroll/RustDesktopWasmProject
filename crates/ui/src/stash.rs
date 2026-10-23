@@ -20,6 +20,7 @@ use crate::discard::{History, Phase};
 use crate::{Action, App, Done, Request, stash};
 use crate::{ErrorKind, format};
 use project_domain::{Oid, Signature, Status};
+use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -94,29 +95,34 @@ impl Stash {
     /// Branch e base: `su main · 1a2b3c4`, `HEAD staccata · 1a2b3c4`.
     pub fn origin(&self) -> String {
         match &self.branch {
-            Some(branch) => format!("su {branch} · {}", self.base.short()),
-            None => format!("HEAD staccata · {}", self.base.short()),
+            Some(branch) => tr!(
+                "stash-origin-branch",
+                branch = branch,
+                base = self.base.short()
+            ),
+            None => tr!("stash-origin-detached", base = self.base.short()),
         }
     }
 
     /// Il testo del suggerimento della riga.
     pub fn tooltip(&self) -> String {
-        let mut text = format!(
-            "{}\n{}\n{}\nCreato su {} il {} (UTC)",
-            self.name,
-            self.message,
-            self.id,
-            self.base,
-            self.date()
+        let created = tr!(
+            "stash-tooltip-created",
+            base = self.base.to_string(),
+            date = self.date()
         );
+        let mut lines = vec![
+            self.name.clone(),
+            self.message.clone(),
+            self.id.to_string(),
+            created,
+        ];
         if self.untracked {
-            text.push_str(
-                "\nContiene anche file non tracciati: non si vedono nei file dello stash, ma \
-                 applicandolo tornano",
-            );
+            lines.push(tr!("stash-tooltip-untracked"));
         }
-        text.push_str("\nClic: mostra i file dello stash\nClic destro: applica, pop, elimina");
-        text
+        lines.push(tr!("stash-tooltip-click"));
+        lines.push(tr!("stash-tooltip-right"));
+        lines.join("\n")
     }
 }
 
@@ -263,8 +269,13 @@ impl StashBox {
     /// La risposta di `stash.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
         match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value)
-                .map_err(|e| format!("{LIST}: risultato inatteso: {e}"))
+            serde_json::from_value::<ListResult>(value).map_err(|e| {
+                tr!(
+                    "stash-unexpected-result",
+                    command = LIST,
+                    error = e.to_string()
+                )
+            })
         }) {
             Ok(list) => self.set_list(list.stashes),
             Err(e) => self.list_error = Some(e),
@@ -360,7 +371,7 @@ impl StashBox {
         }
         dialog.sending = true;
         dialog.error = None;
-        Some((dialog.params(), "Stash delle modifiche".to_owned()))
+        Some((dialog.params(), tr!("stash-push-label")))
     }
 
     /// Comincia l'apply (`pop`: falso) o il pop dello stash `id`: parametri e descrizione.
@@ -380,8 +391,8 @@ impl StashBox {
             "restore_index": self.restore_index,
         });
         let label = match op {
-            Op::Pop => format!("Pop di {}", stash.name),
-            _ => format!("Applicazione di {}", stash.name),
+            Op::Pop => tr!("stash-pop-label", name = &stash.name),
+            _ => tr!("stash-apply-label", name = &stash.name),
         };
         self.conflicts = None;
         self.applying = Some((op, stash));
@@ -396,7 +407,7 @@ impl StashBox {
         }
         let stash = self.find(id)?.clone();
         let params = json!({ "index": stash.index, "expected": stash.id.to_string() });
-        let label = format!("Controllo per l'eliminazione di {}", stash.name);
+        let label = tr!("stash-drop-check-label", name = &stash.name);
         self.dialog = Some(Dialog::Drop(DropDialog {
             stash,
             phase: Phase::Checking,
@@ -419,7 +430,7 @@ impl StashBox {
                 "expected": drop.stash.id.to_string(),
                 "confirm": true,
             }),
-            format!("Eliminazione di {}", drop.stash.name),
+            tr!("stash-drop-label", name = &drop.stash.name),
         ))
     }
 
@@ -469,7 +480,7 @@ impl StashBox {
                 // Un errore di git: forse lo stash c'è, si rilegge tutto.
                 self.dialog = None;
                 Received::Failed {
-                    message: format!("Stash non riuscito: {e}"),
+                    message: tr!("stash-push-failed", error = e),
                     reload: true,
                 }
             }
@@ -478,26 +489,23 @@ impl StashBox {
                 match parse::<PushResult>(Op::Push, value) {
                     Ok(result) => {
                         let warning = reread_warning(
-                            "Stash creato",
+                            &tr!("stash-push-done-what"),
                             result.stashes_error.clone(),
                             result.status_error.clone(),
                         );
                         if let Some(list) = result.stashes {
                             self.set_list(list);
                         }
-                        let untracked = if result.stash.untracked {
-                            ", con i file non tracciati"
+                        let name = &result.stash.name;
+                        let title = result.stash.title();
+                        let notice = if result.stash.untracked {
+                            tr!("stash-push-done-untracked", name = name, title = title)
                         } else {
-                            ""
+                            tr!("stash-push-done", name = name, title = title)
                         };
                         Received::Done(Box::new(Outcome {
                             op: Op::Push,
-                            notice: format!(
-                                "Modifiche messe da parte in {} («{}»{untracked}). «Annulla» le \
-                                 rimette",
-                                result.stash.name,
-                                result.stash.title()
-                            ),
+                            notice,
                             status: result.status,
                             history: Some(result.history),
                             warning,
@@ -526,26 +534,26 @@ impl StashBox {
             return unexpected(op);
         }
         let what = match op {
-            Op::Pop => format!("Pop di {}", stash.name),
-            _ => format!("Applicazione di {}", stash.name),
+            Op::Pop => tr!("stash-pop-label", name = &stash.name),
+            _ => tr!("stash-apply-label", name = &stash.name),
         };
         match result {
             // Modifiche locali sui file dello stash, elenco cambiato, conflitti aperti: niente
             // è cambiato. Si rilegge l'elenco (se è cambiato, si vede dov'è lo stash).
             Err(e) if matches!(kind, Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams)) => {
                 Received::Failed {
-                    message: format!("{what} non possibile: {e}"),
+                    message: tr!("stash-op-not-allowed", label = &what, error = e),
                     reload: false,
                 }
             }
             Err(e) => Received::Failed {
-                message: format!("{what} non riuscita: {e}"),
+                message: tr!("stash-op-failed", label = &what, error = e),
                 reload: true,
             },
             Ok(value) => match parse::<ApplyResult>(op, value) {
                 Ok(result) => {
                     let mut warning = reread_warning(
-                        &format!("{what} fatta"),
+                        &tr!("stash-op-done-what", label = &what),
                         result.stashes_error.clone(),
                         result.status_error.clone(),
                     );
@@ -555,12 +563,8 @@ impl StashBox {
                         if !self.popped.contains(&stash.id) {
                             self.popped.push(stash.id);
                         }
-                        let text = format!(
-                            "{} applicato, ma non tolto dall'elenco: le modifiche sono già nei \
-                             file. Non ripetere il pop; per toglierlo usare Elimina…{}",
-                            stash.name,
-                            warnings_text(&result.warnings)
-                        );
+                        let text = tr!("stash-pop-not-dropped-warning", name = &stash.name)
+                            + &warnings_text(&result.warnings);
                         warning = Some(match warning {
                             Some(w) => format!("{text}; {w}"),
                             None => text,
@@ -616,29 +620,32 @@ impl StashBox {
             Err(e) => {
                 let refused =
                     matches!(kind, Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams));
-                let what = if refused {
-                    "non possibile"
+                let name = &drop.stash.name;
+                let message = if refused {
+                    tr!("stash-drop-not-allowed", name = name, error = &e)
                 } else {
-                    "non riuscita"
+                    tr!("stash-drop-failed", name = name, error = &e)
                 };
                 Received::Failed {
-                    message: format!("Eliminazione di {} {what}: {e}", drop.stash.name),
+                    message,
                     reload: !refused,
                 }
             }
             Ok(value) => match parse::<DropResult>(Op::Drop, value) {
                 Ok(result) => {
-                    let warning =
-                        reread_warning("Stash eliminato", result.stashes_error.clone(), None);
+                    let warning = reread_warning(
+                        &tr!("stash-drop-done-what"),
+                        result.stashes_error.clone(),
+                        None,
+                    );
                     if let Some(list) = result.stashes {
                         self.set_list(list);
                     }
-                    let mut notice = format!(
-                        "{} («{}») eliminato; backup in {}. «Annulla» lo rimette in cima \
-                         all'elenco",
-                        result.stash.name,
-                        result.stash.title(),
-                        result.backup
+                    let mut notice = tr!(
+                        "stash-drop-done",
+                        name = &result.stash.name,
+                        title = result.stash.title(),
+                        backup = &result.backup
                     );
                     notice.push_str(&warnings_text(&result.warnings));
                     Received::Done(Box::new(Outcome {
@@ -661,33 +668,39 @@ impl StashBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: format!("risposta di `{}` inattesa", op.command()),
+        message: tr!("stash-unexpected-response", command = op.command()),
         reload: true,
     }
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| format!("{}: risultato inatteso: {e}", op.command()))
+    serde_json::from_value(value).map_err(|e| {
+        tr!(
+            "stash-unexpected-result",
+            command = op.command(),
+            error = e.to_string()
+        )
+    })
 }
 
 /// `; attenzione: …` per ogni avviso.
 fn warnings_text(warnings: &[String]) -> String {
     warnings
         .iter()
-        .map(|w| format!("; attenzione: {w}"))
+        .map(|w| tr!("stash-warning", warning = w))
         .collect()
 }
 
 /// Il problema dopo un'operazione riuscita: elenco o stato non riletti.
 fn reread_warning(what: &str, stashes: Option<String>, status: Option<String>) -> Option<String> {
     let parts: Vec<String> = [
-        stashes.map(|e| format!("gli stash non si rileggono: {e}")),
-        status.map(|e| format!("lo stato non si rilegge: {e}")),
+        stashes.map(|e| tr!("stash-reread-stashes", error = e)),
+        status.map(|e| tr!("stash-reread-status", error = e)),
     ]
     .into_iter()
     .flatten()
     .collect();
-    (!parts.is_empty()).then(|| format!("{what}, ma {}", parts.join("; ")))
+    (!parts.is_empty()).then(|| tr!("stash-reread-but", what = what, problems = parts.join("; ")))
 }
 
 /// Risultato di `stash.push`.
@@ -724,29 +737,15 @@ impl ApplyResult {
     fn notice(&self, op: Op, stash: &Stash) -> String {
         let name = &stash.name;
         let mut notice = match (op, self.conflicts.len(), self.dropped) {
-            (Op::Pop, 0, true) => {
-                let backup = self
-                    .backup
-                    .as_deref()
-                    .map(|b| format!("; backup in {b}"))
-                    .unwrap_or_default();
-                format!("{name} applicato ed eliminato dall'elenco{backup}")
-            }
-            (Op::Pop, 0, false) => format!(
-                "{name} applicato, ma non tolto dall'elenco: non ripetere il pop, eliminarlo con \
-                 Elimina…"
-            ),
-            (_, 0, _) => format!("{name} applicato; resta nell'elenco"),
-            (_, 1, _) => format!(
-                "{name} applicato con 1 file in conflitto: risolverlo e metterlo in stage; lo \
-                 stash resta nell'elenco"
-            ),
-            (_, n, _) => format!(
-                "{name} applicato con {n} file in conflitto: risolverli e metterli in stage; lo \
-                 stash resta nell'elenco"
-            ),
+            (Op::Pop, 0, true) => match &self.backup {
+                Some(backup) => tr!("stash-pop-done-backup", name = name, backup = backup),
+                None => tr!("stash-pop-done", name = name),
+            },
+            (Op::Pop, 0, false) => tr!("stash-pop-not-dropped", name = name),
+            (_, 0, _) => tr!("stash-apply-done", name = name),
+            (_, n, _) => tr!("stash-apply-conflicts", name = name, n = n),
         };
-        notice.push_str(". Non si annulla con «Annulla»");
+        notice.push_str(&tr!("stash-not-undoable"));
         // L'avviso del motore sul pop in conflitto ripete quello che la finestra spiega.
         let warnings: Vec<String> = self
             .warnings

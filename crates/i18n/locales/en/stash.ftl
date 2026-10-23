@@ -1,0 +1,102 @@
+# Stash: section, panel, dialogs and messages (stash.rs, view/stash_view.rs).
+# $name: the stash name (stash@{0}); $title: its message without git's prefix.
+
+stash-origin-branch = on { $branch } · { $base }
+stash-origin-detached = detached HEAD · { $base }
+stash-tooltip-created = Created on { $base } at { $date } (UTC)
+stash-tooltip-untracked = Also contains untracked files: they don't show among the stash's files, but applying it brings them back
+stash-tooltip-click = Click: show the stash's files
+stash-tooltip-right = Right-click: apply, pop, drop
+stash-unexpected-result = { $command }: unexpected result: { $error }
+stash-unexpected-response = unexpected response from `{ $command }`
+stash-push-label = Stashing changes
+stash-pop-label = Popping { $name }
+stash-apply-label = Applying { $name }
+stash-drop-check-label = Checking before dropping { $name }
+stash-drop-label = Dropping { $name }
+stash-push-failed = Stash failed: { $error }
+stash-push-done-what = Stash created
+stash-push-done = Changes stashed in { $name } (“{ $title }”). “Undo” brings them back
+stash-push-done-untracked = Changes stashed in { $name } (“{ $title }”, with untracked files). “Undo” brings them back
+stash-op-not-allowed = { $label } not possible: { $error }
+stash-op-failed = { $label } failed: { $error }
+stash-op-done-what = { $label }: done
+stash-pop-not-dropped-warning = { $name } applied, but not removed from the list: the changes are already in the files. Don't repeat the pop; to remove it use Drop…
+stash-drop-not-allowed = Dropping { $name } not possible: { $error }
+stash-drop-failed = Dropping { $name } failed: { $error }
+stash-drop-done-what = Stash dropped
+stash-drop-done = { $name } (“{ $title }”) dropped; backup in { $backup }. “Undo” puts it back at the top of the list
+stash-warning = ; warning: { $warning }
+stash-reread-stashes = the stashes can't be reread: { $error }
+stash-reread-status = the status can't be reread: { $error }
+stash-reread-but = { $what }, but { $problems }
+stash-pop-done = { $name } applied and dropped from the list
+stash-pop-done-backup = { $name } applied and dropped from the list; backup in { $backup }
+stash-pop-not-dropped = { $name } applied, but not removed from the list: don't repeat the pop, remove it with Drop…
+stash-apply-done = { $name } applied; it stays in the list
+stash-apply-conflicts = { $n ->
+    [one] { $name } applied with 1 conflicted file: resolve it and stage it; the stash stays in the list
+   *[other] { $name } applied with { $n } conflicted files: resolve them and stage them; the stash stays in the list
+}
+stash-not-undoable = . “Undo” doesn't revert it
+stash-section-title = Stashes ({ $n })
+stash-section-title-loading = Stashes
+stash-none = No stashes
+stash-loading = Reading stashes…
+stash-list-error = Stashes not read: { $error }
+stash-new-button = New stash…
+stash-push-help = Sets the changes aside (staged and unstaged; optionally untracked files too) and restores the files to the last commit. “Undo” brings them back
+stash-no-changes = No changes to stash
+stash-origin-untracked = { $origin } · with untracked
+stash-apply-button = Apply
+stash-apply-help = Puts the changes of { $name } back into the files; the stash stays in the list. Never over files with local changes: in that case nothing changes. “Undo” doesn't revert it
+stash-pop-button = Pop
+stash-pop-help = Applies { $name } and, if there are no conflicts, removes it from the list (its commit stays in a backup refs/project/backup/stash-…). With conflicts the stash stays. “Undo” doesn't revert it
+stash-pop-blocked = Already applied by a pop that couldn't remove it from the list: the changes are in the files, don't repeat it. To remove it, Drop…
+stash-restore-index = Restore the index too
+stash-restore-index-help = Stages again what was staged when the stash was created (--index); without it, everything comes back unstaged except new files
+stash-drop-button = Drop…
+stash-drop-help = Removes the stash from the list; asks for confirmation first. Its commit stays in a backup (refs/project/backup/stash-…) and “Undo” puts it back at the top of the list
+stash-field-stash = Stash
+stash-field-commit = Commit
+stash-copy = Copy
+stash-copy-help = Copy the full id
+stash-field-created-on = Created on
+stash-branch = (branch { $branch })
+stash-detached = (detached HEAD)
+stash-field-date = Date
+stash-date-utc = { $date } UTC
+stash-field-message = Message
+stash-untracked-note = Also contains untracked files: they are not in the list below, but applying the stash brings them back.
+stash-changed-files = Tracked files changed from the base:
+stash-files-loading = Loading the stash's files…
+stash-retry = Retry
+stash-dialog-title = Stash changes
+stash-dialog-body = Changes to tracked files (staged and unstaged) are set aside in a stash and the files go back to the last commit. Bring them back with Apply or Pop from the Stashes section; “Undo” in the bar restores them right away.
+stash-dialog-message = Message
+stash-dialog-message-hint = optional (e.g. halfway through the parser)
+stash-include-untracked = Include untracked files
+stash-include-untracked-count = Include untracked files ({ $n })
+stash-include-untracked-help = Also stashes new files not yet added (and removes them from disk); never ignored ones. Without it, they stay where they are
+stash-keep-index = Keep the index
+stash-keep-index-help = What is staged stays staged (and in the files), but is also saved in the stash; the rest is set aside
+stash-submit = Stash
+stash-close = Close
+stash-sending = Stashing…
+stash-drop-title = Drop { $name }?
+stash-drop-body = The stash “{ $title }” leaves the list: the changes it contains can no longer be applied from here. The repo's files don't change.
+stash-drop-what-happens = What happens:
+stash-drop-undo = With “Undo” in the top bar the stash comes back at the top of the list (stash@{"{"}0{"}"}), as long as the app stays open: the operation log is in memory. After closing, the backup of its commit remains in refs/project/backup/stash-….
+stash-drop-confirm = Drop the stash
+stash-drop-keep = Don't drop
+stash-conflicts-title-pop = Pop of { $name }: conflicts
+stash-conflicts-title-apply = Apply of { $name }: conflicts
+stash-conflicts-body-apply = The stash was applied, but since the commit it was created on the same files have changed: the ones below are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: those files had no local changes and { $name } stays in the list.
+stash-conflicts-body-pop = The stash was applied, but since the commit it was created on the same files have changed: the ones below are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: those files had no local changes and { $name } stays in the list (the pop doesn't drop it).
+stash-conflicts-how = To resolve them: fix each file and stage it from the changes area. Then, if it's no longer needed, drop the stash. While conflicts remain, neither Stash nor Apply is possible.
+stash-conflicts-files = { $n ->
+    [one] Conflicted file:
+   *[other] { $n } conflicted files:
+}
+stash-go-to-changes = Go to changes
+stash-go-to-changes-help = Opens the staging area with the conflicted files

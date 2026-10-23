@@ -4,6 +4,7 @@
 
 use crate::{Action, App, Request, stage};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
+use project_i18n::tr;
 use serde_json::json;
 
 /// Una delle due liste dell'area di stage.
@@ -156,13 +157,21 @@ impl StageOp {
 
     /// Nome dell'operazione per i messaggi, es. "Stage di 2 file".
     pub fn describe(self, paths: &[RepoPath]) -> String {
-        let verb = match self {
-            StageOp::Stage => "Stage",
-            StageOp::Unstage => "Unstage",
-        };
-        match paths {
-            [one] => format!("{verb} di {}", one.to_string_lossy()),
-            many => format!("{verb} di {} file", many.len()),
+        match (self, paths) {
+            (StageOp::Stage, [one]) => {
+                tr!(
+                    "stage-label-stage-one",
+                    path = one.to_string_lossy().into_owned()
+                )
+            }
+            (StageOp::Stage, many) => tr!("stage-label-stage-many", n = many.len()),
+            (StageOp::Unstage, [one]) => {
+                tr!(
+                    "stage-label-unstage-one",
+                    path = one.to_string_lossy().into_owned()
+                )
+            }
+            (StageOp::Unstage, many) => tr!("stage-label-unstage-many", n = many.len()),
         }
     }
 }

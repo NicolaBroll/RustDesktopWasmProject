@@ -204,39 +204,108 @@ fn pull_merge_rebase_and_undo() {
 }
 
 #[test]
-fn pull_conflict_changes_nothing() {
+fn pull_merge_conflict_stays_in_progress() {
     // 12 crea `src/bin/app.rs` (rinomina), e il remoto lo crea con un altro contenuto.
-    for rebase in [false, true] {
-        let mut repo = diverged(Some("src/bin/app.rs"));
-        if rebase {
-            repo.set_pull_settings(PullSettings {
-                rebase: Some("true".into()),
-                ff: None,
-            });
-        }
-        let (r, mut s) = opened_with(repo);
-        let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-        let EngineError::PullConflict {
-            operation, files, ..
-        } = &err
-        else {
-            panic!("{err}");
-        };
-        let expected = if rebase {
-            PullOperation::Rebase
-        } else {
-            PullOperation::Merge
-        };
-        assert_eq!(*operation, expected);
-        assert_eq!(files, &["src/bin/app.rs"]);
-        assert!(err.to_string().contains("annullato"), "{err}");
-        assert_eq!(
-            target(&r, &mut s, "refs/heads/main").unwrap(),
-            oid(12).to_string()
-        );
-        let history = r.run("edit.history", &mut s, json!({})).unwrap();
-        assert_eq!(history["can_undo"], false);
-    }
+    let (r, mut s) = opened_with(diverged(Some("src/bin/app.rs")));
+    let out = r.run("remote.pull", &mut s, json!({})).unwrap();
+    assert_eq!(out["strategy"], "merge");
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["src/bin/app.rs"]));
+    assert!(
+        out["message"].as_str().unwrap().contains("CONFLICT"),
+        "{out}"
+    );
+    assert_eq!(out["before"], oid(12).to_string());
+    assert_eq!(out["after"], oid(12).to_string());
+    assert_eq!(out["backup"], "refs/project/backup/pull-1");
+    assert_eq!(out["can_undo"], false);
+    assert_eq!(out["status"]["operation"], "Merge");
+    assert_eq!(
+        target(&r, &mut s, "refs/heads/main").unwrap(),
+        oid(12).to_string()
+    );
+    let op = r.run("repo.operation", &mut s, json!({})).unwrap();
+    assert_eq!(op["operation"], "Merge");
+    assert_eq!(op["incoming"][0]["id"], oid(20).to_string());
+    assert_eq!(op["incoming"][0]["label"], "origin/main");
+    assert_eq!(op["message"], "Merge remote-tracking branch 'origin/main'");
+    // Un altro pull è rifiutato finché il merge è in corso.
+    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+
+    // Risolto e in stage: `merge.continue` fa il commit di merge, che va nel diario.
+    r.run(
+        "index.stage",
+        &mut s,
+        json!({ "paths": ["src/bin/app.rs"] }),
+    )
+    .unwrap();
+    let done = r.run("merge.continue", &mut s, json!({})).unwrap();
+    assert_eq!(
+        done["commit"]["parents"],
+        json!([oid(12).to_string(), oid(20).to_string()])
+    );
+    assert_eq!(
+        done["message"],
+        "Merge remote-tracking branch 'origin/main'"
+    );
+    assert_eq!(done["can_undo"], true);
+    r.run("edit.undo", &mut s, json!({})).unwrap();
+    assert_eq!(
+        target(&r, &mut s, "refs/heads/main").unwrap(),
+        oid(12).to_string()
+    );
+}
+
+#[test]
+fn pull_merge_conflict_then_abort() {
+    let (r, mut s) = opened_with(diverged(Some("src/bin/app.rs")));
+    let out = r.run("remote.pull", &mut s, json!({})).unwrap();
+    assert_eq!(out["in_progress"], true);
+    let err = r.run("merge.abort", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+    let aborted = r
+        .run("merge.abort", &mut s, json!({ "confirm": true }))
+        .unwrap();
+    assert_eq!(aborted["status"]["operation"], json!(null));
+    assert_eq!(
+        aborted["status"]["entries"],
+        json!([]),
+        "com'era prima del pull"
+    );
+    assert_eq!(aborted["can_undo"], false);
+    assert_eq!(
+        target(&r, &mut s, "refs/heads/main").unwrap(),
+        oid(12).to_string()
+    );
+}
+
+#[test]
+fn pull_rebase_conflict_changes_nothing() {
+    let mut repo = diverged(Some("src/bin/app.rs"));
+    repo.set_pull_settings(PullSettings {
+        rebase: Some("true".into()),
+        ff: None,
+    });
+    let (r, mut s) = opened_with(repo);
+    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
+    let EngineError::PullConflict {
+        operation, files, ..
+    } = &err
+    else {
+        panic!("{err}");
+    };
+    assert_eq!(*operation, PullOperation::Rebase);
+    assert_eq!(files, &["src/bin/app.rs"]);
+    assert!(err.to_string().contains("annullato"), "{err}");
+    assert_eq!(
+        target(&r, &mut s, "refs/heads/main").unwrap(),
+        oid(12).to_string()
+    );
+    let history = r.run("edit.history", &mut s, json!({})).unwrap();
+    assert_eq!(history["can_undo"], false);
+    let status = r.run("repo.status", &mut s, json!({})).unwrap();
+    assert_eq!(status["operation"], json!(null));
 }
 
 #[test]

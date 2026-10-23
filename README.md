@@ -133,14 +133,18 @@ senza upstream (l'errore dice come impostarlo, o di pubblicarlo con `remote.push
 rebase in corso, file in conflitto, `pull.rebase=interactive`; rifiutato anche se il pull
 porterebbe un file che esiste già nel worktree come non tracciato o ignorato (git lo
 sovrascriverebbe). Prima di scrivere salva il branch in
-`refs/project/backup/pull-...`. Se il merge o il rebase si ferma in conflitto viene annullato:
-il branch resta com'era e l'errore elenca i file in conflitto (per risolverli, per ora, git da
-terminale). Entra nel diario: `edit.undo` riporta il branch al commit di prima con indice e
-worktree (come `git reset --keep`: rifiutato se un file da ripristinare ha modifiche locali o se
-un file da ricreare c'è già). Risultato: `{"branch", "remote", "upstream", "strategy":
-"fast_forward"|"merge"|"rebase"|"up_to_date", "strategy_source", "before", "after", "ahead",
-"behind", "backup", "fetch": {"updated", "messages"}, "warnings", "status", "refs"}` più lo stato
-del diario.
+`refs/project/backup/pull-...`. Se il **merge** si ferma (conflitti, un hook, la firma) resta
+in corso come con `merge.start`: non è un errore, il risultato ha `"in_progress": true` e i file
+in `conflicts`, il branch non si è mosso e il backup resta; si conclude con `merge.continue` (dopo
+aver risolto e messo in stage i file) o si annulla con `merge.abort`. Se si ferma il **rebase**
+viene annullato: il branch resta com'era e l'errore elenca i file in conflitto (per risolverli,
+per ora, git da terminale o la strategia merge). Entra nel diario quando sposta il branch:
+`edit.undo` riporta il branch al commit di prima con indice e worktree (come `git reset --keep`:
+rifiutato se un file da ripristinare ha modifiche locali o se un file da ricreare c'è già); il
+merge fermo no (entra con `merge.continue`). Risultato: `{"branch", "remote", "upstream",
+"strategy": "fast_forward"|"merge"|"rebase"|"up_to_date", "strategy_source", "before", "after",
+"ahead", "behind", "in_progress", "conflicts", "message", "backup", "fetch": {"updated",
+"messages"}, "warnings", "status", "refs"}` più lo stato del diario.
 
 `remote.push {"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}` pubblica il branch (HEAD se manca)
 con un refspec esplicito `refs/heads/<b>:refs/heads/<b>`: mai tag o altri branch, qualunque sia

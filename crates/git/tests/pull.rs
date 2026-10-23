@@ -1,6 +1,6 @@
 //! Test di integrazione di `remote.pull` (S26) con il `CliBackend` e un remoto locale (`git
 //! init --bare`) su cui un secondo clone pubblica: fast-forward, merge, rebase secondo la
-//! configurazione, conflitti (annullati), modifiche locali, branch senza upstream, undo e redo,
+//! configurazione, conflitti (il merge resta in corso, il rebase si annulla), modifiche locali, branch senza upstream, undo e redo,
 //! branch non attivo, nomi che iniziano con `-`.
 
 mod common;
@@ -321,53 +321,281 @@ fn next_undo(r: &Registry, s: &mut Session) -> String {
 }
 
 #[test]
-fn conflicts_are_aborted_and_reported() {
-    for rebase in [false, true] {
-        let Setup {
-            other,
-            work,
-            _remote: _keep,
-            ..
-        } = setup();
-        publish(&other, "a.txt", "loro\n", "loro");
-        let mine = work.commit_file("a.txt", "nostra\n", "nostra");
-        if rebase {
-            work.git(&["config", "pull.rebase", "true"]);
-        }
-        let (r, mut s) = open(&work);
-        let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-        let EngineError::PullConflict {
-            branch,
-            upstream,
-            operation,
-            files,
-            message,
-        } = &err
-        else {
-            panic!("{err}");
-        };
-        assert_eq!(branch, "main");
-        assert_eq!(upstream, "origin/main");
-        let expected = if rebase {
-            PullOperation::Rebase
-        } else {
-            PullOperation::Merge
-        };
-        assert_eq!(*operation, expected);
-        assert_eq!(files, &["a.txt"]);
-        assert!(message.contains("CONFLICT"), "{message}");
-        // Annullato: tutto com'era, nessuna operazione in corso, nessun backup rimasto.
-        assert_eq!(work.rev("HEAD"), mine);
-        assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
-        assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
-        assert!(!work.path().join(".git/MERGE_HEAD").exists());
-        assert!(!work.path().join(".git/rebase-merge").exists());
-        assert_eq!(backups(&work), Vec::<String>::new());
-        let history = r.run("edit.history", &mut s, json!({})).unwrap();
-        assert_eq!(history["can_undo"], false);
-        // Il fetch resta fatto.
-        assert_ne!(work.rev("origin/main"), work.rev("HEAD~1"));
+fn a_merge_conflict_stays_in_progress_then_continue() {
+    let Setup {
+        other,
+        work,
+        _remote: _keep,
+        ..
+    } = setup();
+    let theirs = publish(&other, "a.txt", "loro\n", "loro");
+    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
+    // Un non tracciato qualsiasi non blocca il pull e resta com'è.
+    work.write("appunti.txt", "?\n");
+    let (r, mut s) = open(&work);
+    let out = pull(&r, &mut s, json!({}));
+    assert_eq!(out["strategy"], "merge");
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["a.txt"]));
+    assert!(
+        out["message"].as_str().unwrap().contains("CONFLICT"),
+        "{out}"
+    );
+    assert_eq!(out["before"], mine.to_string());
+    assert_eq!(out["after"], mine.to_string());
+    assert_eq!(out["warnings"], json!([]));
+    // Il backup resta, niente nel diario, il fetch è fatto.
+    let backup = out["backup"].as_str().unwrap().to_owned();
+    assert!(backup.starts_with("refs/project/backup/pull-"), "{backup}");
+    assert_eq!(backups(&work), vec![backup.clone()]);
+    assert_eq!(work.rev(&backup), mine);
+    assert_eq!(out["can_undo"], false);
+    assert_eq!(work.rev("origin/main"), theirs);
+    // Il merge è in corso: MERGE_HEAD è l'upstream, il messaggio è quello del pull.
+    assert_eq!(work.rev("HEAD"), mine);
+    assert_eq!(work.rev("MERGE_HEAD"), theirs);
+    let merge_msg = std::fs::read_to_string(work.path().join(".git/MERGE_MSG")).unwrap();
+    assert!(
+        merge_msg.starts_with("Merge remote-tracking branch 'origin/main'\n"),
+        "{merge_msg}"
+    );
+    assert_eq!(out["status"]["operation"], "Merge");
+    let op = r.run("repo.operation", &mut s, json!({})).unwrap();
+    assert_eq!(op["operation"], "Merge");
+    assert_eq!(op["conflicts"], json!(["a.txt"]));
+    assert_eq!(op["incoming"][0]["label"], "origin/main");
+    assert_eq!(op["continue"], "merge.continue");
+    assert_eq!(op["message"], "Merge remote-tracking branch 'origin/main'");
+    // Un altro pull è rifiutato finché il merge è in corso; anche l'undo.
+    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(r.run("edit.undo", &mut s, json!({})).is_err());
+
+    // Risolto e messo in stage, `merge.continue` fa il commit di merge e va nel diario.
+    work.write("a.txt", "risolto\n");
+    r.run("index.stage", &mut s, json!({ "paths": ["a.txt"] }))
+        .unwrap();
+    let done = r.run("merge.continue", &mut s, json!({})).unwrap();
+    assert_eq!(
+        done["message"],
+        "Merge remote-tracking branch 'origin/main'"
+    );
+    let merge = work.rev("HEAD");
+    assert_eq!(work.rev("HEAD^1"), mine);
+    assert_eq!(work.rev("HEAD^2"), theirs);
+    assert_eq!(
+        work.git(&["log", "-1", "--format=%B"]).trim(),
+        "Merge remote-tracking branch 'origin/main'"
+    );
+    assert!(!work.path().join(".git/MERGE_HEAD").exists());
+    assert_eq!(done["can_undo"], true);
+    assert!(
+        next_undo(&r, &mut s).contains("origin/main"),
+        "{}",
+        next_undo(&r, &mut s)
+    );
+    assert_eq!(read(&work, "appunti.txt").as_deref(), Some("?\n"));
+    // L'undo riporta il branch a prima del pull, con indice e worktree.
+    r.run("edit.undo", &mut s, json!({})).unwrap();
+    assert_eq!(work.rev("HEAD"), mine);
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
+    r.run("edit.redo", &mut s, json!({})).unwrap();
+    assert_eq!(work.rev("HEAD"), merge);
+}
+
+#[test]
+fn a_merge_conflict_then_abort_is_back_to_before() {
+    let Setup {
+        other,
+        work,
+        _remote: _keep,
+        ..
+    } = setup();
+    publish(&other, "a.txt", "loro\n", "loro");
+    publish(&other, "b.txt", "nuovo\n", "b dal remoto");
+    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
+    let (r, mut s) = open(&work);
+    let out = pull(&r, &mut s, json!({ "strategy": "merge" }));
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["a.txt"]));
+    assert_eq!(read(&work, "b.txt").as_deref(), Some("nuovo\n"));
+    let backup = out["backup"].as_str().unwrap().to_owned();
+
+    // Senza conferma niente cambia.
+    let err = r.run("merge.abort", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+    assert!(work.path().join(".git/MERGE_HEAD").exists());
+    let aborted = r
+        .run("merge.abort", &mut s, json!({ "confirm": true }))
+        .unwrap();
+    assert!(
+        aborted["backup"]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/merge-abort-"),
+        "{aborted}"
+    );
+    // Tutto com'era prima del pull: il worktree era pulito.
+    assert_eq!(work.rev("HEAD"), mine);
+    assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
+    assert_eq!(read(&work, "b.txt"), None);
+    assert!(!work.path().join(".git/MERGE_HEAD").exists());
+    assert_eq!(aborted["can_undo"], false);
+    // Il backup del pull resta (è il branch com'era).
+    assert!(backups(&work).contains(&backup), "{:?}", backups(&work));
+    // Il pull si può ripetere.
+    let out = pull(&r, &mut s, json!({}));
+    assert_eq!(out["in_progress"], true);
+}
+
+#[test]
+fn a_rebase_conflict_is_still_aborted_and_reported() {
+    let Setup {
+        other,
+        work,
+        _remote: _keep,
+        ..
+    } = setup();
+    publish(&other, "a.txt", "loro\n", "loro");
+    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
+    work.git(&["config", "pull.rebase", "true"]);
+    let (r, mut s) = open(&work);
+    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
+    let EngineError::PullConflict {
+        branch,
+        upstream,
+        operation,
+        files,
+        message,
+    } = &err
+    else {
+        panic!("{err}");
+    };
+    assert_eq!(branch, "main");
+    assert_eq!(upstream, "origin/main");
+    assert_eq!(*operation, PullOperation::Rebase);
+    assert_eq!(files, &["a.txt"]);
+    assert!(message.contains("CONFLICT"), "{message}");
+    // Annullato: tutto com'era, nessuna operazione in corso, nessun backup rimasto.
+    assert_eq!(work.rev("HEAD"), mine);
+    assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
+    assert!(!work.path().join(".git/MERGE_HEAD").exists());
+    assert!(!work.path().join(".git/rebase-merge").exists());
+    assert_eq!(backups(&work), Vec::<String>::new());
+    let history = r.run("edit.history", &mut s, json!({})).unwrap();
+    assert_eq!(history["can_undo"], false);
+    // Il fetch resta fatto.
+    assert_ne!(work.rev("origin/main"), work.rev("HEAD~1"));
+}
+
+/// Installa l'hook `name` di `repo` con lo script `body` (dopo `#!/bin/sh`).
+fn install_hook(repo: &Repo, name: &str, body: &str) -> std::path::PathBuf {
+    let hook = repo.path().join(".git/hooks").join(name);
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, format!("#!/bin/sh\n{body}")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    hook
+}
+
+#[test]
+fn a_failed_rebase_abort_keeps_the_backup() {
+    // L'hook `post-checkout` (il rebase lo esegue dopo il checkout dell'upstream) lascia
+    // `index.lock`: il pick si ferma e anche `rebase --abort` fallisce, il rebase resta in corso.
+    let Setup {
+        other,
+        work,
+        _remote: _keep,
+        ..
+    } = setup();
+    publish(&other, "b.txt", "b\n", "dal remoto");
+    let mine = work.commit_file("c.txt", "c\n", "mio");
+    install_hook(
+        &work,
+        "post-checkout",
+        ": > \"$(git rev-parse --git-dir)/index.lock\"\n",
+    );
+    let (r, mut s) = open(&work);
+    let err = r
+        .run("remote.pull", &mut s, json!({ "strategy": "rebase" }))
+        .unwrap_err();
+    assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    let text = err.to_string();
+    assert!(text.contains("--abort` non è riuscito"), "{text}");
+    let kept = backups(&work);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].starts_with("refs/project/backup/pull-"), "{kept:?}");
+    assert!(text.contains(&kept[0]), "l'errore nomina il backup: {text}");
+    assert_eq!(work.rev(&kept[0]), mine);
+    assert!(work.path().join(".git/rebase-merge").exists());
+    let history = r.run("edit.history", &mut s, json!({})).unwrap();
+    assert_eq!(history["can_undo"], false);
+    // Pulizia da terminale: tolto il lock, il rebase si annulla e il branch è com'era.
+    std::fs::remove_file(work.path().join(".git/index.lock")).unwrap();
+    std::fs::remove_file(work.path().join(".git/hooks/post-checkout")).unwrap();
+    work.git(&["rebase", "--abort"]);
+    assert_eq!(work.rev("HEAD"), mine);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_conflict_is_listed_once() {
+    use std::os::unix::ffi::OsStrExt;
+    let Setup {
+        other,
+        work,
+        _remote: _keep,
+        ..
+    } = setup();
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
+    std::fs::write(other.path().join(name), "loro\n").unwrap();
+    other.git(&["add", "-A"]);
+    other.commit("loro");
+    other.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+    std::fs::write(work.path().join(name), "nostra\n").unwrap();
+    work.git(&["add", "-A"]);
+    work.commit("nostra");
+    let (r, mut s) = open(&work);
+    let out = pull(&r, &mut s, json!({}));
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(
+        out["conflicts"].as_array().unwrap().len(),
+        1,
+        "{}",
+        out["conflicts"]
+    );
+}
+
+#[test]
+fn a_merge_stopped_by_a_hook_stays_in_progress() {
+    let Setup {
+        other,
+        work,
+        _remote: _keep,
+        ..
+    } = setup();
+    publish(&other, "b.txt", "b\n", "dal remoto");
+    let mine = work.commit_file("c.txt", "c\n", "mio");
+    let hook = install_hook(&work, "pre-merge-commit", "echo no >&2\nexit 1\n");
+    let (r, mut s) = open(&work);
+    let out = pull(&r, &mut s, json!({}));
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!([]));
+    assert_eq!(work.rev("HEAD"), mine);
+    assert!(work.path().join(".git/MERGE_HEAD").exists());
+    assert_eq!(out["can_undo"], false);
+    let op = r.run("repo.operation", &mut s, json!({})).unwrap();
+    assert_eq!(op["ready"], true);
+    // Tolto l'hook, `merge.continue` conclude (`git commit` non usa `pre-merge-commit`).
+    std::fs::remove_file(&hook).unwrap();
+    r.run("merge.continue", &mut s, json!({})).unwrap();
+    assert_eq!(work.rev("HEAD^1"), mine);
+    assert_eq!(read(&work, "b.txt").as_deref(), Some("b\n"));
 }
 
 #[test]
@@ -603,21 +831,19 @@ fn ignored_files_are_never_overwritten() {
         assert!(clean(&work), "{case}");
         assert_eq!(backups(&work), Vec::<String>::new(), "{case}");
 
-        // Spostato il file, il pull riesce (salvo il conflitto, annullato).
+        // Spostato il file, il pull riesce (salvo il conflitto, che resta in corso).
         std::fs::remove_file(work.path().join("segreto.env")).unwrap();
-        let result = r.run("remote.pull", &mut s, json!({}));
-        if case == "merge_conflict" {
-            assert!(
-                matches!(result, Err(EngineError::PullConflict { .. })),
-                "{result:?}"
-            );
-        } else {
-            result.unwrap();
-            assert_eq!(
-                read(&work, "segreto.env").as_deref(),
-                Some("quella del remoto\n")
-            );
-        }
+        let out = pull(&r, &mut s, json!({}));
+        assert_eq!(
+            out["in_progress"],
+            case == "merge_conflict",
+            "{case}: {out}"
+        );
+        assert_eq!(
+            read(&work, "segreto.env").as_deref(),
+            Some("quella del remoto\n"),
+            "{case}"
+        );
     }
 }
 
@@ -642,14 +868,16 @@ fn a_conflict_resolved_by_rerere_is_still_a_conflict() {
     work.git(&["reset", "--quiet", "--hard", &mine.to_string()]);
 
     let (r, mut s) = open(&work);
-    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-    let EngineError::PullConflict { files, .. } = &err else {
-        panic!("{err}");
-    };
-    assert_eq!(files, &["a.txt"]);
+    let out = pull(&r, &mut s, json!({}));
+    // Il merge resta fermo e il file conta come conflitto anche se rerere l'ha già risolto
+    // (in stage): va controllato e poi concluso con `merge.continue`.
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["a.txt"]));
     assert_eq!(work.rev("HEAD"), mine);
-    assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
-    assert!(!work.path().join(".git/MERGE_HEAD").exists());
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("risolto\n"));
+    assert!(work.path().join(".git/MERGE_HEAD").exists());
+    r.run("merge.continue", &mut s, json!({})).unwrap();
+    assert_eq!(work.rev("HEAD^1"), mine);
 }
 
 #[test]

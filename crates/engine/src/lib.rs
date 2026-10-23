@@ -187,11 +187,13 @@ pub enum EngineError {
     /// locale toccato).
     #[error("`{command}` annullato")]
     Cancelled { command: &'static str },
-    /// `remote.pull`: il merge o il rebase dell'upstream si è fermato in conflitto. Il backend
-    /// l'ha **annullato** (`git merge --abort` / `git rebase --abort`): branch, indice e
-    /// worktree sono come prima del pull (che partiva da un worktree pulito), il fetch resta
-    /// fatto. `files` sono i file in conflitto, `message` il testo di git. Per integrare le
-    /// modifiche risolvendo i conflitti, per ora, git da terminale.
+    /// `remote.pull`: il rebase dell'upstream si è fermato in conflitto. Il backend l'ha
+    /// **annullato** (`git rebase --abort`): branch, indice e worktree sono come prima del pull
+    /// (che partiva da un worktree pulito), il fetch resta fatto. `files` sono i file in
+    /// conflitto, `message` il testo di git. Per integrare le modifiche risolvendo i conflitti,
+    /// per ora, git da terminale o la strategia merge (finché S32 non porta
+    /// `rebase.continue`/`rebase.abort`). Un **merge** fermo invece non è un errore: resta in
+    /// corso ([`PullOutcome::in_progress`](crate::PullOutcome::in_progress)).
     #[error(
         "pull di `{branch}` interrotto: il {operation} con `{upstream}` ha conflitti in {}. Il \
          {operation} è stato annullato e il branch è com'era (il fetch è fatto): per integrare \

@@ -18,12 +18,15 @@
 //!   come `git rebase <upstream>`, senza il fork-point di `git pull --rebase`: se l'upstream è
 //!   stato riscritto (force push) si riapplicano anche i suoi commit vecchi, e di solito il
 //!   rebase si ferma in conflitto (e si annulla);
-//! - conflitto: i file in conflitto dallo stato, poi `git merge --abort` / `git rebase --abort`
-//!   (il worktree era pulito: torna esattamente com'era) e [`EngineError::PullConflict`]. Se
-//!   l'annullamento non riesce, l'errore lo dice (il repo resta nel merge/rebase in corso).
+//! - merge fermo (conflitti, hook `pre-merge-commit`/`commit-msg`, firma): **resta in corso**
+//!   come con `merge.start` ([`PullOutcome::in_progress`] con i file in conflitto dallo stato e
+//!   dall'output di git), da concludere con `merge.continue` o annullare con `merge.abort`;
+//! - rebase fermo: i file in conflitto, poi `git rebase --abort` (il worktree era pulito: torna
+//!   esattamente com'era) e [`EngineError::PullConflict`]. Se l'annullamento non riesce,
+//!   l'errore lo dice (il repo resta nel rebase in corso, il backup resta).
 //!
 //! Prima di tutto il backup `refs/project/backup/pull-...` sul branch com'era; se poi niente
-//! cambia (errore, conflitto) si toglie. `GIT_REFLOG_ACTION=project: remote.pull` dà il
+//! cambia (errore, rebase annullato) si toglie; con il merge fermo resta. `GIT_REFLOG_ACTION=project: remote.pull` dà il
 //! messaggio del reflog.
 //!
 //! Undo/redo del branch attivo ([`CliBackend::reset_keep`]): gli stessi controlli di
@@ -36,7 +39,7 @@
 
 use super::CliBackend;
 use crate::command::{failure, os_from_bytes};
-use project_domain::{Commit, EntryKind, LOG_ARGS, Oid, Operation, parse_log};
+use project_domain::{Commit, EntryKind, LOG_ARGS, Oid, Operation, RepoPath, parse_log};
 use project_engine::{
     EngineError, HeadState, PullMode, PullOperation, PullOutcome, PullRequest, PullSettings,
     RefRestore, RestoreOutcome, UpstreamConfig, branch_ref, check_pull_state,
@@ -314,13 +317,80 @@ impl CliBackend {
         )?;
         let result = self.integrate(request, &full, &expected, &upstream);
         match result {
-            Ok(()) => {}
-            Err(e) => {
-                // Niente cambiato: il backup non serve (si toglie solo se il branch è com'era).
-                if self.ref_value(&full)? == Some(request.expected) {
-                    self.drop_backup(&backup, &request.expected);
+            Ok(None) => {}
+            Ok(Some(Stopped { conflicts, message })) => {
+                // Merge fermo: resta in corso, il branch non si è mosso e il backup resta. Gli
+                // stessi controlli del merge riuscito, come avvisi: il merge in corso deve
+                // essere quello dell'upstream su questo branch.
+                let mut warnings = Vec::new();
+                if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
+                    warnings.push(format!(
+                        "dopo il pull HEAD non è più su `{full}`: un hook o un altro processo \
+                         l'ha cambiata; controllare HEAD prima di continuare il merge"
+                    ));
                 }
-                return Err(e);
+                let now = self.ref_value(&full)?;
+                if now != Some(request.expected) {
+                    warnings.push(format!(
+                        "`{full}` vale {} invece di {}: un hook o un altro processo l'ha \
+                         spostato; il branch com'era è in `{backup}`",
+                        now.map_or_else(|| "niente".to_owned(), |o| o.to_string()),
+                        request.expected
+                    ));
+                }
+                let incoming = self.read_operation_state().incoming;
+                if incoming != [request.upstream] {
+                    warnings.push(format!(
+                        "il merge in corso unisce {} invece di `{}` ({}): un hook o un altro \
+                         processo l'ha cambiato; controllarlo prima di continuarlo",
+                        if incoming.is_empty() {
+                            "niente".to_owned()
+                        } else {
+                            incoming
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        },
+                        request.upstream_name,
+                        request.upstream
+                    ));
+                }
+                return Ok(PullOutcome {
+                    after: request.expected,
+                    backup,
+                    in_progress: true,
+                    conflicts,
+                    message,
+                    warnings,
+                });
+            }
+            Err(e) => {
+                // Niente cambiato: il backup non serve (si toglie solo se il branch è com'era e
+                // non è rimasta un'operazione in corso, es. un `rebase --abort` non riuscito).
+                let now = self.ref_value(&full)?;
+                let in_progress = self.operation().is_some();
+                if now == Some(request.expected) && !in_progress {
+                    self.drop_backup(&backup, &request.expected);
+                    return Err(e);
+                }
+                // Qualcosa è cambiato nonostante l'errore: il backup resta e l'errore lo dice;
+                // niente nel diario (non è il risultato atteso del pull).
+                let note = if in_progress {
+                    format!(
+                        "il repository è rimasto in un'operazione in corso; il branch com'era è \
+                         in `{backup}`"
+                    )
+                } else {
+                    format!(
+                        "`{full}` però si è spostato da {} a {}: git ha scritto qualcosa prima \
+                         di fallire. Il pull non entra nel diario; il branch com'era è in \
+                         `{backup}`",
+                        request.expected,
+                        now.map_or_else(|| "niente".to_owned(), |o| o.to_string())
+                    )
+                };
+                return Err(with_note(e, &note));
             }
         }
         let after = self.ref_value(&full)?.ok_or_else(|| EngineError::Git {
@@ -344,18 +414,22 @@ impl CliBackend {
         Ok(PullOutcome {
             after,
             backup,
+            in_progress: false,
+            conflicts: Vec::new(),
+            message: String::new(),
             warnings,
         })
     }
 
-    /// L'integrazione vera e propria (vedi il modulo); `Ok` se il branch è stato spostato.
+    /// L'integrazione vera e propria (vedi il modulo): `Ok(None)` se il branch è stato
+    /// spostato, `Ok(Some(..))` se il merge è fermo e resta in corso.
     fn integrate(
         &self,
         request: &PullRequest,
         full: &str,
         expected: &str,
         upstream: &str,
-    ) -> Result<(), EngineError> {
+    ) -> Result<Option<Stopped>, EngineError> {
         let env: [(&str, &OsStr); 3] = [
             ("GIT_REFLOG_ACTION", OsStr::new(REFLOG_ACTION)),
             ("GIT_EDITOR", OsStr::new(":")),
@@ -371,7 +445,7 @@ impl CliBackend {
                     self.check_branch_value(full, &request.expected)?;
                     return Err(failure(&args, &out));
                 }
-                Ok(())
+                Ok(None)
             }
             (PullMode::FastForward, true) => {
                 let args = [
@@ -389,7 +463,7 @@ impl CliBackend {
                 .concat();
                 let out = self.run_input(&args, b"", &env).err();
                 match out {
-                    None => Ok(()),
+                    None => Ok(None),
                     Some(EngineError::Git { stderr, .. }) => Err(overwrite_error(
                         &stderr, "il pull",
                     )
@@ -454,18 +528,19 @@ impl CliBackend {
         }
     }
 
-    /// Esegue un merge o un rebase; se si ferma (conflitto o altro) lo annulla e restituisce
-    /// l'errore: [`EngineError::PullConflict`] con i file in conflitto, altrimenti quello di git.
+    /// Esegue un merge o un rebase. Un merge fermo (conflitto, hook, firma) resta in corso:
+    /// `Ok(Some(..))` con i file in conflitto. Un rebase fermo si annulla e l'errore è
+    /// [`EngineError::PullConflict`] con i file in conflitto, altrimenti quello di git.
     fn run_stopping(
         &self,
         request: &PullRequest,
         args: &[&OsStr],
         env: &[(&str, &OsStr)],
         operation: PullOperation,
-    ) -> Result<(), EngineError> {
+    ) -> Result<Option<Stopped>, EngineError> {
         let out = self.git.output_os_env(Some(&self.workdir), args, env)?;
         if out.status.success() && self.operation().is_none() {
-            return Ok(());
+            return Ok(None);
         }
         let text = format!(
             "{}\n{}",
@@ -490,24 +565,16 @@ impl CliBackend {
                 stderr: text,
             });
         }
-        // I file in conflitto: quelli ancora non uniti e quelli che git ha detto in conflitto
-        // (anche se `rerere.autoUpdate` li ha già risolti e messi in stage con una risoluzione
-        // registrata: il merge/rebase è comunque fermo e va concluso a mano).
-        let mut files: Vec<String> = self
-            .status_for_write()
-            .map(|s| {
-                s.entries
-                    .iter()
-                    .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
-                    .map(|e| e.path.to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
-        for file in conflicted_in_output(&text) {
-            if !files.contains(&file) {
-                files.push(file);
-            }
+        let conflicts = self.stopped_conflicts(&text);
+        if operation == PullOperation::Merge {
+            // Come `merge.start`: il merge resta in corso, si conclude con `merge.continue` o si
+            // annulla con `merge.abort` (il worktree era pulito: torna com'era).
+            return Ok(Some(Stopped {
+                conflicts,
+                message: text,
+            }));
         }
+        let files: Vec<String> = conflicts.iter().map(ToString::to_string).collect();
         let abort = [operation.to_string(), "--abort".to_owned()];
         let abort: Vec<&str> = abort.iter().map(String::as_str).collect();
         let aborted = self
@@ -519,7 +586,7 @@ impl CliBackend {
                 stderr: format!(
                     "il {operation} dell'upstream si è fermato ({text}) e `git {operation} \
                      --abort` non è riuscito ({}): il repository è ancora nel {operation} in \
-                     corso. Il branch com'era è in `refs/project/backup/pull-...`",
+                     corso",
                     String::from_utf8_lossy(&aborted.stderr).trim()
                 ),
             });
@@ -542,6 +609,25 @@ impl CliBackend {
             files,
             message: text,
         })
+    }
+
+    /// I file in conflitto di un merge o rebase fermo: quelli ancora non uniti nello stato e
+    /// quelli che git ha detto in conflitto nell'output `text` (anche se `rerere.autoUpdate` li
+    /// ha già risolti e messi in stage con una risoluzione registrata: l'operazione è comunque
+    /// ferma e va conclusa a mano). Usato anche da `merge.start`.
+    pub(super) fn stopped_conflicts(&self, text: &str) -> Vec<RepoPath> {
+        let mut files: Vec<RepoPath> = self
+            .status_for_write()
+            .map(|s| {
+                s.entries
+                    .iter()
+                    .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
+                    .map(|e| e.path.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        add_output_conflicts(&mut files, conflicted_in_output(text));
+        files
     }
 
     /// [`GitBackend::reset_branch`](project_engine::GitBackend::reset_branch).
@@ -628,6 +714,40 @@ impl CliBackend {
     }
 }
 
+/// Aggiunge a `files` (i percorsi dallo stato, byte esatti) i nomi che git ha detto in conflitto
+/// nell'output (testo convertito con `from_utf8_lossy`): solo quelli che nessun percorso dello
+/// stato ha già, confrontando il testo convertito. Così un nome non UTF-8 non compare due volte
+/// (una con i byte veri, una con i caratteri sostituiti).
+fn add_output_conflicts(files: &mut Vec<RepoPath>, output: Vec<String>) {
+    for file in output {
+        if !files.iter().any(|p| p.to_string() == file) {
+            files.push(RepoPath::from(file));
+        }
+    }
+}
+
+/// `e` con in fondo `note` (che dice cosa è rimasto cambiato e dov'è il backup): nel testo di git
+/// o nel motivo del rifiuto; gli altri errori diventano [`EngineError::Git`] con il loro testo.
+fn with_note(e: EngineError, note: &str) -> EngineError {
+    match e {
+        EngineError::Git { command, stderr } => EngineError::Git {
+            command,
+            stderr: format!("{stderr}\n({note})"),
+        },
+        EngineError::NotAllowed(reason) => EngineError::NotAllowed(format!("{reason} ({note})")),
+        other => EngineError::Git {
+            command: "remote.pull".to_owned(),
+            stderr: format!("{other} ({note})"),
+        },
+    }
+}
+
+/// Un merge del pull fermo e rimasto in corso: i file in conflitto e il testo di git.
+struct Stopped {
+    conflicts: Vec<RepoPath>,
+    message: String,
+}
+
 /// I file che l'output di merge/rebase dice in conflitto: `CONFLICT (...): Merge conflict in
 /// <file>` e, con `rerere`, `Resolved '<file>' using previous resolution.` / `Staged '<file>'
 /// using previous resolution.`.
@@ -677,4 +797,38 @@ pub(super) fn overwrite_error(stderr: &str, what: &str) -> Option<EngineError> {
          metterli da parte o spostarli e riprovare; il branch non è stato toccato",
         files.join(", ")
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_non_utf8_conflict_is_listed_once() {
+        let raw = RepoPath::from(&b"caf\xe9.txt"[..]);
+        let mut files = vec![raw.clone()];
+        let output = conflicted_in_output(&format!(
+            "CONFLICT (content): Merge conflict in {raw}\nCONFLICT (content): Merge conflict in \
+             b.txt"
+        ));
+        add_output_conflicts(&mut files, output);
+        assert_eq!(files, vec![raw, RepoPath::from("b.txt")]);
+    }
+
+    #[test]
+    fn the_note_names_the_backup() {
+        let e = with_note(
+            EngineError::Git {
+                command: "rebase".into(),
+                stderr: "fermo".into(),
+            },
+            "backup in `refs/project/backup/pull-1`",
+        );
+        assert!(e.to_string().contains("refs/project/backup/pull-1"), "{e}");
+        let e = with_note(EngineError::NotAllowed("no".into()), "nota");
+        assert!(
+            matches!(&e, EngineError::NotAllowed(m) if m == "no (nota)"),
+            "{e}"
+        );
+    }
 }

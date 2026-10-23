@@ -229,7 +229,7 @@ pub trait RepoOpener: Send + Sync {
   con `paths` lo stash contiene solo i file scelti (git ci mette tutto l'indice, vedi
   `stash.push`). Gli stash eliminati restano da parte per id, per l'undo del drop;
   `fail_stash_drop` simula un drop che fallisce (per il pop applicato e non tolto). Merge (S29):
-  lo stesso merge file per file del pull, ma un conflitto lascia il merge in corso (voci `u`
+  il merge file per file (`merge_three_way`, lo usa anche il pull in merge): un conflitto lascia il merge in corso (voci `u`
   con i marcatori nel worktree, `MERGE_HEAD` e `MERGE_MSG` in memoria) e il commit con un merge in
   corso fa il commit di merge; vedi [git/merge.md](git/merge.md).
 - `CliBackend` (in `project-git`): esegue `git` (§5).

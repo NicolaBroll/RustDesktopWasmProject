@@ -59,22 +59,38 @@ di nuovo nel backend): operazione in corso o file in conflitto → `NotAllowed`;
 qualunque modifica ai file tracciati → `NotAllowed` (mai `--autostash`; i non tracciati vanno bene);
 il fast-forward accetta modifiche che non toccano i file cambiati, e se git rifiuta perché
 sovrascriverebbe modifiche o non tracciati → `NotAllowed` con i file. **Backup**: prima di scrivere
-`refs/project/backup/pull-...` sul branch com'era (tolto se poi niente cambia). **Conflitti**
-(scelta): il merge o il rebase fermo in conflitto si **annulla subito** (`--abort`: il worktree era
-pulito, quindi torna identico) e l'errore è `PullConflict { branch, upstream, operation: merge |
-rebase, files, message }`; lasciare il repo nel merge/rebase in corso non avrebbe uscita dal client
-finché non ci sono `merge.abort`/`merge.continue` (S29), l'editor dei conflitti (S30) e
-`rebase.abort`/`rebase.continue` (S32); allora si potrà aggiungere un'opzione per tenerlo.
-**Da rivedere** (annotato in S29): ora `merge.abort`/`merge.continue` e `repo.operation` esistono
-([merge.md](merge.md)), quindi un pull con strategia merge potrebbe lasciare il merge in corso come
-fa `merge.start`; per ora il comportamento resta questo (il rebase non ha ancora
-`rebase.abort`/`rebase.continue`, e un pull che a volte annulla e a volte no sarebbe confuso).
-Errori
-del fetch: `Auth`, `RemoteUnreachable`, `Cancelled`. Risultato: `{"branch", "remote", "upstream",
-"strategy": "fast_forward" | "merge" | "rebase" | "up_to_date", "strategy_source": "param" |
-"config" | "default", "before", "after", "ahead", "behind", "backup": string | null, "fetch":
-{"updated", "messages"}, "warnings", "status" | null, "refs" | null, "can_undo", "can_redo",
-"next_undo", "next_redo"}`. Dettagli del `CliBackend` e undo più sotto.
+`refs/project/backup/pull-...` sul branch com'era (tolto se poi niente cambia).
+
+**Merge fermo** (scelta, dopo S29): un pull in merge che si ferma (conflitti, anche se `rerere`
+li ha già risolti; un hook `pre-merge-commit`/`commit-msg` o la firma che falliscono dopo un merge
+senza conflitti) **resta in corso** come con `merge.start` ([merge.md](merge.md)): non è un
+errore, il risultato ha `"in_progress": true`, i file in `conflicts` (vuoto per hook e firma) e il
+testo di git in `message`; il branch non si è mosso (`after == before`), il backup
+`refs/project/backup/pull-...` resta e niente entra nel diario. Il fetch è fatto. Si esce come da
+un `merge.start` fermo: `merge.continue` (dopo aver risolto e messo in stage i file con
+`index.stage`; il messaggio è quello del pull, `Merge remote-tracking branch 'origin/main'`, che
+git mette in `MERGE_MSG` con il blocco `# Conflicts:`, tolto da `merge.continue`) entra nel
+diario come un merge concluso (`Merge di origin/main in `main``); `merge.abort` (con `confirm`)
+riporta indice e worktree a HEAD, cioè com'erano prima del pull, perché il pull in merge parte
+solo da un worktree senza modifiche ai file tracciati (i non tracciati restano: `merge --abort` non
+li tocca). `repo.operation` dà il banner (`incoming` è il commit dell'upstream, `label` il nome
+del branch remoto). Il nome dell'altro lato nei marcatori del `CliBackend` è l'id dell'upstream
+(`>>>>>>> <oid>`: a git arriva solo l'id, come per `merge.start`).
+
+**Rebase fermo** (scelta, per ora): si **annulla subito** (`--abort`: il worktree era pulito,
+quindi torna identico) e l'errore è `PullConflict { branch, upstream, operation: rebase, files,
+message }`; un rebase lasciato in corso non avrebbe uscita dal client finché S32 non porta
+`rebase.abort`/`rebase.continue` (allora si lascerà in corso anche lui). `operation: merge` resta
+nel tipo ma non arriva più dai backend. Anche il rebase fermo per un altro motivo (hook, commit
+vuoto) si annulla, con un errore `Git`.
+
+Errori del fetch: `Auth`, `RemoteUnreachable`, `Cancelled`. Risultato: `{"branch", "remote",
+"upstream", "strategy": "fast_forward" | "merge" | "rebase" | "up_to_date", "strategy_source":
+"param" | "config" | "default", "before", "after", "ahead", "behind", "in_progress": bool,
+"conflicts": [percorso], "message": string, "backup": string | null, "fetch": {"updated",
+"messages"}, "warnings", "status" | null, "refs" | null, "can_undo", "can_redo", "next_undo",
+"next_redo"}` (`in_progress`/`conflicts`/`message` come in `merge.start`: `false`, `[]`, `""`
+se il pull non è fermo). Dettagli del `CliBackend` e undo più sotto.
 
 ### `remote.push`
 
@@ -182,9 +198,17 @@ commit da riapplicare. Hook (`pre-merge-commit`, `commit-msg`, `post-merge`,
 `post-rewrite`) e firma seguono la configurazione. Fermo (conflitto o altro): file in conflitto
 dallo stato e quelli che git dice in conflitto (`Merge conflict in <file>`, e con
 `rerere.autoUpdate` `Resolved '<file>' using previous resolution`: anche un conflitto risolto
-da rerere lascia il merge/rebase fermo ed è `PullConflict`), `git merge --abort` / `git rebase
---abort`, e se l'annullamento non riesce un
-errore che lo dice. Dopo: il branch deve contenere l'upstream, HEAD sul branch, altrimenti
+da rerere lascia il merge/rebase fermo e conta come conflitto; `stopped_conflicts`, la stessa
+funzione di `merge.start`; un nome dell'output si aggiunge solo se nessun percorso dello stato ha
+lo stesso testo, così un nome non UTF-8 non compare due volte). Merge (`MERGE_HEAD` dopo `git
+merge`): nessun `--abort`, risultato `in_progress`, con gli stessi controlli del merge riuscito
+come `warnings` (HEAD ancora sul branch, il branch ancora sul valore di prima, `MERGE_HEAD`
+uguale all'upstream atteso). Rebase: `git rebase --abort` e `PullConflict`; se l'annullamento
+non riesce un errore che lo dice, e il backup resta (non si toglie mai con un'operazione in
+corso: l'errore lo nomina). Uscita non zero senza operazione in corso: se il branch è com'era
+niente è partito, errore (`NotAllowed` se git rifiuta per non sovrascrivere file) e il backup si
+toglie; se il branch si è spostato lo stesso, l'errore lo dice e nomina il backup, che resta, e
+niente entra nel diario. Dopo: il branch deve contenere l'upstream, HEAD sul branch, altrimenti
 `warnings`. File `--assume-unchanged` diversi fra i due commit → `NotAllowed` (git li
 sovrascriverebbe senza controllarli).
 
@@ -231,7 +255,15 @@ fatto dal pull no, come `remote.fetch`.
   (controlla solo il branch locale), ma il remoto ha già i commit.
 
 Il `MemoryBackend` fa lo stesso con i suoi controlli del checkout; registra i backup dei pull in
-`commit_backups` (`refs/project/backup/pull-<n>`) e quelli dei force push (`push-<n>`).
+`commit_backups` (`refs/project/backup/pull-<n>`) e quelli dei force push (`push-<n>`). Il merge
+del pull in memoria è quello di `merge.start` (`merge_three_way`): con conflitti lascia il merge in
+corso (voci `u` con i marcatori `>>>>>>> origin/main`, `MERGE_HEAD`, `MERGE_MSG`); il rebase in
+conflitto non cambia niente e dà `PullConflict`.
+
+**Merge fermo e diario**: il pull fermo non entra nel diario (il branch non si è mosso) e finché
+il merge è in corso `edit.undo`/`edit.redo` sono rifiutati (operazione in corso). La voce arriva
+con `merge.continue` (undo come un merge concluso, [merge.md](merge.md)); `merge.abort` non entra
+nel diario, e `can_undo` dopo l'abort riguarda la voce precedente.
 
 ## Il fetch non entra nel diario
 

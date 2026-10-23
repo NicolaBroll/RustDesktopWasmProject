@@ -10,7 +10,7 @@
 
 use super::{HEADS_PREFIX, check_no_operation};
 use crate::EngineError;
-use project_domain::{EntryKind, Oid, Status};
+use project_domain::{EntryKind, Oid, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
 /// L'upstream configurato di un branch locale (`branch.<nome>.remote` e `branch.<nome>.merge`).
@@ -323,15 +323,29 @@ pub struct PullRequest {
 /// Esito di [`GitBackend::pull`](super::GitBackend::pull).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullOutcome {
-    /// Il valore del branch dopo.
+    /// Il valore del branch dopo; se il merge è fermo ([`PullOutcome::in_progress`]) quello di
+    /// prima.
     pub after: Oid,
-    /// Il ref di backup del branch prima del pull (`refs/project/backup/pull-...`).
+    /// Il ref di backup del branch prima del pull (`refs/project/backup/pull-...`); resta
+    /// anche se il merge è fermo.
     pub backup: String,
+    /// Vero se il **merge** si è fermato (conflitti, o un hook `pre-merge-commit`/`commit-msg`
+    /// o la firma che hanno fallito) e **resta in corso** (`MERGE_HEAD`), come `merge.start`:
+    /// da concludere con `merge.continue` o annullare con `merge.abort`. Il rebase fermo invece
+    /// si annulla ancora ([`EngineError::PullConflict`]).
+    pub in_progress: bool,
+    /// I file in conflitto del merge fermo: quelli ancora non uniti e quelli che git ha detto
+    /// in conflitto (anche se `rerere` li ha già risolti); vuoto altrimenti.
+    pub conflicts: Vec<RepoPath>,
+    /// Il testo di git (stdout e stderr) del merge fermo; vuoto altrimenti.
+    pub message: String,
     /// Avvisi scoperti dopo un'integrazione riuscita (es. un hook che ha spostato HEAD).
     pub warnings: Vec<String>,
 }
 
-/// Quale operazione si è fermata in conflitto ([`EngineError::PullConflict`]).
+/// Quale operazione si è fermata in conflitto ([`EngineError::PullConflict`]). Oggi l'errore
+/// arriva solo dal rebase: un merge fermo resta in corso ([`PullOutcome::in_progress`]); il
+/// valore `merge` resta per compatibilità (e per un backend che non sa lasciarlo in corso).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullOperation {

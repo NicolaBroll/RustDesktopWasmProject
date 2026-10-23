@@ -36,9 +36,12 @@ Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
 - `remote.pull` è fetch e poi integrazione guidata dal motore (mai `git pull`, mai
   `--autostash`); `remote.push` usa solo un refspec esplicito e, per il force,
   `--force-with-lease` con l'oid atteso (mai `--force`). Il pull entra nel diario, il push no.
+  Un pull in merge che si ferma (conflitti, hook) lascia il merge in corso come `merge.start`
+  (`in_progress`, `conflicts`; fuori dal diario finché `merge.continue`); in rebase si annulla
+  (`PullConflict`) finché S32 non porta `rebase.continue`/`rebase.abort`.
 - `merge.start` unisce una rev nel branch attivo (fast-forward o commit di merge, mai
   `--autostash`, rifiutato con modifiche ai file tracciati per un commit di merge); con conflitti
-  il merge **resta in corso** (al contrario del pull, che lo annulla) e si esce solo con
+  il merge **resta in corso** (come il pull in merge; il pull in rebase invece si annulla) e si esce solo con
   `merge.continue` (nessun file in conflitto rimasto) o `merge.abort` (sempre `"confirm": true`,
   backup di indice e worktree prima). Entra nel diario solo il merge concluso; `repo.operation` è
   la lettura per il banner dell'operazione in corso (`impl-docs/git/merge.md`).
@@ -96,7 +99,8 @@ cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"prova"}' 
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"prova","new_name":"prova2"}' --cmd 'branch.delete={"name":"prova2"}'
 # fetch da un remoto configurato (solo branch remoti e tag; avanzamento su stderr se è un terminale)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
-# pull (fetch + fast-forward/merge/rebase secondo pull.rebase/pull.ff, o "strategy"; annullabile con edit.undo)
+# pull (fetch + fast-forward/merge/rebase secondo pull.rebase/pull.ff, o "strategy"; annullabile con edit.undo;
+# merge con conflitti: resta in corso, "in_progress":true, poi merge.continue o merge.abort)
 cargo run -p project-cli -- --repo . run --cmd remote.pull --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'remote.pull={"branch":"main","strategy":"rebase"}'
 # push del branch attivo (remoto: pushRemote/pushDefault/upstream/origin; primo push: imposta l'upstream);

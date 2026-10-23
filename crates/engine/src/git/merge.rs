@@ -5,7 +5,8 @@
 //! [`GitBackend::unmerged_count`](super::GitBackend::unmerged_count)), controlla lo stato
 //! ([`check_merge_state`]) e scrive il messaggio di default ([`merge_source`],
 //! [`MergeSource::message`]); il backend esegue ([`GitBackend::merge`](super::GitBackend::merge)).
-//! **Un merge fermo in conflitto resta in corso** (al contrario del pull, che lo annulla): si
+//! **Un merge fermo in conflitto resta in corso** (come il pull in merge; il pull in rebase
+//! invece si annulla): si
 //! conclude con `merge.continue` (che usa [`GitBackend::commit`](super::GitBackend::commit),
 //! con `MERGE_HEAD` git crea il commit di merge) o si annulla con `merge.abort`
 //! ([`GitBackend::merge_abort`](super::GitBackend::merge_abort), con un backup di indice e

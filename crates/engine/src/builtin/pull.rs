@@ -60,17 +60,22 @@ fn no_upstream(branch: &str) -> EngineError {
 ///    comando anche se il fetch è finito, prima di integrare;
 /// 3. la strategia ([`pull_mode`]): niente da fare se il branch contiene già l'upstream;
 /// 4. l'integrazione ([`GitBackend::pull`](crate::GitBackend::pull)): controlli sullo stato
-///    ([`check_pull_state`]), backup del branch, poi merge/rebase; un conflitto annulla
-///    l'operazione e dà [`EngineError::PullConflict`].
+///    ([`check_pull_state`]), backup del branch, poi merge/rebase. Un **merge** fermo
+///    (conflitti, hook, firma) **resta in corso** come con `merge.start`: non è un errore, il
+///    risultato ha `in_progress: true` e i file in `conflicts`, il branch non si è mosso, il
+///    backup resta; si conclude con `merge.continue` o si annulla con `merge.abort`. Un
+///    **rebase** fermo si annulla e dà [`EngineError::PullConflict`] (finché non ci sono
+///    `rebase.continue`/`rebase.abort`, S32).
 ///
 /// Lo spostamento del branch va nel diario: `edit.undo` lo riporta dov'era (con indice e
-/// worktree, come `git reset --keep`, se è il branch attivo). Il fetch no (§7).
+/// worktree, come `git reset --keep`, se è il branch attivo). Il fetch no (§7), il merge fermo
+/// nemmeno (la voce arriva con `merge.continue`).
 ///
 /// Risultato: `{"branch", "remote", "upstream", "strategy": "fast_forward" | "merge" | "rebase"
 /// | "up_to_date", "strategy_source": "param" | "config" | "default", "before", "after",
-/// "ahead", "behind", "backup": string | null, "fetch": {"updated", "messages"}, "warnings",
-/// "status": Status | null, "refs": [RefInfo] | null, "can_undo", "can_redo", "next_undo",
-/// "next_redo"}`.
+/// "ahead", "behind", "in_progress", "conflicts": [percorso], "message", "backup": string |
+/// null, "fetch": {"updated", "messages"}, "warnings", "status": Status | null, "refs":
+/// [RefInfo] | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
     let PullParams {
         remote,
@@ -214,6 +219,9 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
         "before": before.to_string(),
         "ahead": ahead,
         "behind": behind,
+        "in_progress": false,
+        "conflicts": [],
+        "message": "",
         "fetch": fetch,
     });
     let (after, backup) = match mode {
@@ -233,7 +241,8 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
                 message: merge_message(&tracking, &branch),
             })?;
             // Il branch è spostato: la voce va nel diario anche se dopo qualcosa non si rilegge.
-            if outcome.after != before {
+            // Un merge fermo no: il branch non si è mosso, la voce arriva con `merge.continue`.
+            if !outcome.in_progress && outcome.after != before {
                 journal.record(JournalEntry::pull(
                     &full,
                     before,
@@ -245,6 +254,9 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
                 ));
             }
             warnings.extend(outcome.warnings);
+            out["in_progress"] = json!(outcome.in_progress);
+            out["conflicts"] = to_json(&outcome.conflicts);
+            out["message"] = json!(outcome.message);
             (outcome.after, Some(outcome.backup))
         }
     };

@@ -5,6 +5,7 @@ mod commit;
 mod conflict;
 mod discard;
 mod merge;
+mod pick;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -23,9 +24,10 @@ use super::{
     BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
     ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest,
     GitBackend, HeadState, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
-    OperationState, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore,
-    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
-    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
+    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
+    PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion,
+    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig,
+    WorktreeRestore,
 };
 use crate::{EngineError, JobContext};
 use project_domain::{
@@ -909,6 +911,14 @@ impl GitBackend for MemoryBackend {
 
     fn operation_state(&self) -> Result<OperationState, EngineError> {
         Ok(self.operation_info())
+    }
+
+    fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError> {
+        self.pick_commit(request)
+    }
+
+    fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
+        self.abort_pick(kind)
     }
 }
 

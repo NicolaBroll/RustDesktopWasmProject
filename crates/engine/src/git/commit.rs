@@ -30,6 +30,12 @@ pub struct CommitRequest {
     /// remoto): senza, [`EngineError::ConfirmRequired`]. Altrove è ignorato.
     #[serde(default)]
     pub confirm: bool,
+    /// Non è un parametro di `commit.create`: lo imposta `cherry_pick.continue` /
+    /// `revert.continue` ([`CommitRequest::concluding`]) per concludere con il commit il
+    /// cherry-pick o il revert in corso (con `CHERRY_PICK_HEAD` git tiene l'autore originale).
+    /// `None`: un cherry-pick o un revert in corso rifiutano il commit.
+    #[serde(skip)]
+    pub conclude: Option<Operation>,
 }
 
 impl CommitRequest {
@@ -39,7 +45,15 @@ impl CommitRequest {
             message: message.into(),
             amend: false,
             confirm: false,
+            conclude: None,
         }
+    }
+
+    /// Lo stesso, per concludere l'operazione `op` in corso (cherry-pick o revert, da
+    /// `*.continue`): [`check_commit_state`] la lascia passare.
+    pub fn concluding(mut self, op: Operation) -> Self {
+        self.conclude = Some(op);
+        self
     }
 
     /// Lo stesso, come `amend` dell'ultimo commit.
@@ -134,7 +148,7 @@ pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>
 /// - Rebase, cherry-pick, revert o `git am` in corso → [`EngineError::NotAllowed`]: `git commit`
 ///   concluderebbe o cambierebbe l'operazione in modi poco visibili (un cherry-pick prenderebbe
 ///   l'autore del commit originale e chiuderebbe l'operazione; durante un rebase il commit
-///   finirebbe nella sequenza). Si concludono con i comandi dell'operazione (step futuri) o da
+///   finirebbe nella sequenza). Cherry-pick e revert si concludono con `*.continue` ([`CommitRequest::concluding`]); gli altri da
 ///   terminale.
 /// - Merge in corso: il commit è il **commit di merge** (git aggiunge `MERGE_HEAD` ai genitori),
 ///   anche con l'indice uguale a HEAD (merge senza modifiche, es. `-s ours`). Con `amend` è
@@ -143,7 +157,12 @@ pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>
 /// - `amend` senza commit in HEAD → [`EngineError::NotAllowed`].
 /// - Senza `amend`, niente in stage (e nessun merge in corso) → [`EngineError::NothingToCommit`]:
 ///   mai un commit vuoto. Un file `intent-to-add` (`git add -N`) non conta, come per git.
-pub fn check_commit_state(status: &Status, has_head: bool, amend: bool) -> Result<(), EngineError> {
+pub fn check_commit_state(
+    status: &Status,
+    has_head: bool,
+    request: &CommitRequest,
+) -> Result<(), EngineError> {
+    let amend = request.amend;
     let conflicts: Vec<String> = status
         .entries
         .iter()
@@ -160,7 +179,10 @@ pub fn check_commit_state(status: &Status, has_head: bool, amend: bool) -> Resul
     match status.operation {
         Some(
             op @ (Operation::Rebase | Operation::CherryPick | Operation::Revert | Operation::Am),
-        ) => {
+        ) if !(request.conclude == Some(op)
+            && matches!(op, Operation::CherryPick | Operation::Revert)
+            && !amend) =>
+        {
             let name = match op {
                 Operation::Rebase => "un rebase",
                 Operation::CherryPick => "un cherry-pick",
@@ -314,8 +336,8 @@ mod tests {
     #[test]
     fn state_checks() {
         let sample = MemoryBackend::sample().status().unwrap();
-        check_commit_state(&sample, true, false).unwrap();
-        check_commit_state(&sample, true, true).unwrap();
+        check_commit_state(&sample, true, &CommitRequest::new("m")).unwrap();
+        check_commit_state(&sample, true, &CommitRequest::new("m").amend()).unwrap();
         // Solo modifiche fuori stage e non tracciati: niente da committare.
         let unstaged: Vec<_> = sample
             .entries
@@ -325,19 +347,19 @@ mod tests {
             .collect();
         let status = status_with(unstaged.clone(), None);
         assert!(matches!(
-            check_commit_state(&status, true, false),
+            check_commit_state(&status, true, &CommitRequest::new("m")),
             Err(EngineError::NothingToCommit)
         ));
         // Ma con `amend` si cambia solo il messaggio.
-        check_commit_state(&status, true, true).unwrap();
+        check_commit_state(&status, true, &CommitRequest::new("m").amend()).unwrap();
         assert!(matches!(
-            check_commit_state(&status, false, true),
+            check_commit_state(&status, false, &CommitRequest::new("m").amend()),
             Err(EngineError::NotAllowed(_))
         ));
         // Un merge senza modifiche si conclude; non si fa `amend`.
         let merging = status_with(unstaged, Some(Operation::Merge));
-        check_commit_state(&merging, true, false).unwrap();
-        assert!(check_commit_state(&merging, true, true).is_err());
+        check_commit_state(&merging, true, &CommitRequest::new("m")).unwrap();
+        assert!(check_commit_state(&merging, true, &CommitRequest::new("m").amend()).is_err());
         for op in [
             Operation::Rebase,
             Operation::CherryPick,
@@ -345,11 +367,20 @@ mod tests {
             Operation::Am,
         ] {
             let status = status_with(sample.entries.clone(), Some(op));
-            let err = check_commit_state(&status, true, false).unwrap_err();
+            let err = check_commit_state(&status, true, &CommitRequest::new("m")).unwrap_err();
             assert!(matches!(err, EngineError::NotAllowed(_)), "{op:?}");
+            // Solo `*.continue` conclude cherry-pick e revert (mai con `amend`).
+            let concluding = CommitRequest::new("m").concluding(op);
+            let ok = check_commit_state(&status, true, &concluding).is_ok();
+            assert_eq!(
+                ok,
+                matches!(op, Operation::CherryPick | Operation::Revert),
+                "{op:?}"
+            );
+            assert!(check_commit_state(&status, true, &concluding.amend()).is_err());
         }
         let status = status_with(sample.entries.clone(), Some(Operation::Bisect));
-        check_commit_state(&status, true, false).unwrap();
+        check_commit_state(&status, true, &CommitRequest::new("m")).unwrap();
         // Un conflitto blocca tutto.
         let mut entries = sample.entries.clone();
         entries.push(StatusEntry {
@@ -368,8 +399,12 @@ mod tests {
                 oid_theirs: Oid::from_bytes([3; Oid::LEN]),
             }),
         });
-        let err = check_commit_state(&status_with(entries, Some(Operation::Merge)), true, false)
-            .unwrap_err();
+        let err = check_commit_state(
+            &status_with(entries, Some(Operation::Merge)),
+            true,
+            &CommitRequest::new("m"),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("`c.txt`"), "{err}");
     }
 

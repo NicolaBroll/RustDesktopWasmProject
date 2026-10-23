@@ -201,8 +201,19 @@ impl CliBackend {
                 }
             }
         }
+        self.check_paths_free(&paths, what)
+    }
+
+    /// [`EngineError::NotAllowed`] se uno dei percorsi `paths`, che l'operazione `what`
+    /// scriverebbe, esiste nel worktree come non tracciato o ignorato (o al posto di una delle
+    /// sue cartelle c'è un file): git lo sovrascriverebbe.
+    pub(super) fn check_paths_free(
+        &self,
+        paths: &[Vec<u8>],
+        what: &str,
+    ) -> Result<(), EngineError> {
         let mut hit = Vec::new();
-        for path in &paths {
+        for path in paths {
             let path = path.as_slice();
             let blocked = std::fs::symlink_metadata(self.workdir.join(os_from_bytes(path))).is_ok()
                 || path

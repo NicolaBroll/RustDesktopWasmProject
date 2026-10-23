@@ -246,7 +246,21 @@ l'errore dice quali risoluzioni e modifiche si perderebbero; prima salva indice 
 worktree; un merge fermo e l'abort no. `repo.operation {}` (sola lettura) è il banner
 dell'operazione in corso: `{"operation", "head", "conflicts", "incoming": [{"id", "label",
 "summary", "refs"}], "message", "onto", "rebase_branch", "ready", "continue", "abort"}`
-(`continue`/`abort` sono i comandi da usare, oggi solo per il merge).
+(`continue`/`abort` sono i comandi da usare: merge, cherry-pick e revert).
+
+`commit.cherry_pick {"rev", "mainline"?}` applica un commit sul branch attivo con un commit nuovo
+(autore e messaggio originali); `commit.revert {"rev", "mainline"?}` ne annulla le modifiche con
+un commit nuovo (`Revert "<oggetto>"`, `This reverts commit <id>.`). Un commit di merge vuole
+`mainline` (il genitore, da 1). Rifiutati come il merge (HEAD staccata, operazione in corso,
+conflitti, qualunque modifica ai file tracciati); un commit già applicato (risultato vuoto) dà
+`NotAllowed` e niente resta in corso. Prima salvano il branch in
+`refs/project/backup/cherry-pick-...` / `revert-...`. **Con conflitti l'operazione resta in
+corso**: si conclude con `cherry_pick.continue` / `revert.continue {"message"?}` o si annulla con
+`cherry_pick.abort` / `revert.abort {"confirm": true}` (backup `...-abort-...` come per il merge).
+Risultato: `{"rev", "commit", "summary", "mainline", "branch", "before", "after", "in_progress",
+"conflicts", "message", "backup", "warnings", "status", "refs"}`. Concluso entra nel diario
+(l'undo riporta il branch com'era); una sequenza di più commit avviata da terminale resta al
+terminale. Dettagli in [impl-docs/git/cherry-pick.md](impl-docs/git/cherry-pick.md).
 
 `conflict.show {"path"}` (sola lettura) dà le versioni di un file in conflitto: `{"path", "kind",
 "base", "ours", "theirs", "worktree", "marker_size", "digest"}`, ogni versione `{"text", "binary",

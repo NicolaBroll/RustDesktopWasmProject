@@ -2,7 +2,7 @@
 //! leggono la vista e producono [`Action`]; non cambiano niente direttamente.
 
 use crate::discard::Phase;
-use crate::merge::{self, ContinueDialog, Dialog, OperationInfo};
+use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog, OperationInfo};
 use crate::view::git_text;
 use crate::{Action, RepoView};
 use egui::{RichText, Ui};
@@ -86,7 +86,8 @@ fn hover(info: &OperationInfo) -> String {
     lines.join("\n")
 }
 
-/// "Annulla il merge…" e "Continua il merge…" (da destra), o come concludere da terminale.
+/// "Annulla il …" e "Continua il …" (da destra) con i comandi che `repo.operation` indica
+/// (merge, cherry-pick, revert), o come concludere da terminale.
 fn buttons(
     ui: &mut Ui,
     info: &OperationInfo,
@@ -94,15 +95,29 @@ fn buttons(
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
-    if info.continue_command.is_none() && info.abort_command.is_none() {
-        ui.weak(format!("Si conclude {}", merge::terminal_hint(operation)))
-            .on_hover_text(
+    let abort = info.abort_command.as_deref().and_then(Kind::from_abort);
+    let resume = info
+        .continue_command
+        .as_deref()
+        .and_then(Kind::from_continue);
+    if abort.is_none() && resume.is_none() {
+        let why = match operation {
+            Operation::CherryPick | Operation::Revert => {
+                "È una sequenza di più commit avviata da terminale: va conclusa da lì (un commit \
+                 da qui lascerebbe la sequenza a metà, l'annullamento toglierebbe anche i commit \
+                 già applicati)"
+            }
+            _ => {
                 "La UI non sa ancora concludere o annullare questa operazione: lo farà con i \
-                 passi successivi (cherry-pick e revert, rebase)",
-            );
+                 passi successivi (rebase)"
+            }
+        };
+        ui.weak(format!("Si conclude {}", merge::terminal_hint(operation)))
+            .on_hover_text(why);
         return;
     }
-    if info.abort_command.is_some() {
+    if let Some(kind) = abort {
+        let name = kind.name();
         let color = if can_write {
             ui.visuals().error_fg_color
         } else {
@@ -111,23 +126,28 @@ fn buttons(
         let button = ui
             .add_enabled(
                 can_write,
-                egui::Button::new(RichText::new("Annulla il merge…").color(color)),
+                egui::Button::new(RichText::new(format!("Annulla il {name}…")).color(color)),
             )
-            .on_hover_text(
-                "Torna a com'era prima del merge: chiede conferma e spiega cosa si perde. Prima \
-                 salva indice e worktree in un backup (refs/project/backup/merge-abort-…)",
-            )
+            .on_hover_text(format!(
+                "Torna a com'era prima del {name}: chiede conferma e spiega cosa si perde. Prima \
+                 salva indice e worktree in un backup ({})",
+                kind.abort_backup()
+            ))
             .on_disabled_hover_text("Aspettare l'operazione in corso (o chiudere il dialogo)");
         if button.clicked() {
             actions.push(Action::AbortMerge);
         }
     }
-    if info.continue_command.is_some() {
+    if let Some(kind) = resume {
         let enabled = can_write && info.ready;
-        let button = egui::Button::new(RichText::new("Continua il merge…").strong());
+        let button =
+            egui::Button::new(RichText::new(format!("Continua il {}…", kind.name())).strong());
         let button = ui
             .add_enabled(enabled, button)
-            .on_hover_text("Crea il commit di merge: si può cambiare il messaggio")
+            .on_hover_text(format!(
+                "Crea il {}: si può cambiare il messaggio",
+                kind.commit_noun()
+            ))
             .on_disabled_hover_text(if info.ready {
                 "Aspettare l'operazione in corso (o chiudere il dialogo)"
             } else {
@@ -145,12 +165,17 @@ fn buttons(
 fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &mut Vec<Action>) {
     let n = info.conflicts.len();
     if n == 0 {
-        let text = if info.continue_command.is_some() {
-            "Nessun file in conflitto: si può concludere con «Continua il merge…»"
-        } else {
-            "Nessun file in conflitto"
+        let resume = info
+            .continue_command
+            .as_deref()
+            .and_then(Kind::from_continue);
+        match resume {
+            Some(kind) => ui.label(format!(
+                "Nessun file in conflitto: si può concludere con «Continua il {}…»",
+                kind.name()
+            )),
+            None => ui.label("Nessun file in conflitto"),
         };
-        ui.label(text);
         return;
     }
     ui.horizontal_wrapped(|ui| {
@@ -186,7 +211,8 @@ fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>
     }
 }
 
-/// Il dialogo del merge aperto: "Continua il merge" o la conferma dell'annullamento.
+/// Il dialogo aperto: "Continua", la conferma dell'annullamento o il genitore di un
+/// cherry-pick o revert di un commit di merge.
 pub(crate) fn merge_dialog(
     ctx: &egui::Context,
     repo: &RepoView,
@@ -197,8 +223,11 @@ pub(crate) fn merge_dialog(
         ui.set_max_width(520.0);
         match dialog {
             Dialog::Continue(dialog) => continue_dialog(ui, repo, dialog, actions),
-            Dialog::Abort(Phase::Confirm { reason }) => abort_dialog(ui, reason, actions),
-            Dialog::Abort(_) => {}
+            Dialog::Abort(kind, Phase::Confirm { reason }) => {
+                abort_dialog(ui, *kind, reason, actions)
+            }
+            Dialog::Abort(..) => {}
+            Dialog::Mainline(dialog) => mainline_dialog(ui, dialog, actions),
         }
     });
     if modal.should_close() {
@@ -212,7 +241,9 @@ fn continue_dialog(
     dialog: &ContinueDialog,
     actions: &mut Vec<Action>,
 ) {
-    ui.heading("Concludi il merge");
+    let kind = dialog.kind;
+    let noun = kind.commit_noun();
+    ui.heading(format!("Concludi il {}", kind.name()));
     ui.add_space(6.0);
     let into = match &repo.head {
         project_domain::Head::Branch { name, .. } => format!("su «{name}»"),
@@ -220,13 +251,13 @@ fn continue_dialog(
     };
     ui.add(
         egui::Label::new(format!(
-            "Crea il commit di merge {into} con quello che è in stage. «Annulla» nella barra lo \
+            "Crea il {noun} {into} con quello che è in stage. «Annulla» nella barra lo \
              annulla, finché l'app resta aperta."
         ))
         .wrap(),
     );
     ui.add_space(8.0);
-    ui.label("Messaggio del commit di merge");
+    ui.label(format!("Messaggio del {noun}"));
     let mut message = dialog.message.clone();
     let edit = ui.add(
         egui::TextEdit::multiline(&mut message)
@@ -251,7 +282,7 @@ fn continue_dialog(
     ui.horizontal(|ui| {
         let enabled = !dialog.sending && !dialog.is_blank();
         let button = ui
-            .add_enabled(enabled, egui::Button::new("Crea il commit di merge"))
+            .add_enabled(enabled, egui::Button::new(format!("Crea il {noun}")))
             .on_disabled_hover_text(if dialog.sending {
                 "Commit in corso"
             } else {
@@ -273,14 +304,15 @@ fn continue_dialog(
     });
 }
 
-fn abort_dialog(ui: &mut Ui, reason: &str, actions: &mut Vec<Action>) {
-    ui.heading(RichText::new("Annullare il merge?").color(ui.visuals().error_fg_color));
+fn abort_dialog(ui: &mut Ui, kind: Kind, reason: &str, actions: &mut Vec<Action>) {
+    let name = kind.name();
+    ui.heading(RichText::new(format!("Annullare il {name}?")).color(ui.visuals().error_fg_color));
     ui.add_space(6.0);
     ui.add(
-        egui::Label::new(
-            "Il merge in corso si annulla: indice e file tornano come prima del merge, il branch \
-             non si muove.",
-        )
+        egui::Label::new(format!(
+            "Il {name} in corso si annulla: indice e file tornano come prima del {name}, il \
+             branch non si muove."
+        ))
         .wrap(),
     );
     ui.add_space(6.0);
@@ -293,22 +325,72 @@ fn abort_dialog(ui: &mut Ui, reason: &str, actions: &mut Vec<Action>) {
         });
     ui.add_space(6.0);
     ui.add(
-        egui::Label::new(
+        egui::Label::new(format!(
             "«Annulla» nella barra in alto non lo ripristina: per riavere le risoluzioni fatte \
-             resta il backup (git stash apply <backup>).",
-        )
+             resta il backup {} (git stash apply <backup>).",
+            kind.abort_backup()
+        ))
         .wrap(),
     );
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let button = egui::Button::new(
-            RichText::new("Annulla il merge").color(ui.visuals().strong_text_color()),
+            RichText::new(format!("Annulla il {name}")).color(ui.visuals().strong_text_color()),
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
             actions.push(Action::ConfirmAbortMerge);
         }
         if ui.button("Non annullare").clicked() {
+            actions.push(Action::CloseMergeDialog);
+        }
+    });
+}
+
+/// Il genitore di riferimento per il cherry-pick o il revert di un commit di merge: le
+/// modifiche sono quelle del merge rispetto al genitore scelto (`mainline`).
+fn mainline_dialog(ui: &mut Ui, dialog: &MainlineDialog, actions: &mut Vec<Action>) {
+    let kind = dialog.pick.kind();
+    ui.heading(format!("{} di un commit di merge", kind.title()));
+    ui.add_space(6.0);
+    let effect = match dialog.pick {
+        merge::Pick::CherryPick => "applica su",
+        merge::Pick::Revert => "annulla su",
+    };
+    ui.add(
+        egui::Label::new(format!(
+            "«{}» ha {} genitori. Si {effect} «{}» le modifiche che il merge ha portato rispetto \
+             al genitore scelto: di solito il primo (il branch in cui si è unito).",
+            dialog.what,
+            dialog.parents.len(),
+            dialog.into
+        ))
+        .wrap(),
+    );
+    ui.add_space(8.0);
+    for (i, (id, name, summary)) in dialog.parents.iter().enumerate() {
+        let n = i + 1;
+        let mut text = format!("{n}. {name}");
+        if *name != id.short() {
+            text.push_str(&format!(" ({})", id.short()));
+        }
+        if let Some(summary) = summary {
+            text.push_str(&format!(" — {summary}"));
+        }
+        if ui.radio(dialog.mainline == n, text).clicked() {
+            actions.push(Action::Mainline(n));
+        }
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        if ui
+            .button(RichText::new(kind.title()).strong())
+            .on_hover_text(format!("Con il genitore {} (mainline)", dialog.mainline))
+            .clicked()
+        {
+            actions.push(Action::SubmitMainline);
+        }
+        if ui.button("Chiudi").clicked() {
             actions.push(Action::CloseMergeDialog);
         }
     });

@@ -49,6 +49,13 @@ cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"origin/main"
 cargo run -p project-cli -- --repo . run --cmd repo.operation
 cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["a.txt"]}' --cmd merge.continue
 cargo run -p project-cli -- --repo . run --cmd 'merge.abort={"confirm":true}'
+# cherry-pick e revert di un commit (annullabili con edit.undo; un commit di merge vuole "mainline");
+# con conflitti restano in corso: risolvere, mettere in stage, poi *.continue o *.abort ("confirm":true, backup)
+cargo run -p project-cli -- --repo . run --cmd 'commit.cherry_pick={"rev":"prova"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'commit.revert={"rev":"HEAD"}' --cmd 'commit.revert={"rev":"<id del merge>","mainline":1}'
+cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["a.txt"]}' --cmd cherry_pick.continue
+cargo run -p project-cli -- --repo . run --cmd 'revert.continue={"message":"Revert di prova"}'
+cargo run -p project-cli -- --repo . run --cmd 'cherry_pick.abort={"confirm":true}' --cmd 'revert.abort={"confirm":true}'
 # editor dei conflitti: versioni di un file in conflitto (base, nostra, loro, worktree; testo o
 # binary), poi la risoluzione con il "digest" letto (testo nel worktree + stage, backup del
 # worktree in refs/project/backup/conflict-...); "delete":true al posto di "content" lo cancella

@@ -120,9 +120,12 @@ null, "ready": bool, "continue": string | null, "abort": string | null}`.
 - `onto`, `rebase_branch`: per un rebase, il commit su cui si riapplica e il branch riscritto
   (`rebase-merge/` o `rebase-apply/`: `onto` e `head-name`; `null` se partito da HEAD staccata).
 - `ready`: c'è un'operazione e non restano file in conflitto.
-- `continue` / `abort`: gli id dei comandi che concludono o annullano l'operazione da qui; oggi
-  solo il merge (`merge.continue`, `merge.abort`), `null` per le altre (cherry-pick e revert in
-  S31, rebase in S32: per ora da terminale).
+- `continue` / `abort`: gli id dei comandi che concludono o annullano l'operazione da qui:
+  `merge.continue` / `merge.abort` per il merge, `cherry_pick.continue` / `cherry_pick.abort` per
+  un cherry-pick, `revert.continue` / `revert.abort` per un revert ([cherry-pick.md](cherry-pick.md));
+  `null` per le altre (rebase in S32: per ora da terminale) e per una sequenza di cherry-pick o
+  revert di più commit avviata da terminale (`.git/sequencer`, campo `sequencer` di
+  `OperationState`), che resta al terminale.
 
 Il banner della UI: `operation` non `null` → banner con il tipo, `incoming[].label`, il numero di
 `conflicts` (e i file, che si aprono come le modifiche), e i pulsanti `continue` (attivo se `ready`)

@@ -21,10 +21,10 @@
 use super::sync::{TempFile, overwrite_error};
 use super::{BACKUP_IDENTITY, CliBackend, TempIndex};
 use crate::command::os_from_bytes;
-use project_domain::{Oid, Operation, RepoPath};
+use project_domain::{Oid, Operation, RepoPath, Status};
 use project_engine::{
-    EngineError, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState, branch_ref,
-    check_merge_state, check_merging,
+    EngineError, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState, PickKind,
+    branch_ref, check_merge_state, check_merging, check_picking,
 };
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -44,8 +44,26 @@ const PLAIN_INDEX: [&str; 6] = [
     "index.sparse=false",
 ];
 
+/// L'operazione annullata da [`CliBackend::abort_operation`]: il tipo, il sottocomando di git
+/// (anche nel nome del backup), l'id del comando, il file con i commit in ingresso.
+struct AbortTarget {
+    operation: Operation,
+    git: &'static str,
+    command: &'static str,
+    head_file: &'static str,
+}
+
+impl AbortTarget {
+    const MERGE: AbortTarget = AbortTarget {
+        operation: Operation::Merge,
+        git: "merge",
+        command: "merge.abort",
+        head_file: "MERGE_HEAD",
+    };
+}
+
 /// Gli id, uno per riga, di un file come `MERGE_HEAD`; le righe non valide si saltano.
-fn oids(bytes: &[u8]) -> Vec<Oid> {
+pub(super) fn oids(bytes: &[u8]) -> Vec<Oid> {
     bytes
         .split(|&b| b == b'\n')
         .map(<[u8]>::trim_ascii)
@@ -210,7 +228,7 @@ impl CliBackend {
 
     /// Toglie il backup `name` se il branch `full` vale ancora `expected` (niente è cambiato) e
     /// il backup punta ancora lì.
-    fn drop_merge_backup(&self, name: &str, full: &str, expected: &Oid) {
+    pub(super) fn drop_merge_backup(&self, name: &str, full: &str, expected: &Oid) {
         if self.ref_value(full).ok().flatten() == Some(*expected) {
             let oid = expected.to_string();
             let _ = self
@@ -223,6 +241,42 @@ impl CliBackend {
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_merging("merge.abort", &status)?;
+        self.abort_operation(&status, AbortTarget::MERGE)
+    }
+
+    /// [`GitBackend::pick_abort`](project_engine::GitBackend::pick_abort).
+    pub(super) fn abort_pick(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
+        let status = self.status_for_write()?;
+        check_picking(
+            kind.abort_command(),
+            kind,
+            &status,
+            &self.read_operation_state(),
+        )?;
+        self.abort_operation(
+            &status,
+            AbortTarget {
+                operation: kind.operation(),
+                git: kind.git(),
+                command: kind.abort_command(),
+                head_file: kind.head_file(),
+            },
+        )
+    }
+
+    /// L'annullamento dell'operazione in corso `target` (già controllata sullo stato
+    /// `status`): il backup di indice e worktree come uno stash, poi `git <git> --abort`.
+    fn abort_operation(
+        &mut self,
+        status: &Status,
+        target: AbortTarget,
+    ) -> Result<MergeAborted, EngineError> {
+        let AbortTarget {
+            operation,
+            git,
+            command,
+            head_file,
+        } = target;
         self.check_index_unlocked()?;
         let head = self.resolve("HEAD")?.ok_or_else(|| {
             EngineError::NotAllowed("HEAD non ha un commit: niente annullato".to_owned())
@@ -233,7 +287,7 @@ impl CliBackend {
             .filter(|e| e.is_conflict() || e.is_staged() || e.is_unstaged())
             .map(|e| e.path.clone())
             .collect();
-        // `git merge --abort` (`reset --merge`) rifiuta un file in stage con anche modifiche
+        // `git <git> --abort` (`reset --merge`) rifiuta un file in stage con anche modifiche
         // fuori stage: si controlla prima, come il `MemoryBackend`, così niente viene scritto.
         let mixed: Vec<String> = status
             .entries
@@ -243,19 +297,21 @@ impl CliBackend {
             .collect();
         if !mixed.is_empty() {
             return Err(EngineError::NotAllowed(format!(
-                "git non annulla il merge: file in stage con anche modifiche fuori stage ({}). \
-                 Metterle in stage (`index.stage`) o scartarle (`worktree.discard`) e \
-                 riprovare; niente modificato, il merge è ancora in corso",
+                "git non annulla l'operazione in corso: file in stage con anche modifiche fuori \
+                 stage ({}). Metterle in stage (`index.stage`) o scartarle \
+                 (`worktree.discard`) e riprovare; niente modificato, `{command}` non ha \
+                 annullato niente",
                 mixed.join(", ")
             )));
         }
-        let backup = self.save_merge_backup(&head, &files)?;
-        let env = [("GIT_REFLOG_ACTION", OsStr::new("project: merge.abort"))];
-        let args = ["-c", "core.fsmonitor=false", "merge", "--abort"];
+        let backup = self.save_merge_backup(&head, &files, git, command, head_file)?;
+        let reflog = format!("project: {command}");
+        let env = [("GIT_REFLOG_ACTION", OsStr::new(&reflog))];
+        let args = ["-c", "core.fsmonitor=false", git, "--abort"];
         let out = self
             .git
             .output_with_input_env(Some(&self.workdir), &args, b"", &env)?;
-        let still_merging = self.operation() == Some(Operation::Merge);
+        let still_merging = self.operation() == Some(operation);
         if !out.status.success() || still_merging {
             // Il backup non si toglie mai: anche quando git rifiuta, `reset --merge` può aver
             // già riscritto una parte dei file (un file che non si cancella, una cartella in
@@ -271,12 +327,12 @@ impl CliBackend {
                 ""
             };
             return Err(EngineError::Git {
-                command: "merge".to_owned(),
+                command: git.to_owned(),
                 stderr: format!(
-                    "`git merge --abort` non è riuscito ({stderr}).{hint} Il merge {} in corso e \
-                     alcuni file potrebbero essere già stati riscritti: rileggere lo stato. \
-                     Indice e worktree di prima sono salvati in `{backup}` (`git stash apply \
-                     {backup}`)",
+                    "`git {git} --abort` non è riuscito ({stderr}).{hint} L'operazione {} in \
+                     corso e alcuni file potrebbero essere già stati riscritti: rileggere lo \
+                     stato. Indice e worktree di prima sono salvati in `{backup}` (`git stash \
+                     apply {backup}`)",
                     if still_merging {
                         "è ancora"
                     } else {
@@ -305,7 +361,14 @@ impl CliBackend {
     /// worktree (conflitti con i marcatori e risoluzioni comprese), con genitori HEAD e il
     /// commit dell'indice. Tutto in indici temporanei: l'indice vero, con i conflitti, non si
     /// tocca. Poi il ref nuovo `refs/project/backup/merge-abort-...` sul secondo commit.
-    fn save_merge_backup(&self, head: &Oid, files: &[RepoPath]) -> Result<String, EngineError> {
+    fn save_merge_backup(
+        &self,
+        head: &Oid,
+        files: &[RepoPath],
+        git: &str,
+        command: &str,
+        head_file: &str,
+    ) -> Result<String, EngineError> {
         // L'indice vero, con gli stadi.
         let listing = self.run(&["ls-files", "-s", "-z", "--"])?;
         let mut info = Vec::new();
@@ -337,7 +400,7 @@ impl CliBackend {
             .map(|(k, v)| (*k, OsStr::new(v)))
             .collect();
         let head = head.to_string();
-        let merging = std::fs::read(self.git_dir.join("MERGE_HEAD"))
+        let merging = std::fs::read(self.git_dir.join(head_file))
             .map(|b| {
                 oids(&b)
                     .iter()
@@ -354,7 +417,7 @@ impl CliBackend {
         let write = [&PLAIN_INDEX[..], &["write-tree"]].concat();
         let index_tree = self.run_input(&write, b"", &env)?;
         let index_tree = String::from_utf8_lossy(index_tree.trim_ascii_end()).into_owned();
-        let message = format!("project: indice prima di merge.abort (merge di {merging})");
+        let message = format!("project: indice prima di {command} ({git} di {merging})");
         let args = [
             "commit-tree",
             "--no-gpg-sign",
@@ -403,9 +466,8 @@ impl CliBackend {
             let tree = self.run_input(&write, b"", &env)?;
             String::from_utf8_lossy(tree.trim_ascii_end()).into_owned()
         };
-        let message = format!(
-            "project: backup di indice e worktree prima di merge.abort (merge di {merging})"
-        );
+        let message =
+            format!("project: backup di indice e worktree prima di {command} ({git} di {merging})");
         let args = [
             "commit-tree",
             "--no-gpg-sign",
@@ -420,9 +482,9 @@ impl CliBackend {
         let commit = self.run_input(&args, message.as_bytes(), &identity)?;
         let commit = String::from_utf8_lossy(commit.trim_ascii_end()).into_owned();
         self.create_backup_ref(
-            "merge-abort",
+            &format!("{git}-abort"),
             &commit,
-            "project: backup di indice e worktree prima di merge.abort",
+            &format!("project: backup di indice e worktree prima di {command}"),
         )
     }
 
@@ -464,6 +526,7 @@ impl CliBackend {
             message,
             onto,
             rebase_branch,
+            sequencer: self.git_dir.join("sequencer").is_dir(),
         }
     }
 }

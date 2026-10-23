@@ -278,10 +278,16 @@ Regole valide per tutti gli step:
 - **Fatto quando:** l'app desktop e quella web mostrano nome e icona; CI verde.
 
 ### S31 — Cherry-pick e revert
-- [ ] **Agente:** `git-engine`, poi `egui-ui`
+- [x] **Agente:** `git-engine`, poi `egui-ui`
 - **Obiettivo:** `commit.cherry_pick`, `commit.revert` dal menu contestuale del commit, con
   gestione dei conflitti di S29.
 - **Fatto quando:** test di integrazione; CI verde.
+- [x] Parte `git-engine`: comandi `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue`,
+  `cherry_pick.abort`, `revert.continue`, `revert.abort` e `continue`/`abort` di
+  `repo.operation` per cherry-pick e revert ([git/cherry-pick.md](git/cherry-pick.md)).
+- [x] Parte `egui-ui`: "Cherry-pick su «branch»" e "Revert" nel menu del commit (dialogo del
+  genitore per un commit di merge); riquadro dell'operazione con i comandi `continue`/`abort` di
+  `repo.operation` per merge, cherry-pick e revert (`crates/ui/src/pick.rs`).
 
 ### S32 — Rebase interattivo
 - [ ] **Agente:** `git-domain` (piano), `git-engine` (esecuzione)

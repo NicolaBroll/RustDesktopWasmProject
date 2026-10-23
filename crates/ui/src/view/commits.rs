@@ -115,6 +115,7 @@ pub(crate) fn commit_list(
                 }
                 let what = merge::commit_name(id, &repo.refs);
                 merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
+                pick_items(ui, commit, &what, &merge, can_write, actions);
             });
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
@@ -430,4 +431,63 @@ pub(super) fn ref_labels(
         x += width;
     }
     x - cell.left()
+}
+
+/// "Cherry-pick su «branch»" e "Revert" del menu del commit: spenti come il merge (HEAD
+/// staccata, operazione in corso, scrittura o dialogo aperto). Per un commit di merge si apre
+/// prima il dialogo del genitore.
+fn pick_items(
+    ui: &mut Ui,
+    commit: &Commit,
+    what: &str,
+    gate: &merge::Gate,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    ui.separator();
+    let (into, blocked) = match gate {
+        merge::Gate::Into(branch) => (branch.as_str(), None),
+        merge::Gate::Blocked(reason) => ("branch attivo", Some(*reason)),
+    };
+    let is_merge = commit.parents.len() > 1;
+    let choose = if is_merge {
+        " È un commit di merge: si sceglie prima il genitore di riferimento."
+    } else {
+        ""
+    };
+    let items = [
+        (
+            merge::Pick::CherryPick,
+            format!("Cherry-pick su «{into}»{}", if is_merge { "…" } else { "" }),
+            format!(
+                "Applica le modifiche di «{what}» sopra «{into}» con un commit nuovo (autore e \
+                 messaggio originali).{choose} Servono file senza modifiche; con conflitti resta \
+                 in corso (si risolve o si annulla dal riquadro in alto). «Annulla» lo toglie"
+            ),
+        ),
+        (
+            merge::Pick::Revert,
+            format!("Revert{}", if is_merge { "…" } else { "" }),
+            format!(
+                "Crea su «{into}» un commit che annulla le modifiche di «{what}».{choose} Servono \
+                 file senza modifiche; con conflitti resta in corso (si risolve o si annulla dal \
+                 riquadro in alto). «Annulla» lo toglie"
+            ),
+        ),
+    ];
+    for (pick, label, hint) in items {
+        let button = ui
+            .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
+            .on_hover_text(hint)
+            .on_disabled_hover_text(blocked.unwrap_or(WAIT));
+        if button.clicked() {
+            actions.push(Action::Pick {
+                pick,
+                rev: commit.id,
+                what: what.to_owned(),
+                parents: commit.parents.clone(),
+            });
+            ui.close();
+        }
+    }
 }

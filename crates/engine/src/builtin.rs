@@ -3,6 +3,7 @@
 mod branch;
 mod conflict;
 mod merge;
+mod pick;
 mod pull;
 mod push;
 mod remote;
@@ -220,6 +221,42 @@ impl Registry {
             merge::merge_abort,
         );
         add(
+            "commit.cherry_pick",
+            "Applica un commit sul branch attivo (cherry-pick)",
+            r#"{"rev": string (id, branch o tag del commit), "mainline"?: number (per un commit di merge: il genitore, da 1)}"#,
+            pick::commit_cherry_pick,
+        );
+        add(
+            "cherry_pick.continue",
+            "Concludi il cherry-pick in corso",
+            r#"{"message"?: string (altrimenti quello preparato da git)}"#,
+            pick::cherry_pick_continue,
+        );
+        add(
+            "cherry_pick.abort",
+            "Annulla il cherry-pick in corso",
+            r#"{"confirm": true}"#,
+            pick::cherry_pick_abort,
+        );
+        add(
+            "commit.revert",
+            "Annulla un commit con un commit nuovo (revert)",
+            r#"{"rev": string (id, branch o tag del commit), "mainline"?: number (per un commit di merge: il genitore, da 1)}"#,
+            pick::commit_revert,
+        );
+        add(
+            "revert.continue",
+            "Concludi il revert in corso",
+            r#"{"message"?: string (altrimenti quello preparato da git)}"#,
+            pick::revert_continue,
+        );
+        add(
+            "revert.abort",
+            "Annulla il revert in corso",
+            r#"{"confirm": true}"#,
+            pick::revert_abort,
+        );
+        add(
             "conflict.show",
             "Versioni di un file in conflitto (base, nostra, loro, worktree)",
             r#"{"path": percorso}"#,
@@ -249,7 +286,11 @@ const WRITES: &[&str] = &[
     "branch.create",
     "branch.delete",
     "branch.rename",
+    "cherry_pick.abort",
+    "cherry_pick.continue",
+    "commit.cherry_pick",
     "commit.create",
+    "commit.revert",
     "conflict.resolve",
     "edit.redo",
     "edit.undo",
@@ -265,6 +306,8 @@ const WRITES: &[&str] = &[
     "remote.pull",
     "remote.push",
     "remote.remove",
+    "revert.abort",
+    "revert.continue",
     "stash.apply",
     "stash.drop",
     "stash.pop",
@@ -731,7 +774,11 @@ mod tests {
                 "branch.create",
                 "branch.delete",
                 "branch.rename",
+                "cherry_pick.abort",
+                "cherry_pick.continue",
+                "commit.cherry_pick",
                 "commit.create",
+                "commit.revert",
                 "commit.show",
                 "conflict.resolve",
                 "conflict.show",
@@ -759,6 +806,8 @@ mod tests {
                 "repo.operation",
                 "repo.refs",
                 "repo.status",
+                "revert.abort",
+                "revert.continue",
                 "stash.apply",
                 "stash.drop",
                 "stash.list",
@@ -777,7 +826,11 @@ mod tests {
                 "branch.create",
                 "branch.delete",
                 "branch.rename",
+                "cherry_pick.abort",
+                "cherry_pick.continue",
+                "commit.cherry_pick",
                 "commit.create",
+                "commit.revert",
                 "conflict.resolve",
                 "edit.redo",
                 "edit.undo",
@@ -793,6 +846,8 @@ mod tests {
                 "remote.pull",
                 "remote.push",
                 "remote.remove",
+                "revert.abort",
+                "revert.continue",
                 "stash.apply",
                 "stash.drop",
                 "stash.pop",

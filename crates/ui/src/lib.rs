@@ -223,7 +223,19 @@ enum Action {
     AbortMerge,
     /// L'utente ha confermato l'annullamento.
     ConfirmAbortMerge,
-    /// Chiude il dialogo del merge aperto.
+    /// Cherry-pick o revert del commit `rev` (mostrato come `what`) sul branch attivo; con più
+    /// `parents` (commit di merge) si apre prima il dialogo del genitore.
+    Pick {
+        pick: merge::Pick,
+        rev: Oid,
+        what: String,
+        parents: Vec<Oid>,
+    },
+    /// Il genitore (da 1) scelto nel dialogo del `mainline`.
+    Mainline(usize),
+    /// Manda il cherry-pick o il revert con il genitore scelto.
+    SubmitMainline,
+    /// Chiude il dialogo aperto del merge, del cherry-pick o del revert.
     CloseMergeDialog,
     /// Chiude la finestra di un merge rifiutato.
     DismissMergeError,
@@ -309,7 +321,8 @@ enum Request {
     Stash(u64, stash::Op),
     /// `repo.operation`: l'operazione in corso per il riquadro.
     Operation(u64),
-    /// `merge.start`/`merge.continue`/`merge.abort` (lo stato è in [`MergeBox`]).
+    /// `merge.*`, `commit.cherry_pick`, `commit.revert`, `cherry_pick.*`, `revert.*` (lo stato
+    /// è in [`MergeBox`]).
     Merge(u64, merge::Op),
     /// `conflict.show` con il numero di lettura di [`ConflictBox`].
     ConflictShow(u64, u64),
@@ -719,6 +732,9 @@ impl App {
             | Action::SubmitContinueMerge
             | Action::AbortMerge
             | Action::ConfirmAbortMerge
+            | Action::Pick { .. }
+            | Action::Mainline(..)
+            | Action::SubmitMainline
             | Action::CloseMergeDialog
             | Action::DismissMergeError => self.apply_merge(action),
             Action::OpenConflict(..)

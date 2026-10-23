@@ -243,6 +243,17 @@ impl CliBackend {
         head: &Option<Oid>,
         target: &Oid,
     ) -> Result<(), EngineError> {
+        let from = head.map_or_else(|| self.empty_tree.to_owned(), |h| h.to_string());
+        self.check_assume_unchanged_between(&from, &target.to_string())
+    }
+
+    /// Come [`Self::check_assume_unchanged`], fra due alberi o commit qualsiasi (`from` può
+    /// essere l'albero vuoto).
+    pub(super) fn check_assume_unchanged_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<(), EngineError> {
         let listing = self.index_listing()?;
         let hidden: BTreeSet<&RepoPath> = listing
             .iter()
@@ -252,8 +263,6 @@ impl CliBackend {
         if hidden.is_empty() {
             return Ok(());
         }
-        let from = head.map_or_else(|| self.empty_tree.to_owned(), |h| h.to_string());
-        let to = target.to_string();
         let args = [
             "diff-tree",
             "-r",
@@ -261,8 +270,8 @@ impl CliBackend {
             "--name-only",
             "--no-renames",
             "--end-of-options",
-            &from,
-            &to,
+            from,
+            to,
         ];
         let out = self.run(&args)?;
         let hit: Vec<String> = out

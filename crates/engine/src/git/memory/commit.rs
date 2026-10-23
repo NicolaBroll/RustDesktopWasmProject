@@ -35,7 +35,7 @@ impl MemoryBackend {
         request.check_message()?;
         let status = self.status()?;
         let previous = self.head_target();
-        check_commit_state(&status, previous.is_some(), request.amend)?;
+        check_commit_state(&status, previous.is_some(), request)?;
         // Con un merge in corso il commit è il commit di merge: genitori HEAD e `MERGE_HEAD`.
         let merge_heads = match (&self.operation, &self.merge_state) {
             (Some(Operation::Merge), Some(merge)) => Some(merge.heads.clone()),
@@ -46,6 +46,17 @@ impl MemoryBackend {
                         .to_owned(),
                 ));
             }
+            _ => None,
+        };
+        // `cherry_pick.continue`/`revert.continue`: il commit conclude l'operazione; per il
+        // cherry-pick l'autore è quello del commit originale (come git con `CHERRY_PICK_HEAD`).
+        let concluding = request.conclude.is_some() && request.conclude == self.operation;
+        let pick_author = match (&self.operation, &self.merge_state) {
+            (Some(Operation::CherryPick), Some(pick)) if concluding => pick
+                .heads
+                .first()
+                .and_then(|h| self.commits.get(h))
+                .map(|c| c.author.clone()),
             _ => None,
         };
         let current_branch = match &self.head {
@@ -101,7 +112,7 @@ impl MemoryBackend {
                     .chain(merge_heads.iter().flatten().copied())
                     .collect(),
                 self.head_tree(),
-                now.clone(),
+                pick_author.unwrap_or_else(|| now.clone()),
             ),
         };
         let changes = tree_changes(&parent_tree, &tree);
@@ -154,7 +165,7 @@ impl MemoryBackend {
             }
         };
         self.commit_entries();
-        if merge_heads.is_some() {
+        if merge_heads.is_some() || concluding {
             self.operation = None;
             self.merge_state = None;
         }

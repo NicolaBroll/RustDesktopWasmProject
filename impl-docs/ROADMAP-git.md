@@ -342,7 +342,7 @@ Rules that apply to every step:
   progress can be concluded from the app.
 
 ### S33 — Rebase by dragging
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** reorder, combine and delete commits by dragging them in the list, with a plan
   preview before running.
 - **Done when:** web screenshot with the plan in preview; the rebase run from the UI gives the

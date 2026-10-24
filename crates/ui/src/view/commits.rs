@@ -116,6 +116,7 @@ pub(crate) fn commit_list(
                 let what = merge::commit_name(id, &repo.refs);
                 merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
                 pick_items(ui, commit, &what, &merge, can_write, actions);
+                rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
             });
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
@@ -487,4 +488,67 @@ fn pick_items(
             ui.close();
         }
     }
+}
+
+/// "Interactive rebase from here…": base = the parent of `commit`, which must be on the first-parent
+/// history of HEAD among the loaded commits (the engine checks again: merges in the range, ...).
+fn rebase_item(
+    ui: &mut Ui,
+    repo: &RepoView,
+    commit: &Commit,
+    what: &str,
+    gate: &merge::Gate,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    ui.separator();
+    let blocked = match gate {
+        merge::Gate::Blocked(reason) => Some(reason.clone()),
+        merge::Gate::Into(_) => match commit.parents.first() {
+            None => Some(tr!("rebase-menu-root", id = commit.id.short())),
+            Some(_) if !on_first_parent_history(repo, commit.id) => {
+                Some(tr!("rebase-menu-not-on-branch"))
+            }
+            Some(_) => None,
+        },
+    };
+    let branch = match gate {
+        merge::Gate::Into(branch) => branch.as_str(),
+        merge::Gate::Blocked(_) => "",
+    };
+    let button = ui
+        .add_enabled(
+            can_write && blocked.is_none(),
+            egui::Button::new(tr!("rebase-menu-item")),
+        )
+        .on_hover_text(tr!(
+            "rebase-menu-hint",
+            id = commit.id.short(),
+            branch = branch
+        ))
+        .on_disabled_hover_text(blocked.unwrap_or_else(wait));
+    if button.clicked()
+        && let Some(&base) = commit.parents.first()
+    {
+        actions.push(Action::OpenRebase {
+            base,
+            what: what.to_owned(),
+        });
+        ui.close();
+    }
+}
+
+/// True if `id` is reached from HEAD following first parents among the loaded commits.
+fn on_first_parent_history(repo: &RepoView, id: Oid) -> bool {
+    let commits = repo.list.commits();
+    let by_id: std::collections::HashMap<Oid, &Commit> =
+        commits.iter().map(|c| (c.id, c)).collect();
+    let mut next = repo.head.target();
+    while let Some(current) = next {
+        if current == id {
+            return true;
+        }
+        next = by_id.get(&current).and_then(|c| c.parents.first().copied());
+    }
+    false
 }

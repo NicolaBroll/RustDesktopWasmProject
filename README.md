@@ -41,6 +41,11 @@ first parent). Diffs return `{"files": [...]}` with hunks and lines (in `diff.wo
 `diff.index` each file also has `digest`, to be passed to `index.*_lines`); `path` limits the
 result to that file (renames stay renames) and is a string, or a byte array for non-UTF-8 names.
 There is no size limit: for large commits it is better to request one file at a time.
+`file.blame {"path", "rev"?}` says who last changed each line of a file (`{"lines", "commits",
+"path", "rev"}`; without `rev` the worktree file, uncommitted lines have `commit: null`) and
+`file.log {"path", "rev"?, "skip"?, "limit"?, "follow"?}` lists the commits that change it, newest
+first, across renames unless `"follow": false` (`{"commits": [{"commit", "path", "old_path",
+"status"}], "has_more"}`).
 
 Writes (marked `[writes]` by `commands`): `index.stage {"paths"}` stages files
 (modifications, new files, deletions; for a rename the two paths) and `index.unstage {"paths"}`

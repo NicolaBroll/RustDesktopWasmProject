@@ -418,6 +418,13 @@ pub(super) fn file_menu(
         actions.push(Action::OpenDiff(target.clone()));
         ui.close();
     }
+    let blame_off = match item.change {
+        Change::Untracked => Some(tr!("stage-blame-untracked")),
+        Change::Deleted => Some(tr!("stage-blame-deleted")),
+        _ => None,
+    };
+    file_menu_entries(ui, &item.path, None, blame_off, actions);
+    ui.separator();
     let label = match op {
         StageOp::Stage if item.is_conflict() => tr!("stage-mark-resolved"),
         StageOp::Stage => tr!("stage-stage"),

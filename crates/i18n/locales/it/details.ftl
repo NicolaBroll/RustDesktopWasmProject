@@ -25,3 +25,6 @@ details-similarity = somiglianza { $score }%
 details-mode = modo { $old } -> { $new }
 details-submodule = sottomodulo
 details-click-diff = Clic: mostra il diff
+details-show-diff = Mostra il diff
+details-blame-deleted = Il commit elimina il file: non c'è niente su cui fare il blame
+details-blame-submodule = Un submodule non ha righe su cui fare il blame

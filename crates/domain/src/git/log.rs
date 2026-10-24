@@ -40,6 +40,7 @@ macro_rules! log_format {
         "%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b"
     };
 }
+pub(super) use log_format;
 
 /// The format string read by [`parse_log`]. On its own it is not enough: it must be used with the other
 /// arguments of [`LOG_ARGS`], which already contains it.
@@ -111,7 +112,7 @@ pub fn parse_log(input: &[u8]) -> Result<Vec<Commit>, DomainError> {
         .collect()
 }
 
-fn parse_record(n: usize, f: &[&[u8]; LOG_FIELDS]) -> Result<Commit, DomainError> {
+pub(super) fn parse_record(n: usize, f: &[&[u8]; LOG_FIELDS]) -> Result<Commit, DomainError> {
     let field_err = |idx: usize, reason: String| {
         invalid(format!("commit {n}, field {}: {reason}", FIELD_NAMES[idx]))
     };
@@ -167,21 +168,28 @@ fn parse_raw_date(raw: &[u8]) -> Result<(i64, i32), String> {
     let time = parse_digits(secs)
         .and_then(|v| i64::try_from(v).ok())
         .ok_or_else(|| bad("the seconds must be a non-negative integer"))?;
+    let offset = parse_tz(tz).map_err(bad)?;
+    Ok((time, offset))
+}
+
+/// Reads a time zone `<+hhmm|-hhmm>` into minutes relative to UTC (e.g. `-0530` → `-330`).
+/// On error, the reason (without the input, which the caller shows).
+pub(super) fn parse_tz(tz: &[u8]) -> Result<i32, &'static str> {
     let sign = match tz.first() {
         Some(b'+') => 1,
         Some(b'-') => -1,
-        _ => return Err(bad("the time zone must start with `+` or `-`")),
+        _ => return Err("the time zone must start with `+` or `-`"),
     };
     let hhmm = &tz[1..];
     if hhmm.len() != 4 {
-        return Err(bad("the time zone must have four digits (`+hhmm`)"));
+        return Err("the time zone must have four digits (`+hhmm`)");
     }
     let (hh, mm) = hhmm.split_at(2);
-    let hours = parse_digits(hh).ok_or_else(|| bad("non-numeric time zone hours"))?;
-    let minutes = parse_digits(mm).ok_or_else(|| bad("non-numeric time zone minutes"))?;
+    let hours = parse_digits(hh).ok_or("non-numeric time zone hours")?;
+    let minutes = parse_digits(mm).ok_or("non-numeric time zone minutes")?;
     // At most 99 * 60 + 99: always fits in an i32.
     let offset = i32::try_from(hours * 60 + minutes).unwrap_or(i32::MAX);
-    Ok((time, sign * offset))
+    Ok(sign * offset)
 }
 
 /// ASCII decimal digits (at least one) into a `u64`; `None` if empty, non-numeric or too large.

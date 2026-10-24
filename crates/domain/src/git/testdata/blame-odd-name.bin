@@ -1,0 +1,12 @@
+7e859253faac7b3e4d6dec3550ac89097f2aa7db 1 1 1
+author Anna Author
+author-mail <anna@example.com>
+author-time 1700000500
+author-tz +0200
+committer Carlo Committer
+committer-mail <carlo@example.com>
+committer-time 1700000500
+committer-tz -0530
+summary Odd name
+filename "odd\tcaf\351.txt"
+	x

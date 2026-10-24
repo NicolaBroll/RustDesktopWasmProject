@@ -68,3 +68,5 @@ stage-tooltip-double-stage = Double-click: stage
 stage-tooltip-double-unstage = Double-click: unstage
 stage-tooltip-right-discard = Right-click: more actions, including discarding the changes
 stage-tooltip-right = Right-click: more actions
+stage-blame-untracked = The file is not tracked yet: the blame needs a file in HEAD or in the index
+stage-blame-deleted = The file is deleted: there is nothing to blame

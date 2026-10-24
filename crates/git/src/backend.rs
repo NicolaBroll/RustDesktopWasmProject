@@ -4,6 +4,7 @@ mod branch;
 mod commit;
 mod conflict;
 mod discard;
+mod file;
 mod merge;
 mod pick;
 mod rebase;
@@ -16,20 +17,23 @@ mod sync;
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
 use project_domain::EntryKind;
-use project_domain::{Change, Commit, CommitDetails, Diff, Head, RefInfo, RepoPath, Status};
+use project_domain::{
+    Change, Commit, CommitDetails, Diff, FileLogEntry, Head, RefInfo, RepoPath, Status,
+};
 use project_domain::{
     DIFF_ARGS, DIFF_TREE_ARGS, LOG_ARGS, Oid, Operation, PatchDirection, REFS_ARGS, STATUS_ARGS,
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution,
-    ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
-    FetchOutcome, FetchRequest, GitBackend, HeadState, JobContext, LinePatch, LineSelection,
-    LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message, OperationState, PickKind,
-    PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest,
-    RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
-    StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
-    apply_patch, backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, BlameQuery, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry,
+    ConflictResolution, ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome,
+    DiscardedFile, EngineError, FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend,
+    HeadState, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
+    MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
+    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteSnapshot, RepoOpener,
+    RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
+    StashPush, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
+    path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1067,6 +1071,18 @@ impl GitBackend for CliBackend {
         diff.files
             .retain(|f| f.new_path == *path || f.old_path == *path);
         Ok(diff)
+    }
+
+    fn blame(&self, query: &BlameQuery, job: &JobContext) -> Result<FileBlame, EngineError> {
+        self.blame_file(query, job)
+    }
+
+    fn file_log(
+        &self,
+        query: &FileLogQuery,
+        job: &JobContext,
+    ) -> Result<Vec<FileLogEntry>, EngineError> {
+        self.log_file(query, job)
     }
 
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {

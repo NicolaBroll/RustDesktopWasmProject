@@ -9,6 +9,7 @@ mod branch;
 mod commit;
 mod conflict;
 mod discard;
+mod file;
 mod line_diff;
 mod lines;
 mod memory;
@@ -48,6 +49,10 @@ pub use discard::{
     DiscardOutcome, DiscardedFile, WorktreeBackup, WorktreeRestore, check_same_plan,
     discard_description, discard_plan,
 };
+pub use file::{
+    BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
+    blame_missing_worktree, blame_no_commits, is_binary_content,
+};
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
 pub(crate) use merge::check_in_progress;
@@ -85,7 +90,9 @@ pub use stash::{
 };
 
 use crate::{EngineError, JobContext, Message};
-use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
+use project_domain::{
+    Commit, CommitDetails, Diff, FileLogEntry, Head, Oid, RefInfo, RepoPath, Status,
+};
 use serde::{Deserialize, Serialize};
 
 /// An open repository: reads and, one step at a time, writes (stage and unstage for now).
@@ -130,6 +137,25 @@ pub trait GitBackend: Send {
     /// [`GitBackend::show_commit`]). For [`DiffSpec::Commit`] a `rev` that does not resolve to
     /// a commit gives [`EngineError::UnknownRev`].
     fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
+
+    /// Who last changed each line of `query.path` (`file.blame`): at commit `query.rev`, or in
+    /// the worktree (lines not yet committed have no commit). Slow on long histories: `job`
+    /// cancels it ([`EngineError::Cancelled`]). Errors: `rev` that does not resolve →
+    /// [`EngineError::UnknownRev`]; path that is not a file there ([`blame_missing_at`],
+    /// [`blame_missing_worktree`]), worktree on a branch without commits
+    /// ([`blame_no_commits`]) → [`EngineError::InvalidParams`]; binary file → [`blame_binary`].
+    fn blame(&self, query: &BlameQuery, job: &JobContext) -> Result<FileBlame, EngineError>;
+
+    /// The commits that change `query.path` (`file.log`), newest first, from HEAD or
+    /// `query.rev`, with the file's name in each; with `follow` across renames. Merges are
+    /// compared with the first parent and shown only if the file differs from every parent.
+    /// Slow on long histories: `job` cancels it. A `rev` that does not resolve →
+    /// [`EngineError::UnknownRev`]; HEAD without commits → empty.
+    fn file_log(
+        &self,
+        query: &FileLogQuery,
+        job: &JobContext,
+    ) -> Result<Vec<FileLogEntry>, EngineError>;
 
     // --- Writes: they change the repo. They take `&mut self` because the `MemoryBackend` holds the
     // state itself; a read done afterwards always sees the new state.

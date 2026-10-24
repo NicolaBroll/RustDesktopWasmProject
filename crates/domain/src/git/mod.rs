@@ -5,11 +5,14 @@
 //! by a commit, [`parse_diff_tree`], and the diff, [`parse_diff`]); [`build_patch`] builds the
 //! patches for staging single lines; [`parse_conflicts`] reads the conflict markers of a
 //! file and [`resolve_block`]/[`resolve_all`] resolve them; [`RebasePlan`] is the plan of an
-//! interactive rebase.
+//! interactive rebase; [`parse_blame`] reads `git blame --porcelain` and [`parse_file_log`] the
+//! history of one file.
 
+mod blame;
 mod conflict;
 mod diff;
 mod diff_tree;
+mod file_log;
 mod graph;
 mod log;
 mod oid;
@@ -22,11 +25,15 @@ mod status;
 mod text;
 
 #[cfg(test)]
+mod blame_tests;
+#[cfg(test)]
 mod conflict_tests;
 #[cfg(test)]
 mod diff_tests;
 #[cfg(test)]
 mod diff_tree_tests;
+#[cfg(test)]
+mod file_log_tests;
 #[cfg(test)]
 mod graph_tests;
 #[cfg(test)]
@@ -42,11 +49,13 @@ mod status_tests;
 #[cfg(test)]
 mod tests;
 
+pub use blame::{Blame, BlameCommit, BlameLine, parse_blame};
 pub use conflict::{
     Choice, ConflictBlock, ConflictText, Segment, parse_conflicts, resolve_all, resolve_block,
 };
 pub use diff::{DIFF_ARGS, Diff, FileDiff, Hunk, Line, LineKind, NO_NEWLINE_MARKER, parse_diff};
 pub use diff_tree::{ChangedFile, CommitDetails, DIFF_TREE_ARGS, parse_diff_tree};
+pub use file_log::{FILE_LOG_ARGS, FileLogEntry, parse_file_log};
 pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;

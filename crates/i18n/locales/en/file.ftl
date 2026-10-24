@@ -1,0 +1,36 @@
+# Blame and history of a file (file.rs, view/file_view.rs).
+
+file-menu-blame = Blame
+file-menu-blame-hint-commit = Who last changed each line, as of commit { $id }
+file-menu-blame-hint-worktree = Who last changed each line of the file in the working tree
+file-menu-history = File history
+file-menu-history-hint-commit = The commits that changed this file, from { $id } back
+file-menu-history-hint-head = The commits that changed this file, from HEAD back
+file-close = Close
+file-close-hint = Back to the commit list (Esc)
+file-tab-blame = Blame
+file-tab-history = History
+file-at-commit = at { $id }
+file-at-worktree = working tree
+file-from-commit = from { $id }
+file-from-head = from HEAD
+file-follow = Follow renames
+file-follow-hint = Also show the commits from before the file was renamed
+file-retry = Retry
+file-blame-loading = Reading the blame…
+file-blame-empty = The file is empty.
+file-not-committed = Not committed yet
+file-not-committed-hint = Lines changed in the working tree or the index, not committed yet
+file-tooltip-author = Author: { $author }, { $date }
+file-tooltip-committer = Committer: { $committer }, { $date }
+file-tooltip-boundary = Boundary commit: the lines may be older
+file-tooltip-select = Click to select it in the commit list
+file-history-loading = Reading the history…
+file-history-empty = No commits change this file.
+file-history-pick = Select a commit to see how it changed this file.
+file-history-page-error = The next page could not be read
+file-history-click = Click to see its changes to this file
+file-load-more = Load more
+file-select-commit = Select in the commit list
+file-renamed-from = renamed from { $path }
+file-copied-from = copied from { $path }

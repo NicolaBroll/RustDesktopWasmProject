@@ -1,0 +1,36 @@
+# Blame e cronologia di un file (file.rs, view/file_view.rs).
+
+file-menu-blame = Blame
+file-menu-blame-hint-commit = Chi ha cambiato per ultimo ogni riga, al commit { $id }
+file-menu-blame-hint-worktree = Chi ha cambiato per ultimo ogni riga del file nella working tree
+file-menu-history = Cronologia del file
+file-menu-history-hint-commit = I commit che hanno cambiato questo file, a partire da { $id }
+file-menu-history-hint-head = I commit che hanno cambiato questo file, a partire da HEAD
+file-close = Chiudi
+file-close-hint = Torna alla lista dei commit (Esc)
+file-tab-blame = Blame
+file-tab-history = Cronologia
+file-at-commit = al commit { $id }
+file-at-worktree = working tree
+file-from-commit = da { $id }
+file-from-head = da HEAD
+file-follow = Segui le rinomine
+file-follow-hint = Mostra anche i commit di prima che il file fosse rinominato
+file-retry = Riprova
+file-blame-loading = Lettura del blame…
+file-blame-empty = Il file è vuoto.
+file-not-committed = Non ancora nel commit
+file-not-committed-hint = Righe cambiate nella working tree o nell'indice, non ancora nel commit
+file-tooltip-author = Autore: { $author }, { $date }
+file-tooltip-committer = Committer: { $committer }, { $date }
+file-tooltip-boundary = Commit di confine: le righe possono essere più vecchie
+file-tooltip-select = Clic per selezionarlo nella lista dei commit
+file-history-loading = Lettura della cronologia…
+file-history-empty = Nessun commit cambia questo file.
+file-history-pick = Seleziona un commit per vedere come ha cambiato questo file.
+file-history-page-error = Non è stato possibile leggere la pagina successiva
+file-history-click = Clic per vedere le sue modifiche a questo file
+file-load-more = Carica altri
+file-select-commit = Seleziona nella lista dei commit
+file-renamed-from = rinominato da { $path }
+file-copied-from = copiato da { $path }

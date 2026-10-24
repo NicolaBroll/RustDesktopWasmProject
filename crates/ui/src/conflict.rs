@@ -594,6 +594,7 @@ impl App {
                 repo.stash.select(None);
                 repo.select_worktree(true);
                 repo.diff.close();
+                repo.file.close();
                 read = repo.conflict.open(path);
             }
             Action::CloseConflict => repo.conflict.close(),

@@ -167,39 +167,7 @@ fn parse_header(header: &[u8]) -> Result<RawHeader, String> {
             f.len()
         ));
     };
-    let (change, score) = match status {
-        [letter, score @ ..] => {
-            let change = match letter {
-                b'A' => Change::Added,
-                b'D' => Change::Deleted,
-                b'M' => Change::Modified,
-                b'T' => Change::TypeChanged,
-                b'R' => Change::Renamed,
-                b'C' => Change::Copied,
-                _ => return Err(format!("unknown status `{}`", show(status))),
-            };
-            let needs_score = matches!(change, Change::Renamed | Change::Copied);
-            let score = match (needs_score, score) {
-                (false, []) => None,
-                // `M` can have a dissimilarity only with `-B`, which we do not use.
-                (false, _) => return Err(format!("unexpected status `{}`", show(status))),
-                (true, digits) => Some(
-                    parse_digits(digits)
-                        .and_then(|v| u8::try_from(v).ok())
-                        .filter(|v| *v <= 100)
-                        .ok_or_else(|| {
-                            format!(
-                                "`{}` is not a valid score (expected `{}<0-100>`)",
-                                show(status),
-                                char::from(*letter)
-                            )
-                        })?,
-                ),
-            };
-            (change, score)
-        }
-        [] => return Err("empty status".to_owned()),
-    };
+    let (change, score) = parse_change_status(status)?;
     Ok(RawHeader {
         old_mode: mode(old_mode)?,
         new_mode: mode(new_mode)?,
@@ -215,4 +183,40 @@ fn invalid(reason: String) -> DomainError {
         command: "diff-tree",
         reason,
     }
+}
+
+/// Reads a status of `--raw` or `--name-status` (`A`, `D`, `M`, `T`, `R<score>`, `C<score>`)
+/// into the change and, for renames and copies, the similarity (0–100).
+pub(super) fn parse_change_status(status: &[u8]) -> Result<(Change, Option<u8>), String> {
+    let [letter, score @ ..] = status else {
+        return Err("empty status".to_owned());
+    };
+    let change = match letter {
+        b'A' => Change::Added,
+        b'D' => Change::Deleted,
+        b'M' => Change::Modified,
+        b'T' => Change::TypeChanged,
+        b'R' => Change::Renamed,
+        b'C' => Change::Copied,
+        _ => return Err(format!("unknown status `{}`", show(status))),
+    };
+    let needs_score = matches!(change, Change::Renamed | Change::Copied);
+    let score = match (needs_score, score) {
+        (false, []) => None,
+        // `M` can have a dissimilarity only with `-B`, which we do not use.
+        (false, _) => return Err(format!("unexpected status `{}`", show(status))),
+        (true, digits) => Some(
+            parse_digits(digits)
+                .and_then(|v| u8::try_from(v).ok())
+                .filter(|v| *v <= 100)
+                .ok_or_else(|| {
+                    format!(
+                        "`{}` is not a valid score (expected `{}<0-100>`)",
+                        show(status),
+                        char::from(*letter)
+                    )
+                })?,
+        ),
+    };
+    Ok((change, score))
 }

@@ -428,3 +428,53 @@ pub fn repo_with_special_names() -> Repo {
     }
     repo
 }
+
+/// The ids of [`repo_with_renamed_file`].
+pub struct RenamedFile {
+    pub repo: Repo,
+    pub add: Oid,
+    pub two: Oid,
+    pub rename: Oid,
+    pub four: Oid,
+    pub five: Oid,
+    pub one: Oid,
+    pub merge: Oid,
+}
+
+/// The history of a file renamed and changed on two branches, HEAD on `main`:
+///
+/// ```text
+/// merge  Merge branch 'side'      (main)  b.txt = ONE TWO three four five
+/// |\
+/// | five  b.txt: + five           (side)
+/// one |   b.txt: one → ONE
+/// |/
+/// four    b.txt: + four
+/// rename  a.txt → b.txt
+/// two     a.txt: two → TWO
+/// add     a.txt = one two three   (root)
+/// ```
+pub fn repo_with_renamed_file() -> RenamedFile {
+    let repo = Repo::new();
+    let add = repo.commit_file("a.txt", "one\ntwo\nthree\n", "add");
+    let two = repo.commit_file("a.txt", "one\nTWO\nthree\n", "two");
+    repo.git(&["mv", "a.txt", "b.txt"]);
+    let rename = repo.commit("rename");
+    let four = repo.commit_file("b.txt", "one\nTWO\nthree\nfour\n", "four");
+    repo.branch("side");
+    repo.checkout("side");
+    let five = repo.commit_file("b.txt", "one\nTWO\nthree\nfour\nfive\n", "five");
+    repo.checkout("main");
+    let one = repo.commit_file("b.txt", "ONE\nTWO\nthree\nfour\n", "one");
+    let merge = repo.merge("side");
+    RenamedFile {
+        repo,
+        add,
+        two,
+        rename,
+        four,
+        five,
+        one,
+        merge,
+    }
+}

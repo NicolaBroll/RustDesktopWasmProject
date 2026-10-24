@@ -4,6 +4,7 @@ mod branch;
 mod commit;
 mod conflict;
 mod discard;
+mod file;
 mod merge;
 mod pick;
 mod rebase;
@@ -23,18 +24,18 @@ use stash::MemoryStash;
 
 use super::line_diff;
 use super::{
-    BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
-    ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest,
-    GitBackend, HeadState, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
-    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
-    PushRequest, RebaseRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    UpstreamConfig, WorktreeRestore,
+    BlameQuery, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution,
+    ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome,
+    FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, LineSelection, LogQuery,
+    MergeAborted, MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest, PullOutcome,
+    PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteSnapshot,
+    RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped,
+    StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
-    Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
-    RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
+    Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, FileLogEntry, Head, Oid,
+    Operation, RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
 };
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
@@ -720,6 +721,18 @@ impl GitBackend for MemoryBackend {
             files.retain(|f| f.new_path == *path || f.old_path == *path);
         }
         Ok(Diff { files })
+    }
+
+    fn blame(&self, query: &BlameQuery, job: &JobContext) -> Result<FileBlame, EngineError> {
+        self.memory_blame(query, job)
+    }
+
+    fn file_log(
+        &self,
+        query: &FileLogQuery,
+        job: &JobContext,
+    ) -> Result<Vec<FileLogEntry>, EngineError> {
+        self.memory_file_log(query, job)
     }
 
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {

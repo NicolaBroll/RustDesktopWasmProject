@@ -349,9 +349,12 @@ Rules that apply to every step:
   same result as the S32 test; CI green.
 
 ### S34 — Blame and file history
-- [ ] **Agent:** `git-domain` (`--porcelain` parser), then `git-engine` and `egui-ui`
+- [x] **Agent:** `git-domain` (`--porcelain` parser), then `git-engine` and `egui-ui`
 - **Goal:** `file.blame`, `file.log` (with `--follow`) and their views.
 - **Done when:** parser and command tests; CI green.
+- Done: parsers, commands and `CliBackend`; UI with "Blame"/"File history" in the file menus of
+  the commit details and the stage area, a view in place of the graph (`crates/ui/src/file.rs`,
+  `view/file_view.rs`), requests in the background cancelled when replaced.
 
 ### S35 — Multiple repos and recent repos
 - [ ] **Agent:** `egui-ui`

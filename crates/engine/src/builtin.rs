@@ -6,6 +6,7 @@ mod merge;
 mod pick;
 mod pull;
 mod push;
+mod rebase;
 mod remote;
 mod remotes;
 mod stash;
@@ -257,6 +258,30 @@ impl Registry {
             pick::revert_abort,
         );
         add(
+            "rebase.plan",
+            "Default plan of an interactive rebase of the current branch",
+            r#"{"base": string (the commit to rebuild on, excluded: id, branch or tag)}"#,
+            rebase::rebase_plan,
+        );
+        add(
+            "rebase.start",
+            "Rewrite the commits of the current branch (interactive rebase)",
+            r#"{"base": string, "steps": [{"action": "pick" | "reword" | "squash" | "fixup" | "drop", "commit": full oid, "message"?: string}] (oldest first, every commit of base..HEAD once), "confirm"?: bool (rewrites published commits)}"#,
+            rebase::rebase_start,
+        );
+        add(
+            "rebase.continue",
+            "Continue the rebase in progress",
+            "{}",
+            rebase::rebase_continue,
+        );
+        add(
+            "rebase.abort",
+            "Abort the rebase in progress",
+            r#"{"confirm": true}"#,
+            rebase::rebase_abort,
+        );
+        add(
             "conflict.show",
             "Versions of a conflicted file (base, ours, theirs, worktree)",
             r#"{"path": path}"#,
@@ -296,6 +321,9 @@ const WRITES: &[&str] = &[
     "merge.abort",
     "merge.continue",
     "merge.start",
+    "rebase.abort",
+    "rebase.continue",
+    "rebase.start",
     "remote.add",
     "remote.fetch",
     "remote.pull",
@@ -782,6 +810,10 @@ mod tests {
                 "merge.abort",
                 "merge.continue",
                 "merge.start",
+                "rebase.abort",
+                "rebase.continue",
+                "rebase.plan",
+                "rebase.start",
                 "remote.add",
                 "remote.fetch",
                 "remote.list",
@@ -828,6 +860,9 @@ mod tests {
                 "merge.abort",
                 "merge.continue",
                 "merge.start",
+                "rebase.abort",
+                "rebase.continue",
+                "rebase.start",
                 "remote.add",
                 "remote.fetch",
                 "remote.pull",

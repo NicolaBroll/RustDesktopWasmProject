@@ -79,12 +79,16 @@ touch them). `repo.operation` gives the banner (`incoming` is the upstream commi
 of the remote branch). The name of the other side in the `CliBackend` markers is the upstream id
 (`>>>>>>> <oid>`: only the id reaches git, as for `merge.start`).
 
-**Stopped rebase** (choice, for now): it is **aborted immediately** (`--abort`: the worktree was clean,
-so it returns identical) and the error is `PullConflict { branch, upstream, operation: rebase, files,
-message }`; a rebase left in progress would have no way out of the client until S32 brings
-`rebase.abort`/`rebase.continue` (then it too will be left in progress). `operation: merge` stays
-in the type but no longer comes from the backends. A rebase stopped for another reason (hook, empty
-commit) is also aborted, with a `Git` error.
+**Stopped rebase** (S32): like the merge it **stays in progress** (conflicts, a lock, signing): result
+`in_progress: true`, `conflicts`, `message`, the branch not moved (`after == before`, HEAD detached
+by git on the commit reached), the backup `refs/project/backup/pull-...` kept, nothing in the journal.
+The backend saves the [`RebaseRecord`](rebase.md#undo-and-backup) of the pull (command `remote.pull`,
+branch, before, upstream, backup) in `rebase-merge/project-rebase.json`. `rebase.continue` (after
+resolving and staging) concludes it with the **pull's** journal entry (`Pull of `main` (rebase onto
+origin/main: ...)`, undo like a concluded pull, with a warning if the branch does not contain the
+upstream); `rebase.abort` (with `confirm`) returns the branch where it was. `repo.operation` offers
+`rebase.continue`/`rebase.abort`. `PullConflict` (and `PullOperation`) stay in the types for
+compatibility but no backend produces them any more.
 
 Fetch errors: `Auth`, `RemoteUnreachable`, `Cancelled`. Result: `{"branch", "remote",
 "upstream", "strategy": "fast_forward" | "merge" | "rebase" | "up_to_date", "strategy_source":
@@ -182,7 +186,7 @@ merge `git -c core.fsmonitor=false merge --no-autostash --no-overwrite-ignore --
 core.fsmonitor=false -c rebase.updateRefs=false rebase --no-autostash --no-autosquash [--rebase-merges]
 --end-of-options <oid>` (`rebase.updateRefs` would move other branches outside the journal; without the
 fork-point of `git pull --rebase`: with a rewritten upstream the rebase usually stops on
-conflict, and is aborted). **Ignored files**: git overwrites without saying so an ignored file that
+conflict, and stays in progress). **Ignored files**: git overwrites without saying so an ignored file that
 the upstream adds (and an aborted merge would delete it); the rebase has no
 `--no-overwrite-ignore`. For this reason, for the active branch and before the backup, the files the
 upstream brings and HEAD does not have (`diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD
@@ -193,7 +197,7 @@ merge it is a second defense after `--no-overwrite-ignore`). For the rebase (als
 HEAD does not have also count (`git log -m --no-renames --format= -z --name-only <upstream>..HEAD`): the rebase
 goes through the intermediate trees, so a file that a local commit adds and a later one
 removes (or renames, or removes and recreates), or that a local commit modifies while the upstream
-removes it (modify/delete conflict, then `rebase --abort`), would be written and then deleted
+removes it (modify/delete conflict, then `rebase.abort`), would be written and then deleted
 together with the ignored file that was in its place. The merge goes only from HEAD to the
 result and does not need it. The `MemoryBackend` does the same check on the trees of the
 commits to reapply. Hooks (`pre-merge-commit`, `commit-msg`, `post-merge`,
@@ -205,9 +209,11 @@ function as `merge.start`; a name from the output is added only if no path in th
 the same text, so a non-UTF-8 name does not appear twice). Merge (`MERGE_HEAD` after `git
 merge`): no `--abort`, result `in_progress`, with the same checks as a successful merge
 as `warnings` (HEAD still on the branch, the branch still at its previous value, `MERGE_HEAD`
-equal to the expected upstream). Rebase: `git rebase --abort` and `PullConflict`; if the abort
-fails an error that says so, and the backup stays (it is never removed with an operation in
-progress: the error names it). Non-zero exit without an operation in progress: if the branch is as it was
+equal to the expected upstream). Rebase (`rebase-merge/` after `git rebase`): no `--abort` either,
+result `in_progress` with the same checks as `warnings` (`head-name` the branch, the branch at its
+previous value, `onto` the expected upstream) and the record written (a failure to write it is a
+warning: `rebase.continue` would then conclude without the journal entry). The backup is never
+removed with an operation in progress. Non-zero exit without an operation in progress: if the branch is as it was
 nothing started, error (`NotAllowed` if git refuses so as not to overwrite files) and the backup is
 removed; if the branch moved anyway, the error says so and names the backup, which stays, and
 nothing goes into the journal. Afterwards: the branch must contain the upstream, HEAD on the branch, otherwise
@@ -259,13 +265,15 @@ done by the pull does not, like `remote.fetch`.
 The `MemoryBackend` does the same with its checkout checks; it records pull backups in
 `commit_backups` (`refs/project/backup/pull-<n>`) and those of force pushes (`push-<n>`). The pull's
 in-memory merge is that of `merge.start` (`merge_three_way`): with conflicts it leaves the merge in
-progress (`u` entries with `>>>>>>> origin/main` markers, `MERGE_HEAD`, `MERGE_MSG`); the rebase in
-conflict changes nothing and gives `PullConflict`.
+progress (`u` entries with `>>>>>>> origin/main` markers, `MERGE_HEAD`, `MERGE_MSG`); the rebase
+replays the local commits with the in-memory rebase of [rebase.md](rebase.md) (those whose changes are
+already upstream dropped, like git's `--empty=drop`) and a conflict leaves it in progress.
 
-**Stopped merge and journal**: the stopped pull does not go into the journal (the branch has not moved) and while
-the merge is in progress `edit.undo`/`edit.redo` are refused (operation in progress). The entry arrives
-with `merge.continue` (undo like a concluded merge, [merge.md](merge.md)); `merge.abort` does not go into
-the journal, and `can_undo` after the abort refers to the previous entry.
+**Stopped merge or rebase and journal**: the stopped pull does not go into the journal (the branch has
+not moved) and while the operation is in progress `edit.undo`/`edit.redo` are refused. The entry
+arrives with `merge.continue` (undo like a concluded merge, [merge.md](merge.md)) or with
+`rebase.continue` (the pull's own entry); `merge.abort`/`rebase.abort` do not go into the journal, and
+`can_undo` after the abort refers to the previous entry.
 
 ## The fetch does not go into the journal
 

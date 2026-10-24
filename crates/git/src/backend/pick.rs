@@ -179,7 +179,7 @@ impl CliBackend {
 
     /// True if the index equals HEAD: the `says_empty` text can also come from a hook, and
     /// `--skip` would throw away a staged result.
-    fn index_matches_head(&self) -> Result<bool, EngineError> {
+    pub(super) fn index_matches_head(&self) -> Result<bool, EngineError> {
         let out = self.git.output(
             Some(&self.workdir),
             &["diff-index", "--cached", "--quiet", "HEAD", "--"],

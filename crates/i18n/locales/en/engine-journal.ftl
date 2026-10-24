@@ -21,6 +21,10 @@ engine-journal-pick = { $kind ->
     [revert] Revert
    *[other] Cherry-pick
 } of { $source } onto `{ $branch }` (from { $before } to { $after })
+engine-journal-rebase = Rebase of `{ $branch }` ({ $n ->
+    [one] 1 commit
+   *[other] { $n } commits
+}, from { $before } to { $after })
 engine-journal-remote-add = Add remote `{ $name }`
 engine-journal-remote-add-fetched = Add remote `{ $name }` (with fetch: { $n ->
     [one] 1 remote branch

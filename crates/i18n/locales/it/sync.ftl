@@ -31,6 +31,8 @@ sync-rejection-short-hook = un hook pre-push l'ha fermato
 sync-rejection-short-other = rifiutato da git
 sync-pull-stopped = { $what }: merge di { $upstream } fermo prima del commit (un hook o la firma?): concluderlo con «Continua il merge…» nel riquadro in alto, o annullarlo
 sync-pull-stopped-conflicts = { $what }: merge di { $upstream } fermo: { $n } file in conflitto. Risolverli e segnarli come risolti nell'area di stage, poi «Continua il merge…» nel riquadro in alto (o «Annulla il merge…», che riporta il branch com'era)
+sync-pull-stopped-rebase = { $what }: rebase su { $upstream } fermo prima di un commit (un hook o la firma?): concluderlo con «Continua il rebase…» nel riquadro in alto, o annullarlo
+sync-pull-stopped-conflicts-rebase = { $what }: rebase su { $upstream } fermo: { $n } file in conflitto. Risolverli e segnarli come risolti nell'area di stage, poi «Continua il rebase…» nel riquadro in alto (o «Annulla il rebase…», che riporta il branch com'era)
 sync-pull-up-to-date = { $what }: già aggiornato con { $upstream }
 sync-pull-up-to-date-ahead = { $what }: già aggiornato con { $upstream } ({ $n ->
     [one] 1 commit locale
@@ -70,7 +72,7 @@ sync-push-refs-not-reread = Push fatto, ma i ref non si rileggono: { $error }
 sync-close = Chiudi
 sync-conflict-title = Pull annullato: conflitti
 sync-conflict-explanation = Il { $operation } con l'upstream si è fermato in conflitto ed è stato annullato: il repo è com'era prima del pull (branch, indice e file non sono cambiati). Il fetch invece è fatto: il branch remoto mostra i commit arrivati.
-sync-conflict-hint = Un rebase fermo non si continua ancora dall'app. Si può fare il pull con { $other }: se va in conflitto il merge resta in corso e i file si risolvono qui (poi «Continua il merge…» o «Annulla il merge…»); oppure continuare a lavorare sul branch e integrare dopo, o risolvere da terminale.
+sync-conflict-hint = Si può rifare il pull con { $other } (o con la stessa strategia): un pull che va in conflitto ora resta in corso e i file si risolvono qui, poi «Continua…» o «Annulla…» nel riquadro in alto; oppure continuare a lavorare sul branch e integrare dopo, o risolvere da terminale.
 sync-conflict-no-files = Git non ha indicato i file.
 sync-conflict-files = { $n ->
     [one] File in conflitto:

@@ -6,6 +6,7 @@ mod conflict;
 mod discard;
 mod merge;
 mod pick;
+mod rebase;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -25,10 +26,10 @@ use project_engine::{
     ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
     FetchOutcome, FetchRequest, GitBackend, HeadState, JobContext, LinePatch, LineSelection,
     LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message, OperationState, PickKind,
-    PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RefRestore,
-    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
-    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore, apply_patch,
-    backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest,
+    RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
+    StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
+    apply_patch, backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1327,6 +1328,18 @@ impl GitBackend for CliBackend {
 
     fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
         self.abort_pick(kind)
+    }
+
+    fn rebase(&mut self, request: &RebaseRequest) -> Result<MergeOutcome, EngineError> {
+        self.rebase_onto_base(request)
+    }
+
+    fn rebase_continue(&mut self) -> Result<MergeOutcome, EngineError> {
+        self.rebase_go_on()
+    }
+
+    fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
+        self.abort_rebase()
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

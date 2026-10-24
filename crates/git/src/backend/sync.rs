@@ -18,16 +18,16 @@
 //!   outside the journal), with `GIT_EDITOR=:` and `GIT_SEQUENCE_EDITOR=:`. Rebase onto the upstream
 //!   like `git rebase <upstream>`, without the fork-point of `git pull --rebase`: if the upstream
 //!   was rewritten (force push) its old commits are replayed too, and usually the
-//!   rebase stops with a conflict (and is aborted);
+//!   rebase stops with a conflict;
 //! - stopped merge (conflicts, `pre-merge-commit`/`commit-msg` hooks, signing): **stays in progress**
 //!   as with `merge.start` ([`PullOutcome::in_progress`] with the conflicted files from the status and
 //!   from git's output), to be finished with `merge.continue` or aborted with `merge.abort`;
-//! - stopped rebase: the conflicted files, then `git rebase --abort` (the worktree was clean: it goes back
-//!   exactly as it was) and [`EngineError::PullConflict`]. If the abort fails,
-//!   the error says so (the repo stays in the rebase in progress, the backup stays).
+//! - stopped rebase (S32): **stays in progress** too, with the conflicted files and the
+//!   [`RebaseRecord`] of the pull in `rebase-merge/project-rebase.json`, to be finished with
+//!   `rebase.continue` (the pull's journal entry) or aborted with `rebase.abort`.
 //!
 //! First of all the backup `refs/project/backup/pull-...` of the branch as it was; if then nothing
-//! changes (error, aborted rebase) it is removed; with a stopped merge it stays.
+//! changes (error) it is removed; with a stopped merge or rebase it stays.
 //! `GIT_REFLOG_ACTION=project: remote.pull` gives the reflog message.
 //!
 //! Undo/redo of the active branch ([`CliBackend::reset_keep`]): the same checks as
@@ -43,7 +43,8 @@ use crate::command::{failure, os_from_bytes};
 use project_domain::{Commit, EntryKind, LOG_ARGS, Oid, Operation, RepoPath, parse_log};
 use project_engine::{
     EngineError, HeadState, Message, PullMode, PullOperation, PullOutcome, PullRequest,
-    PullSettings, RefRestore, RestoreOutcome, UpstreamConfig, branch_ref, check_pull_state,
+    PullSettings, RebaseRecord, RefRestore, RestoreOutcome, UpstreamConfig, branch_ref,
+    check_pull_state,
 };
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -330,11 +331,18 @@ impl CliBackend {
         match result {
             Ok(None) => {}
             Ok(Some(Stopped { conflicts, message })) => {
-                // Stopped merge: stays in progress, the branch has not moved and the backup stays. The
-                // same checks as a successful merge, as warnings: the merge in progress must
-                // be the upstream's on this branch.
+                // Stopped merge or rebase: stays in progress, the branch has not moved and the backup
+                // stays. The same checks as a successful merge, as warnings: the operation in
+                // progress must be the upstream's on this branch.
                 let mut warnings = Vec::new();
-                if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
+                let rebase = matches!(request.mode, PullMode::Rebase { .. });
+                let state = self.read_operation_state();
+                let on_branch = if rebase {
+                    state.rebase_branch.as_deref() == Some(full.as_str())
+                } else {
+                    self.head_ref_name()?.as_deref() == Some(full.as_str())
+                };
+                if !on_branch {
                     warnings.push(msg!("engine-pull-head-moved-merge", full = full));
                 }
                 let now = self.ref_value(&full)?;
@@ -350,7 +358,40 @@ impl CliBackend {
                         backup = backup
                     ));
                 }
-                let incoming = self.read_operation_state().incoming;
+                // The rebase: what `rebase.continue` needs to conclude it as this pull.
+                if rebase {
+                    let record = RebaseRecord {
+                        command: "remote.pull".to_owned(),
+                        branch: request.branch.clone(),
+                        before: request.expected,
+                        onto: request.upstream,
+                        backup: backup.clone(),
+                        messages: Vec::new(),
+                        message_commits: Vec::new(),
+                        applied: 0,
+                        commits: self.count_unmerged(&request.expected, &[request.upstream])?,
+                        produces: None,
+                        upstream: Some(
+                            request
+                                .upstream_name
+                                .strip_prefix("refs/remotes/")
+                                .unwrap_or(&request.upstream_name)
+                                .to_owned(),
+                        ),
+                    };
+                    if let Err(error) = self.write_rebase_record(&record) {
+                        warnings.push(msg!(
+                            "engine-rebase-record-not-written",
+                            error = error,
+                            backup = backup
+                        ));
+                    }
+                }
+                let incoming = if rebase {
+                    state.onto.into_iter().collect()
+                } else {
+                    state.incoming
+                };
                 if incoming != [request.upstream] {
                     warnings.push(msg!(
                         "engine-pull-merging-other",
@@ -520,7 +561,7 @@ impl CliBackend {
                 // The path as `OsStr`: the git folder may not be UTF-8.
                 args.push(file.0.as_os_str());
                 args.extend(["--end-of-options", upstream].map(OsStr::new));
-                self.run_stopping(request, &args, &env, PullOperation::Merge)
+                self.run_stopping(&args, &env, PullOperation::Merge)
             }
             (PullMode::Rebase { merges }, _) => {
                 let mut args = vec![
@@ -537,17 +578,15 @@ impl CliBackend {
                 }
                 args.extend(["--end-of-options", upstream]);
                 let args: Vec<&OsStr> = args.into_iter().map(OsStr::new).collect();
-                self.run_stopping(request, &args, &env, PullOperation::Rebase)
+                self.run_stopping(&args, &env, PullOperation::Rebase)
             }
         }
     }
 
-    /// Runs a merge or a rebase. A stopped merge (conflict, hook, signing) stays in progress:
-    /// `Ok(Some(..))` with the conflicted files. A stopped rebase is aborted and the error is
-    /// [`EngineError::PullConflict`] with the conflicted files, otherwise git's own.
+    /// Runs a merge or a rebase. A stopped merge or rebase (conflict, hook, signing) stays in
+    /// progress: `Ok(Some(..))` with the conflicted files.
     fn run_stopping(
         &self,
-        request: &PullRequest,
         args: &[&OsStr],
         env: &[(&str, &OsStr)],
         operation: PullOperation,
@@ -579,54 +618,13 @@ impl CliBackend {
                 stderr: text,
             });
         }
-        let conflicts = self.stopped_conflicts(&text);
-        if operation == PullOperation::Merge {
-            // Like `merge.start`: the merge stays in progress, it is finished with `merge.continue` or
-            // aborted with `merge.abort` (the worktree was clean: it goes back as it was).
-            return Ok(Some(Stopped {
-                conflicts,
-                message: text,
-            }));
-        }
-        let files: Vec<String> = conflicts.iter().map(ToString::to_string).collect();
-        let abort = [operation.to_string(), "--abort".to_owned()];
-        let abort: Vec<&str> = abort.iter().map(String::as_str).collect();
-        let aborted = self
-            .git
-            .output_with_input_env(Some(&self.workdir), &abort, b"", env)?;
-        if !aborted.status.success() || self.operation().is_some() {
-            return Err(EngineError::GitWithReason {
-                command: operation.to_string(),
-                reason: msg!(
-                    "engine-pull-abort-failed",
-                    operation = operation,
-                    text = text,
-                    stderr = String::from_utf8_lossy(&aborted.stderr).trim()
-                ),
-            });
-        }
-        if files.is_empty() {
-            // Stopped for another reason (hook, signing, empty commit): aborted.
-            return Err(EngineError::GitWithReason {
-                command: operation.to_string(),
-                reason: msg!(
-                    "engine-pull-aborted",
-                    text = text,
-                    operation = operation.to_string()
-                ),
-            });
-        }
-        Err(EngineError::PullConflict {
-            branch: request.branch.clone(),
-            upstream: request
-                .upstream_name
-                .strip_prefix("refs/remotes/")
-                .unwrap_or(&request.upstream_name)
-                .to_owned(),
-            operation,
-            files,
+        // Like `merge.start` and `rebase.start`: the operation stays in progress, it is finished
+        // with `merge.continue`/`rebase.continue` or aborted with `merge.abort`/`rebase.abort`
+        // (the worktree was clean: it goes back as it was).
+        Ok(Some(Stopped {
+            conflicts: self.stopped_conflicts(&text),
             message: text,
-        })
+        }))
     }
 
     /// The conflicted files of a stopped merge or rebase: those still unmerged in the status and

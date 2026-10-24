@@ -78,6 +78,7 @@ engine-busy-revert = would start a revert
 engine-busy-worktree = would rewrite files
 engine-busy-branch-move = would move the branch
 engine-busy-merge = would start another merge
+engine-busy-rebase = would start a rebase
 # Refs changed from outside (`UndoConflict`, one line per ref).
 engine-head-branch = on branch `{ $name }`
 engine-head-detached = detached at { $id }

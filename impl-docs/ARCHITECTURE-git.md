@@ -197,7 +197,8 @@ pub trait GitBackend: Send {
     // Merge { no_ff }, message); `MergeOutcome` (after, backup, in_progress, conflicts, message,
     // warnings): a merge stopped on conflict stays in progress. The abort first saves index and
     // worktree (`MergeAborted`: backup, files). `OperationState` (operation, incoming =
-    // MERGE_HEAD / CHERRY_PICK_HEAD / REVERT_HEAD, message = MERGE_MSG, onto, rebase_branch)
+    // MERGE_HEAD / CHERRY_PICK_HEAD / REVERT_HEAD, message = MERGE_MSG, onto, rebase_branch,
+    // rebase = the app's record of a rebase it started)
     // for `repo.operation`. `merge.continue` uses `commit`.
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
     fn merge_abort(&mut self) -> Result<MergeAborted, EngineError>;
@@ -207,7 +208,12 @@ pub trait GitBackend: Send {
     // `*.continue` uses `commit` with `CommitRequest::concluding`.
     fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError>;
     fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError>;
-    // then rebase, ...
+    // Interactive rebase (S32, git/rebase.md): `RebaseRequest` (branch, expected, plan, commits)
+    // → `MergeOutcome`; a stop stays in progress with its `RebaseRecord` (also for a stopped pull,
+    // read back in `OperationState::rebase`); the abort like the merge.
+    fn rebase(&mut self, request: &RebaseRequest) -> Result<MergeOutcome, EngineError>;
+    fn rebase_continue(&mut self) -> Result<MergeOutcome, EngineError>;
+    fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError>;
 }
 
 pub trait RepoOpener: Send + Sync {
@@ -268,6 +274,7 @@ its function (or to a new file in `impl-docs/git/`, listed here).
 | `stash.list`, `stash.push`, `stash.apply` / `stash.pop`, `stash.drop` | [git/stash.md](git/stash.md) |
 | `merge.start`, `merge.continue`, `merge.abort`, `repo.operation` | [git/merge.md](git/merge.md) |
 | `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue` / `abort`, `revert.continue` / `abort` | [git/cherry-pick.md](git/cherry-pick.md) |
+| `rebase.plan`, `rebase.start`, `rebase.continue`, `rebase.abort` | [git/rebase.md](git/rebase.md) |
 | `conflict.show`, `conflict.resolve` | [git/conflicts.md](git/conflicts.md) |
 | `edit.undo` / `edit.redo`, `edit.history` | below and §7 |
 

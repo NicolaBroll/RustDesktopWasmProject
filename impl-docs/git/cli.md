@@ -56,6 +56,13 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.revert={"rev":"HEAD"}' --
 cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["a.txt"]}' --cmd cherry_pick.continue
 cargo run -p project-cli -- --repo . run --cmd 'revert.continue={"message":"Revert test"}'
 cargo run -p project-cli -- --repo . run --cmd 'cherry_pick.abort={"confirm":true}' --cmd 'revert.abort={"confirm":true}'
+# interactive rebase: the default plan of base..HEAD (pick of each commit, oldest first), then the
+# plan with reordered, reworded, squashed, fixed up or dropped commits (undoable with edit.undo;
+# "confirm":true to rewrite published commits); a stop stays in progress: resolve, stage, continue
+cargo run -p project-cli -- --repo . run --cmd 'rebase.plan={"base":"HEAD~3"}'
+cargo run -p project-cli -- --repo . run --cmd 'rebase.start={"base":"HEAD~3","steps":[{"action":"pick","commit":"<id 3>"},{"action":"reword","commit":"<id 2>","message":"New message"},{"action":"fixup","commit":"<id 1>"}]}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["a.txt"]}' --cmd rebase.continue
+cargo run -p project-cli -- --repo . run --cmd 'rebase.abort={"confirm":true}'
 # conflict editor: versions of a conflicted file (base, ours, theirs, worktree; text or
 # binary), then the resolution with the `digest` read (text in the worktree + stage, worktree
 # backup in refs/project/backup/conflict-...); "delete":true instead of "content" deletes it

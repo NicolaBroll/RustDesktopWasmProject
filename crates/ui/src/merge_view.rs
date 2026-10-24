@@ -140,7 +140,11 @@ fn buttons(
         );
         let button = ui
             .add_enabled(enabled, button)
-            .on_hover_text(tr!("merge-continue-hint", noun = kind.commit_noun()))
+            .on_hover_text(if kind.has_message() {
+                tr!("merge-continue-hint", noun = kind.commit_noun())
+            } else {
+                tr!("merge-continue-hint-rebase")
+            })
             .on_disabled_hover_text(if info.ready {
                 tr!("merge-wait")
             } else {
@@ -228,6 +232,9 @@ fn continue_dialog(
     actions: &mut Vec<Action>,
 ) {
     let kind = dialog.kind;
+    if !kind.has_message() {
+        return rebase_continue_dialog(ui, repo, dialog, actions);
+    }
     let noun = kind.commit_noun();
     ui.heading(tr!("merge-finish-heading", name = kind.name()));
     ui.add_space(6.0);
@@ -287,13 +294,70 @@ fn continue_dialog(
     });
 }
 
+/// "Continue" of a rebase: no message (the commit it stopped on keeps its own), git goes on with
+/// the remaining commits and may stop again on the next conflict.
+fn rebase_continue_dialog(
+    ui: &mut Ui,
+    repo: &RepoView,
+    dialog: &ContinueDialog,
+    actions: &mut Vec<Action>,
+) {
+    let name = dialog.kind.name();
+    ui.heading(tr!("merge-finish-heading", name = name));
+    ui.add_space(6.0);
+    let branch = repo
+        .merge
+        .info()
+        .and_then(|info| info.rebase_branch.as_deref())
+        .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
+    let text = match branch {
+        Some(branch) => tr!("merge-rebase-continue-text-branch", branch = branch),
+        None => tr!("merge-rebase-continue-text"),
+    };
+    ui.add(egui::Label::new(text).wrap());
+    if let Some(error) = &dialog.error {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
+        git_text(ui, dialog.git.as_deref());
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let button = ui
+            .add_enabled(
+                !dialog.sending,
+                egui::Button::new(
+                    RichText::new(tr!("merge-rebase-continue-button", name = name)).strong(),
+                ),
+            )
+            .on_disabled_hover_text(tr!("merge-continuing"));
+        if button.clicked() {
+            actions.push(Action::SubmitContinueMerge);
+        }
+        if ui
+            .add_enabled(!dialog.sending, egui::Button::new(tr!("merge-close")))
+            .clicked()
+        {
+            actions.push(Action::CloseMergeDialog);
+        }
+        if dialog.sending {
+            ui.spinner();
+            ui.label(tr!("merge-continuing"));
+        }
+    });
+}
+
 fn abort_dialog(ui: &mut Ui, kind: Kind, reason: &str, actions: &mut Vec<Action>) {
     let name = kind.name();
     ui.heading(
         RichText::new(tr!("merge-abort-heading", name = name)).color(ui.visuals().error_fg_color),
     );
     ui.add_space(6.0);
-    ui.add(egui::Label::new(tr!("merge-abort-text", name = name)).wrap());
+    let text = if kind == Kind::Rebase {
+        tr!("merge-abort-text-rebase")
+    } else {
+        tr!("merge-abort-text", name = name)
+    };
+    ui.add(egui::Label::new(text).wrap());
     ui.add_space(6.0);
     ui.strong(tr!("merge-what-happens"));
     egui::ScrollArea::vertical()

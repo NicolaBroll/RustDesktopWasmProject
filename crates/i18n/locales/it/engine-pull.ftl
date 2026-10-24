@@ -26,7 +26,6 @@ engine-pull-undo-overwrite-git = `{ $command }` riporterebbe `{ $name }` a { $to
 engine-pull-undo-untracked = `{ $command }` ricreerebbe file che ora esistono nel worktree come non tracciati o ignorati ({ $files }): niente modificato; spostarli e riprovare
 engine-pull-other-worktree = `{ $branch }` è il branch attivo del worktree `{ $worktree }`: il pull va fatto lì, niente modificato
 engine-pull-incoming-untracked = { $what } porterebbe file che ora esistono nel worktree come non tracciati o ignorati ({ $files }): git li sovrascriverebbe. Il branch non è stato toccato; spostarli o rinominarli e riprovare
-engine-pull-abort-failed = il { $operation } dell'upstream si è fermato ({ $text }) e `git { $operation } --abort` non è riuscito ({ $stderr }): il repository è ancora nel { $operation } in corso
 engine-pull-aborted =
     { $text }
     (il { $operation } è stato annullato, niente modificato)

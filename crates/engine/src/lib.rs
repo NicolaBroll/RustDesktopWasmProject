@@ -37,6 +37,11 @@ pub use git::{
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
 pub use git::{
+    MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
+    check_rebase_state, check_rebasing, explicit_squash_messages, plan_error, rebase_range,
+    rewritten_commits,
+};
+pub use git::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
     OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
     merge_source,
@@ -184,13 +189,11 @@ pub enum EngineError {
     Cancelled {
         command: &'static str,
     },
-    /// `remote.pull`: the rebase onto the upstream stopped on a conflict. The backend
-    /// **aborted** it (`git rebase --abort`): branch, index and worktree are as before the pull
-    /// (which started from a clean worktree), the fetch stays done. `files` are the files in
-    /// conflict, `message` git's text. To integrate the changes by resolving the conflicts,
-    /// for now, use git from a terminal or the merge strategy (until S32 brings
-    /// `rebase.continue`/`rebase.abort`). A stopped **merge**, instead, is not an error: it stays in
-    /// progress ([`PullOutcome::in_progress`](crate::PullOutcome::in_progress)).
+    /// `remote.pull`: the merge or rebase onto the upstream stopped on a conflict and was aborted:
+    /// branch, index and worktree are as before the pull, the fetch stays done. `files` are the
+    /// files in conflict, `message` git's text. No backend produces it any more (since S32 a
+    /// stopped merge or rebase stays in progress,
+    /// [`PullOutcome::in_progress`](crate::PullOutcome::in_progress)); it stays for compatibility.
     PullConflict {
         branch: String,
         /// The remote branch (short name, e.g. `origin/main`).

@@ -584,8 +584,9 @@ fn operation_of_a_rebase_and_a_cherry_pick() {
     assert_eq!(op["onto"], theirs.to_string());
     assert_eq!(op["rebase_branch"], "refs/heads/main");
     assert_eq!(op["conflicts"], json!(["a.txt"]));
-    assert_eq!(op["continue"], Value::Null);
-    assert_eq!(op["abort"], Value::Null);
+    // A rebase started from the terminal is offered to `rebase.continue`/`rebase.abort` (S32).
+    assert_eq!(op["continue"], "rebase.continue");
+    assert_eq!(op["abort"], "rebase.abort");
     let err = r
         .run("merge.abort", &mut s, json!({ "confirm": true }))
         .unwrap_err();

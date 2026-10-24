@@ -5,11 +5,13 @@
 //! ([`CommandSpec::writes`](project_engine::CommandSpec)), and the UI does not send one while
 //! another is in progress. Rejections to explain open a window:
 //!
-//! - pull whose merge stopped on a conflict: not an error, the merge **stays in progress** as with
-//!   `merge.start` (`in_progress` in the result). The re-read status makes the in-progress
-//!   operation panel appear (Continue/Abort merge) and the stage area opens with the files;
-//! - pull whose rebase stopped on a conflict ([`ErrorKind::PullConflict`]): the engine already aborted
-//!   the rebase, the repo is as before; the window lists the files and proposes the other strategy;
+//! - pull whose merge or rebase stopped on a conflict: not an error, the operation **stays in
+//!   progress** as with `merge.start` (`in_progress` in the result; the rebase since S32). The
+//!   re-read status makes the in-progress operation panel appear (Continue/Abort merge or rebase)
+//!   and the stage area opens with the files;
+//! - pull stopped on a conflict and aborted by the engine ([`ErrorKind::PullConflict`], no longer
+//!   produced since S32 but still handled): the repo is as before; the window lists the files and
+//!   proposes the other strategy;
 //! - rejected push ([`ErrorKind::PushRejected`]): non-fast-forward proposes "Pull" and, as a
 //!   second choice, "Force (with lease)…"; stale lease proposes "Fetch"; a hook shows its
 //!   output.
@@ -590,6 +592,16 @@ impl PullResult {
         let what = tr!("sync-label-pull-branch", branch = &self.branch);
         let range = format!("{} → {}", self.before.short(), self.after.short());
         let mut notice = match self.strategy.as_str() {
+            // The merge or rebase of the pull stays in progress: the panel finishes or aborts it.
+            "rebase" if self.in_progress => match self.conflicts.len() {
+                0 => tr!("sync-pull-stopped-rebase", what = what, upstream = upstream),
+                n => tr!(
+                    "sync-pull-stopped-conflicts-rebase",
+                    what = what,
+                    upstream = upstream,
+                    n = n
+                ),
+            },
             _ if self.in_progress => match self.conflicts.len() {
                 0 => tr!("sync-pull-stopped", what = what, upstream = upstream),
                 n => tr!(
@@ -1226,7 +1238,9 @@ mod tests {
     }
 
     #[test]
-    fn pull_rebase_conflict_opens_the_window_with_the_files() {
+    fn pull_rebase_conflict_stays_in_progress_without_a_window() {
+        // Since S32 a stopped rebase stays in progress like the merge (`rebase.continue`,
+        // `rebase.abort` from the panel): no error, no window, a notice that speaks of the rebase.
         let (r, mut s) = open(diverged(Some("src/bin/app.rs")));
         let mut sync = SyncBox::default();
         let received = run(
@@ -1235,33 +1249,31 @@ mod tests {
             &mut sync,
             Request::pull(None, Some(Strategy::Rebase)),
         );
-        let Received::Failed { message, reload } = received else {
-            panic!("{received:?}")
-        };
-        assert!(reload, "the fetch is done");
-        assert!(message.contains("aborted"), "{message}");
-        let Some(Window::Conflict(conflict)) = sync.window() else {
-            panic!("{:?}", sync.window())
-        };
-        assert_eq!(conflict.operation, PullOperation::Rebase);
-        assert_eq!(conflict.files, ["src/bin/app.rs"]);
-        assert_eq!(conflict.other(), Strategy::Merge);
-        let refs = r.run("repo.refs", &mut s, json!({})).unwrap();
-        let main = refs
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|x| x["name"] == "refs/heads/main")
-            .unwrap();
-        assert_eq!(main["target"], oid(12).to_string(), "repo as it was");
-        // The other strategy is asked from the window: the merge stays in progress.
-        let retry = Request::pull(conflict.branch.clone(), Some(conflict.other()));
-        let received = run(&r, &mut s, &mut sync, retry);
         let Received::Done(outcome) = received else {
             panic!("{received:?}")
         };
-        assert!(outcome.show_changes);
         assert_eq!(sync.window(), None);
+        assert!(outcome.show_changes);
+        assert!(!outcome.moved_head);
+        assert!(
+            outcome
+                .notice
+                .starts_with("Pull of “main”: rebase onto origin/main stopped: 1 conflicted file"),
+            "{}",
+            outcome.notice
+        );
+        assert!(
+            outcome.notice.contains("Continue rebase…")
+                && outcome.notice.contains("Abort rebase…")
+                && !outcome.notice.contains("merge"),
+            "{}",
+            outcome.notice
+        );
+        assert_eq!(
+            outcome.status.unwrap().operation,
+            Some(project_domain::Operation::Rebase)
+        );
+        assert!(!outcome.history.unwrap().can_undo);
     }
 
     #[test]

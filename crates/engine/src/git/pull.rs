@@ -320,23 +320,21 @@ pub struct PullOutcome {
     /// The backup ref of the branch before the pull (`refs/project/backup/pull-...`); it stays
     /// even if the merge is stopped.
     pub backup: String,
-    /// True if the **merge** stopped (conflicts, or a `pre-merge-commit`/`commit-msg` hook
-    /// or the signing that failed) and **stays in progress** (`MERGE_HEAD`), like `merge.start`:
-    /// to be concluded with `merge.continue` or aborted with `merge.abort`. A stopped rebase
-    /// is still aborted ([`EngineError::PullConflict`]).
+    /// True if the merge or the rebase stopped (conflicts, or a hook or the signing that failed)
+    /// and **stays in progress**, like `merge.start`/`rebase.start`: to be concluded with
+    /// `merge.continue`/`rebase.continue` or aborted with `merge.abort`/`rebase.abort`.
     pub in_progress: bool,
-    /// The conflicted files of the stopped merge: those still unmerged and those git reported
+    /// The conflicted files of the stopped merge or rebase: those still unmerged and those git reported
     /// as conflicted (even if `rerere` already resolved them); empty otherwise.
     pub conflicts: Vec<RepoPath>,
-    /// The git text (stdout and stderr) of the stopped merge; empty otherwise.
+    /// The git text (stdout and stderr) of the stopped merge or rebase; empty otherwise.
     pub message: String,
     /// Warnings found after a successful integration (e.g. a hook that moved HEAD).
     pub warnings: Vec<Message>,
 }
 
-/// Which operation stopped on conflict ([`EngineError::PullConflict`]). Today the error
-/// comes only from the rebase: a stopped merge stays in progress ([`PullOutcome::in_progress`]); the
-/// value `merge` stays for compatibility (and for a backend that cannot leave it in progress).
+/// Which operation stopped on conflict ([`EngineError::PullConflict`]). No backend produces the
+/// error any more: a stopped merge or rebase stays in progress ([`PullOutcome::in_progress`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullOperation {

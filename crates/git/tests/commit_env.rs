@@ -1,8 +1,8 @@
-//! `commit.create` con un ambiente ostile ereditato (es. l'app avviata da un hook git o da un
-//! terminale con variabili git impostate): il commit va nel repo aperto, con il suo indice,
-//! senza la configurazione iniettata, senza editor e con la data attuale (non quella delle
-//! variabili `GIT_*_DATE` ereditate). Un file a parte perché cambia l'ambiente
-//! del processo, che i test di un file condividono.
+//! `commit.create` with a hostile inherited environment (e.g. the app started from a git hook or
+//! from a terminal with git variables set): the commit goes into the open repo, with its index,
+//! without the injected configuration, without an editor and with the current date (not the one
+//! from the inherited `GIT_*_DATE` variables). A separate file because it changes the
+//! process environment, which the tests of one file share.
 
 mod common;
 
@@ -12,18 +12,18 @@ use project_engine::{CommitRequest, GitBackend};
 #[test]
 fn inherited_environment_does_not_change_the_commit() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
+    repo.commit_file("a.txt", "a\n", "first");
     repo.write("b.txt", "b\n");
     repo.stage(&["b.txt"]);
     let other = Repo::new();
-    other.commit_file("x.txt", "x\n", "altro repo");
+    other.commit_file("x.txt", "x\n", "other repo");
     let other_head = other.rev("HEAD");
     let mut backend = repo.open();
 
     let other_git = other.path().join(".git");
     let other_index = other_git.join("index");
     let vars: [(&str, &std::ffi::OsStr); 8] = [
-        // Date ereditate (es. da un hook): non devono finire nel commit.
+        // Inherited dates (e.g. from a hook): they must not end up in the commit.
         ("GIT_AUTHOR_DATE", "1000000000 +0000".as_ref()),
         ("GIT_COMMITTER_DATE", "1000000000 +0000".as_ref()),
         ("GIT_DIR", other_git.as_os_str()),
@@ -36,14 +36,14 @@ fn inherited_environment_does_not_change_the_commit() {
         ("GIT_CONFIG_COUNT", "1".as_ref()),
         ("GIT_CONFIG_KEY_0", "core.hooksPath".as_ref()),
     ];
-    // SAFETY: è l'unico test di questo eseguibile, nessun altro thread legge l'ambiente.
+    // SAFETY: this is the only test of this executable, no other thread reads the environment.
     unsafe {
         for (key, value) in &vars {
             std::env::set_var(key, value);
         }
-        std::env::set_var("GIT_CONFIG_VALUE_0", "/inesistente");
+        std::env::set_var("GIT_CONFIG_VALUE_0", "/nonexistent");
     }
-    let result = backend.commit(&CommitRequest::new("nel repo giusto"));
+    let result = backend.commit(&CommitRequest::new("in the right repo"));
     unsafe {
         for (key, _) in &vars {
             std::env::remove_var(key);
@@ -56,7 +56,7 @@ fn inherited_environment_does_not_change_the_commit() {
         repo.git(&["show", "--format=", "--name-only", "HEAD"]),
         "b.txt"
     );
-    assert_eq!(repo.git(&["log", "-1", "--format=%B"]), "nel repo giusto");
+    assert_eq!(repo.git(&["log", "-1", "--format=%B"]), "in the right repo");
     assert_eq!(other.rev("HEAD"), other_head);
     assert_ne!(out.commit.author.time, 1_000_000_000);
     assert_ne!(out.commit.committer.time, 1_000_000_000);

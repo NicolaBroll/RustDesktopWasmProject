@@ -1,18 +1,18 @@
-uno
+one
 <<<<<<< HEAD
-DUE main
+TWO main
 =======
-DUE altro
->>>>>>> altro
-tre
-quattro
-cinque
-sei
-sette
+TWO other
+>>>>>>> other
+three
+four
+five
+six
+seven
 <<<<<<< HEAD
-OTTO main
-OTTO bis
+EIGHT main
+EIGHT extra
 =======
-OTTO altro
->>>>>>> altro
-nove
+EIGHT other
+>>>>>>> other
+nine

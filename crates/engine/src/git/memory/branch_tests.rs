@@ -1,4 +1,4 @@
-//! Test dei branch sul `MemoryBackend`, direttamente sul backend (i comandi sono provati in
+//! Branch tests on the `MemoryBackend`, directly on the backend (the commands are tested in
 //! `builtin/branch.rs`).
 
 use super::*;
@@ -20,10 +20,10 @@ fn target(repo: &MemoryBackend, name: &str) -> Option<Oid> {
 fn create_never_overwrites_and_checks_nested_names() {
     let mut repo = clean();
     let main = target(&repo, "main").unwrap();
-    let grafo = target(&repo, "feature/grafo").unwrap();
-    repo.create_branch("nuovo", &grafo).unwrap();
-    assert_eq!(target(&repo, "nuovo"), Some(grafo));
-    for name in ["main", "nuovo", "feature", "main/x"] {
+    let graph = target(&repo, "feature/graph").unwrap();
+    repo.create_branch("brand-new", &graph).unwrap();
+    assert_eq!(target(&repo, "brand-new"), Some(graph));
+    for name in ["main", "brand-new", "feature", "main/x"] {
         let err = repo.create_branch(name, &main).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{name}: {err}");
     }
@@ -39,24 +39,24 @@ fn create_never_overwrites_and_checks_nested_names() {
 #[test]
 fn checkout_updates_head_index_and_worktree_or_refuses() {
     let mut repo = clean();
-    let grafo = target(&repo, "feature/grafo").unwrap();
-    let tree = repo.tree_at(grafo);
-    repo.checkout(&HeadState::Branch("refs/heads/feature/grafo".to_owned()))
+    let graph = target(&repo, "feature/graph").unwrap();
+    let tree = repo.tree_at(graph);
+    repo.checkout(&HeadState::Branch("refs/heads/feature/graph".to_owned()))
         .unwrap();
-    assert!(matches!(repo.head().unwrap(), Head::Branch { name, .. } if name == "feature/grafo"));
+    assert!(matches!(repo.head().unwrap(), Head::Branch { name, .. } if name == "feature/graph"));
     assert_eq!(repo.head_tree(), tree);
     assert_eq!(repo.index_tree(), tree);
     assert!(repo.status().unwrap().entries.is_empty());
 
-    // HEAD staccata su un commit, poi di nuovo sul branch.
+    // Detached HEAD on a commit, then back on the branch.
     let main = target(&repo, "main").unwrap();
     repo.checkout(&HeadState::Detached(main)).unwrap();
     assert_eq!(repo.head().unwrap(), Head::Detached(main));
     repo.checkout(&HeadState::Branch("refs/heads/main".to_owned()))
         .unwrap();
 
-    // Un non tracciato che il branch di destinazione contiene: rifiutato, niente cambia.
-    let path = repo.tree_at(grafo).keys().next().unwrap().clone();
+    // An untracked file that the destination branch contains: rejected, nothing changes.
+    let path = repo.tree_at(graph).keys().next().unwrap().clone();
     let mut repo = clean();
     let untracked = StatusEntry {
         path: path.clone(),
@@ -64,11 +64,11 @@ fn checkout_updates_head_index_and_worktree_or_refuses() {
         worktree: Change::Untracked,
         kind: EntryKind::Untracked,
     };
-    // Basta che la destinazione contenga il file e che il worktree lo abbia non tracciato.
+    // It is enough that the destination contains the file and the worktree has it untracked.
     repo.set_entries(vec![untracked]);
     let before = repo.clone();
     let err = repo
-        .checkout(&HeadState::Branch("refs/heads/feature/grafo".to_owned()))
+        .checkout(&HeadState::Branch("refs/heads/feature/graph".to_owned()))
         .unwrap_err();
     assert!(
         matches!(&err, EngineError::CheckoutConflict { files, .. } if files == &[path.to_string()]),
@@ -77,7 +77,7 @@ fn checkout_updates_head_index_and_worktree_or_refuses() {
     assert_eq!(repo, before);
 
     let err = repo
-        .checkout(&HeadState::Branch("refs/heads/nessuno".to_owned()))
+        .checkout(&HeadState::Branch("refs/heads/missing".to_owned()))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 }
@@ -86,21 +86,21 @@ fn checkout_updates_head_index_and_worktree_or_refuses() {
 fn delete_refuses_the_current_branch_and_a_moved_one() {
     let mut repo = clean();
     let main = target(&repo, "main").unwrap();
-    let grafo = target(&repo, "feature/grafo").unwrap();
+    let graph = target(&repo, "feature/graph").unwrap();
     let err = repo.delete_branch("main", &main).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    let err = repo.delete_branch("feature/grafo", &main).unwrap_err();
+    let err = repo.delete_branch("feature/graph", &main).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert_eq!(target(&repo, "feature/grafo"), Some(grafo));
+    assert_eq!(target(&repo, "feature/graph"), Some(graph));
 
-    let out = repo.delete_branch("feature/grafo", &grafo).unwrap();
+    let out = repo.delete_branch("feature/graph", &graph).unwrap();
     assert_eq!(out.backup, "refs/project/backup/delete-1");
     assert_eq!(
         repo.commit_backups().last().unwrap(),
-        &("refs/project/backup/delete-1".to_owned(), grafo)
+        &("refs/project/backup/delete-1".to_owned(), graph)
     );
-    assert_eq!(target(&repo, "feature/grafo"), None);
-    assert!(!repo.upstreams.contains_key("refs/heads/feature/grafo"));
+    assert_eq!(target(&repo, "feature/graph"), None);
+    assert!(!repo.upstreams.contains_key("refs/heads/feature/graph"));
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn rename_moves_head_and_upstream_and_never_overwrites() {
     let mut repo = clean();
     let main = target(&repo, "main").unwrap();
     let err = repo
-        .rename_branch("main", "feature/grafo", &main)
+        .rename_branch("main", "feature/graph", &main)
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     let err = repo.rename_branch("main", "feature", &main).unwrap_err();
@@ -129,9 +129,9 @@ fn rename_moves_head_and_upstream_and_never_overwrites() {
 fn unmerged_counts_commits_not_reachable_from_the_others() {
     let repo = clean();
     let main = target(&repo, "main").unwrap();
-    let grafo = target(&repo, "feature/grafo").unwrap();
-    assert_eq!(repo.unmerged_count(&grafo, &[main]).unwrap(), 0);
-    assert!(repo.unmerged_count(&main, &[grafo]).unwrap() > 0);
+    let graph = target(&repo, "feature/graph").unwrap();
+    assert_eq!(repo.unmerged_count(&graph, &[main]).unwrap(), 0);
+    assert!(repo.unmerged_count(&main, &[graph]).unwrap() > 0);
     assert_eq!(
         repo.unmerged_count(&main, &[]).unwrap(),
         repo.reachable(main).len()
@@ -140,15 +140,15 @@ fn unmerged_counts_commits_not_reachable_from_the_others() {
 
 #[test]
 fn checkout_refuses_an_untracked_folder_where_the_target_has_a_file() {
-    let grafo = target(&clean(), "feature/grafo").unwrap();
-    let tree = clean().tree_at(grafo);
+    let graph = target(&clean(), "feature/graph").unwrap();
+    let tree = clean().tree_at(graph);
     let file = tree.keys().next().unwrap().to_string();
     let dir = tree
         .keys()
         .find_map(|p| p.to_string().split_once('/').map(|(d, _)| d.to_owned()))
         .unwrap();
-    // `d/x` non tracciato dove la destinazione ha il file `d`; un file non tracciato `d` dove
-    // la destinazione ha la cartella `d/`.
+    // `d/x` untracked where the destination has the file `d`; an untracked file `d` where
+    // the destination has the folder `d/`.
     for path in [format!("{file}/x"), dir] {
         let mut repo = clean();
         repo.set_entries(vec![StatusEntry {
@@ -159,7 +159,7 @@ fn checkout_refuses_an_untracked_folder_where_the_target_has_a_file() {
         }]);
         let before = repo.clone();
         let err = repo
-            .checkout(&HeadState::Branch("refs/heads/feature/grafo".to_owned()))
+            .checkout(&HeadState::Branch("refs/heads/feature/graph".to_owned()))
             .unwrap_err();
         assert!(
             matches!(&err, EngineError::CheckoutConflict { files, .. } if files == std::slice::from_ref(&path)),
@@ -172,45 +172,45 @@ fn checkout_refuses_an_untracked_folder_where_the_target_has_a_file() {
 #[test]
 fn delete_saves_the_upstream_and_restore_puts_it_back() {
     let mut repo = clean();
-    let grafo = target(&repo, "feature/grafo").unwrap();
-    let out = repo.delete_branch("feature/grafo", &grafo).unwrap();
+    let graph = target(&repo, "feature/graph").unwrap();
+    let out = repo.delete_branch("feature/graph", &graph).unwrap();
     let config = vec![
         ConfigEntry {
-            key: "branch.feature/grafo.remote".to_owned(),
+            key: "branch.feature/graph.remote".to_owned(),
             value: Some("origin".to_owned()),
         },
         ConfigEntry {
-            key: "branch.feature/grafo.merge".to_owned(),
-            value: Some("refs/heads/feature/grafo".to_owned()),
+            key: "branch.feature/graph.merge".to_owned(),
+            value: Some("refs/heads/feature/graph".to_owned()),
         },
     ];
     assert_eq!(out.config, config);
-    assert!(!repo.upstreams.contains_key("refs/heads/feature/grafo"));
-    repo.set_branch("feature/grafo", grafo);
+    assert!(!repo.upstreams.contains_key("refs/heads/feature/graph"));
+    repo.set_branch("feature/graph", graph);
     assert!(
-        repo.restore_branch_config("feature/grafo", &config, false)
+        repo.restore_branch_config("feature/graph", &config, false)
             .is_empty()
     );
     assert_eq!(
         repo.upstreams
-            .get("refs/heads/feature/grafo")
+            .get("refs/heads/feature/graph")
             .map(String::as_str),
-        Some("refs/remotes/origin/feature/grafo")
+        Some("refs/remotes/origin/feature/graph")
     );
-    // Già presente: non si riscrive, avviso.
+    // Already present: not rewritten, warning.
     assert_eq!(
-        repo.restore_branch_config("feature/grafo", &config, false)
+        repo.restore_branch_config("feature/graph", &config, false)
             .len(),
         1
     );
-    // Diversa da quella salvata: il redo non la toglie.
+    // Different from the saved one: the redo does not remove it.
     assert_eq!(
-        repo.restore_branch_config("feature/grafo", &[], true).len(),
+        repo.restore_branch_config("feature/graph", &[], true).len(),
         1
     );
     assert!(
-        repo.restore_branch_config("feature/grafo", &config, true)
+        repo.restore_branch_config("feature/graph", &config, true)
             .is_empty()
     );
-    assert!(!repo.upstreams.contains_key("refs/heads/feature/grafo"));
+    assert!(!repo.upstreams.contains_key("refs/heads/feature/graph"));
 }

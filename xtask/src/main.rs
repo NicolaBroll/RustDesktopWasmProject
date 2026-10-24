@@ -1,4 +1,4 @@
-//! `cargo xtask <compito>`: lo stesso comando in locale e in CI.
+//! `cargo xtask <task>`: the same command locally and in CI.
 
 mod layers;
 
@@ -9,17 +9,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-/// `--quiet`: l'output dei comandi si mostra solo se falliscono (meno testo da leggere per chi
-/// lancia la CI tante volte, come gli agenti).
+/// `--quiet`: command output is shown only if they fail (less text to read for whoever
+/// runs CI many times, such as agents).
 static QUIET: AtomicBool = AtomicBool::new(false);
 
 const USAGE: &str = "\
-uso: cargo xtask <compito>
+usage: cargo xtask <task>
 
   ci        fmt, clippy, test, layering, clippy wasm
-            (`ci --quiet`: una riga per passo, l'output solo del passo che fallisce)
-  layers    verifica che ogni crate dipenda solo da livelli inferiori
-  release   build desktop/CLI ottimizzata e sito web in dist/";
+            (`ci --quiet`: one line per step, output only of the failing step)
+  layers    checks that every crate depends only on lower layers
+  release   optimized desktop/CLI build and website in dist/";
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -29,7 +29,7 @@ fn main() -> anyhow::Result<()> {
             for arg in args {
                 match arg.as_str() {
                     "-q" | "--quiet" => QUIET.store(true, Ordering::Relaxed),
-                    other => bail!("opzione sconosciuta per ci: {other}\n\n{USAGE}"),
+                    other => bail!("unknown option for ci: {other}\n\n{USAGE}"),
                 }
             }
             ci()
@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
             println!("{USAGE}");
             Ok(())
         }
-        Some(other) => bail!("compito sconosciuto: {other}\n\n{USAGE}"),
+        Some(other) => bail!("unknown task: {other}\n\n{USAGE}"),
     }
 }
 
@@ -54,7 +54,7 @@ fn ci() -> anyhow::Result<()> {
         "-D",
         "warnings",
     ])?;
-    // Con `--quiet` anche i test stampano solo i fallimenti, se l'output va mostrato.
+    // With `--quiet` tests also print only failures, if the output is to be shown.
     if QUIET.load(Ordering::Relaxed) {
         cargo(&["test", "--workspace", "-q"])?;
     } else {
@@ -62,7 +62,7 @@ fn ci() -> anyhow::Result<()> {
     }
     step("layering");
     layers::check_layers()?;
-    // L'interfaccia e l'app web devono compilare anche per il browser.
+    // The UI and the web app must also compile for the browser.
     cargo(&[
         "clippy",
         "-p",
@@ -75,7 +75,7 @@ fn ci() -> anyhow::Result<()> {
         "-D",
         "warnings",
     ])?;
-    eprintln!("\nci: tutto verde");
+    eprintln!("\nci: all green");
     Ok(())
 }
 
@@ -96,21 +96,21 @@ fn run(cmd: &mut Command) -> anyhow::Result<()> {
         step(&args.join(" "));
         let output = cmd
             .output()
-            .with_context(|| format!("avvio di {:?}", cmd.get_program()))?;
+            .with_context(|| format!("starting {:?}", cmd.get_program()))?;
         if !output.status.success() {
             use std::io::Write as _;
             std::io::stderr().write_all(&output.stdout)?;
             std::io::stderr().write_all(&output.stderr)?;
-            bail!("{cmd:?} è fallito ({})", output.status);
+            bail!("{cmd:?} failed ({})", output.status);
         }
         return Ok(());
     }
     step(&format!("{cmd:?}"));
     let status = cmd
         .status()
-        .with_context(|| format!("avvio di {:?}", cmd.get_program()))?;
+        .with_context(|| format!("starting {:?}", cmd.get_program()))?;
     if !status.success() {
-        bail!("{cmd:?} è fallito ({status})");
+        bail!("{cmd:?} failed ({status})");
     }
     Ok(())
 }
@@ -127,6 +127,6 @@ fn step(name: &str) {
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("xtask sta dentro il workspace")
+        .expect("xtask is inside the workspace")
         .to_path_buf()
 }

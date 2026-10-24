@@ -1,11 +1,11 @@
-//! Cherry-pick e revert (S31) dal menu del commit: `commit.cherry_pick` e `commit.revert`.
-//! Solo dati, senza egui. Contratto dei comandi in `impl-docs/git/cherry-pick.md`.
+//! Cherry-pick and revert (S31) from the commit menu: `commit.cherry_pick` and `commit.revert`.
+//! Data only, no egui. Command contract in `impl-docs/git/cherry-pick.md`.
 //!
-//! È una parte di [`MergeBox`]: l'avvio, la finestra di un rifiuto e il riquadro
-//! dell'operazione in corso sono quelli del merge. Per un commit di merge si sceglie prima il
-//! genitore (`mainline`) in un piccolo dialogo; per gli altri si parte subito. Fermo in
-//! conflitto, il cherry-pick o il revert **resta in corso** e si conclude o si annulla dal
-//! riquadro con `cherry_pick.continue`/`revert.continue` e `*.abort`, come il merge.
+//! It is a part of [`MergeBox`]: the start, the window of a refusal and the panel
+//! of the operation in progress are those of the merge. For a merge commit the
+//! parent (`mainline`) is chosen first in a small dialog; for the others it starts at once. Stopped
+//! on a conflict, the cherry-pick or revert **stays in progress** and is finished or aborted from the
+//! panel with `cherry_pick.continue`/`revert.continue` and `*.abort`, like the merge.
 
 use super::{
     Dialog, ErrorKind, Failure, History, Kind, MergeBox, Op, Outcome, Received, Starting, parse,
@@ -16,7 +16,7 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Cherry-pick o revert di un commit.
+/// Cherry-pick or revert of a commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
     CherryPick,
@@ -24,7 +24,7 @@ pub enum Pick {
 }
 
 impl Pick {
-    /// L'id del comando del Registry.
+    /// The id of the Registry command.
     pub fn command(self) -> &'static str {
         match self {
             Pick::CherryPick => "commit.cherry_pick",
@@ -32,7 +32,7 @@ impl Pick {
         }
     }
 
-    /// L'operazione che resta in corso se si ferma.
+    /// The operation that stays in progress if it stops.
     pub fn kind(self) -> Kind {
         match self {
             Pick::CherryPick => Kind::CherryPick,
@@ -41,26 +41,26 @@ impl Pick {
     }
 }
 
-/// Il dialogo che chiede da quale genitore di un commit di merge prendere le modifiche.
+/// The dialog that asks from which parent of a merge commit to take the changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainlineDialog {
     pub pick: Pick,
-    /// Il commit di merge.
+    /// The merge commit.
     pub rev: Oid,
-    /// Come mostrarlo.
+    /// How to show it.
     pub what: String,
-    /// Il branch attivo, su cui si applica.
+    /// The active branch, onto which it is applied.
     pub into: String,
-    /// I genitori nell'ordine di git: id, nome (branch o id abbreviato), oggetto se noto.
+    /// The parents in git's order: id, name (branch or abbreviated id), subject if known.
     pub parents: Vec<(Oid, String, Option<String>)>,
-    /// Il genitore scelto, da 1.
+    /// The chosen parent, from 1.
     pub mainline: usize,
 }
 
 impl MergeBox {
-    /// Comincia il cherry-pick o il revert di `rev` (mostrato come `what`) sul branch `into`.
-    /// Con più di un genitore apre il dialogo del `mainline` e dà `None`; altrimenti
-    /// parametri e descrizione. `None` anche se un comando è in corso o un dialogo è aperto.
+    /// Starts the cherry-pick or revert of `rev` (shown as `what`) onto branch `into`.
+    /// With more than one parent it opens the `mainline` dialog and gives `None`; otherwise
+    /// parameters and description. `None` also if a command is in progress or a dialog is open.
     pub fn start_pick(
         &mut self,
         pick: Pick,
@@ -87,7 +87,7 @@ impl MergeBox {
         Some(self.begin_pick(pick, rev, what, into, None))
     }
 
-    /// Il genitore scelto nel dialogo del `mainline` (da 1).
+    /// The parent chosen in the `mainline` dialog (from 1).
     pub fn set_mainline(&mut self, mainline: usize) {
         if let Some(Dialog::Mainline(dialog)) = &mut self.dialog
             && (1..=dialog.parents.len()).contains(&mainline)
@@ -96,7 +96,7 @@ impl MergeBox {
         }
     }
 
-    /// Invio del dialogo del `mainline`: comando, parametri e descrizione.
+    /// Submit of the `mainline` dialog: command, parameters and description.
     pub fn submit_mainline(&mut self) -> Option<(Op, Value, String)> {
         let Some(Dialog::Mainline(dialog)) = self.dialog.take() else {
             return None;
@@ -154,8 +154,8 @@ impl MergeBox {
         );
         match result {
             Err(e) => {
-                // Rifiuti del motore (modifiche locali, già applicato, HEAD staccata, mainline):
-                // niente è cambiato. Altri errori (git): forse sì, si rilegge.
+                // Engine refusals (local changes, already applied, detached HEAD, mainline):
+                // nothing changed. Other errors (git): maybe, so the state is reread.
                 let refused = matches!(
                     kind,
                     Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams | ErrorKind::UnknownRev)
@@ -209,7 +209,7 @@ impl MergeBox {
     }
 }
 
-/// Risultato di `commit.cherry_pick` e `commit.revert`.
+/// Result of `commit.cherry_pick` and `commit.revert`.
 #[derive(Debug, Clone, Deserialize)]
 struct PickResult {
     branch: String,
@@ -218,7 +218,7 @@ struct PickResult {
     in_progress: bool,
     #[serde(default)]
     conflicts: Vec<RepoPath>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     warnings: Vec<String>,
     status: Option<Status>,
     status_error: Option<String>,
@@ -229,7 +229,7 @@ struct PickResult {
 }
 
 impl PickResult {
-    /// Il messaggio per la barra di stato.
+    /// The message for the status bar.
     fn notice(&self, pick: Pick, starting: &Starting) -> String {
         let kind = pick.kind();
         let title = kind.title();

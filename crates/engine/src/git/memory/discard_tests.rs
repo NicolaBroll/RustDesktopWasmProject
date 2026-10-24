@@ -1,9 +1,9 @@
-//! Test di `worktree.discard` e del suo undo/redo sul `MemoryBackend`, attraverso il diario.
+//! Tests of `worktree.discard` and its undo/redo on the `MemoryBackend`, through the journal.
 
 use super::*;
 use crate::{Journal, JournalEntry, discard_plan};
 
-/// Lo scarto come lo fa `worktree.discard`: il piano letto prima e poi il backend.
+/// The discard as `worktree.discard` does it: the plan read first and then the backend.
 fn planned(repo: &mut MemoryBackend, paths: &[RepoPath]) -> Result<DiscardOutcome, EngineError> {
     let plan = discard_plan(&repo.status()?, paths)?;
     repo.discard(paths, &plan)
@@ -13,7 +13,7 @@ fn p(s: &str) -> RepoPath {
     RepoPath::from(s)
 }
 
-/// Scarta `paths` e registra la voce nel diario.
+/// Discards `paths` and records the entry in the journal.
 fn discard(repo: &mut MemoryBackend, journal: &mut Journal, paths: &[&str]) -> DiscardOutcome {
     let paths: Vec<RepoPath> = paths.iter().map(|s| p(s)).collect();
     let out = planned(repo, &paths).unwrap();
@@ -29,13 +29,13 @@ fn discard_then_undo_and_redo() {
     let worktree_before = repo.worktree.clone();
     let index_before = repo.index_tree();
 
-    // README.md `MM`, src/lib.rs `.M`, note.txt `??` (dentro la radice: non chiesto).
+    // README.md `MM`, src/lib.rs `.M`, note.txt `??` (inside the root: not requested).
     let out = discard(&mut repo, &mut journal, &["README.md", "src"]);
     let paths: Vec<_> = out.files.iter().map(|f| f.path.clone()).collect();
     assert_eq!(paths, [p("README.md"), p("src/lib.rs")]);
     assert_eq!(out.backup, "refs/project/backup/discard-1");
     assert_eq!(repo.worktree_backups()[0].stash, out.stash);
-    // Worktree come l'indice, indice invariato, non tracciato intatto.
+    // Worktree like the index, index unchanged, untracked intact.
     assert_eq!(repo.index_tree(), index_before);
     let status = repo.status().unwrap();
     assert!(
@@ -49,7 +49,7 @@ fn discard_then_undo_and_redo() {
         .iter()
         .find(|e| e.path == p("README.md"))
         .unwrap();
-    assert_eq!(readme.index, Change::Modified, "la modifica in stage resta");
+    assert_eq!(readme.index, Change::Modified, "the staged change stays");
     assert!(!status.entries.iter().any(|e| e.path == p("src/lib.rs")));
     assert_eq!(
         repo.worktree_file(&p("note.txt")),
@@ -62,22 +62,22 @@ fn discard_then_undo_and_redo() {
     let entry = &journal.done()[0];
     assert_eq!(entry.command, "worktree.discard");
     assert_eq!(
-        entry.description,
-        "Scarta le modifiche di 2 file («README.md», «src/lib.rs»)"
+        entry.description.to_string(),
+        "Discard changes to 2 files (“README.md”, “src/lib.rs”)"
     );
     assert_eq!(
         entry.backup.as_deref(),
         Some("refs/project/backup/discard-1")
     );
 
-    // Undo: tutto come prima, byte per byte.
+    // Undo: everything as before, byte for byte.
     let (undone, outcome) = journal.undo(&mut repo).unwrap();
     assert_eq!(undone.command, "worktree.discard");
     assert!(outcome.backups.is_empty() && outcome.warnings.is_empty());
     assert_eq!(repo.status().unwrap(), status_before);
     assert_eq!(repo.worktree, worktree_before);
 
-    // Redo: di nuovo scartato, senza un altro backup.
+    // Redo: discarded again, without another backup.
     journal.redo(&mut repo).unwrap();
     assert_eq!(repo.status().unwrap(), status);
     assert_eq!(repo.worktree_backups().len(), 1);
@@ -89,7 +89,7 @@ fn discard_then_undo_and_redo() {
 fn undo_of_a_deleted_file_deletes_it_again() {
     let mut repo = MemoryBackend::sample();
     let mut journal = Journal::new();
-    // src/lib.rs eliminato nel worktree (`.D`).
+    // src/lib.rs deleted in the worktree (`.D`).
     let mut entries = repo.status().unwrap().entries;
     let lib = entries
         .iter_mut()
@@ -115,7 +115,7 @@ fn undo_refused_if_the_file_changed_after_the_discard() {
     let mut repo = MemoryBackend::sample();
     let mut journal = Journal::new();
     discard(&mut repo, &mut journal, &["src/lib.rs"]);
-    // Il file viene cambiato di nuovo (e ricompare fuori stage).
+    // The file is changed again (and reappears unstaged).
     let mut entries = repo.status().unwrap().entries;
     entries.push(StatusEntry {
         path: p("src/lib.rs"),
@@ -132,7 +132,7 @@ fn undo_refused_if_the_file_changed_after_the_discard() {
     });
     entries.sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
     repo.set_entries(entries);
-    repo.set_worktree_file("src/lib.rs", "lavoro nuovo\n");
+    repo.set_worktree_file("src/lib.rs", "new work\n");
     let snapshot = repo.clone();
     let err = journal.undo(&mut repo).unwrap_err();
     let EngineError::UndoConflict { command, refs } = &err else {
@@ -141,7 +141,7 @@ fn undo_refused_if_the_file_changed_after_the_discard() {
     assert_eq!(*command, "edit.undo");
     assert!(refs[0].contains("src/lib.rs"), "{refs:?}");
     assert_eq!(repo, snapshot, "niente cambiato");
-    assert!(journal.can_undo(), "la voce resta");
+    assert!(journal.can_undo(), "the entry stays");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn undo_refused_if_the_index_changed() {
     let mut repo = MemoryBackend::sample();
     let mut journal = Journal::new();
     discard(&mut repo, &mut journal, &["README.md"]);
-    // La versione in stage di README.md torna come in HEAD.
+    // The staged version of README.md goes back as in HEAD.
     repo.unstage(&[p("README.md")]).unwrap();
     let snapshot = repo.clone();
     let err = journal.undo(&mut repo).unwrap_err();
@@ -166,7 +166,7 @@ fn redo_refused_if_the_file_changed_after_the_undo() {
     let mut journal = Journal::new();
     discard(&mut repo, &mut journal, &["src/lib.rs"]);
     journal.undo(&mut repo).unwrap();
-    repo.set_worktree_file("src/lib.rs", "altro ancora\n");
+    repo.set_worktree_file("src/lib.rs", "yet more\n");
     let snapshot = repo.clone();
     let err = journal.redo(&mut repo).unwrap_err();
     assert!(
@@ -189,7 +189,7 @@ fn refusals_change_nothing() {
     for paths in [
         vec![p("note.txt")],
         vec![p("docs")],
-        vec![p("non-esiste")],
+        vec![p("does-not-exist")],
         vec![],
     ] {
         let err = planned(&mut repo, &paths).unwrap_err();
@@ -202,12 +202,15 @@ fn refusals_change_nothing() {
     let mut empty = MemoryBackend::new();
     assert!(planned(&mut empty, &[p("a")]).is_err());
 
-    // Un piano diverso da quello confermato: rifiutato.
+    // A plan different from the confirmed one: rejected.
     let plan = discard_plan(&repo.status().unwrap(), &[p("README.md")]).unwrap();
     let err = repo
         .discard(&[p("README.md"), p("src")], &plan)
         .unwrap_err();
-    assert!(err.to_string().contains("cambiati dalla conferma"), "{err}");
+    assert!(
+        err.to_string().contains("changed since the confirmation"),
+        "{err}"
+    );
     assert_eq!(repo, snapshot);
 }
 
@@ -227,7 +230,7 @@ fn undo_refused_if_head_moved() {
     assert_eq!(repo, snapshot);
     repo.set_head_branch("main");
     journal.undo(&mut repo).unwrap();
-    // E il redo con HEAD spostata.
+    // And the redo with HEAD moved.
     repo.detach_head(head);
     assert!(matches!(
         journal.redo(&mut repo),

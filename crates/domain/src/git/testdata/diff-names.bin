@@ -1,0 +1,53 @@
+diff --git "a/a\nbreak.txt" "b/a\nbreak.txt"
+index 1a7f284fd3e433234c61296f0f0f9cab68897ccc..ed474e82a8971f1f15f5147e5b229f1a712579ba 100644
+--- "a/a\nbreak.txt"
++++ "b/a\nbreak.txt"
+@@ -1 +1,2 @@
+ newline
++modified
+diff --git a/cafÿ.txt b/cafÿ.txt
+index 3a1c020488b7b68d038f0f7d5c8af10e1c2ffeb7..49b6b3d35f860e2333abb494e472268442dc531b 100644
+--- a/cafÿ.txt
++++ b/cafÿ.txt
+@@ -1 +1,2 @@
+ latin
++modified
+diff --git a/naÃ¯ve.txt b/naÃ¯ve.txt
+index 5546241a359d3be69594e40b68ad556151a86b08..410f3c105c6756ab58f82e03fa41863ead5c1405 100644
+--- a/naÃ¯ve.txt
++++ b/naÃ¯ve.txt
+@@ -1 +1,2 @@
+ utf8
++modified
+diff --git a/simple.txt "b/strange \"name\"\twith space.txt"
+similarity index 100%
+rename from simple.txt
+rename to "strange \"name\"\twith space.txt"
+diff --git "a/with\ttab.txt" "b/with\ttab.txt"
+index 8cc35a3d55c810ba1f998f398e475feb0e5f6b8a..baef0d95deae9fea825df7a5368cbc984f24c94e 100644
+--- "a/with\ttab.txt"
++++ "b/with\ttab.txt"
+@@ -1 +1,2 @@
+ tab
++modified
+diff --git "a/with \"quotes\".txt" "b/with \"quotes\".txt"
+index d875bad1a40ec5c413b9df7372df6eb4574143b7..3f676eb716996008dced7220e08630991d8dc615 100644
+--- "a/with \"quotes\".txt"	
++++ "b/with \"quotes\".txt"	
+@@ -1 +1,2 @@
+ quotes
++modified
+diff --git a/with space.txt b/with space.txt
+index 9495c3c5a31810439c36d49aad161b7f3db75d09..42777b1ce5e011b76f5d6bf93f4653f5dd2fa411 100644
+--- a/with space.txt	
++++ b/with space.txt	
+@@ -1 +1,2 @@
+ space
++modified
+diff --git "a/with\\back.txt" "b/with\\back.txt"
+index 8f57a771d472509c58aa2faffbb8e2d8a9bdefd9..81f2aa36d34c282a508e6ca9c07d2b541cc0bd05 100644
+--- "a/with\\back.txt"
++++ "b/with\\back.txt"
+@@ -1 +1,2 @@
+ backslash
++modified

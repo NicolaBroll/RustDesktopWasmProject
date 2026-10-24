@@ -1,17 +1,18 @@
-//! L0 — Traduzioni della UI con [Fluent](https://projectfluent.org/): italiano e inglese.
+//! L0 — UI translations with [Fluent](https://projectfluent.org/): Italian and English.
 //!
-//! I testi stanno in `locales/<lingua>/<area>.ftl`, un file per area della UI; le chiavi sono
-//! `<area>-<cosa>` in kebab-case. Nel codice si usa sempre la macro [`tr!`] con la chiave
-//! letterale (un test della UI controlla che ogni chiave usata esista):
+//! The texts live in `locales/<language>/<area>.ftl`, one file per UI area; keys are
+//! `<area>-<what>` in kebab-case. In code the [`tr!`] macro is always used with a literal key
+//! (a UI test checks that every key used exists):
 //!
 //! ```
 //! use project_i18n::tr;
 //! let text = tr!("merge-conflict-files", n = 3);
 //! ```
 //!
-//! La lingua è una sola per tutta l'app ([`set_lang`]): cambia subito, senza riavvio; i testi
-//! già composti (un messaggio nella barra di stato) restano nella lingua di quando sono nati.
-//! Guida: `impl-docs/i18n.md`.
+//! There is a single language for the whole app ([`set_lang`]): it changes at once, without a
+//! restart; texts already composed (a status bar message) stay in the language they were
+//! created in.
+//! Guide: `impl-docs/i18n.md`.
 
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource, FluentValue};
@@ -22,9 +23,8 @@ mod areas {
     include!(concat!(env!("OUT_DIR"), "/areas.rs"));
 }
 
-/// Una lingua della UI.
-/// L'app è in inglese; l'italiano resta per i test della UI, che confrontano i testi italiani
-/// di sempre, e non si sceglie dall'app.
+/// A UI language.
+/// The app is in English; Italian is not chosen from the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Lang {
     It,
@@ -50,7 +50,7 @@ impl Lang {
         }
     }
 
-    /// I file `.ftl` della lingua: (area, contenuto).
+    /// The language's `.ftl` files: (area, content).
     fn sources(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Lang::It => areas::IT,
@@ -59,7 +59,7 @@ impl Lang {
     }
 }
 
-/// Un parametro di un testo: stringa o numero (i numeri scelgono la forma plurale).
+/// A parameter of a text: string or number (numbers choose the plural form).
 pub struct Arg<'a>(FluentValue<'a>);
 
 impl<'a> From<&'a str> for Arg<'a> {
@@ -91,19 +91,19 @@ macro_rules! number_arg {
 }
 number_arg!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f64);
 
-/// I testi di una lingua.
+/// The texts of a language.
 pub struct I18n {
     lang: Lang,
     bundle: FluentBundle<FluentResource>,
 }
 
 impl I18n {
-    /// Carica tutte le aree della lingua. Un file che non si analizza o una chiave ripetuta
-    /// fermano le build di debug (e i test); in release si usa quello che si è letto.
+    /// Loads all the areas of the language. A file that does not parse or a repeated key
+    /// stops debug builds (and tests); in release what was read is used.
     pub fn new(lang: Lang) -> Self {
-        let id = lang.code().parse().expect("codice di lingua valido");
+        let id = lang.code().parse().expect("valid language code");
         let mut bundle = FluentBundle::new_concurrent(vec![id]);
-        // Senza i caratteri di isolamento Unicode attorno ai parametri: egui li mostrerebbe.
+        // Without the Unicode isolation characters around parameters: egui would show them.
         bundle.set_use_isolating(false);
         for (area, source) in lang.sources() {
             let resource = match FluentResource::try_new((*source).to_owned()) {
@@ -129,12 +129,12 @@ impl I18n {
         self.bundle.has_message(key)
     }
 
-    /// Il testo della chiave, senza parametri.
+    /// The text of the key, without parameters.
     pub fn tr(&self, key: &str) -> String {
         self.format(key, None)
     }
 
-    /// Il testo della chiave con i parametri (`$nome` nel file `.ftl`).
+    /// The text of the key with parameters (`$name` in the `.ftl` file).
     pub fn tr_args<'a>(
         &self,
         key: &str,
@@ -147,11 +147,11 @@ impl I18n {
         self.format(key, Some(&fluent))
     }
 
-    /// Una chiave mancante (o un parametro mancante) ferma le build di debug; in release si
-    /// mostra la chiave.
+    /// A missing key (or a missing parameter) stops debug builds; in release the key is
+    /// shown.
     fn format(&self, key: &str, args: Option<&FluentArgs>) -> String {
         let Some(pattern) = self.bundle.get_message(key).and_then(|m| m.value()) else {
-            debug_assert!(false, "chiave mancante in {}: {key}", self.lang.code());
+            debug_assert!(false, "missing key in {}: {key}", self.lang.code());
             return key.to_owned();
         };
         let mut errors = Vec::new();
@@ -161,15 +161,10 @@ impl I18n {
     }
 }
 
-/// La lingua attiva, come indice di [`Lang`]. All'avvio l'inglese (l'italiano con la feature
-/// `test-italiano`, solo per i test della UI).
-static CURRENT: AtomicU8 = AtomicU8::new(if cfg!(feature = "test-italiano") {
-    0
-} else {
-    1
-});
+/// The active language, as an index of [`Lang`]. English at startup.
+static CURRENT: AtomicU8 = AtomicU8::new(1);
 
-/// Cambia la lingua di tutta l'app, subito.
+/// Changes the language of the whole app, at once.
 pub fn set_lang(lang: Lang) {
     CURRENT.store(lang.index() as u8, Ordering::Relaxed);
 }
@@ -182,19 +177,19 @@ pub fn lang() -> Lang {
     }
 }
 
-/// I testi di `lang`, caricati alla prima richiesta.
+/// The texts of `lang`, loaded on first request.
 pub fn get(lang: Lang) -> &'static I18n {
     static ALL: OnceLock<[I18n; 2]> = OnceLock::new();
     &ALL.get_or_init(|| Lang::ALL.map(I18n::new))[lang.index()]
 }
 
-/// I testi della lingua attiva.
+/// The texts of the active language.
 pub fn current() -> &'static I18n {
     get(lang())
 }
 
-/// Il testo di una chiave nella lingua attiva: `tr!("merge-continue")`, con parametri
-/// `tr!("merge-files", n = 3, name = "main")`. La chiave è sempre un letterale.
+/// The text of a key in the active language: `tr!("merge-continue")`, with parameters
+/// `tr!("merge-files", n = 3, name = "main")`. The key is always a literal.
 #[macro_export]
 macro_rules! tr {
     ($key:literal) => {

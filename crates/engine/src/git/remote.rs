@@ -1,63 +1,67 @@
-//! Remoti (`remote.fetch`, S25): tipi e controlli comuni ai backend
+//! Remotes (`remote.fetch`, S25): types and checks shared by the backends
 //! (`impl-docs/git/sync.md`).
 //!
-//! Un remoto si indica sempre con il **nome** di un remoto configurato (`origin`), mai con un
-//! URL o un percorso: `git fetch <x>` con un `x` che non è un remoto lo userebbe come URL, quindi
-//! il comando controlla che il nome sia fra quelli di [`GitBackend::remotes`](super::GitBackend)
-//! prima di chiamare il backend.
+//! A remote is always given by the **name** of a configured remote (`origin`), never by a
+//! URL or a path: `git fetch <x>` with an `x` that is not a remote would use it as a URL, so
+//! the command checks that the name is among those of [`GitBackend::remotes`](super::GitBackend)
+//! before calling the backend.
 
 use super::valid_ref_name;
 use crate::EngineError;
 use project_domain::Status;
 use serde::{Deserialize, Serialize};
 
-/// Cosa scaricare con [`GitBackend::fetch`](super::GitBackend::fetch). Nomi già controllati dal
-/// comando: `remote` è un remoto configurato, `branch` un nome breve di branch valido.
+/// What to download with [`GitBackend::fetch`](super::GitBackend::fetch). Names already checked by the
+/// command: `remote` is a configured remote, `branch` a valid short branch name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchRequest {
-    /// Il nome del remoto configurato.
+    /// The name of the configured remote.
     pub remote: String,
-    /// Solo questo branch del remoto (nome breve, es. `main`); `None`: quello che dice la
-    /// configurazione del remoto (`remote.<nome>.fetch`, di solito tutti i branch).
+    /// Only this branch of the remote (short name, e.g. `main`); `None`: what the remote's
+    /// configuration says (`remote.<name>.fetch`, usually all branches).
     pub branch: Option<String>,
 }
 
-/// Il risultato di [`GitBackend::fetch`](super::GitBackend::fetch). I ref aggiornati li calcola
-/// il comando confrontando i ref prima e dopo.
+/// The result of [`GitBackend::fetch`](super::GitBackend::fetch). The updated refs are computed by
+/// the command comparing the refs before and after.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchOutcome {
-    /// Le righe di git che non sono avanzamento (`From <url>`, ` * [new branch] main ->
-    /// origin/main`, avvisi), in ordine.
+    /// The git lines that are not progress (`From <url>`, ` * [new branch] main ->
+    /// origin/main`, warnings), in order.
     pub messages: Vec<String>,
 }
 
-/// Il nome di un remoto passato a `remote.*`: non vuoto, senza caratteri di controllo, e tale
-/// che `refs/remotes/<nome>/x` sia un nome di ref valido (lo stesso controllo di git per i nomi
-/// dei remoti). Un nome che inizia con `-` è accettato (git lo permette): ai backend arriva
-/// sempre dopo `--end-of-options`. Altrimenti [`EngineError::InvalidParams`].
+/// The name of a remote passed to `remote.*`: not empty, without control characters, and such
+/// that `refs/remotes/<name>/x` is a valid ref name (the same check git does for remote
+/// names). A name starting with `-` is accepted (git allows it): backends always receive it
+/// after `--end-of-options`. Otherwise [`EngineError::InvalidParams`].
 pub fn check_remote_name(id: &'static str, name: &str) -> Result<(), EngineError> {
     let reason = if name.is_empty() {
-        Some("il nome del remoto è vuoto")
+        Some(msg!("engine-remote-name-empty"))
     } else if name.chars().any(char::is_control) {
-        Some("il nome del remoto contiene caratteri di controllo")
+        Some(msg!("engine-remote-name-control"))
     } else if !valid_ref_name(&format!("refs/remotes/{name}/x")) {
-        Some("non è un nome di remoto valido")
+        Some(msg!("engine-remote-name-invalid"))
     } else {
         None
     };
     match reason {
         Some(reason) => Err(EngineError::InvalidParams {
             id,
-            reason: format!("{reason}: `{}`", name.escape_debug()),
+            reason: msg!(
+                "engine-with-name",
+                reason = reason,
+                name = name.escape_debug()
+            ),
         }),
         None => Ok(()),
     }
 }
 
-/// Il remoto da usare quando `remote` manca, come `git fetch` senza argomenti: quello
-/// dell'upstream del branch attivo (`origin/main` → `origin`; con più remoti che potrebbero
-/// corrispondere, il nome più lungo), altrimenti `origin`, altrimenti l'unico remoto
-/// configurato. Nessuno di questi: [`EngineError::NotAllowed`] che chiede di indicarlo.
+/// The remote to use when `remote` is missing, like `git fetch` without arguments: the one
+/// of the active branch's upstream (`origin/main` → `origin`; with several remotes that could
+/// match, the longest name), otherwise `origin`, otherwise the only configured
+/// remote. None of these: [`EngineError::NotAllowed`] asking to specify it.
 pub fn default_remote(
     id: &'static str,
     status: &Status,
@@ -82,27 +86,26 @@ pub fn default_remote(
     }
     match remotes {
         [only] => Ok(only.clone()),
-        [] => Err(EngineError::NotAllowed(format!(
-            "`{id}`: il repository non ha remoti configurati"
-        ))),
-        _ => Err(EngineError::NotAllowed(format!(
-            "`{id}`: il branch attivo non ha un upstream e non c'è un remoto `origin`: indicare \
-             `remote` fra {}",
-            names(remotes)
+        [] => Err(EngineError::NotAllowed(msg!("engine-remote-none", id = id))),
+        _ => Err(EngineError::NotAllowed(msg!(
+            "engine-remote-which",
+            id = id,
+            names = names(remotes)
         ))),
     }
 }
 
-/// [`EngineError::NotAllowed`] per un remoto che non è configurato: niente scaricato.
+/// [`EngineError::NotAllowed`] for a remote that is not configured: nothing downloaded.
 pub fn unknown_remote(remote: &str, remotes: &[String]) -> EngineError {
     let known = if remotes.is_empty() {
-        "il repository non ha remoti configurati".to_owned()
+        msg!("engine-remote-none-configured")
     } else {
-        format!("remoti configurati: {}", names(remotes))
+        msg!("engine-remote-configured", names = names(remotes))
     };
-    EngineError::NotAllowed(format!(
-        "non esiste un remoto `{}` ({known}); niente scaricato",
-        remote.escape_debug()
+    EngineError::NotAllowed(msg!(
+        "engine-remote-unknown",
+        remote = remote.escape_debug(),
+        known = known
     ))
 }
 
@@ -141,7 +144,7 @@ mod tests {
 
     #[test]
     fn remote_names() {
-        for ok in ["origin", "-x", "--upload-pack=evil", "a/b", "fork.mio"] {
+        for ok in ["origin", "-x", "--upload-pack=evil", "a/b", "fork.mine"] {
             check_remote_name("remote.fetch", ok).unwrap();
         }
         for bad in [
@@ -160,29 +163,29 @@ mod tests {
             default_remote(id, &status(Some("fork/main")), &remotes).unwrap(),
             "fork"
         );
-        // Il nome più lungo vince: `fork/a/main` è del remoto `fork/a`.
+        // The longest name wins: `fork/a/main` belongs to the remote `fork/a`.
         assert_eq!(
             default_remote(id, &status(Some("fork/a/main")), &remotes).unwrap(),
             "fork/a"
         );
-        // Upstream locale (`branch.<b>.remote = .`) o assente: `origin`.
+        // Local upstream (`branch.<b>.remote = .`) or absent: `origin`.
         assert_eq!(
-            default_remote(id, &status(Some("altro")), &remotes).unwrap(),
+            default_remote(id, &status(Some("other")), &remotes).unwrap(),
             "origin"
         );
         assert_eq!(
             default_remote(id, &status(None), &remotes).unwrap(),
             "origin"
         );
-        // Senza `origin`: l'unico remoto, o errore se ce ne sono di più o nessuno.
+        // Without `origin`: the only remote, or an error if there are several or none.
         assert_eq!(
-            default_remote(id, &status(None), &list(&["solo"])).unwrap(),
-            "solo"
+            default_remote(id, &status(None), &list(&["only"])).unwrap(),
+            "only"
         );
         let err = default_remote(id, &status(None), &list(&["a", "b"])).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
         let err = default_remote(id, &status(None), &[]).unwrap_err();
-        assert!(err.to_string().contains("non ha remoti"), "{err}");
+        assert!(err.to_string().contains("has no remotes"), "{err}");
     }
 
     #[test]

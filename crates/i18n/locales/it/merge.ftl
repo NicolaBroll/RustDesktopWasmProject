@@ -1,5 +1,5 @@
-# Merge, cherry-pick, revert e riquadro dell'operazione in corso (merge.rs, pick.rs, merge_view.rs).
-# $name: merge, cherry-pick, revert (minuscolo); $title: lo stesso con la maiuscola.
+# Merge, cherry-pick, revert and the operation-in-progress panel (merge.rs, pick.rs, merge_view.rs).
+# $name: merge, cherry-pick, revert (lowercase); $title: the same, capitalized.
 
 merge-noun-merge-commit = commit di merge
 merge-noun-commit = commit
@@ -64,7 +64,7 @@ merge-pick-stopped = { $title } di «{ $what }» su «{ $branch }» fermo: { $fi
 merge-cherry-picked = «{ $what }» applicato su «{ $branch }»: commit { $id }. «Annulla» lo annulla
 merge-reverted = Modifiche di «{ $what }» annullate su «{ $branch }» con il commit { $id }. «Annulla» lo toglie
 
-# Riquadro dell'operazione in corso.
+# Operation-in-progress panel.
 merge-info-error = Dettagli dell'operazione non letti: { $error }
 merge-onto = Su { $onto }
 merge-sequence-hint = È una sequenza di più commit avviata da terminale: va conclusa da lì (un commit da qui lascerebbe la sequenza a metà, l'annullamento toglierebbe anche i commit già applicati)
@@ -86,7 +86,7 @@ merge-more-files-hint = Apre l'area di stage, dove ci sono tutti
 merge-click-to-resolve = — un clic apre l'editor per risolverli
 merge-file-hint = Apre l'editor dei conflitti del file
 
-# Dialoghi: Continua, annullamento, genitore di un commit di merge.
+# Dialogs: Continue, abort, parent of a merge commit.
 merge-finish-heading = Concludi il { $name }
 merge-into-branch = su «{ $branch }»
 merge-into-detached = su HEAD staccata ({ $id })

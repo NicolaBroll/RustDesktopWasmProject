@@ -1,28 +1,28 @@
-//! Merge e stato "in corso" (S29): `merge.start`, `merge.abort`, `merge.continue` e la lettura
-//! `repo.operation` per il banner della UI. Tipi e controlli comuni ai backend in
-//! `git/merge.rs`; contratto in `impl-docs/git/merge.md`.
+//! Merge and the "in progress" state (S29): `merge.start`, `merge.abort`, `merge.continue` and the reading
+//! `repo.operation` for the UI banner. Types and checks common to the backends in
+//! `git/merge.rs`; contract in `impl-docs/git/merge.md`.
 //!
-//! Un merge concluso (fast-forward o commit di merge, subito o con `merge.continue`) entra nel
-//! diario e `edit.undo` lo annulla come un pull del branch attivo. Un merge fermo in conflitto
-//! **resta in corso** e non entra nel diario (il branch non si è mosso); `merge.abort` chiede
-//! sempre `"confirm": true` e prima salva indice e worktree in un backup.
+//! A concluded merge (fast-forward or merge commit, right away or with `merge.continue`) enters the
+//! journal and `edit.undo` undoes it like a pull of the active branch. A merge stopped on a conflict
+//! **stays in progress** and does not enter the journal (the branch has not moved); `merge.abort` always asks
+//! for `"confirm": true` and first saves index and worktree in a backup.
 
 use super::{Out, journal_state, to_json};
 use crate::commands::parse_params;
 use crate::{
     CommitRequest, EngineError, GitBackend, HeadState, JournalEntry, LogQuery, MergeMode,
-    MergeRequest, Session, branch_ref, check_merge_state, check_merging, clean_merge_message,
-    conflicted_paths, merge_source,
+    MergeRequest, MessageArg, Session, branch_ref, check_merge_state, check_merging,
+    clean_merge_message, conflicted_paths, merge_source,
 };
 use project_domain::{Head, Oid, Operation, RefInfo, RefKind, RepoPath};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Parametri di `merge.start`.
+/// Parameters of `merge.start`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StartParams {
-    /// Cosa unire: un branch locale o remoto, un tag, un id o un'altra rev.
+    /// What to merge: a local or remote branch, a tag, an id or another rev.
     rev: String,
     #[serde(default)]
     no_ff: bool,
@@ -32,7 +32,7 @@ struct StartParams {
     message: Option<String>,
 }
 
-/// Parametri di `merge.abort`.
+/// Parameters of `merge.abort`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AbortParams {
@@ -40,7 +40,7 @@ struct AbortParams {
     confirm: bool,
 }
 
-/// Parametri di `merge.continue`.
+/// Parameters of `merge.continue`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContinueParams {
@@ -52,8 +52,8 @@ struct ContinueParams {
 #[serde(deny_unknown_fields)]
 struct NoParams {}
 
-/// Il messaggio facoltativo di `merge.start`/`merge.continue`: non vuoto e senza NUL (come
-/// `commit.create`), altrimenti [`EngineError::InvalidParams`] con l'id del comando.
+/// The optional message of `merge.start`/`merge.continue`: non-empty and without NUL (like
+/// `commit.create`), otherwise [`EngineError::InvalidParams`] with the command id.
 pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Result<(), EngineError> {
     let Some(message) = message else {
         return Ok(());
@@ -66,8 +66,8 @@ pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Resul
         })
 }
 
-/// Aggiunge a `out` lo stato e i ref riletti (`null` con `*_error` se non si rileggono:
-/// l'operazione è fatta e non va ripetuta) e lo stato del diario.
+/// Adds to `out` the re-read state and refs (`null` with `*_error` if they cannot be re-read:
+/// the operation is done and must not be repeated) and the journal state.
 pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
     let state = journal_state(journal);
     for key in ["can_undo", "can_redo", "next_undo", "next_redo"] {
@@ -89,8 +89,8 @@ pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Jo
     }
 }
 
-/// Il nome breve del primo branch locale, branch remoto o tag che punta a `oid` (in
-/// quest'ordine), altrimenti l'id abbreviato: per descrivere un commit in ingresso.
+/// The short name of the first local branch, remote branch or tag that points to `oid` (in
+/// this order), otherwise the abbreviated id: to describe an incoming commit.
 pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
     for (kind, prefix) in [
         (RefKind::LocalBranch, "refs/heads/"),
@@ -104,25 +104,25 @@ pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
     crate::git::short(oid)
 }
 
-/// Unisce `rev` nel branch attivo (`git merge`): fast-forward se il branch non ha commit che
-/// `rev` non ha (e non c'è `no_ff`), altrimenti un commit di merge con `message` o il messaggio
-/// di default di git (`Merge branch 'x'`, ...). `ff_only`: solo fast-forward (divergenti →
-/// [`EngineError::NotAllowed`]); `no_ff` e `ff_only` insieme → [`EngineError::InvalidParams`].
+/// Merges `rev` into the active branch (`git merge`): fast-forward if the branch has no commits that
+/// `rev` lacks (and there is no `no_ff`), otherwise a merge commit with `message` or git's default
+/// message (`Merge branch 'x'`, ...). `ff_only`: fast-forward only (diverged →
+/// [`EngineError::NotAllowed`]); `no_ff` and `ff_only` together → [`EngineError::InvalidParams`].
 ///
-/// Rifiutati prima di scrivere ([`EngineError::NotAllowed`], niente cambia): HEAD staccata o
-/// branch senza commit, operazione in corso, file in conflitto, per un commit di merge qualunque
-/// modifica ai file tracciati ([`check_merge_state`]); una rev che non c'è →
-/// [`EngineError::UnknownRev`]. Niente da fare se il branch contiene già `rev` (`up_to_date`).
-/// Prima di scrivere il backend salva il branch in `refs/project/backup/merge-...`.
+/// Refused before writing ([`EngineError::NotAllowed`], nothing changes): detached HEAD or
+/// branch without commits, operation in progress, conflicted files, for a merge commit any
+/// change to tracked files ([`check_merge_state`]); a rev that does not exist →
+/// [`EngineError::UnknownRev`]. Nothing to do if the branch already contains `rev` (`up_to_date`).
+/// Before writing the backend saves the branch in `refs/project/backup/merge-...`.
 ///
-/// **Conflitti**: il merge resta in corso (`in_progress`, `conflicts`), da concludere con
-/// `merge.continue` dopo aver risolto i file (`index.stage`) o da annullare con `merge.abort`;
-/// niente nel diario. Un merge concluso entra nel diario: `edit.undo` riporta il branch, con
-/// indice e worktree, dov'era.
+/// **Conflicts**: the merge stays in progress (`in_progress`, `conflicts`), to be concluded with
+/// `merge.continue` after resolving the files (`index.stage`) or aborted with `merge.abort`;
+/// nothing in the journal. A concluded merge enters the journal: `edit.undo` brings the branch, with
+/// index and worktree, back to where it was.
 ///
-/// Risultato: `{"rev", "source": {"kind", "name", "full"}, "target", "branch", "strategy":
+/// Result: `{"rev", "source": {"kind", "name", "full"}, "target", "branch", "strategy":
 /// "fast_forward" | "merge" | "up_to_date", "before", "after", "ahead", "behind",
-/// "in_progress", "conflicts": [percorso], "message", "backup": string | null, "warnings",
+/// "in_progress", "conflicts": [path], "message", "backup": string | null, "warnings",
 /// "status", "refs", "can_undo", "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     const ID: &str = "merge.start";
@@ -135,15 +135,13 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     if no_ff && ff_only {
         return Err(EngineError::InvalidParams {
             id: ID,
-            reason: "`no_ff` (sempre un commit di merge) e `ff_only` (solo fast-forward) si \
-                     escludono"
-                .to_owned(),
+            reason: msg!("engine-merge-no-ff-and-ff-only"),
         });
     }
     if rev.trim().is_empty() || rev.contains('\0') {
         return Err(EngineError::InvalidParams {
             id: ID,
-            reason: "`rev` deve essere un nome di branch, di tag o un id, non vuoto".to_owned(),
+            reason: msg!("engine-merge-rev-empty"),
         });
     }
     check_message(ID, &message)?;
@@ -155,20 +153,16 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
             target: Some(target),
         } => (name.clone(), *target),
         Head::Branch { name, target: None } => {
-            return Err(EngineError::NotAllowed(format!(
-                "il branch `{}` non ha ancora commit: niente da unire, niente modificato",
-                name.escape_debug()
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-merge-unborn",
+                name = name.escape_debug()
             )));
         }
         Head::Detached(_) => {
-            return Err(EngineError::NotAllowed(
-                "HEAD è staccata: il merge va fatto su un branch, niente modificato. Passare a \
-                 un branch (`branch.checkout`) o crearne uno qui (`branch.create`) e riprovare"
-                    .to_owned(),
-            ));
+            return Err(EngineError::NotAllowed(msg!("engine-merge-detached")));
         }
     };
-    // Prima di tutto il resto: un'operazione in corso o un conflitto fermano comunque.
+    // Before everything else: an operation in progress or a conflict stops it anyway.
     check_merge_state(&status, &MergeMode::FastForward)?;
     let target = repo
         .log(&LogQuery::page(0, 1).from_rev(rev.clone()))?
@@ -202,11 +196,12 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     let mode = if ahead == 0 && !no_ff {
         MergeMode::FastForward
     } else if ff_only {
-        return Err(EngineError::NotAllowed(format!(
-            "`{}` e `{}` sono divergenti ({ahead} commit solo nel branch, {behind} solo in \
-             `{0}`): con `ff_only` si può solo fare fast-forward, niente modificato",
-            source.name.escape_debug(),
-            branch.escape_debug()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-merge-diverged-ff-only",
+            source = source.name.escape_debug(),
+            branch = branch.escape_debug(),
+            ahead = ahead,
+            behind = behind
         )));
     } else {
         MergeMode::Merge { no_ff }
@@ -222,9 +217,9 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
         message,
     })?;
     let mut warnings = outcome.warnings.clone();
-    // Nel diario solo se il risultato è quello del merge: il commit del fast-forward, o un
-    // commit di merge sopra il branch di prima. Altrimenti un altro processo (o un hook) ha
-    // spostato il branch nel frattempo, e un undo riporterebbe indietro anche il suo lavoro.
+    // In the journal only if the result is the merge's: the fast-forward commit, or a
+    // merge commit on top of the previous branch. Otherwise another process (or a hook) has
+    // moved the branch in the meantime, and an undo would also bring back its work.
     let as_expected = !outcome.in_progress
         && outcome.after != before
         && match mode {
@@ -236,15 +231,14 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
                 .unwrap_or(false),
         };
     if !outcome.in_progress && outcome.after != before && !as_expected {
-        warnings.push(format!(
-            "il branch è a {} ma non è il risultato atteso del merge (un hook o un altro \
-             processo l'ha spostato?): l'operazione non entra nel diario, il branch com'era è \
-             in `{}`",
-            outcome.after, outcome.backup
+        warnings.push(msg!(
+            "engine-merge-unexpected-result",
+            after = outcome.after,
+            backup = outcome.backup
         ));
     }
     if as_expected {
-        // Il branch è spostato: la voce va nel diario anche se dopo qualcosa non si rilegge.
+        // The branch moved: the entry goes into the journal even if something cannot be re-read afterwards.
         journal.record(JournalEntry::merge(
             ID,
             &branch_ref(&branch),
@@ -267,15 +261,15 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// Annulla il merge in corso (`git merge --abort`): indice e worktree tornano come HEAD per i
-/// file del merge, e le risoluzioni fatte nei file in conflitto, le modifiche in stage e quelle
-/// fatte dopo l'inizio del merge andrebbero perse. Per questo chiede **sempre** `"confirm":
-/// true` (senza: [`EngineError::ConfirmRequired`] con i file, niente cambia) e il backend salva
-/// prima indice e worktree in `refs/project/backup/merge-abort-...` (come uno stash: `git stash
-/// apply <ref>` li rimette). Senza un merge in corso → [`EngineError::NotAllowed`]. Non entra
-/// nel diario (il recupero è il backup).
+/// Aborts the merge in progress (`git merge --abort`): index and worktree go back to HEAD for the
+/// merge's files, and the resolutions made in the conflicted files, the staged changes and those
+/// made after the merge started would be lost. For this it **always** asks for `"confirm":
+/// true` (without: [`EngineError::ConfirmRequired`] with the files, nothing changes) and the backend first saves
+/// index and worktree in `refs/project/backup/merge-abort-...` (like a stash: `git stash
+/// apply <ref>` puts them back). Without a merge in progress → [`EngineError::NotAllowed`]. It does not enter
+/// the journal (recovery is the backup).
 ///
-/// Risultato: `{"backup", "files": [percorso], "warnings", "status", "refs", "can_undo",
+/// Result: `{"backup", "files": [path], "warnings", "status", "refs", "can_undo",
 /// "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
     const ID: &str = "merge.abort";
@@ -296,10 +290,10 @@ pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// L'errore [`EngineError::ConfirmRequired`] di `merge.abort`, `cherry_pick.abort` e
-/// `revert.abort` senza `"confirm": true`: cosa andrebbe perso (i file in conflitto e quelli
-/// cambiati) e il backup che si salverebbe prima (`refs/project/backup/<backup>-abort-...`).
-/// `what` è il nome dell'operazione (`merge`, `cherry-pick`, `revert`).
+/// The [`EngineError::ConfirmRequired`] error of `merge.abort`, `cherry_pick.abort` and
+/// `revert.abort` without `"confirm": true`: what would be lost (the conflicted files and those
+/// changed) and the backup that would be saved first (`refs/project/backup/<backup>-abort-...`).
+/// `what` is the name of the operation (`merge`, `cherry-pick`, `revert`).
 pub(super) fn abort_confirm(
     id: &'static str,
     status: &project_domain::Status,
@@ -315,44 +309,40 @@ pub(super) fn abort_confirm(
         .collect();
     let mut lost = Vec::new();
     if !conflicts.is_empty() {
-        lost.push(format!(
-            "i file in conflitto ({}) tornerebbero come in HEAD, con le risoluzioni fatte finora",
-            conflicts
-                .iter()
-                .map(|p| format!("`{p}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
+        lost.push(msg!(
+            "engine-merge-abort-lose-conflicts",
+            files = crate::quoted_list(&conflicts)
         ));
     }
     if !changed.is_empty() {
-        lost.push(format!(
-            "le modifiche del {what} e quelle fatte dopo, in stage o no, andrebbero perse ({})",
-            changed.join(", ")
+        lost.push(msg!(
+            "engine-merge-abort-lose-changes",
+            operation = what,
+            files = changed.join(", ")
         ));
     }
     if lost.is_empty() {
-        lost.push(format!("il {what} in corso verrebbe annullato"));
+        lost.push(msg!("engine-merge-abort-lose-operation", operation = what));
     }
     EngineError::ConfirmRequired {
         command: id,
-        reason: format!(
-            "{}. Prima si salverebbero indice e worktree in \
-             `refs/project/backup/{backup}-abort-...` (si rimettono con `git stash apply \
-             <ref>`); l'annullamento non entra nel diario",
-            lost.join("; ")
+        reason: msg!(
+            "engine-merge-abort-confirm",
+            lost = MessageArg::Joined(lost, "; ".into()),
+            backup = backup
         ),
         expected: None,
     }
 }
 
-/// Conclude il merge in corso con il commit di merge (genitori HEAD e `MERGE_HEAD`, `git commit`
-/// come `commit.create`: hook e firma secondo la configurazione), con `message` o quello
-/// preparato da git (`MERGE_MSG`, senza il blocco `# Conflicts:`). Rifiutato
-/// ([`EngineError::NotAllowed`], niente cambia) senza un merge in corso o se restano file in
-/// conflitto (elencati: vanno risolti e messi in stage con `index.stage`). Entra nel diario come
-/// un merge concluso; con HEAD staccata (un merge iniziato da terminale) come un commit.
+/// Concludes the merge in progress with the merge commit (parents HEAD and `MERGE_HEAD`, `git commit`
+/// like `commit.create`: hooks and signing according to the configuration), with `message` or the one
+/// prepared by git (`MERGE_MSG`, without the `# Conflicts:` block). Refused
+/// ([`EngineError::NotAllowed`], nothing changes) without a merge in progress or if conflicted files
+/// remain (listed: they must be resolved and staged with `index.stage`). It enters the journal as
+/// a concluded merge; with detached HEAD (a merge started from a terminal) as a commit.
 ///
-/// Risultato: `{"commit": Commit, "previous", "branch", "message", "status", "refs",
+/// Result: `{"commit": Commit, "previous", "branch", "message", "status", "refs",
 /// "can_undo", "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
     const ID: &str = "merge.continue";
@@ -363,10 +353,9 @@ pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
     check_merging(ID, &status)?;
     let conflicts = conflicted_paths(&status);
     if !conflicts.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "restano file in conflitto ({}): risolverli e metterli in stage (`index.stage`), \
-             poi ripetere `merge.continue`; niente committato",
-            conflicts
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-merge-continue-conflicts",
+            files = conflicts
                 .iter()
                 .map(|p| format!("`{p}`"))
                 .collect::<Vec<_>>()
@@ -422,17 +411,17 @@ pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// L'operazione in corso, per il banner della UI: `{"operation": "Merge" | "Rebase" |
-/// "CherryPick" | "Revert" | "Bisect" | "Am" | null, "head": Head, "conflicts": [percorso],
-/// "incoming": [{"id", "label", "summary": string | null, "refs": [nome completo]}], "message":
+/// The operation in progress, for the UI banner: `{"operation": "Merge" | "Rebase" |
+/// "CherryPick" | "Revert" | "Bisect" | "Am" | null, "head": Head, "conflicts": [path],
+/// "incoming": [{"id", "label", "summary": string | null, "refs": [full name]}], "message":
 /// string | null, "onto": oid | null, "rebase_branch": string | null, "ready": bool,
 /// "continue": id | null, "abort": id | null}`.
 ///
-/// `incoming`: i commit in ingresso (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) con i ref
-/// che ci puntano; `message`: il messaggio che `merge.continue` userebbe (`MERGE_MSG` senza il
-/// blocco dei conflitti); `ready`: niente più file in conflitto; `continue`/`abort`: i comandi
-/// che concludono o annullano l'operazione da qui (merge, cherry-pick e revert; `null` per le
-/// altre e per una sequenza di più commit avviata da terminale).
+/// `incoming`: the incoming commits (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) with the refs
+/// that point to them; `message`: the message `merge.continue` would use (`MERGE_MSG` without the
+/// conflicts block); `ready`: no more conflicted files; `continue`/`abort`: the commands
+/// that conclude or abort the operation from here (merge, cherry-pick and revert; `null` for the
+/// others and for a sequence of several commits started from a terminal).
 pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
     let NoParams {} = parse_params("repo.operation", p)?;
     let repo = s.repo()?;
@@ -462,8 +451,8 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
         })
         .collect();
     let operation = status.operation;
-    // I comandi che concludono o annullano l'operazione da qui: il merge, e cherry-pick e
-    // revert di un commit solo (una sequenza avviata da terminale resta al terminale).
+    // The commands that conclude or abort the operation from here: merge, and cherry-pick and
+    // revert of a single commit (a sequence started from a terminal stays with the terminal).
     let (continue_id, abort_id) = match operation {
         Some(Operation::Merge) => (Some("merge.continue"), Some("merge.abort")),
         Some(op) => match crate::PickKind::from_operation(op) {

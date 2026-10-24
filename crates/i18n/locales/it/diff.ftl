@@ -1,4 +1,4 @@
-# Vista del diff e stage di hunk e righe (diff.rs, diff_view.rs, lines.rs).
+# Diff view and staging of hunks and lines (diff.rs, diff_view.rs, lines.rs).
 
 diff-submodule-badge = [sottomodulo]
 diff-note-mode = modo { $old } -> { $new }

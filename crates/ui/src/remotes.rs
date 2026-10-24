@@ -1,15 +1,15 @@
-//! Gestione dei remoti dalla sezione "Remoti" della colonna dei ref (S27): `remote.list`,
-//! `remote.add`, `remote.remove`. Solo dati, senza egui: si prova con test unitari.
+//! Remote management from the "Remotes" section of the refs column (S27): `remote.list`,
+//! `remote.add`, `remote.remove`. Data only, no egui: tested with unit tests.
 //!
-//! L'elenco viene da `remote.list` (anche i remoti senza branch scaricati, e i nomi con `/`
-//! interi), letto all'apertura e riletto dopo aggiunta, rimozione, fetch, pull e push. Gli URL
-//! arrivano già mascherati dal motore: qui non si vedono mai password o token.
+//! The list comes from `remote.list` (also remotes without fetched branches, and names with `/`
+//! kept whole), read on open and reread after add, remove, fetch, pull and push. URLs
+//! arrive already masked by the engine: passwords or tokens are never seen here.
 //!
-//! L'aggiunta si scrive in un dialogo (nome, URL, "Scarica subito"); gli errori del motore
-//! restano nel dialogo. Con il fetch il dialogo mostra l'avanzamento e "Interrompi": un fetch
-//! fallito o interrotto non annulla l'aggiunta. La rimozione va in due tempi come
-//! l'eliminazione di un branch: prima senza `confirm` (il motore risponde sempre con
-//! `ConfirmRequired` e il motivo), poi, solo dopo il clic nel dialogo rosso, `"confirm": true`.
+//! Adding is typed in a dialog (name, URL, "Fetch right away"); engine errors
+//! stay in the dialog. With the fetch the dialog shows progress and "Cancel": a failed
+//! or cancelled fetch does not undo the add. Removal happens in two steps like
+//! deleting a branch: first without `confirm` (the engine always answers with
+//! `ConfirmRequired` and the reason), then, only after the click in the red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
@@ -21,10 +21,10 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// L'id del comando che elenca i remoti.
+/// The id of the command that lists the remotes.
 pub const LIST: &str = "remote.list";
 
-/// Un comando che cambia i remoti.
+/// A command that changes the remotes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Add,
@@ -32,7 +32,7 @@ pub enum Op {
 }
 
 impl Op {
-    /// L'id del comando del Registry.
+    /// The id of the Registry command.
     pub fn command(self) -> &'static str {
         match self {
             Op::Add => "remote.add",
@@ -41,32 +41,32 @@ impl Op {
     }
 }
 
-/// Un remoto configurato, come lo dà `remote.list`.
+/// A configured remote, as `remote.list` gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Remote {
     pub name: String,
-    /// L'URL del fetch, con le credenziali mascherate; `None` per un remoto senza URL.
+    /// The fetch URL, with credentials masked; `None` for a remote without URL.
     pub url: Option<String>,
-    /// Dove va il push se non è `url` (mascherati).
+    /// Where the push goes if it is not `url` (masked).
     #[serde(default)]
     pub push_urls: Vec<String>,
     #[serde(default)]
     pub mirror: bool,
-    /// Quanti branch remoti `refs/remotes/<nome>/...` ci sono.
+    /// How many remote branches `refs/remotes/<name>/...` there are.
     pub branches: usize,
-    /// È il remoto del "Fetch" senza scelta.
+    /// It is the remote of "Fetch" without a choice.
     #[serde(default)]
     pub default: bool,
-    /// È `remote.pushDefault`.
+    /// It is `remote.pushDefault`.
     #[serde(default)]
     pub push_default: bool,
-    /// L'URL configurato contiene credenziali (salvate in chiaro da git).
+    /// The configured URL contains credentials (saved in clear text by git).
     #[serde(default)]
     pub credentials: bool,
 }
 
 impl Remote {
-    /// L'URL da mostrare.
+    /// The URL to show.
     pub fn url_text(&self) -> String {
         match &self.url {
             Some(url) => url.clone(),
@@ -74,7 +74,7 @@ impl Remote {
         }
     }
 
-    /// `nessun branch scaricato`, `1 branch`, `3 branch`.
+    /// `no branches`, `1 branch`, `3 branches`.
     pub fn branches_text(&self) -> String {
         match self.branches {
             0 => tr!("remotes-no-branches"),
@@ -82,7 +82,7 @@ impl Remote {
         }
     }
 
-    /// Le etichette accanto al nome, con la loro spiegazione.
+    /// The labels next to the name, with their explanation.
     pub fn badges(&self) -> Vec<(String, String)> {
         let mut badges = Vec::new();
         if self.default {
@@ -106,7 +106,7 @@ impl Remote {
         badges
     }
 
-    /// Il testo del suggerimento della riga.
+    /// The text of the row tooltip.
     pub fn tooltip(&self) -> String {
         let mut text = tr!("remotes-tooltip", name = &self.name, url = self.url_text());
         for url in &self.push_urls {
@@ -123,61 +123,61 @@ impl Remote {
     }
 }
 
-/// Risultato di `remote.list`.
+/// Result of `remote.list`.
 #[derive(Debug, Clone, Deserialize)]
 struct ListResult {
     remotes: Vec<Remote>,
 }
 
-/// Vero se l'URL scritto contiene credenziali, con la stessa regola del motore
-/// ([`mask_url`]): solo per l'avviso nel dialogo, prima di mandarlo. Il motore lo dice comunque
-/// nei `warnings` dopo l'aggiunta.
+/// True if the typed URL contains credentials, with the same rule as the engine
+/// ([`mask_url`]): only for the warning in the dialog, before sending it. The engine says so anyway
+/// in the `warnings` after the add.
 pub fn looks_like_credentials(url: &str) -> bool {
     mask_url(url.trim()).1
 }
 
-/// I campi del dialogo "Aggiungi remoto".
+/// The fields of the "Add remote" dialog.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AddFields {
     pub name: String,
     pub url: String,
-    /// "Scarica subito (fetch)".
+    /// "Fetch right away".
     pub fetch: bool,
 }
 
-/// Il dialogo "Aggiungi remoto".
+/// The "Add remote" dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddDialog {
     pub fields: AddFields,
-    /// L'errore del motore all'ultimo invio, mostrato nel dialogo.
+    /// The engine error from the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// Vero mentre il comando è in corso.
+    /// True while the command is running.
     pub sending: bool,
-    /// Il ticket del comando in corso (per l'avanzamento e "Interrompi").
+    /// The ticket of the running command (for progress and "Cancel").
     pub ticket: Option<Ticket>,
-    /// Vero dopo "Interrompi", finché il comando non risponde.
+    /// True after "Cancel", until the command answers.
     pub cancelling: bool,
-    /// Vero se l'invio in corso ha chiesto anche il fetch.
+    /// True if the running submit also asked for the fetch.
     pub fetching: bool,
-    /// "Nascondi": l'URL con credenziali si mostra mascherato anche mentre si scrive.
+    /// "Hide": the URL with credentials is shown masked even while typing.
     pub hide_url: bool,
 }
 
 impl AddDialog {
-    /// Vero se il pulsante è attivo: nome e URL scritti, nessun invio in corso. Il resto lo
-    /// controlla il motore.
+    /// True if the button is enabled: name and URL typed, no submit in progress. The rest is
+    /// checked by the engine.
     pub fn can_submit(&self) -> bool {
         !self.sending && !self.fields.name.trim().is_empty() && !self.fields.url.trim().is_empty()
     }
 
-    /// Vero se l'URL si mostra mascherato in un campo di sola lettura: durante l'invio (il
-    /// fetch può durare, il token non resta in chiaro sullo schermo) o dopo "Nascondi".
+    /// True if the URL is shown masked in a read-only field: during the submit (the
+    /// fetch can take long, the token does not stay in clear on screen) or after "Hide".
     pub fn url_masked(&self) -> bool {
         (self.sending || self.hide_url) && looks_like_credentials(&self.fields.url)
     }
 
-    /// L'URL come si mostra nel campo: mascherato come lo mostra il motore ([`mask_url`]) se
-    /// [`AddDialog::url_masked`], altrimenti com'è scritto.
+    /// The URL as shown in the field: masked as the engine shows it ([`mask_url`]) if
+    /// [`AddDialog::url_masked`], otherwise as typed.
     pub fn shown_url(&self) -> String {
         if self.url_masked() {
             mask_url(self.fields.url.trim()).0
@@ -186,12 +186,12 @@ impl AddDialog {
         }
     }
 
-    /// L'avviso da mostrare sotto l'URL, se contiene credenziali.
+    /// The warning to show below the URL, if it contains credentials.
     pub fn credentials_warning(&self) -> Option<String> {
         looks_like_credentials(&self.fields.url).then(|| tr!("remotes-credentials-warning"))
     }
 
-    /// Il remoto che si sta aggiungendo, per la barra di stato.
+    /// The remote being added, for the status bar.
     pub fn label(&self) -> String {
         let name = self.fields.name.trim();
         if self.fetching {
@@ -202,75 +202,75 @@ impl AddDialog {
     }
 }
 
-/// La rimozione di un remoto, dal controllo alla risposta.
+/// The removal of a remote, from the check to the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveDialog {
     pub name: String,
     pub phase: Phase,
 }
 
-/// Il dialogo dei remoti aperto (o la rimozione in controllo, ancora senza dialogo).
+/// The open remotes dialog (or the removal being checked, still without a dialog).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
     Add(AddDialog),
     Remove(RemoveDialog),
 }
 
-/// L'elenco dei remoti e i dialoghi per cambiarlo: un dialogo alla volta.
+/// The list of remotes and the dialogs to change it: one dialog at a time.
 #[derive(Debug, Default)]
 pub struct RemotesBox {
-    /// L'ultimo elenco letto; `None` finché non arriva.
+    /// The last list read; `None` until it arrives.
     list: Option<Vec<Remote>>,
-    /// L'errore dell'ultima lettura dell'elenco.
+    /// The error of the last list read.
     list_error: Option<String>,
     dialog: Option<Dialog>,
-    /// Il fetch dopo l'aggiunta non è riuscito per un motivo da spiegare.
+    /// The fetch after the add failed for a reason to explain.
     failure: Option<Failure>,
 }
 
-/// Cosa è arrivato da `remote.add`/`remote.remove`.
+/// What came back from `remote.add`/`remote.remove`.
 #[derive(Debug)]
 pub enum Received {
-    /// Fatto: cosa aggiornare nella vista.
+    /// Done: what to update in the view.
     Done(Box<Outcome>),
-    /// Rifiutato: l'errore è nel dialogo dell'aggiunta, che resta aperto.
+    /// Refused: the error is in the add dialog, which stays open.
     Inline,
-    /// Serve la conferma della rimozione: il dialogo si apre.
+    /// The removal needs confirmation: the dialog opens.
     Confirm,
-    /// Rifiutato o non riuscito: il messaggio da mostrare; con `reload` si rilegge tutto.
+    /// Refused or failed: the message to show; with `reload` everything is reloaded.
     Failed { message: String, reload: bool },
 }
 
-/// Il risultato di un comando riuscito, per la vista.
+/// The result of a successful command, for the view.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub notice: String,
-    /// I ref nuovi, se il comando li ha riletti.
+    /// The new refs, if the command reloaded them.
     pub refs: Option<Vec<RefInfo>>,
-    /// L'elenco nuovo dei remoti, se il comando l'ha riletto.
+    /// The new list of remotes, if the command reloaded it.
     pub remotes: Option<Vec<Remote>>,
-    /// Un problema dopo l'operazione riuscita (ref o remoti non riletti, fetch non riuscito).
+    /// A problem after the successful operation (refs or remotes not reread, fetch failed).
     pub warning: Option<String>,
     pub history: History,
 }
 
 impl RemotesBox {
-    /// L'elenco dei remoti, se è arrivato.
+    /// The list of remotes, if it arrived.
     pub fn list(&self) -> Option<&[Remote]> {
         self.list.as_deref()
     }
 
-    /// L'errore dell'ultima lettura dell'elenco.
+    /// The error of the last list read.
     pub fn list_error(&self) -> Option<&str> {
         self.list_error.as_deref()
     }
 
-    /// I nomi dei remoti, in ordine (vuoto finché l'elenco non arriva).
+    /// The names of the remotes, in order (empty until the list arrives).
     pub fn names(&self) -> Vec<String> {
         self.list.iter().flatten().map(|r| r.name.clone()).collect()
     }
 
-    /// La risposta di `remote.list`.
+    /// The answer of `remote.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
         match result.and_then(|value| {
             serde_json::from_value::<ListResult>(value).map_err(|e| {
@@ -294,7 +294,7 @@ impl RemotesBox {
         self.list_error = None;
     }
 
-    /// Il dialogo da disegnare: la rimozione si vede solo quando chiede la conferma.
+    /// The dialog to draw: the removal is shown only when it asks for confirmation.
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Remove(remove) => matches!(remove.phase, Phase::Confirm { .. }),
@@ -302,23 +302,23 @@ impl RemotesBox {
         })
     }
 
-    /// Vero se un dialogo è aperto: niente altre scritture, i tasti vanno a lui.
+    /// True if a dialog is open: no other writes, keys go to it.
     pub fn modal_open(&self) -> bool {
         self.dialog().is_some()
     }
 
-    /// Il fetch dopo l'aggiunta non riuscito, da spiegare in una finestra.
+    /// The fetch after the add failed, to explain in a window.
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
 
-    /// Chiude la finestra dell'errore del fetch.
+    /// Closes the fetch error window.
     pub fn dismiss(&mut self) {
         self.failure = None;
     }
 
-    /// Apre il dialogo "Aggiungi remoto": nome proposto `origin` se non c'è ancora nessun
-    /// remoto con quel nome, fetch subito attivo.
+    /// Opens the "Add remote" dialog: proposed name `origin` if there is no remote
+    /// with that name yet, fetch enabled.
     pub fn open_add(&mut self) -> bool {
         if self.dialog.is_some() {
             return false;
@@ -344,7 +344,7 @@ impl RemotesBox {
         true
     }
 
-    /// I campi del dialogo dell'aggiunta sono cambiati.
+    /// The fields of the add dialog changed.
     pub fn set_fields(&mut self, fields: AddFields) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog
             && !dialog.sending
@@ -353,14 +353,14 @@ impl RemotesBox {
         }
     }
 
-    /// "Mostra"/"Nascondi" l'URL con credenziali nel dialogo.
+    /// "Show"/"Hide" the URL with credentials in the dialog.
     pub fn hide_url(&mut self, hide: bool) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog {
             dialog.hide_url = hide;
         }
     }
 
-    /// Invio del dialogo dell'aggiunta: parametri e descrizione. `None` se non si può.
+    /// Submit of the add dialog: parameters and description. `None` if it cannot be done.
     pub fn submit_add(&mut self) -> Option<(Value, String)> {
         let Some(Dialog::Add(dialog)) = &mut self.dialog else {
             return None;
@@ -381,14 +381,14 @@ impl RemotesBox {
         Some((params, dialog.label()))
     }
 
-    /// L'aggiunta mandata con [`RemotesBox::submit_add`] è partita con `ticket`.
+    /// The add sent with [`RemotesBox::submit_add`] started with `ticket`.
     pub fn add_started(&mut self, ticket: Ticket) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog {
             dialog.ticket = Some(ticket);
         }
     }
 
-    /// L'aggiunta in corso con il fetch: il ticket per l'avanzamento.
+    /// The add in progress with the fetch: the ticket for progress.
     pub fn running_fetch(&self) -> Option<&AddDialog> {
         match &self.dialog {
             Some(Dialog::Add(dialog)) if dialog.sending && dialog.fetching => Some(dialog),
@@ -396,8 +396,8 @@ impl RemotesBox {
         }
     }
 
-    /// "Interrompi" il fetch dell'aggiunta: il ticket da annullare, una volta sola. Il remoto
-    /// resta aggiunto.
+    /// "Cancel" the fetch of the add: the ticket to cancel, only once. The remote
+    /// stays added.
     pub fn cancel(&mut self) -> Option<Ticket> {
         let Some(Dialog::Add(dialog)) = &mut self.dialog else {
             return None;
@@ -409,8 +409,8 @@ impl RemotesBox {
         dialog.ticket
     }
 
-    /// Comincia la rimozione del remoto `name`: i parametri del primo invio, senza `confirm`
-    /// (il motore risponde con il motivo della conferma).
+    /// Starts the removal of the remote `name`: the parameters of the first submit, without `confirm`
+    /// (the engine answers with the reason for the confirmation).
     pub fn start_remove(&mut self, name: String) -> Option<Value> {
         if self.dialog.is_some() {
             return None;
@@ -423,7 +423,7 @@ impl RemotesBox {
         Some(params)
     }
 
-    /// L'utente ha confermato la rimozione: i parametri con `"confirm": true`.
+    /// The user confirmed the removal: the parameters with `"confirm": true`.
     pub fn confirm_remove(&mut self) -> Option<(Value, String)> {
         let Some(Dialog::Remove(remove)) = &mut self.dialog else {
             return None;
@@ -438,7 +438,7 @@ impl RemotesBox {
         ))
     }
 
-    /// Chiude il dialogo aperto senza mandare niente; non durante un invio.
+    /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
             Some(Dialog::Add(dialog)) => !dialog.sending,
@@ -450,7 +450,7 @@ impl RemotesBox {
         }
     }
 
-    /// La risposta del comando `op`.
+    /// The answer of the command `op`.
     pub fn receive(
         &mut self,
         op: Op,
@@ -478,7 +478,7 @@ impl RemotesBox {
             return unexpected(Op::Add);
         }
         match result {
-            // Nome o URL rifiutati, nome già preso: niente è cambiato, si corregge nel dialogo.
+            // Name or URL refused, name already taken: nothing changed, fixed in the dialog.
             Err(e) if matches!(kind, Some(ErrorKind::InvalidParams | ErrorKind::NotAllowed)) => {
                 dialog.sending = false;
                 dialog.ticket = None;
@@ -487,7 +487,7 @@ impl RemotesBox {
                 Received::Inline
             }
             Err(e) => {
-                // Un errore di git durante l'aggiunta: forse il remoto c'è, si rilegge tutto.
+                // A git error during the add: maybe the remote exists, everything is reloaded.
                 let name = dialog.fields.name.trim().to_owned();
                 self.dialog = None;
                 Received::Failed {
@@ -573,7 +573,7 @@ fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String
     })
 }
 
-/// `; attenzione: …` per ogni avviso.
+/// `; warning: ...` for each warning.
 fn warnings_text(warnings: &[String]) -> String {
     warnings
         .iter()
@@ -581,7 +581,7 @@ fn warnings_text(warnings: &[String]) -> String {
         .collect()
 }
 
-/// Il problema dopo un'operazione riuscita: ref o remoti non riletti.
+/// The problem after a successful operation: refs or remotes not reread.
 fn reread_warning(what: &str, refs: Option<String>, remotes: Option<String>) -> Option<String> {
     let parts: Vec<String> = [
         refs.map(|e| tr!("remotes-refs-not-reread", error = e)),
@@ -599,31 +599,31 @@ fn reread_warning(what: &str, refs: Option<String>, remotes: Option<String>) -> 
     })
 }
 
-/// Il fetch fatto dopo l'aggiunta.
+/// The fetch done after the add.
 #[derive(Debug, Clone, Deserialize)]
 struct FetchPart {
     updated: Option<Vec<RefUpdate>>,
     #[serde(default)]
     messages: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     warnings: Vec<String>,
 }
 
-/// Il fetch non riuscito dopo l'aggiunta.
+/// The failed fetch after the add.
 #[derive(Debug, Clone, Deserialize)]
 struct FetchError {
     kind: String,
     message: String,
 }
 
-/// Risultato di `remote.add`.
+/// Result of `remote.add`.
 #[derive(Debug, Clone, Deserialize)]
 struct AddResult {
     remote: String,
     url: String,
     fetch: Option<FetchPart>,
     fetch_error: Option<FetchError>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     warnings: Vec<String>,
     remotes: Option<Vec<Remote>>,
     remotes_error: Option<String>,
@@ -633,7 +633,7 @@ struct AddResult {
     history: History,
 }
 
-/// Cosa dire nella finestra quando il fetch dopo l'aggiunta non riesce: il remoto c'è.
+/// What to say in the window when the fetch after the add fails: the remote is there.
 fn added_anyway() -> String {
     tr!("remotes-added-anyway")
 }
@@ -703,14 +703,14 @@ impl AddResult {
     }
 }
 
-/// Il remoto tolto, come lo fotografa il motore (basta il numero di branch remoti).
+/// The removed remote, as the engine photographs it (the number of remote branches is enough).
 #[derive(Debug, Clone, Deserialize)]
 struct Removed {
     #[serde(default)]
     refs: Vec<Value>,
 }
 
-/// Risultato di `remote.remove`.
+/// Result of `remote.remove`.
 #[derive(Debug, Clone, Deserialize)]
 struct RemoveResult {
     remote: String,
@@ -723,7 +723,7 @@ struct RemoveResult {
     push_default_removed: bool,
     #[serde(default)]
     backups: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     warnings: Vec<String>,
     remotes: Option<Vec<Remote>>,
     remotes_error: Option<String>,
@@ -733,7 +733,7 @@ struct RemoveResult {
     history: History,
 }
 
-/// `«a», «b»`.
+/// `“a”, “b”`.
 fn quoted(names: &[String]) -> String {
     names
         .iter()
@@ -785,7 +785,7 @@ impl RemoveResult {
     }
 }
 
-/// Il nome breve dell'upstream: `origin/main`.
+/// The short name of the upstream: `origin/main`.
 pub fn upstream_name(upstream: &Upstream) -> &str {
     upstream
         .name
@@ -793,8 +793,8 @@ pub fn upstream_name(upstream: &Upstream) -> &str {
         .unwrap_or(&upstream.name)
 }
 
-/// Avanti e indietro rispetto all'upstream, accanto a un branch: il testo breve (`↑2 ↓1`,
-/// vuoto se in pari, `upstream sparito`) e la spiegazione per il suggerimento.
+/// Ahead and behind relative to the upstream, next to a branch: the short text (`↑2 ↓1`,
+/// empty if in sync, `upstream gone`) and the explanation for the tooltip.
 pub fn ahead_behind(upstream: &Upstream) -> (String, String) {
     let name = upstream_name(upstream);
     match (upstream.ahead, upstream.behind) {
@@ -824,7 +824,7 @@ pub fn ahead_behind(upstream: &Upstream) -> (String, String) {
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, dispatched by [`App::apply`].
     pub(crate) fn apply_remotes(&mut self, action: Action) {
         match action {
             Action::AddRemote => {
@@ -910,13 +910,13 @@ impl App {
                     repo.remotes.dismiss();
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
-    /// Risposta di `remote.add`/`remote.remove`: elenco dei remoti, ref e diario dalla
-    /// risposta, poi lo stato e il log riletti (i branch remoti scaricati o tolti cambiano il
-    /// grafo e l'upstream del branch attivo). Un nome o URL rifiutato resta nel dialogo.
+    /// Answer of `remote.add`/`remote.remove`: list of remotes, refs and journal from the
+    /// answer, then the status and log reread (fetched or removed remote branches change the
+    /// graph and the upstream of the current branch). A refused name or URL stays in the dialog.
     pub(crate) fn receive_remote(&mut self, generation: u64, op: remotes::Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
@@ -981,7 +981,7 @@ mod tests {
         (registry, session)
     }
 
-    /// Esegue `command` come l'executor e passa la risposta a `receive`.
+    /// Runs `command` like the executor and passes the answer to `receive`.
     fn run(
         registry: &Registry,
         session: &mut Session,
@@ -992,12 +992,12 @@ mod tests {
         let result = registry.run(op.command(), session, params);
         let kind = result.as_ref().err().map(ErrorKind::of);
         let detail = result.as_ref().err().and_then(ErrorKind::detail);
-        b.receive(op, result.map_err(|e| e.to_string()), kind, detail)
+        b.receive(op, result.map_err(|e| e.text()), kind, detail)
     }
 
     fn list(registry: &Registry, session: &mut Session, b: &mut RemotesBox) {
         let result = registry.run(LIST, session, json!({}));
-        b.receive_list(result.map_err(|e| e.to_string()));
+        b.receive_list(result.map_err(|e| e.text()));
     }
 
     #[test]
@@ -1011,22 +1011,22 @@ mod tests {
         assert_eq!(remotes.len(), 1);
         let origin = &remotes[0];
         assert_eq!(origin.name, "origin");
-        assert_eq!(origin.url_text(), "https://example.com/progetto.git");
-        assert_eq!(origin.branches_text(), "2 branch");
+        assert_eq!(origin.url_text(), "https://example.com/project.git");
+        assert_eq!(origin.branches_text(), "2 branches");
         assert!(origin.default);
-        assert_eq!(origin.badges()[0].0, "predefinito");
+        assert_eq!(origin.badges()[0].0, "default");
         assert_eq!(b.names(), ["origin"]);
         assert_eq!(b.list_error(), None);
 
-        b.receive_list(Err("rotto".into()));
-        assert_eq!(b.list_error(), Some("rotto"));
-        assert!(b.list().is_some(), "l'elenco di prima resta");
+        b.receive_list(Err("broken".into()));
+        assert_eq!(b.list_error(), Some("broken"));
+        assert!(b.list().is_some(), "the previous list stays");
     }
 
     #[test]
     fn list_shows_remotes_without_branches_and_slashes() {
         let mut repo = MemoryBackend::sample();
-        repo.add_remote("team/fork", "https://anna:segreto@example.com/fork.git");
+        repo.add_remote("team/fork", "https://anna:secret@example.com/fork.git");
         let (registry, mut session) = opened(repo);
         let mut b = RemotesBox::default();
         list(&registry, &mut session, &mut b);
@@ -1036,10 +1036,10 @@ mod tests {
             .iter()
             .find(|r| r.name == "team/fork")
             .unwrap();
-        assert_eq!(fork.branches_text(), "nessun branch");
+        assert_eq!(fork.branches_text(), "no branches");
         assert!(fork.credentials);
-        assert!(!fork.url_text().contains("segreto"), "{}", fork.url_text());
-        assert!(fork.tooltip().contains("credenziali"));
+        assert!(!fork.url_text().contains("secret"), "{}", fork.url_text());
+        assert!(fork.tooltip().contains("credentials"));
     }
 
     #[test]
@@ -1051,7 +1051,7 @@ mod tests {
         assert!(!looks_like_credentials("ssh://git@host/r"));
         assert!(!looks_like_credentials("git@github.com:x/y.git"));
         assert!(!looks_like_credentials("https://example.com/a@b"));
-        assert!(!looks_like_credentials("/percorso/locale"));
+        assert!(!looks_like_credentials("/local/path"));
     }
 
     #[test]
@@ -1060,19 +1060,19 @@ mod tests {
         let mut b = RemotesBox::default();
         list(&registry, &mut session, &mut b);
         assert!(b.open_add());
-        assert!(!b.open_add(), "un dialogo alla volta");
+        assert!(!b.open_add(), "one dialog at a time");
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
-        assert_eq!(dialog.fields.name, "", "origin è già preso");
+        assert_eq!(dialog.fields.name, "", "origin is already taken");
         assert!(dialog.fields.fetch);
         assert!(!dialog.can_submit());
         assert_eq!(b.submit_add(), None);
 
-        // Un nome già preso: l'errore resta nel dialogo.
+        // A name already taken: the error stays in the dialog.
         b.set_fields(AddFields {
             name: "origin".into(),
-            url: "https://example.com/altro.git".into(),
+            url: "https://example.com/other.git".into(),
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
@@ -1081,10 +1081,10 @@ mod tests {
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
-        assert!(dialog.error.as_deref().unwrap().contains("esiste già"));
+        assert!(dialog.error.as_deref().unwrap().contains("already exists"));
         assert!(!dialog.sending);
 
-        // URL con credenziali: avviso nel dialogo e dopo.
+        // URL with credentials: warning in the dialog and after.
         b.set_fields(AddFields {
             name: "fork".into(),
             url: " https://anna:pw@example.com/fork.git ".into(),
@@ -1094,7 +1094,7 @@ mod tests {
             panic!()
         };
         assert!(dialog.credentials_warning().is_some());
-        assert!(!dialog.url_masked(), "mentre si scrive si vede");
+        assert!(!dialog.url_masked(), "while typing it is visible");
         b.hide_url(true);
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
@@ -1105,45 +1105,45 @@ mod tests {
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
-        // Durante l'invio (e il fetch) il token non è sullo schermo.
+        // During the submit (and the fetch) the token is not on screen.
         assert!(dialog.url_masked());
         assert_eq!(dialog.shown_url(), "https://anna:***@example.com/fork.git");
-        assert_eq!(label, "Aggiunta del remoto «fork» e fetch");
+        assert_eq!(label, "Adding remote “fork” and fetching");
         assert_eq!(params["url"], "https://anna:pw@example.com/fork.git");
         b.add_started(Ticket::for_test(3));
         assert!(b.running_fetch().is_some());
         assert_eq!(b.cancel(), Some(Ticket::for_test(3)));
-        assert_eq!(b.cancel(), None, "una volta sola");
+        assert_eq!(b.cancel(), None, "only once");
         b.close();
-        assert!(b.modal_open(), "non si chiude durante l'invio");
+        assert!(b.modal_open(), "it does not close during the submit");
         let r = run(&registry, &mut session, &mut b, Op::Add, params);
         let Received::Done(outcome) = r else {
             panic!("{r:?}")
         };
         assert!(
             outcome.notice.starts_with(
-                "Remoto «fork» aggiunto (https://anna:***@example.com/fork.git); fetch da «fork»"
+                "Remote “fork” added (https://anna:***@example.com/fork.git); fetch from “fork”"
             ),
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.contains("«Annulla» lo toglie"));
+        assert!(outcome.notice.contains("“Undo” removes it"));
         assert!(
             outcome
                 .notice
-                .contains("attenzione: l'URL contiene credenziali")
+                .contains("warning: the URL contains credentials")
         );
         assert!(!outcome.notice.contains("pw@"));
         assert!(outcome.history.can_undo);
         assert!(b.dialog().is_none());
-        assert_eq!(b.names(), ["fork", "origin"], "l'elenco dalla risposta");
+        assert_eq!(b.names(), ["fork", "origin"], "the list from the answer");
         assert!(b.failure().is_none());
     }
 
     #[test]
     fn add_with_fetch_downloads_the_branches() {
-        // Tolto origin e riaggiunto con lo stesso URL sotto un altro nome: il fetch ritrova i
-        // branch del server in memoria.
+        // Removed origin and re-added with the same URL under another name: the fetch finds the
+        // in-memory server branches again.
         let (registry, mut session) = opened(MemoryBackend::sample());
         let mut b = RemotesBox::default();
         let params = b.start_remove("origin".into()).unwrap();
@@ -1157,10 +1157,10 @@ mod tests {
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
-        assert_eq!(dialog.fields.name, "origin", "proposto: non c'è più");
+        assert_eq!(dialog.fields.name, "origin", "proposed: it is gone");
         b.set_fields(AddFields {
             name: "upstream".into(),
-            url: "https://example.com/progetto.git".into(),
+            url: "https://example.com/project.git".into(),
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
@@ -1168,7 +1168,7 @@ mod tests {
             panic!()
         };
         assert!(
-            outcome.notice.contains("2 ref aggiornati"),
+            outcome.notice.contains("2 refs updated"),
             "{}",
             outcome.notice
         );
@@ -1180,23 +1180,23 @@ mod tests {
     #[test]
     fn add_with_a_failed_fetch_keeps_the_remote_and_explains() {
         let mut repo = MemoryBackend::sample();
-        // Il server in memoria di un URL già visto: rifiuta le credenziali.
-        repo.add_remote("vecchio", "https://example.com/privato.git");
+        // The in-memory server of an already seen URL: rejects the credentials.
+        repo.add_remote("old", "https://example.com/private.git");
         repo.fail_fetch(
-            "vecchio",
+            "old",
             Some(FetchFailure::Auth("fatal: Authentication failed".into())),
         );
         let (registry, mut session) = opened(repo);
         let mut b = RemotesBox::default();
-        let params = b.start_remove("vecchio".into()).unwrap();
+        let params = b.start_remove("old".into()).unwrap();
         run(&registry, &mut session, &mut b, Op::Remove, params);
         let (params, _) = b.confirm_remove().unwrap();
         run(&registry, &mut session, &mut b, Op::Remove, params);
 
         b.open_add();
         b.set_fields(AddFields {
-            name: "privato".into(),
-            url: "https://example.com/privato.git".into(),
+            name: "private".into(),
+            url: "https://example.com/private.git".into(),
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
@@ -1204,17 +1204,15 @@ mod tests {
             panic!()
         };
         assert!(
-            outcome
-                .notice
-                .contains("fetch non riuscito: autenticazione"),
+            outcome.notice.contains("fetch failed: authentication"),
             "{}",
             outcome.notice
         );
         let failure = b.failure().unwrap();
-        assert_eq!(failure.title, "Autenticazione non riuscita");
-        assert!(failure.explanation.contains("aggiunto comunque"));
-        assert!(!failure.explanation.contains("Niente è stato modificato"));
-        assert!(b.names().contains(&"privato".to_owned()));
+        assert_eq!(failure.title, "Authentication failed");
+        assert!(failure.explanation.contains("added anyway"));
+        assert!(!failure.explanation.contains("Nothing was changed"));
+        assert!(b.names().contains(&"private".to_owned()));
         b.dismiss();
         assert!(b.failure().is_none());
     }
@@ -1225,8 +1223,8 @@ mod tests {
         let mut b = RemotesBox::default();
         list(&registry, &mut session, &mut b);
         let params = b.start_remove("origin".into()).unwrap();
-        assert_eq!(params, json!({ "name": "origin" }), "prima senza confirm");
-        assert!(!b.modal_open(), "in controllo: niente dialogo");
+        assert_eq!(params, json!({ "name": "origin" }), "first without confirm");
+        assert!(!b.modal_open(), "being checked: no dialog");
         assert_eq!(b.start_remove("origin".into()), None);
         let r = run(&registry, &mut session, &mut b, Op::Remove, params);
         assert!(matches!(r, Received::Confirm), "{r:?}");
@@ -1237,19 +1235,19 @@ mod tests {
             panic!()
         };
         assert!(reason.contains("main"), "{reason}");
-        // Niente è cambiato finché non si conferma.
+        // Nothing changed until confirmed.
         list(&registry, &mut session, &mut b);
         assert_eq!(b.names(), ["origin"]);
 
-        // "Non rimuovere" chiude senza mandare niente.
+        // "Don't remove" closes without sending anything.
         b.close();
         assert!(b.dialog().is_none());
         let params = b.start_remove("origin".into()).unwrap();
         run(&registry, &mut session, &mut b, Op::Remove, params);
         let (params, label) = b.confirm_remove().unwrap();
         assert_eq!(params, json!({ "name": "origin", "confirm": true }));
-        assert_eq!(label, "Rimozione del remoto «origin»");
-        assert_eq!(b.confirm_remove(), None, "una volta sola");
+        assert_eq!(label, "Removing remote “origin”");
+        assert_eq!(b.confirm_remove(), None, "only once");
         let r = run(&registry, &mut session, &mut b, Op::Remove, params);
         let Received::Done(outcome) = r else {
             panic!("{r:?}")
@@ -1257,11 +1255,11 @@ mod tests {
         assert!(
             outcome
                 .notice
-                .starts_with("Remoto «origin» rimosso (tolti 2 branch remoti); senza upstream: «"),
+                .starts_with("Remote “origin” removed (deleted 2 remote-tracking branches); no upstream anymore: “"),
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.contains("«Annulla» lo rimette"));
+        assert!(outcome.notice.contains("“Undo” restores it"));
         assert!(b.names().is_empty());
         let refs = outcome.refs.unwrap();
         assert!(!refs.iter().any(|r| r.name.starts_with("refs/remotes/")));
@@ -1277,13 +1275,13 @@ mod tests {
     fn remove_of_an_unknown_remote_is_refused() {
         let (registry, mut session) = opened(MemoryBackend::sample());
         let mut b = RemotesBox::default();
-        let params = b.start_remove("nessuno".into()).unwrap();
+        let params = b.start_remove("nobody".into()).unwrap();
         let Received::Failed { message, reload } =
             run(&registry, &mut session, &mut b, Op::Remove, params)
         else {
             panic!()
         };
-        assert!(message.starts_with("Rimozione del remoto «nessuno» non possibile"));
+        assert!(message.starts_with("Removing remote “nobody” not possible"));
         assert!(!reload);
         assert!(b.dialog().is_none());
     }
@@ -1297,20 +1295,20 @@ mod tests {
         };
         assert_eq!(
             ahead_behind(&up(Some(0), Some(0))),
-            (String::new(), "Allineato con origin/main".to_owned())
+            (String::new(), "Up to date with origin/main".to_owned())
         );
         assert_eq!(
             ahead_behind(&up(Some(2), Some(1))),
             (
                 "↑2 ↓1".to_owned(),
-                "2 commit da pubblicare, 1 commit da scaricare rispetto a origin/main".to_owned()
+                "2 commits to push, 1 commit to pull compared to origin/main".to_owned()
             )
         );
         assert_eq!(ahead_behind(&up(Some(0), Some(3))).0, "↓3");
         let (short, long) = ahead_behind(&up(None, None));
-        assert_eq!(short, "upstream sparito");
-        assert!(long.contains("origin/main non c'è più"), "{long}");
-        // Lo stato dà il nome breve.
+        assert_eq!(short, "upstream gone");
+        assert!(long.contains("origin/main no longer exists"), "{long}");
+        // The status gives the short name.
         let status = Upstream {
             name: "origin/main".to_owned(),
             ahead: Some(1),
@@ -1320,7 +1318,7 @@ mod tests {
             ahead_behind(&status),
             (
                 "↑1".to_owned(),
-                "1 commit da pubblicare rispetto a origin/main".to_owned()
+                "1 commit to push compared to origin/main".to_owned()
             )
         );
     }
@@ -1339,6 +1337,6 @@ mod tests {
             ahead_behind(info.upstream.as_ref().unwrap()).0
         };
         assert_eq!(text("refs/heads/main"), "↑1");
-        assert_eq!(text("refs/heads/feature/grafo"), "↓1");
+        assert_eq!(text("refs/heads/feature/graph"), "↓1");
     }
 }

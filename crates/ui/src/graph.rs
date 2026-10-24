@@ -1,57 +1,57 @@
-//! Disegno del grafo dei commit: colori delle corsie, geometria degli archi ed etichette dei
-//! ref. Le corsie le calcola `project_domain::layout_graph`; qui c'è solo come mostrarle, in
-//! funzioni pure che si provano senza aprire una finestra.
+//! Drawing of the commit graph: lane colors, edge geometry and ref labels. The lanes are
+//! computed by `project_domain::layout_graph`; here is only how to show them, in pure
+//! functions that can be tested without opening a window.
 
 use egui::{Color32, Pos2, pos2};
 use project_domain::{GraphSegment, Head, Oid, RefInfo, RefKind};
 use std::collections::HashMap;
 
-/// Larghezza di una corsia, in punti.
+/// Width of a lane, in points.
 pub const LANE_WIDTH: f32 = 14.0;
-/// Raggio del pallino di un commit.
+/// Radius of a commit dot.
 pub const NODE_RADIUS: f32 = 4.5;
-/// Spessore degli archi.
+/// Thickness of the edges.
 pub const EDGE_WIDTH: f32 = 2.0;
 
-/// Colori delle corsie: abbastanza saturi da leggersi su sfondo chiaro e scuro, vicini tra
-/// loro diversi. Si ripetono dopo l'ultimo.
+/// Lane colors: saturated enough to read on light and dark backgrounds, neighbors different
+/// from each other. They repeat after the last one.
 const PALETTE: [Color32; 8] = [
-    Color32::from_rgb(0x3d, 0x9e, 0xf5), // blu
-    Color32::from_rgb(0xf5, 0x8b, 0x2d), // arancio
-    Color32::from_rgb(0x3c, 0xba, 0x6a), // verde
-    Color32::from_rgb(0xe0, 0x4f, 0x8f), // rosa
-    Color32::from_rgb(0x9b, 0x6b, 0xdf), // viola
-    Color32::from_rgb(0xd9, 0xb8, 0x2b), // giallo
-    Color32::from_rgb(0x2b, 0xb8, 0xb8), // turchese
-    Color32::from_rgb(0xe0, 0x55, 0x45), // rosso
+    Color32::from_rgb(0x3d, 0x9e, 0xf5), // blue
+    Color32::from_rgb(0xf5, 0x8b, 0x2d), // orange
+    Color32::from_rgb(0x3c, 0xba, 0x6a), // green
+    Color32::from_rgb(0xe0, 0x4f, 0x8f), // pink
+    Color32::from_rgb(0x9b, 0x6b, 0xdf), // purple
+    Color32::from_rgb(0xd9, 0xb8, 0x2b), // yellow
+    Color32::from_rgb(0x2b, 0xb8, 0xb8), // turquoise
+    Color32::from_rgb(0xe0, 0x55, 0x45), // red
 ];
 
-/// Il colore della corsia `lane` (stabile finché la corsia resta aperta).
+/// The color of lane `lane` (stable as long as the lane stays open).
 pub fn lane_color(lane: usize) -> Color32 {
     PALETTE[lane % PALETTE.len()]
 }
 
-/// Larghezza della colonna del grafo per `lanes` corsie, con un margine per lato.
+/// Width of the graph column for `lanes` lanes, with a margin on each side.
 pub fn graph_width(lanes: usize) -> f32 {
     lanes.max(1) as f32 * LANE_WIDTH + LANE_WIDTH / 2.0
 }
 
-/// Ascissa del centro della colonna `column`, se la colonna del grafo comincia a `left`.
+/// X of the center of column `column`, if the graph column starts at `left`.
 pub fn column_x(left: f32, column: usize) -> f32 {
     left + LANE_WIDTH / 4.0 + (column as f32 + 0.5) * LANE_WIDTH
 }
 
-/// Un tratto da disegnare.
+/// A stroke to draw.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Edge {
-    /// Tratto dritto (verticale) tra due punti.
+    /// Straight (vertical) stroke between two points.
     Line([Pos2; 2]),
-    /// Curva di Bézier cubica: sposta l'arco da una colonna all'altra.
+    /// Cubic Bezier curve: moves the edge from one column to another.
     Curve([Pos2; 4]),
 }
 
-/// Il tratto di `segment`: dal centro della sua riga (ordinata `y`) al centro della riga
-/// seguente (`y + step`). Se cambia colonna è una curva a S che parte e arriva in verticale.
+/// The stroke of `segment`: from the center of its row (y `y`) to the center of the next
+/// row (`y + step`). If it changes column it is an S curve that starts and ends vertical.
 pub fn segment_edge(segment: &GraphSegment, left: f32, y: f32, step: f32) -> Edge {
     let start = pos2(column_x(left, segment.from), y);
     let end = pos2(column_x(left, segment.to), y + step);
@@ -63,30 +63,30 @@ pub fn segment_edge(segment: &GraphSegment, left: f32, y: f32, step: f32) -> Edg
     }
 }
 
-/// Tipo di etichetta, nell'ordine in cui si mostrano sulla riga.
+/// Kind of label, in the order they are shown on the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LabelKind {
-    /// HEAD staccata su questo commit.
+    /// HEAD detached on this commit.
     Head,
-    /// Il branch su cui è HEAD.
+    /// The branch HEAD is on.
     CurrentBranch,
     Branch,
     Remote,
     Tag,
-    /// Uno stash, sul commit su cui è stato creato (la sua base).
+    /// A stash, on the commit it was created on (its base).
     Stash,
 }
 
-/// Un'etichetta da mostrare sulla riga di un commit.
+/// A label to show on a commit's row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefLabel {
     pub kind: LabelKind,
     pub text: String,
 }
 
-/// Etichette per commit: branch locali (quello corrente per primo), remoti, tag, e `HEAD` se
-/// è staccata. `refs/stash` non ha etichetta: gli stash si aggiungono con [`add_stash_labels`],
-/// sulla loro base.
+/// Labels per commit: local branches (the current one first), remotes, tags, and `HEAD` if
+/// detached. `refs/stash` has no label: stashes are added with [`add_stash_labels`],
+/// on their base.
 pub fn ref_labels(refs: &[RefInfo], head: &Head) -> HashMap<Oid, Vec<RefLabel>> {
     let mut labels: HashMap<Oid, Vec<RefLabel>> = HashMap::new();
     let current = match head {
@@ -111,7 +111,7 @@ pub fn ref_labels(refs: &[RefInfo], head: &Head) -> HashMap<Oid, Vec<RefLabel>> 
             .or_default()
             .push(RefLabel { kind, text });
     }
-    // HEAD arriva anche prima dei ref (da `repo.open`): il branch corrente si mostra subito.
+    // HEAD also arrives before the refs (from `repo.open`): the current branch is shown right away.
     match head {
         Head::Detached(id) => labels.entry(*id).or_default().push(RefLabel {
             kind: LabelKind::Head,
@@ -132,9 +132,9 @@ pub fn ref_labels(refs: &[RefInfo], head: &Head) -> HashMap<Oid, Vec<RefLabel>> 
     labels
 }
 
-/// Aggiunge in fondo alle etichette di ogni commit gli stash creati lì sopra: `(base, nome)`,
-/// dal più recente (come `stash.list`). Più stash sulla stessa base restano nell'ordine
-/// dell'elenco.
+/// Appends to the labels of each commit the stashes created on top of it: `(base, name)`,
+/// from the most recent (like `stash.list`). Several stashes on the same base stay in the
+/// order of the list.
 pub fn add_stash_labels<'a>(
     labels: &mut HashMap<Oid, Vec<RefLabel>>,
     stashes: impl IntoIterator<Item = (Oid, &'a str)>,
@@ -147,9 +147,9 @@ pub fn add_stash_labels<'a>(
     }
 }
 
-/// Quante etichette larghe `widths` (spazio tra l'una e l'altra compreso) stanno in
-/// `available`. Se non ci stanno tutte serve anche l'indicatore `+N`, largo `more`: le
-/// etichette mostrate lasciano posto anche a quello.
+/// How many labels of widths `widths` (space between them included) fit in
+/// `available`. If they do not all fit the `+N` indicator, of width `more`, is needed too: the
+/// shown labels leave room for that as well.
 pub fn labels_that_fit(widths: &[f32], available: f32, more: f32) -> usize {
     let total: f32 = widths.iter().sum();
     if total <= available {
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn adjacent_lanes_have_different_colors() {
         for lane in 0..PALETTE.len() * 2 {
-            assert_ne!(lane_color(lane), lane_color(lane + 1), "corsia {lane}");
+            assert_ne!(lane_color(lane), lane_color(lane + 1), "lane {lane}");
         }
         assert_eq!(lane_color(1), lane_color(1 + PALETTE.len()));
     }
@@ -199,8 +199,8 @@ mod tests {
             let right = left + graph_width(lanes);
             let first = column_x(left, 0);
             let last = column_x(left, lanes - 1);
-            assert!(first - NODE_RADIUS > left, "{lanes} corsie");
-            assert!(last + NODE_RADIUS < right, "{lanes} corsie");
+            assert!(first - NODE_RADIUS > left, "{lanes} lanes");
+            assert!(last + NODE_RADIUS < right, "{lanes} lanes");
             assert_eq!(column_x(left, 1) - first, LANE_WIDTH);
         }
         assert_eq!(graph_width(0), graph_width(1));
@@ -219,14 +219,14 @@ mod tests {
             Edge::Line([pos2(x1, 10.0), pos2(x1, 30.0)])
         );
 
-        // Diramazione dalla colonna 0 alla 2: parte e arriva in verticale, curva a metà.
+        // Branch from column 0 to 2: starts and ends vertical, curves in the middle.
         let branch = GraphSegment {
             from: 0,
             to: 2,
             lane: 2,
         };
         let Edge::Curve([a, b, c, d]) = segment_edge(&branch, 0.0, 10.0, 20.0) else {
-            panic!("attesa una curva");
+            panic!("expected a curve");
         };
         let (x0, x2) = (column_x(0.0, 0), column_x(0.0, 2));
         assert_eq!((a, d), (pos2(x0, 10.0), pos2(x2, 30.0)));
@@ -265,10 +265,7 @@ mod tests {
             ]
         );
         assert_eq!(texts(2), [(LabelKind::Branch, "feature")]);
-        assert!(
-            !labels.contains_key(&oid(3)),
-            "niente etichetta per refs/stash"
-        );
+        assert!(!labels.contains_key(&oid(3)), "no label for refs/stash");
     }
 
     #[test]

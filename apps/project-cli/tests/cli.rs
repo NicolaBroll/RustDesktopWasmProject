@@ -1,11 +1,11 @@
-//! Test end-to-end di `project-cli` su repo git temporanei.
+//! End-to-end tests of `project-cli` on temporary git repos.
 
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-/// Ambiente deterministico per git, sia per i repo dei test sia per la CLI.
+/// Deterministic environment for git, both for the test repos and for the CLI.
 const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
     ("GIT_CONFIG_NOSYSTEM", "1"),
@@ -34,12 +34,12 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?}");
 }
 
-/// Repo con `commits` commit su `main` (ognuno aggiunge una riga a `a.txt`) in `dir`.
+/// Repo with `commits` commits on `main` (each adds a line to `a.txt`) in `dir`.
 fn init_repo(dir: &Path, commits: usize) {
     std::fs::create_dir_all(dir).unwrap();
     git(dir, &["-c", "init.defaultBranch=main", "init", "--quiet"]);
     for n in 1..=commits {
-        let text = (1..=n).map(|i| format!("riga {i}\n")).collect::<String>();
+        let text = (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
         std::fs::write(dir.join("a.txt"), text).unwrap();
         git(dir, &["add", "a.txt"]);
         git(dir, &["commit", "--quiet", "-m", &format!("commit {n}")]);
@@ -83,7 +83,7 @@ fn with_stdin(mut cmd: Command, input: &str) -> Output {
 #[test]
 fn run_with_repo_reads_status_and_log() {
     let repo = temp_repo(3);
-    std::fs::write(repo.path().join("nuovo.txt"), "?\n").unwrap();
+    std::fs::write(repo.path().join("new.txt"), "?\n").unwrap();
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args(["--cmd", "repo.status", "--cmd", r#"repo.log={"limit":2}"#])
@@ -133,7 +133,7 @@ fn run_commit_show() {
 #[test]
 fn run_diff_commands() {
     let repo = temp_repo(2);
-    std::fs::write(repo.path().join("a.txt"), "riga 1\nriga 2\nriga 3\n").unwrap();
+    std::fs::write(repo.path().join("a.txt"), "line 1\nline 2\nline 3\n").unwrap();
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args(["--cmd", "diff.worktree", "--cmd", "diff.index"])
@@ -146,7 +146,7 @@ fn run_diff_commands() {
     assert_eq!(file["new_path"], "a.txt");
     let added = &file["hunks"][0]["lines"][2];
     assert_eq!(added["kind"], "Added");
-    assert_eq!(added["content"], "riga 3");
+    assert_eq!(added["content"], "line 3");
     assert_eq!(added["new_line"], 3);
     assert_eq!(lines[1], json!({ "files": [] }));
     let hunk = &lines[2]["files"][0]["hunks"][0];
@@ -158,7 +158,7 @@ fn run_diff_commands() {
 fn run_stage_and_unstage() {
     let repo = temp_repo(1);
     std::fs::write(repo.path().join("a.txt"), "cambiato\n").unwrap();
-    std::fs::write(repo.path().join("b.txt"), "nuovo\n").unwrap();
+    std::fs::write(repo.path().join("b.txt"), "new\n").unwrap();
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args(["--cmd", r#"index.stage={"paths":["a.txt","b.txt"]}"#])
@@ -168,8 +168,8 @@ fn run_stage_and_unstage() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let lines = json_lines(&output.stdout);
-    // Ogni scrittura restituisce il nuovo stato e l'eventuale backup dell'indice (qui niente
-    // a rischio).
+    // Every write returns the new state and the possible index backup (here nothing
+    // at risk).
     assert_eq!(lines[0]["backup"], Value::Null);
     let entries = &lines[0]["status"]["entries"];
     assert_eq!(entries[0]["path"], "a.txt");
@@ -182,7 +182,7 @@ fn run_stage_and_unstage() {
     let files = lines[2]["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["new_path"], "b.txt");
-    // Il worktree non cambia.
+    // The worktree does not change.
     let a = std::fs::read_to_string(repo.path().join("a.txt")).unwrap();
     assert_eq!(a, "cambiato\n");
 
@@ -193,20 +193,20 @@ fn run_stage_and_unstage() {
         .unwrap();
     assert!(
         !output.status.success(),
-        "una lista vuota non vuol dire tutto"
+        "an empty list does not mean everything"
     );
 }
 
 #[test]
 fn run_commit_create() {
     let repo = temp_repo(1);
-    std::fs::write(repo.path().join("b.txt"), "nuovo\n").unwrap();
+    std::fs::write(repo.path().join("b.txt"), "new\n").unwrap();
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args(["--cmd", r#"index.stage={"paths":["b.txt"]}"#])
         .args([
             "--cmd",
-            r#"commit.create={"message":"Aggiungi b\n\nCon corpo."}"#,
+            r#"commit.create={"message":"Add b\n\nWith body."}"#,
         ])
         .args(["--cmd", r#"repo.log={"limit":1}"#])
         .output()
@@ -214,30 +214,30 @@ fn run_commit_create() {
     assert!(output.status.success(), "{output:?}");
     let lines = json_lines(&output.stdout);
     let out = &lines[1];
-    assert_eq!(out["commit"]["summary"], "Aggiungi b");
-    assert_eq!(out["commit"]["body"], "Con corpo.");
+    assert_eq!(out["commit"]["summary"], "Add b");
+    assert_eq!(out["commit"]["body"], "With body.");
     assert_eq!(out["branch"], "refs/heads/main");
     assert_eq!(out["backup"], Value::Null);
     assert_eq!(out["status"]["entries"], json!([]));
     assert_eq!(out["commit"]["parents"][0], out["previous"]);
     assert_eq!(lines[2]["commits"][0], out["commit"]);
 
-    // Niente da committare: errore, e la CLI esce con un codice di errore.
+    // Nothing to commit: an error, and the CLI exits with an error code.
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
-        .args(["--cmd", r#"commit.create={"message":"ancora"}"#])
+        .args(["--cmd", r#"commit.create={"message":"again"}"#])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("niente da committare"), "{stderr}");
+    assert!(stderr.contains("nothing to commit"), "{stderr}");
 
-    // `amend`: il commit riscritto resta in un ref di backup.
+    // `amend`: the rewritten commit stays in a backup ref.
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args([
             "--cmd",
-            r#"commit.create={"message":"Aggiungi b, corretto","amend":true}"#,
+            r#"commit.create={"message":"Add b, fixed","amend":true}"#,
         ])
         .output()
         .unwrap();
@@ -249,17 +249,17 @@ fn run_commit_create() {
             .unwrap()
             .starts_with("refs/project/backup/amend-")
     );
-    assert_eq!(out["commit"]["summary"], "Aggiungi b, corretto");
+    assert_eq!(out["commit"]["summary"], "Add b, fixed");
 }
 
 #[test]
 fn run_undo_and_redo_in_one_invocation() {
     let repo = temp_repo(1);
-    std::fs::write(repo.path().join("b.txt"), "nuovo\n").unwrap();
+    std::fs::write(repo.path().join("b.txt"), "new\n").unwrap();
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args(["--cmd", r#"index.stage={"paths":["b.txt"]}"#])
-        .args(["--cmd", r#"commit.create={"message":"Aggiungi b"}"#])
+        .args(["--cmd", r#"commit.create={"message":"Add b"}"#])
         .args(["--cmd", "edit.undo"])
         .args(["--cmd", "edit.history"])
         .args(["--cmd", "edit.redo"])
@@ -290,22 +290,22 @@ fn run_undo_and_redo_in_one_invocation() {
     );
     assert_eq!(redo["can_undo"], true);
 
-    // Il diario non sopravvive fra due invocazioni: niente da annullare.
+    // The journal does not survive between two invocations: nothing to undo.
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run", "--cmd", "edit.undo"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("niente da annullare"), "{stderr}");
+    assert!(stderr.contains("nothing to undo"), "{stderr}");
 }
 
 #[test]
 fn run_discard_needs_confirm_and_undo_restores() {
     let repo = temp_repo(1);
     let file = repo.path().join("a.txt");
-    std::fs::write(&file, "da non perdere\n").unwrap();
-    // Senza `confirm`: errore e niente cambia.
+    std::fs::write(&file, "do not lose\n").unwrap();
+    // Without `confirm`: an error and nothing changes.
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
         .args(["--cmd", r#"worktree.discard={"paths":["a.txt"]}"#])
@@ -314,7 +314,7 @@ fn run_discard_needs_confirm_and_undo_restores() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("\"confirm\": true"), "{stderr}");
-    assert_eq!(std::fs::read(&file).unwrap(), b"da non perdere\n");
+    assert_eq!(std::fs::read(&file).unwrap(), b"do not lose\n");
 
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
@@ -335,13 +335,13 @@ fn run_discard_needs_confirm_and_undo_restores() {
             .starts_with("refs/project/backup/discard-")
     );
     assert_eq!(lines[1]["undone"]["command"], "worktree.discard");
-    assert_eq!(std::fs::read(&file).unwrap(), b"da non perdere\n");
+    assert_eq!(std::fs::read(&file).unwrap(), b"do not lose\n");
 }
 
 #[test]
 fn run_stage_and_unstage_lines() {
     let repo = temp_repo(3);
-    std::fs::write(repo.path().join("a.txt"), "riga 1\nDUE\nriga 3\nquattro\n").unwrap();
+    std::fs::write(repo.path().join("a.txt"), "line 1\nTWO\nline 3\nfour\n").unwrap();
     let run = |cmd: String| {
         let output = cli()
             .args(["--repo", path_str(repo.path()), "run", "--cmd", &cmd])
@@ -349,7 +349,7 @@ fn run_stage_and_unstage_lines() {
             .unwrap();
         (output.status.success(), json_lines(&output.stdout), output)
     };
-    // Prima il diff, da cui vengono i numeri di riga e il digest.
+    // First the diff, which gives the line numbers and the digest.
     let (ok, lines, output) = run(r#"diff.worktree={"path":"a.txt"}"#.to_owned());
     assert!(ok, "{output:?}");
     let digest = lines[0]["files"][0]["digest"].as_str().unwrap().to_owned();
@@ -359,15 +359,15 @@ fn run_stage_and_unstage_lines() {
     assert_eq!(lines[0]["backup"], Value::Null);
     assert_eq!(lines[0]["status"]["entries"][0]["index"], "Modified");
     assert_eq!(lines[0]["status"]["entries"][0]["worktree"], "Modified");
-    // Il worktree non cambia.
+    // The worktree does not change.
     let a = std::fs::read_to_string(repo.path().join("a.txt")).unwrap();
-    assert_eq!(a, "riga 1\nDUE\nriga 3\nquattro\n");
+    assert_eq!(a, "line 1\nTWO\nline 3\nfour\n");
 
-    // Lo stesso digest, dopo la scrittura, è vecchio.
+    // The same digest, after the write, is stale.
     let (ok, _, output) = run(format!("index.stage_lines={params}"));
     assert!(!ok, "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("rileggere"), "{stderr}");
+    assert!(stderr.contains("reload"), "{stderr}");
 
     let (ok, lines, output) = run(r#"diff.index={"path":"a.txt"}"#.to_owned());
     assert!(ok, "{output:?}");
@@ -375,7 +375,7 @@ fn run_stage_and_unstage_lines() {
     let params = json!({ "path": "a.txt", "lines": [{ "new": 4 }], "digest": digest });
     let (ok, lines, output) = run(format!("index.unstage_lines={params}"));
     assert!(ok, "{output:?}");
-    // `MM`: la versione in stage era solo nell'indice.
+    // `MM`: the staged version was only in the index.
     assert!(
         lines[0]["backup"]
             .as_str()
@@ -419,7 +419,7 @@ fn run_without_a_repo_fails() {
         .args(["run", "--cmd", "repo.status"])
         .output()
         .unwrap();
-    assert!(!output.status.success(), "nessun repo aperto");
+    assert!(!output.status.success(), "no repository open");
     let output = cli().args(["run", "--cmd", "nope"]).output().unwrap();
     assert!(!output.status.success());
 }
@@ -481,10 +481,10 @@ fn commands_lists_the_catalog() {
             "worktree.discard"
         ]
     );
-    // I comandi che modificano il repo sono segnati.
+    // Commands that modify the repo are marked.
     let marked: Vec<&str> = text
         .lines()
-        .filter(|l| l.ends_with("[modifica]"))
+        .filter(|l| l.ends_with("[writes]"))
         .map(|l| l.split_whitespace().next().unwrap())
         .collect();
     assert_eq!(
@@ -525,7 +525,7 @@ fn commands_lists_the_catalog() {
     );
 
     let output = cli()
-        .args(["commands", "--search", "cronologia"])
+        .args(["commands", "--search", "commit history"])
         .output()
         .unwrap();
     let text = String::from_utf8(output.stdout).unwrap();
@@ -549,7 +549,7 @@ fn eval_with_repo_keeps_going_after_errors() {
     assert_eq!(lines[1]["ok"]["commits"][0]["summary"], "commit 2");
 }
 
-/// Risposte del server MCP a `requests`, una per richiesta con id.
+/// Responses of the MCP server to `requests`, one per request with an id.
 fn mcp(root: &Path, requests: &[Value]) -> (Vec<Value>, String) {
     let mut cmd = cli();
     cmd.args(["mcp", "--root", path_str(root)]);
@@ -567,7 +567,7 @@ fn tool_call(id: u32, name: &str, arguments: Value) -> Value {
     })
 }
 
-/// Il testo del risultato di un tool, e se è un errore.
+/// The text of a tool's result, and whether it is an error.
 fn tool_text(response: &Value) -> (String, bool) {
     let result = &response["result"];
     (
@@ -591,7 +591,7 @@ fn mcp_opens_the_repo_in_the_root() {
             json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list" }),
         ],
     );
-    assert!(stderr.contains("repository aperto"), "{stderr}");
+    assert!(stderr.contains("repository open"), "{stderr}");
 
     let (text, is_error) = tool_text(&responses[0]);
     assert!(!is_error, "{text}");
@@ -612,24 +612,24 @@ fn mcp_opens_the_repo_in_the_root() {
 
 #[test]
 fn mcp_stays_inside_the_root() {
-    // La radice è una cartella qualunque dentro un repo: git non deve risalire fino a quello.
+    // The root is any folder inside a repo: git must not climb up to it.
     let outer = temp_repo(1);
-    let root = outer.path().join("radice");
+    let root = outer.path().join("root");
     init_repo(&root.join("interno"), 1);
-    std::fs::create_dir_all(root.join("cartella")).unwrap();
+    std::fs::create_dir_all(root.join("folder")).unwrap();
 
     let (responses, stderr) = mcp(
         &root,
         &[
             tool_call(1, "execute_command", json!({ "id": "repo.status" })),
             tool_call(2, "open_repo", json!({ "path": "." })),
-            tool_call(3, "open_repo", json!({ "path": "cartella" })),
+            tool_call(3, "open_repo", json!({ "path": "folder" })),
             tool_call(4, "open_repo", json!({ "path": ".." })),
             tool_call(5, "open_repo", json!({ "path": "interno" })),
             tool_call(6, "execute_command", json!({ "id": "repo.refs" })),
         ],
     );
-    assert!(stderr.contains("nessun repository aperto"), "{stderr}");
+    assert!(stderr.contains("no repository open"), "{stderr}");
     for (i, response) in responses[..4].iter().enumerate() {
         let (text, is_error) = tool_text(response);
         assert!(is_error, "richiesta {}: {text}", i + 1);
@@ -654,7 +654,7 @@ fn mcp_rejects_the_repo_option() {
 
 #[test]
 fn run_fetch_from_a_local_remote() {
-    // `source` ha due commit e il remoto `origin` (bare); `work` ha lo stesso remoto e niente.
+    // `source` has two commits and the remote `origin` (bare); `work` has the same remote and nothing.
     let source = temp_repo(2);
     let remote = tempfile::tempdir().unwrap();
     git(remote.path(), &["init", "--quiet", "--bare"]);
@@ -697,15 +697,12 @@ fn run_fetch_from_a_local_remote() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("non esiste un remoto `nessuno`"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("there is no remote `nessuno`"), "{stderr}");
 }
 
 #[test]
 fn run_push_and_pull_with_a_local_remote() {
-    // `source` pubblica (primo push: l'upstream si imposta), `work` scarica con il pull.
+    // `source` publishes (first push: the upstream is set), `work` downloads with the pull.
     let source = temp_repo(1);
     let remote = tempfile::tempdir().unwrap();
     git(remote.path(), &["init", "--quiet", "--bare"]);
@@ -744,7 +741,7 @@ fn run_push_and_pull_with_a_local_remote() {
     );
     git(
         source.path(),
-        &["commit", "--quiet", "--allow-empty", "-m", "secondo"],
+        &["commit", "--quiet", "--allow-empty", "-m", "second"],
     );
     let lines = run(source.path(), &[r#"remote.push={"remote":"origin"}"#]);
     assert_eq!(lines[0]["kind"], "fast_forward");

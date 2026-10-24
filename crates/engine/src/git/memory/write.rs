@@ -1,10 +1,10 @@
-//! Scritture del [`MemoryBackend`]: stage e unstage sulle voci dello stato.
+//! Writes of the [`MemoryBackend`]: stage and unstage on the status entries.
 //!
-//! L'indice non è tenuto a parte: è descritto dalle voci dello stato ([`StatusEntry`]), che
-//! hanno per ogni file modi e id in HEAD e nell'indice, come `git status --porcelain=v2`.
-//! Stage e unstage aggiornano quelle voci, i blob e i file del worktree, così `repo.status`,
-//! `diff.index` e `diff.worktree` vedono subito il nuovo stato. Ogni operazione lavora su una
-//! copia e la applica solo se tutti i percorsi sono validi: un errore non cambia niente.
+//! The index is not kept separately: it is described by the status entries ([`StatusEntry`]), which
+//! have for each file the modes and ids in HEAD and in the index, like `git status --porcelain=v2`.
+//! Stage and unstage update those entries, the blobs and the worktree files, so `repo.status`,
+//! `diff.index` and `diff.worktree` immediately see the new state. Every operation works on a
+//! copy and applies it only if all paths are valid: an error changes nothing.
 
 use super::{MemoryBackend, content_oid};
 use crate::git::{
@@ -16,18 +16,18 @@ use project_domain::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Modo e id di un file in un albero.
+/// Mode and id of a file in a tree.
 pub(super) type TreeEntry = (u32, Oid);
 
 pub(super) const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
 
-/// Il tipo di oggetto di un modo (file, link, sottomodulo), senza i permessi.
+/// The object type of a mode (file, link, submodule), without the permissions.
 pub(super) fn file_type(mode: u32) -> u32 {
     mode & 0o170000
 }
 
-/// Ordine delle voci di `git status --porcelain=v2`: file tracciati e in conflitto per
-/// percorso, poi i non tracciati, poi gli ignorati.
+/// Order of the entries of `git status --porcelain=v2`: tracked and conflicted files by
+/// path, then the untracked, then the ignored.
 pub(super) fn entry_order(entry: &StatusEntry) -> (u8, &RepoPath) {
     let group = match entry.kind {
         EntryKind::Untracked => 1,
@@ -56,8 +56,8 @@ fn untracked(path: RepoPath) -> StatusEntry {
 }
 
 impl MemoryBackend {
-    /// L'albero del commit `id`: i file cambiati lungo la catena dei primi genitori, applicati
-    /// dalla radice (ogni commit ha i file cambiati rispetto al primo genitore).
+    /// The tree of commit `id`: the files changed along the chain of first parents, applied
+    /// from the root (each commit has the files changed relative to the first parent).
     pub(super) fn tree_at(&self, id: Oid) -> BTreeMap<RepoPath, TreeEntry> {
         let mut chain = Vec::new();
         let mut next = Some(id);
@@ -83,13 +83,13 @@ impl MemoryBackend {
             .unwrap_or_default()
     }
 
-    /// Vero se i blob `a` e `b` hanno lo stesso contenuto (stesso id o contenuti noti uguali).
+    /// True if the blobs `a` and `b` have the same content (same id or known equal contents).
     fn same_blob(&self, a: Oid, b: Oid) -> bool {
         a == b || matches!((self.blobs.get(&a), self.blobs.get(&b)), (Some(x), Some(y)) if x == y)
     }
 
-    /// Vero se il file `path` del worktree ha il contenuto del blob `oid` (falso se uno dei due
-    /// non è noto).
+    /// True if the worktree file `path` has the content of blob `oid` (false if either
+    /// is not known).
     fn worktree_is(&self, path: &RepoPath, oid: Oid) -> bool {
         matches!(
             (self.worktree.get(path), self.blobs.get(&oid)),
@@ -97,24 +97,24 @@ impl MemoryBackend {
         )
     }
 
-    /// Salva `content` come blob e ne restituisce l'id.
+    /// Saves `content` as a blob and returns its id.
     pub(super) fn store_blob(&mut self, content: Vec<u8>) -> Oid {
         let id = content_oid(&content);
         self.blobs.insert(id, content);
         id
     }
 
-    /// Id nell'indice del file `path` del worktree messo in stage.
+    /// Id in the index of the staged worktree file `path`.
     fn stage_content(&mut self, path: &RepoPath) -> Oid {
         match self.worktree.get(path).cloned() {
             Some(content) => self.store_blob(content),
-            // Contenuto sconosciuto: un id fisso, il diff lo mostrerà come binario.
+            // Unknown content: a fixed id, the diff will show it as binary.
             None => MemoryBackend::fake_oid(u64::MAX),
         }
     }
 
-    /// Prima di cambiare l'indice di un file non modificato nel worktree, ne copia il
-    /// contenuto dall'indice al worktree: dopo, il worktree deve restare com'era.
+    /// Before changing the index of a file unmodified in the worktree, it copies its
+    /// content from the index to the worktree: afterwards, the worktree must stay as it was.
     fn keep_worktree(&mut self, entry: &StatusEntry, index_mode: u32, index_oid: Oid) {
         if entry.worktree == Change::Unmodified
             && index_mode != 0
@@ -125,8 +125,8 @@ impl MemoryBackend {
         }
     }
 
-    /// Le voci che corrispondono a `wanted`, o un errore come quello di git se `wanted` non è
-    /// né fra le voci né in HEAD. `in_head` dice se c'è almeno un file di HEAD sotto `wanted`.
+    /// The entries matching `wanted`, or an error like git's if `wanted` is
+    /// neither among the entries nor in HEAD. `in_head` says whether there is at least one HEAD file under `wanted`.
     fn hits(
         entries: &[StatusEntry],
         head: &BTreeMap<RepoPath, TreeEntry>,
@@ -146,9 +146,9 @@ impl MemoryBackend {
         Ok(hits)
     }
 
-    /// [`GitBackend::stage`](crate::GitBackend::stage) sulle voci dello stato.
-    /// Salva in un backup (in memoria) le versioni in stage che stage o unstage di `paths`
-    /// farebbero perdere; il nome del ref, se ce n'erano.
+    /// [`GitBackend::stage`](crate::GitBackend::stage) on the status entries.
+    /// Saves in a (in-memory) backup the staged versions that stage or unstage of `paths`
+    /// would lose; the ref name, if there were any.
     fn backup(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         let versions = versions_at_risk(&self.status()?, paths);
         if versions.is_empty() {
@@ -175,11 +175,11 @@ impl MemoryBackend {
             for i in hits {
                 let entry = &self.entries[i];
                 match entry.kind {
-                    // Un file ignorato si rifiuta solo se chiesto per nome; dentro una
-                    // cartella si salta, come fa git.
+                    // An ignored file is rejected only if requested by name; inside a
+                    // folder it is skipped, as git does.
                     EntryKind::Ignored if entry.path == *wanted => ignored.push(wanted.clone()),
-                    // Un conflitto si risolve solo chiedendolo per nome, non per sbaglio con
-                    // la sua cartella.
+                    // A conflict is resolved only by requesting it by name, not by mistake with
+                    // its folder.
                     EntryKind::Unmerged(_) if !paths.contains(&entry.path) => {
                         conflicts.push(entry.path.clone());
                     }
@@ -212,7 +212,7 @@ impl MemoryBackend {
         Ok(backup)
     }
 
-    /// La voce dopo lo stage del file; `None` se il file non è più cambiato.
+    /// The entry after staging the file; `None` if the file no longer changed.
     fn stage_entry(&mut self, mut entry: StatusEntry) -> Option<StatusEntry> {
         match &entry.kind {
             EntryKind::Untracked => {
@@ -256,8 +256,8 @@ impl MemoryBackend {
         }
     }
 
-    /// Un file in conflitto messo in stage: risolto con il contenuto del worktree e
-    /// confrontato con «nostro» (HEAD).
+    /// A conflicted file that is staged: resolved with the worktree content and
+    /// compared with "ours" (HEAD).
     fn resolve_conflict(&mut self, path: RepoPath, u: &UnmergedInfo) -> Option<StatusEntry> {
         let (mode_index, oid_index) = if u.mode_worktree == 0 {
             (0, ZERO)
@@ -281,12 +281,12 @@ impl MemoryBackend {
         self.finish(entry, info)
     }
 
-    /// Aggiorna la voce con i nuovi dati dell'indice e ricalcola il cambiamento in stage;
-    /// `None` se il file non è più cambiato né in stage né fuori.
+    /// Updates the entry with the new index data and recomputes the staged change;
+    /// `None` if the file no longer changed, neither staged nor unstaged.
     pub(super) fn finish(&self, mut entry: StatusEntry, info: TrackedInfo) -> Option<StatusEntry> {
         let index = if info.mode_index == 0 {
             if info.mode_head == 0 {
-                // Aggiunto e poi cancellato: per git non c'è più.
+                // Added and then deleted: for git it no longer exists.
                 return None;
             }
             Change::Deleted
@@ -332,16 +332,16 @@ impl MemoryBackend {
         Some(entry)
     }
 
-    /// [`GitBackend::unstage`](crate::GitBackend::unstage) sulle voci dello stato. Il
-    /// worktree non cambia (se serve, il contenuto di un file non modificato viene copiato
-    /// dall'indice al worktree, che per il `MemoryBackend` è solo una mappa).
+    /// [`GitBackend::unstage`](crate::GitBackend::unstage) on the status entries. The
+    /// worktree does not change (if needed, the content of an unmodified file is copied
+    /// from the index to the worktree, which for the `MemoryBackend` is just a map).
     pub(super) fn unstage_paths(
         &mut self,
         paths: &[RepoPath],
     ) -> Result<Option<String>, EngineError> {
         let head = self.head_tree();
-        // Una rinomina o copia toccata da uno dei percorsi diventa due voci (cancellazione del
-        // vecchio e aggiunta del nuovo), così ognuno dei due si toglie dallo stage da solo.
+        // A rename or copy touched by one of the paths becomes two entries (deletion of the
+        // old and addition of the new), so each of the two is unstaged on its own.
         let mut entries = Vec::with_capacity(self.entries.len());
         for entry in &self.entries {
             match &entry.kind {
@@ -406,7 +406,7 @@ impl MemoryBackend {
         Ok(backup)
     }
 
-    /// La voce dopo l'unstage del file (un file tracciato, non in conflitto).
+    /// The entry after unstaging the file (a tracked file, not conflicted).
     fn unstage_entry(&mut self, mut entry: StatusEntry) -> Option<StatusEntry> {
         let mut info = tracked_info(&entry).cloned()?;
         if !entry.index.is_change() {
@@ -415,7 +415,7 @@ impl MemoryBackend {
         self.keep_worktree(&entry, info.mode_index, info.oid_index);
         let absent = entry.worktree == Change::Deleted || info.mode_worktree == 0;
         if info.mode_head == 0 {
-            // Non era in HEAD: torna non tracciato, se nel worktree c'è ancora.
+            // It was not in HEAD: it becomes untracked again, if it is still in the worktree.
             return (!absent).then(|| untracked(entry.path));
         }
         info.mode_index = info.mode_head;
@@ -438,9 +438,9 @@ impl MemoryBackend {
 }
 
 impl MemoryBackend {
-    /// [`GitBackend::apply_lines`](crate::GitBackend::apply_lines): la patch delle righe scelte
-    /// applicata al contenuto in stage del file, poi stato e diff ricalcolati come dopo uno
-    /// stage. Il worktree non cambia.
+    /// [`GitBackend::apply_lines`](crate::GitBackend::apply_lines): the patch of the chosen lines
+    /// applied to the file's staged content, then state and diff recomputed as after a
+    /// stage. The worktree does not change.
     pub(super) fn apply_line_patch(
         &mut self,
         selection: &LineSelection,
@@ -459,21 +459,22 @@ impl MemoryBackend {
             .ok_or_else(not_in_index)?;
         let entry = self.entries[i].clone();
         let info = tracked_info(&entry).cloned().ok_or_else(not_in_index)?;
-        // Senza versione in stage (file `intent-to-add`, o eliminato in stage) la patch crea il
+        // Without a staged version (`intent-to-add` file, or deleted in the stage) the patch creates the
         // file.
         let base = (info.mode_index != 0)
             .then(|| self.blobs.get(&info.oid_index).cloned())
             .flatten();
         if info.mode_index != 0 && base.is_none() {
-            return Err(EngineError::Git {
+            return Err(EngineError::GitWithReason {
                 command: "apply".to_owned(),
-                stderr: format!("error: {target}: contenuto in stage sconosciuto"),
+                reason: msg!("engine-memory-unknown-staged", target = target),
             });
         }
         let content = apply_patch(base.as_deref(), &prepared.patch).map_err(|e| {
-            EngineError::NotAllowed(format!(
-                "la patch non si applica alla versione in stage di `{target}` ({e}): niente \
-                     scritto, rileggere il diff"
+            EngineError::NotAllowed(msg!(
+                "engine-lines-patch-failed",
+                target = target,
+                error = e
             ))
         })?;
         let backup = self.backup(&prepared.touched(selection))?;
@@ -489,8 +490,8 @@ impl MemoryBackend {
                         .or(Some(info.mode_worktree).filter(|m| *m != 0))
                         .unwrap_or(FILE_MODE);
                 }
-                // Come in git, lo stesso contenuto ha lo stesso id: se torna come in HEAD, l'id
-                // di HEAD (gli id del `MemoryBackend` sono finti e non vengono dal contenuto).
+                // As in git, the same content has the same id: if it comes back as in HEAD, the id
+                // of HEAD (the `MemoryBackend` ids are fake and do not come from the content).
                 info.oid_index = if self.blobs.get(&info.oid_head) == Some(&content) {
                     info.oid_head
                 } else {
@@ -514,13 +515,13 @@ impl MemoryBackend {
             }
         } else if info.mode_index == 0 {
             if info.mode_head == 0 {
-                // Uscito dall'indice e mai stato in HEAD: torna non tracciato.
+                // Left the index and was never in HEAD: it becomes untracked again.
                 self.entries[i] = untracked(entry.path);
                 self.entries
                     .sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
                 return Ok(backup);
             }
-            // Eliminato in stage ma ancora nel worktree: anche non tracciato, come per git.
+            // Deleted in the stage but still in the worktree: also untracked, as for git.
             extra = Some(untracked(entry.path.clone()));
             info.mode_worktree = 0;
             Change::Unmodified
@@ -545,8 +546,8 @@ impl MemoryBackend {
 
 const FILE_MODE: u32 = 0o100644;
 
-/// Una rinomina (o copia) in stage come due voci: il vecchio percorso cancellato in stage (solo
-/// per la rinomina) e il nuovo aggiunto.
+/// A staged rename (or copy) as two entries: the old path deleted in the stage (only
+/// for the rename) and the new one added.
 fn split(entry: &StatusEntry) -> Vec<StatusEntry> {
     let (info, original, renamed) = match &entry.kind {
         EntryKind::Renamed { info, original, .. } => (info, original, true),
@@ -582,7 +583,7 @@ fn split(entry: &StatusEntry) -> Vec<StatusEntry> {
     out
 }
 
-/// Applica a un albero un file cambiato da un commit.
+/// Applies to a tree a file changed by a commit.
 fn apply_change(tree: &mut BTreeMap<RepoPath, TreeEntry>, file: &ChangedFile) {
     if file.change == Change::Renamed {
         tree.remove(file.old_path());

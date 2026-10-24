@@ -1,10 +1,10 @@
-//! Test di integrazione di `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue`,
-//! `cherry_pick.abort`, `revert.continue`, `revert.abort` (S31) con il `CliBackend`: riuscito con
-//! undo e redo, autore preservato, messaggio del revert, già applicato (niente resta in corso),
-//! conflitto che resta in corso e si conclude dopo `conflict.resolve`/`index.stage`, abort con
-//! e senza conferma e il suo backup, commit di merge con e senza `mainline`, modifiche locali,
-//! file non tracciati o ignorati al posto di quelli in arrivo, HEAD staccata, firma che fallisce,
-//! sequenza di più commit avviata da terminale.
+//! Integration tests of `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue`,
+//! `cherry_pick.abort`, `revert.continue`, `revert.abort` (S31) with the `CliBackend`: success with
+//! undo and redo, preserved author, revert message, already applied (nothing stays in progress),
+//! conflict that stays in progress and ends after `conflict.resolve`/`index.stage`, abort with
+//! and without confirmation and its backup, merge commit with and without `mainline`, local
+//! changes, untracked or ignored files in place of the incoming ones, detached HEAD, failing
+//! signature, multi-commit sequence started from the terminal.
 
 mod common;
 
@@ -55,7 +55,7 @@ fn parents(repo: &Repo, rev: &str) -> Vec<Oid> {
         .collect()
 }
 
-/// Un commit di `file` con autore Cleo (il committer dei test è Bob).
+/// A commit of `file` authored by Cleo (the test committer is Bob).
 fn commit_by_cleo(repo: &Repo, file: &str, content: &str, message: &str) -> Oid {
     repo.write(file, content);
     repo.stage(&[file]);
@@ -69,28 +69,28 @@ fn commit_by_cleo(repo: &Repo, file: &str, content: &str, message: &str) -> Oid 
     repo.rev("HEAD")
 }
 
-/// `main`: `base` (`a.txt` = «base») e poi `c.txt`; `altro` da `base`, un commit di Cleo che
-/// aggiunge `b.txt` (con corpo nel messaggio): si applica senza conflitti.
+/// `main`: `base` (`a.txt` = "base") and then `c.txt`; `other` from `base`, a commit by Cleo
+/// that adds `b.txt` (with a body in the message): it applies without conflicts.
 fn picking_repo() -> (Repo, Oid, Oid) {
     let repo = Repo::new();
     repo.commit_file("a.txt", "base\n", "base");
-    repo.branch("altro");
-    repo.checkout("altro");
-    let theirs = commit_by_cleo(&repo, "b.txt", "b\n", "aggiunge b\n\ncon un corpo");
+    repo.branch("other");
+    repo.checkout("other");
+    let theirs = commit_by_cleo(&repo, "b.txt", "b\n", "adds b\n\nwith a body");
     repo.checkout("main");
-    let main = repo.commit_file("c.txt", "c\n", "aggiunge c");
+    let main = repo.commit_file("c.txt", "c\n", "adds c");
     (repo, main, theirs)
 }
 
-/// `main` e `altro` cambiano `a.txt` in modo diverso da `base`; il commit di `altro` è di Cleo.
+/// `main` and `other` change `a.txt` differently from `base`; the commit of `other` is by Cleo.
 fn conflicting_repo() -> (Repo, Oid, Oid) {
     let repo = Repo::new();
     repo.commit_file("a.txt", "base\n", "base");
-    repo.branch("altro");
-    repo.checkout("altro");
-    let theirs = commit_by_cleo(&repo, "a.txt", "loro\n", "a.txt su altro");
+    repo.branch("other");
+    repo.checkout("other");
+    let theirs = commit_by_cleo(&repo, "a.txt", "theirs\n", "a.txt on other");
     repo.checkout("main");
-    let main = repo.commit_file("a.txt", "nostra\n", "a.txt su main");
+    let main = repo.commit_file("a.txt", "ours\n", "a.txt on main");
     (repo, main, theirs)
 }
 
@@ -98,7 +98,7 @@ fn conflicting_repo() -> (Repo, Oid, Oid) {
 fn cherry_pick_keeps_the_author_undo_and_redo() {
     let (repo, main, theirs) = picking_repo();
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], false);
     assert_eq!(out["commit"], theirs.to_string());
     assert_eq!(out["before"], main.to_string());
@@ -107,7 +107,7 @@ fn cherry_pick_keeps_the_author_undo_and_redo() {
     assert_eq!(parents(&repo, "main"), [main]);
     assert_eq!(
         repo.git(&["log", "-1", "--format=%an <%ae>|%cn|%B", "main"]),
-        "Cleo <cleo@example.com>|Bob|aggiunge b\n\ncon un corpo"
+        "Cleo <cleo@example.com>|Bob|adds b\n\nwith a body"
     );
     assert_eq!(read(&repo, "b.txt").as_deref(), Some("b\n"));
     assert!(clean(&repo));
@@ -119,12 +119,12 @@ fn cherry_pick_keeps_the_author_undo_and_redo() {
         "{reflog}"
     );
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Cherry-pick di altro su `main`"),
+            .starts_with("Cherry-pick of other onto `main`"),
         "{}",
-        out["next_undo"]
+        out["next_undo"]["text"]
     );
 
     run(&r, &mut s, "edit.undo", json!({}));
@@ -135,7 +135,7 @@ fn cherry_pick_keeps_the_author_undo_and_redo() {
     assert_eq!(repo.rev("main"), picked);
     assert!(clean(&repo));
 
-    // Già applicato: NotAllowed, niente in corso, niente `MERGE_MSG`, il backup tolto.
+    // Already applied: NotAllowed, nothing in progress, no `MERGE_MSG`, the backup removed.
     let before = backups(&repo, "cherry-pick").len();
     let err = r
         .run(
@@ -145,7 +145,7 @@ fn cherry_pick_keeps_the_author_undo_and_redo() {
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert!(err.to_string().contains("non cambierebbe niente"), "{err}");
+    assert!(err.to_string().contains("would change nothing"), "{err}");
     assert_eq!(repo.rev("main"), picked);
     assert!(!has(&repo, "CHERRY_PICK_HEAD"));
     assert!(!has(&repo, "MERGE_MSG"));
@@ -165,7 +165,7 @@ fn revert_message_and_already_reverted() {
     assert_eq!(parents(&repo, "main"), [main]);
     assert_eq!(
         repo.git(&["log", "-1", "--format=%an|%B", "main"]),
-        format!("Ada|Revert \"aggiunge c\"\n\nThis reverts commit {main}.")
+        format!("Ada|Revert \"adds c\"\n\nThis reverts commit {main}.")
     );
     assert!(read(&repo, "c.txt").is_none());
     assert!(clean(&repo));
@@ -174,13 +174,13 @@ fn revert_message_and_already_reverted() {
     let reflog = repo.git(&["reflog", "-1", "--format=%gs", "main"]);
     assert!(reflog.starts_with("project: commit.revert"), "{reflog}");
 
-    // `revert.reference` non cambia il messaggio.
+    // `revert.reference` does not change the message.
     repo.git(&["config", "revert.reference", "true"]);
-    // Già annullato: niente cambia, niente in corso.
+    // Already reverted: nothing changes, nothing in progress.
     let err = r
         .run("commit.revert", &mut s, json!({ "rev": main.to_string() }))
         .unwrap_err();
-    assert!(err.to_string().contains("non cambierebbe niente"), "{err}");
+    assert!(err.to_string().contains("would change nothing"), "{err}");
     assert_eq!(repo.rev("main"), reverted);
     assert!(!has(&repo, "REVERT_HEAD"));
     assert!(!has(&repo, "MERGE_MSG"));
@@ -193,7 +193,7 @@ fn revert_message_and_already_reverted() {
     assert_eq!(out["in_progress"], false);
     assert_eq!(
         repo.git(&["log", "-1", "--format=%s", "main"]),
-        "Revert \"aggiunge c\""
+        "Revert \"adds c\""
     );
 }
 
@@ -201,7 +201,7 @@ fn revert_message_and_already_reverted() {
 fn conflict_stays_in_progress_then_resolve_and_continue() {
     let (repo, main, theirs) = conflicting_repo();
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], true);
     assert_eq!(out["conflicts"], json!(["a.txt"]));
     assert_eq!(out["after"], main.to_string());
@@ -216,7 +216,7 @@ fn conflict_stays_in_progress_then_resolve_and_continue() {
     let op = run(&r, &mut s, "repo.operation", json!({}));
     assert_eq!(op["operation"], "CherryPick");
     assert_eq!(op["incoming"][0]["id"], theirs.to_string());
-    assert_eq!(op["message"], "a.txt su altro");
+    assert_eq!(op["message"], "a.txt on other");
     assert_eq!(op["continue"], "cherry_pick.continue");
     assert_eq!(op["abort"], "cherry_pick.abort");
     assert_eq!(op["ready"], false);
@@ -225,7 +225,7 @@ fn conflict_stays_in_progress_then_resolve_and_continue() {
         ("cherry_pick.continue", json!({})),
         ("merge.continue", json!({})),
         ("revert.abort", json!({ "confirm": true })),
-        ("commit.revert", json!({ "rev": "altro" })),
+        ("commit.revert", json!({ "rev": "other" })),
         ("edit.undo", json!({})),
     ] {
         let err = r.run(id, &mut s, params).unwrap_err();
@@ -238,30 +238,30 @@ fn conflict_stays_in_progress_then_resolve_and_continue() {
         &r,
         &mut s,
         "conflict.resolve",
-        json!({ "path": "a.txt", "digest": shown["digest"], "content": "unita\n" }),
+        json!({ "path": "a.txt", "digest": shown["digest"], "content": "merged\n" }),
     );
     let op = run(&r, &mut s, "repo.operation", json!({}));
     assert_eq!(op["ready"], true);
     let out = run(&r, &mut s, "cherry_pick.continue", json!({}));
-    assert_eq!(out["message"], "a.txt su altro");
+    assert_eq!(out["message"], "a.txt on other");
     let done = repo.rev("main");
     assert_eq!(parents(&repo, "main"), [main]);
     assert_eq!(
         repo.git(&["log", "-1", "--format=%an|%cn|%B", "main"]),
-        "Cleo|Bob|a.txt su altro"
+        "Cleo|Bob|a.txt on other"
     );
-    assert_eq!(read(&repo, "a.txt").as_deref(), Some("unita\n"));
+    assert_eq!(read(&repo, "a.txt").as_deref(), Some("merged\n"));
     assert!(!has(&repo, "CHERRY_PICK_HEAD"));
     assert!(clean(&repo));
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Cherry-pick di altro su `main`")
+            .starts_with("Cherry-pick of other onto `main`")
     );
     run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(repo.rev("main"), main);
-    assert_eq!(read(&repo, "a.txt").as_deref(), Some("nostra\n"));
+    assert_eq!(read(&repo, "a.txt").as_deref(), Some("ours\n"));
     run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(repo.rev("main"), done);
 }
@@ -269,9 +269,9 @@ fn conflict_stays_in_progress_then_resolve_and_continue() {
 #[test]
 fn revert_conflict_index_stage_and_continue() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "uno\n", "uno");
-    let x = repo.commit_file("a.txt", "due\n", "due");
-    let last = repo.commit_file("a.txt", "tre\n", "tre");
+    repo.commit_file("a.txt", "one\n", "one");
+    let x = repo.commit_file("a.txt", "two\n", "two");
+    let last = repo.commit_file("a.txt", "three\n", "three");
     let (r, mut s) = open(&repo);
     let out = run(&r, &mut s, "commit.revert", json!({ "rev": "HEAD~1" }));
     assert_eq!(out["in_progress"], true);
@@ -283,29 +283,29 @@ fn revert_conflict_index_stage_and_continue() {
     let err = r
         .run("cherry_pick.continue", &mut s, json!({}))
         .unwrap_err();
-    assert!(err.to_string().contains("non un cherry-pick"), "{err}");
+    assert!(err.to_string().contains("not a cherry-pick"), "{err}");
 
-    repo.write("a.txt", "uno e tre\n");
+    repo.write("a.txt", "one and three\n");
     run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
     let out = run(
         &r,
         &mut s,
         "revert.continue",
-        json!({ "message": "Revert di due, a mano" }),
+        json!({ "message": "Revert of two, by hand" }),
     );
-    assert_eq!(out["message"], "Revert di due, a mano");
+    assert_eq!(out["message"], "Revert of two, by hand");
     assert_eq!(parents(&repo, "main"), [last]);
     assert_eq!(
         repo.git(&["log", "-1", "--format=%an|%B", "main"]),
-        "Ada|Revert di due, a mano"
+        "Ada|Revert of two, by hand"
     );
     assert!(!has(&repo, "REVERT_HEAD"));
     assert!(clean(&repo));
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with(&format!("Revert di {} su `main`", &x.to_string()[..7]))
+            .starts_with(&format!("Revert of {} onto `main`", &x.to_string()[..7]))
     );
     run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(repo.rev("main"), last);
@@ -319,9 +319,12 @@ fn abort_needs_confirm_and_saves_a_backup() {
     let err = r
         .run("cherry_pick.abort", &mut s, json!({ "confirm": true }))
         .unwrap_err();
-    assert!(err.to_string().contains("non c'è un cherry-pick"), "{err}");
+    assert!(
+        err.to_string().contains("a cherry-pick is not in progress"),
+        "{err}"
+    );
 
-    run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     let err = r.run("cherry_pick.abort", &mut s, json!({})).unwrap_err();
     match &err {
         EngineError::ConfirmRequired { reason, .. } => {
@@ -331,8 +334,8 @@ fn abort_needs_confirm_and_saves_a_backup() {
         other => panic!("{other}"),
     }
     assert!(has(&repo, "CHERRY_PICK_HEAD"));
-    // Una risoluzione a metà, che l'abort cancellerebbe: è nel backup.
-    repo.write("a.txt", "a metà\n");
+    // A half-done resolution, which the abort would delete: it is in the backup.
+    repo.write("a.txt", "half done\n");
     let out = run(&r, &mut s, "cherry_pick.abort", json!({ "confirm": true }));
     let backup = out["backup"].as_str().unwrap().to_owned();
     assert!(
@@ -344,17 +347,17 @@ fn abort_needs_confirm_and_saves_a_backup() {
     assert!(!has(&repo, "CHERRY_PICK_HEAD"));
     assert_eq!(repo.rev("main"), main);
     assert!(clean(&repo));
-    assert_eq!(read(&repo, "a.txt").as_deref(), Some("nostra\n"));
-    assert_eq!(repo.git(&["show", &format!("{backup}:a.txt")]), "a metà");
+    assert_eq!(read(&repo, "a.txt").as_deref(), Some("ours\n"));
+    assert_eq!(repo.git(&["show", &format!("{backup}:a.txt")]), "half done");
     assert_eq!(parents(&repo, &backup).len(), 2);
     let reflog = repo.git(&["reflog", "-1", "--format=%gs", "HEAD"]);
     assert!(!reflog.is_empty());
 
-    // Il revert fermo si annulla allo stesso modo.
+    // A stopped revert is aborted the same way.
     let out = run(&r, &mut s, "commit.revert", json!({ "rev": "HEAD" }));
     assert_eq!(out["in_progress"], false);
     run(&r, &mut s, "edit.undo", json!({}));
-    repo.commit_file("a.txt", "ancora\n", "ancora");
+    repo.commit_file("a.txt", "again\n", "again");
     let out = run(
         &r,
         &mut s,
@@ -379,13 +382,13 @@ fn merge_commit_with_and_without_mainline() {
     let base = repo.commit_file("a.txt", "base\n", "base");
     repo.branch("feat");
     repo.checkout("feat");
-    repo.commit_file("f.txt", "f\n", "aggiunge f");
+    repo.commit_file("f.txt", "f\n", "adds f");
     repo.checkout("main");
-    let m1 = repo.commit_file("m.txt", "m\n", "aggiunge m");
+    let m1 = repo.commit_file("m.txt", "m\n", "adds m");
     let merge = repo.merge("feat");
-    // Un branch da `base` dove applicare il merge.
+    // A branch from `base` where to apply the merge.
     repo.git(&["checkout", "--quiet", "-b", "dest", &base.to_string()]);
-    let dest = repo.commit_file("d.txt", "d\n", "aggiunge d");
+    let dest = repo.commit_file("d.txt", "d\n", "adds d");
     let (r, mut s) = open(&repo);
     let id = merge.to_string();
     for params in [
@@ -408,7 +411,7 @@ fn merge_commit_with_and_without_mainline() {
     assert!(err.to_string().contains("mainline"), "{err}");
     assert!(backups(&repo, "cherry-pick").is_empty());
 
-    // Rispetto al primo genitore: le modifiche di `feat` (`f.txt`).
+    // Relative to the first parent: the changes of `feat` (`f.txt`).
     let out = run(
         &r,
         &mut s,
@@ -421,7 +424,7 @@ fn merge_commit_with_and_without_mainline() {
     assert!(read(&repo, "m.txt").is_none());
     assert!(clean(&repo));
 
-    // Il revert del merge su `main`, rispetto al primo genitore: toglie `f.txt`.
+    // The revert of the merge on `main`, relative to the first parent: removes `f.txt`.
     repo.checkout("main");
     let (r, mut s) = open(&repo);
     run(
@@ -444,13 +447,13 @@ fn merge_commit_with_and_without_mainline() {
 fn local_changes_and_files_in_the_way_are_refused() {
     let (repo, main, _) = picking_repo();
     let (r, mut s) = open(&repo);
-    // Una modifica a un file che il commit non tocca, fuori stage e poi in stage.
-    repo.write("a.txt", "cambiato\n");
+    // A change to a file the commit does not touch, unstaged and then staged.
+    repo.write("a.txt", "changed\n");
     for id in ["commit.cherry_pick", "commit.revert"] {
         let rev = if id == "commit.revert" {
             "HEAD"
         } else {
-            "altro"
+            "other"
         };
         let err = r.run(id, &mut s, json!({ "rev": rev })).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{id}: {err}");
@@ -459,46 +462,46 @@ fn local_changes_and_files_in_the_way_are_refused() {
     }
     repo.stage(&["a.txt"]);
     let err = r
-        .run("commit.cherry_pick", &mut s, json!({ "rev": "altro" }))
+        .run("commit.cherry_pick", &mut s, json!({ "rev": "other" }))
         .unwrap_err();
     assert!(err.to_string().contains("`a.txt`"), "{err}");
     repo.git(&["reset", "--quiet", "--hard"]);
 
-    // Un non tracciato al posto del file in arrivo: niente scritto, niente backup.
-    repo.write("b.txt", "mio\n");
+    // An untracked file in place of the incoming file: nothing written, no backup.
+    repo.write("b.txt", "mine\n");
     let err = r
-        .run("commit.cherry_pick", &mut s, json!({ "rev": "altro" }))
+        .run("commit.cherry_pick", &mut s, json!({ "rev": "other" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(err.to_string().contains("`b.txt`"), "{err}");
-    assert_eq!(read(&repo, "b.txt").as_deref(), Some("mio\n"));
-    // Ignorato: lo stesso (git lo sovrascriverebbe senza dirlo).
+    assert_eq!(read(&repo, "b.txt").as_deref(), Some("mine\n"));
+    // Ignored: the same (git would overwrite it without saying).
     repo.write(".git/info/exclude", "b.txt\n");
     let err = r
-        .run("commit.cherry_pick", &mut s, json!({ "rev": "altro" }))
+        .run("commit.cherry_pick", &mut s, json!({ "rev": "other" }))
         .unwrap_err();
     assert!(err.to_string().contains("`b.txt`"), "{err}");
-    assert_eq!(read(&repo, "b.txt").as_deref(), Some("mio\n"));
-    // Il revert che ricrea un file: un non tracciato al suo posto.
+    assert_eq!(read(&repo, "b.txt").as_deref(), Some("mine\n"));
+    // The revert that recreates a file: an untracked file in its place.
     std::fs::remove_file(repo.path().join("b.txt")).unwrap();
     repo.git(&["rm", "--quiet", "c.txt"]);
-    let gone = repo.commit("toglie c");
-    repo.write("c.txt", "mio\n");
+    let gone = repo.commit("removes c");
+    repo.write("c.txt", "mine\n");
     let err = r
         .run("commit.revert", &mut s, json!({ "rev": gone.to_string() }))
         .unwrap_err();
     assert!(err.to_string().contains("`c.txt`"), "{err}");
-    assert_eq!(read(&repo, "c.txt").as_deref(), Some("mio\n"));
+    assert_eq!(read(&repo, "c.txt").as_deref(), Some("mine\n"));
     assert_eq!(repo.rev("main"), gone);
     assert_ne!(gone, main);
     assert!(backups(&repo, "cherry-pick").is_empty());
     assert!(backups(&repo, "revert").is_empty());
-    // Non tracciati altrove vanno bene.
+    // Non tracciati otherve vanno bene.
     std::fs::remove_file(repo.path().join("c.txt")).unwrap();
-    repo.write("altro.txt", "x\n");
-    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    repo.write("other.txt", "x\n");
+    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], false);
-    assert_eq!(read(&repo, "altro.txt").as_deref(), Some("x\n"));
+    assert_eq!(read(&repo, "other.txt").as_deref(), Some("x\n"));
 }
 
 #[test]
@@ -507,8 +510,8 @@ fn detached_head_is_refused() {
     repo.detach(main);
     let (r, mut s) = open(&repo);
     for id in ["commit.cherry_pick", "commit.revert"] {
-        let err = r.run(id, &mut s, json!({ "rev": "altro" })).unwrap_err();
-        assert!(err.to_string().contains("HEAD è staccata"), "{id}: {err}");
+        let err = r.run(id, &mut s, json!({ "rev": "other" })).unwrap_err();
+        assert!(err.to_string().contains("HEAD is detached"), "{id}: {err}");
     }
     assert_eq!(repo.rev("HEAD"), main);
     assert!(clean(&repo));
@@ -520,15 +523,15 @@ fn failing_signature_leaves_it_in_progress() {
     repo.git(&["config", "commit.gpgSign", "true"]);
     repo.git(&["config", "gpg.program", "false"]);
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], true);
     assert_eq!(out["conflicts"], json!([]));
     assert!(out["message"].as_str().unwrap().contains("gpg"), "{out}");
     assert_eq!(repo.rev("main"), main);
     assert!(has(&repo, "CHERRY_PICK_HEAD"));
-    // Fallito dopo il backup: il backup resta.
+    // Failed after the backup: the backup stays.
     assert_eq!(repo.rev(out["backup"].as_str().unwrap()), main);
-    // Con la firma ancora rotta il continue riporta l'errore di git e resta in corso.
+    // With the signature still broken, continue reports git's error and stays in progress.
     let err = r
         .run("cherry_pick.continue", &mut s, json!({}))
         .unwrap_err();
@@ -544,10 +547,10 @@ fn failing_signature_leaves_it_in_progress() {
 #[test]
 fn a_sequence_started_from_the_terminal_stays_there() {
     let (repo, main, _) = conflicting_repo();
-    repo.checkout("altro");
+    repo.checkout("other");
     let p2 = repo.commit_file("z.txt", "z\n", "z");
     repo.checkout("main");
-    repo.git_fails(&["cherry-pick", "altro~1", &p2.to_string()]);
+    repo.git_fails(&["cherry-pick", "other~1", &p2.to_string()]);
     assert!(has(&repo, "sequencer"));
     let (r, mut s) = open(&repo);
     let op = run(&r, &mut s, "repo.operation", json!({}));
@@ -560,7 +563,7 @@ fn a_sequence_started_from_the_terminal_stays_there() {
     ] {
         let err = r.run(id, &mut s, params).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{id}: {err}");
-        assert!(err.to_string().contains("terminale"), "{id}: {err}");
+        assert!(err.to_string().contains("terminal"), "{id}: {err}");
     }
     assert!(has(&repo, "CHERRY_PICK_HEAD"));
     assert!(backups(&repo, "cherry-pick-abort").is_empty());
@@ -574,22 +577,22 @@ fn rerere_auto_update_does_not_hide_the_conflict() {
     repo.git(&["config", "rerere.enabled", "true"]);
     repo.git(&["config", "rerere.autoUpdate", "true"]);
     let (r, mut s) = open(&repo);
-    run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     let shown = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
     run(
         &r,
         &mut s,
         "conflict.resolve",
-        json!({ "path": "a.txt", "digest": shown["digest"], "content": "unita\n" }),
+        json!({ "path": "a.txt", "digest": shown["digest"], "content": "merged\n" }),
     );
     run(&r, &mut s, "cherry_pick.continue", json!({}));
     run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(repo.rev("main"), main);
-    // Di nuovo: rerere rimette la risoluzione nel file, ma il conflitto resta da confermare.
-    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "altro" }));
+    // Again: rerere puts the resolution back in the file, but the conflict still has to be confirmed.
+    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], true);
     assert_eq!(out["conflicts"], json!(["a.txt"]));
-    assert_eq!(read(&repo, "a.txt").as_deref(), Some("unita\n"));
+    assert_eq!(read(&repo, "a.txt").as_deref(), Some("merged\n"));
     let err = r
         .run("cherry_pick.continue", &mut s, json!({}))
         .unwrap_err();
@@ -605,17 +608,17 @@ fn assume_unchanged_files_and_option_like_revs_are_refused() {
     repo.commit_file("a.txt", "base\n", "base");
     repo.branch("x");
     repo.checkout("x");
-    repo.commit_file("a.txt", "x\n", "cambia a");
+    repo.commit_file("a.txt", "x\n", "change a");
     repo.checkout("main");
-    let main = repo.commit_file("c.txt", "c\n", "aggiunge c");
+    let main = repo.commit_file("c.txt", "c\n", "adds c");
     repo.git(&["update-index", "--assume-unchanged", "a.txt"]);
-    repo.write("a.txt", "nascosto\n");
+    repo.write("a.txt", "hidden\n");
     let (r, mut s) = open(&repo);
     let err = r
         .run("commit.cherry_pick", &mut s, json!({ "rev": "x" }))
         .unwrap_err();
     assert!(err.to_string().contains("assume-unchanged"), "{err}");
-    assert_eq!(read(&repo, "a.txt").as_deref(), Some("nascosto\n"));
+    assert_eq!(read(&repo, "a.txt").as_deref(), Some("hidden\n"));
     assert_eq!(repo.rev("main"), main);
     assert!(backups(&repo, "cherry-pick").is_empty());
 

@@ -1,5 +1,5 @@
-//! Test di integrazione di `CliBackend::stage`/`unstage` e dei comandi `index.stage` e
-//! `index.unstage` su repo veri.
+//! Integration tests of `CliBackend::stage`/`unstage` and of the `index.stage` and
+//! `index.unstage` commands on real repos.
 
 mod common;
 
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 
-/// `(percorso, X, Y)` di ogni voce dello stato, come le lettere di `git status`.
+/// `(path, X, Y)` of every status entry, like the letters of `git status`.
 fn entries(status: &Status) -> Vec<(String, char, char)> {
     status
         .entries
@@ -47,9 +47,9 @@ fn stage_modification_new_file_and_folder() {
         entries(&backend.status().unwrap()),
         [
             entry("a.txt", '.', 'M'),
-            entry("nuovo.txt", 'A', '.'),
-            entry("rinominato.txt", 'R', '.'),
-            entry("cartella/non tracciato.txt", '?', '?'),
+            entry("new.txt", 'A', '.'),
+            entry("renamed.txt", 'R', '.'),
+            entry("dir/untracked file.txt", '?', '?'),
         ]
     );
 
@@ -63,72 +63,66 @@ fn stage_modification_new_file_and_folder() {
         ),
         ('M', '.')
     );
-    // Le letture dopo la scrittura vedono il nuovo indice.
-    assert_eq!(repo.git(&["show", ":a.txt"]), "modificato");
+    // Reads after the write see the new index.
+    assert_eq!(repo.git(&["show", ":a.txt"]), "modified");
     let unstaged = backend.diff(&DiffSpec::Worktree { path: None }).unwrap();
     assert!(unstaged.files.is_empty(), "{unstaged:?}");
 
-    // Una cartella comprende i file non tracciati che contiene.
-    backend.stage(&paths(&["cartella"])).unwrap();
+    // A directory includes the untracked files it contains.
+    backend.stage(&paths(&["dir"])).unwrap();
     assert_eq!(
         entries(&backend.status().unwrap()),
         [
             entry("a.txt", 'M', '.'),
-            entry("cartella/non tracciato.txt", 'A', '.'),
-            entry("nuovo.txt", 'A', '.'),
-            entry("rinominato.txt", 'R', '.'),
+            entry("dir/untracked file.txt", 'A', '.'),
+            entry("new.txt", 'A', '.'),
+            entry("renamed.txt", 'R', '.'),
         ]
     );
-    // Il worktree non cambia.
-    assert_eq!(read(&repo, "a.txt"), b"modificato\n");
+    // The worktree does not change.
+    assert_eq!(read(&repo, "a.txt"), b"modified\n");
 }
 
 #[test]
 fn stage_deletion_and_worktree_rename() {
     let repo = Repo::new();
-    repo.commit_file("via.txt", "da eliminare\n", "primo");
+    repo.commit_file("gone.txt", "to delete\n", "first");
     repo.commit_file(
-        "vecchio.txt",
-        "contenuto abbastanza lungo da riconoscere la rinomina\n",
-        "secondo",
+        "old.txt",
+        "content long enough to recognize the rename\n",
+        "second",
     );
-    std::fs::remove_file(repo.path().join("via.txt")).unwrap();
-    std::fs::rename(
-        repo.path().join("vecchio.txt"),
-        repo.path().join("nuovo.txt"),
-    )
-    .unwrap();
+    std::fs::remove_file(repo.path().join("gone.txt")).unwrap();
+    std::fs::rename(repo.path().join("old.txt"), repo.path().join("new.txt")).unwrap();
     let mut backend = repo.open();
     assert_eq!(
         entries(&backend.status().unwrap()),
         [
-            entry("vecchio.txt", '.', 'D'),
-            entry("via.txt", '.', 'D'),
-            entry("nuovo.txt", '?', '?'),
+            entry("gone.txt", '.', 'D'),
+            entry("old.txt", '.', 'D'),
+            entry("new.txt", '?', '?'),
         ]
     );
 
-    backend.stage(&paths(&["via.txt"])).unwrap();
-    backend
-        .stage(&paths(&["vecchio.txt", "nuovo.txt"]))
-        .unwrap();
+    backend.stage(&paths(&["gone.txt"])).unwrap();
+    backend.stage(&paths(&["old.txt", "new.txt"])).unwrap();
     let status = backend.status().unwrap();
     assert_eq!(
         entries(&status),
-        [entry("nuovo.txt", 'R', '.'), entry("via.txt", 'D', '.')]
+        [entry("gone.txt", 'D', '.'), entry("new.txt", 'R', '.')]
     );
     assert!(matches!(
-        &status.entries[0].kind,
-        EntryKind::Renamed { original, .. } if *original == RepoPath::from("vecchio.txt")
+        &status.entries[1].kind,
+        EntryKind::Renamed { original, .. } if *original == RepoPath::from("old.txt")
     ));
 
-    // Di nuovo gli stessi percorsi: le cancellazioni sono già in stage, niente da fare
-    // (`git add` da solo direbbe "did not match any files").
+    // The same paths again: the deletions are already staged, nothing to do
+    // (`git add` alone would say "did not match any files").
     backend
-        .stage(&paths(&["vecchio.txt", "nuovo.txt", "via.txt"]))
+        .stage(&paths(&["old.txt", "new.txt", "gone.txt"]))
         .unwrap();
     assert_eq!(backend.status().unwrap(), status);
-    assert!(!exists(&repo, "via.txt"));
+    assert!(!exists(&repo, "gone.txt"));
 }
 
 #[cfg(unix)]
@@ -137,7 +131,7 @@ fn non_utf8_names_are_staged_and_unstaged_byte_for_byte() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
+    repo.commit_file("a.txt", "a\n", "first");
     let name = common::NON_UTF8_NAME;
     std::fs::write(repo.path().join(OsStr::from_bytes(name)), "latin\n").unwrap();
     let mut backend = repo.open();
@@ -159,7 +153,7 @@ fn non_utf8_names_are_staged_and_unstaged_byte_for_byte() {
 fn glob_magic_and_dash_names_are_literal() {
     let repo = repo_with_special_names();
     let mut backend = repo.open();
-    for name in ["file*.txt", "a[1].txt", ":(top)magia.txt", "-trattino.txt"] {
+    for name in ["file*.txt", "a[1].txt", ":(top)magic.txt", "-dash.txt"] {
         backend.stage(&paths(&[name])).unwrap();
     }
     let mut staged: Vec<_> = entries(&backend.status().unwrap())
@@ -168,100 +162,97 @@ fn glob_magic_and_dash_names_are_literal() {
         .map(|(p, _, _)| p)
         .collect();
     staged.sort();
-    // `file1.txt` e `a1.txt` restano fuori stage: `file*.txt` e `a[1].txt` non sono glob.
+    // `file1.txt` and `a1.txt` stay unstaged: `file*.txt` and `a[1].txt` are not globs.
     assert_eq!(
         staged,
-        ["-trattino.txt", ":(top)magia.txt", "a[1].txt", "file*.txt"]
+        ["-dash.txt", ":(top)magic.txt", "a[1].txt", "file*.txt"]
     );
 
     backend
-        .unstage(&paths(&["file*.txt", ":(top)magia.txt"]))
+        .unstage(&paths(&["file*.txt", ":(top)magic.txt"]))
         .unwrap();
     let status = entries(&backend.status().unwrap());
     assert!(status.contains(&entry("file*.txt", '.', 'M')), "{status:?}");
     assert!(
-        status.contains(&entry(":(top)magia.txt", '.', 'M')),
+        status.contains(&entry(":(top)magic.txt", '.', 'M')),
         "{status:?}"
     );
-    assert!(
-        status.contains(&entry("-trattino.txt", 'M', '.')),
-        "{status:?}"
-    );
+    assert!(status.contains(&entry("-dash.txt", 'M', '.')), "{status:?}");
     assert!(status.contains(&entry("file1.txt", '.', 'M')), "{status:?}");
 }
 
 #[test]
 fn ignored_files_are_refused_and_nothing_is_staged() {
     let repo = Repo::new();
-    repo.commit_file(".gitignore", "*.log\n", "ignora i log");
+    repo.commit_file(".gitignore", "*.log\n", "ignore the logs");
     repo.write("ok.txt", "ok\n");
-    repo.write("debug.log", "rumore\n");
-    repo.write("dir/dentro.txt", "dentro\n");
-    repo.write("dir/dentro.log", "rumore\n");
+    repo.write("debug.log", "noise\n");
+    repo.write("dir/inside.txt", "inside\n");
+    repo.write("dir/inside.log", "noise\n");
     let mut backend = repo.open();
     let before = backend.status().unwrap();
 
     let err = backend.stage(&paths(&["ok.txt", "debug.log"])).unwrap_err();
     assert!(is_not_allowed(&err), "{err}");
     assert!(err.to_string().contains("debug.log"), "{err}");
-    // Neanche `ok.txt` è in stage: o tutto o niente.
+    // Not even `ok.txt` is staged: all or nothing.
     assert_eq!(backend.status().unwrap(), before);
 
-    // In una cartella i file ignorati si saltano, come in git.
+    // In a directory ignored files are skipped, like in git.
     backend.stage(&paths(&["dir"])).unwrap();
     let after = entries(&backend.status().unwrap());
     assert!(
-        after.contains(&entry("dir/dentro.txt", 'A', '.')),
+        after.contains(&entry("dir/inside.txt", 'A', '.')),
         "{after:?}"
     );
     assert!(
         repo.git(&["ls-files", "--", "dir"])
             .lines()
-            .eq(["dir/dentro.txt"]),
-        "il file ignorato non entra nell'indice"
+            .eq(["dir/inside.txt"]),
+        "the ignored file does not enter the index"
     );
 }
 
 #[test]
 fn unstage_never_touches_the_worktree() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "uno\n", "primo");
-    repo.commit_file("via.txt", "da eliminare\n", "secondo");
-    // `a.txt`: una modifica in stage e un'altra fuori; `nuovo.txt` aggiunto; `via.txt`
-    // cancellato in stage.
-    repo.write("a.txt", "in stage\n");
+    repo.commit_file("a.txt", "one\n", "first");
+    repo.commit_file("gone.txt", "to delete\n", "second");
+    // `a.txt`: one change staged and another unstaged; `new.txt` added; `gone.txt`
+    // deleted in the index.
+    repo.write("a.txt", "staged\n");
     repo.stage(&["a.txt"]);
-    repo.write("a.txt", "fuori stage\n");
-    repo.write("nuovo.txt", "nuovo\n");
-    repo.stage(&["nuovo.txt"]);
-    repo.git(&["rm", "--quiet", "via.txt"]);
+    repo.write("a.txt", "unstaged\n");
+    repo.write("new.txt", "new\n");
+    repo.stage(&["new.txt"]);
+    repo.git(&["rm", "--quiet", "gone.txt"]);
     let mut backend = repo.open();
     assert_eq!(
         entries(&backend.status().unwrap()),
         [
             entry("a.txt", 'M', 'M'),
-            entry("nuovo.txt", 'A', '.'),
-            entry("via.txt", 'D', '.'),
+            entry("gone.txt", 'D', '.'),
+            entry("new.txt", 'A', '.'),
         ]
     );
 
     backend
-        .unstage(&paths(&["a.txt", "nuovo.txt", "via.txt"]))
+        .unstage(&paths(&["a.txt", "new.txt", "gone.txt"]))
         .unwrap();
     assert_eq!(
         entries(&backend.status().unwrap()),
         [
             entry("a.txt", '.', 'M'),
-            entry("via.txt", '.', 'D'),
-            entry("nuovo.txt", '?', '?'),
+            entry("gone.txt", '.', 'D'),
+            entry("new.txt", '?', '?'),
         ]
     );
-    // Il worktree è com'era: niente ripristinato, niente perso.
-    assert_eq!(read(&repo, "a.txt"), b"fuori stage\n");
-    assert_eq!(read(&repo, "nuovo.txt"), b"nuovo\n");
-    assert!(!exists(&repo, "via.txt"), "unstage non ripristina i file");
-    // L'indice è tornato come in HEAD.
-    assert_eq!(repo.git(&["show", ":a.txt"]), "uno");
+    // The worktree is as it was: nothing restored, nothing lost.
+    assert_eq!(read(&repo, "a.txt"), b"unstaged\n");
+    assert_eq!(read(&repo, "new.txt"), b"new\n");
+    assert!(!exists(&repo, "gone.txt"), "unstage does not restore files");
+    // The index is back as in HEAD.
+    assert_eq!(repo.git(&["show", ":a.txt"]), "one");
     assert!(
         backend
             .diff(&DiffSpec::Index { path: None })
@@ -275,17 +266,14 @@ fn unstage_never_touches_the_worktree() {
 fn unstage_one_side_of_a_staged_rename() {
     let repo = repo_with_changes();
     let mut backend = repo.open();
-    backend.unstage(&paths(&["rinominato.txt"])).unwrap();
+    backend.unstage(&paths(&["renamed.txt"])).unwrap();
     let status = entries(&backend.status().unwrap());
+    assert!(status.contains(&entry("old.txt", 'D', '.')), "{status:?}");
     assert!(
-        status.contains(&entry("vecchio.txt", 'D', '.')),
+        status.contains(&entry("renamed.txt", '?', '?')),
         "{status:?}"
     );
-    assert!(
-        status.contains(&entry("rinominato.txt", '?', '?')),
-        "{status:?}"
-    );
-    assert!(exists(&repo, "rinominato.txt"));
+    assert!(exists(&repo, "renamed.txt"));
 }
 
 #[test]
@@ -317,20 +305,20 @@ fn conflicts_resolve_with_stage_and_refuse_unstage() {
     assert!(matches!(before.entries[0].kind, EntryKind::Unmerged(_)));
     let content = read(&repo, "a.txt");
 
-    // Unstage toglierebbe gli stadi del conflitto: rifiutato, niente cambia.
+    // Unstage would drop the conflict stages: refused, nothing changes.
     let err = backend.unstage(&paths(&["a.txt"])).unwrap_err();
     assert!(is_not_allowed(&err), "{err}");
     assert!(err.to_string().contains("a.txt"), "{err}");
     assert_eq!(backend.status().unwrap(), before);
 
-    // Stage = risoluzione con il contenuto del worktree (qui con i marcatori di conflitto).
+    // Stage = resolution with the worktree content (here with the conflict markers).
     backend.stage(&paths(&["a.txt"])).unwrap();
     let status = backend.status().unwrap();
     assert_eq!(entries(&status), [entry("a.txt", 'M', '.')]);
     assert_eq!(
         status.operation,
         Some(Operation::Merge),
-        "il merge resta in corso"
+        "the merge stays in progress"
     );
     assert_eq!(read(&repo, "a.txt"), content);
 }
@@ -345,14 +333,14 @@ fn locked_index_is_an_error_and_the_lock_stays() {
 
     for result in [
         backend.stage(&paths(&["a.txt"])),
-        backend.unstage(&paths(&["nuovo.txt"])),
+        backend.unstage(&paths(&["new.txt"])),
     ] {
         let err = result.unwrap_err();
         let EngineError::IndexLocked { lock: reported } = &err else {
-            panic!("atteso IndexLocked: {err}");
+            panic!("expected IndexLocked: {err}");
         };
         assert_eq!(Path::new(reported), lock);
-        assert!(lock.exists(), "il lock non si cancella mai");
+        assert!(lock.exists(), "the lock is never deleted");
     }
     std::fs::remove_file(&lock).unwrap();
     assert_eq!(backend.status().unwrap(), before);
@@ -365,17 +353,17 @@ fn missing_paths_fail_and_change_nothing() {
     let before = backend.status().unwrap();
 
     let err = backend
-        .stage(&paths(&["a.txt", "nessuno.txt"]))
+        .stage(&paths(&["a.txt", "missing.txt"]))
         .unwrap_err();
     let EngineError::Git { command, stderr } = &err else {
-        panic!("atteso un errore di git: {err}");
+        panic!("expected a git error: {err}");
     };
     assert_eq!(command, "add");
-    assert!(stderr.contains("nessuno.txt"), "{stderr}");
-    assert_eq!(backend.status().unwrap(), before, "`a.txt` non è in stage");
+    assert!(stderr.contains("missing.txt"), "{stderr}");
+    assert_eq!(backend.status().unwrap(), before, "`a.txt` is not staged");
 
     let err = backend
-        .unstage(&paths(&["nuovo.txt", "nessuno.txt"]))
+        .unstage(&paths(&["new.txt", "missing.txt"]))
         .unwrap_err();
     assert!(
         matches!(&err, EngineError::Git { command, .. } if command == "restore"),
@@ -383,13 +371,13 @@ fn missing_paths_fail_and_change_nothing() {
     );
     assert_eq!(backend.status().unwrap(), before);
 
-    // Un file non tracciato non è in stage: per git è sconosciuto.
+    // An untracked file is not staged: to git it is unknown.
     let err = backend
-        .unstage(&paths(&["cartella/non tracciato.txt"]))
+        .unstage(&paths(&["dir/untracked file.txt"]))
         .unwrap_err();
     assert!(matches!(err, EngineError::Git { .. }), "{err}");
 
-    // Nessun percorso: niente da fare, non "tutto".
+    // No paths: nothing to do, not "everything".
     backend.stage(&[]).unwrap();
     backend.unstage(&[]).unwrap();
     assert_eq!(backend.status().unwrap(), before);
@@ -398,10 +386,10 @@ fn missing_paths_fail_and_change_nothing() {
 #[test]
 fn many_paths_go_through_stdin() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
-    // Nomi lunghi: insieme superano di molto il limite di un singolo argomento (128 KiB).
+    repo.commit_file("a.txt", "a\n", "first");
+    // Long names: together they far exceed the limit of a single argument (128 KiB).
     let names: Vec<String> = (0..1500)
-        .map(|i| format!("cartella/{}-{i:04}.txt", "x".repeat(150)))
+        .map(|i| format!("dir/{}-{i:04}.txt", "x".repeat(150)))
         .collect();
     for name in &names {
         repo.write(name, "?\n");
@@ -444,12 +432,12 @@ fn index_commands_on_a_real_repo() {
         json!({ "path": repo.path_str() }),
     );
 
-    // Il risultato è il nuovo stato, come `repo.status`.
+    // The result is the new status, like `repo.status`.
     let out = run(
         &registry,
         &mut session,
         "index.stage",
-        json!({ "paths": ["a.txt", "cartella/non tracciato.txt"] }),
+        json!({ "paths": ["a.txt", "dir/untracked file.txt"] }),
     );
     assert_eq!(
         out["status"],
@@ -484,11 +472,11 @@ fn index_commands_on_a_real_repo() {
         json!({ "paths": ["a.txt"], "confirm": true }),
         json!({ "paths": [""] }),
         json!({ "paths": ["/etc/passwd"] }),
-        json!({ "paths": ["../fuori"] }),
+        json!({ "paths": ["../outside"] }),
         json!({ "paths": ["a/../b"] }),
         json!({ "paths": ["./a.txt"] }),
         json!({ "paths": ["."] }),
-        json!({ "paths": ["cartella/"] }),
+        json!({ "paths": ["dir/"] }),
         json!({ "paths": ["a.txt", [97, 0, 98]] }),
     ] {
         for id in ["index.stage", "index.unstage"] {
@@ -505,24 +493,21 @@ fn index_commands_on_a_real_repo() {
 fn folders_with_conflicts_are_refused() {
     let repo = Repo::new();
     repo.commit_file("dir/a.txt", "base\n", "base");
-    repo.diverge("altro", "dir/a.txt", "nostra\n", "loro\n");
-    repo.conflict("altro");
-    repo.write("dir/nuovo.txt", "nuovo\n");
+    repo.diverge("other", "dir/a.txt", "ours\n", "theirs\n");
+    repo.conflict("other");
+    repo.write("dir/new.txt", "new\n");
     let mut backend = repo.open();
     let before = backend.status().unwrap();
-    // Per la cartella: il conflitto non si risolve di nascosto, e niente va in stage.
+    // By directory: the conflict is not resolved silently, and nothing is staged.
     let err = backend.stage(&paths(&["dir"])).unwrap_err();
     assert!(is_not_allowed(&err), "{err}");
     assert!(err.to_string().contains("dir/a.txt"), "{err}");
     assert_eq!(backend.status().unwrap(), before);
-    // Per nome sì (è la risoluzione), anche insieme alla cartella.
+    // By name yes (it is the resolution), also together with the directory.
     backend.stage(&paths(&["dir", "dir/a.txt"])).unwrap();
     let after = entries(&backend.status().unwrap());
     assert!(after.contains(&entry("dir/a.txt", 'M', '.')), "{after:?}");
-    assert!(
-        after.contains(&entry("dir/nuovo.txt", 'A', '.')),
-        "{after:?}"
-    );
+    assert!(after.contains(&entry("dir/new.txt", 'A', '.')), "{after:?}");
 }
 
 #[test]
@@ -531,7 +516,7 @@ fn folder_with_only_staged_deletions_is_a_no_op() {
     repo.write("dir/a.txt", "a\n");
     repo.write("dir/b.txt", "b\n");
     repo.git(&["add", "-A"]);
-    repo.commit("primo");
+    repo.commit("first");
     repo.git(&["rm", "--quiet", "-r", "dir"]);
     assert!(!exists(&repo, "dir"));
     let mut backend = repo.open();
@@ -543,11 +528,11 @@ fn folder_with_only_staged_deletions_is_a_no_op() {
 #[test]
 fn broken_head_is_not_an_empty_branch() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
+    repo.commit_file("a.txt", "a\n", "first");
     repo.write("b.txt", "b\n");
     repo.stage(&["b.txt"]);
     let mut backend = repo.open();
-    // `main` punta a un commit che non esiste.
+    // `main` points to a commit that does not exist.
     std::fs::write(
         repo.path().join(".git/refs/heads/main"),
         "1111111111111111111111111111111111111111\n",
@@ -559,6 +544,6 @@ fn broken_head_is_not_an_empty_branch() {
     assert_eq!(
         std::fs::read(repo.path().join(".git/index")).unwrap(),
         index,
-        "l'indice non si svuota"
+        "the index is not emptied"
     );
 }

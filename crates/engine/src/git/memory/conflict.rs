@@ -1,10 +1,10 @@
-//! Editor dei conflitti sul [`MemoryBackend`] (`conflict.show`, `conflict.resolve`, S30), con
-//! gli stessi controlli del `CliBackend`.
+//! Conflict editor on the [`MemoryBackend`] (`conflict.show`, `conflict.resolve`, S30), with
+//! the same checks as the `CliBackend`.
 //!
-//! Le voci `u` dello stato (da [`merge_three_way`](MemoryBackend::merge_three_way) o
-//! [`set_entries`](MemoryBackend::set_entries)) hanno gli id dei tre stadi; i contenuti sono nei
-//! blob. Il backup del worktree è un commit senza genitori con il solo file, nello store dei
-//! backup dei commit (come gli altri ref `refs/project/backup/...`).
+//! The `u` entries of the status (from [`merge_three_way`](MemoryBackend::merge_three_way) or
+//! [`set_entries`](MemoryBackend::set_entries)) have the ids of the three stages; the contents are in the
+//! blobs. The worktree backup is a commit without parents with just the file, in the store of
+//! commit backups (like the other `refs/project/backup/...` refs).
 
 use super::{MemoryBackend, commit::Tree};
 use crate::EngineError;
@@ -14,11 +14,11 @@ use crate::git::{
 };
 use project_domain::{Commit, EntryKind, Oid, RepoPath, Signature};
 
-/// Modo di un file normale, per un file che il worktree non aveva.
+/// Mode of a normal file, for a file the worktree did not have.
 const FILE_MODE: u32 = 0o100644;
 
 impl MemoryBackend {
-    /// Il contenuto di uno stadio: `None` se manca (modo 0).
+    /// The content of a stage: `None` if missing (mode 0).
     fn stage_blob(&self, mode: u32, oid: Oid) -> Result<Option<Vec<u8>>, EngineError> {
         if mode == 0 {
             return Ok(None);
@@ -27,9 +27,9 @@ impl MemoryBackend {
             .get(&oid)
             .cloned()
             .map(Some)
-            .ok_or_else(|| EngineError::Git {
+            .ok_or_else(|| EngineError::GitWithReason {
                 command: "cat-file".to_owned(),
-                stderr: format!("fatal: blob sconosciuto {oid}"),
+                reason: msg!("engine-memory-unknown-blob", oid = oid),
             })
     }
 
@@ -48,7 +48,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::resolve_conflict`]. Un errore non cambia niente.
+    /// [`GitBackend::resolve_conflict`]. An error changes nothing.
     pub(super) fn resolve_file(
         &mut self,
         request: &ConflictResolution,
@@ -57,14 +57,14 @@ impl MemoryBackend {
         let status = self.status()?;
         let info = check_conflict("conflict.resolve", &status, path)?.clone();
         let current = self.worktree.get(path).cloned();
-        check_digest(path, &request.digest, current.as_deref(), "")?;
+        check_digest(path, &request.digest, current.as_deref())?;
 
         let mut work = self.clone();
         let backup = match current {
             Some(bytes) => Some(work.conflict_backup(path, info.mode_worktree, bytes)?),
             None => None,
         };
-        // Il file nuovo nel worktree, e il suo modo nella voce `u` che lo stage legge.
+        // The new file in the worktree, and its mode in the `u` entry that the stage reads.
         let mode = match &request.content {
             Some(content) => {
                 work.worktree.insert(path.clone(), content.clone());
@@ -94,7 +94,7 @@ impl MemoryBackend {
         })
     }
 
-    /// Il backup dei byte del worktree di `path`: un commit senza genitori con il solo file.
+    /// The backup of the worktree bytes of `path`: a commit without parents with just the file.
     fn conflict_backup(
         &mut self,
         path: &RepoPath,
@@ -104,7 +104,8 @@ impl MemoryBackend {
         let mode = if mode == 0 { FILE_MODE } else { mode };
         let blob = self.store_blob(bytes);
         let tree: Tree = [(path.clone(), (mode, blob))].into_iter().collect();
-        let message = format!("project: backup del worktree prima di conflict.resolve\n\n{path}\n");
+        let message =
+            format!("project: backup of the worktree before conflict.resolve\n\n{path}\n");
         let sig = Signature {
             name: "Project".to_owned(),
             email: "backup@project.invalid".to_owned(),

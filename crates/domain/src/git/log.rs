@@ -1,38 +1,38 @@
-//! Parser dell'output di `git log` nel formato a campi fissi separati da NUL.
+//! Parser for the output of `git log` in the fixed-field format separated by NULs.
 //!
-//! # Formato
+//! # Format
 //!
-//! Ogni commit è scritto come [`LOG_FIELDS`] campi, ciascuno **terminato** da un NUL:
+//! Each commit is written as [`LOG_FIELDS`] fields, each **terminated** by a NUL:
 //!
 //! ```text
 //! %H \0 %P \0 %an \0 %ae \0 %ad \0 %cn \0 %ce \0 %cd \0 %s \0 %b \0
 //! ```
 //!
-//! Comportamento verificato con git 2.43:
+//! Behavior verified with git 2.43:
 //!
-//! - nel formato i primi nove campi sono separati da `%x00`; il decimo NUL lo mette `-z`, che con
-//!   `tformat:` (il default di `--format=`) **termina** ogni record, ultimo compreso. L'output
-//!   quindi finisce sempre con un NUL, e un log senza commit è vuoto (zero byte). Con `format:`
-//!   invece `-z` separa i record e l'ultimo non ha il NUL finale: per questo [`LOG_ARGS`] usa
-//!   `tformat:` in modo esplicito;
-//! - `%P` sono i genitori separati da uno spazio; è vuoto per un commit radice;
-//! - `%ad` e `%cd` con `--date=raw` sono `<secondi> <+hhmm|-hhmm>`: a differenza di `%at`/`%ct`
-//!   portano anche il fuso orario di chi ha firmato;
-//! - `%s` è il primo paragrafo del messaggio con le righe unite da uno spazio (come in
-//!   `git log --oneline`); `%b` è il resto, senza le righe vuote iniziali. `%b` è vuoto se il
-//!   messaggio ha solo l'oggetto, altrimenti termina con `\n` (e con `--cleanup=verbatim` può
-//!   terminare con più `\n`): il parser toglie gli a capo finali;
-//! - un messaggio, un nome o un'email non possono contenere NUL, quindi contare i campi è
-//!   univoco anche quando il corpo è vuoto o contiene righe vuote;
-//! - `%an`/`%ae` sono i valori scritti nel commit, senza `.mailmap` (quelli sarebbero `%aN`/`%aE`);
-//! - con `--encoding=UTF-8` git converte in UTF-8 i commit che dichiarano un'altra codifica
-//!   (intestazione `encoding`); i commit senza intestazione passano così come sono e possono
-//!   contenere byte non UTF-8, che qui diventano `U+FFFD` con `from_utf8_lossy`.
+//! - in the format the first nine fields are separated by `%x00`; the tenth NUL is added by `-z`, which with
+//!   `tformat:` (the default of `--format=`) **terminates** every record, the last included. The output
+//!   therefore always ends with a NUL, and a log without commits is empty (zero bytes). With `format:`
+//!   instead `-z` separates the records and the last has no final NUL: this is why [`LOG_ARGS`] uses
+//!   `tformat:` explicitly;
+//! - `%P` are the parents separated by a space; it is empty for a root commit;
+//! - `%ad` and `%cd` with `--date=raw` are `<seconds> <+hhmm|-hhmm>`: unlike `%at`/`%ct`
+//!   they also carry the time zone of the signer;
+//! - `%s` is the first paragraph of the message with lines joined by a space (as in
+//!   `git log --oneline`); `%b` is the rest, without the leading blank lines. `%b` is empty if the
+//!   message has only the subject, otherwise it ends with `\n` (and with `--cleanup=verbatim` it may
+//!   end with several `\n`): the parser strips the trailing newlines;
+//! - a message, a name or an email cannot contain NUL, so counting the fields is
+//!   unambiguous even when the body is empty or contains blank lines;
+//! - `%an`/`%ae` are the values written in the commit, without `.mailmap` (those would be `%aN`/`%aE`);
+//! - with `--encoding=UTF-8` git converts to UTF-8 the commits that declare another encoding
+//!   (`encoding` header); commits without the header pass through as they are and may
+//!   contain non-UTF-8 bytes, which here become `U+FFFD` with `from_utf8_lossy`.
 
 use super::{Commit, Oid, Signature};
 use crate::DomainError;
 
-/// Numero di campi per commit nel formato [`LOG_FORMAT`].
+/// Number of fields per commit in the [`LOG_FORMAT`] format.
 pub const LOG_FIELDS: usize = 10;
 
 macro_rules! log_format {
@@ -41,20 +41,20 @@ macro_rules! log_format {
     };
 }
 
-/// La stringa di formato letta da [`parse_log`]. Da sola non basta: va usata con gli altri
-/// argomenti di [`LOG_ARGS`], che la contiene già.
+/// The format string read by [`parse_log`]. On its own it is not enough: it must be used with the other
+/// arguments of [`LOG_ARGS`], which already contains it.
 pub const LOG_FORMAT: &str = log_format!();
 
-/// Argomenti obbligatori di `git log` per produrre l'input di [`parse_log`]. Chi chiama aggiunge
-/// solo l'ordine (es. `--topo-order`), i limiti (es. `--max-count`) e il range; non vanno
-/// aggiunte opzioni che cambiano l'output, come `--graph`, `--stat` o `--patch`.
+/// Mandatory arguments of `git log` to produce the input of [`parse_log`]. The caller adds
+/// only the order (e.g. `--topo-order`), the limits (e.g. `--max-count`) and the range; options that
+/// change the output must not be added, such as `--graph`, `--stat` or `--patch`.
 ///
-/// - `-z`: NUL alla fine di ogni record;
-/// - `--date=raw`: `%ad`/`%cd` con secondi e fuso orario;
-/// - `--encoding=UTF-8`: messaggi in UTF-8 qualunque sia `i18n.logOutputEncoding`;
-/// - `--no-show-signature`: niente output di gpg in mezzo ai record con `log.showSignature`;
-/// - `--no-color`: niente sequenze di colore;
-/// - `--format=tformat:...`: [`LOG_FORMAT`] con il NUL finale anche sull'ultimo record.
+/// - `-z`: NUL at the end of every record;
+/// - `--date=raw`: `%ad`/`%cd` with seconds and time zone;
+/// - `--encoding=UTF-8`: messages in UTF-8 whatever `i18n.logOutputEncoding` is;
+/// - `--no-show-signature`: no gpg output between records with `log.showSignature`;
+/// - `--no-color`: no color sequences;
+/// - `--format=tformat:...`: [`LOG_FORMAT`] with the final NUL also on the last record.
 pub const LOG_ARGS: &[&str] = &[
     "-z",
     "--date=raw",
@@ -64,32 +64,32 @@ pub const LOG_ARGS: &[&str] = &[
     concat!("--format=tformat:", log_format!()),
 ];
 
-/// Nomi dei campi, per i messaggi di errore.
+/// Names of the fields, for error messages.
 const FIELD_NAMES: [&str; LOG_FIELDS] = [
     "id (%H)",
-    "genitori (%P)",
-    "nome dell'autore (%an)",
-    "email dell'autore (%ae)",
-    "data dell'autore (%ad)",
-    "nome del committer (%cn)",
-    "email del committer (%ce)",
-    "data del committer (%cd)",
-    "oggetto (%s)",
-    "corpo (%b)",
+    "parents (%P)",
+    "author name (%an)",
+    "author email (%ae)",
+    "author date (%ad)",
+    "committer name (%cn)",
+    "committer email (%ce)",
+    "committer date (%cd)",
+    "subject (%s)",
+    "body (%b)",
 ];
 
-/// Legge l'output di `git log` prodotto con [`LOG_ARGS`], nell'ordine in cui git lo ha scritto.
+/// Reads the output of `git log` produced with [`LOG_ARGS`], in the order git wrote it.
 ///
-/// Un input vuoto dà un vettore vuoto. Un input che non termina con NUL, che ha un numero di
-/// campi non multiplo di [`LOG_FIELDS`] o con id, genitori o date non validi dà
-/// [`DomainError::InvalidGitOutput`], con il numero del commit (da 1) e il campo coinvolto.
+/// An empty input gives an empty vector. An input that does not end with NUL, that has a number of
+/// fields not a multiple of [`LOG_FIELDS`] or with invalid ids, parents or dates gives
+/// [`DomainError::InvalidGitOutput`], with the commit number (from 1) and the field involved.
 pub fn parse_log(input: &[u8]) -> Result<Vec<Commit>, DomainError> {
     if input.is_empty() {
         return Ok(Vec::new());
     }
     let Some(body) = input.strip_suffix(b"\0") else {
         return Err(invalid(
-            "l'output non termina con NUL: è troncato o non è stato prodotto con `-z` e \
+            "the output does not end with NUL: it is truncated or was not produced with `-z` and \
              `--format=tformat:`"
                 .to_owned(),
         ));
@@ -98,7 +98,7 @@ pub fn parse_log(input: &[u8]) -> Result<Vec<Commit>, DomainError> {
     let (records, rest) = fields.as_chunks::<LOG_FIELDS>();
     if !rest.is_empty() {
         return Err(invalid(format!(
-            "il commit n. {} ha {} campi invece di {LOG_FIELDS}: il formato non è quello di \
+            "commit {} has {} fields instead of {LOG_FIELDS}: the format is not that of \
              `LOG_FORMAT`",
             records.len() + 1,
             rest.len()
@@ -113,15 +113,12 @@ pub fn parse_log(input: &[u8]) -> Result<Vec<Commit>, DomainError> {
 
 fn parse_record(n: usize, f: &[&[u8]; LOG_FIELDS]) -> Result<Commit, DomainError> {
     let field_err = |idx: usize, reason: String| {
-        invalid(format!(
-            "commit n. {n}, campo {}: {reason}",
-            FIELD_NAMES[idx]
-        ))
+        invalid(format!("commit {n}, field {}: {reason}", FIELD_NAMES[idx]))
     };
     let oid = |idx: usize, hex: &[u8]| {
         Oid::from_hex(hex).map_err(|e| match e {
             DomainError::InvalidOid { input, reason } => {
-                field_err(idx, format!("`{input}` non è un id valido ({reason})"))
+                field_err(idx, format!("`{input}` is not a valid id ({reason})"))
             }
             other => other,
         })
@@ -156,38 +153,38 @@ fn parse_record(n: usize, f: &[&[u8]; LOG_FIELDS]) -> Result<Commit, DomainError
     })
 }
 
-/// Legge una data `--date=raw`: `<secondi> <segno><hh><mm>`, es. `1700000000 -0530`.
-/// Restituisce i secondi e il fuso in minuti (`-330` nell'esempio).
+/// Reads a `--date=raw` date: `<seconds> <sign><hh><mm>`, e.g. `1700000000 -0530`.
+/// Returns the seconds and the time zone in minutes (`-330` in the example).
 fn parse_raw_date(raw: &[u8]) -> Result<(i64, i32), String> {
     let shown = || String::from_utf8_lossy(raw).into_owned();
-    let bad = |what: &str| format!("data `{}` non valida: {what}", shown());
+    let bad = |what: &str| format!("invalid date `{}`: {what}", shown());
     let Some(space) = raw.iter().position(|&b| b == b' ') else {
         return Err(bad(
-            "manca il fuso orario (formato atteso `<secondi> <+hhmm>`)",
+            "missing time zone (expected format `<seconds> <+hhmm>`)",
         ));
     };
     let (secs, tz) = (&raw[..space], &raw[space + 1..]);
     let time = parse_digits(secs)
         .and_then(|v| i64::try_from(v).ok())
-        .ok_or_else(|| bad("i secondi devono essere un numero intero non negativo"))?;
+        .ok_or_else(|| bad("the seconds must be a non-negative integer"))?;
     let sign = match tz.first() {
         Some(b'+') => 1,
         Some(b'-') => -1,
-        _ => return Err(bad("il fuso orario deve iniziare con `+` o `-`")),
+        _ => return Err(bad("the time zone must start with `+` or `-`")),
     };
     let hhmm = &tz[1..];
     if hhmm.len() != 4 {
-        return Err(bad("il fuso orario deve avere quattro cifre (`+hhmm`)"));
+        return Err(bad("the time zone must have four digits (`+hhmm`)"));
     }
     let (hh, mm) = hhmm.split_at(2);
-    let hours = parse_digits(hh).ok_or_else(|| bad("ore del fuso non numeriche"))?;
-    let minutes = parse_digits(mm).ok_or_else(|| bad("minuti del fuso non numerici"))?;
-    // Al massimo 99 * 60 + 99: sta sempre in un i32.
+    let hours = parse_digits(hh).ok_or_else(|| bad("non-numeric time zone hours"))?;
+    let minutes = parse_digits(mm).ok_or_else(|| bad("non-numeric time zone minutes"))?;
+    // At most 99 * 60 + 99: always fits in an i32.
     let offset = i32::try_from(hours * 60 + minutes).unwrap_or(i32::MAX);
     Ok((time, sign * offset))
 }
 
-/// Cifre decimali ASCII (almeno una) in un `u64`; `None` se vuoto, non numerico o troppo grande.
+/// ASCII decimal digits (at least one) into a `u64`; `None` if empty, non-numeric or too large.
 pub(super) fn parse_digits(s: &[u8]) -> Option<u64> {
     if s.is_empty() {
         return None;

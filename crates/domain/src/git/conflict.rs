@@ -1,53 +1,53 @@
-//! Parser dei marcatori di conflitto nel file del worktree e risoluzione dei blocchi.
+//! Parser of conflict markers in the worktree file and resolution of the blocks.
 //!
-//! [`parse_conflicts`] divide i byte del file in testo comune e blocchi di conflitto
-//! ([`ConflictText`]); [`resolve_block`] e [`resolve_all`] sostituiscono uno o tutti i blocchi
-//! con la versione scelta ([`Choice`]). Tutto lavora sui byte: niente si perde se il file non è
+//! [`parse_conflicts`] splits the bytes of the file into common text and conflict blocks
+//! ([`ConflictText`]); [`resolve_block`] and [`resolve_all`] replace one or all the blocks
+//! with the chosen version ([`Choice`]). Everything works on bytes: nothing is lost if the file is not
 //! UTF-8.
 //!
-//! # Marcatori
+//! # Markers
 //!
-//! Un marcatore sta a inizio riga ed è fatto di esattamente `marker_size` caratteri uguali
-//! (7 per default, attributo `conflict-marker-size`), seguiti da fine riga o da uno spazio e
-//! un'etichetta:
+//! A marker is at the start of a line and is made of exactly `marker_size` equal characters
+//! (7 by default, `conflict-marker-size` attribute), followed by end of line or by a space and
+//! a label:
 //!
 //! ```text
-//! <<<<<<< nostra        inizio, etichetta del lato nostro (es. `HEAD`)
-//! righe nostre
-//! ||||||| base          solo con `merge.conflictStyle=diff3`/`zdiff3`
-//! righe della base
+//! <<<<<<< ours          start, label of our side (e.g. `HEAD`)
+//! our lines
+//! ||||||| base          only with `merge.conflictStyle=diff3`/`zdiff3`
+//! base lines
 //! =======
-//! righe loro
-//! >>>>>>> loro          fine, etichetta del lato loro (es. il branch unito)
+//! their lines
+//! >>>>>>> theirs        end, label of their side (e.g. the merged branch)
 //! ```
 //!
-//! - Una riga con più caratteri (`<<<<<<<<` con `marker_size` 7) o con altro dopo i caratteri
-//!   senza spazio (`=======x`) è testo.
-//! - A capo `\n` o `\r\n`, conservati com'erano; l'ultima riga può non avere a capo.
-//! - Fuori da un blocco, una riga che sembra un marcatore di mezzo o di fine (`|||||||`,
-//!   `=======`, `>>>>>>>`) è testo comune: può essere un titolo setext di Markdown o una riga
-//!   qualsiasi di un file vero.
-//! - Dentro un blocco i marcatori devono venire nell'ordine `<` (`|`) `=` `>`: un marcatore fuori
-//!   ordine (un secondo `<<<<<<<`, `>>>>>>>` prima di `=======`, ...) o un blocco non chiuso a
-//!   fine file danno [`DomainError::InvalidConflict`]. In quel caso l'editor mostra le tre
-//!   versioni e il file com'è, senza blocchi.
+//! - A line with more characters (`<<<<<<<<` with `marker_size` 7) or with anything after the characters
+//!   without a space (`=======x`) is text.
+//! - Line endings `\n` or `\r\n`, preserved as they were; the last line may have no newline.
+//! - Outside a block, a line that looks like a middle or end marker (`|||||||`,
+//!   `=======`, `>>>>>>>`) is plain text: it may be a Markdown setext heading or any
+//!   line of a real file.
+//! - Inside a block the markers must come in the order `<` (`|`) `=` `>`: an out-of-order
+//!   marker (a second `<<<<<<<`, `>>>>>>>` before `=======`, ...) or a block left unclosed at
+//!   the end of the file gives [`DomainError::InvalidConflict`]. In that case the editor shows the three
+//!   versions and the file as it is, without blocks.
 
 use crate::DomainError;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-/// Il file del worktree diviso in testo comune e blocchi di conflitto, nell'ordine del file.
+/// The worktree file split into common text and conflict blocks, in file order.
 ///
-/// Concatenare i segmenti, con ogni blocco sostituito dai byte del testo nel suo
-/// [`ConflictBlock::range`], ridà il file.
+/// Concatenating the segments, with each block replaced by the bytes of the text in its
+/// [`ConflictBlock::range`], gives back the file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ConflictText {
     pub segments: Vec<Segment>,
 }
 
 impl ConflictText {
-    /// I blocchi di conflitto, nell'ordine del file. L'indice di un blocco qui è quello da
-    /// passare a [`resolve_block`].
+    /// The conflict blocks, in file order. The index of a block here is the one to
+    /// pass to [`resolve_block`].
     pub fn blocks(&self) -> impl Iterator<Item = &ConflictBlock> {
         self.segments.iter().filter_map(|s| match s {
             Segment::Conflict(block) => Some(block),
@@ -55,68 +55,68 @@ impl ConflictText {
         })
     }
 
-    /// Numero di blocchi di conflitto.
+    /// Number of conflict blocks.
     pub fn block_count(&self) -> usize {
         self.blocks().count()
     }
 }
 
-/// Un pezzo del file.
+/// A piece of the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Segment {
-    /// Byte fuori dai blocchi, a capo compresi. Mai vuoto.
+    /// Bytes outside the blocks, newlines included. Never empty.
     Common(Vec<u8>),
     Conflict(ConflictBlock),
 }
 
-/// Un blocco `<<<<<<<` ... `>>>>>>>`.
+/// A `<<<<<<<` ... `>>>>>>>` block.
 ///
-/// Le parti sono i byte delle righe fra i marcatori, a capo compresi (vuote se il lato non ha
-/// righe); le etichette sono il testo dopo il marcatore senza lo spazio iniziale e senza l'a
-/// capo, vuote se mancano.
+/// The parts are the bytes of the lines between the markers, newlines included (empty if the side has no
+/// lines); the labels are the text after the marker without the leading space and without the
+/// newline, empty if missing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConflictBlock {
     pub ours: Vec<u8>,
-    /// Le righe fra `|||||||` e `=======`; `None` se il blocco non ha il marcatore della base
-    /// (stile `merge`).
+    /// The lines between `|||||||` and `=======`; `None` if the block has no base marker
+    /// (`merge` style).
     pub base: Option<Vec<u8>>,
     pub theirs: Vec<u8>,
     pub ours_label: Vec<u8>,
-    /// Vuota anche se il blocco non ha la base.
+    /// Empty also if the block has no base.
     pub base_label: Vec<u8>,
     pub theirs_label: Vec<u8>,
-    /// Intervallo di byte del blocco nel testo letto, dal `<` iniziale all'a capo del marcatore
-    /// `>>>>>>>` compreso (o alla fine del testo se quella riga non ha a capo).
+    /// Byte range of the block in the text read, from the initial `<` to the newline of the
+    /// `>>>>>>>` marker included (or to the end of the text if that line has no newline).
     pub range: Range<usize>,
 }
 
-/// Con che cosa sostituire un blocco. In JSON: `"ours"`, `"theirs"`, `"base"`,
+/// What to replace a block with. In JSON: `"ours"`, `"theirs"`, `"base"`,
 /// `"ours_then_theirs"`, `"theirs_then_ours"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Choice {
-    /// Le righe nostre.
+    /// Our lines.
     Ours,
-    /// Le righe loro.
+    /// Their lines.
     Theirs,
-    /// Le righe della base: solo per un blocco che la ha (stile `diff3`/`zdiff3`).
+    /// The base lines: only for a block that has one (`diff3`/`zdiff3` style).
     Base,
-    /// Le nostre e poi le loro.
+    /// Ours and then theirs.
     OursThenTheirs,
-    /// Le loro e poi le nostre.
+    /// Theirs and then ours.
     TheirsThenOurs,
 }
 
 impl ConflictBlock {
-    /// I byte che sostituiscono il blocco con la scelta data.
+    /// The bytes that replace the block with the given choice.
     ///
-    /// [`Choice::Base`] su un blocco senza base dà [`DomainError::InvalidConflict`].
+    /// [`Choice::Base`] on a block without a base gives [`DomainError::InvalidConflict`].
     pub fn resolved(&self, choice: Choice) -> Result<Vec<u8>, DomainError> {
         Ok(match choice {
             Choice::Ours => self.ours.clone(),
             Choice::Theirs => self.theirs.clone(),
             Choice::Base => self.base.clone().ok_or_else(|| invalid(
-                "il blocco non ha la versione base (serve `merge.conflictStyle=diff3` o `zdiff3`)",
+                "the block has no base version (`merge.conflictStyle=diff3` or `zdiff3` is needed)",
             ))?,
             Choice::OursThenTheirs => [self.ours.as_slice(), &self.theirs].concat(),
             Choice::TheirsThenOurs => [self.theirs.as_slice(), &self.ours].concat(),
@@ -124,7 +124,7 @@ impl ConflictBlock {
     }
 }
 
-/// Il tipo di marcatore, dal suo carattere.
+/// The kind of marker, from its character.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Marker {
     Start,
@@ -144,7 +144,7 @@ impl Marker {
     }
 }
 
-/// Se la riga (senza a capo) è un marcatore, il suo tipo e l'etichetta.
+/// If the line (without newline) is a marker, its kind and label.
 fn marker(line: &[u8], size: usize) -> Option<(Marker, &[u8])> {
     let kind = match line.first()? {
         b'<' => Marker::Start,
@@ -164,7 +164,7 @@ fn marker(line: &[u8], size: usize) -> Option<(Marker, &[u8])> {
     }
 }
 
-/// La riga senza `\n` o `\r\n` finale.
+/// The line without the trailing `\n` or `\r\n`.
 fn strip_eol(line: &[u8]) -> &[u8] {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     line.strip_suffix(b"\r").unwrap_or(line)
@@ -176,7 +176,7 @@ fn invalid(reason: impl Into<String>) -> DomainError {
     }
 }
 
-/// Dove si trova il parser dentro un blocco aperto.
+/// Where the parser is inside an open block.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Part {
     Ours,
@@ -184,20 +184,20 @@ enum Part {
     Theirs,
 }
 
-/// Divide il file del worktree in testo comune e blocchi di conflitto.
+/// Splits the worktree file into common text and conflict blocks.
 ///
-/// `marker_size` è la lunghezza dei marcatori (7, o l'attributo `conflict-marker-size` del
-/// file); deve essere almeno 1. Un blocco non chiuso o con i marcatori fuori ordine dà
-/// [`DomainError::InvalidConflict`] con il numero della riga (da 1). Un file senza blocchi dà
-/// un solo [`Segment::Common`] (nessuno se è vuoto).
+/// `marker_size` is the length of the markers (7, or the `conflict-marker-size` attribute of the
+/// file); it must be at least 1. A block left unclosed or with out-of-order markers gives
+/// [`DomainError::InvalidConflict`] with the line number (from 1). A file without blocks gives
+/// a single [`Segment::Common`] (none if it is empty).
 pub fn parse_conflicts(text: &[u8], marker_size: usize) -> Result<ConflictText, DomainError> {
     if marker_size == 0 {
-        return Err(invalid("la lunghezza dei marcatori deve essere almeno 1"));
+        return Err(invalid("the marker length must be at least 1"));
     }
     let mut segments = Vec::new();
-    // Inizio del testo comune non ancora salvato.
+    // Start of the common text not yet saved.
     let mut common_start = 0;
-    // Il blocco aperto, la parte in cui siamo e la riga del suo `<<<<<<<`.
+    // The open block, the part we are in and the line of its `<<<<<<<`.
     let mut open: Option<(ConflictBlock, Part, usize)> = None;
     let mut offset = 0;
     for (index, line) in text.split_inclusive(|&b| b == b'\n').enumerate() {
@@ -221,7 +221,7 @@ pub fn parse_conflicts(text: &[u8], marker_size: usize) -> Result<ConflictText, 
                 };
                 open = Some((block, Part::Ours, number));
             }
-            // Fuori da un blocco ogni altra riga, anche se sembra un marcatore, è testo.
+            // Outside a block every other line, even if it looks like a marker, is text.
             continue;
         };
         let next = match (part, found) {
@@ -249,13 +249,13 @@ pub fn parse_conflicts(text: &[u8], marker_size: usize) -> Result<ConflictText, 
             }
             (_, Some((kind, _))) => {
                 let expected = match part {
-                    Part::Ours => "`|||||||` o `=======`",
+                    Part::Ours => "`|||||||` or `=======`",
                     Part::Base => "`=======`",
                     Part::Theirs => "`>>>>>>>`",
                 };
                 return Err(invalid(format!(
-                    "marcatore `{}` fuori ordine alla riga {number} nel blocco aperto alla riga \
-                     {opened_at}: atteso {expected}",
+                    "marker `{}` out of order at line {number} in the block opened at line \
+                     {opened_at}: expected {expected}",
                     kind.text()
                 )));
             }
@@ -264,7 +264,7 @@ pub fn parse_conflicts(text: &[u8], marker_size: usize) -> Result<ConflictText, 
     }
     if let Some((_, _, opened_at)) = open {
         return Err(invalid(format!(
-            "il blocco aperto alla riga {opened_at} non è chiuso da `>>>>>>>`"
+            "the block opened at line {opened_at} is not closed by `>>>>>>>`"
         )));
     }
     if common_start < text.len() {
@@ -273,11 +273,11 @@ pub fn parse_conflicts(text: &[u8], marker_size: usize) -> Result<ConflictText, 
     Ok(ConflictText { segments })
 }
 
-/// Il testo con il blocco numero `index` (da 0, in [`ConflictText::blocks`]) sostituito dalla
-/// scelta; gli altri blocchi, risolti o no, restano come sono.
+/// The text with block number `index` (from 0, in [`ConflictText::blocks`]) replaced by the
+/// choice; the other blocks, resolved or not, stay as they are.
 ///
-/// `text` deve essere quello letto da [`parse_conflicts`] per ottenere `parsed`: un indice
-/// inesistente, o un intervallo che non sta nel testo, dà [`DomainError::InvalidConflict`].
+/// `text` must be the one read by [`parse_conflicts`] to obtain `parsed`: a nonexistent
+/// index, or a range that does not fit in the text, gives [`DomainError::InvalidConflict`].
 pub fn resolve_block(
     text: &[u8],
     parsed: &ConflictText,
@@ -287,16 +287,16 @@ pub fn resolve_block(
     let count = parsed.block_count();
     let block = parsed.blocks().nth(index).ok_or_else(|| {
         invalid(format!(
-            "il blocco {index} non esiste: il file ha {count} blocchi di conflitto"
+            "block {index} does not exist: the file has {count} conflict blocks"
         ))
     })?;
     replace(text, [(block, choice)])
 }
 
-/// Il testo con tutti i blocchi sostituiti dalla stessa scelta.
+/// The text with all the blocks replaced by the same choice.
 ///
-/// Come per [`resolve_block`], `text` deve essere quello letto da [`parse_conflicts`]. Con
-/// [`Choice::Base`] serve che tutti i blocchi abbiano la base.
+/// As for [`resolve_block`], `text` must be the one read by [`parse_conflicts`]. With
+/// [`Choice::Base`] all the blocks need to have the base.
 pub fn resolve_all(
     text: &[u8],
     parsed: &ConflictText,
@@ -305,7 +305,7 @@ pub fn resolve_all(
     replace(text, parsed.blocks().map(|b| (b, choice)))
 }
 
-/// Copia `text` sostituendo gli intervalli dei blocchi dati (in ordine) con la loro scelta.
+/// Copies `text` replacing the ranges of the given blocks (in order) with their choice.
 fn replace<'a>(
     text: &[u8],
     blocks: impl IntoIterator<Item = (&'a ConflictBlock, Choice)>,
@@ -316,8 +316,8 @@ fn replace<'a>(
         let Range { start, end } = block.range.clone();
         if start < pos || end <= start || end > text.len() || text[start] != b'<' {
             return Err(invalid(format!(
-                "l'intervallo {start}..{end} del blocco non corrisponde al testo ({} byte): il \
-                 file è cambiato dopo la lettura?",
+                "the range {start}..{end} of the block does not match the text ({} bytes): did the \
+                 file change after it was read?",
                 text.len()
             )));
         }

@@ -1,10 +1,10 @@
-//! Test di `merge.start`, `merge.continue`, `merge.abort` e `repo.operation` sul
-//! `MemoryBackend` (con git vero: `crates/git/tests/merge.rs`).
+//! Tests of `merge.start`, `merge.continue`, `merge.abort` and `repo.operation` on the
+//! `MemoryBackend` (with real git: `crates/git/tests/merge.rs`).
 //!
-//! Il repo: `c1` (radice: `a.txt`, `b.txt`); `main` su `c2` (`a.txt` = «nostra»); `altro` su
-//! `c3` da `c1` (`a.txt` = «loro»: conflitto con `main`); `feat` su `c4` da `c1` (aggiunge
-//! `n.txt`: si unisce senza conflitti); `avanti` su `c5` da `c2` (aggiunge `c.txt`:
-//! fast-forward). HEAD su `main`, worktree pulito.
+//! The repo: `c1` (root: `a.txt`, `b.txt`); `main` at `c2` (`a.txt` = "ours"); `other` at
+//! `c3` from `c1` (`a.txt` = "theirs": conflict with `main`); `feat` at `c4` from `c1` (adds
+//! `n.txt`: merges without conflicts); `ahead` at `c5` from `c2` (adds `c.txt`:
+//! fast-forward). HEAD on `main`, clean worktree.
 
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
@@ -24,7 +24,7 @@ fn sig(n: i64) -> Signature {
     }
 }
 
-/// Un blob con `content` (id dal contenuto).
+/// A blob with `content` (id from the content).
 fn blob(repo: &mut MemoryBackend, content: &str) -> Oid {
     let hash = content.bytes().fold(1_469_598_103_934_665_603_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211)
@@ -34,8 +34,8 @@ fn blob(repo: &mut MemoryBackend, content: &str) -> Oid {
     id
 }
 
-/// Il commit `n` con genitore `parent` e i file `files` (percorso, contenuto prima se
-/// c'era, contenuto dopo).
+/// Commit `n` with parent `parent` and the files `files` (path, content before if
+/// there was any, content after).
 fn commit(
     repo: &mut MemoryBackend,
     n: u64,
@@ -89,15 +89,15 @@ fn repo() -> MemoryBackend {
         &mut repo,
         2,
         Some(1),
-        "nostra",
-        &[("a.txt", Some("base\n"), "nostra\n")],
+        "ours",
+        &[("a.txt", Some("base\n"), "ours\n")],
     );
     commit(
         &mut repo,
         3,
         Some(1),
-        "loro",
-        &[("a.txt", Some("base\n"), "loro\n")],
+        "theirs",
+        &[("a.txt", Some("base\n"), "theirs\n")],
     );
     commit(
         &mut repo,
@@ -106,11 +106,11 @@ fn repo() -> MemoryBackend {
         "nuovo",
         &[("n.txt", None, "nuovo\n")],
     );
-    commit(&mut repo, 5, Some(2), "avanti", &[("c.txt", None, "c\n")]);
+    commit(&mut repo, 5, Some(2), "ahead", &[("c.txt", None, "c\n")]);
     repo.set_branch("main", oid(2));
-    repo.set_branch("altro", oid(3));
+    repo.set_branch("other", oid(3));
     repo.set_branch("feat", oid(4));
-    repo.set_branch("avanti", oid(5));
+    repo.set_branch("ahead", oid(5));
     repo.set_head_branch("main");
     repo
 }
@@ -154,16 +154,16 @@ fn merge_commands_write() {
 #[test]
 fn fast_forward_and_undo() {
     let (r, mut s) = opened_with(repo());
-    let out = run(&r, &mut s, "merge.start", json!({ "rev": "avanti" }));
+    let out = run(&r, &mut s, "merge.start", json!({ "rev": "ahead" }));
     assert_eq!(out["strategy"], "fast_forward");
     assert_eq!(out["after"], oid(5).to_string());
     assert_eq!(out["in_progress"], false);
     assert_eq!(out["backup"], "refs/project/backup/merge-1");
     assert_eq!(out["source"]["kind"], "branch");
     assert_eq!(
-        out["next_undo"],
+        out["next_undo"]["text"],
         format!(
-            "Merge di avanti in `main` (fast-forward: da {} a {})",
+            "Merge of ahead into `main` (fast-forward: from {} to {})",
             &oid(2).to_string()[..7],
             &oid(5).to_string()[..7]
         )
@@ -175,7 +175,7 @@ fn fast_forward_and_undo() {
     run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(main_at(&r, &mut s), oid(5).to_string());
 
-    // Già contenuto: niente da fare, niente nel diario.
+    // Already contained: nothing to do, nothing in the journal.
     let out = run(&r, &mut s, "merge.start", json!({ "rev": "main" }));
     assert_eq!(out["strategy"], "up_to_date");
     assert_eq!(out["backup"], Value::Null);
@@ -205,23 +205,23 @@ fn merge_commit_without_conflicts() {
     assert_eq!(main_at(&r, &mut s), oid(2).to_string());
     assert_eq!(entries(&r, &mut s), 0);
 
-    // `no_ff` anche quando si potrebbe fare fast-forward; il messaggio scelto.
+    // `no_ff` even when a fast-forward would be possible; the chosen message.
     let out = run(
         &r,
         &mut s,
         "merge.start",
-        json!({ "rev": "avanti", "no_ff": true, "message": "Unisci avanti" }),
+        json!({ "rev": "ahead", "no_ff": true, "message": "Merge ahead" }),
     );
     assert_eq!(out["strategy"], "merge");
     let show = run(&r, &mut s, "commit.show", json!({ "id": out["after"] }));
-    assert_eq!(show["commit"]["summary"], "Unisci avanti");
+    assert_eq!(show["commit"]["summary"], "Merge ahead");
     assert_eq!(show["commit"]["parents"].as_array().unwrap().len(), 2);
 }
 
 #[test]
 fn conflict_stays_in_progress_then_continue() {
     let (r, mut s) = opened_with(repo());
-    let out = run(&r, &mut s, "merge.start", json!({ "rev": "altro" }));
+    let out = run(&r, &mut s, "merge.start", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], true);
     assert_eq!(out["conflicts"], json!(["a.txt"]));
     assert_eq!(out["after"], oid(2).to_string());
@@ -233,15 +233,15 @@ fn conflict_stays_in_progress_then_continue() {
     assert_eq!(op["operation"], "Merge");
     assert_eq!(op["conflicts"], json!(["a.txt"]));
     assert_eq!(op["incoming"][0]["id"], oid(3).to_string());
-    assert_eq!(op["incoming"][0]["label"], "altro");
-    assert_eq!(op["incoming"][0]["summary"], "loro");
-    assert_eq!(op["incoming"][0]["refs"], json!(["refs/heads/altro"]));
-    assert_eq!(op["message"], "Merge branch 'altro'");
+    assert_eq!(op["incoming"][0]["label"], "other");
+    assert_eq!(op["incoming"][0]["summary"], "theirs");
+    assert_eq!(op["incoming"][0]["refs"], json!(["refs/heads/other"]));
+    assert_eq!(op["message"], "Merge branch 'other'");
     assert_eq!(op["ready"], false);
     assert_eq!(op["continue"], "merge.continue");
     assert_eq!(op["abort"], "merge.abort");
 
-    // Durante il merge: undo, un altro merge e il commit con conflitti sono rifiutati.
+    // During the merge: undo, another merge and the commit with conflicts are refused.
     for (id, params) in [
         ("edit.undo", json!({})),
         ("merge.start", json!({ "rev": "feat" })),
@@ -253,12 +253,12 @@ fn conflict_stays_in_progress_then_continue() {
     let err = r.run("merge.continue", &mut s, json!({})).unwrap_err();
     assert!(err.to_string().contains("`a.txt`"), "{err}");
 
-    // Risolto (il contenuto del worktree, con i marcatori) e messo in stage: si conclude.
+    // Resolved (the worktree content, with the markers) and staged: it concludes.
     run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
     let op = run(&r, &mut s, "repo.operation", json!({}));
     assert_eq!(op["ready"], true);
     let out = run(&r, &mut s, "merge.continue", json!({}));
-    assert_eq!(out["message"], "Merge branch 'altro'");
+    assert_eq!(out["message"], "Merge branch 'other'");
     assert_eq!(
         out["commit"]["parents"],
         json!([oid(2).to_string(), oid(3).to_string()])
@@ -266,10 +266,10 @@ fn conflict_stays_in_progress_then_continue() {
     assert_eq!(out["status"]["operation"], Value::Null);
     assert_eq!(out["can_undo"], true);
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Merge di altro in `main` (commit di merge")
+            .starts_with("Merge of other into `main` (merge commit")
     );
     let op = run(&r, &mut s, "repo.operation", json!({}));
     assert_eq!(op["operation"], Value::Null);
@@ -282,7 +282,7 @@ fn conflict_stays_in_progress_then_continue() {
 #[test]
 fn commit_create_concludes_a_merge_too() {
     let (r, mut s) = opened_with(repo());
-    run(&r, &mut s, "merge.start", json!({ "rev": "altro" }));
+    run(&r, &mut s, "merge.start", json!({ "rev": "other" }));
     run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
     let out = run(
         &r,
@@ -300,9 +300,12 @@ fn abort_needs_confirm_and_saves_a_backup() {
     let err = r
         .run("merge.abort", &mut s, json!({ "confirm": true }))
         .unwrap_err();
-    assert!(err.to_string().contains("non c'è un merge"), "{err}");
+    assert!(
+        err.to_string().contains("a merge is not in progress"),
+        "{err}"
+    );
 
-    run(&r, &mut s, "merge.start", json!({ "rev": "altro" }));
+    run(&r, &mut s, "merge.start", json!({ "rev": "other" }));
     let err = r.run("merge.abort", &mut s, json!({})).unwrap_err();
     match err {
         EngineError::ConfirmRequired { reason, .. } => {
@@ -321,14 +324,14 @@ fn abort_needs_confirm_and_saves_a_backup() {
     assert_eq!(out["status"]["operation"], Value::Null);
     assert_eq!(out["status"]["entries"], json!([]));
     assert_eq!(out["can_undo"], false);
-    // Il backup ha la forma di uno stash (genitori HEAD e il commit dell'indice), con il file
-    // com'era (i marcatori).
+    // The backup has the shape of a stash (parents HEAD and the index commit), with the file
+    // as it was (the markers).
     let show = run(&r, &mut s, "commit.show", json!({ "id": out["backup"] }));
     assert_eq!(show["commit"]["parents"][0], oid(2).to_string());
     assert_eq!(show["commit"]["parents"].as_array().unwrap().len(), 2);
     assert_eq!(show["files"][0]["path"], "a.txt");
-    // Dopo l'annullamento il merge si può rifare.
-    let out = run(&r, &mut s, "merge.start", json!({ "rev": "altro" }));
+    // After the abort the merge can be redone.
+    let out = run(&r, &mut s, "merge.start", json!({ "rev": "other" }));
     assert_eq!(out["in_progress"], true);
 }
 
@@ -348,7 +351,7 @@ fn refusals() {
         );
     }
     let err = r
-        .run("merge.start", &mut s, json!({ "rev": "nessuno" }))
+        .run("merge.start", &mut s, json!({ "rev": "missing" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
     let err = r
@@ -360,19 +363,22 @@ fn refusals() {
         .unwrap_err();
     assert!(err.to_string().contains("ff_only"), "{err}");
     let err = r.run("merge.continue", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("non c'è un merge"), "{err}");
+    assert!(
+        err.to_string().contains("a merge is not in progress"),
+        "{err}"
+    );
 
-    // HEAD staccata.
+    // Detached HEAD.
     let mut detached = repo();
     detached.detach_head(oid(2));
     let (r, mut s) = opened_with(detached);
     let err = r
         .run("merge.start", &mut s, json!({ "rev": "feat" }))
         .unwrap_err();
-    assert!(err.to_string().contains("HEAD è staccata"), "{err}");
+    assert!(err.to_string().contains("HEAD is detached"), "{err}");
 
-    // Modifiche locali ai file tracciati: niente commit di merge; il fast-forward sì, se non
-    // tocca quei file.
+    // Local changes to tracked files: no merge commit; the fast-forward yes, if it does not
+    // touch those files.
     let mut dirty = repo();
     let (mode, b) = (0o100644, oid_of_b(&mut dirty));
     dirty.set_entries(vec![project_domain::StatusEntry {
@@ -395,7 +401,7 @@ fn refusals() {
         .unwrap_err();
     assert!(err.to_string().contains("`b.txt`"), "{err}");
     assert!(err.to_string().contains("autostash"), "{err}");
-    let out = run(&r, &mut s, "merge.start", json!({ "rev": "avanti" }));
+    let out = run(&r, &mut s, "merge.start", json!({ "rev": "ahead" }));
     assert_eq!(out["strategy"], "fast_forward");
     assert_eq!(entries(&r, &mut s), 1);
 }

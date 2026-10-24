@@ -1,4 +1,4 @@
-# Branch locali: creazione, checkout, eliminazione, rinomina (branch.rs, view/branches.rs).
+# Local branches: create, checkout, delete, rename (branch.rs, view/branches.rs).
 
 branch-start-commit = commit { $id }
 branch-create-label = Creazione del branch «{ $name }»
@@ -34,7 +34,7 @@ branch-deleted-config = Branch «{ $branch }» eliminato (era su { $id }{ $unmer
 branch-renamed = Branch «{ $previous }» rinominato in «{ $branch }». «Annulla» gli rimette il nome di prima
 branch-refs-warning = Fatto, ma i ref non si rileggono: { $error }
 
-# Dialoghi.
+# Dialogs.
 branch-new-title = Nuovo branch
 branch-create-button = Crea il branch
 branch-rename-title = Rinomina il branch

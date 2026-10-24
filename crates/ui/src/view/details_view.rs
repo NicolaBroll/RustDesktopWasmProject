@@ -4,10 +4,10 @@ pub(super) fn signer(sig: &Signature) -> String {
     format!("{} <{}>", sig.name, sig.email)
 }
 
-/// Pannello a destra: messaggio e metadati del commit selezionato, poi i file cambiati.
+/// Panel on the right: message and metadata of the selected commit, then the changed files.
 ///
-/// `selected` è il commit della lista: mentre `commit.show` lavora se ne mostrano subito
-/// messaggio e metadati, i file arrivano dopo. `open` è il file del diff aperto, evidenziato.
+/// `selected` is the commit of the list: while `commit.show` works its message
+/// and metadata are shown right away, the files arrive later. `open` is the file of the open diff, highlighted.
 pub(crate) fn details_panel(
     ui: &mut Ui,
     selected: Option<&Commit>,
@@ -23,7 +23,7 @@ pub(crate) fn details_panel(
         Shown::Loaded(details) => (Some(&details.commit), Some(details.compared_to)),
         Shown::Loading(id) | Shown::Failed(id, _) => (selected.filter(|c| c.id == *id), None),
     };
-    // Il messaggio può essere lungo: scorre da solo e lascia ai file almeno metà pannello.
+    // The message can be long: it scrolls on its own and leaves at least half the panel to the files.
     let max_header = (ui.available_height() * 0.5).max(120.0);
     egui::ScrollArea::vertical()
         .id_salt("dettagli-testa")
@@ -55,7 +55,7 @@ pub(crate) fn details_panel(
     }
 }
 
-/// Oggetto, corpo e metadati. `compared_to` è `None` finché `commit.show` non risponde.
+/// Subject, body and metadata. `compared_to` is `None` until `commit.show` answers.
 pub(super) fn commit_header(
     ui: &mut Ui,
     commit: &Commit,
@@ -143,11 +143,11 @@ pub(super) fn commit_header(
     ui.add_space(4.0);
 }
 
-/// Altezza di una riga della lista dei file.
+/// Height of a row of the file list.
 pub(super) const FILE_ROW_HEIGHT: f32 = 20.0;
 
-/// Elenco dei file cambiati del commit `commit`, virtualizzato: si disegnano solo le righe
-/// visibili. Un clic su un file ne apre il diff; il file del diff aperto (`open`) è evidenziato.
+/// List of the changed files of commit `commit`, virtualized: only the visible rows
+/// are drawn. A click on a file opens its diff; the file of the open diff (`open`) is highlighted.
 pub(super) fn changed_files(
     ui: &mut Ui,
     commit: Oid,
@@ -193,7 +193,7 @@ pub(super) fn changed_files(
                     Color32::from_gray(20),
                 );
 
-                // A destra: somiglianza e segno del sottomodulo.
+                // On the right: similarity and submodule marker.
                 let mut right = rect.right() - 4.0;
                 let mut tail = file_score(file);
                 if file.is_submodule() {

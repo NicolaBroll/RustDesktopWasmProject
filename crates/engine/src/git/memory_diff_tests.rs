@@ -1,4 +1,4 @@
-//! Test di `GitBackend::diff` su `MemoryBackend`.
+//! Tests of `GitBackend::diff` on `MemoryBackend`.
 
 use super::{DiffSpec, GitBackend, LogQuery, MemoryBackend};
 use crate::EngineError;
@@ -33,7 +33,7 @@ fn index() -> DiffSpec {
     DiffSpec::Index { path: None }
 }
 
-/// `(stato, percorso vecchio, percorso nuovo)` di ogni file.
+/// `(status, old path, new path)` of each file.
 fn summary(diff: &Diff) -> Vec<(Change, String, String)> {
     diff.files
         .iter()
@@ -45,17 +45,17 @@ fn file<'a>(diff: &'a Diff, path: &str) -> &'a FileDiff {
     diff.files
         .iter()
         .find(|f| f.new_path.to_str() == Some(path))
-        .unwrap_or_else(|| panic!("manca {path}"))
+        .unwrap_or_else(|| panic!("missing {path}"))
 }
 
-/// Il diff riscritto nel formato di git e riletto dal parser è identico: i campi sono quelli
-/// che darebbe `git diff`.
+/// The diff rewritten in git's format and reread by the parser is identical: the fields are those
+/// `git diff` would give.
 fn assert_round_trip(diff: &Diff) {
     assert_eq!(&parse_diff(&diff.to_patch()).unwrap(), diff);
 }
 
 #[test]
-fn ogni_commit_ha_i_file_di_commit_show_con_hunk() {
+fn every_commit_has_the_files_of_commit_show_with_hunks() {
     let repo = sample();
     let zero = Oid::from_bytes([0; Oid::LEN]);
     for c in repo.log(&LogQuery::all()).unwrap() {
@@ -73,7 +73,7 @@ fn ogni_commit_ha_i_file_di_commit_show_con_hunk() {
             assert_eq!(f.similarity, changed.score);
             assert_eq!(f.old_oid, Some(changed.old_oid));
             assert_eq!(f.new_oid, Some(changed.new_oid));
-            // Solo `.gitkeep` è vuoto: tutti gli altri file hanno righe.
+            // Only `.gitkeep` is empty: all the other files have lines.
             let empty = f.new_path.to_str() == Some(".gitkeep");
             assert_eq!(f.hunks.is_empty(), empty, "{}", f.new_path);
             match f.change {
@@ -93,14 +93,14 @@ fn ogni_commit_ha_i_file_di_commit_show_con_hunk() {
 }
 
 #[test]
-fn rinomina_con_modifiche_nel_commit_di_head() {
+fn rename_with_changes_in_the_head_commit() {
     let repo = sample();
     let diff = repo.diff(&commit("HEAD")).unwrap();
     let renamed = file(&diff, "src/bin/app.rs");
     assert_eq!(renamed.change, Change::Renamed);
     assert_eq!(renamed.old_path.to_str(), Some("src/main.rs"));
     assert_eq!(renamed.similarity, Some(92));
-    // Una riga cambiata e una aggiunta, con il contesto intorno.
+    // One changed line and one added, with the context around.
     assert_eq!(renamed.line_counts(), (2, 1));
     let hunk = &renamed.hunks[0];
     assert_eq!((hunk.old_start, hunk.new_start), (1, 1));
@@ -110,18 +110,12 @@ fn rinomina_con_modifiche_nel_commit_di_head() {
         .filter(|l| l.kind == LineKind::Removed)
         .map(|l| (l.old_line, l.content.to_string()))
         .collect();
-    assert_eq!(
-        removed,
-        [(Some(2), "// ultima modifica: commit 3".to_owned())]
-    );
+    assert_eq!(removed, [(Some(2), "// last change: commit 3".to_owned())]);
     let last = hunk.lines.last().unwrap();
     assert_eq!(last.kind, LineKind::Added);
-    assert_eq!(
-        last.content.to_str(),
-        Some("// riga aggiunta da: commit 12")
-    );
+    assert_eq!(last.content.to_str(), Some("// line added by: commit 12"));
 
-    // Chiesto per uno dei due percorsi, resta una rinomina.
+    // Asked for by one of the two paths, it stays a rename.
     for path in ["src/bin/app.rs", "src/main.rs"] {
         let only = repo.diff(&commit_path("HEAD", path)).unwrap();
         assert_eq!(only.files, std::slice::from_ref(renamed), "{path}");
@@ -129,12 +123,12 @@ fn rinomina_con_modifiche_nel_commit_di_head() {
 }
 
 #[test]
-fn merge_radice_e_file_vuoto() {
+fn merge_root_and_empty_file() {
     let repo = sample();
-    // Il merge porta il Cargo.toml di `feature/grafo`: il diff è quello del branch, a partire
-    // dal Cargo.toml del primo genitore.
+    // The merge brings the Cargo.toml of `feature/graph`: the diff is that of the branch, starting
+    // from the Cargo.toml of the first parent.
     let merge = repo.diff(&commit("v0.1.0")).unwrap();
-    let feature = repo.diff(&commit("feature/grafo")).unwrap();
+    let feature = repo.diff(&commit("feature/graph")).unwrap();
     let cargo = file(&merge, "Cargo.toml");
     assert_eq!(cargo.new_oid, file(&feature, "Cargo.toml").new_oid);
     assert_eq!(cargo.line_counts(), (2, 1));
@@ -152,14 +146,14 @@ fn merge_radice_e_file_vuoto() {
     assert_eq!(gitignore.hunks.len(), 1);
     assert_eq!(gitignore.hunks[0].old_count, 0);
     assert_eq!(gitignore.hunks[0].header(), b"@@ -0,0 +1,4 @@");
-    // Un file nuovo vuoto non ha hunk e non è binario, come in git.
+    // A new empty file has no hunks and is not binary, as in git.
     let gitkeep = file(&diff, ".gitkeep");
     assert!(gitkeep.hunks.is_empty() && !gitkeep.binary);
 
-    // Eliminato nel commit 3 (il terzo dal fondo del log).
+    // Deleted in commit 3 (the third from the bottom of the log).
     let structure = repo.log(&LogQuery::all()).unwrap();
     let structure = &structure[structure.len() - 3];
-    assert_eq!(structure.summary, "Struttura del progetto");
+    assert_eq!(structure.summary, "Project structure");
     let deleted = repo
         .diff(&commit_path(&structure.id.to_string(), ".gitkeep"))
         .unwrap();
@@ -171,7 +165,7 @@ fn merge_radice_e_file_vuoto() {
 }
 
 #[test]
-fn indice_e_worktree_coerenti_con_lo_stato() {
+fn index_and_worktree_consistent_with_the_status() {
     let repo = sample();
     let status = repo.status().unwrap();
     let info = |path: &str| match &status
@@ -192,8 +186,8 @@ fn indice_e_worktree_coerenti_con_lo_stato() {
             (Change::Modified, "README.md".into(), "README.md".into()),
             (
                 Change::Added,
-                "docs/guida.md".into(),
-                "docs/guida.md".into()
+                "docs/guide.md".into(),
+                "docs/guide.md".into()
             ),
         ]
     );
@@ -201,16 +195,16 @@ fn indice_e_worktree_coerenti_con_lo_stato() {
     assert_eq!(readme.old_oid, Some(info("README.md").oid_head));
     assert_eq!(readme.new_oid, Some(info("README.md").oid_index));
     assert_eq!(readme.line_counts(), (2, 1));
-    // HEAD ha il README del commit 6, l'ultimo che lo ha cambiato.
+    // HEAD has the README of commit 6, the last one that changed it.
     assert_eq!(
         readme.hunks[0].lines[1].content.to_str(),
-        Some("ultima modifica: commit 6")
+        Some("last change: commit 6")
     );
-    let guide = file(&staged, "docs/guida.md");
-    assert_eq!(guide.new_oid, Some(info("docs/guida.md").oid_index));
+    let guide = file(&staged, "docs/guide.md");
+    assert_eq!(guide.new_oid, Some(info("docs/guide.md").oid_index));
     assert!(!guide.hunks.is_empty());
 
-    // Il file non tracciato (`note.txt`) non compare.
+    // The untracked file (`note.txt`) does not appear.
     let unstaged = repo.diff(&worktree()).unwrap();
     assert_eq!(
         summary(&unstaged),
@@ -219,7 +213,7 @@ fn indice_e_worktree_coerenti_con_lo_stato() {
             (Change::Modified, "src/lib.rs".into(), "src/lib.rs".into()),
         ]
     );
-    // Il worktree parte dall'indice.
+    // The worktree starts from the index.
     let readme_wt = file(&unstaged, "README.md");
     assert_eq!(readme_wt.old_oid, Some(info("README.md").oid_index));
     let added: Vec<_> = readme_wt
@@ -232,8 +226,8 @@ fn indice_e_worktree_coerenti_con_lo_stato() {
     assert_eq!(
         added,
         [
-            "ultima modifica: modifica non in stage",
-            "riga aggiunta da: modifica non in stage"
+            "last change: unstaged change",
+            "line added by: unstaged change"
         ]
     );
     let lib = file(&unstaged, "src/lib.rs");
@@ -245,7 +239,7 @@ fn indice_e_worktree_coerenti_con_lo_stato() {
     assert_round_trip(&staged);
     assert_round_trip(&unstaged);
 
-    // Limitati a un file.
+    // Limited to a single file.
     let path = |p: &str| Some(RepoPath::from(p));
     let only = repo.diff(&DiffSpec::Index {
         path: path("README.md"),
@@ -255,14 +249,14 @@ fn indice_e_worktree_coerenti_con_lo_stato() {
         path: path("src/lib.rs"),
     });
     assert_eq!(only.unwrap().files, std::slice::from_ref(lib));
-    for p in ["note.txt", "src/lib.rs", "src", "nessuno"] {
+    for p in ["note.txt", "src/lib.rs", "src", "none"] {
         let none = repo.diff(&DiffSpec::Index { path: path(p) }).unwrap();
         assert!(none.files.is_empty(), "{p}");
     }
 }
 
 #[test]
-fn repo_vuoto_contenuto_sconosciuto_e_rev_sconosciuta() {
+fn empty_repo_unknown_content_and_unknown_rev() {
     let mut repo = MemoryBackend::new();
     assert_eq!(repo.diff(&worktree()).unwrap(), Diff::default());
     assert_eq!(repo.diff(&index()).unwrap(), Diff::default());
@@ -271,8 +265,8 @@ fn repo_vuoto_contenuto_sconosciuto_e_rev_sconosciuta() {
         Err(EngineError::UnknownRev(_))
     ));
 
-    // Branch senza commit: un file in stage è aggiunto rispetto all'albero vuoto. Senza il
-    // contenuto del blob il file compare come binario.
+    // Branch without commits: a staged file is added relative to the empty tree. Without the
+    // blob content the file shows up as binary.
     let blob = MemoryBackend::fake_oid(77);
     let entry = |path: &str| StatusEntry {
         path: RepoPath::from(path),
@@ -292,7 +286,7 @@ fn repo_vuoto_contenuto_sconosciuto_e_rev_sconosciuta() {
     assert_eq!(diff.files[0].change, Change::Added);
     assert!(diff.files[0].binary && diff.files[0].hunks.is_empty());
 
-    repo.set_blob(blob, "uno\ndue");
+    repo.set_blob(blob, "one\ntwo");
     let diff = repo.diff(&index()).unwrap();
     let f = &diff.files[0];
     assert!(!f.binary);
@@ -300,12 +294,12 @@ fn repo_vuoto_contenuto_sconosciuto_e_rev_sconosciuta() {
     assert!(f.hunks[0].lines[1].no_newline);
     assert_round_trip(&diff);
 
-    // Un NUL nel contenuto: binario, come per git.
+    // A NUL in the content: binary, as for git.
     repo.set_blob(blob, b"\0\x01".to_vec());
     assert!(repo.diff(&index()).unwrap().files[0].binary);
 
     let sample = sample();
-    for rev in ["nessuno", ""] {
+    for rev in ["none", ""] {
         let err = sample.diff(&commit(rev)).unwrap_err();
         assert!(
             matches!(err, EngineError::UnknownRev(ref r) if r == rev),

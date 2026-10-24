@@ -1,10 +1,10 @@
-//! Cherry-pick e revert di un commit (S31): `commit.cherry_pick`, `commit.revert`,
-//! `cherry_pick.continue`, `cherry_pick.abort`, `revert.continue`, `revert.abort`. Tipi e
-//! controlli comuni ai backend in `git/pick.rs`; contratto in `impl-docs/git/cherry-pick.md`.
+//! Cherry-pick and revert of a commit (S31): `commit.cherry_pick`, `commit.revert`,
+//! `cherry_pick.continue`, `cherry_pick.abort`, `revert.continue`, `revert.abort`. Types and
+//! checks common to the backends in `git/pick.rs`; contract in `impl-docs/git/cherry-pick.md`.
 //!
-//! Come il merge di S29: un'operazione conclusa (subito o con `*.continue`) entra nel diario e
-//! `edit.undo` la annulla con `reset --keep`; ferma in conflitto **resta in corso** e non entra
-//! nel diario; `*.abort` chiede sempre `"confirm": true` e prima salva indice e worktree.
+//! Like the merge of S29: a concluded operation (right away or with `*.continue`) enters the journal and
+//! `edit.undo` undoes it with `reset --keep`; stopped on a conflict it **stays in progress** and does not enter
+//! the journal; `*.abort` always asks for `"confirm": true` and first saves index and worktree.
 
 use super::merge::{abort_confirm, check_message, finish, label};
 use super::{Out, to_json};
@@ -18,18 +18,18 @@ use project_domain::Head;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Parametri di `commit.cherry_pick` e `commit.revert`.
+/// Parameters of `commit.cherry_pick` and `commit.revert`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StartParams {
-    /// Il commit: un id (anche abbreviato), un branch, un tag o un'altra rev.
+    /// The commit: an id (also abbreviated), a branch, a tag or another rev.
     rev: String,
-    /// Per un commit di merge: il genitore (da 1) rispetto a cui prendere le modifiche.
+    /// For a merge commit: the parent (from 1) relative to which to take the changes.
     #[serde(default)]
     mainline: Option<usize>,
 }
 
-/// Parametri di `*.continue`.
+/// Parameters of `*.continue`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContinueParams {
@@ -37,7 +37,7 @@ struct ContinueParams {
     message: Option<String>,
 }
 
-/// Parametri di `*.abort`.
+/// Parameters of `*.abort`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AbortParams {
@@ -69,23 +69,23 @@ pub(super) fn revert_abort(s: &mut Session, p: Value) -> Out {
     pick_abort(s, p, PickKind::Revert)
 }
 
-/// Applica (`commit.cherry_pick`) o annulla (`commit.revert`) il commit `rev` sul branch attivo
-/// con un commit nuovo: per il cherry-pick con l'autore e il messaggio originali, per il revert
-/// con `Revert "<oggetto>"` e `This reverts commit <id>.`. Un commit di merge vuole `mainline`
-/// (da 1); `mainline` su un altro commit o fuori dai genitori → [`EngineError::InvalidParams`].
+/// Applies (`commit.cherry_pick`) or undoes (`commit.revert`) the commit `rev` on the active branch
+/// with a new commit: for cherry-pick with the original author and message, for revert
+/// with `Revert "<subject>"` and `This reverts commit <id>.`. A merge commit needs `mainline`
+/// (from 1); `mainline` on another commit or outside the parents → [`EngineError::InvalidParams`].
 ///
-/// Rifiutati prima di scrivere ([`EngineError::NotAllowed`], niente cambia): HEAD staccata o
-/// branch senza commit, operazione in corso, file in conflitto, qualunque modifica ai file
-/// tracciati ([`check_pick_state`]); una rev che non c'è → [`EngineError::UnknownRev`]; un
-/// risultato vuoto (commit già applicato o già annullato) → [`EngineError::NotAllowed`], niente
-/// in corso. Prima di scrivere il backend salva il branch in
+/// Refused before writing ([`EngineError::NotAllowed`], nothing changes): detached HEAD or
+/// branch without commits, operation in progress, conflicted files, any change to tracked
+/// files ([`check_pick_state`]); a rev that does not exist → [`EngineError::UnknownRev`]; an
+/// empty result (commit already applied or already undone) → [`EngineError::NotAllowed`], nothing
+/// in progress. Before writing the backend saves the branch in
 /// `refs/project/backup/<cherry-pick|revert>-...`.
 ///
-/// **Conflitti**: l'operazione resta in corso (`in_progress`, `conflicts`), da concludere con
-/// `*.continue` o annullare con `*.abort`; niente nel diario. Conclusa entra nel diario:
-/// `edit.undo` riporta il branch, con indice e worktree, dov'era.
+/// **Conflicts**: the operation stays in progress (`in_progress`, `conflicts`), to be concluded with
+/// `*.continue` or aborted with `*.abort`; nothing in the journal. Once concluded it enters the journal:
+/// `edit.undo` brings the branch, with index and worktree, back to where it was.
 ///
-/// Risultato: `{"rev", "commit", "summary", "mainline", "branch", "before", "after",
+/// Result: `{"rev", "commit", "summary", "mainline", "branch", "before", "after",
 /// "in_progress", "conflicts", "message", "backup", "warnings", "status", "refs", "can_undo",
 /// "can_redo", "next_undo", "next_redo"}`.
 fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
@@ -94,7 +94,7 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
     if rev.trim().is_empty() || rev.contains('\0') {
         return Err(EngineError::InvalidParams {
             id,
-            reason: "`rev` deve essere un id di commit, un branch o un tag, non vuoto".to_owned(),
+            reason: msg!("engine-pick-rev-empty"),
         });
     }
     let (repo, journal) = s.repo_and_journal()?;
@@ -105,16 +105,16 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
             target: Some(target),
         } => (name.clone(), *target),
         Head::Branch { name, target: None } => {
-            return Err(EngineError::NotAllowed(format!(
-                "il branch `{}` non ha ancora commit: `{id}` ha bisogno di un commit su cui \
-                 applicare, niente modificato",
-                name.escape_debug()
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pick-unborn",
+                name = name.escape_debug(),
+                id = id
             )));
         }
         Head::Detached(_) => {
-            return Err(EngineError::NotAllowed(format!(
-                "HEAD è staccata: `{id}` va fatto su un branch, niente modificato. Passare a un \
-                 branch (`branch.checkout`) o crearne uno qui (`branch.create`) e riprovare"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pick-detached",
+                id = id
             )));
         }
     };
@@ -138,7 +138,7 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
         message,
     })?;
     let mut warnings = outcome.warnings.clone();
-    // Nel diario solo il risultato atteso: un commit nuovo sopra il branch di prima.
+    // In the journal only the expected result: a new commit on top of the previous branch.
     let as_expected = !outcome.in_progress
         && outcome.after != before
         && repo
@@ -147,11 +147,11 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
             .and_then(|c| c.first().map(|c| c.parents == [before]))
             .unwrap_or(false);
     if !outcome.in_progress && !as_expected {
-        warnings.push(format!(
-            "il branch è a {} ma non è il risultato atteso di `{id}` (un hook o un altro \
-             processo l'ha spostato?): l'operazione non entra nel diario, il branch com'era è \
-             in `{}`",
-            outcome.after, outcome.backup
+        warnings.push(msg!(
+            "engine-pick-unexpected-result",
+            after = outcome.after,
+            command = id,
+            backup = outcome.backup
         ));
     }
     if as_expected {
@@ -184,15 +184,15 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
     Ok(out)
 }
 
-/// Conclude il cherry-pick o il revert in corso con il commit (`git commit` come
-/// `commit.create`: hook e firma secondo la configurazione; per il cherry-pick git tiene
-/// l'autore del commit originale), con `message` o quello preparato da git (`MERGE_MSG` senza
-/// il blocco `# Conflicts:`). Rifiutato ([`EngineError::NotAllowed`], niente cambia) senza
-/// l'operazione `kind` in corso, con una sequenza di più commit avviata da terminale o se
-/// restano file in conflitto. Entra nel diario come l'operazione conclusa; con HEAD staccata
-/// (avviata da terminale) come un commit.
+/// Concludes the cherry-pick or revert in progress with the commit (`git commit` like
+/// `commit.create`: hooks and signing according to the configuration; for cherry-pick git keeps
+/// the author of the original commit), with `message` or the one prepared by git (`MERGE_MSG` without
+/// the `# Conflicts:` block). Refused ([`EngineError::NotAllowed`], nothing changes) without
+/// the operation `kind` in progress, with a sequence of several commits started from a terminal or if
+/// conflicted files remain. It enters the journal like the concluded operation; with detached HEAD
+/// (started from a terminal) as a commit.
 ///
-/// Risultato: `{"commit": Commit, "previous", "branch", "backup", "also_on", "message",
+/// Result: `{"commit": Commit, "previous", "branch", "backup", "also_on", "message",
 /// "status", "refs", "can_undo", "can_redo", "next_undo", "next_redo"}`.
 fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
     let id = kind.continue_command();
@@ -204,14 +204,14 @@ fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
     check_picking(id, kind, &status, &state)?;
     let conflicts = conflicted_paths(&status);
     if !conflicts.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "restano file in conflitto ({}): risolverli e metterli in stage (`index.stage`), \
-             poi ripetere `{id}`; niente committato",
-            conflicts
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pick-continue-conflicts",
+            files = conflicts
                 .iter()
                 .map(|p| format!("`{p}`"))
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            id = id
         )));
     }
     let refs = repo.refs()?;
@@ -235,21 +235,15 @@ fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
                     .as_ref()
                     .map(|c| pick_message(kind, c, c.parents.first(), false))
             })
-            .ok_or_else(|| {
-                EngineError::NotAllowed(format!(
-                    "git non ha preparato un messaggio (`MERGE_MSG`) e il commit in ingresso \
-                     non si legge: indicare `message` e ripetere `{id}`; niente committato"
-                ))
-            })?,
+            .ok_or_else(|| EngineError::NotAllowed(msg!("engine-pick-no-message", id = id)))?,
     };
     let outcome = repo
         .commit(&CommitRequest::new(message.clone()).concluding(kind.operation()))
         .map_err(|e| match e {
-            // Risolto com'era HEAD: niente da committare, e l'operazione resta in corso.
-            EngineError::NothingToCommit => EngineError::NotAllowed(format!(
-                "dopo la risoluzione il risultato è uguale a HEAD: niente da committare; \
-                 per uscire usare `{}`",
-                kind.abort_command()
+            // Resolved as HEAD was: nothing to commit, and the operation stays in progress.
+            EngineError::NothingToCommit => EngineError::NotAllowed(msg!(
+                "engine-pick-continue-empty",
+                abort = kind.abort_command()
             )),
             e => e,
         })?;
@@ -276,14 +270,14 @@ fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
     Ok(out)
 }
 
-/// Annulla il cherry-pick o il revert in corso (`git cherry-pick --abort`, `git revert
-/// --abort`): indice e worktree tornano come HEAD per i file dell'operazione. Chiede **sempre**
-/// `"confirm": true` (senza: [`EngineError::ConfirmRequired`] con i file, niente cambia) e il
-/// backend salva prima indice e worktree in `refs/project/backup/<cherry-pick|revert>-abort-...`
-/// (come uno stash). Senza l'operazione `kind` in corso, o con una sequenza di più commit avviata
-/// da terminale → [`EngineError::NotAllowed`]. Non entra nel diario.
+/// Aborts the cherry-pick or revert in progress (`git cherry-pick --abort`, `git revert
+/// --abort`): index and worktree go back to HEAD for the operation's files. It **always** asks for
+/// `"confirm": true` (without: [`EngineError::ConfirmRequired`] with the files, nothing changes) and the
+/// backend first saves index and worktree in `refs/project/backup/<cherry-pick|revert>-abort-...`
+/// (like a stash). Without the operation `kind` in progress, or with a sequence of several commits started
+/// from a terminal → [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
-/// Risultato: `{"backup", "files": [percorso], "warnings", "status", "refs", "can_undo",
+/// Result: `{"backup", "files": [path], "warnings", "status", "refs", "can_undo",
 /// "can_redo", "next_undo", "next_redo"}`.
 fn pick_abort(s: &mut Session, p: Value, kind: PickKind) -> Out {
     let id = kind.abort_command();

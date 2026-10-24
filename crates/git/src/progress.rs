@@ -1,12 +1,12 @@
-//! Lettura dello stderr di `git fetch --progress` (§6): righe di avanzamento ed errori dei
-//! remoti. Funzioni pure, provate con il testo che git scrive con `LC_ALL=C`.
+//! Reading the stderr of `git fetch --progress` (§6): progress lines and remote
+//! errors. Pure functions, tested with the text git writes with `LC_ALL=C`.
 
 use project_engine::{EngineError, Progress};
 
-/// Una riga di avanzamento di git, come la scrive `progress.c`: `<fase>: <n>` oppure
-/// `<fase>: <p>% (<n>/<totale>)`, poi forse `, <byte> | <velocità>` e `, done.`; con il
-/// prefisso `remote: ` se viene dal remoto. `None` per le altre righe (`From <url>`,
-/// ` * [new branch] ...`, `remote: Total 3 (delta 0) ...`, errori).
+/// A git progress line, as `progress.c` writes it: `<phase>: <n>` or
+/// `<phase>: <p>% (<n>/<total>)`, then maybe `, <bytes> | <speed>` and `, done.`; with the
+/// prefix `remote: ` if it comes from the remote. `None` for other lines (`From <url>`,
+/// ` * [new branch] ...`, `remote: Total 3 (delta 0) ...`, errors).
 pub(crate) fn parse_progress(line: &str) -> Option<Progress> {
     let text = clean(line);
     let (remote, body) = match text.strip_prefix("remote: ") {
@@ -43,13 +43,13 @@ pub(crate) fn parse_progress(line: &str) -> Option<Progress> {
     })
 }
 
-/// La riga senza spazi finali e senza la sequenza `ESC [K` (cancella fino a fine riga) che git
-/// aggiunge alle righe del remoto quando stderr è un terminale.
+/// The line without trailing spaces and without the `ESC [K` sequence (clear to end of line) that git
+/// adds to remote lines when stderr is a terminal.
 fn clean(line: &str) -> String {
     line.replace("\u{1b}[K", "").trim_end().to_owned()
 }
 
-/// Le cifre all'inizio di `text` e il resto.
+/// The digits at the start of `text` and the rest.
 fn number_prefix(text: &str) -> Option<(u64, &str)> {
     let end = text
         .find(|c: char| !c.is_ascii_digit())
@@ -58,7 +58,7 @@ fn number_prefix(text: &str) -> Option<(u64, &str)> {
     Some((n, &text[end..]))
 }
 
-/// `(<n>/<totale>)` all'inizio di `text`.
+/// `(<n>/<total>)` at the start of `text`.
 fn counts(text: &str) -> Option<(u64, u64)> {
     let inner = text.strip_prefix('(')?;
     let (current, rest) = number_prefix(inner)?;
@@ -66,9 +66,9 @@ fn counts(text: &str) -> Option<(u64, u64)> {
     rest.starts_with(')').then_some((current, total))
 }
 
-/// Testi di git (`LC_ALL=C`, minuscoli) che dicono che il remoto ha rifiutato le credenziali o
-/// che servirebbe chiederle: HTTP (`could not read Username ...: terminal prompts disabled`,
-/// `Authentication failed`, 401/403) e SSH (`Permission denied (publickey)`, `Host key
+/// Git texts (`LC_ALL=C`, lowercase) saying the remote rejected the credentials or
+/// that they would need to be asked for: HTTP (`could not read Username ...: terminal prompts disabled`,
+/// `Authentication failed`, 401/403) and SSH (`Permission denied (publickey)`, `Host key
 /// verification failed`).
 const AUTH: &[&str] = &[
     "authentication failed",
@@ -87,10 +87,10 @@ const AUTH: &[&str] = &[
     "invalid username or password",
 ];
 
-/// Testi di git (`LC_ALL=C`, minuscoli) che dicono che il remoto non si raggiunge: una
-/// cartella che non c'è o non è un repository, host sconosciuto, rete, repository che il server
-/// non ha. Si guardano dopo [`AUTH`]: `Could not read from remote repository` segue anche un
-/// `Permission denied (publickey)`.
+/// Git texts (`LC_ALL=C`, lowercase) saying the remote cannot be reached: a
+/// directory that does not exist or is not a repository, unknown host, network, a repository the server
+/// does not have. They are checked after [`AUTH`]: `Could not read from remote repository` also follows
+/// a `Permission denied (publickey)`.
 const UNREACHABLE: &[&str] = &[
     "does not appear to be a git repository",
     "not a git repository",
@@ -112,10 +112,10 @@ const UNREACHABLE: &[&str] = &[
     "could not read from remote repository",
 ];
 
-/// L'errore di un `git fetch` da `remote` non riuscito, dal suo stderr (senza le righe di
-/// avanzamento): [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
-/// [`EngineError::NotAllowed`] per un branch che il remoto non ha (`couldn't find remote ref`),
-/// altrimenti `None` (l'errore generico [`EngineError::Git`]).
+/// The error of a failed `git fetch` from `remote`, from its stderr (without the progress
+/// lines): [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
+/// [`EngineError::NotAllowed`] for a branch the remote does not have (`couldn't find remote ref`),
+/// otherwise `None` (the generic [`EngineError::Git`] error).
 pub(crate) fn remote_error(remote: &str, stderr: &str) -> Option<EngineError> {
     let lower = stderr.to_ascii_lowercase();
     let message = || stderr.trim().to_owned();
@@ -126,9 +126,10 @@ pub(crate) fn remote_error(remote: &str, stderr: &str) -> Option<EngineError> {
         });
     }
     if lower.contains("couldn't find remote ref") {
-        return Some(EngineError::NotAllowed(format!(
-            "il remoto `{remote}` non ha il branch chiesto, niente scaricato: {}",
-            message()
+        return Some(EngineError::NotAllowed(msg!(
+            "engine-remote-no-such-branch",
+            remote = remote,
+            message = message()
         )));
     }
     if UNREACHABLE.iter().any(|p| lower.contains(p)) {
@@ -145,7 +146,7 @@ mod tests {
     use super::*;
 
     fn progress(line: &str) -> Progress {
-        parse_progress(line).unwrap_or_else(|| panic!("non letta: {line:?}"))
+        parse_progress(line).unwrap_or_else(|| panic!("unreadable: {line:?}"))
     }
 
     #[test]
@@ -197,7 +198,7 @@ mod tests {
             " * [new branch]      main       -> origin/main",
             "   1234567..89abcde  main       -> origin/main",
             "remote: Total 3 (delta 0), reused 0 (delta 0), pack-reused 0",
-            "fatal: 'nessuno' does not appear to be a git repository",
+            "fatal: 'nobody' does not appear to be a git repository",
             "error: cannot lock ref 'refs/remotes/origin/main': x",
             "warning: redirecting to https://x/",
             "remote: Create a pull request for 'x' on GitHub by visiting:",
@@ -229,10 +230,10 @@ mod tests {
     #[test]
     fn network_and_missing_remote_errors() {
         for stderr in [
-            "fatal: '/tmp/manca' does not appear to be a git repository\nfatal: Could not read \
+            "fatal: '/tmp/missing' does not appear to be a git repository\nfatal: Could not read \
              from remote repository.",
-            "fatal: unable to access 'https://nessuno.invalid/r.git/': Could not resolve host: \
-             nessuno.invalid",
+            "fatal: unable to access 'https://nobody.invalid/r.git/': Could not resolve host: \
+             nobody.invalid",
             "ssh: connect to host x port 22: Connection refused\nfatal: Could not read from \
              remote repository.",
             "ssh: Could not resolve hostname x: Name or service not known",

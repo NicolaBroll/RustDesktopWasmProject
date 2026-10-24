@@ -1,7 +1,7 @@
-//! Test di integrazione di `CliBackend::commit` e del comando `commit.create` su repo veri:
-//! messaggi, primo commit, HEAD staccata, `amend` (con il backup del commit riscritto e la
-//! conferma per un commit pubblicato), hook, firma, conflitti e operazioni in corso,
-//! configurazione ostile.
+//! Integration tests of `CliBackend::commit` and of the `commit.create` command on real repos:
+//! messages, first commit, detached HEAD, `amend` (with the backup of the rewritten commit and the
+//! confirmation for a published commit), hooks, signing, conflicts and operations in progress,
+//! hostile configuration.
 
 mod common;
 
@@ -12,27 +12,27 @@ use project_git::CliOpener;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// Il messaggio completo dell'ultimo commit, come lo legge git.
+/// The full message of the last commit, as git reads it.
 fn last_message(repo: &Repo) -> String {
-    // `--encoding`: con `i18n.commitEncoding` impostato git ricodificherebbe l'output.
+    // `--encoding`: with `i18n.commitEncoding` set git would re-encode the output.
     repo.git(&["log", "-1", "--encoding=UTF-8", "--format=%B"])
 }
 
-/// Le voci dell'indice (`git ls-files -s`), per controllare che un errore non lo cambi.
+/// The index entries (`git ls-files -s`), to check that an error does not change it.
 fn index(repo: &Repo) -> String {
     repo.git(&["ls-files", "-s"])
 }
 
-/// Un repo con un commit (`a.txt`) e `b.txt` nuovo in stage.
+/// A repo with one commit (`a.txt`) and a new `b.txt` staged.
 fn repo_with_staged_file() -> Repo {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
+    repo.commit_file("a.txt", "a\n", "first");
     repo.write("b.txt", "b\n");
     repo.stage(&["b.txt"]);
     repo
 }
 
-/// Scrive l'hook `name` (script `sh`) nella cartella degli hook del repo.
+/// Writes the hook `name` (`sh` script) in the repo's hooks directory.
 #[cfg(unix)]
 fn hook(repo: &Repo, name: &str, script: &str) {
     use std::os::unix::fs::PermissionsExt;
@@ -43,7 +43,7 @@ fn hook(repo: &Repo, name: &str, script: &str) {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// Controlla che il commit non sia stato fatto: HEAD e indice come prima.
+/// Checks that the commit was not made: HEAD and index as before.
 fn assert_unchanged(repo: &Repo, head: &str, index_before: &str) {
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
     assert_eq!(index(repo), index_before);
@@ -56,17 +56,17 @@ fn commit_with_multiline_utf8_message() {
     let mut backend = repo.open();
     let out = backend
         .commit(&CommitRequest::new(
-            "Aggiungi b: è UTF-8 ✓\n\nCorpo su\ndue righe.\n",
+            "Add b: naïve UTF-8 ✓\n\nBody on\ntwo lines.\n",
         ))
         .unwrap();
     assert_eq!(
         last_message(&repo),
-        "Aggiungi b: è UTF-8 ✓\n\nCorpo su\ndue righe."
+        "Add b: naïve UTF-8 ✓\n\nBody on\ntwo lines."
     );
     assert_eq!(out.commit.id, repo.rev("HEAD"));
     assert_eq!(out.commit.parents, [before]);
-    assert_eq!(out.commit.summary, "Aggiungi b: è UTF-8 ✓");
-    assert_eq!(out.commit.body, "Corpo su\ndue righe.");
+    assert_eq!(out.commit.summary, "Add b: naïve UTF-8 ✓");
+    assert_eq!(out.commit.body, "Body on\ntwo lines.");
     assert_eq!(out.commit.author.name, "Ada");
     assert_eq!(out.commit.committer.name, "Bob");
     assert_eq!(out.previous, Some(before));
@@ -77,8 +77,8 @@ fn commit_with_multiline_utf8_message() {
         "b.txt"
     );
     assert!(backend.status().unwrap().entries.is_empty());
-    // Il messaggio non passa dalla riga di comando: un messaggio che sembra un'opzione resta
-    // un messaggio.
+    // The message does not go through the command line: a message that looks like an option stays
+    // a message.
     repo.write("c.txt", "c\n");
     repo.stage(&["c.txt"]);
     backend.commit(&CommitRequest::new("--amend")).unwrap();
@@ -90,20 +90,20 @@ fn commit_with_multiline_utf8_message() {
 fn message_cleanup_follows_the_configuration() {
     let repo = repo_with_staged_file();
     let mut backend = repo.open();
-    // Senza `commit.cleanup`, con `-F` git usa `whitespace`: le righe `#` restano.
+    // Without `commit.cleanup`, with `-F` git uses `whitespace`: the `#` lines stay.
     backend
-        .commit(&CommitRequest::new("\n#123 corregge  \n\n\n# nota\n"))
+        .commit(&CommitRequest::new("\n#123 fixes  \n\n\n# note\n"))
         .unwrap();
-    assert_eq!(last_message(&repo), "#123 corregge\n\n# nota");
+    assert_eq!(last_message(&repo), "#123 fixes\n\n# note");
 
-    // Con `commit.cleanup=strip` un messaggio di soli commenti è vuoto: rifiutato da git.
+    // With `commit.cleanup=strip` a message of only comments is empty: rejected by git.
     repo.git(&["config", "commit.cleanup", "strip"]);
     repo.write("c.txt", "c\n");
     repo.stage(&["c.txt"]);
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
     let err = backend
-        .commit(&CommitRequest::new("# solo commenti\n"))
+        .commit(&CommitRequest::new("# only comments\n"))
         .unwrap_err();
     assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
     assert!(err.to_string().contains("commit.cleanup"), "{err}");
@@ -115,15 +115,15 @@ fn first_commit() {
     let repo = Repo::new();
     repo.write("a.txt", "a\n");
     let mut backend = repo.open();
-    let err = backend.commit(&CommitRequest::new("primo")).unwrap_err();
+    let err = backend.commit(&CommitRequest::new("first")).unwrap_err();
     assert!(matches!(err, EngineError::NothingToCommit), "{err}");
     let err = backend
-        .commit(&CommitRequest::new("primo").amend())
+        .commit(&CommitRequest::new("first").amend())
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
     repo.stage(&["a.txt"]);
-    let out = backend.commit(&CommitRequest::new("primo")).unwrap();
+    let out = backend.commit(&CommitRequest::new("first")).unwrap();
     assert_eq!(out.previous, None);
     assert!(out.commit.parents.is_empty());
     assert_eq!(out.branch.as_deref(), Some("refs/heads/main"));
@@ -145,7 +145,7 @@ fn detached_head_moves_only_head() {
     h.repo.write("c.txt", "c\n");
     h.repo.stage(&["c.txt"]);
     let mut backend = h.repo.open();
-    let out = backend.commit(&CommitRequest::new("staccato")).unwrap();
+    let out = backend.commit(&CommitRequest::new("detached")).unwrap();
     assert_eq!(out.branch, None);
     assert_eq!(out.previous, Some(h.f1));
     assert_eq!(out.commit.parents, [h.f1]);
@@ -157,17 +157,17 @@ fn detached_head_moves_only_head() {
 #[test]
 fn nothing_to_commit_and_empty_messages_change_nothing() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
-    // Solo modifiche fuori stage e file non tracciati.
-    repo.write("a.txt", "modificato\n");
-    repo.write("nuovo.txt", "?\n");
-    // Un file `intent-to-add` non conta, come per git.
+    repo.commit_file("a.txt", "a\n", "first");
+    // Only unstaged changes and untracked files.
+    repo.write("a.txt", "modified\n");
+    repo.write("new.txt", "?\n");
+    // An `intent-to-add` file does not count, as for git.
     repo.write("ita.txt", "ita\n");
     repo.git(&["add", "-N", "ita.txt"]);
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
     let mut backend = repo.open();
-    let err = backend.commit(&CommitRequest::new("niente")).unwrap_err();
+    let err = backend.commit(&CommitRequest::new("nothing")).unwrap_err();
     assert!(matches!(err, EngineError::NothingToCommit), "{err}");
     assert_unchanged(&repo, &head, &before);
 
@@ -186,7 +186,7 @@ fn nothing_to_commit_and_empty_messages_change_nothing() {
 #[test]
 fn missing_identity_is_git_error() {
     let repo = repo_with_staged_file();
-    // Niente identità nell'ambiente e niente da indovinare dal sistema.
+    // No identity in the environment and nothing to guess from the system.
     repo.git(&["config", "user.useConfigOnly", "true"]);
     let opener = CliOpener::new()
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -195,7 +195,7 @@ fn missing_identity_is_git_error() {
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
     let err = backend
-        .commit(&CommitRequest::new("chi sono?"))
+        .commit(&CommitRequest::new("who am I?"))
         .unwrap_err();
     assert!(matches!(err, EngineError::Git { .. }), "{err}");
     assert!(
@@ -208,21 +208,21 @@ fn missing_identity_is_git_error() {
 #[test]
 fn amend_only_the_message() {
     let repo = Repo::new();
-    let first = repo.commit_file("a.txt", "a\n", "primo");
-    let second = repo.commit_file("b.txt", "b\n", "secondo con refuso");
+    let first = repo.commit_file("a.txt", "a\n", "first");
+    let second = repo.commit_file("b.txt", "b\n", "second with typo");
     let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
     let author = repo.git(&["log", "-1", "--format=%an %ae %ad"]);
     let mut backend = repo.open();
     let out = backend
-        .commit(&CommitRequest::new("secondo corretto").amend())
+        .commit(&CommitRequest::new("second fixed").amend())
         .unwrap();
-    assert_eq!(last_message(&repo), "secondo corretto");
+    assert_eq!(last_message(&repo), "second fixed");
     assert_eq!(out.previous, Some(second));
     assert_eq!(out.commit.parents, [first]);
     assert_eq!(repo.git(&["rev-parse", "HEAD^{tree}"]), tree);
-    // L'autore (anche la data) resta quello del commit riscritto.
+    // The author (and the date) stays that of the rewritten commit.
     assert_eq!(repo.git(&["log", "-1", "--format=%an %ae %ad"]), author);
-    // Il vecchio HEAD è salvato in un ref di backup.
+    // The old HEAD is saved in a backup ref.
     let backup = out.backup.unwrap();
     assert!(backup.starts_with("refs/project/backup/amend-"), "{backup}");
     assert_eq!(repo.rev(&backup), second);
@@ -232,13 +232,13 @@ fn amend_only_the_message() {
 #[test]
 fn amend_with_new_files() {
     let repo = Repo::new();
-    let first = repo.commit_file("a.txt", "a\n", "primo");
-    let second = repo.commit_file("b.txt", "b\n", "secondo");
+    let first = repo.commit_file("a.txt", "a\n", "first");
+    let second = repo.commit_file("b.txt", "b\n", "second");
     repo.write("c.txt", "c\n");
     repo.stage(&["c.txt"]);
     let mut backend = repo.open();
     let out = backend
-        .commit(&CommitRequest::new("secondo, con c").amend())
+        .commit(&CommitRequest::new("second, with c").amend())
         .unwrap();
     assert_eq!(out.commit.parents, [first]);
     assert_eq!(
@@ -252,8 +252,8 @@ fn amend_with_new_files() {
 #[test]
 fn amend_of_a_published_commit_needs_confirm() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
-    let published = repo.commit_file("b.txt", "b\n", "pubblicato");
+    repo.commit_file("a.txt", "a\n", "first");
+    let published = repo.commit_file("b.txt", "b\n", "published");
     let origin = Repo::bare();
     repo.add_remote("origin", &origin);
     repo.push("origin", "main", "main");
@@ -262,7 +262,7 @@ fn amend_of_a_published_commit_needs_confirm() {
     let mut backend = repo.open();
 
     let err = backend
-        .commit(&CommitRequest::new("riscritto").amend())
+        .commit(&CommitRequest::new("rewritten").amend())
         .unwrap_err();
     assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
     assert!(
@@ -270,78 +270,74 @@ fn amend_of_a_published_commit_needs_confirm() {
         "{err}"
     );
     assert_unchanged(&repo, &published.to_string(), &before);
-    // Nessun backup salvato per un commit non fatto.
+    // No backup saved for a commit that was not made.
     assert_eq!(repo.git(&["for-each-ref", "refs/project/"]), backups_before);
 
     let out = backend
-        .commit(&CommitRequest::new("riscritto").amend().confirmed())
+        .commit(&CommitRequest::new("rewritten").amend().confirmed())
         .unwrap();
     assert_eq!(out.previous, Some(published));
     assert_eq!(repo.rev(out.backup.as_deref().unwrap()), published);
-    assert_eq!(last_message(&repo), "riscritto");
+    assert_eq!(last_message(&repo), "rewritten");
 
-    // Un commit nuovo sopra un commit pubblicato non chiede niente.
+    // A new commit on top of a published commit asks for nothing.
     repo.write("c.txt", "c\n");
     repo.stage(&["c.txt"]);
-    backend.commit(&CommitRequest::new("nuovo")).unwrap();
+    backend.commit(&CommitRequest::new("new")).unwrap();
 }
 
 #[test]
 fn amend_with_a_tag_needs_confirm_and_reports_diverging_refs() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
-    let old = repo.commit_file("b.txt", "b\n", "secondo");
-    repo.branch("altro");
+    repo.commit_file("a.txt", "a\n", "first");
+    let old = repo.commit_file("b.txt", "b\n", "second");
+    repo.branch("other");
     let mut backend = repo.open();
-    // Un altro branch sul commit: niente conferma, ma resta indietro e lo si dice.
+    // Another branch on the commit: no confirmation, but it stays behind and it is reported.
     let out = backend
-        .commit(&CommitRequest::new("secondo corretto").amend())
+        .commit(&CommitRequest::new("second fixed").amend())
         .unwrap();
-    assert_eq!(out.also_on, ["refs/heads/altro"]);
-    assert_eq!(repo.rev("altro"), old);
+    assert_eq!(out.also_on, ["refs/heads/other"]);
+    assert_eq!(repo.rev("other"), old);
 
-    // Un tag sul commit: resterebbe sul commit vecchio, serve la conferma.
+    // A tag on the commit: it would stay on the old commit, confirmation needed.
     repo.tag("v1", "HEAD");
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
     let err = backend
-        .commit(&CommitRequest::new("terzo tentativo").amend())
+        .commit(&CommitRequest::new("third attempt").amend())
         .unwrap_err();
     assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
     assert!(err.to_string().contains("refs/tags/v1"), "{err}");
     assert_unchanged(&repo, &head, &before);
     let out = backend
-        .commit(&CommitRequest::new("terzo tentativo").amend().confirmed())
+        .commit(&CommitRequest::new("third attempt").amend().confirmed())
         .unwrap();
     assert_eq!(out.also_on, ["refs/tags/v1"]);
-    // Un commit nuovo non riscrive niente.
+    // A new commit rewrites nothing.
     repo.write("c.txt", "c\n");
     repo.stage(&["c.txt"]);
-    let out = backend.commit(&CommitRequest::new("nuovo")).unwrap();
+    let out = backend.commit(&CommitRequest::new("new")).unwrap();
     assert!(out.also_on.is_empty());
 }
 
 #[test]
 fn amend_that_produces_the_same_commit_changes_nothing() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\n", "primo");
-    repo.commit_file("b.txt", "b\n", "secondo");
-    // Date fisse impostate apposta (le variabili ereditate invece si tolgono): due `amend`
-    // uguali danno lo stesso commit, come due `amend` nello stesso secondo.
+    repo.commit_file("a.txt", "a\n", "first");
+    repo.commit_file("b.txt", "b\n", "second");
+    // Fixed dates set on purpose (inherited variables are removed instead): two identical
+    // `amend`s give the same commit, like two `amend`s in the same second.
     let opener = Repo::opener()
         .env("GIT_AUTHOR_DATE", "1700000000 +0200")
         .env("GIT_COMMITTER_DATE", "1700000000 +0200");
     let mut backend = opener.open_cli(repo.path_str()).unwrap();
-    let first = backend
-        .commit(&CommitRequest::new("uguale").amend())
-        .unwrap();
+    let first = backend.commit(&CommitRequest::new("same").amend()).unwrap();
     let backups = repo.git(&["for-each-ref", "refs/project/"]);
-    let out = backend
-        .commit(&CommitRequest::new("uguale").amend())
-        .unwrap();
+    let out = backend.commit(&CommitRequest::new("same").amend()).unwrap();
     assert_eq!(out.commit.id, first.commit.id);
     assert_eq!(out.previous, Some(first.commit.id));
-    // Niente è cambiato: nessun backup nuovo (puntava allo stesso commit).
+    // Nothing changed: no new backup (it pointed to the same commit).
     assert_eq!(out.backup, None);
     assert_eq!(repo.git(&["for-each-ref", "refs/project/"]), backups);
 }
@@ -350,15 +346,21 @@ fn amend_that_produces_the_same_commit_changes_nothing() {
 #[test]
 fn failed_commit_that_moved_head_keeps_the_backup() {
     let repo = Repo::new();
-    let first = repo.commit_file("a.txt", "a\n", "primo");
-    let second = repo.commit_file("b.txt", "b\n", "secondo");
-    // L'hook sposta HEAD e poi rifiuta il commit.
+    let first = repo.commit_file("a.txt", "a\n", "first");
+    let second = repo.commit_file("b.txt", "b\n", "second");
+    // The hook moves HEAD and then rejects the commit.
     hook(&repo, "pre-commit", "git reset -q --soft HEAD~1\nexit 1");
     let mut backend = repo.open();
     let err = backend
         .commit(&CommitRequest::new("x").amend())
         .unwrap_err();
-    assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    assert!(
+        matches!(
+            err,
+            EngineError::Git { .. } | EngineError::GitWithReason { .. }
+        ),
+        "{err}"
+    );
     assert_eq!(repo.rev("HEAD"), first);
     let backup = repo.git(&["for-each-ref", "--format=%(refname)", "refs/project/"]);
     assert!(backup.starts_with("refs/project/backup/amend-"), "{backup}");
@@ -370,26 +372,26 @@ fn failed_commit_that_moved_head_keeps_the_backup() {
 #[test]
 fn error_after_a_successful_amend_names_the_backup() {
     let repo = Repo::new();
-    let first = repo.commit_file("a.txt", "a\n", "primo");
-    let second = repo.commit_file("b.txt", "b\n", "secondo");
-    // Il commit riesce, poi un `post-commit` sposta HEAD.
+    let first = repo.commit_file("a.txt", "a\n", "first");
+    let second = repo.commit_file("b.txt", "b\n", "second");
+    // The commit succeeds, then a `post-commit` moves HEAD.
     hook(&repo, "post-commit", "git reset -q --hard HEAD~1");
     let mut backend = repo.open();
     let err = backend
-        .commit(&CommitRequest::new("riscritto").amend())
+        .commit(&CommitRequest::new("rewritten").amend())
         .unwrap_err();
     let EngineError::PostCommit { commit, backup, .. } = &err else {
         panic!("{err}");
     };
-    // HEAD non è il commit creato: non lo si spaccia per quello.
+    // HEAD is not the created commit: it is not passed off as such.
     assert_eq!(*commit, None);
     let backup = backup.clone().unwrap();
     assert_eq!(repo.rev(&backup), second);
     assert!(err.to_string().contains(&backup), "{err}");
-    assert!(err.to_string().contains("non ripetere"), "{err}");
+    assert!(err.to_string().contains("do not repeat"), "{err}");
     assert_eq!(repo.rev("HEAD"), first);
 
-    // Lo stesso tramite il comando: l'errore è `PostCommit`, non un commit fallito.
+    // The same through the command: the error is `PostCommit`, not a failed commit.
     repo.git(&["reset", "-q", "--hard", &second.to_string()]);
     let registry = Registry::builtin();
     let mut session = Session::new(Arc::new(Repo::opener()));
@@ -404,7 +406,7 @@ fn error_after_a_successful_amend_names_the_backup() {
         .run(
             "commit.create",
             &mut session,
-            json!({ "message": "ancora", "amend": true }),
+            json!({ "message": "again", "amend": true }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::PostCommit { .. }), "{err}");
@@ -415,7 +417,7 @@ fn amend_of_a_merge_keeps_both_parents() {
     let h = repo_with_history();
     let mut backend = h.repo.open();
     let out = backend
-        .commit(&CommitRequest::new("merge con un messaggio migliore").amend())
+        .commit(&CommitRequest::new("merge with a better message").amend())
         .unwrap();
     assert_eq!(out.previous, Some(h.m));
     assert_eq!(out.commit.parents, [h.c2, h.f2]);
@@ -429,7 +431,7 @@ fn failing_pre_commit_hook_creates_nothing() {
     hook(
         &repo,
         "pre-commit",
-        "echo 'lint: 3 errori'\necho 'dettagli su stderr' >&2\nexit 1",
+        "echo 'lint: 3 errors'\necho 'details on stderr' >&2\nexit 1",
     );
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
@@ -439,8 +441,8 @@ fn failing_pre_commit_hook_creates_nothing() {
         panic!("{err}");
     };
     assert_eq!(command, "commit");
-    assert!(stderr.contains("lint: 3 errori"), "{stderr}");
-    assert!(stderr.contains("dettagli su stderr"), "{stderr}");
+    assert!(stderr.contains("lint: 3 errors"), "{stderr}");
+    assert!(stderr.contains("details on stderr"), "{stderr}");
     assert_unchanged(&repo, &head, &before);
     assert!(backend.status().unwrap().entries[0].is_staged());
 }
@@ -455,10 +457,10 @@ fn failing_hook_during_amend_removes_the_backup() {
     let err = backend
         .commit(&CommitRequest::new("x").amend())
         .unwrap_err();
-    assert!(matches!(err, EngineError::Git { .. }), "{err}");
-    assert!(err.to_string().contains("senza messaggi"), "{err}");
+    assert!(matches!(err, EngineError::GitWithReason { .. }), "{err}");
+    assert!(err.to_string().contains("without messages"), "{err}");
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
-    // HEAD non è cambiato: il backup non serve e non resta.
+    // HEAD did not change: the backup is not needed and is not left.
     assert_eq!(repo.git(&["for-each-ref", "refs/project/"]), "");
 }
 
@@ -469,20 +471,20 @@ fn commit_msg_hook_can_reject() {
     hook(
         &repo,
         "commit-msg",
-        "grep -q '^JIRA-' \"$1\" || { echo 'manca il codice JIRA'; exit 1; }",
+        "grep -q '^JIRA-' \"$1\" || { echo 'missing JIRA code'; exit 1; }",
     );
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
     let mut backend = repo.open();
     let err = backend
-        .commit(&CommitRequest::new("senza codice"))
+        .commit(&CommitRequest::new("without code"))
         .unwrap_err();
-    assert!(err.to_string().contains("manca il codice JIRA"), "{err}");
+    assert!(err.to_string().contains("missing JIRA code"), "{err}");
     assert_unchanged(&repo, &head, &before);
     backend
-        .commit(&CommitRequest::new("JIRA-1 con codice"))
+        .commit(&CommitRequest::new("JIRA-1 with code"))
         .unwrap();
-    assert_eq!(last_message(&repo), "JIRA-1 con codice");
+    assert_eq!(last_message(&repo), "JIRA-1 with code");
 }
 
 #[cfg(unix)]
@@ -492,56 +494,54 @@ fn prepare_commit_msg_hook_changes_the_message() {
     hook(
         &repo,
         "prepare-commit-msg",
-        "printf '\\nAggiunto-da: hook\\n' >> \"$1\"",
+        "printf '\\nAdded-by: hook\\n' >> \"$1\"",
     );
     let mut backend = repo.open();
-    let out = backend.commit(&CommitRequest::new("titolo")).unwrap();
-    assert_eq!(last_message(&repo), "titolo\n\nAggiunto-da: hook");
-    // Il risultato riporta il messaggio come scritto nel commit.
-    assert_eq!(out.commit.body, "Aggiunto-da: hook");
+    let out = backend.commit(&CommitRequest::new("title")).unwrap();
+    assert_eq!(last_message(&repo), "title\n\nAdded-by: hook");
+    // The result reports the message as written in the commit.
+    assert_eq!(out.commit.body, "Added-by: hook");
 }
 
 #[cfg(unix)]
 #[test]
 fn hooks_with_large_output_do_not_block() {
     let repo = repo_with_staged_file();
-    // Circa 2 MB su stdout e su stderr, più di qualunque buffer di una pipe.
+    // About 2 MB on stdout and on stderr, more than any pipe buffer.
     let big = "i=0; while [ $i -lt 20000 ]; do \
-               echo \"riga $i di output dell'hook, abbastanza lunga da riempire la pipe\"; \
-               echo \"errore $i dell'hook, abbastanza lungo da riempire la pipe\" >&2; \
+               echo \"line $i of hook output, long enough to fill the pipe\"; \
+               echo \"error $i of the hook, long enough to fill the pipe\" >&2; \
                i=$((i+1)); done";
     hook(&repo, "pre-commit", big);
     let mut backend = repo.open();
-    backend.commit(&CommitRequest::new("rumoroso")).unwrap();
-    assert_eq!(last_message(&repo), "rumoroso");
+    backend.commit(&CommitRequest::new("noisy")).unwrap();
+    assert_eq!(last_message(&repo), "noisy");
 
     repo.write("c.txt", "c\n");
     repo.stage(&["c.txt"]);
     hook(
         &repo,
         "pre-commit",
-        &format!("{big}\necho 'ultima riga'\nexit 1"),
+        &format!("{big}\necho 'last line'\nexit 1"),
     );
-    let err = backend
-        .commit(&CommitRequest::new("rifiutato"))
-        .unwrap_err();
-    assert!(err.to_string().contains("ultima riga"), "...");
-    assert!(err.to_string().contains("errore 19999"), "...");
+    let err = backend.commit(&CommitRequest::new("rejected")).unwrap_err();
+    assert!(err.to_string().contains("last line"), "...");
+    assert!(err.to_string().contains("error 19999"), "...");
 }
 
 #[cfg(unix)]
 #[test]
 fn pre_commit_hook_that_stages_files_is_respected() {
-    // Documentato: un pre-commit che cambia l'indice (es. un formattatore) cambia quello che
-    // viene committato, come con `git commit`.
+    // Documented: a pre-commit that changes the index (e.g. a formatter) changes what gets
+    // committed, as with `git commit`.
     let repo = repo_with_staged_file();
-    repo.write("generato.txt", "g\n");
-    hook(&repo, "pre-commit", "git add generato.txt");
+    repo.write("generated.txt", "g\n");
+    hook(&repo, "pre-commit", "git add generated.txt");
     let mut backend = repo.open();
-    backend.commit(&CommitRequest::new("con hook")).unwrap();
+    backend.commit(&CommitRequest::new("with hook")).unwrap();
     assert_eq!(
         repo.git(&["show", "--format=", "--name-only", "HEAD"]),
-        "b.txt\ngenerato.txt"
+        "b.txt\ngenerated.txt"
     );
 }
 
@@ -553,7 +553,7 @@ fn signing_that_fails_creates_nothing() {
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
     let mut backend = repo.open();
-    let err = backend.commit(&CommitRequest::new("firmato")).unwrap_err();
+    let err = backend.commit(&CommitRequest::new("signed")).unwrap_err();
     assert!(matches!(err, EngineError::Git { .. }), "{err}");
     assert!(err.to_string().contains("gpg failed to sign"), "{err}");
     assert_unchanged(&repo, &head, &before);
@@ -571,28 +571,28 @@ fn unresolved_conflicts_are_refused_and_merge_is_concluded() {
     assert!(err.to_string().contains("`a.txt`"), "{err}");
     assert_unchanged(&repo, &head, &before);
 
-    // Risolto il conflitto, il commit è il commit di merge e conclude il merge. Non si fa
-    // `amend` durante il merge.
-    repo.write("a.txt", "risolto\n");
+    // Once the conflict is resolved, the commit is the merge commit and concludes the merge. There
+    // is no `amend` during a merge.
+    repo.write("a.txt", "resolved\n");
     backend.stage(&[RepoPath::from("a.txt")]).unwrap();
     let err = backend
         .commit(&CommitRequest::new("merge").amend())
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     let out = backend
-        .commit(&CommitRequest::new("Merge di altro"))
+        .commit(&CommitRequest::new("Merge of other"))
         .unwrap();
     assert_eq!(out.commit.parents.len(), 2);
-    assert_eq!(out.commit.parents[1], repo.rev("altro"));
+    assert_eq!(out.commit.parents[1], repo.rev("other"));
     assert_eq!(backend.status().unwrap().operation, None);
-    assert_eq!(last_message(&repo), "Merge di altro");
+    assert_eq!(last_message(&repo), "Merge of other");
 }
 
 #[test]
 fn rebase_and_cherry_pick_in_progress_are_refused() {
     let (repo, theirs) = common::repo_with_divergent_branches();
     repo.git_fails(&["cherry-pick", &theirs.to_string()]);
-    repo.write("a.txt", "risolto\n");
+    repo.write("a.txt", "resolved\n");
     repo.stage(&["a.txt"]);
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
@@ -606,8 +606,8 @@ fn rebase_and_cherry_pick_in_progress_are_refused() {
     assert_unchanged(&repo, &head, &before);
     repo.git(&["cherry-pick", "--abort"]);
 
-    repo.git_fails(&["rebase", "altro"]);
-    repo.write("a.txt", "risolto\n");
+    repo.git_fails(&["rebase", "other"]);
+    repo.write("a.txt", "resolved\n");
     repo.stage(&["a.txt"]);
     let head = repo.git(&["rev-parse", "HEAD"]);
     let before = index(&repo);
@@ -620,10 +620,10 @@ fn rebase_and_cherry_pick_in_progress_are_refused() {
 #[test]
 fn hostile_configuration_is_neutralized() {
     let repo = repo_with_staged_file();
-    let template = repo.path().join("modello.txt");
-    std::fs::write(&template, "MODELLO\n").unwrap();
+    let template = repo.path().join("template.txt");
+    std::fs::write(&template, "TEMPLATE\n").unwrap();
     for (key, value) in [
-        // Un editor che fallisce: se git lo avviasse, il commit fallirebbe.
+        // An editor that fails: if git started it, the commit would fail.
         ("core.editor", "false"),
         ("commit.verbose", "true"),
         ("commit.template", template.to_str().unwrap()),
@@ -634,18 +634,18 @@ fn hostile_configuration_is_neutralized() {
     }
     let mut backend = repo.open();
     backend
-        .commit(&CommitRequest::new("Messaggio è UTF-8"))
+        .commit(&CommitRequest::new("Message naïve UTF-8"))
         .unwrap();
-    assert_eq!(last_message(&repo), "Messaggio è UTF-8");
-    // Nessuna intestazione `encoding`: il messaggio è registrato come UTF-8.
+    assert_eq!(last_message(&repo), "Message naïve UTF-8");
+    // No `encoding` header: the message is recorded as UTF-8.
     let raw = repo.git(&["cat-file", "commit", "HEAD"]);
     assert!(!raw.contains("\nencoding "), "{raw}");
 
-    // `amend` con la stessa configurazione.
+    // `amend` with the same configuration.
     backend
-        .commit(&CommitRequest::new("Corretto").amend())
+        .commit(&CommitRequest::new("Fixed").amend())
         .unwrap();
-    assert_eq!(last_message(&repo), "Corretto");
+    assert_eq!(last_message(&repo), "Fixed");
 }
 
 #[test]
@@ -676,12 +676,12 @@ fn commit_create_command() {
         .run(
             "commit.create",
             &mut session,
-            json!({ "message": "Da comando\n\nCorpo." }),
+            json!({ "message": "From command\n\nBody." }),
         )
         .unwrap();
     assert_eq!(out["commit"]["id"], repo.rev("HEAD").to_string());
-    assert_eq!(out["commit"]["summary"], "Da comando");
-    assert_eq!(out["commit"]["body"], "Corpo.");
+    assert_eq!(out["commit"]["summary"], "From command");
+    assert_eq!(out["commit"]["body"], "Body.");
     assert_eq!(out["previous"], before.to_string());
     assert_eq!(out["branch"], "refs/heads/main");
     assert_eq!(out["backup"], Value::Null);
@@ -692,7 +692,7 @@ fn commit_create_command() {
             .run("repo.status", &mut session, json!({}))
             .unwrap()
     );
-    // Il commit restituito è quello di `repo.log`.
+    // The returned commit is the one of `repo.log`.
     let log = registry
         .run("repo.log", &mut session, json!({ "limit": 1 }))
         .unwrap();
@@ -715,7 +715,7 @@ fn commit_create_command() {
         .run(
             "commit.create",
             &mut session,
-            json!({ "message": "Da comando, corretto", "amend": true }),
+            json!({ "message": "From command, fixed", "amend": true }),
         )
         .unwrap();
     let backup = out["backup"].as_str().unwrap();

@@ -1,36 +1,36 @@
 ---
 name: egui-ui
-description: Implementa l'interfaccia egui del client git (crates/ui) e il collegamento nelle app (apps/project, apps/project-web) - layout, lista e grafo dei commit, diff, area di stage, dialoghi, lavoro in background. Usalo per gli step della roadmap assegnati a egui-ui.
+description: Implements the egui interface of the git client (crates/ui) and its wiring in the apps (apps/project, apps/project-web) - layout, commit list and graph, diff, stage area, dialogs, background work. Use it for the roadmap steps assigned to egui-ui.
 ---
 
-Lavori sul client git. Leggi prima `impl-docs/git/regole.md` (invarianti, checklist di
-sicurezza, come tenere basso l'output) e lo step in `impl-docs/ROADMAP-git.md`; poi solo i file
-di `impl-docs/git/` delle funzioni che tocchi e, di `impl-docs/ARCHITETTURA-git.md`, solo i
-paragrafi che servono (cerca con `grep -n`). Se chi ti lancia indica file e righe, parti da lì.
+You work on the git client. First read `impl-docs/git/rules.md` (invariants, safety
+checklist, how to keep output small) and the step in `impl-docs/ROADMAP-git.md`; then only the files
+in `impl-docs/git/` for the functions you touch and, from `impl-docs/ARCHITECTURE-git.md`, only the
+sections you need (search with `grep -n`). If whoever launches you points to files and lines, start there.
 
-Branch: ogni implementazione parte dall'ultima versione di `origin/dev` (`AGENTS.md`, "Branch").
-Prima `git fetch origin dev`; un branch nuovo si crea con `git checkout -b <nome> origin/dev`. Se
-lavori su un branch già creato, controlla con `git merge-base --is-ancestor origin/dev HEAD` che
-contenga l'ultimo `origin/dev`; se no fermati e dillo.
+Branch: every implementation starts from the latest version of `origin/dev` (`AGENTS.md`, "Branches").
+First `git fetch origin dev`; create a new branch with `git checkout -b <name> origin/dev`. If
+you work on an existing branch, check with `git merge-base --is-ancestor origin/dev HEAD` that it
+contains the latest `origin/dev`; if not, stop and say so.
 
-Ambito: `crates/ui`, `apps/project`, `apps/project-web`. Se ti manca un comando o un dato dal
-motore, non scriverlo nella UI: fermati e dì quale comando serve, con parametri e risultato.
+Scope: `crates/ui`, `apps/project`, `apps/project-web`. If you are missing a command or data from the
+engine, do not write it in the UI: stop and say which command is needed, with parameters and result.
 
-Regole:
-- I callback grafici producono un `Action` che passa da `Registry::run`. Nessuna logica git o di
-  modifica nella UI.
-- Niente `cfg(target_arch)` in `crates/ui`: ciò che dipende dal target passa da `Platform`.
-- I comandi lenti girano con `Platform::spawn` (§6); la UI non si blocca mai e mostra lo stato
-  del lavoro in corso.
-- Liste lunghe sempre virtualizzate (`ScrollArea::show_rows`).
-- Le azioni distruttive mostrano una conferma che spiega cosa succede, e solo dopo mandano
+Rules:
+- Graphical callbacks produce an `Action` that goes through `Registry::run`. No git or
+  modification logic in the UI.
+- No `cfg(target_arch)` in `crates/ui`: anything that depends on the target goes through `Platform`.
+- Slow commands run with `Platform::spawn` (§6); the UI never blocks and shows the state
+  of the work in progress.
+- Long lists are always virtualized (`ScrollArea::show_rows`).
+- Destructive actions show a confirmation that explains what happens, and only then send
   `"confirm": true`.
-- La build web usa il `MemoryBackend` con il repo di esempio.
+- The web build uses the `MemoryBackend` with the sample repo.
 
-Verifica visiva: costruisci la versione web (`trunk build`, servila con
-`python3 -m http.server -d dist 8080`) e fai uno screenshot con Playwright della parte che hai
-cambiato. Se trunk non è installato, installalo con `cargo install --locked trunk`.
+Visual check: build the web version (`trunk build`, serve it with
+`python3 -m http.server -d dist 8080`) and take a Playwright screenshot of the part you
+changed. If trunk is not installed, install it with `cargo install --locked trunk`.
 
-Durante il lavoro `cargo test -q -p <crate>` mirati; chiudi con `cargo xtask ci --quiet` verde
-e spunta lo step in `impl-docs/ROADMAP-git.md`. Resoconto breve
-(15-20 righe): cosa cambia per l'utente, file toccati, percorso dello screenshot, esito della CI.
+While working, run targeted `cargo test -q -p <crate>`; finish with a green `cargo xtask ci --quiet`
+and tick the step in `impl-docs/ROADMAP-git.md`. Short report
+(15-20 lines): what changes for the user, files touched, screenshot path, CI result.

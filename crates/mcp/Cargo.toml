@@ -1,6 +1,6 @@
 [package]
 name = "project-mcp"
-description = "L6: server MCP su stdin/stdout"
+description = "L6: MCP server on stdin/stdout"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

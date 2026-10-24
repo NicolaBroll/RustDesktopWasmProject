@@ -1,4 +1,4 @@
-# Conferme prima di scrivere: conflitti da segnare risolti, scarto, amend (view/confirm.rs).
+# Confirmations before writing: conflicts to mark resolved, discard, amend (view/confirm.rs).
 
 confirm-resolve-title = { $n ->
     [one] Segnare il conflitto come risolto?

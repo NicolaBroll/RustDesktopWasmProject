@@ -1,4 +1,4 @@
-//! Repository finto in memoria: per i test dei comandi e per la versione web.
+//! In-memory fake repository: for command tests and for the web version.
 
 mod branch;
 mod commit;
@@ -29,7 +29,7 @@ use super::{
     StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig,
     WorktreeRestore,
 };
-use crate::{EngineError, JobContext};
+use crate::{EngineError, JobContext, Message};
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, Head, Oid, Operation,
     RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
@@ -40,10 +40,10 @@ const HEADS: &str = "refs/heads/";
 const REMOTES: &str = "refs/remotes/";
 const TAGS: &str = "refs/tags/";
 
-/// Dove punta HEAD: il branch è tenuto per nome, così segue i commit del branch.
+/// Where HEAD points: the branch is held by name, so it follows the branch's commits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HeadRef {
-    /// Nome breve del branch, anche se non esiste ancora (repo vuoto).
+    /// Short name of the branch, even if it does not exist yet (empty repo).
     Branch(String),
     Detached(Oid),
 }
@@ -54,62 +54,62 @@ struct RefEntry {
     tag_object: Option<Oid>,
 }
 
-/// Repository costruito in codice, senza processi né file system.
+/// Repository built in code, without processes or file system.
 ///
-/// Si parte da [`MemoryBackend::new`] (repo vuoto su `main`) o da [`MemoryBackend::sample`]
-/// (repo di esempio) e si aggiungono commit e ref con i metodi `insert_commit`, `set_*`.
-/// Ahead/behind degli upstream sono calcolati dal grafo dei commit a ogni lettura.
+/// Start from [`MemoryBackend::new`] (empty repo on `main`) or from [`MemoryBackend::sample`]
+/// (sample repo) and add commits and refs with the `insert_commit`, `set_*` methods.
+/// Ahead/behind of upstreams are computed from the commit graph at every read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryBackend {
     commits: BTreeMap<Oid, Commit>,
-    /// File cambiati da ogni commit rispetto al primo genitore; un commit assente non cambia
-    /// niente.
+    /// Files changed by each commit relative to the first parent; a missing commit changes
+    /// nothing.
     changes: BTreeMap<Oid, Vec<ChangedFile>>,
-    /// Nome completo → destinazione; l'ordine della mappa è quello di `git for-each-ref`.
+    /// Full name → target; the map order is that of `git for-each-ref`.
     refs: BTreeMap<String, RefEntry>,
-    /// Branch locale → branch remoto, entrambi nomi completi.
+    /// Local branch → remote branch, both full names.
     upstreams: BTreeMap<String, String>,
     head: HeadRef,
     entries: Vec<StatusEntry>,
     operation: Option<Operation>,
-    /// Contenuto degli oggetti blob, per i diff.
+    /// Content of the blob objects, for diffs.
     blobs: BTreeMap<Oid, Vec<u8>>,
-    /// Contenuto dei file nel worktree, per `diff.worktree`.
+    /// Content of the files in the worktree, for `diff.worktree`.
     worktree: BTreeMap<RepoPath, Vec<u8>>,
-    /// Backup dell'indice salvati da stage e unstage: nome del ref e versioni salvate.
+    /// Index backups saved by stage and unstage: ref name and saved versions.
     backups: Vec<(String, Vec<StagedVersion>)>,
-    /// Ref di backup dei commit (riscritti da `amend`, abbandonati da undo/redo): nome e commit.
+    /// Backup refs of commits (rewritten by `amend`, abandoned by undo/redo): name and commit.
     commit_backups: Vec<(String, Oid)>,
-    /// Backup del worktree salvati da `worktree.discard`.
+    /// Worktree backups saved by `worktree.discard`.
     worktree_backups: Vec<WorktreeStash>,
-    /// Nome ed email di chi committa (`user.name`/`user.email`); `None` = non configurata.
+    /// Name and email of the committer (`user.name`/`user.email`); `None` = not configured.
     identity: Option<(String, String)>,
-    /// Remoti configurati, per nome.
+    /// Configured remotes, by name.
     remotes: BTreeMap<String, MemoryRemote>,
-    /// La configurazione di pull (`pull.rebase`, `pull.ff`), uguale per tutti i branch.
+    /// The pull configuration (`pull.rebase`, `pull.ff`), the same for all branches.
     pull_settings: PullSettings,
-    /// Se c'è, un hook `pre-push` che rifiuta ogni push con questo messaggio.
+    /// If set, a `pre-push` hook that rejects every push with this message.
     pre_push_failure: Option<String>,
-    /// Altre chiavi della configurazione ([`GitBackend::config_values`]).
+    /// Other configuration keys ([`GitBackend::config_values`]).
     config: BTreeMap<String, Vec<String>>,
-    /// I "server" dei remoti tolti, per URL: un remoto aggiunto con lo stesso URL li ritrova.
+    /// The "servers" of removed remotes, by URL: a remote added with the same URL finds them again.
     detached_remotes: BTreeMap<String, MemoryRemote>,
-    /// Voci `remote.<nome>.*` "fuori dal file del repo" ([`MemoryBackend::set_remote_elsewhere`]).
+    /// `remote.<name>.*` entries "outside the repo file" ([`MemoryBackend::set_remote_elsewhere`]).
     remote_elsewhere: BTreeMap<String, Vec<String>>,
-    /// Remoti che `remotes()` elenca anche dopo la rimozione
+    /// Remotes that `remotes()` lists even after removal
     /// ([`MemoryBackend::keep_remote_listed`]).
     listed_anyway: BTreeSet<String>,
-    /// Quante `restore_refs` riescono ancora prima di fallire
-    /// ([`MemoryBackend::fail_restore_refs_after`]); `None`: sempre.
+    /// How many `restore_refs` calls still succeed before failing
+    /// ([`MemoryBackend::fail_restore_refs_after`]); `None`: always.
     restore_budget: Option<usize>,
-    /// Gli stash, dal più recente (`stash@{0}`); `refs/stash` punta al primo.
+    /// The stashes, most recent first (`stash@{0}`); `refs/stash` points to the first.
     stashes: Vec<MemoryStash>,
-    /// Gli stash eliminati, per id: `stash_store` (l'undo di un drop) li ritrova interi.
+    /// The dropped stashes, by id: `stash_store` (the undo of a drop) finds them again whole.
     dropped_stashes: BTreeMap<Oid, MemoryStash>,
-    /// Se c'è, ogni `stash_drop` fallisce con questo messaggio
+    /// If set, every `stash_drop` fails with this message
     /// ([`MemoryBackend::fail_stash_drop`]).
     stash_drop_failure: Option<String>,
-    /// Il merge in corso (`MERGE_HEAD`, `MERGE_MSG`), con `operation` = `Merge`.
+    /// The merge in progress (`MERGE_HEAD`, `MERGE_MSG`), with `operation` = `Merge`.
     merge_state: Option<MemoryMerge>,
 }
 
@@ -120,7 +120,7 @@ impl Default for MemoryBackend {
 }
 
 impl MemoryBackend {
-    /// Repo vuoto: HEAD su `main`, che non ha ancora commit; worktree pulito.
+    /// Empty repo: HEAD on `main`, which has no commits yet; clean worktree.
     pub fn new() -> Self {
         Self {
             commits: BTreeMap::new(),
@@ -151,10 +151,10 @@ impl MemoryBackend {
         }
     }
 
-    /// Id finto e deterministico: lo stesso `seed` dà sempre lo stesso id, seed diversi id
-    /// diversi (in pratica). Le cifre sembrano casuali, come quelle vere.
+    /// Fake, deterministic id: the same `seed` always gives the same id, different seeds different
+    /// ids (in practice). The digits look random, like real ones.
     pub fn fake_oid(seed: u64) -> Oid {
-        // splitmix64: abbastanza mescolato da non dare id simili per seed vicini.
+        // splitmix64: mixed enough not to give similar ids for nearby seeds.
         let mut state = seed;
         let mut bytes = [0u8; Oid::LEN];
         for chunk in bytes.chunks_mut(8) {
@@ -168,97 +168,97 @@ impl MemoryBackend {
         Oid::from_bytes(bytes)
     }
 
-    /// Aggiunge (o sostituisce) un commit. I genitori assenti dal repo vengono ignorati dal log,
-    /// come in un clone superficiale.
+    /// Adds (or replaces) a commit. Parents missing from the repo are ignored by the log,
+    /// as in a shallow clone.
     pub fn insert_commit(&mut self, commit: Commit) {
         self.commits.insert(commit.id, commit);
     }
 
-    /// File cambiati dal commit `id` rispetto al primo genitore (o all'albero vuoto per un
-    /// commit radice), nell'ordine in cui li darebbe git. Li restituisce
-    /// [`GitBackend::show_commit`]; senza questa chiamata il commit non cambia nessun file.
+    /// Files changed by commit `id` relative to the first parent (or to the empty tree for a
+    /// root commit), in the order git would give them. Returned by
+    /// [`GitBackend::show_commit`]; without this call the commit changes no files.
     pub fn set_changes(&mut self, id: Oid, files: Vec<ChangedFile>) {
         self.changes.insert(id, files);
     }
 
-    /// Contenuto del blob `id`, usato dai diff dei file che lo hanno come id. Un file il cui
-    /// contenuto non è noto compare nei diff come binario (senza hunk).
+    /// Content of blob `id`, used by the diffs of files that have it as id. A file whose
+    /// content is not known shows up in diffs as binary (without hunks).
     pub fn set_blob(&mut self, id: Oid, content: impl Into<Vec<u8>>) {
         self.blobs.insert(id, content.into());
     }
 
-    /// Contenuto del file `path` nel worktree, per [`DiffSpec::Worktree`]: serve per le voci
-    /// dello stato modificate fuori stage (per i file eliminati no).
+    /// Content of file `path` in the worktree, for [`DiffSpec::Worktree`]: needed for the status
+    /// entries modified outside the stage (not for deleted files).
     pub fn set_worktree_file(&mut self, path: impl Into<RepoPath>, content: impl Into<Vec<u8>>) {
         self.worktree.insert(path.into(), content.into());
     }
 
-    /// I backup dell'indice salvati da stage e unstage, in ordine: nome del ref e versioni in
-    /// stage salvate (i contenuti sono nei blob).
+    /// The index backups saved by stage and unstage, in order: ref name and saved staged
+    /// versions (the contents are in the blobs).
     pub fn backups(&self) -> &[(String, Vec<StagedVersion>)] {
         &self.backups
     }
 
-    /// I ref di backup dei commit, in ordine: nome del ref e commit. Li creano `amend`
-    /// (`refs/project/backup/amend-<n>`, il commit riscritto) e `edit.undo`/`edit.redo`
-    /// (`refs/project/backup/undo-<n>`/`redo-<n>`, i commit che non sarebbero più
-    /// raggiungibili).
+    /// The backup refs of commits, in order: ref name and commit. Created by `amend`
+    /// (`refs/project/backup/amend-<n>`, the rewritten commit) and `edit.undo`/`edit.redo`
+    /// (`refs/project/backup/undo-<n>`/`redo-<n>`, the commits that would no longer be
+    /// reachable).
     pub fn commit_backups(&self) -> &[(String, Oid)] {
         &self.commit_backups
     }
 
-    /// Identità di chi committa, come `user.name` e `user.email`. Senza (il default di
-    /// [`MemoryBackend::new`]) un commit dà errore, come git senza identità.
+    /// Identity of the committer, like `user.name` and `user.email`. Without it (the default of
+    /// [`MemoryBackend::new`]) a commit fails, like git without an identity.
     pub fn set_identity(&mut self, name: &str, email: &str) {
         self.identity = Some((name.to_owned(), email.to_owned()));
     }
 
-    /// Il contenuto del blob `id`, se noto.
+    /// The content of blob `id`, if known.
     pub fn blob(&self, id: Oid) -> Option<&[u8]> {
         self.blobs.get(&id).map(Vec::as_slice)
     }
 
-    /// Crea o sposta il branch locale `name` (nome breve, es. `main`).
+    /// Creates or moves the local branch `name` (short name, e.g. `main`).
     pub fn set_branch(&mut self, name: &str, target: Oid) {
         self.set_ref(format!("{HEADS}{name}"), target, None);
     }
 
-    /// Crea o sposta il branch remoto `name` (nome breve, es. `origin/main`).
+    /// Creates or moves the remote branch `name` (short name, e.g. `origin/main`).
     pub fn set_remote_branch(&mut self, name: &str, target: Oid) {
         self.set_ref(format!("{REMOTES}{name}"), target, None);
     }
 
-    /// Crea o sposta il tag `name` sul commit `target`. `tag_object` è l'id dell'oggetto tag
-    /// per un tag annotato, `None` per uno leggero.
+    /// Creates or moves the tag `name` on commit `target`. `tag_object` is the id of the tag object
+    /// for an annotated tag, `None` for a lightweight one.
     pub fn set_tag(&mut self, name: &str, target: Oid, tag_object: Option<Oid>) {
         self.set_ref(format!("{TAGS}{name}"), target, tag_object);
     }
 
-    /// Il branch locale `branch` segue il branch remoto `remote` (nomi brevi, es. `main` e
-    /// `origin/main`). Il remoto può anche non esistere: l'upstream risulta sparito.
+    /// The local branch `branch` follows the remote branch `remote` (short names, e.g. `main` and
+    /// `origin/main`). The remote may also not exist: the upstream shows up as gone.
     pub fn set_upstream(&mut self, branch: &str, remote: &str) {
         self.upstreams
             .insert(format!("{HEADS}{branch}"), format!("{REMOTES}{remote}"));
     }
 
-    /// HEAD sul branch `name` (nome breve), che può non esistere ancora.
+    /// HEAD on branch `name` (short name), which may not exist yet.
     pub fn set_head_branch(&mut self, name: &str) {
         self.head = HeadRef::Branch(name.to_owned());
     }
 
-    /// HEAD staccata sul commit `target`.
+    /// HEAD detached on commit `target`.
     pub fn detach_head(&mut self, target: Oid) {
         self.head = HeadRef::Detached(target);
     }
 
-    /// Voci dello stato, nell'ordine in cui le darebbe git.
+    /// Status entries, in the order git would give them.
     pub fn set_entries(&mut self, entries: Vec<StatusEntry>) {
         self.entries = entries;
     }
 
-    /// Operazione in corso (merge, rebase, ...), `None` se nessuna. Un merge impostato così
-    /// non ha `MERGE_HEAD` (il commit lo rifiuta); un merge vero lo lascia `merge.start` fermo
-    /// in conflitto.
+    /// Operation in progress (merge, rebase, ...), `None` if none. A merge set this way
+    /// has no `MERGE_HEAD` (the commit rejects it); a real merge is left by `merge.start` stopped
+    /// on conflict.
     pub fn set_operation(&mut self, operation: Option<Operation>) {
         self.operation = operation;
         self.merge_state = None;
@@ -275,8 +275,8 @@ impl MemoryBackend {
         }
     }
 
-    /// Risolve una rev come `git rev-parse`, nell'ordine di git: `HEAD`, nome completo,
-    /// `refs/<rev>`, tag, branch locale, branch remoto, poi id (anche abbreviato).
+    /// Resolves a rev like `git rev-parse`, in git's order: `HEAD`, full name,
+    /// `refs/<rev>`, tag, local branch, remote branch, then id (also abbreviated).
     fn resolve(&self, rev: &str) -> Result<Oid, EngineError> {
         let unknown = || EngineError::UnknownRev(rev.to_owned());
         if rev == "HEAD" {
@@ -292,7 +292,7 @@ impl MemoryBackend {
         if let Some(entry) = candidates.iter().find_map(|name| self.refs.get(name)) {
             return Ok(entry.target);
         }
-        // I backup dei commit sono ref anche loro (`refs/project/backup/...`).
+        // Commit backups are refs too (`refs/project/backup/...`).
         if let Some((_, id)) = self.commit_backups.iter().find(|(name, _)| name == rev) {
             return Ok(*id);
         }
@@ -302,7 +302,7 @@ impl MemoryBackend {
                 .commits
                 .keys()
                 .filter(|id| id.to_string().starts_with(&hex));
-            // Un prefisso ambiguo non si risolve, come in git.
+            // An ambiguous prefix does not resolve, as in git.
             if let (Some(id), None) = (matches.next(), matches.next()) {
                 return Ok(*id);
             }
@@ -310,7 +310,7 @@ impl MemoryBackend {
         Err(unknown())
     }
 
-    /// Commit raggiungibili da `start` (compreso), solo quelli presenti nel repo.
+    /// Commits reachable from `start` (included), only those present in the repo.
     fn reachable(&self, start: Oid) -> BTreeSet<Oid> {
         self.reachable_from([start])
     }
@@ -339,7 +339,7 @@ impl MemoryBackend {
                     Some(count(theirs.difference(&ours).count())),
                 )
             }
-            // Il remoto non c'è più: `gone`.
+            // The remote is gone: `gone`.
             _ => (None, None),
         };
         Some(Upstream {
@@ -366,7 +366,7 @@ fn kind_of(name: &str) -> RefKind {
     }
 }
 
-/// Un lato di un file in un diff: modo, id e contenuto (se noto).
+/// One side of a file in a diff: mode, id and content (if known).
 #[derive(Clone, Copy)]
 struct Side<'a> {
     mode: u32,
@@ -374,17 +374,17 @@ struct Side<'a> {
     content: Option<&'a [u8]>,
 }
 
-/// Id finto del contenuto di un file del worktree (git lo calcola con `hash-object`).
+/// Fake id of the content of a worktree file (git computes it with `hash-object`).
 fn content_oid(content: &[u8]) -> Oid {
-    // FNV-1a: deterministico e diverso per contenuti diversi (in pratica).
+    // FNV-1a: deterministic and different for different contents (in practice).
     let hash = content.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
     MemoryBackend::fake_oid(hash)
 }
 
-/// Il [`FileDiff`] di un file da `old` (assente per un file aggiunto) a `new` (assente per un
-/// file eliminato), con i campi come li legge `parse_diff` dall'output di git.
+/// The [`FileDiff`] of a file from `old` (absent for an added file) to `new` (absent for a
+/// deleted file), with the fields as `parse_diff` reads them from git's output.
 fn file_diff<'a>(
     change: Change,
     old_path: &RepoPath,
@@ -409,8 +409,8 @@ fn file_diff<'a>(
     if let (Some(o), Some(n)) = (old, new)
         && o.oid == n.oid
     {
-        // Contenuto invariato (rinomina esatta, cambio di solo modo): git non scrive la riga
-        // `index`, e i modi solo se cambiano.
+        // Unchanged content (exact rename, mode-only change): git does not write the `index`
+        // line, and the modes only if they change.
         file.old_oid = None;
         file.new_oid = None;
         if o.mode == n.mode {
@@ -427,7 +427,7 @@ fn file_diff<'a>(
         }
     };
     match (content(old), content(new)) {
-        // Come git: binario se c'è un NUL nei primi 8000 byte.
+        // Like git: binary if there is a NUL in the first 8000 bytes.
         (Some(o), Some(n)) if !is_binary(o) && !is_binary(n) => {
             file.hunks = line_diff::hunks(o, n);
         }
@@ -455,8 +455,8 @@ fn unmerged(path: &RepoPath) -> FileDiff {
     }
 }
 
-/// Il tipo di modifica di un file nel diff: un cambio di tipo è una modifica (git lo scrive
-/// come due sezioni, ma qui basta una).
+/// The kind of change of a file in the diff: a type change is a modification (git writes it
+/// as two sections, but one is enough here).
 fn diff_change(change: Change) -> Change {
     match change {
         Change::TypeChanged => Change::Modified,
@@ -473,7 +473,7 @@ impl MemoryBackend {
         })
     }
 
-    /// I file del commit `rev` rispetto al primo genitore, dai file di `show_commit`.
+    /// The files of commit `rev` relative to the first parent, from the files of `show_commit`.
     fn commit_diff(&self, rev: &str) -> Result<Vec<FileDiff>, EngineError> {
         let details = self.show_commit(rev)?;
         Ok(details
@@ -492,7 +492,7 @@ impl MemoryBackend {
             .collect())
     }
 
-    /// Indice rispetto a HEAD, dalle voci dello stato.
+    /// Index relative to HEAD, from the status entries.
     fn index_diff(&self) -> Vec<FileDiff> {
         let mut files = Vec::new();
         for entry in &self.entries {
@@ -534,7 +534,7 @@ impl MemoryBackend {
         files
     }
 
-    /// Worktree rispetto all'indice, dalle voci dello stato e dai file del worktree.
+    /// Worktree relative to the index, from the status entries and the worktree files.
     fn worktree_diff(&self) -> Vec<FileDiff> {
         let mut files = Vec::new();
         for entry in &self.entries {
@@ -551,7 +551,7 @@ impl MemoryBackend {
             if !entry.worktree.is_change() {
                 continue;
             }
-            // Un file aggiunto fuori stage (`git add -N`) non ha contenuto nell'indice.
+            // A file added outside the stage (`git add -N`) has no content in the index.
             let old = match entry.worktree {
                 Change::Added => None,
                 _ => self.side(info.mode_index, info.oid_index),
@@ -614,8 +614,8 @@ impl GitBackend for MemoryBackend {
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError> {
         query.check()?;
         let starts: Vec<Oid> = if query.all {
-            // Come `--branches --remotes --tags HEAD`: niente stash né backup (con `stashes` le
-            // basi degli stash, non gli stash).
+            // Like `--branches --remotes --tags HEAD`: no stash or backup (with `stashes` the
+            // stash bases, not the stashes).
             self.refs
                 .iter()
                 .filter(|(name, _)| [HEADS, REMOTES, TAGS].iter().any(|p| name.starts_with(p)))
@@ -637,8 +637,8 @@ impl GitBackend for MemoryBackend {
         let wanted = query.skip.saturating_add(query.limit.unwrap_or(usize::MAX));
         let reachable = self.reachable_from(starts);
 
-        // Come `git log --date-order`: un commit esce solo dopo tutti i suoi figli; fra quelli
-        // pronti, prima il più recente (a parità di data decide l'id, per un ordine stabile).
+        // Like `git log --date-order`: a commit comes out only after all its children; among those
+        // ready, the most recent first (on equal date the id decides, for a stable order).
         let mut children: BTreeMap<Oid, usize> = reachable.iter().map(|id| (*id, 0)).collect();
         for id in &reachable {
             for parent in &self.commits[id].parents {
@@ -674,7 +674,7 @@ impl GitBackend for MemoryBackend {
     fn status(&self) -> Result<Status, EngineError> {
         let upstream = match &self.head {
             HeadRef::Branch(name) => self.upstream_of(&format!("{HEADS}{name}")).map(|up| {
-                // `git status` usa il nome breve.
+                // `git status` uses the short name.
                 Upstream {
                     name: up.name.strip_prefix(REMOTES).unwrap_or(&up.name).to_owned(),
                     ..up
@@ -692,7 +692,7 @@ impl GitBackend for MemoryBackend {
 
     fn show_commit(&self, rev: &str) -> Result<CommitDetails, EngineError> {
         let id = self.resolve(rev)?;
-        // Un ref può puntare a un commit che il repo non ha (come in un clone superficiale).
+        // A ref may point to a commit the repo does not have (as in a shallow clone).
         let commit = self
             .commits
             .get(&id)
@@ -748,7 +748,7 @@ impl GitBackend for MemoryBackend {
             if *budget == 0 {
                 return Err(EngineError::Git {
                     command: "update-ref".to_owned(),
-                    stderr: "fallimento simulato (fail_restore_refs_after)".to_owned(),
+                    stderr: "simulated failure (fail_restore_refs_after)".to_owned(),
                 });
             }
             *budget -= 1;
@@ -857,7 +857,7 @@ impl GitBackend for MemoryBackend {
         name: &str,
         entries: &[ConfigEntry],
         remove: bool,
-    ) -> Vec<String> {
+    ) -> Vec<Message> {
         self.set_branch_config(name, entries, remove)
     }
 
@@ -869,11 +869,11 @@ impl GitBackend for MemoryBackend {
         self.create_memory_remote(name, url)
     }
 
-    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         self.drop_remote_config(snapshot)
     }
 
-    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         self.put_remote_config(snapshot)
     }
 
@@ -922,36 +922,36 @@ impl GitBackend for MemoryBackend {
     }
 }
 
-/// [`RepoOpener`] su repo in memoria, registrati per percorso. Ogni `open` restituisce una copia
-/// indipendente del repo registrato.
+/// [`RepoOpener`] over in-memory repos, registered by path. Each `open` returns an independent
+/// copy of the registered repo.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryOpener {
     repos: BTreeMap<String, MemoryBackend>,
 }
 
 impl MemoryOpener {
-    /// Percorso del repo di esempio in [`MemoryOpener::sample`].
-    pub const SAMPLE_PATH: &'static str = "esempio";
+    /// Path of the sample repo in [`MemoryOpener::sample`].
+    pub const SAMPLE_PATH: &'static str = "sample";
 
-    /// Nessun repo registrato.
+    /// No registered repo.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Solo il repo di [`MemoryBackend::sample`], al percorso [`MemoryOpener::SAMPLE_PATH`].
-    /// È l'opener della versione web.
+    /// Only the repo from [`MemoryBackend::sample`], at path [`MemoryOpener::SAMPLE_PATH`].
+    /// It is the opener of the web version.
     pub fn sample() -> Self {
         let mut opener = Self::new();
         opener.insert(Self::SAMPLE_PATH, MemoryBackend::sample());
         opener
     }
 
-    /// Registra (o sostituisce) il repo al percorso `path`.
+    /// Registers (or replaces) the repo at path `path`.
     pub fn insert(&mut self, path: impl Into<String>, repo: MemoryBackend) {
         self.repos.insert(path.into(), repo);
     }
 
-    /// Percorsi registrati, in ordine.
+    /// Registered paths, in order.
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.repos.keys().map(String::as_str)
     }
@@ -966,9 +966,9 @@ impl RepoOpener for MemoryOpener {
                 Err(EngineError::RepoNotFound {
                     path: path.to_owned(),
                     reason: if known.is_empty() {
-                        "nessun repo in memoria".to_owned()
+                        msg!("engine-memory-no-repo")
                     } else {
-                        format!("repo in memoria disponibili: {}", known.join(", "))
+                        msg!("engine-memory-repos", repos = known.join(", "))
                     },
                 })
             }

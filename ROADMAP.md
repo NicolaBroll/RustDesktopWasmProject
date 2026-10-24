@@ -1,17 +1,17 @@
 # Roadmap
 
-## Prima iterazione
+## First iteration
 
-- [x] Workspace con `core`, `domain`, `engine`, `ui`, `mcp` e le tre app.
-- [x] `cargo xtask ci` verde: formattazione, lint, test, layering, wasm.
-- [x] La stessa finestra si apre su desktop e con `trunk serve`.
-- [x] `Platform` con `pick_file` e `save_file`, implementazioni nativa (`rfd`) e web (input file / download `Blob`).
-- [x] Comandi del registro eseguiti da UI, CLI e MCP.
+- [x] Workspace with `core`, `domain`, `engine`, `ui`, `mcp` and the three apps.
+- [x] `cargo xtask ci` green: formatting, lint, tests, layering, wasm.
+- [x] The same window opens on desktop and with `trunk serve`.
+- [x] `Platform` with `pick_file` and `save_file`, native (`rfd`) and web (file input / `Blob` download) implementations.
+- [x] Registry commands run from UI, CLI and MCP.
 
-## Prossimi passi
+## Next steps
 
-- [ ] Packaging (`packaging/`): AppImage/deb e zip del sito web con `SHA256SUMS.txt`, poi MSI/DMG con firma.
-- [ ] `cargo deny check` nella CI (configurazione già in `deny.toml`).
-- [ ] Web: gestire l'annullamento del dialogo file (evento `cancel`) e prototipare accessibilità, IME e incolla.
-- [ ] Desktop: dialoghi file non bloccanti (`rfd::AsyncFileDialog`).
-- [ ] Controllo della UI per agenti (spento di default, solo loopback, token).
+- [ ] Packaging (`packaging/`): AppImage/deb and a zip of the web site with `SHA256SUMS.txt`, then signed MSI/DMG.
+- [ ] `cargo deny check` in CI (configuration already in `deny.toml`).
+- [ ] Web: handle cancelling the file dialog (`cancel` event) and prototype accessibility, IME and paste.
+- [ ] Desktop: non-blocking file dialogs (`rfd::AsyncFileDialog`).
+- [ ] UI control for agents (off by default, loopback only, token).

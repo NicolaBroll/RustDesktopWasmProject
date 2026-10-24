@@ -1,9 +1,9 @@
 #!/bin/sh
-# Rigenera i file refs-*.bin (usati da refs_tests.rs) in repo temporanei.
-# Uso: sh refs.sh <cartella-di-uscita>
+# Regenerates the refs-*.bin files (used by refs_tests.rs) in temporary repos.
+# Usage: sh refs.sh <output-folder>
 #
-# Ogni file è l'output di `git for-each-ref` con gli argomenti di REFS_ARGS (formato e pattern
-# ripetuti qui sotto in `refs`: se cambiano in refs.rs vanno cambiati anche qui).
+# Each file is the output of `git for-each-ref` with the REFS_ARGS arguments (format and pattern
+# repeated below in `refs`: if they change in refs.rs they must change here too).
 set -eu
 out=$(cd "$1" && pwd)
 dir=$(mktemp -d)
@@ -11,7 +11,7 @@ trap 'rm -rf "$dir"' EXIT
 cd "$dir"
 
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 LC_ALL=C TZ=UTC
-export GIT_AUTHOR_NAME='Anna Autrice' GIT_AUTHOR_EMAIL=anna@example.com
+export GIT_AUTHOR_NAME='Anna Author' GIT_AUTHOR_EMAIL=anna@example.com
 export GIT_COMMITTER_NAME='Carlo Committer' GIT_COMMITTER_EMAIL=carlo@example.com
 export GIT_AUTHOR_DATE='1700000000 +0000' GIT_COMMITTER_DATE='1700000000 +0000'
 
@@ -25,11 +25,11 @@ commit() {
     git commit -q --allow-empty -m "$1"
 }
 
-# --- Repo appena creato: nessun ref, output vuoto. -----------------------------------------
-git init -q -b main vuoto
-(cd vuoto && refs >"$out/refs-vuoto.bin")
+# --- Freshly created repo: no refs, empty output. -----------------------------------------
+git init -q -b main empty
+(cd empty && refs >"$out/refs-empty.bin")
 
-# --- Repo con un remoto vero (bare) e ogni tipo di ref. ------------------------------------
+# --- Repo with a real (bare) remote and every kind of ref. --------------------------------
 git init -q --bare -b main origin.git
 git init -q -b main repo
 (
@@ -38,77 +38,77 @@ git init -q -b main repo
     echo base >file.txt
     git add file.txt
     commit 'Base'
-    # main: in pari con origin/main.
+    # main: level with origin/main.
     git push -q -u origin main 2>/dev/null
 
-    # avanti: due commit non ancora inviati (ahead 2).
-    git checkout -q -b avanti
-    git push -q -u origin avanti 2>/dev/null
-    commit 'Avanti 1'
-    commit 'Avanti 2'
+    # forward: two commits not yet pushed (ahead 2).
+    git checkout -q -b forward
+    git push -q -u origin forward 2>/dev/null
+    commit 'Forward 1'
+    commit 'Forward 2'
 
-    # indietro: origin/indietro ha un commit in più (behind 1).
-    git checkout -q -b indietro main
-    commit 'Indietro 1'
-    git push -q -u origin indietro 2>/dev/null
+    # back: origin/back has one more commit (behind 1).
+    git checkout -q -b back main
+    commit 'Back 1'
+    git push -q -u origin back 2>/dev/null
     git reset -q --hard HEAD~1
 
-    # entrambi: divergente (ahead 1, behind 2).
-    git checkout -q -b entrambi main
-    commit 'Entrambi remoto 1'
-    commit 'Entrambi remoto 2'
-    git push -q -u origin entrambi 2>/dev/null
+    # both: diverged (ahead 1, behind 2).
+    git checkout -q -b both main
+    commit 'Both remote 1'
+    commit 'Both remote 2'
+    git push -q -u origin both 2>/dev/null
     git reset -q --hard main
-    commit 'Entrambi locale'
+    commit 'Both local'
 
-    # sparito: upstream configurato ma cancellato dal remoto (gone).
-    git checkout -q -b sparito main
-    git push -q -u origin sparito 2>/dev/null
-    git push -q origin --delete sparito 2>/dev/null
+    # gone: upstream configured but deleted from the remote (gone).
+    git checkout -q -b gone main
+    git push -q -u origin gone 2>/dev/null
+    git push -q origin --delete gone 2>/dev/null
 
-    # Solo sul remoto: refs/remotes/origin/solo-remoto senza branch locale.
-    git checkout -q -b solo-remoto main
-    commit 'Solo remoto'
-    git push -q origin solo-remoto 2>/dev/null
+    # Only on the remote: refs/remotes/origin/remote-only with no local branch.
+    git checkout -q -b only-remote main
+    commit 'Solo remote'
+    git push -q origin only-remote 2>/dev/null
     git checkout -q main
-    git branch -q -D solo-remoto
+    git branch -q -D only-remote
 
-    # origin/HEAD simbolico verso origin/main.
+    # symbolic origin/HEAD pointing to origin/main.
     git remote set-head origin main >/dev/null
 
-    # Branch senza upstream: con `/`, non ASCII, non UTF-8 (byte 0xff).
-    git branch feature/nuova-interfaccia
-    git branch "$(printf 'caff\303\250')"
+    # Branches without upstream: with `/`, non-ASCII, non-UTF-8 (byte 0xff).
+    git branch feature/new-interface
+    git branch "$(printf 'caf\303\251')"
     git branch "$(printf 'latin-\377')"
-    # Upstream locale (remote = `.`): l'upstream è refs/heads/main.
-    git branch -q --track su-main main
-    # Ref simbolico locale: scartato dal parser come origin/HEAD.
+    # Local upstream (remote = `.`): the upstream is refs/heads/main.
+    git branch -q --track on-main main
+    # Local symbolic ref: discarded by the parser like origin/HEAD.
     git symbolic-ref refs/heads/alias refs/heads/main
 
-    # Tag: leggero, annotato, annotato di un tag annotato, leggero su un albero.
+    # Tags: lightweight, annotated, annotated tag of an annotated tag, lightweight on a tree.
     git tag v0.1
-    git tag -a -m 'Versione 1.0' v1.0 avanti
-    git -c advice.nestedTag=false tag -a -m 'Tag del tag' v1.0-doppio v1.0
-    git tag albero 'main^{tree}'
+    git tag -a -m 'Version 1.0' v1.0 forward
+    git -c advice.nestedTag=false tag -a -m 'Tag of the tag' v1.0-double v1.0
+    git tag tree 'main^{tree}'
 
-    # Note: refs/notes/commits non rientra nei pattern.
-    git notes add -m 'una nota' main
+    # Notes: refs/notes/commits is not in the patterns.
+    git notes add -m 'a note' main
 
     # Stash.
-    echo modifica >>file.txt
+    echo change >>file.txt
     git stash -q
 
     refs >"$out/refs.bin"
 )
 
-# --- Upstream con un a capo nel nome (da `branch.<b>.merge` nella config). -----------------
-git init -q -b main a-capo
+# --- Upstream with a newline in the name (from `branch.<b>.merge` in the config). --------
+git init -q -b main newline
 (
-    cd a-capo
+    cd newline
     commit 'Base'
     git config remote.origin.url ../origin.git
     git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
     git config branch.main.remote origin
-    git config branch.main.merge "$(printf 'refs/heads/riga\nnuova')"
-    refs >"$out/refs-upstream-a-capo.bin"
+    git config branch.main.merge "$(printf 'refs/heads/line\nnew')"
+    refs >"$out/refs-upstream-newline.bin"
 )

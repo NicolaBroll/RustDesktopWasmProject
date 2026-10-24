@@ -1,20 +1,20 @@
-//! Gli stash dalla sezione "Stash" della colonna dei ref (S28): `stash.list`, `stash.push`,
-//! `stash.apply`, `stash.pop`, `stash.drop`. Solo dati, senza egui: si prova con test unitari.
+//! The stashes from the "Stash" section of the refs column (S28): `stash.list`, `stash.push`,
+//! `stash.apply`, `stash.pop`, `stash.drop`. Data only, no egui: tested with unit tests.
 //!
-//! L'elenco viene da `stash.list`, letto all'apertura (e con "Aggiorna", dopo undo e redo) e
-//! preso dalle risposte dei comandi. Ogni stash si disegna nel grafo accanto al commit `base`
-//! (il `repo.log` della lista chiede `"stashes": true`, così quel commit c'è sempre).
+//! The list comes from `stash.list`, read on open (and with "Refresh", after undo and redo) and
+//! taken from the command responses. Each stash is drawn in the graph next to its `base` commit
+//! (the list's `repo.log` asks for `"stashes": true`, so that commit is always there).
 //!
-//! - **Push**: un dialogo con messaggio facoltativo, "includi i non tracciati" e "tieni lo
-//!   stage"; un rifiuto del motore (niente da mettere da parte, conflitti, operazione in corso)
-//!   resta nel dialogo. Entra nel diario: «Annulla» lo riapplica.
-//! - **Apply/pop**: sempre con `index` ed `expected` (l'id visto): se l'elenco è cambiato il
-//!   motore rifiuta e l'elenco si rilegge. Non entrano nel diario: l'avviso non propone
-//!   «Annulla» (che riguarderebbe l'operazione di prima). Con `conflicts` non vuoto è un
-//!   successo parziale: si apre una finestra con i file, che si risolvono dall'area di stage.
-//! - **Drop**: in due tempi come la rimozione di un remoto: prima senza `confirm` (il motore
-//!   risponde sempre con `ConfirmRequired` e cosa si perderebbe), poi, solo dopo il clic nel
-//!   dialogo rosso, `"confirm": true`.
+//! - **Push**: a dialog with an optional message, "include untracked" and "keep the
+//!   index"; an engine refusal (nothing to stash, conflicts, operation in progress)
+//!   stays in the dialog. It enters the journal: "Undo" reapplies it.
+//! - **Apply/pop**: always with `index` and `expected` (the id seen): if the list changed the
+//!   engine refuses and the list is reread. They do not enter the journal: the notice does not offer
+//!   "Undo" (which would concern the previous operation). With non-empty `conflicts` it is a
+//!   partial success: a window opens with the files, to be resolved from the stage area.
+//! - **Drop**: in two steps like removing a remote: first without `confirm` (the engine
+//!   always answers with `ConfirmRequired` and what would be lost), then, only after the click in the
+//!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
 use crate::{Action, App, Done, Request, stash};
@@ -24,10 +24,10 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// L'id del comando che elenca gli stash.
+/// The id of the command that lists the stashes.
 pub const LIST: &str = "stash.list";
 
-/// Un comando che cambia gli stash (o i file, per apply e pop).
+/// A command that changes the stashes (or the files, for apply and pop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Push,
@@ -37,7 +37,7 @@ pub enum Op {
 }
 
 impl Op {
-    /// L'id del comando del Registry.
+    /// The id of the Registry command.
     pub fn command(self) -> &'static str {
         match self {
             Op::Push => "stash.push",
@@ -48,28 +48,28 @@ impl Op {
     }
 }
 
-/// Uno stash, come lo dà `stash.list`.
+/// A stash, as given by `stash.list`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct Stash {
-    /// `n` di `stash@{n}`, 0 il più recente.
+    /// `n` of `stash@{n}`, 0 the most recent.
     pub index: usize,
     /// `stash@{n}`.
     pub name: String,
-    /// Il commit dello stash: `commit.show`/`diff.commit` su questo id danno i file tracciati.
+    /// The stash commit: `commit.show`/`diff.commit` on this id give the tracked files.
     pub id: Oid,
-    /// Il commit su cui è stato creato.
+    /// The commit it was created on.
     pub base: Oid,
-    /// Il messaggio come in `git stash list`.
+    /// The message as in `git stash list`.
     pub message: String,
     pub branch: Option<String>,
     pub time: i64,
-    /// Contiene anche file non tracciati (che `commit.show` non mostra).
+    /// Also contains untracked files (which `commit.show` does not show).
     pub untracked: bool,
 }
 
 impl Stash {
-    /// Il messaggio senza il prefisso `On <branch>: ` / `WIP on <branch>: `, che la riga
-    /// mostra a parte.
+    /// The message without the `On <branch>: ` / `WIP on <branch>: ` prefix, which the row
+    /// shows separately.
     pub fn title(&self) -> &str {
         let message = self.message.as_str();
         for prefix in ["On ", "WIP on "] {
@@ -82,7 +82,7 @@ impl Stash {
         message
     }
 
-    /// Data dello stash, es. `2026-10-23 09:12` (UTC).
+    /// Date of the stash, e.g. `2026-10-23 09:12` (UTC).
     pub fn date(&self) -> String {
         format::date_time(&Signature {
             name: String::new(),
@@ -92,7 +92,7 @@ impl Stash {
         })
     }
 
-    /// Branch e base: `su main · 1a2b3c4`, `HEAD staccata · 1a2b3c4`.
+    /// Branch and base: `on main · 1a2b3c4`, `detached HEAD · 1a2b3c4`.
     pub fn origin(&self) -> String {
         match &self.branch {
             Some(branch) => tr!(
@@ -104,7 +104,7 @@ impl Stash {
         }
     }
 
-    /// Il testo del suggerimento della riga.
+    /// The text of the row tooltip.
     pub fn tooltip(&self) -> String {
         let created = tr!(
             "stash-tooltip-created",
@@ -126,36 +126,36 @@ impl Stash {
     }
 }
 
-/// Risultato di `stash.list`.
+/// Result of `stash.list`.
 #[derive(Debug, Clone, Deserialize)]
 struct ListResult {
     stashes: Vec<Stash>,
 }
 
-/// I campi del dialogo "Stash".
+/// The fields of the "Stash" dialog.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PushFields {
     pub message: String,
-    /// "Includi i file non tracciati" (`include_untracked`).
+    /// "Include untracked files" (`include_untracked`).
     pub include_untracked: bool,
-    /// "Tieni lo stage" (`keep_index`).
+    /// "Keep the index" (`keep_index`).
     pub keep_index: bool,
 }
 
-/// Il dialogo "Stash".
+/// The "Stash" dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushDialog {
     pub fields: PushFields,
-    /// L'errore del motore all'ultimo invio, mostrato nel dialogo.
+    /// The engine error at the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// Vero mentre il comando è in corso.
+    /// True while the command is running.
     pub sending: bool,
 }
 
 impl PushDialog {
-    /// Il messaggio come lo vuole il motore: una riga, senza spazi in testa e in coda (vuoto
-    /// = git scrive `WIP on ...`). Gli a capo incollati diventano spazi: il motore li
-    /// rifiuterebbe.
+    /// The message as the engine wants it: one line, no leading or trailing spaces (empty
+    /// = git writes `WIP on ...`). Pasted newlines become spaces: the engine would
+    /// refuse them.
     pub fn message(&self) -> String {
         self.fields
             .message
@@ -166,7 +166,7 @@ impl PushDialog {
             .join(" ")
     }
 
-    /// I parametri di `stash.push`.
+    /// The parameters of `stash.push`.
     pub fn params(&self) -> Value {
         let mut params = json!({
             "include_untracked": self.fields.include_untracked,
@@ -180,93 +180,93 @@ impl PushDialog {
     }
 }
 
-/// L'eliminazione di uno stash, dal controllo alla risposta.
+/// The drop of a stash, from the check to the response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropDialog {
     pub stash: Stash,
     pub phase: Phase,
 }
 
-/// Il dialogo degli stash aperto (o l'eliminazione in controllo, ancora senza dialogo).
+/// The open stash dialog (or the drop being checked, still without a dialog).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
     Push(PushDialog),
     Drop(DropDialog),
 }
 
-/// Apply o pop fermo in conflitto: lo stash è applicato in parte, i file sono da risolvere.
+/// Apply or pop stopped on conflicts: the stash is partly applied, the files are to be resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflicts {
     pub op: Op,
-    /// `stash@{n}` com'era quando è stato applicato.
+    /// `stash@{n}` as it was when it was applied.
     pub stash: String,
     pub files: Vec<String>,
 }
 
-/// L'elenco degli stash, lo stash selezionato e i dialoghi: un dialogo alla volta.
+/// The stash list, the selected stash and the dialogs: one dialog at a time.
 #[derive(Debug, Default)]
 pub struct StashBox {
-    /// L'ultimo elenco letto; `None` finché non arriva.
+    /// The last list read; `None` until it arrives.
     list: Option<Vec<Stash>>,
-    /// L'errore dell'ultima lettura dell'elenco.
+    /// The error of the last list read.
     list_error: Option<String>,
-    /// Lo stash mostrato a destra al posto dei dettagli del commit (per id: la posizione
-    /// cambia a ogni push e drop).
+    /// The stash shown on the right in place of the commit details (by id: the position
+    /// changes at every push and drop).
     selected: Option<Oid>,
     dialog: Option<Dialog>,
-    /// L'apply o il pop in corso (lo stash visto), per i messaggi.
+    /// The apply or pop in progress (the stash seen), for the messages.
     applying: Option<(Op, Stash)>,
-    /// "Rimetti anche lo stage" per apply e pop (`restore_index`).
+    /// "Restore the index too" for apply and pop (`restore_index`).
     pub restore_index: bool,
-    /// La finestra dei conflitti dopo apply o pop.
+    /// The conflicts window after apply or pop.
     conflicts: Option<Conflicts>,
-    /// Gli stash già applicati da un pop che poi non è riuscito a toglierli dall'elenco: le
-    /// modifiche sono nei file, il pop non va ripetuto (resta Elimina).
+    /// The stashes already applied by a pop that then failed to remove them from the list: the
+    /// changes are in the files, the pop must not be repeated (Drop stays).
     popped: Vec<Oid>,
 }
 
-/// Cosa è arrivato da un comando degli stash.
+/// What came back from a stash command.
 #[derive(Debug)]
 pub enum Received {
-    /// Fatto: cosa aggiornare nella vista.
+    /// Done: what to update in the view.
     Done(Box<Outcome>),
-    /// Rifiutato: l'errore è nel dialogo dello stash, che resta aperto.
+    /// Refused: the error is in the stash dialog, which stays open.
     Inline,
-    /// Serve la conferma dell'eliminazione: il dialogo si apre.
+    /// The drop confirmation is needed: the dialog opens.
     Confirm,
-    /// Rifiutato o non riuscito: il messaggio da mostrare; con `reload` si rilegge tutto,
-    /// altrimenti solo l'elenco degli stash e il diario.
+    /// Refused or failed: the message to show; with `reload` everything is reread,
+    /// otherwise only the stash list and the journal.
     Failed { message: String, reload: bool },
 }
 
-/// Il risultato di un comando riuscito, per la vista.
+/// The result of a successful command, for the view.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub op: Op,
     pub notice: String,
-    /// Il nuovo stato, se il comando l'ha riletto (non c'è per il drop, che non tocca i file).
+    /// The new status, if the command reread it (absent for drop, which does not touch files).
     pub status: Option<Status>,
-    /// Il diario, per i comandi che ci entrano (push e drop); apply e pop non lo cambiano.
+    /// The journal, for the commands that enter it (push and drop); apply and pop do not change it.
     pub history: Option<History>,
-    /// Un problema dopo l'operazione riuscita (elenco o stato non riletti).
+    /// A problem after the successful operation (list or status not reread).
     pub warning: Option<String>,
-    /// Vero se va riletto il log: l'insieme delle basi degli stash è cambiato (push, drop, pop
-    /// riuscito), e una base che nessun branch contiene esce dal grafo.
+    /// True if the log must be reread: the set of stash bases changed (push, drop, successful
+    /// pop), and a base that no branch contains leaves the graph.
     pub reload_log: bool,
 }
 
 impl StashBox {
-    /// L'elenco degli stash, se è arrivato.
+    /// The stash list, if it arrived.
     pub fn list(&self) -> Option<&[Stash]> {
         self.list.as_deref()
     }
 
-    /// L'errore dell'ultima lettura dell'elenco.
+    /// The error of the last list read.
     pub fn list_error(&self) -> Option<&str> {
         self.list_error.as_deref()
     }
 
-    /// La risposta di `stash.list`.
+    /// The response of `stash.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
         match result.and_then(|value| {
             serde_json::from_value::<ListResult>(value).map_err(|e| {
@@ -282,7 +282,7 @@ impl StashBox {
         }
     }
 
-    /// Un elenco nuovo: lo stash selezionato che non c'è più si deseleziona.
+    /// A new list: a selected stash that is no longer there is deselected.
     fn set_list(&mut self, stashes: Vec<Stash>) {
         if let Some(id) = self.selected
             && !stashes.iter().any(|s| s.id == id)
@@ -294,29 +294,29 @@ impl StashBox {
         self.list_error = None;
     }
 
-    /// Vero se lo stash `id` è già stato applicato da un pop che non l'ha tolto dall'elenco:
-    /// Pop non si offre più (riapplicherebbe le stesse modifiche), resta Elimina.
+    /// True if the stash `id` was already applied by a pop that did not remove it from the list:
+    /// Pop is no longer offered (it would reapply the same changes), Drop stays.
     pub fn pop_blocked(&self, id: Oid) -> bool {
         self.popped.contains(&id)
     }
 
-    /// Lo stash selezionato, se c'è ancora nell'elenco.
+    /// The selected stash, if it is still in the list.
     pub fn selected(&self) -> Option<&Stash> {
         let id = self.selected?;
         self.list.iter().flatten().find(|s| s.id == id)
     }
 
-    /// Seleziona lo stash `id` (o nessuno).
+    /// Selects the stash `id` (or none).
     pub fn select(&mut self, id: Option<Oid>) {
         self.selected = id.filter(|id| self.list.iter().flatten().any(|s| s.id == *id));
     }
 
-    /// Lo stash dell'elenco con questo id (la posizione può essere cambiata).
+    /// The stash from the list with this id (the position may have changed).
     pub fn find(&self, id: Oid) -> Option<&Stash> {
         self.list.iter().flatten().find(|s| s.id == id)
     }
 
-    /// Il dialogo da disegnare: l'eliminazione si vede solo quando chiede la conferma.
+    /// The dialog to draw: the drop is only visible when it asks for confirmation.
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Drop(drop) => matches!(drop.phase, Phase::Confirm { .. }),
@@ -324,22 +324,22 @@ impl StashBox {
         })
     }
 
-    /// Vero se un dialogo è aperto: niente altre scritture, i tasti vanno a lui.
+    /// True if a dialog is open: no other writes, the keys go to it.
     pub fn modal_open(&self) -> bool {
         self.dialog().is_some()
     }
 
-    /// La finestra dei conflitti di apply o pop, se è aperta.
+    /// The conflicts window of apply or pop, if it is open.
     pub fn conflicts(&self) -> Option<&Conflicts> {
         self.conflicts.as_ref()
     }
 
-    /// Chiude la finestra dei conflitti.
+    /// Closes the conflicts window.
     pub fn dismiss(&mut self) {
         self.conflicts = None;
     }
 
-    /// Apre il dialogo "Stash" con i campi vuoti.
+    /// Opens the "Stash" dialog with empty fields.
     pub fn open_push(&mut self) -> bool {
         if self.dialog.is_some() {
             return false;
@@ -352,7 +352,7 @@ impl StashBox {
         true
     }
 
-    /// I campi del dialogo "Stash" sono cambiati.
+    /// The fields of the "Stash" dialog changed.
     pub fn set_fields(&mut self, fields: PushFields) {
         if let Some(Dialog::Push(dialog)) = &mut self.dialog
             && !dialog.sending
@@ -361,7 +361,7 @@ impl StashBox {
         }
     }
 
-    /// Invio del dialogo "Stash": parametri e descrizione. `None` se non si può.
+    /// Submit of the "Stash" dialog: parameters and description. `None` if it cannot be done.
     pub fn submit_push(&mut self) -> Option<(Value, String)> {
         let Some(Dialog::Push(dialog)) = &mut self.dialog else {
             return None;
@@ -374,8 +374,8 @@ impl StashBox {
         Some((dialog.params(), tr!("stash-push-label")))
     }
 
-    /// Comincia l'apply (`pop`: falso) o il pop dello stash `id`: parametri e descrizione.
-    /// `None` se lo stash non è nell'elenco o un altro apply è in corso.
+    /// Starts the apply (`pop`: false) or the pop of the stash `id`: parameters and description.
+    /// `None` if the stash is not in the list or another apply is in progress.
     pub fn start_apply(&mut self, id: Oid, pop: bool) -> Option<(Value, String)> {
         if self.applying.is_some() || self.dialog.is_some() {
             return None;
@@ -399,8 +399,8 @@ impl StashBox {
         Some((params, label))
     }
 
-    /// Comincia l'eliminazione dello stash `id`: i parametri del primo invio, senza `confirm`
-    /// (il motore risponde con cosa si perderebbe).
+    /// Starts the drop of the stash `id`: the parameters of the first submit, without `confirm`
+    /// (the engine answers with what would be lost).
     pub fn start_drop(&mut self, id: Oid) -> Option<(Value, String)> {
         if self.dialog.is_some() || self.applying.is_some() {
             return None;
@@ -415,7 +415,7 @@ impl StashBox {
         Some((params, label))
     }
 
-    /// L'utente ha confermato l'eliminazione: i parametri con `"confirm": true`.
+    /// The user confirmed the drop: the parameters with `"confirm": true`.
     pub fn confirm_drop(&mut self) -> Option<(Value, String)> {
         let Some(Dialog::Drop(drop)) = &mut self.dialog else {
             return None;
@@ -434,7 +434,7 @@ impl StashBox {
         ))
     }
 
-    /// Chiude il dialogo aperto senza mandare niente; non durante un invio.
+    /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
             Some(Dialog::Push(dialog)) => !dialog.sending,
@@ -446,7 +446,7 @@ impl StashBox {
         }
     }
 
-    /// La risposta del comando `op`.
+    /// The response of command `op`.
     pub fn receive(
         &mut self,
         op: Op,
@@ -469,15 +469,15 @@ impl StashBox {
             return unexpected(Op::Push);
         }
         match result {
-            // Niente da mettere da parte, conflitti, messaggio non valido: niente è cambiato,
-            // si corregge nel dialogo.
+            // Nothing to stash, conflicts, invalid message: nothing changed,
+            // it is fixed in the dialog.
             Err(e) if matches!(kind, Some(ErrorKind::InvalidParams | ErrorKind::NotAllowed)) => {
                 dialog.sending = false;
                 dialog.error = Some(e);
                 Received::Inline
             }
             Err(e) => {
-                // Un errore di git: forse lo stash c'è, si rilegge tutto.
+                // A git error: the stash may exist, everything is reread.
                 self.dialog = None;
                 Received::Failed {
                     message: tr!("stash-push-failed", error = e),
@@ -538,8 +538,8 @@ impl StashBox {
             _ => tr!("stash-apply-label", name = &stash.name),
         };
         match result {
-            // Modifiche locali sui file dello stash, elenco cambiato, conflitti aperti: niente
-            // è cambiato. Si rilegge l'elenco (se è cambiato, si vede dov'è lo stash).
+            // Local changes on the stash files, list changed, conflicts open: nothing
+            // changed. The list is reread (if it changed, we see where the stash is).
             Err(e) if matches!(kind, Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams)) => {
                 Received::Failed {
                     message: tr!("stash-op-not-allowed", label = &what, error = e),
@@ -557,8 +557,8 @@ impl StashBox {
                         result.stashes_error.clone(),
                         result.status_error.clone(),
                     );
-                    // Pop applicato ma lo stash non si è tolto: lo si dice in evidenza e il pop
-                    // non si offre più per quello stash.
+                    // Pop applied but the stash was not removed: it is said prominently and the pop
+                    // is no longer offered for that stash.
                     if op == Op::Pop && !result.dropped && result.conflicts.is_empty() {
                         if !self.popped.contains(&stash.id) {
                             self.popped.push(stash.id);
@@ -683,7 +683,7 @@ fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String
     })
 }
 
-/// `; attenzione: …` per ogni avviso.
+/// `; warning: …` for each warning.
 fn warnings_text(warnings: &[String]) -> String {
     warnings
         .iter()
@@ -691,7 +691,7 @@ fn warnings_text(warnings: &[String]) -> String {
         .collect()
 }
 
-/// Il problema dopo un'operazione riuscita: elenco o stato non riletti.
+/// The problem after a successful operation: list or status not reread.
 fn reread_warning(what: &str, stashes: Option<String>, status: Option<String>) -> Option<String> {
     let parts: Vec<String> = [
         stashes.map(|e| tr!("stash-reread-stashes", error = e)),
@@ -703,7 +703,7 @@ fn reread_warning(what: &str, stashes: Option<String>, status: Option<String>) -
     (!parts.is_empty()).then(|| tr!("stash-reread-but", what = what, problems = parts.join("; ")))
 }
 
-/// Risultato di `stash.push`.
+/// Result of `stash.push`.
 #[derive(Debug, Clone, Deserialize)]
 struct PushResult {
     stash: Stash,
@@ -715,7 +715,7 @@ struct PushResult {
     history: History,
 }
 
-/// Risultato di `stash.apply`/`stash.pop`.
+/// Result of `stash.apply`/`stash.pop`.
 #[derive(Debug, Clone, Deserialize)]
 struct ApplyResult {
     #[serde(default)]
@@ -723,7 +723,7 @@ struct ApplyResult {
     #[serde(default)]
     dropped: bool,
     backup: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     warnings: Vec<String>,
     stashes: Option<Vec<Stash>>,
     stashes_error: Option<String>,
@@ -732,8 +732,8 @@ struct ApplyResult {
 }
 
 impl ApplyResult {
-    /// Il messaggio per la barra di stato. Apply e pop non entrano nel diario: non si dice
-    /// mai che «Annulla» li annulla (annullerebbe l'operazione di prima).
+    /// The message for the status bar. Apply and pop do not enter the journal: it is never
+    /// said that "Undo" undoes them (it would undo the previous operation).
     fn notice(&self, op: Op, stash: &Stash) -> String {
         let name = &stash.name;
         let mut notice = match (op, self.conflicts.len(), self.dropped) {
@@ -746,11 +746,11 @@ impl ApplyResult {
             (_, n, _) => tr!("stash-apply-conflicts", name = name, n = n),
         };
         notice.push_str(&tr!("stash-not-undoable"));
-        // L'avviso del motore sul pop in conflitto ripete quello che la finestra spiega.
+        // The engine warning about a pop with conflicts repeats what the window explains.
         let warnings: Vec<String> = self
             .warnings
             .iter()
-            .filter(|w| !(!self.conflicts.is_empty() && w.contains("resta nell'elenco")))
+            .filter(|w| !(!self.conflicts.is_empty() && w.contains("stays in the list")))
             .cloned()
             .collect();
         notice.push_str(&warnings_text(&warnings));
@@ -758,12 +758,12 @@ impl ApplyResult {
     }
 }
 
-/// Risultato di `stash.drop`.
+/// Result of `stash.drop`.
 #[derive(Debug, Clone, Deserialize)]
 struct DropResult {
     stash: Stash,
     backup: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     warnings: Vec<String>,
     stashes: Option<Vec<Stash>>,
     stashes_error: Option<String>,
@@ -772,7 +772,7 @@ struct DropResult {
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, routed by [`App::apply`].
     pub(crate) fn apply_stash(&mut self, action: Action) {
         match action {
             Action::OpenStash => {
@@ -810,7 +810,7 @@ impl App {
                 let Some(base) = repo.stash.find(id).map(|s| s.base) else {
                     return;
                 };
-                // La base si seleziona nel grafo (portata in vista), lo stash a destra.
+                // The base is selected in the graph (brought into view), the stash on the right.
                 self.seek(base);
                 if let Some(repo) = &mut self.repo {
                     repo.worktree_selected = false;
@@ -880,13 +880,13 @@ impl App {
                     repo.stash.dismiss();
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action routed to the wrong function"),
         }
     }
 
-    /// Risposta di `stash.*`: elenco, stato e diario dalla risposta, le etichette degli stash
-    /// nel grafo rifatte e, se le basi sono cambiate, il log riletto. Un push rifiutato resta
-    /// nel suo dialogo; i conflitti di apply e pop aprono la loro finestra.
+    /// Response of `stash.*`: list, status and journal from the response, the stash labels
+    /// in the graph redone and, if the bases changed, the log reread. A refused push stays
+    /// in its dialog; the conflicts of apply and pop open their window.
     pub(crate) fn receive_stash(&mut self, generation: u64, op: stash::Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
@@ -913,8 +913,8 @@ impl App {
                 self.notice = outcome.notice;
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
-                // Il drop non tocca i file; gli altri sì, e se lo stato non è arrivato si
-                // rilegge.
+                // The drop does not touch files; the others do, and if the status did not arrive it is
+                // reread.
                 if !status_read && outcome.op != stash::Op::Drop {
                     self.submit("repo.status", json!({}), Request::Status(generation));
                 }
@@ -932,7 +932,7 @@ impl App {
                 if reload {
                     self.load();
                 } else {
-                    // L'elenco può essere cambiato (lo stash visto si è spostato): si rilegge.
+                    // The list may have changed (the stash seen moved): it is reread.
                     self.submit(stash::LIST, json!({}), Request::Stashes(generation));
                     self.submit("edit.history", json!({}), Request::History(generation));
                 }
@@ -959,7 +959,7 @@ mod tests {
         (registry, session)
     }
 
-    /// Esegue `op` come l'executor e passa la risposta a `receive`.
+    /// Runs `op` like the executor and passes the response to `receive`.
     fn run(
         registry: &Registry,
         session: &mut Session,
@@ -970,12 +970,12 @@ mod tests {
         let result = registry.run(op.command(), session, params);
         let kind = result.as_ref().err().map(ErrorKind::of);
         let detail = result.as_ref().err().and_then(ErrorKind::detail);
-        b.receive(op, result.map_err(|e| e.to_string()), kind, detail)
+        b.receive(op, result.map_err(|e| e.text()), kind, detail)
     }
 
     fn list(registry: &Registry, session: &mut Session, b: &mut StashBox) {
         let result = registry.run(LIST, session, json!({}));
-        b.receive_list(result.map_err(|e| e.to_string()));
+        b.receive_list(result.map_err(|e| e.text()));
     }
 
     fn push(registry: &Registry, session: &mut Session, b: &mut StashBox, fields: PushFields) {
@@ -998,15 +998,15 @@ mod tests {
             time: 0,
             untracked: true,
         };
-        let s = stash("On main: prova: due punti", Some("main"));
-        assert_eq!(s.title(), "prova: due punti");
-        assert_eq!(s.origin(), "su main · 0202020");
+        let s = stash("On main: test: colon", Some("main"));
+        assert_eq!(s.title(), "test: colon");
+        assert_eq!(s.origin(), "on main · 0202020");
         assert_eq!(s.date(), "1970-01-01 00:00");
-        assert!(s.tooltip().contains("non tracciati"));
-        let s = stash("WIP on (no branch): 1a2b3c4 Oggetto", None);
-        assert_eq!(s.title(), "1a2b3c4 Oggetto");
-        assert_eq!(s.origin(), "HEAD staccata · 0202020");
-        assert_eq!(stash("salvato a mano", None).title(), "salvato a mano");
+        assert!(s.tooltip().contains("untracked files"));
+        let s = stash("WIP on (no branch): 1a2b3c4 Subject", None);
+        assert_eq!(s.title(), "1a2b3c4 Subject");
+        assert_eq!(s.origin(), "detached HEAD · 0202020");
+        assert_eq!(stash("saved by hand", None).title(), "saved by hand");
     }
 
     #[test]
@@ -1016,7 +1016,7 @@ mod tests {
             name: "stash@{0}".into(),
             id: Oid::from_bytes([1; 20]),
             base: Oid::from_bytes([2; 20]),
-            message: "On main: prova".into(),
+            message: "On main: test".into(),
             branch: Some("main".into()),
             time: 0,
             untracked: false,
@@ -1029,9 +1029,9 @@ mod tests {
             "conflicts": [],
             "dropped": false,
             "backup": null,
-            "warnings": ["lo stash `stash@{0}` è stato applicato ma non tolto dall'elenco (rotto): \
-                          le modifiche sono nei file; eliminarlo con `stash.drop` (non ripetere \
-                          il pop)"],
+            "warnings": ["stash `stash@{0}` was applied but not removed from the list (broken): \
+                          the changes are in the files; drop it with `stash.drop` (do not repeat \
+                          the pop)"],
             "stashes": [stash.clone()],
             "status": null,
             "status_error": "x",
@@ -1040,29 +1040,29 @@ mod tests {
             panic!()
         };
         assert!(
-            outcome
-                .notice
-                .starts_with("stash@{0} applicato, ma non tolto dall'elenco: non ripetere il pop"),
+            outcome.notice.starts_with(
+                "stash@{0} applied, but not removed from the list: don't repeat the pop"
+            ),
             "{}",
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("(rotto)"),
-            "l'avviso del motore resta"
+            outcome.notice.contains("(broken)"),
+            "the engine warning stays"
         );
         let warning = outcome.warning.unwrap();
-        assert!(warning.contains("Non ripetere il pop"), "{warning}");
+        assert!(warning.contains("Don't repeat the pop"), "{warning}");
         assert!(!outcome.reload_log);
         assert!(b.pop_blocked(stash.id));
-        assert_eq!(b.start_apply(stash.id, true), None, "niente secondo pop");
-        assert!(b.start_drop(stash.id).is_some(), "resta Elimina");
+        assert_eq!(b.start_apply(stash.id, true), None, "no second pop");
+        assert!(b.start_drop(stash.id).is_some(), "Drop stays");
     }
 
     #[test]
     fn push_dialog_params() {
         let mut d = PushDialog {
             fields: PushFields {
-                message: "  prima riga\n seconda \r\n".into(),
+                message: "  first line\n second \r\n".into(),
                 include_untracked: true,
                 keep_index: false,
             },
@@ -1071,14 +1071,14 @@ mod tests {
         };
         assert_eq!(
             d.params(),
-            json!({ "message": "prima riga seconda", "include_untracked": true, "keep_index": false })
+            json!({ "message": "first line second", "include_untracked": true, "keep_index": false })
         );
         d.fields.message = "   ".into();
         d.fields.keep_index = true;
         assert_eq!(
             d.params(),
             json!({ "include_untracked": true, "keep_index": true }),
-            "vuoto = assente"
+            "empty = absent"
         );
     }
 
@@ -1091,64 +1091,64 @@ mod tests {
         assert_eq!(b.list(), Some(&[][..]));
 
         assert!(b.open_push());
-        assert!(!b.open_push(), "un dialogo alla volta");
+        assert!(!b.open_push(), "one dialog at a time");
         assert!(b.modal_open());
         b.set_fields(PushFields {
-            message: "prova".into(),
+            message: "test".into(),
             include_untracked: true,
             keep_index: false,
         });
         let (params, label) = b.submit_push().unwrap();
-        assert_eq!(label, "Stash delle modifiche");
-        assert_eq!(b.submit_push(), None, "una volta sola");
+        assert_eq!(label, "Stashing changes");
+        assert_eq!(b.submit_push(), None, "only once");
         b.close();
-        assert!(b.modal_open(), "non si chiude durante l'invio");
+        assert!(b.modal_open(), "it does not close while sending");
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Push, params) else {
             panic!()
         };
         assert_eq!(
             outcome.notice,
-            "Modifiche messe da parte in stash@{0} («prova», con i file non tracciati). \
-             «Annulla» le rimette"
+            "Changes stashed in stash@{0} (“test”, with untracked files). \
+             “Undo” brings them back"
         );
         assert!(outcome.history.as_ref().unwrap().can_undo);
-        assert!(
-            outcome.status.unwrap().entries.is_empty(),
-            "worktree pulito"
-        );
+        assert!(outcome.status.unwrap().entries.is_empty(), "clean worktree");
         assert!(outcome.reload_log);
         assert!(b.dialog().is_none());
         let stash = b.list().unwrap()[0].clone();
         assert_eq!(stash.name, "stash@{0}");
         assert!(stash.untracked);
 
-        // Selezione per id.
+        // Selection by id.
         b.select(Some(stash.id));
         assert_eq!(b.selected(), Some(&stash));
         b.select(Some(Oid::from_bytes([9; 20])));
-        assert_eq!(b.selected(), None, "solo uno stash dell'elenco");
+        assert_eq!(b.selected(), None, "only a stash from the list");
         b.select(Some(stash.id));
 
         let (params, label) = b.start_apply(stash.id, false).unwrap();
-        assert_eq!(label, "Applicazione di stash@{0}");
+        assert_eq!(label, "Applying stash@{0}");
         assert_eq!(
             params,
             json!({ "index": 0, "expected": stash.id.to_string(), "restore_index": false })
         );
-        assert_eq!(b.start_apply(stash.id, true), None, "uno alla volta");
+        assert_eq!(b.start_apply(stash.id, true), None, "one at a time");
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Apply, params)
         else {
             panic!()
         };
         assert_eq!(
             outcome.notice,
-            "stash@{0} applicato; resta nell'elenco. Non si annulla con «Annulla»"
+            "stash@{0} applied; it stays in the list. “Undo” doesn't revert it"
         );
-        assert!(outcome.history.is_none(), "apply non entra nel diario");
+        assert!(
+            outcome.history.is_none(),
+            "apply does not enter the journal"
+        );
         assert!(!outcome.reload_log);
         assert!(!outcome.status.unwrap().entries.is_empty());
         assert_eq!(b.list().unwrap().len(), 1);
-        assert_eq!(b.selected(), Some(&stash), "lo stash resta selezionato");
+        assert_eq!(b.selected(), Some(&stash), "the stash stays selected");
         assert!(b.conflicts().is_none());
     }
 
@@ -1157,7 +1157,7 @@ mod tests {
         let (registry, mut session) = opened(MemoryBackend::sample());
         let mut b = StashBox::default();
         push(&registry, &mut session, &mut b, PushFields::default());
-        // Restano solo i non tracciati: senza "includi i non tracciati" non c'è niente.
+        // Only the untracked files remain: without "include untracked" there is nothing.
         b.open_push();
         let (params, _) = b.submit_push().unwrap();
         let r = run(&registry, &mut session, &mut b, Op::Push, params);
@@ -1180,7 +1180,7 @@ mod tests {
         b.select(Some(stash.id));
         b.restore_index = true;
         let (params, label) = b.start_apply(stash.id, true).unwrap();
-        assert_eq!(label, "Pop di stash@{0}");
+        assert_eq!(label, "Popping stash@{0}");
         assert_eq!(params["restore_index"], true);
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Pop, params) else {
             panic!()
@@ -1188,18 +1188,18 @@ mod tests {
         assert!(
             outcome
                 .notice
-                .starts_with("stash@{0} applicato ed eliminato dall'elenco; backup in refs/"),
+                .starts_with("stash@{0} applied and dropped from the list; backup in refs/"),
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.ends_with("Non si annulla con «Annulla»"));
+        assert!(outcome.notice.ends_with("“Undo” doesn't revert it"));
         assert!(outcome.reload_log);
         assert!(outcome.history.is_none());
         assert_eq!(b.list(), Some(&[][..]));
         assert_eq!(
             b.selected(),
             None,
-            "lo stash eliminato non è più selezionato"
+            "the dropped stash is no longer selected"
         );
     }
 
@@ -1209,7 +1209,7 @@ mod tests {
         let mut b = StashBox::default();
         push(&registry, &mut session, &mut b, PushFields::default());
         let old = b.list().unwrap()[0].clone();
-        // Un altro stash arriva in cima senza che la UI lo sappia.
+        // Another stash arrives on top without the UI knowing.
         registry
             .run(
                 "stash.push",
@@ -1224,12 +1224,12 @@ mod tests {
             panic!()
         };
         assert!(
-            message.starts_with("Applicazione di stash@{0} non possibile: "),
+            message.starts_with("Applying stash@{0} not possible: "),
             "{message}"
         );
-        assert!(message.contains("ora è `stash@{1}`"), "{message}");
+        assert!(message.contains("is now `stash@{1}`"), "{message}");
         assert!(!reload);
-        // Riletto l'elenco, lo stesso stash si applica dalla sua nuova posizione.
+        // With the list reread, the same stash applies from its new position.
         list(&registry, &mut session, &mut b);
         let (params, _) = b.start_apply(old.id, false).unwrap();
         assert_eq!(params["index"], 1);
@@ -1239,8 +1239,8 @@ mod tests {
         ));
     }
 
-    /// Il repo di esempio con le modifiche messe da parte, poi un commit che cambia
-    /// `README.md` su `main`: lo stash va in conflitto su quel file.
+    /// The sample repo with the stashed changes, then a commit that changes
+    /// `README.md` on `main`: the stash goes into conflict on that file.
     fn moved_head() -> MemoryBackend {
         let mut repo = MemoryBackend::sample();
         let old = match &repo.status().unwrap().entries[0].kind {
@@ -1250,7 +1250,7 @@ mod tests {
         repo.stash_push(&StashPush::default()).unwrap();
         let head = repo.head().unwrap().target().unwrap();
         let new = MemoryBackend::fake_oid(4242);
-        repo.set_blob(new, "README cambiato su main\n");
+        repo.set_blob(new, "README changed on main\n");
         let id = MemoryBackend::fake_oid(4243);
         let who = Signature {
             name: "Ada".to_owned(),
@@ -1295,10 +1295,13 @@ mod tests {
         };
         assert_eq!(
             outcome.notice,
-            "stash@{0} applicato con 1 file in conflitto: risolverlo e metterlo in stage; lo \
-             stash resta nell'elenco. Non si annulla con «Annulla»"
+            "stash@{0} applied with 1 conflicted file: resolve it and stage it; the stash \
+             stays in the list. “Undo” doesn't revert it"
         );
-        assert!(!outcome.reload_log, "lo stash resta: le basi non cambiano");
+        assert!(
+            !outcome.reload_log,
+            "the stash stays: the bases do not change"
+        );
         let status = outcome.status.unwrap();
         assert!(
             status
@@ -1313,19 +1316,19 @@ mod tests {
         assert_eq!(
             b.list().unwrap().len(),
             1,
-            "il pop in conflitto non elimina"
+            "a pop with conflicts does not drop"
         );
         b.dismiss();
         assert!(b.conflicts().is_none());
 
-        // Con il conflitto aperto un altro apply è rifiutato: il motivo nella barra.
+        // With the conflict open another apply is refused: the reason in the status bar.
         let (params, _) = b.start_apply(stash.id, false).unwrap();
         let Received::Failed { message, reload } =
             run(&registry, &mut session, &mut b, Op::Apply, params)
         else {
             panic!()
         };
-        assert!(message.contains("in conflitto"), "{message}");
+        assert!(message.contains("conflicted files"), "{message}");
         assert!(!reload);
     }
 
@@ -1339,10 +1342,10 @@ mod tests {
         assert_eq!(
             params,
             json!({ "index": 0, "expected": stash.id.to_string() }),
-            "prima senza confirm"
+            "first without confirm"
         );
-        assert_eq!(label, "Controllo per l'eliminazione di stash@{0}");
-        assert!(!b.modal_open(), "in controllo: niente dialogo");
+        assert_eq!(label, "Checking before dropping stash@{0}");
+        assert!(!b.modal_open(), "checking: no dialog");
         assert_eq!(b.start_drop(stash.id), None);
         let r = run(&registry, &mut session, &mut b, Op::Drop, params);
         assert!(matches!(r, Received::Confirm), "{r:?}");
@@ -1353,7 +1356,7 @@ mod tests {
             panic!()
         };
         assert!(reason.contains("stash@{0}"), "{reason}");
-        // Niente è cambiato finché non si conferma; "Non eliminare" chiude.
+        // Nothing changed until confirmed; "Don't drop" closes.
         list(&registry, &mut session, &mut b);
         assert_eq!(b.list().unwrap().len(), 1);
         b.close();
@@ -1364,13 +1367,13 @@ mod tests {
         let (params, label) = b.confirm_drop().unwrap();
         assert_eq!(params["confirm"], true);
         assert_eq!(params["expected"], stash.id.to_string());
-        assert_eq!(label, "Eliminazione di stash@{0}");
-        assert_eq!(b.confirm_drop(), None, "una volta sola");
+        assert_eq!(label, "Dropping stash@{0}");
+        assert_eq!(b.confirm_drop(), None, "only once");
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Drop, params) else {
             panic!()
         };
         assert!(
-            outcome.notice.starts_with("stash@{0} («"),
+            outcome.notice.starts_with("stash@{0} (“"),
             "{}",
             outcome.notice
         );
@@ -1379,7 +1382,11 @@ mod tests {
                 .notice
                 .contains("backup in refs/project/backup/stash-")
         );
-        assert!(outcome.notice.contains("«Annulla» lo rimette in cima"));
+        assert!(
+            outcome
+                .notice
+                .contains("“Undo” puts it back at the top of the list")
+        );
         assert!(outcome.history.unwrap().can_undo);
         assert!(outcome.status.is_none());
         assert_eq!(b.list(), Some(&[][..]));
@@ -1409,7 +1416,7 @@ mod tests {
             panic!()
         };
         assert!(
-            message.starts_with("Eliminazione di stash@{0} non possibile"),
+            message.starts_with("Dropping stash@{0} not possible"),
             "{message}"
         );
         assert!(!reload);

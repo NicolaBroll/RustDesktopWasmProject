@@ -1,5 +1,5 @@
-//! Test di `remote.pull` e `remote.push` sul `MemoryBackend` (i backend sono provati anche in
-//! `git/memory/sync_tests.rs` e, con git vero, in `crates/git/tests/{pull,push}.rs`).
+//! Tests of `remote.pull` and `remote.push` on the `MemoryBackend` (the backends are also tested in
+//! `git/memory/sync_tests.rs` and, with real git, in `crates/git/tests/{pull,push}.rs`).
 
 use crate::{
     CancelToken, EngineError, FetchFailure, GitBackend, JobContext, MemoryBackend, MemoryOpener,
@@ -41,8 +41,8 @@ fn who() -> Signature {
     }
 }
 
-/// Il repo di esempio senza modifiche locali, con `origin/main` che ha un commit (20) dopo
-/// `11` che `main` (su `12`) non ha: branch divergenti. Il commit 20 cambia `file`, se c'è.
+/// The sample repo without local changes, with `origin/main` having a commit (20) after
+/// `11` that `main` (at `12`) does not have: diverged branches. Commit 20 changes `file`, if given.
 fn diverged(file: Option<&str>) -> MemoryBackend {
     let mut repo = MemoryBackend::sample();
     repo.set_entries(Vec::new());
@@ -58,7 +58,7 @@ fn diverged(file: Option<&str>) -> MemoryBackend {
         },
     );
     if let Some(file) = file {
-        repo.set_blob(oid(5_000), "dal remoto\n");
+        repo.set_blob(oid(5_000), "from the remote\n");
         repo.set_changes(
             oid(20),
             vec![ChangedFile {
@@ -81,42 +81,42 @@ fn diverged(file: Option<&str>) -> MemoryBackend {
 fn pull_of_a_branch_that_is_not_checked_out() {
     let (r, mut s) = opened_with(MemoryBackend::sample());
     let out = r
-        .run("remote.pull", &mut s, json!({ "branch": "feature/grafo" }))
+        .run("remote.pull", &mut s, json!({ "branch": "feature/graph" }))
         .unwrap();
     assert_eq!(out["strategy"], "fast_forward");
     assert_eq!(out["before"], oid(9).to_string());
     assert_eq!(out["after"], oid(13).to_string());
     assert_eq!(out["backup"], "refs/project/backup/pull-1");
-    assert_eq!(out["upstream"], "refs/remotes/origin/feature/grafo");
+    assert_eq!(out["upstream"], "refs/remotes/origin/feature/graph");
     assert_eq!(
         out["fetch"]["updated"][0]["name"],
-        "refs/remotes/origin/feature/grafo"
+        "refs/remotes/origin/feature/graph"
     );
     assert_eq!(
-        target(&r, &mut s, "refs/heads/feature/grafo").unwrap(),
+        target(&r, &mut s, "refs/heads/feature/graph").unwrap(),
         oid(13).to_string()
     );
-    // HEAD e le modifiche locali dell'esempio non si toccano.
+    // HEAD and the sample's local changes are not touched.
     assert_eq!(out["status"]["head"]["Branch"]["name"], "main");
     assert_eq!(out["status"]["entries"].as_array().unwrap().len(), 4);
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Pull di `feature/grafo` (fast-forward")
+            .starts_with("Pull of `feature/graph` (fast-forward")
     );
     r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(
-        target(&r, &mut s, "refs/heads/feature/grafo").unwrap(),
+        target(&r, &mut s, "refs/heads/feature/graph").unwrap(),
         oid(9).to_string()
     );
     r.run("edit.redo", &mut s, json!({})).unwrap();
     assert_eq!(
-        target(&r, &mut s, "refs/heads/feature/grafo").unwrap(),
+        target(&r, &mut s, "refs/heads/feature/graph").unwrap(),
         oid(13).to_string()
     );
 
-    // `main` contiene già `origin/main`: niente da fare.
+    // `main` already contains `origin/main`: nothing to do.
     let out = r.run("remote.pull", &mut s, json!({})).unwrap();
     assert_eq!(out["strategy"], "up_to_date");
     assert_eq!(
@@ -127,14 +127,14 @@ fn pull_of_a_branch_that_is_not_checked_out() {
 
 #[test]
 fn pull_merge_rebase_and_undo() {
-    // Modifiche locali: un merge non parte.
+    // Local changes: a merge does not start.
     let mut dirty = diverged(None);
     dirty.set_entries(MemoryBackend::sample().status().unwrap().entries);
     let (r, mut s) = opened_with(dirty);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(err.to_string().contains("autostash"), "{err}");
 
-    let (r, mut s) = opened_with(diverged(Some("nuovo.txt")));
+    let (r, mut s) = opened_with(diverged(Some("fresh.txt")));
     let out = r.run("remote.pull", &mut s, json!({})).unwrap();
     assert_eq!(out["strategy"], "merge");
     assert_eq!(out["strategy_source"], "default");
@@ -150,11 +150,11 @@ fn pull_merge_rebase_and_undo() {
         head["summary"],
         "Merge remote-tracking branch 'origin/main'"
     );
-    // Il file arrivato è nell'albero di HEAD e lo stato è pulito.
+    // The incoming file is in HEAD's tree and the state is clean.
     let show = r
         .run("commit.show", &mut s, json!({ "id": merge }))
         .unwrap();
-    assert_eq!(show["files"][0]["path"], "nuovo.txt");
+    assert_eq!(show["files"][0]["path"], "fresh.txt");
     assert_eq!(out["status"]["entries"], json!([]));
 
     let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
@@ -167,8 +167,8 @@ fn pull_merge_rebase_and_undo() {
     r.run("edit.redo", &mut s, json!({})).unwrap();
     assert_eq!(target(&r, &mut s, "refs/heads/main").unwrap(), merge);
 
-    // Rebase dalla configurazione: il commit 12 riscritto sopra 20.
-    let mut repo = diverged(Some("nuovo.txt"));
+    // Rebase from the configuration: commit 12 rewritten on top of 20.
+    let mut repo = diverged(Some("fresh.txt"));
     repo.set_pull_settings(PullSettings {
         rebase: Some("true".into()),
         ff: None,
@@ -178,7 +178,7 @@ fn pull_merge_rebase_and_undo() {
     assert_eq!(out["strategy"], "rebase");
     assert_eq!(out["strategy_source"], "config");
     let log = r.run("repo.log", &mut s, json!({ "limit": 2 })).unwrap();
-    assert_eq!(log["commits"][0]["summary"], "Pannello dei commit");
+    assert_eq!(log["commits"][0]["summary"], "Commit panel");
     assert_eq!(log["commits"][0]["parents"], json!([oid(20).to_string()]));
     assert_eq!(log["commits"][1]["id"], oid(20).to_string());
     r.run("edit.undo", &mut s, json!({})).unwrap();
@@ -187,7 +187,7 @@ fn pull_merge_rebase_and_undo() {
         oid(12).to_string()
     );
 
-    // Solo fast-forward: rifiutato, ma il fetch è fatto.
+    // Fast-forward only: refused, but the fetch is done.
     let (r, mut s) = opened_with(diverged(None));
     let err = r
         .run("remote.pull", &mut s, json!({ "strategy": "ff_only" }))
@@ -205,7 +205,7 @@ fn pull_merge_rebase_and_undo() {
 
 #[test]
 fn pull_merge_conflict_stays_in_progress() {
-    // 12 crea `src/bin/app.rs` (rinomina), e il remoto lo crea con un altro contenuto.
+    // 12 creates `src/bin/app.rs` (rename), and the remote creates it with other content.
     let (r, mut s) = opened_with(diverged(Some("src/bin/app.rs")));
     let out = r.run("remote.pull", &mut s, json!({})).unwrap();
     assert_eq!(out["strategy"], "merge");
@@ -229,11 +229,11 @@ fn pull_merge_conflict_stays_in_progress() {
     assert_eq!(op["incoming"][0]["id"], oid(20).to_string());
     assert_eq!(op["incoming"][0]["label"], "origin/main");
     assert_eq!(op["message"], "Merge remote-tracking branch 'origin/main'");
-    // Un altro pull è rifiutato finché il merge è in corso.
+    // Another pull is refused while the merge is in progress.
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
-    // Risolto e in stage: `merge.continue` fa il commit di merge, che va nel diario.
+    // Resolved and staged: `merge.continue` makes the merge commit, which goes into the journal.
     r.run(
         "index.stage",
         &mut s,
@@ -271,7 +271,7 @@ fn pull_merge_conflict_then_abort() {
     assert_eq!(
         aborted["status"]["entries"],
         json!([]),
-        "com'era prima del pull"
+        "as it was before the pull"
     );
     assert_eq!(aborted["can_undo"], false);
     assert_eq!(
@@ -297,7 +297,7 @@ fn pull_rebase_conflict_changes_nothing() {
     };
     assert_eq!(*operation, PullOperation::Rebase);
     assert_eq!(files, &["src/bin/app.rs"]);
-    assert!(err.to_string().contains("annullato"), "{err}");
+    assert!(err.to_string().contains("aborted"), "{err}");
     assert_eq!(
         target(&r, &mut s, "refs/heads/main").unwrap(),
         oid(12).to_string()
@@ -311,10 +311,10 @@ fn pull_rebase_conflict_changes_nothing() {
 #[test]
 fn pull_refusals() {
     let (r, mut s) = opened_with(MemoryBackend::sample());
-    r.run("branch.create", &mut s, json!({ "name": "solo" }))
+    r.run("branch.create", &mut s, json!({ "name": "only" }))
         .unwrap();
     let err = r
-        .run("remote.pull", &mut s, json!({ "branch": "solo" }))
+        .run("remote.pull", &mut s, json!({ "branch": "only" }))
         .unwrap_err();
     assert!(err.to_string().contains("--set-upstream-to"), "{err}");
     let err = r
@@ -330,7 +330,7 @@ fn pull_refusals() {
     repo.detach_head(oid(11));
     let (r, mut s) = opened_with(repo);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("staccata"), "{err}");
+    assert!(err.to_string().contains("detached"), "{err}");
 
     let mut repo = MemoryBackend::sample();
     repo.set_operation(Some(project_domain::Operation::Rebase));
@@ -345,8 +345,8 @@ fn pull_refusals() {
     });
     let (r, mut s) = opened_with(repo);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("interattivo"), "{err}");
-    // Niente scaricato.
+    assert!(err.to_string().contains("interactive"), "{err}");
+    // Nothing fetched.
     let refs = r.run("repo.refs", &mut s, json!({})).unwrap();
     assert!(!refs.to_string().contains(&oid(13).to_string()));
 
@@ -363,7 +363,7 @@ fn pull_refusals() {
         .run_with(
             "remote.pull",
             &mut s,
-            json!({ "branch": "feature/grafo" }),
+            json!({ "branch": "feature/graph" }),
             JobContext::new().with_cancel(token),
         )
         .unwrap_err();
@@ -394,38 +394,38 @@ fn push_of_the_sample() {
             "after": oid(12).to_string(),
         }])
     );
-    assert_eq!(out["messages"][0], "To https://example.com/progetto.git");
+    assert_eq!(out["messages"][0], "To https://example.com/project.git");
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
     assert_eq!(history["can_undo"], false);
     let out = r.run("remote.push", &mut s, json!({})).unwrap();
     assert_eq!(out["kind"], "up_to_date");
 
-    // Primo push di un branch nuovo: l'upstream si imposta.
-    r.run("branch.create", &mut s, json!({ "name": "nuovo" }))
+    // First push of a new branch: the upstream is set.
+    r.run("branch.create", &mut s, json!({ "name": "fresh" }))
         .unwrap();
     let out = r
-        .run("remote.push", &mut s, json!({ "branch": "nuovo" }))
+        .run("remote.push", &mut s, json!({ "branch": "fresh" }))
         .unwrap();
     assert_eq!(out["kind"], "new");
     assert_eq!(out["set_upstream"], true);
     let refs = r.run("repo.refs", &mut s, json!({})).unwrap();
-    let nuovo = refs
+    let fresh = refs
         .as_array()
         .unwrap()
         .iter()
-        .find(|x| x["name"] == "refs/heads/nuovo")
+        .find(|x| x["name"] == "refs/heads/fresh")
         .unwrap();
-    assert_eq!(nuovo["upstream"]["name"], "refs/remotes/origin/nuovo");
-    // E ora anche il pull lo trova.
+    assert_eq!(fresh["upstream"]["name"], "refs/remotes/origin/fresh");
+    // And now the pull finds it too.
     let out = r
-        .run("remote.pull", &mut s, json!({ "branch": "nuovo" }))
+        .run("remote.pull", &mut s, json!({ "branch": "fresh" }))
         .unwrap();
     assert_eq!(out["strategy"], "up_to_date");
 }
 
 #[test]
 fn push_rejections_and_force() {
-    // Il remoto ha 20, che qui non c'è: rifiutato, niente cambia.
+    // The remote has 20, which is not here: refused, nothing changes.
     let (r, mut s) = opened_with(diverged(None));
     let err = r.run("remote.push", &mut s, json!({})).unwrap_err();
     assert!(
@@ -442,7 +442,7 @@ fn push_rejections_and_force() {
         target(&r, &mut s, "refs/remotes/origin/main").unwrap(),
         oid(11).to_string()
     );
-    // Il force con il branch remoto locale vecchio (11): il lease fallisce.
+    // The force with the old local remote-tracking branch (11): the lease fails.
     let err = r
         .run("remote.push", &mut s, json!({ "force": true }))
         .unwrap_err();
@@ -456,7 +456,7 @@ fn push_rejections_and_force() {
         ),
         "{err}"
     );
-    // Dopo il fetch: il force toglierebbe 20, serve la conferma.
+    // After the fetch: the force would remove 20, the confirmation is needed.
     r.run("remote.fetch", &mut s, json!({})).unwrap();
     let err = r
         .run("remote.push", &mut s, json!({ "force": true }))
@@ -467,13 +467,13 @@ fn push_rejections_and_force() {
     else {
         panic!("{err}");
     };
-    assert!(reason.contains("«Dal remoto»"), "{reason}");
+    assert!(reason.contains("“Dal remoto”"), "{reason}");
     assert_eq!(expected.as_deref(), Some(oid(20).to_string().as_str()));
     assert!(
         reason.contains(&format!("\"expected\": \"{}\"", oid(20))),
         "{reason}"
     );
-    // Un `expected` che non è il branch remoto locale: si chiede di nuovo, niente pubblicato.
+    // An `expected` that is not the local remote-tracking branch: asked again, nothing published.
     let err = r
         .run(
             "remote.push",
@@ -494,7 +494,7 @@ fn push_rejections_and_force() {
     assert_eq!(out["lost"][0]["id"], oid(20).to_string());
     assert_eq!(out["before"], oid(20).to_string());
 
-    // Hook `pre-push`, credenziali, annullamento.
+    // `pre-push` hook, credentials, cancellation.
     let mut repo = MemoryBackend::sample();
     repo.fail_pre_push(Some("pre-push: no"));
     let (r, mut s) = opened_with(repo);
@@ -507,7 +507,7 @@ fn push_rejections_and_force() {
         "{err}"
     );
     let mut repo = MemoryBackend::sample();
-    repo.fail_fetch("origin", Some(FetchFailure::Unreachable("giù".into())));
+    repo.fail_fetch("origin", Some(FetchFailure::Unreachable("down".into())));
     let (r, mut s) = opened_with(repo);
     let err = r.run("remote.push", &mut s, json!({})).unwrap_err();
     assert!(
@@ -538,17 +538,17 @@ fn push_refusals() {
     repo.detach_head(oid(12));
     let (r, mut s) = opened_with(repo);
     let err = r.run("remote.push", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("staccata"), "{err}");
+    assert!(err.to_string().contains("detached"), "{err}");
 
     let mut repo = MemoryBackend::sample();
-    repo.set_upstream("feature/grafo", "origin/main");
+    repo.set_upstream("feature/graph", "origin/main");
     let (r, mut s) = opened_with(repo);
     let err = r
-        .run("remote.push", &mut s, json!({ "branch": "feature/grafo" }))
+        .run("remote.push", &mut s, json!({ "branch": "feature/graph" }))
         .unwrap_err();
     assert!(err.to_string().contains("simple"), "{err}");
     for params in [
-        json!({ "remote": "nessuno" }),
+        json!({ "remote": "missing" }),
         json!({ "remote": "-x" }),
         json!({ "branch": "manca" }),
     ] {
@@ -609,10 +609,10 @@ fn push_remote_from_the_configuration() {
 
 #[test]
 fn pull_never_overwrites_ignored_files() {
-    // Il remoto aggiunge `segreto.env`, che qui è ignorato: il pull è rifiutato.
-    let mut repo = diverged(Some("segreto.env"));
+    // The remote adds `secret.env`, which is ignored here: the pull is refused.
+    let mut repo = diverged(Some("secret.env"));
     repo.set_entries(vec![project_domain::StatusEntry {
-        path: RepoPath::from("segreto.env"),
+        path: RepoPath::from("secret.env"),
         index: Change::Ignored,
         worktree: Change::Ignored,
         kind: project_domain::EntryKind::Ignored,
@@ -623,7 +623,7 @@ fn pull_never_overwrites_ignored_files() {
             .run("remote.pull", &mut s, json!({ "strategy": strategy }))
             .unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-        assert!(err.to_string().contains("segreto.env"), "{err}");
+        assert!(err.to_string().contains("secret.env"), "{err}");
         assert_eq!(
             target(&r, &mut s, "refs/heads/main").unwrap(),
             oid(12).to_string()
@@ -633,8 +633,8 @@ fn pull_never_overwrites_ignored_files() {
 
 #[test]
 fn rebase_never_passes_over_ignored_files() {
-    // Il commit 12 (da riapplicare) ha `src/bin/app.rs`; qui al suo posto c'è un ignorato,
-    // come se un commit successivo l'avesse tolto: il rebase è rifiutato, il merge no.
+    // Commit 12 (to be reapplied) has `src/bin/app.rs`; here an ignored file is in its place,
+    // as if a later commit had removed it: the rebase is refused, the merge is not.
     let mut repo = diverged(None);
     repo.set_entries(vec![project_domain::StatusEntry {
         path: RepoPath::from("src/bin/app.rs"),

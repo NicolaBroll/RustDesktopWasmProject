@@ -1,4 +1,4 @@
-# Pannello dei dettagli del commit (details.rs, view/details_view.rs).
+# Commit details panel (details.rs, view/details_view.rs).
 
 details-no-commit = Nessun commit selezionato.
 details-loading-files = Caricamento dei file cambiati…

@@ -1,7 +1,7 @@
-//! Test di integrazione dei comandi `branch.*` (S24) con il `CliBackend` su repo veri:
-//! creazione, checkout (anche rifiutato per modifiche locali, con i file intatti), eliminazione
-//! (con conferma se non unito, backup, undo e redo), rinomina e undo; nomi che iniziano con `-`
-//! (anche un branch chiamato `--force`), worktree aggiuntivi.
+//! Integration tests of the `branch.*` commands (S24) with the `CliBackend` on real repos:
+//! creation, checkout (also refused because of local changes, with the files intact), deletion
+//! (with confirmation if not merged, backup, undo and redo), rename and undo; names starting
+//! with `-` (even a branch called `--force`), additional worktrees.
 
 mod common;
 
@@ -23,7 +23,7 @@ fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-/// Tutti i ref con il valore e HEAD, per controllare che niente cambi.
+/// All refs with their value and HEAD, to check that nothing changes.
 fn refs(repo: &Repo) -> String {
     let head = repo.git_output(&["symbolic-ref", "-q", "HEAD"]).stdout;
     format!(
@@ -34,7 +34,7 @@ fn refs(repo: &Repo) -> String {
     )
 }
 
-/// Il valore del ref `name` (nome completo), `None` se non esiste.
+/// The value of the ref `name` (full name), `None` if it does not exist.
 fn ref_value(repo: &Repo, name: &str) -> Option<Oid> {
     let out = repo.git_output(&["rev-parse", "-q", "--verify", "--end-of-options", name]);
     out.status
@@ -46,8 +46,8 @@ fn head_branch(repo: &Repo) -> String {
     repo.git(&["symbolic-ref", "HEAD"])
 }
 
-/// Indice, `git status` e contenuto dei file indicati: tutto quello che un checkout rifiutato
-/// non deve toccare.
+/// Index, `git status` and contents of the given files: everything a refused checkout must
+/// not touch.
 fn snapshot(repo: &Repo, files: &[&str]) -> (String, String, String, Vec<Option<Vec<u8>>>) {
     (
         refs(repo),
@@ -60,58 +60,58 @@ fn snapshot(repo: &Repo, files: &[&str]) -> (String, String, String, Vec<Option<
     )
 }
 
-/// `main` con `a.txt`, e `altro` (un commit dopo) che cambia `a.txt` e aggiunge `b.txt`; HEAD
-/// su `main`.
+/// `main` with `a.txt`, and `other` (one commit later) that changes `a.txt` and adds `b.txt`;
+/// HEAD on `main`.
 fn two_branches() -> (Repo, Oid, Oid) {
     let repo = Repo::new();
-    let main = repo.commit_file("a.txt", "a\n", "primo");
-    repo.branch("altro");
-    repo.checkout("altro");
+    let main = repo.commit_file("a.txt", "a\n", "first");
+    repo.branch("other");
+    repo.checkout("other");
     repo.write("b.txt", "b\n");
     repo.stage(&["b.txt"]);
-    let altro = repo.commit_file("a.txt", "a su altro\n", "altro");
+    let other_tip = repo.commit_file("a.txt", "a on other\n", "other");
     repo.checkout("main");
-    (repo, main, altro)
+    (repo, main, other_tip)
 }
 
 #[test]
 fn create_from_head_and_from_a_rev_never_overwrites() {
-    let (repo, main, altro) = two_branches();
+    let (repo, main, other_tip) = two_branches();
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "branch.create", json!({ "name": "nuovo" }));
-    assert_eq!(out["branch"], "refs/heads/nuovo");
+    let out = run(&r, &mut s, "branch.create", json!({ "name": "new" }));
+    assert_eq!(out["branch"], "refs/heads/new");
     assert_eq!(out["target"], main.to_string());
     assert!(
         out["refs"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|r| r["name"] == "refs/heads/nuovo")
+            .any(|r| r["name"] == "refs/heads/new")
     );
-    assert_eq!(ref_value(&repo, "refs/heads/nuovo"), Some(main));
+    assert_eq!(ref_value(&repo, "refs/heads/new"), Some(main));
     assert_eq!(head_branch(&repo), "refs/heads/main");
-    // Reflog con il nostro messaggio.
-    let log = repo.git(&["reflog", "show", "--format=%gs", "refs/heads/nuovo"]);
-    assert!(log.starts_with("project: branch.create nuovo"), "{log}");
+    // Reflog with our message.
+    let log = repo.git(&["reflog", "show", "--format=%gs", "refs/heads/new"]);
+    assert!(log.starts_with("project: branch.create new"), "{log}");
 
     let out = run(
         &r,
         &mut s,
         "branch.create",
-        json!({ "name": "da-altro", "start": "altro" }),
+        json!({ "name": "from-other", "start": "other" }),
     );
-    assert_eq!(out["target"], altro.to_string());
+    assert_eq!(out["target"], other_tip.to_string());
 
-    // Un ref simbolico verso un ref che non c'è: non si segue (si creerebbe `refs/heads/target`).
+    // A symbolic ref to a ref that does not exist: not followed (it would create `refs/heads/target`).
     repo.git(&["symbolic-ref", "refs/heads/dang", "refs/heads/target"]);
-    // Esistente, contenuto in un altro (`altro/x`), che ne contiene uno (`nuovo` → `nuovo`
-    // esiste), rev sconosciuta: niente cambia.
+    // Existing, contained in another (`other/x`), containing one (`new` -> `new`
+    // exists), unknown rev: nothing changes.
     let before = refs(&repo);
     for (params, kind) in [
-        (json!({ "name": "altro" }), "NotAllowed"),
-        (json!({ "name": "altro/x" }), "NotAllowed"),
+        (json!({ "name": "other" }), "NotAllowed"),
+        (json!({ "name": "other/x" }), "NotAllowed"),
         (json!({ "name": "dang" }), "NotAllowed"),
-        (json!({ "name": "x", "start": "nessuno" }), "UnknownRev"),
+        (json!({ "name": "x", "start": "nobody" }), "UnknownRev"),
         (json!({ "name": "-x" }), "InvalidParams"),
         (json!({ "name": "--force" }), "InvalidParams"),
         (json!({ "name": "@" }), "InvalidParams"),
@@ -134,34 +134,34 @@ fn create_from_head_and_from_a_rev_never_overwrites() {
         "refs/heads/target"
     );
 
-    // Undo elimina il branch, redo lo ricrea.
+    // Undo deletes the branch, redo recreates it.
     run(&r, &mut s, "edit.undo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/da-altro"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/from-other"), None);
     run(&r, &mut s, "edit.redo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/da-altro"), Some(altro));
+    assert_eq!(ref_value(&repo, "refs/heads/from-other"), Some(other_tip));
 }
 
 #[test]
 fn checkout_and_undo() {
-    let (repo, main, altro) = two_branches();
-    // Una modifica che non tocca i file diversi resta.
-    repo.write("c.txt", "non tracciato\n");
+    let (repo, main, other_tip) = two_branches();
+    // A change that does not touch the differing files stays.
+    repo.write("c.txt", "untracked\n");
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "branch.checkout", json!({ "name": "altro" }));
-    assert_eq!(out["branch"], "refs/heads/altro");
+    let out = run(&r, &mut s, "branch.checkout", json!({ "name": "other" }));
+    assert_eq!(out["branch"], "refs/heads/other");
     assert_eq!(out["previous"], json!({ "branch": "refs/heads/main" }));
     assert_eq!(out["changed"], true);
     assert_eq!(out["warnings"], json!([]));
-    assert_eq!(out["status"]["head"]["Branch"]["name"], "altro");
-    assert_eq!(head_branch(&repo), "refs/heads/altro");
-    assert_eq!(repo.rev("HEAD"), altro);
+    assert_eq!(out["status"]["head"]["Branch"]["name"], "other");
+    assert_eq!(head_branch(&repo), "refs/heads/other");
+    assert_eq!(repo.rev("HEAD"), other_tip);
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "a su altro\n"
+        "a on other\n"
     );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("c.txt")).unwrap(),
-        "non tracciato\n"
+        "untracked\n"
     );
 
     let out = run(&r, &mut s, "edit.undo", json!({}));
@@ -170,9 +170,9 @@ fn checkout_and_undo() {
     assert_eq!(repo.rev("HEAD"), main);
     assert!(!repo.path().join("b.txt").exists());
     run(&r, &mut s, "edit.redo", json!({}));
-    assert_eq!(head_branch(&repo), "refs/heads/altro");
+    assert_eq!(head_branch(&repo), "refs/heads/other");
 
-    // Undo rifiutato se HEAD è cambiata da fuori.
+    // Undo refused if HEAD was changed from outside.
     repo.checkout("main");
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
@@ -181,12 +181,12 @@ fn checkout_and_undo() {
 
 #[test]
 fn checkout_from_detached_head_is_undone_to_the_same_commit() {
-    let (repo, main, altro) = two_branches();
+    let (repo, main, other_tip) = two_branches();
     repo.detach(main);
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "branch.checkout", json!({ "name": "altro" }));
+    let out = run(&r, &mut s, "branch.checkout", json!({ "name": "other" }));
     assert_eq!(out["previous"], json!({ "detached": main.to_string() }));
-    assert_eq!(repo.rev("HEAD"), altro);
+    assert_eq!(repo.rev("HEAD"), other_tip);
     run(&r, &mut s, "edit.undo", json!({}));
     assert!(
         !repo
@@ -201,17 +201,17 @@ fn checkout_from_detached_head_is_undone_to_the_same_commit() {
 fn checkout_refused_by_local_changes_leaves_everything_intact() {
     let files = ["a.txt", "b.txt", "ign.txt"];
 
-    // Modifica fuori stage, poi in stage, a un file diverso nel branch di destinazione.
+    // Unstaged change, then staged, to a file that differs in the target branch.
     for staged in [false, true] {
         let (repo, _, _) = two_branches();
-        repo.write("a.txt", "mia modifica\n");
+        repo.write("a.txt", "my change\n");
         if staged {
             repo.stage(&["a.txt"]);
         }
         let before = snapshot(&repo, &files);
         let (r, mut s) = open(&repo);
         let err = r
-            .run("branch.checkout", &mut s, json!({ "name": "altro" }))
+            .run("branch.checkout", &mut s, json!({ "name": "other" }))
             .unwrap_err();
         let EngineError::CheckoutConflict {
             target,
@@ -221,25 +221,25 @@ fn checkout_refused_by_local_changes_leaves_everything_intact() {
         else {
             panic!("{err}");
         };
-        assert_eq!(target, "altro");
+        assert_eq!(target, "other");
         assert_eq!(hit, &["a.txt"], "{stderr}");
-        assert!(err.to_string().contains("Niente modificato"), "{err}");
+        assert!(err.to_string().contains("Nothing changed"), "{err}");
         assert_eq!(snapshot(&repo, &files), before);
         assert!(!s.journal().unwrap().can_undo());
     }
 
-    // Un non tracciato e un ignorato che il branch di destinazione contiene.
+    // An untracked and an ignored file that the target branch contains.
     let (repo, _, _) = two_branches();
-    repo.checkout("altro");
-    repo.commit_file("ign.txt", "versione del branch\n", "ign");
+    repo.checkout("other");
+    repo.commit_file("ign.txt", "branch version\n", "ign");
     repo.checkout("main");
     std::fs::write(repo.path().join(".git/info/exclude"), "ign.txt\n").unwrap();
-    repo.write("ign.txt", "mio, ignorato\n");
-    repo.write("b.txt", "mio, non tracciato\n");
+    repo.write("ign.txt", "mine, ignored\n");
+    repo.write("b.txt", "mine, untracked\n");
     let before = snapshot(&repo, &files);
     let (r, mut s) = open(&repo);
     let err = r
-        .run("branch.checkout", &mut s, json!({ "name": "altro" }))
+        .run("branch.checkout", &mut s, json!({ "name": "other" }))
         .unwrap_err();
     let EngineError::CheckoutConflict { files: hit, .. } = &err else {
         panic!("{err}");
@@ -251,51 +251,51 @@ fn checkout_refused_by_local_changes_leaves_everything_intact() {
 #[test]
 fn checkout_refused_during_a_merge_or_with_assume_unchanged_files() {
     let (repo, _, _) = two_branches();
-    repo.branch("terzo");
-    repo.commit_file("a.txt", "a su main\n", "main");
-    repo.conflict("altro");
+    repo.branch("third");
+    repo.commit_file("a.txt", "a on main\n", "main");
+    repo.conflict("other");
     let before = snapshot(&repo, &["a.txt"]);
     let (r, mut s) = open(&repo);
     let err = r
-        .run("branch.checkout", &mut s, json!({ "name": "terzo" }))
+        .run("branch.checkout", &mut s, json!({ "name": "third" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(snapshot(&repo, &["a.txt"]), before);
 
-    // `--assume-unchanged`: git sovrascriverebbe la modifica senza dirlo.
+    // `--assume-unchanged`: git would overwrite the change without saying so.
     let (repo, _, _) = two_branches();
     repo.git(&["update-index", "--assume-unchanged", "a.txt"]);
-    repo.write("a.txt", "modifica nascosta\n");
+    repo.write("a.txt", "hidden change\n");
     let (r, mut s) = open(&repo);
     let err = r
-        .run("branch.checkout", &mut s, json!({ "name": "altro" }))
+        .run("branch.checkout", &mut s, json!({ "name": "other" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "modifica nascosta\n"
+        "hidden change\n"
     );
     assert_eq!(head_branch(&repo), "refs/heads/main");
 }
 
 #[test]
 fn names_starting_with_a_dash() {
-    let (repo, main, altro) = two_branches();
-    // Branch che git non lascerebbe creare, ma che possono esistere.
-    repo.git(&["update-ref", "refs/heads/-x", &altro.to_string()]);
-    repo.git(&["update-ref", "refs/heads/--force", &altro.to_string()]);
-    repo.git(&["update-ref", "refs/heads/-d", &altro.to_string()]);
+    let (repo, main, other_tip) = two_branches();
+    // Branches that git would not let you create, but that can exist.
+    repo.git(&["update-ref", "refs/heads/-x", &other_tip.to_string()]);
+    repo.git(&["update-ref", "refs/heads/--force", &other_tip.to_string()]);
+    repo.git(&["update-ref", "refs/heads/-d", &other_tip.to_string()]);
     let (r, mut s) = open(&repo);
 
-    // Un branch `--force` non forza niente: la modifica locale blocca il checkout.
-    repo.write("a.txt", "mia modifica\n");
+    // A `--force` branch forces nothing: the local change blocks the checkout.
+    repo.write("a.txt", "my change\n");
     let err = r
         .run("branch.checkout", &mut s, json!({ "name": "--force" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::CheckoutConflict { .. }), "{err}");
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "mia modifica\n"
+        "my change\n"
     );
     assert_eq!(head_branch(&repo), "refs/heads/main");
     repo.git(&["checkout", "--", "a.txt"]);
@@ -304,7 +304,7 @@ fn names_starting_with_a_dash() {
     assert_eq!(head_branch(&repo), "refs/heads/-x");
     run(&r, &mut s, "branch.checkout", json!({ "name": "main" }));
 
-    // `-d` non diventa "elimina": si elimina solo `-d`.
+    // `-d` does not become "delete": only `-d` is deleted.
     let out = run(
         &r,
         &mut s,
@@ -314,21 +314,21 @@ fn names_starting_with_a_dash() {
     assert_eq!(ref_value(&repo, "refs/heads/-d"), None);
     assert_eq!(ref_value(&repo, "refs/heads/main"), Some(main));
     let backup = out["backup"].as_str().unwrap();
-    assert_eq!(ref_value(&repo, backup), Some(altro));
+    assert_eq!(ref_value(&repo, backup), Some(other_tip));
     run(&r, &mut s, "edit.undo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/-d"), Some(altro));
+    assert_eq!(ref_value(&repo, "refs/heads/-d"), Some(other_tip));
 
-    // Rinomina di `--force` in un nome valido.
+    // Rename of `--force` to a valid name.
     run(
         &r,
         &mut s,
         "branch.rename",
-        json!({ "name": "--force", "new_name": "forzato" }),
+        json!({ "name": "--force", "new_name": "forced" }),
     );
     assert_eq!(ref_value(&repo, "refs/heads/--force"), None);
-    assert_eq!(ref_value(&repo, "refs/heads/forzato"), Some(altro));
+    assert_eq!(ref_value(&repo, "refs/heads/forced"), Some(other_tip));
 
-    // Un nome nuovo con `-` è rifiutato prima di arrivare a git.
+    // A new name with `-` is refused before reaching git.
     let before = refs(&repo);
     for (id, params) in [
         ("branch.create", json!({ "name": "-n" })),
@@ -345,12 +345,12 @@ fn names_starting_with_a_dash() {
 
 #[test]
 fn delete_unmerged_needs_confirm_and_undo_recreates() {
-    let (repo, main, altro) = two_branches();
-    repo.git(&["config", "branch.altro.description", "da tenere?"]);
+    let (repo, main, other_tip) = two_branches();
+    repo.git(&["config", "branch.other.description", "to keep?"]);
     let (r, mut s) = open(&repo);
     let before = refs(&repo);
     let err = r
-        .run("branch.delete", &mut s, json!({ "name": "altro" }))
+        .run("branch.delete", &mut s, json!({ "name": "other" }))
         .unwrap_err();
     let EngineError::ConfirmRequired {
         command, reason, ..
@@ -367,9 +367,9 @@ fn delete_unmerged_needs_confirm_and_undo_recreates() {
         &r,
         &mut s,
         "branch.delete",
-        json!({ "name": "altro", "confirm": true }),
+        json!({ "name": "other", "confirm": true }),
     );
-    assert_eq!(out["target"], altro.to_string());
+    assert_eq!(out["target"], other_tip.to_string());
     assert_eq!(out["unmerged"], 1);
     assert_eq!(out["warnings"], json!([]));
     let backup = out["backup"].as_str().unwrap().to_owned();
@@ -377,41 +377,44 @@ fn delete_unmerged_needs_confirm_and_undo_recreates() {
         backup.starts_with("refs/project/backup/delete-"),
         "{backup}"
     );
-    assert_eq!(ref_value(&repo, &backup), Some(altro));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), None);
-    // Come `git branch -d`: via la configurazione del branch.
+    assert_eq!(ref_value(&repo, &backup), Some(other_tip));
+    assert_eq!(ref_value(&repo, "refs/heads/other"), None);
+    // Like `git branch -d`: the branch configuration is removed.
     assert!(
         !repo
-            .git_output(&["config", "--get", "branch.altro.description"])
+            .git_output(&["config", "--get", "branch.other.description"])
             .status
             .success()
     );
-    // Il backup resiste al gc.
+    // The backup survives gc.
     repo.git(&["gc", "--quiet", "--prune=now"]);
-    assert_eq!(repo.git(&["cat-file", "-t", &altro.to_string()]), "commit");
+    assert_eq!(
+        repo.git(&["cat-file", "-t", &other_tip.to_string()]),
+        "commit"
+    );
 
     let out = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(out["undone"]["command"], "branch.delete");
     assert_eq!(out["backups"], json!([]));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), Some(altro));
+    assert_eq!(ref_value(&repo, "refs/heads/other"), Some(other_tip));
     run(&r, &mut s, "edit.redo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/other"), None);
 
-    // Ricreato da fuori su un altro commit: l'undo non lo sovrascrive.
-    repo.git(&["branch", "altro", &main.to_string()]);
+    // Recreated from outside on another commit: the undo does not overwrite it.
+    repo.git(&["branch", "other", &main.to_string()]);
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), Some(main));
+    assert_eq!(ref_value(&repo, "refs/heads/other"), Some(main));
 }
 
 #[test]
 fn delete_merged_current_and_open_in_another_worktree() {
     let (repo, main, _) = two_branches();
-    repo.branch("unito");
+    repo.branch("merged");
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "branch.delete", json!({ "name": "unito" }));
+    let out = run(&r, &mut s, "branch.delete", json!({ "name": "merged" }));
     assert_eq!(out["unmerged"], 0);
-    assert_eq!(ref_value(&repo, "refs/heads/unito"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/merged"), None);
     assert_eq!(
         ref_value(&repo, out["backup"].as_str().unwrap()),
         Some(main)
@@ -430,13 +433,13 @@ fn delete_merged_current_and_open_in_another_worktree() {
         .run(
             "branch.delete",
             &mut s,
-            json!({ "name": "nessuno", "confirm": true }),
+            json!({ "name": "nobody", "confirm": true }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(refs(&repo), before);
 
-    // `altro` aperto in un altro worktree: rifiutato, niente cambia (nemmeno un backup).
+    // `other` open in another worktree: refused, nothing changes (not even a backup).
     let wt = tempfile::tempdir().unwrap();
     let wt_path = wt.path().join("wt");
     repo.git(&[
@@ -444,14 +447,14 @@ fn delete_merged_current_and_open_in_another_worktree() {
         "add",
         "--quiet",
         wt_path.to_str().unwrap(),
-        "altro",
+        "other",
     ]);
     let before_wt = refs(&repo);
     let err = r
         .run(
             "branch.delete",
             &mut s,
-            json!({ "name": "altro", "confirm": true }),
+            json!({ "name": "other", "confirm": true }),
         )
         .unwrap_err();
     assert!(
@@ -460,30 +463,39 @@ fn delete_merged_current_and_open_in_another_worktree() {
     );
     assert_eq!(refs(&repo), before_wt);
 
-    // Nemmeno il redo di un'eliminazione cancella un branch aperto altrove.
+    // Not even the redo of a deletion removes a branch open elsewhere.
     run(&r, &mut s, "edit.undo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/unito"), Some(main));
+    assert_eq!(ref_value(&repo, "refs/heads/merged"), Some(main));
     let wt2 = wt.path().join("wt2");
-    repo.git(&["worktree", "add", "--quiet", wt2.to_str().unwrap(), "unito"]);
+    repo.git(&[
+        "worktree",
+        "add",
+        "--quiet",
+        wt2.to_str().unwrap(),
+        "merged",
+    ]);
     let err = r.run("edit.redo", &mut s, json!({})).unwrap_err();
     assert!(
         matches!(&err, EngineError::NotAllowed(m) if m.contains("worktree")),
         "{err}"
     );
-    assert_eq!(ref_value(&repo, "refs/heads/unito"), Some(main));
+    assert_eq!(ref_value(&repo, "refs/heads/merged"), Some(main));
 }
 
 #[test]
 fn delete_merged_into_its_upstream_needs_no_confirm() {
-    let (repo, _, altro) = two_branches();
+    let (repo, _, other_tip) = two_branches();
     let remote = Repo::bare();
     repo.add_remote("origin", &remote);
-    repo.push("origin", "altro", "altro");
-    repo.set_upstream("altro", "origin");
+    repo.push("origin", "other", "other");
+    repo.set_upstream("other", "origin");
     let (r, mut s) = open(&repo);
-    let out = run(&r, &mut s, "branch.delete", json!({ "name": "altro" }));
+    let out = run(&r, &mut s, "branch.delete", json!({ "name": "other" }));
     assert_eq!(out["unmerged"], 0);
-    assert_eq!(ref_value(&repo, "refs/remotes/origin/altro"), Some(altro));
+    assert_eq!(
+        ref_value(&repo, "refs/remotes/origin/other"),
+        Some(other_tip)
+    );
 }
 
 #[test]
@@ -499,80 +511,83 @@ fn rename_and_undo() {
         &r,
         &mut s,
         "branch.rename",
-        json!({ "name": "main", "new_name": "principale" }),
+        json!({ "name": "main", "new_name": "primary" }),
     );
-    assert_eq!(out["branch"], "refs/heads/principale");
+    assert_eq!(out["branch"], "refs/heads/primary");
     assert_eq!(out["previous"], "refs/heads/main");
     assert_eq!(out["target"], main.to_string());
     assert_eq!(out["head"], true);
     assert_eq!(out["warnings"], json!([]));
-    assert_eq!(head_branch(&repo), "refs/heads/principale");
+    assert_eq!(head_branch(&repo), "refs/heads/primary");
     assert_eq!(ref_value(&repo, "refs/heads/main"), None);
-    assert_eq!(ref_value(&repo, "refs/heads/principale"), Some(main));
-    // Upstream e reflog seguono il branch.
+    assert_eq!(ref_value(&repo, "refs/heads/primary"), Some(main));
+    // Upstream and reflog follow the branch.
     assert_eq!(
-        repo.git(&["config", "branch.principale.merge"]),
+        repo.git(&["config", "branch.primary.merge"]),
         "refs/heads/main"
     );
-    let reflog = repo.git(&["reflog", "show", "--format=%H", "refs/heads/principale"]);
+    let reflog = repo.git(&["reflog", "show", "--format=%H", "refs/heads/primary"]);
     assert!(reflog.ends_with(&reflog_before), "{reflog}");
 
     let out = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(out["undone"]["command"], "branch.rename");
     assert_eq!(head_branch(&repo), "refs/heads/main");
     assert_eq!(ref_value(&repo, "refs/heads/main"), Some(main));
-    assert_eq!(ref_value(&repo, "refs/heads/principale"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/primary"), None);
     assert_eq!(repo.git(&["config", "branch.main.remote"]), "origin");
     run(&r, &mut s, "edit.redo", json!({}));
-    assert_eq!(head_branch(&repo), "refs/heads/principale");
+    assert_eq!(head_branch(&repo), "refs/heads/primary");
 
-    // Rifiuti senza cambiare niente: nome già preso, branch assente.
+    // Refusals without changing anything: name already taken, missing branch.
     let before = refs(&repo);
     for params in [
-        json!({ "name": "principale", "new_name": "altro" }),
-        json!({ "name": "nessuno", "new_name": "x" }),
+        json!({ "name": "primary", "new_name": "other" }),
+        json!({ "name": "nobody", "new_name": "x" }),
     ] {
         let err = r.run("branch.rename", &mut s, params.clone()).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{params}: {err}");
     }
     assert_eq!(refs(&repo), before);
 
-    // Il vecchio nome ripreso da fuori: l'undo è rifiutato.
+    // The old name taken again from outside: the undo is refused.
     repo.git(&["branch", "main", &main.to_string()]);
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
-    assert_eq!(head_branch(&repo), "refs/heads/principale");
+    assert_eq!(head_branch(&repo), "refs/heads/primary");
 }
 
 #[test]
 fn rename_of_another_branch_keeps_head() {
-    let (repo, _, altro) = two_branches();
+    let (repo, _, other_tip) = two_branches();
     let (r, mut s) = open(&repo);
     let out = run(
         &r,
         &mut s,
         "branch.rename",
-        json!({ "name": "altro", "new_name": "feature/altro" }),
+        json!({ "name": "other", "new_name": "feature/other" }),
     );
     assert_eq!(out["head"], false);
     assert_eq!(head_branch(&repo), "refs/heads/main");
-    assert_eq!(ref_value(&repo, "refs/heads/feature/altro"), Some(altro));
+    assert_eq!(
+        ref_value(&repo, "refs/heads/feature/other"),
+        Some(other_tip)
+    );
     run(&r, &mut s, "edit.undo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), Some(altro));
-    assert_eq!(ref_value(&repo, "refs/heads/feature/altro"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/other"), Some(other_tip));
+    assert_eq!(ref_value(&repo, "refs/heads/feature/other"), None);
 }
 
 #[test]
 fn checkout_refused_when_a_folder_with_untracked_files_would_become_a_file() {
     let (repo, _, _) = two_branches();
-    repo.checkout("altro");
-    repo.commit_file("d", "file d nel branch\n", "d");
+    repo.checkout("other");
+    repo.commit_file("d", "file d in the branch\n", "d");
     repo.checkout("main");
-    repo.write("d/x", "mio, non tracciato\n");
+    repo.write("d/x", "mine, untracked\n");
     let before = snapshot(&repo, &["d/x"]);
     let (r, mut s) = open(&repo);
     let err = r
-        .run("branch.checkout", &mut s, json!({ "name": "altro" }))
+        .run("branch.checkout", &mut s, json!({ "name": "other" }))
         .unwrap_err();
     let EngineError::CheckoutConflict { files, stderr, .. } = &err else {
         panic!("{err}");
@@ -584,19 +599,15 @@ fn checkout_refused_when_a_folder_with_untracked_files_would_become_a_file() {
 
 #[test]
 fn delete_saves_the_branch_config_and_undo_rewrites_it() {
-    let (repo, _, altro) = two_branches();
+    let (repo, _, other_tip) = two_branches();
     let remote = Repo::bare();
     repo.add_remote("origin", &remote);
-    repo.push("origin", "main", "altro-remoto");
-    repo.git(&["config", "branch.altro.remote", "origin"]);
-    repo.git(&["config", "branch.altro.merge", "refs/heads/altro-remoto"]);
-    repo.git(&[
-        "config",
-        "branch.altro.description",
-        "-inizia con un trattino",
-    ]);
+    repo.push("origin", "main", "other-remote");
+    repo.git(&["config", "branch.other.remote", "origin"]);
+    repo.git(&["config", "branch.other.merge", "refs/heads/other-remote"]);
+    repo.git(&["config", "branch.other.description", "-starts with a dash"]);
     let config = |repo: &Repo| {
-        let out = repo.git_output(&["config", "--local", "--get-regexp", "^branch\\.altro\\."]);
+        let out = repo.git_output(&["config", "--local", "--get-regexp", "^branch\\.other\\."]);
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     let saved = config(&repo);
@@ -606,14 +617,14 @@ fn delete_saves_the_branch_config_and_undo_rewrites_it() {
         &r,
         &mut s,
         "branch.delete",
-        json!({ "name": "altro", "confirm": true }),
+        json!({ "name": "other", "confirm": true }),
     );
     assert_eq!(
         out["removed_config"],
         json!([
-            { "key": "branch.altro.remote", "value": "origin" },
-            { "key": "branch.altro.merge", "value": "refs/heads/altro-remoto" },
-            { "key": "branch.altro.description", "value": "-inizia con un trattino" }
+            { "key": "branch.other.remote", "value": "origin" },
+            { "key": "branch.other.merge", "value": "refs/heads/other-remote" },
+            { "key": "branch.other.description", "value": "-starts with a dash" }
         ])
     );
     assert_eq!(config(&repo), "");
@@ -622,53 +633,53 @@ fn delete_saves_the_branch_config_and_undo_rewrites_it() {
 
     let out = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(out["warnings"], json!([]));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), Some(altro));
+    assert_eq!(ref_value(&repo, "refs/heads/other"), Some(other_tip));
     assert_eq!(config(&repo), saved);
-    // L'upstream funziona di nuovo.
+    // The upstream works again.
     let refs = run(&r, &mut s, "repo.refs", json!({}));
     let branch = refs
         .as_array()
         .unwrap()
         .iter()
-        .find(|r| r["name"] == "refs/heads/altro")
+        .find(|r| r["name"] == "refs/heads/other")
         .unwrap();
     assert_eq!(
         branch["upstream"]["name"],
-        "refs/remotes/origin/altro-remoto"
+        "refs/remotes/origin/other-remote"
     );
 
     let out = run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(out["warnings"], json!([]));
     assert_eq!(config(&repo), "");
 
-    // Una configurazione nuova comparsa nel frattempo non si sovrascrive: avviso.
-    repo.git(&["config", "branch.altro.description", "nuova"]);
+    // A new configuration that appeared in the meantime is not overwritten: warning.
+    repo.git(&["config", "branch.other.description", "new"]);
     let out = run(&r, &mut s, "edit.undo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), Some(altro));
+    assert_eq!(ref_value(&repo, "refs/heads/other"), Some(other_tip));
     assert_eq!(out["warnings"].as_array().unwrap().len(), 1, "{out}");
     assert_eq!(
-        repo.git(&["config", "--get-all", "branch.altro.description"]),
-        "nuova"
+        repo.git(&["config", "--get-all", "branch.other.description"]),
+        "new"
     );
-    // E il redo non la toglie.
+    // And the redo does not remove it.
     let out = run(&r, &mut s, "edit.redo", json!({}));
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/other"), None);
     assert_eq!(out["warnings"].as_array().unwrap().len(), 1, "{out}");
-    assert_eq!(repo.git(&["config", "branch.altro.description"]), "nuova");
+    assert_eq!(repo.git(&["config", "branch.other.description"]), "new");
 }
 
 #[test]
 fn delete_with_expected_refuses_a_branch_that_moved() {
-    let (repo, main, altro) = two_branches();
+    let (repo, main, other_tip) = two_branches();
     let (r, mut s) = open(&repo);
-    // Visto su `altro`, poi spostato da fuori.
-    repo.git(&["branch", "-f", "altro", &main.to_string()]);
+    // Seen on `other`, then moved from outside.
+    repo.git(&["branch", "-f", "other", &main.to_string()]);
     let before = refs(&repo);
     let err = r
         .run(
             "branch.delete",
             &mut s,
-            json!({ "name": "altro", "confirm": true, "expected": altro.to_string() }),
+            json!({ "name": "other", "confirm": true, "expected": other_tip.to_string() }),
         )
         .unwrap_err();
     assert!(
@@ -681,7 +692,7 @@ fn delete_with_expected_refuses_a_branch_that_moved() {
         .run(
             "branch.delete",
             &mut s,
-            json!({ "name": "altro", "expected": &main.to_string()[..7] }),
+            json!({ "name": "other", "expected": &main.to_string()[..7] }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
@@ -690,10 +701,10 @@ fn delete_with_expected_refuses_a_branch_that_moved() {
         &r,
         &mut s,
         "branch.delete",
-        json!({ "name": "altro", "expected": main.to_string() }),
+        json!({ "name": "other", "expected": main.to_string() }),
     );
     assert_eq!(out["target"], main.to_string());
-    assert_eq!(ref_value(&repo, "refs/heads/altro"), None);
+    assert_eq!(ref_value(&repo, "refs/heads/other"), None);
 }
 
 #[test]

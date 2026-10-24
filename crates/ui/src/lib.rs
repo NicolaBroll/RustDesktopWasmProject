@@ -1,16 +1,16 @@
-//! L6 — interfaccia egui condivisa da desktop e web.
+//! L6 — egui interface shared by desktop and web.
 //!
-//! Regola: i callback grafici non modificano il repository direttamente, producono
-//! un'[`Action`]; i comandi passano dall'[`Executor`], che li esegue con
-//! [`Registry::run`](project_engine::Registry::run) fuori dal thread della UI.
+//! Rule: graphical callbacks do not modify the repository directly, they produce
+//! an [`Action`]; commands go through the [`Executor`], which runs them with
+//! [`Registry::run`](project_engine::Registry::run) off the UI thread.
 //!
-//! Layout (`impl-docs/ARCHITETTURA-git.md` §8): barra in alto, ref a sinistra, commit al
-//! centro, dettagli del commit selezionato a destra. In cima alla lista la riga "Modifiche non
-//! committate" apre a destra l'area di stage. Il diff di un file si apre al posto del grafo,
-//! con il pannello a destra accanto per passare da un file all'altro. Sotto le liste dell'area
-//! di stage c'è la casella del messaggio di commit.
-//! Con un'operazione in corso (merge, rebase, ...) sotto la barra c'è il suo riquadro
-//! (`merge_view`), con i file in conflitto e i comandi per concluderla o annullarla.
+//! Layout (`impl-docs/ARCHITECTURE-git.md` §8): top bar, refs on the left, commits in the
+//! center, details of the selected commit on the right. At the top of the list the "Uncommitted
+//! changes" row opens the stage area on the right. A file's diff opens in place of the graph,
+//! with the side panel next to it to switch between files. Under the stage area lists there is
+//! the commit message box.
+//! With an operation in progress (merge, rebase, ...) its panel sits under the bar
+//! (`merge_view`), with the conflicted files and the commands to finish or abort it.
 
 mod branch;
 mod commit;
@@ -19,6 +19,7 @@ mod details;
 mod diff;
 mod diff_view;
 mod discard;
+mod engine_text;
 mod executor;
 mod fetch;
 mod format;
@@ -58,213 +59,213 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use sync::SyncBox;
 
-/// Ciò che l'utente ha chiesto durante il frame.
+/// What the user asked for during the frame.
 #[derive(Debug, Clone)]
 enum Action {
-    /// Dialogo per scegliere la cartella del repo.
+    /// Dialog to choose the repo folder.
     PickFolder,
     Open(String),
-    /// Rilegge ref, stato e log del repo aperto.
+    /// Re-reads refs, status and log of the open repo.
     Refresh,
-    /// Seleziona il commit alla riga indicata della lista.
+    /// Selects the commit at the given row of the list.
     Select(usize),
-    /// Seleziona la riga "Modifiche non committate": a destra l'area di stage.
+    /// Selects the "Uncommitted changes" row: the stage area on the right.
     SelectWorktree,
-    /// Seleziona il commit puntato da un ref, se è nella lista.
+    /// Selects the commit a ref points to, if it is in the list.
     SelectCommit(Oid),
-    /// Sposta la selezione di tante righe (tastiera).
+    /// Moves the selection by that many rows (keyboard).
     Move(isize),
-    /// Seleziona il primo commit (`true`) o l'ultimo caricato (`false`).
+    /// Selects the first commit (`true`) or the last loaded one (`false`).
     Edge(bool),
-    /// La lista mostra le righe fino a questa (esclusa): se serve chiede la pagina seguente.
+    /// The list shows rows up to this one (excluded): if needed it asks for the next page.
     Visible(usize),
-    /// Richiede i dettagli del commit selezionato dopo un errore.
+    /// Asks again for the selected commit's details after an error.
     RetryDetails,
-    /// Apre il diff di un file del commit selezionato al posto del grafo.
+    /// Opens a file's diff of the selected commit in place of the graph.
     OpenDiff(DiffTarget),
-    /// Chiude il diff e torna al grafo.
+    /// Closes the diff and returns to the graph.
     CloseDiff,
-    /// Richiede il diff aperto dopo un errore.
+    /// Asks again for the open diff after an error.
     RetryDiff,
-    /// Stage o unstage dei percorsi indicati (mai vuoti). Lo stage di file in conflitto chiede
-    /// prima una conferma.
+    /// Stage or unstage the given paths (never empty). Staging conflicted files asks
+    /// for confirmation first.
     Write(StageOp, Vec<RepoPath>),
-    /// Conferma la scrittura in attesa.
+    /// Confirms the pending write.
     ConfirmWrite,
-    /// Annulla la scrittura in attesa di conferma.
+    /// Cancels the write awaiting confirmation.
     CancelWrite,
-    /// Nasconde l'errore dell'ultima scrittura.
+    /// Hides the error of the last write.
     DismissWriteError,
-    /// Scarta le modifiche fuori stage dei file indicati (mai vuoti): prima il motore controlla
-    /// e chiede la conferma, che si apre in un dialogo.
+    /// Discards the unstaged changes of the given files (never empty): first the engine checks
+    /// and asks for confirmation, which opens in a dialog.
     Discard(Vec<RepoPath>),
-    /// Conferma lo scarto in attesa: reinvia con `"confirm": true`.
+    /// Confirms the pending discard: resends with `"confirm": true`.
     ConfirmDiscard,
-    /// Chiude il dialogo dello scarto senza scartare niente.
+    /// Closes the discard dialog without discarding anything.
     CancelDiscard,
-    /// Annulla l'ultima operazione del diario, o rifà l'ultima annullata.
+    /// Undoes the last journal operation, or redoes the last undone one.
     Undo(UndoOp),
-    /// Clic su una riga del diff (indice in `DiffDoc::rows`): la seleziona o la deseleziona;
-    /// con Maiusc seleziona l'intervallo dall'ultima cliccata.
+    /// Click on a diff row (index in `DiffDoc::rows`): selects or deselects it;
+    /// with Shift selects the range from the last clicked one.
     SelectLine {
         row: usize,
         shift: bool,
     },
-    /// Trascinamento sulle righe del diff.
+    /// Dragging over the diff rows.
     DragLines(Drag),
-    /// Deseleziona tutte le righe del diff.
+    /// Deselects all the diff rows.
     ClearLines,
-    /// Stage (diff worktree) o unstage (diff indice) dell'hunk con questo indice.
+    /// Stage (worktree diff) or unstage (index diff) the hunk with this index.
     WriteHunk(usize),
-    /// Stage o unstage delle righe selezionate.
+    /// Stage or unstage the selected lines.
     WriteSelectedLines,
-    /// Attiva o disattiva "Amend" nella casella del messaggio.
+    /// Toggles "Amend" in the message box.
     SetAmend(bool),
-    /// Commit del messaggio scritto (pulsante o Ctrl+Invio).
+    /// Commit with the written message (button or Ctrl+Enter).
     Commit,
-    /// Conferma l'amend di un commit già pubblicato: reinvia con `"confirm": true`.
+    /// Confirms the amend of an already published commit: resends with `"confirm": true`.
     ConfirmCommit,
-    /// Annulla l'amend in attesa di conferma.
+    /// Cancels the amend awaiting confirmation.
     CancelCommit,
-    /// Nasconde l'errore dell'ultimo commit.
+    /// Hides the error of the last commit.
     DismissCommitError,
-    /// Apre il dialogo per un branch nuovo da `start`, con il nome proposto.
+    /// Opens the dialog for a new branch from `start`, with the proposed name.
     NewBranch(Start, String),
-    /// Apre il dialogo per rinominare il branch locale (nome breve).
+    /// Opens the dialog to rename the local branch (short name).
     RenameBranch(String),
-    /// Il testo del dialogo del nome del branch è cambiato.
+    /// The text of the branch name dialog changed.
     BranchName(String),
-    /// Manda il dialogo del nome: crea o rinomina.
+    /// Submits the name dialog: creates or renames.
     SubmitBranchName,
-    /// Passa al branch locale (nome breve).
+    /// Switches to the local branch (short name).
     Checkout(String),
-    /// Elimina il branch locale (nome breve) visto sul commit indicato: prima senza conferma;
-    /// se il motore la chiede si apre il dialogo. Il commit va al motore come `expected`.
+    /// Deletes the local branch (short name) seen on the given commit: first without confirmation;
+    /// if the engine asks for it the dialog opens. The commit goes to the engine as `expected`.
     DeleteBranch(String, Oid),
-    /// Conferma l'eliminazione in attesa: reinvia con `"confirm": true`.
+    /// Confirms the pending deletion: resends with `"confirm": true`.
     ConfirmDeleteBranch,
-    /// Chiude il dialogo dei branch aperto senza mandare niente.
+    /// Closes the open branch dialog without sending anything.
     CloseBranchDialog,
-    /// Fetch dal remoto indicato (`None`: quello scelto dal motore: upstream, `origin`,
-    /// l'unico).
+    /// Fetch from the given remote (`None`: the one the engine chooses: upstream, `origin`,
+    /// the only one).
     Fetch(Option<String>),
-    /// "Interrompi" il fetch in corso.
+    /// "Stop" the fetch in progress.
     CancelFetch,
-    /// Chiude la finestra dell'errore del fetch.
+    /// Closes the fetch error window.
     DismissFetchError,
-    /// Pull del branch indicato (`None`: quello di HEAD), con la strategia indicata (`None`:
-    /// quella della configurazione).
+    /// Pull the given branch (`None`: HEAD's), with the given strategy (`None`:
+    /// the configured one).
     Pull(Option<String>, Option<sync::Strategy>),
-    /// Push del branch indicato (`None`: quello di HEAD), mai forzato.
+    /// Push the given branch (`None`: HEAD's), never forced.
     Push(Option<String>),
-    /// "Forza (con lease)…" nella finestra del push rifiutato: `"force": true` senza
+    /// "Force (with lease)…" in the rejected push window: `"force": true` without
     /// `confirm`.
     ForcePush,
-    /// "Forza il push" nella conferma: `"force": true, "confirm": true`.
+    /// "Force the push" in the confirmation: `"force": true, "confirm": true`.
     ConfirmForcePush,
-    /// "Interrompi" il pull o push in corso.
+    /// "Stop" the pull or push in progress.
     CancelSync,
-    /// Chiude la finestra di pull e push (anche la conferma del force, senza forzare).
+    /// Closes the pull and push window (also the force confirmation, without forcing).
     DismissSync,
-    /// Apre il dialogo "Aggiungi remoto".
+    /// Opens the "Add remote" dialog.
     AddRemote,
-    /// I campi del dialogo "Aggiungi remoto" sono cambiati.
+    /// The fields of the "Add remote" dialog changed.
     AddRemoteFields(AddFields),
-    /// "Nascondi" (`true`) o "Mostra" l'URL con credenziali nel dialogo "Aggiungi remoto".
+    /// "Hide" (`true`) or "Show" the URL with credentials in the "Add remote" dialog.
     HideRemoteUrl(bool),
-    /// Manda il dialogo "Aggiungi remoto".
+    /// Submits the "Add remote" dialog.
     SubmitAddRemote,
-    /// "Interrompi" il fetch dell'aggiunta in corso (il remoto resta aggiunto).
+    /// "Stop" the fetch of the add in progress (the remote stays added).
     CancelAddRemote,
-    /// Rimuove il remoto indicato: prima senza conferma, il motore la chiede sempre e si apre
-    /// il dialogo.
+    /// Removes the given remote: first without confirmation, the engine always asks and the
+    /// dialog opens.
     RemoveRemote(String),
-    /// Conferma la rimozione in attesa: reinvia con `"confirm": true`.
+    /// Confirms the pending removal: resends with `"confirm": true`.
     ConfirmRemoveRemote,
-    /// Chiude il dialogo dei remoti aperto senza mandare niente.
+    /// Closes the open remotes dialog without sending anything.
     CloseRemoteDialog,
-    /// Chiude la finestra dell'errore del fetch dopo l'aggiunta.
+    /// Closes the fetch error window after the add.
     DismissRemoteError,
-    /// Apre il dialogo "Stash" per mettere da parte le modifiche.
+    /// Opens the "Stash" dialog to set changes aside.
     OpenStash,
-    /// I campi del dialogo "Stash" sono cambiati.
+    /// The fields of the "Stash" dialog changed.
     StashFields(PushFields),
-    /// Manda il dialogo "Stash" (`stash.push`).
+    /// Submits the "Stash" dialog (`stash.push`).
     SubmitStash,
-    /// Seleziona lo stash con questo id: a destra i suoi file, nel grafo la sua base.
+    /// Selects the stash with this id: its files on the right, its base in the graph.
     SelectStash(Oid),
-    /// Applica lo stash con questo id (`true`: pop, cioè applica e se va tutto bene lo
-    /// elimina), con `index` ed `expected` dall'elenco visto.
+    /// Applies the stash with this id (`true`: pop, i.e. apply and, if all goes well, delete
+    /// it), with `index` and `expected` from the list seen.
     ApplyStash(Oid, bool),
-    /// "Rimetti anche lo stage" per apply e pop.
+    /// "Also restore the stage" for apply and pop.
     StashRestoreIndex(bool),
-    /// Elimina lo stash con questo id: prima senza conferma, il motore la chiede sempre e si
-    /// apre il dialogo.
+    /// Deletes the stash with this id: first without confirmation, the engine always asks and
+    /// the dialog opens.
     DropStash(Oid),
-    /// Conferma l'eliminazione in attesa: reinvia con `"confirm": true`.
+    /// Confirms the pending deletion: resends with `"confirm": true`.
     ConfirmDropStash,
-    /// Chiude il dialogo degli stash aperto senza mandare niente.
+    /// Closes the open stash dialog without sending anything.
     CloseStashDialog,
-    /// Chiude la finestra dei conflitti di apply o pop.
+    /// Closes the apply or pop conflicts window.
     DismissStashConflicts,
-    /// Unisce `rev` (mostrato come `what`) nel branch attivo; `no_ff`: sempre un commit di
-    /// merge.
+    /// Merges `rev` (shown as `what`) into the active branch; `no_ff`: always a merge
+    /// commit.
     Merge {
         rev: String,
         what: String,
         no_ff: bool,
     },
-    /// Apre il dialogo "Continua il merge".
+    /// Opens the "Continue merge" dialog.
     ContinueMerge,
-    /// Il messaggio del dialogo "Continua il merge" è cambiato.
+    /// The message of the "Continue merge" dialog changed.
     MergeMessage(String),
-    /// Conclude il merge con il messaggio del dialogo (`merge.continue`).
+    /// Finishes the merge with the dialog's message (`merge.continue`).
     SubmitContinueMerge,
-    /// Comincia l'annullamento del merge: il motore risponde con la conferma.
+    /// Starts aborting the merge: the engine answers with the confirmation.
     AbortMerge,
-    /// L'utente ha confermato l'annullamento.
+    /// The user confirmed the abort.
     ConfirmAbortMerge,
-    /// Cherry-pick o revert del commit `rev` (mostrato come `what`) sul branch attivo; con più
-    /// `parents` (commit di merge) si apre prima il dialogo del genitore.
+    /// Cherry-pick or revert the commit `rev` (shown as `what`) on the active branch; with several
+    /// `parents` (merge commit) the parent dialog opens first.
     Pick {
         pick: merge::Pick,
         rev: Oid,
         what: String,
         parents: Vec<Oid>,
     },
-    /// Il genitore (da 1) scelto nel dialogo del `mainline`.
+    /// The parent (from 1) chosen in the `mainline` dialog.
     Mainline(usize),
-    /// Manda il cherry-pick o il revert con il genitore scelto.
+    /// Submits the cherry-pick or revert with the chosen parent.
     SubmitMainline,
-    /// Chiude il dialogo aperto del merge, del cherry-pick o del revert.
+    /// Closes the open merge, cherry-pick or revert dialog.
     CloseMergeDialog,
-    /// Chiude la finestra di un merge rifiutato.
+    /// Closes the window of a rejected merge.
     DismissMergeError,
-    /// Apre l'area di stage e, al centro, l'editor dei conflitti del file.
+    /// Opens the stage area and, in the center, the file's conflict editor.
     OpenConflict(RepoPath),
-    /// Chiude l'editor dei conflitti (le scelte non segnate si perdono).
+    /// Closes the conflict editor (unmarked choices are lost).
     CloseConflict,
-    /// "Ricomincia": rilegge il file in conflitto.
+    /// "Start over": re-reads the conflicted file.
     RestartConflict,
-    /// Il risultato dell'editor dei conflitti modificato a mano.
+    /// The result of the conflict editor, edited by hand.
     ConflictText(String),
-    /// Sostituisce il blocco di conflitto con questo indice con la scelta.
+    /// Replaces the conflict block with this index with the choice.
     ChooseBlock(usize, project_domain::Choice),
-    /// Sostituisce tutti i blocchi di conflitto con la stessa scelta.
+    /// Replaces all conflict blocks with the same choice.
     ChooseAll(project_domain::Choice),
-    /// "Segna come risolto" con il risultato (chiede conferma se restano marcatori).
+    /// "Mark as resolved" with the result (asks for confirmation if markers remain).
     ResolveConflict,
-    /// Risolve con la versione intera di un lato.
+    /// Resolves with the whole version of one side.
     UseSide(conflict::Pick),
-    /// "Elimina il file": apre la conferma.
+    /// "Delete the file": opens the confirmation.
     DeleteConflicted,
-    /// Conferma la risoluzione in attesa (marcatori rimasti o eliminazione).
+    /// Confirms the pending resolution (remaining markers or deletion).
     ConfirmConflict,
-    /// Rinuncia alla risoluzione in attesa di conferma.
+    /// Gives up the resolution awaiting confirmation.
     CancelConflict,
 }
 
-/// Un passo del trascinamento sulle righe del diff.
+/// A step of dragging over the diff rows.
 #[derive(Debug, Clone, Copy)]
 enum Drag {
     Start(usize),
@@ -272,121 +273,121 @@ enum Drag {
     End,
 }
 
-/// Risultato di `index.stage`/`index.unstage` (e delle versioni per righe): il nuovo stato e il ref del backup dell'indice,
-/// se prima di scrivere ne è stato salvato uno.
+/// Result of `index.stage`/`index.unstage` (and the per-line versions): the new status and the index backup ref,
+/// if one was saved before writing.
 #[derive(serde::Deserialize)]
 struct WriteResult {
     status: Status,
     backup: Option<String>,
 }
 
-/// A cosa serve un comando mandato all'executor. Le letture portano la generazione del repo
-/// aperto: se nel frattempo se n'è aperto un altro il risultato si scarta.
+/// What a command sent to the executor is for. Reads carry the generation of the open repo:
+/// if another one was opened in the meantime the result is discarded.
 #[derive(Debug, Clone, Copy)]
 enum Request {
-    /// `index.stage`/`index.unstage`/`index.stage_lines`/`index.unstage_lines`: il risultato
-    /// è il nuovo stato.
+    /// `index.stage`/`index.unstage`/`index.stage_lines`/`index.unstage_lines`: the result
+    /// is the new status.
     Write(u64),
     Open,
     Refs(u64),
     Status(u64),
     Log(u64, PageRequest),
-    /// `commit.show` del commit indicato.
+    /// `commit.show` of the given commit.
     Show(u64, Oid),
-    /// `diff.commit` con il numero di richiesta di [`DiffState`].
+    /// `diff.commit` with the request number of [`DiffState`].
     Diff(u64, u64),
-    /// `commit.create`: il risultato è il nuovo commit e lo stato.
+    /// `commit.create`: the result is the new commit and the status.
     Commit(u64),
-    /// `commit.show` di HEAD per proporre il suo messaggio con amend, quando HEAD non è tra
-    /// i commit caricati.
+    /// `commit.show` of HEAD to propose its message with amend, when HEAD is not among
+    /// the loaded commits.
     HeadMessage(u64),
-    /// `worktree.discard`, senza o con `confirm` (la fase è in [`DiscardBox`]).
+    /// `worktree.discard`, without or with `confirm` (the phase is in [`DiscardBox`]).
     Discard(u64),
     /// `edit.undo`/`edit.redo`.
     Undo(u64),
-    /// `edit.history`: lo stato dei pulsanti Annulla e Ripeti.
+    /// `edit.history`: the state of the Undo and Redo buttons.
     History(u64),
-    /// `branch.*` (lo stato del dialogo è in [`BranchBox`]).
+    /// `branch.*` (the dialog state is in [`BranchBox`]).
     Branch(u64, branch::Op),
-    /// `remote.fetch` (lo stato è in [`FetchBox`]).
+    /// `remote.fetch` (the state is in [`FetchBox`]).
     Fetch(u64),
-    /// `remote.pull`/`remote.push` (lo stato è in [`SyncBox`]).
+    /// `remote.pull`/`remote.push` (the state is in [`SyncBox`]).
     Sync(u64),
     /// `remote.list`.
     Remotes(u64),
-    /// `remote.add`/`remote.remove` (lo stato del dialogo è in [`RemotesBox`]).
+    /// `remote.add`/`remote.remove` (the dialog state is in [`RemotesBox`]).
     Remote(u64, remotes::Op),
     /// `stash.list`.
     Stashes(u64),
-    /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (lo stato è in [`StashBox`]).
+    /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (the state is in [`StashBox`]).
     Stash(u64, stash::Op),
-    /// `repo.operation`: l'operazione in corso per il riquadro.
+    /// `repo.operation`: the operation in progress for the panel.
     Operation(u64),
-    /// `merge.*`, `commit.cherry_pick`, `commit.revert`, `cherry_pick.*`, `revert.*` (lo stato
-    /// è in [`MergeBox`]).
+    /// `merge.*`, `commit.cherry_pick`, `commit.revert`, `cherry_pick.*`, `revert.*` (the state
+    /// is in [`MergeBox`]).
     Merge(u64, merge::Op),
-    /// `conflict.show` con il numero di lettura di [`ConflictBox`].
+    /// `conflict.show` with the read number of [`ConflictBox`].
     ConflictShow(u64, u64),
-    /// `conflict.resolve` (lo stato è in [`ConflictBox`]).
+    /// `conflict.resolve` (the state is in [`ConflictBox`]).
     ConflictResolve(u64),
 }
 
-/// Il repo mostrato e i dati letti finora.
+/// The repo shown and the data read so far.
 struct RepoView {
     path: String,
     head: Head,
     refs: Vec<RefInfo>,
     status: Option<Status>,
-    /// Le voci dello stato divise per l'area di stage.
+    /// The status entries split for the stage area.
     stage: StageLists,
-    /// Vero se è selezionata la riga "Modifiche non committate" invece di un commit.
+    /// True if the "Uncommitted changes" row is selected instead of a commit.
     worktree_selected: bool,
-    /// Porta in vista la riga delle modifiche al prossimo frame.
+    /// Brings the changes row into view on the next frame.
     scroll_header: bool,
-    /// Scrittura in attesa di conferma.
+    /// Write awaiting confirmation.
     confirm: Option<PendingWrite>,
-    /// La scrittura in corso, descritta (es. "Stage di note.txt").
+    /// The write in progress, described (e.g. "Stage of note.txt").
     write_label: Option<String>,
-    /// L'errore dell'ultima scrittura.
+    /// The error of the last write.
     write_error: Option<String>,
     list: CommitList,
-    /// Etichette dei ref per commit, rifatte quando cambiano ref o HEAD.
+    /// Ref labels per commit, rebuilt when refs or HEAD change.
     labels: HashMap<Oid, Vec<RefLabel>>,
-    /// Dettagli del commit selezionato (`commit.show`).
+    /// Details of the selected commit (`commit.show`).
     details: DetailsState,
-    /// Diff del file aperto (`diff.commit`), mostrato al posto del grafo.
+    /// Diff of the open file (`diff.commit`), shown in place of the graph.
     diff: DiffState,
-    /// La casella del messaggio di commit: bozza, commit in corso, conferma, errore.
+    /// The commit message box: draft, commit in progress, confirmation, error.
     commit: CommitBox,
-    /// Lo scarto delle modifiche: controllo, conferma, invio.
+    /// Discarding changes: check, confirmation, submission.
     discard: DiscardBox,
-    /// I comandi sui branch: dialoghi del nome, conferma dell'eliminazione, checkout.
+    /// Branch commands: name dialogs, deletion confirmation, checkout.
     branch: BranchBox,
-    /// Il fetch in corso e l'ultimo errore da spiegare.
+    /// The fetch in progress and the last error to explain.
     fetch: FetchBox,
-    /// Il pull o push in corso e la finestra aperta (conflitto, rifiuto, conferma del force).
+    /// The pull or push in progress and the open window (conflict, rejection, force confirmation).
     sync: SyncBox,
-    /// I remoti configurati (`remote.list`) e i dialoghi per aggiungerli e rimuoverli.
+    /// The configured remotes (`remote.list`) and the dialogs to add and remove them.
     remotes: RemotesBox,
-    /// Gli stash (`stash.list`), lo stash selezionato, i dialoghi di push e drop.
+    /// The stashes (`stash.list`), the selected stash, the push and drop dialogs.
     stash: StashBox,
-    /// Il merge avviato, l'operazione in corso (riquadro) e i dialoghi Continua e Annulla.
+    /// The merge started, the operation in progress (panel) and the Continue and Abort dialogs.
     merge: MergeBox,
-    /// L'editor dei conflitti, al posto del grafo quando è aperto.
+    /// The conflict editor, in place of the graph when it is open.
     conflict: ConflictBox,
-    /// Cresce a ogni stato nuovo: l'operazione in corso si rilegge una volta per stato.
+    /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
-    /// Cosa farebbero Annulla e Ripeti.
+    /// What Undo and Redo would do.
     history: History,
-    /// Il commit da selezionare quando arriva la prima pagina del log (dopo un commit, se la
-    /// riga delle modifiche è sparita).
+    /// The commit to select when the first page of the log arrives (after a commit, if the
+    /// changes row has disappeared).
     select_after_load: Option<Oid>,
 }
 
 impl RepoView {
     fn new(path: String, head: Head) -> Self {
-        // All'apertura si seleziona HEAD: con tutti i ref nel grafo può non essere il primo
-        // commit (un branch remoto appena scaricato è più recente).
+        // On opening HEAD is selected: with all refs in the graph it may not be the first
+        // commit (a just-fetched remote branch is more recent).
         let select_after_load = head.target();
         let mut view = Self {
             path,
@@ -429,8 +430,8 @@ impl RepoView {
         );
     }
 
-    /// Nuovo stato del repo, da `repo.status` o da una scrittura. Senza modifiche la riga
-    /// delle modifiche sparisce: se era selezionata si torna al commit.
+    /// New repo status, from `repo.status` or a write. Without changes the changes
+    /// row disappears: if it was selected we go back to the commit.
     fn set_status(&mut self, status: Status) {
         self.head = status.head.clone();
         self.stage = StageLists::new(&status);
@@ -445,8 +446,8 @@ impl RepoView {
         self.update_labels();
     }
 
-    /// Vero se è aperta una conferma (stage di conflitti, amend pubblicato, scarto) o un
-    /// dialogo dei branch: finché c'è, niente scritture e i tasti vanno solo a lei.
+    /// True if a confirmation is open (stage of conflicts, published amend, discard) or a
+    /// branch dialog: while it is, no writes and the keys go only to it.
     fn modal_open(&self) -> bool {
         self.confirm.is_some()
             || self.commit.confirm().is_some()
@@ -458,13 +459,13 @@ impl RepoView {
             || self.merge.modal_open()
     }
 
-    /// L'ultimo commit (HEAD), se è tra quelli caricati.
+    /// The last commit (HEAD), if it is among the loaded ones.
     fn head_commit(&self) -> Option<&Commit> {
         let head = self.head.target()?;
         self.list.commits().iter().find(|c| c.id == head)
     }
 
-    /// Lo stato del pulsante "Commit".
+    /// The state of the "Commit" button.
     fn commit_gate(&self, writing: bool) -> Gate<'_> {
         Gate {
             draft: &self.commit.draft,
@@ -475,12 +476,12 @@ impl RepoView {
         }
     }
 
-    /// Vero se c'è la riga "Modifiche non committate" in cima alla lista.
+    /// True if the "Uncommitted changes" row is at the top of the list.
     fn has_changes(&self) -> bool {
         !self.stage.is_empty()
     }
 
-    /// Seleziona la riga delle modifiche (`true`) o torna ai commit.
+    /// Selects the changes row (`true`) or goes back to the commits.
     fn select_worktree(&mut self, on: bool) {
         self.worktree_selected = on && self.has_changes();
         if self.worktree_selected {
@@ -491,7 +492,7 @@ impl RepoView {
         }
     }
 
-    /// Frecce e Pagina su/giù: la riga delle modifiche sta sopra il primo commit.
+    /// Arrows and Page up/down: the changes row sits above the first commit.
     fn move_selection(&mut self, delta: isize) {
         if self.worktree_selected {
             if delta > 0 && !self.list.commits().is_empty() {
@@ -513,11 +514,11 @@ impl RepoView {
     }
 }
 
-/// Dove era la lista dei commit nell'ultimo frame: serve per portare in vista la selezione e
-/// per sapere quante righe salta Pagina giù.
+/// Where the commit list was in the last frame: needed to bring the selection into view and
+/// to know how many rows Page down skips.
 #[derive(Debug, Default)]
 struct ListViewport {
-    /// Righe disegnate, anche solo in parte.
+    /// Rows drawn, even only partly.
     rows: std::ops::Range<usize>,
     height: f32,
 }
@@ -537,21 +538,21 @@ struct LogPage {
 pub struct App {
     executor: Executor,
     platform: Arc<dyn Platform>,
-    /// Cartella scelta nel dialogo; sul desktop arriva subito, in generale da un callback.
+    /// Folder chosen in the dialog; on desktop it arrives at once, in general from a callback.
     picked: Arc<Mutex<Option<String>>>,
     pending: HashMap<Ticket, Request>,
-    /// Cresce a ogni repo aperto.
+    /// Grows with every repo opened.
     generation: u64,
     repo: Option<RepoView>,
     viewport: ListViewport,
     error: String,
-    /// Messaggio informativo nella barra di stato (es. il backup dell'indice salvato).
+    /// Informational message in the status bar (e.g. the saved index backup).
     notice: String,
 }
 
 impl App {
-    /// `opener` apre i repository: `CliOpener` sul desktop, `MemoryOpener` sul web. Se c'è,
-    /// `repo` si apre subito, in background.
+    /// `opener` opens repositories: `CliOpener` on desktop, `MemoryOpener` on the web. If present,
+    /// `repo` opens at once, in the background.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         platform: Arc<dyn Platform>,
@@ -600,7 +601,7 @@ impl App {
                 }));
             }
             Action::Open(path) => self.submit("repo.open", json!({ "path": path }), Request::Open),
-            // Durante una scrittura (un fetch può durare) le letture aspetterebbero in coda.
+            // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
                     self.load();
@@ -760,8 +761,8 @@ impl App {
         );
     }
 
-    /// Seleziona il commit di un ref; se non è ancora caricato chiede le pagine seguenti
-    /// finché non arriva (fino a [`list::SEEK_LIMIT`] commit).
+    /// Selects a ref's commit; if it is not loaded yet asks for the next pages
+    /// until it arrives (up to [`list::SEEK_LIMIT`] commits).
     fn seek(&mut self, id: Oid) {
         let Some(repo) = &mut self.repo else {
             return;
@@ -781,7 +782,7 @@ impl App {
         self.submit(command, params, Request::Diff(self.generation, seq));
     }
 
-    /// Il diff caricato con la sua selezione, se permette la selezione parziale.
+    /// The loaded diff with its selection, if it allows partial selection.
     fn selectable_diff(&mut self) -> Option<(&DiffTarget, &DiffDoc, &mut lines::LineSelection)> {
         let (target, doc, selection) = self.repo.as_mut()?.diff.loaded_mut()?;
         matches!(
@@ -791,8 +792,8 @@ impl App {
         .then_some((target, doc, selection))
     }
 
-    /// Dopo un nuovo stato, il diff aperto di worktree o indice si richiede; se il file è
-    /// passato tutto nell'altra lista si apre quel diff, se non ha più modifiche si chiude.
+    /// After a new status, the open worktree or index diff is requested again; if the file
+    /// moved entirely to the other list that diff opens, if it has no more changes it closes.
     fn follow_diff(&mut self) {
         let Some(repo) = &mut self.repo else {
             return;
@@ -824,9 +825,9 @@ impl App {
         }
     }
 
-    /// Chiude il diff se non è più di ciò che è selezionato: il diff di un commit vale finché
-    /// è selezionato quel commit, quelli di worktree e indice finché è selezionata la riga
-    /// delle modifiche.
+    /// Closes the diff if it is no longer of what is selected: a commit's diff holds while
+    /// that commit is selected, worktree and index ones while the changes row
+    /// is selected.
     fn close_stale_diff(&mut self) {
         if let Some(repo) = &mut self.repo {
             let selected = match repo.stash.selected() {
@@ -840,19 +841,19 @@ impl App {
             if stale {
                 repo.diff.close();
             }
-            // L'editor dei conflitti vale finché è selezionata la riga delle modifiche.
+            // The conflict editor holds while the changes row is selected.
             if !repo.worktree_selected {
                 repo.conflict.close();
             }
         }
     }
 
-    /// Chiede i dettagli del commit selezionato, se è cambiato e non ci sono già.
+    /// Asks for the selected commit's details, if it changed and they are not there already.
     fn request_details(&mut self) {
         let Some(repo) = &mut self.repo else {
             return;
         };
-        // Uno stash selezionato si mostra come il suo commit: i file rispetto alla base.
+        // A selected stash is shown as its commit: the files relative to the base.
         let selected = match repo.stash.selected() {
             Some(stash) => Some(stash.id),
             None => repo.list.selected_commit().map(|c| c.id),
@@ -864,24 +865,24 @@ impl App {
         }
     }
 
-    /// Azioni dei tasti della lista: frecce, Pagina su/giù, Inizio/Fine. Con il diff aperto,
-    /// Esc lo chiude e le frecce restano alla vista del diff. Solo se nessun campo di testo sta
-    /// ricevendo la tastiera.
+    /// List key actions: arrows, Page up/down, Home/End. With the diff open,
+    /// Esc closes it and the arrows stay with the diff view. Only if no text field is
+    /// receiving the keyboard.
     fn keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let Some(repo) = &self.repo else {
             return;
         };
-        // Con la conferma aperta i tasti vanno solo a lei.
+        // With the confirmation open the keys go only to it.
         if ctx.egui_wants_keyboard_input() || repo.modal_open() {
             return;
         }
-        // Con l'editor dei conflitti aperto la lista non è in vista.
+        // With the conflict editor open the list is not in view.
         if repo.conflict.editor().is_some() {
             return;
         }
         if repo.diff.target().is_some() {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                // Prima si deseleziona, poi si chiude.
+                // First deselect, then close.
                 if repo.diff.selection().is_some_and(|s| !s.is_empty()) {
                     actions.push(Action::ClearLines);
                 } else {
@@ -909,7 +910,7 @@ impl App {
         });
     }
 
-    /// Chiede ref, stato e log del repo aperto.
+    /// Asks for refs, status and log of the open repo.
     fn load(&mut self) {
         if self.repo.is_none() {
             return;
@@ -926,8 +927,8 @@ impl App {
         }
     }
 
-    /// Chiede `repo.operation` se lo stato arrivato dice che c'è un'operazione in corso e per
-    /// quello stato non si è ancora chiesto (uno alla volta).
+    /// Asks for `repo.operation` if the status that arrived says there is an operation in progress and for
+    /// that status it has not been asked yet (one at a time).
     fn request_operation(&mut self) {
         let generation = self.generation;
         let Some(repo) = &mut self.repo else {
@@ -941,7 +942,7 @@ impl App {
         }
     }
 
-    /// Rilegge l'elenco dei remoti (quanti branch remoti, quale è il predefinito).
+    /// Re-reads the remotes list (how many remote branches, which is the default).
     fn request_remotes(&mut self, generation: u64) {
         self.submit(remotes::LIST, json!({}), Request::Remotes(generation));
     }
@@ -955,7 +956,7 @@ impl App {
             let Some(request) = self.pending.remove(&done.ticket) else {
                 continue;
             };
-            // I dettagli hanno il loro stato, errori compresi: li mostra il pannello.
+            // Details have their own state, errors included: the panel shows them.
             if let Request::Show(generation, id) = request {
                 let result = done.result.and_then(|value| {
                     serde_json::from_value::<CommitDetails>(value).map_err(|e| {
@@ -971,7 +972,7 @@ impl App {
                 }
                 continue;
             }
-            // Le scritture: il nuovo stato, oppure l'errore nell'area di stage.
+            // Writes: the new status, or the error in the stage area.
             if let Request::Write(generation) = request {
                 let result = done.result.and_then(|value| {
                     serde_json::from_value::<WriteResult>(value).map_err(|e| {
@@ -993,8 +994,8 @@ impl App {
                     Ok(WriteResult { status, backup }) => {
                         repo.set_status(status);
                         self.error.clear();
-                        // Versioni in stage che esistevano solo nell'indice: salvate prima di
-                        // scrivere, lo si dice nella barra di stato.
+                        // Staged versions that existed only in the index: saved before
+                        // writing, this is said in the status bar.
                         self.notice = backup
                             .map(|r| tr!("app-index-backup", backup = r))
                             .unwrap_or_default();
@@ -1009,8 +1010,8 @@ impl App {
                             tr!("common-failed", label = &label, error = &e)
                         };
                         repo.write_error = Some(message.clone());
-                        // Il diff visto non è più quello attuale: si rileggono stato e diff
-                        // (il diff segue lo stato) e la selezione si azzera.
+                        // The diff seen is no longer the current one: status and diff are re-read
+                        // (the diff follows the status) and the selection is cleared.
                         if stale && let Some((_, _, selection)) = repo.diff.loaded_mut() {
                             selection.clear();
                         }
@@ -1047,7 +1048,7 @@ impl App {
                 self.receive_sync(generation, done);
                 continue;
             }
-            // L'elenco dei remoti ha il suo errore, mostrato nella sua sezione.
+            // The remotes list has its own error, shown in its section.
             if let Request::Remotes(generation) = request {
                 if let Some(repo) = self.current(generation) {
                     if let Err(e) = &done.result {
@@ -1061,7 +1062,7 @@ impl App {
                 self.receive_remote(generation, op, done);
                 continue;
             }
-            // Anche l'elenco degli stash ha il suo errore, nella sua sezione.
+            // The stash list also has its own error, in its section.
             if let Request::Stashes(generation) = request {
                 if let Some(repo) = self.current(generation) {
                     if let Err(e) = &done.result {
@@ -1076,7 +1077,7 @@ impl App {
                 self.receive_stash(generation, op, done);
                 continue;
             }
-            // Anche l'operazione in corso ha il suo errore, nel riquadro.
+            // The operation in progress also has its own error, in the panel.
             if let Request::Operation(generation) = request {
                 if let Some(repo) = self.current(generation) {
                     if let Err(e) = &done.result {
@@ -1090,7 +1091,7 @@ impl App {
                 self.receive_merge(generation, op, done);
                 continue;
             }
-            // L'editor dei conflitti mostra da sé gli errori di lettura.
+            // The conflict editor shows read errors by itself.
             if let Request::ConflictShow(generation, seq) = request {
                 if let Some(repo) = self.current(generation) {
                     if let Err(e) = &done.result {
@@ -1104,7 +1105,7 @@ impl App {
                 self.receive_conflict(generation, done);
                 continue;
             }
-            // Anche il diff: errori nella sua vista, risposte vecchie scartate.
+            // The diff too: errors in its view, old answers discarded.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
                     serde_json::from_value::<Diff>(value).map_err(|e| {
@@ -1120,7 +1121,7 @@ impl App {
                 }
                 continue;
             }
-            // Una pagina non arrivata si potrà chiedere di nuovo.
+            // A page that did not arrive can be asked for again.
             if done.result.is_err()
                 && let Request::Log(generation, page) = request
                 && let Some(repo) = self.current(generation)
@@ -1130,7 +1131,7 @@ impl App {
             match done.result {
                 Ok(value) => {
                     if let Err(e) = self.store(request, value) {
-                        log::error!("{}: risultato inatteso: {e}", done.command);
+                        log::error!("{}: unexpected result: {e}", done.command);
                         self.error = tr!(
                             "common-unexpected-result",
                             command = &done.command,
@@ -1148,12 +1149,12 @@ impl App {
         }
     }
 
-    /// Il repo mostrato, se è ancora quello della generazione `generation`.
+    /// The repo shown, if it is still the one of generation `generation`.
     fn current(&mut self, generation: u64) -> Option<&mut RepoView> {
         self.repo.as_mut().filter(|_| generation == self.generation)
     }
 
-    /// Mette il risultato di `request` nella vista.
+    /// Puts the result of `request` into the view.
     fn store(&mut self, request: Request, value: Value) -> Result<(), serde_json::Error> {
         match request {
             Request::Open => {
@@ -1188,8 +1189,8 @@ impl App {
                     {
                         repo.list.select_id(id);
                     }
-                    // Un ref cliccato il cui commit non era ancora caricato: si guarda nella
-                    // pagina arrivata e, se non c'è, si chiede la seguente.
+                    // A clicked ref whose commit was not loaded yet: look in the
+                    // page that arrived and, if it is not there, ask for the next one.
                     if let Some(id) = repo.list.seeking() {
                         self.seek(id);
                     }
@@ -1206,7 +1207,7 @@ impl App {
                     repo.history = serde_json::from_value(value)?;
                 }
             }
-            // Gestiti a parte in `receive`.
+            // Handled separately in `receive`.
             Request::Show(..)
             | Request::Diff(..)
             | Request::Write(..)
@@ -1238,15 +1239,15 @@ impl eframe::App for App {
         self.keyboard(&ctx, &mut actions);
         let can_pick = self.platform.capabilities().open_folder;
         let writing = self.executor.writing().is_some();
-        // La bozza del messaggio si scrive direttamente (stato della UI, non del repo): si
-        // presta al pannello per questo frame e poi si rimette a posto.
+        // The message draft is written directly (UI state, not repo state): it is
+        // lent to the panel for this frame and then put back.
         let mut draft = self
             .repo
             .as_mut()
             .map(|r| std::mem::take(&mut r.commit.draft))
             .unwrap_or_default();
 
-        // Il fetch, pull o push in corso con il suo ultimo avanzamento, per la barra.
+        // The fetch, pull or push in progress with its latest progress, for the bar.
         let network = self.repo.as_ref().and_then(|r| {
             if let Some(running) = r.fetch.running() {
                 return Some(view::Network {
@@ -1278,7 +1279,7 @@ impl eframe::App for App {
                 cancel: Action::CancelSync,
             })
         });
-        egui::Panel::top("barra").show(ui, |ui| {
+        egui::Panel::top("bar").show(ui, |ui| {
             view::top_bar(
                 ui,
                 self.repo.as_ref(),
@@ -1288,7 +1289,7 @@ impl eframe::App for App {
                 &mut actions,
             );
         });
-        egui::Panel::bottom("stato").show(ui, |ui| {
+        egui::Panel::bottom("status").show(ui, |ui| {
             let write = self.repo.as_ref().and_then(|r| r.write_label.as_deref());
             view::status_bar(
                 ui,
@@ -1298,16 +1299,16 @@ impl eframe::App for App {
                 &self.notice,
             );
         });
-        // L'operazione in corso (merge, rebase, ...) sotto la barra, per tutta la larghezza.
+        // The operation in progress (merge, rebase, ...) under the bar, across the full width.
         if let Some(repo) = &self.repo
             && let Some(operation) = repo.status.as_ref().and_then(|s| s.operation)
         {
             let can_write = !writing && !repo.modal_open() && !repo.merge.busy();
-            egui::Panel::top("operazione").show(ui, |ui| {
+            egui::Panel::top("operation").show(ui, |ui| {
                 merge_view::banner(ui, repo, operation, can_write, &mut actions);
             });
         }
-        // I pannelli laterali non superano un terzo della finestra: il contenuto va a capo.
+        // Side panels do not exceed a third of the window: the content wraps.
         let side_max = (ui.available_width() / 3.0).max(200.0);
         match &self.repo {
             Some(repo) => {
@@ -1317,7 +1318,7 @@ impl eframe::App for App {
                     .min_size(140.0)
                     .max_size(side_max)
                     .show(ui, |ui| view::refs_panel(ui, repo, writing, &mut actions));
-                egui::Panel::right("dettagli")
+                egui::Panel::right("details")
                     .resizable(true)
                     .default_size(320.0)
                     .min_size(200.0)
@@ -1346,7 +1347,7 @@ impl eframe::App for App {
                 if let Some(failure) = repo.fetch.failure() {
                     view::failure_window(
                         &ctx,
-                        "errore-fetch",
+                        "fetch-error",
                         failure,
                         Action::DismissFetchError,
                         &mut actions,
@@ -1355,7 +1356,7 @@ impl eframe::App for App {
                 if let Some(failure) = repo.remotes.failure() {
                     view::failure_window(
                         &ctx,
-                        "errore-remoto",
+                        "remote-error",
                         failure,
                         Action::DismissRemoteError,
                         &mut actions,
@@ -1388,7 +1389,7 @@ impl eframe::App for App {
                 if let Some(failure) = repo.merge.failure() {
                     view::failure_window(
                         &ctx,
-                        "errore-merge",
+                        "merge-error",
                         failure,
                         Action::DismissMergeError,
                         &mut actions,
@@ -1439,7 +1440,7 @@ impl eframe::App for App {
             }
         }
 
-        // La lista ha portato in vista la riga chiesta: non serve più.
+        // The list brought the requested row into view: no longer needed.
         if let Some(repo) = &mut self.repo {
             repo.commit.draft = draft;
             repo.list.take_scroll_to();
@@ -1448,13 +1449,13 @@ impl eframe::App for App {
         for action in actions {
             self.apply(&ctx, action);
         }
-        // Dopo le azioni: la selezione appena cambiata si chiede in questo stesso frame.
+        // After the actions: the selection just changed is requested in this same frame.
         self.close_stale_diff();
         self.request_details();
     }
 }
 
-/// Il diff di un file della lista `side`.
+/// The diff of a file of the `side` list.
 fn side_source(side: Side) -> DiffSource {
     match side {
         Side::Staged => DiffSource::Index,
@@ -1462,7 +1463,7 @@ fn side_source(side: Side) -> DiffSource {
     }
 }
 
-/// `testo` con la prima lettera minuscola, per metterlo dentro una frase.
+/// `text` with the first letter lowercased, to put it inside a sentence.
 fn lowercase_first(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {

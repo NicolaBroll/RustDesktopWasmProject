@@ -1,8 +1,8 @@
-//! Accesso a un repository git tramite trait (vedi `impl-docs/ARCHITETTURA-git.md` §4).
+//! Access to a git repository through a trait (see `impl-docs/ARCHITECTURE-git.md` §4).
 //!
-//! Il motore non esegue `git` e non tocca il file system: legge il repo tramite
-//! [`GitBackend`], aperto da un [`RepoOpener`] iniettato dall'app. Le implementazioni sono
-//! [`MemoryBackend`] (qui, per i test e la versione web) e `CliBackend` (in `project-git`).
+//! The engine does not run `git` and does not touch the file system: it reads the repo through
+//! [`GitBackend`], opened by a [`RepoOpener`] injected by the app. The implementations are
+//! [`MemoryBackend`] (here, for tests and the web version) and `CliBackend` (in `project-git`).
 
 mod backup;
 mod branch;
@@ -77,290 +77,290 @@ pub use stash::{
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
 
-use crate::{EngineError, JobContext};
+use crate::{EngineError, JobContext, Message};
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// Un repository aperto: letture e, uno step alla volta, scritture (stage e unstage per ora).
+/// An open repository: reads and, one step at a time, writes (stage and unstage for now).
 ///
-/// `Send` perché la sessione può spostarlo su un thread di lavoro per i comandi lenti (§6).
+/// `Send` because the session may move it to a worker thread for slow commands (§6).
 pub trait GitBackend: Send {
-    /// Dove punta HEAD.
+    /// Where HEAD points.
     fn head(&self) -> Result<Head, EngineError>;
 
-    /// Branch locali, branch remoti, tag e stash, ordinati per nome completo (byte per byte),
-    /// come `git for-each-ref`. Per i branch locali `upstream` riporta il nome completo del ref
-    /// remoto (es. `refs/remotes/origin/main`) e ahead/behind, `None` se il ref non esiste più.
+    /// Local branches, remote branches, tags and stashes, sorted by full name (byte by byte),
+    /// like `git for-each-ref`. For local branches `upstream` reports the full name of the remote
+    /// ref (e.g. `refs/remotes/origin/main`) and ahead/behind, `None` if the ref no longer exists.
     fn refs(&self) -> Result<Vec<RefInfo>, EngineError>;
 
-    /// Commit raggiungibili da `query.rev` (HEAD se manca), figli sempre prima dei genitori e,
-    /// a parità, il più recente per data del committer prima. Su un branch senza commit e senza
-    /// `rev` il risultato è vuoto; una `rev` che non si risolve dà
-    /// [`EngineError::UnknownRev`]. Con `query.all` parte da tutti i branch locali e remoti, i
-    /// tag e HEAD (una HEAD senza commit si salta); `rev` e `all` insieme danno
+    /// Commits reachable from `query.rev` (HEAD if missing), children always before parents and,
+    /// on ties, the most recent by committer date first. On a branch without commits and without
+    /// `rev` the result is empty; a `rev` that does not resolve gives
+    /// [`EngineError::UnknownRev`]. With `query.all` it starts from all local and remote branches, the
+    /// tags and HEAD (a HEAD without commits is skipped); `rev` and `all` together give
     /// [`EngineError::InvalidParams`] ([`LogQuery::check`]).
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
 
-    /// Stato del worktree e dell'indice, con HEAD e upstream del branch corrente.
+    /// State of the worktree and the index, with HEAD and upstream of the current branch.
     fn status(&self) -> Result<Status, EngineError>;
 
-    /// Metadati e file cambiati del commit a cui porta `rev` (un id, anche abbreviato, o
-    /// qualunque rev accettata da [`GitBackend::log`]). I file sono confrontati con il **primo
-    /// genitore**, anche per i merge (i file portati nel branch dal merge); un commit radice è
-    /// confrontato con l'albero vuoto. Le rinomine sono riconosciute. Una `rev` che non si
-    /// risolve in un commit dà [`EngineError::UnknownRev`].
+    /// Metadata and changed files of the commit `rev` leads to (an id, also abbreviated, or
+    /// any rev accepted by [`GitBackend::log`]). The files are compared with the **first
+    /// parent**, also for merges (the files the merge brought into the branch); a root commit is
+    /// compared with the empty tree. Renames are detected. A `rev` that does not
+    /// resolve to a commit gives [`EngineError::UnknownRev`].
     fn show_commit(&self, rev: &str) -> Result<CommitDetails, EngineError>;
 
-    /// Il diff descritto da `spec` (vedi [`DiffSpec`]), con le rinomine riconosciute.
+    /// The diff described by `spec` (see [`DiffSpec`]), with renames detected.
     ///
-    /// Con un percorso in `spec` il risultato ha solo il file con quel percorso **esatto**,
-    /// nuovo o vecchio: una cartella non comprende i file che contiene, e una rinomina resta
-    /// una rinomina (con l'altro percorso) anche se si chiede solo uno dei due. Un percorso
-    /// che non è cambiato dà un diff vuoto.
+    /// With a path in `spec` the result has only the file with that **exact** path,
+    /// new or old: a folder does not include the files it contains, and a rename stays
+    /// a rename (with the other path) even if only one of the two is requested. A path
+    /// that has not changed gives an empty diff.
     ///
-    /// Non c'è un limite di dimensione: il diff di un commit enorme è tutto in memoria. Per i
-    /// commit grandi conviene chiedere un file alla volta (l'elenco viene da
-    /// [`GitBackend::show_commit`]). Per [`DiffSpec::Commit`] una `rev` che non si risolve in
-    /// un commit dà [`EngineError::UnknownRev`].
+    /// There is no size limit: the diff of a huge commit is all in memory. For
+    /// large commits it is better to ask for one file at a time (the list comes from
+    /// [`GitBackend::show_commit`]). For [`DiffSpec::Commit`] a `rev` that does not resolve to
+    /// a commit gives [`EngineError::UnknownRev`].
     fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
 
-    // --- Scritture: cambiano il repo. Prendono `&mut self` perché il `MemoryBackend` tiene lo
-    // stato in sé; una lettura fatta dopo vede sempre il nuovo stato.
+    // --- Writes: they change the repo. They take `&mut self` because the `MemoryBackend` holds the
+    // state itself; a read done afterwards always sees the new state.
     //
-    // Stage e unstage restituiscono il nome del ref di backup (`refs/project/backup/...`) se
-    // prima di scrivere hanno salvato versioni in stage che esistevano solo nell'indice
-    // ([`versions_at_risk`]); se il backup non riesce l'indice non si tocca e il risultato è
-    // l'errore.
+    // Stage and unstage return the name of the backup ref (`refs/project/backup/...`) if
+    // before writing they saved staged versions that existed only in the index
+    // ([`versions_at_risk`]); if the backup fails the index is not touched and the result is
+    // the error.
     //
-    // Il controllo dei rischi legge lo stato prima di scrivere: fra la lettura e la scrittura
-    // un altro processo git potrebbe cambiare l'indice (finestra breve, solo con scritture
-    // esterne concorrenti). Il `CliBackend` ricontrolla le voci toccate subito prima di
-    // scrivere e, se sono cambiate, dà errore senza scrivere; resta solo l'istante fra
-    // quell'ultimo controllo e la scrittura.
+    // The risk check reads the state before writing: between the read and the write
+    // another git process could change the index (short window, only with concurrent
+    // external writes). The `CliBackend` rechecks the touched entries right before
+    // writing and, if they changed, fails without writing; only the instant between
+    // that last check and the write remains.
 
-    /// Mette in stage i file `paths` com'erano nel worktree (`git add`): modifiche, file nuovi
-    /// non tracciati e cancellazioni. Per una rinomina fatta nel worktree si passano i due
-    /// percorsi (la cancellazione del vecchio e il nuovo file). Non tocca il worktree.
+    /// Stages the files `paths` as they were in the worktree (`git add`): modifications, new
+    /// untracked files and deletions. For a rename done in the worktree both paths are passed
+    /// (the deletion of the old one and the new file). Does not touch the worktree.
     ///
-    /// - I percorsi sono presi alla lettera (niente glob né pathspec magici); un percorso che
-    ///   è una cartella comprende i file che contiene, come in git (i file ignorati al suo
-    ///   interno sono saltati).
-    /// - Un file ignorato da `.gitignore` e non tracciato, chiesto per nome, dà
-    ///   [`EngineError::NotAllowed`] e **niente** viene messo in stage (non si forza mai).
-    /// - Un percorso che non esiste né nel worktree né nell'indice né in HEAD dà errore e
-    ///   niente cambia; uno (file o cartella) che indica solo cancellazioni già in stage non
-    ///   fa niente.
-    /// - Un file in conflitto messo in stage è **risolto** con il contenuto del worktree (come
-    ///   `git add`): gli stadi del conflitto spariscono dall'indice (git ne tiene le versioni
-    ///   nell'estensione REUC, da cui `git checkout -m` rifà il conflitto). Solo se chiesto per
-    ///   nome: un file in conflitto dentro una cartella richiesta dà
-    ///   [`EngineError::NotAllowed`] e niente cambia.
-    /// - `paths` vuoto non fa niente (non vuol dire "tutto").
+    /// - Paths are taken literally (no globs or magic pathspecs); a path that
+    ///   is a folder includes the files it contains, as in git (ignored files inside it
+    ///   are skipped).
+    /// - A file ignored by `.gitignore` and untracked, requested by name, gives
+    ///   [`EngineError::NotAllowed`] and **nothing** is staged (never forced).
+    /// - A path that exists neither in the worktree nor in the index nor in HEAD gives an error and
+    ///   nothing changes; one (file or folder) that only indicates deletions already staged
+    ///   does nothing.
+    /// - A conflicted file that is staged is **resolved** with the worktree content (like
+    ///   `git add`): the conflict stages disappear from the index (git keeps their versions
+    ///   in the REUC extension, from which `git checkout -m` recreates the conflict). Only if requested by
+    ///   name: a conflicted file inside a requested folder gives
+    ///   [`EngineError::NotAllowed`] and nothing changes.
+    /// - Empty `paths` does nothing (it does not mean "everything").
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
 
-    /// Toglie dallo stage i file `paths`: l'indice torna come in HEAD per quei percorsi (un
-    /// file aggiunto torna non tracciato), come `git restore --staged`. Su un branch senza
-    /// commit l'indice torna vuoto per quei percorsi. **Non tocca mai il worktree.**
+    /// Unstages the files `paths`: the index goes back as in HEAD for those paths (an
+    /// added file becomes untracked again), like `git restore --staged`. On a branch without
+    /// commits the index becomes empty for those paths. **Never touches the worktree.**
     ///
-    /// - Percorsi alla lettera, cartelle comprese, come in [`GitBackend::stage`].
-    /// - Un file in conflitto dà [`EngineError::NotAllowed`]: togliere dall'indice gli stadi
-    ///   del conflitto ne perderebbe le versioni; si risolve con [`GitBackend::stage`].
-    /// - Un percorso sconosciuto a git (né in HEAD né nell'indice) dà errore e niente cambia.
-    /// - `paths` vuoto non fa niente.
+    /// - Literal paths, folders included, as in [`GitBackend::stage`].
+    /// - A conflicted file gives [`EngineError::NotAllowed`]: removing the conflict stages
+    ///   from the index would lose their versions; it is resolved with [`GitBackend::stage`].
+    /// - A path unknown to git (neither in HEAD nor in the index) gives an error and nothing changes.
+    /// - Empty `paths` does nothing.
     fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
 
-    /// Mette in stage ([`PatchDirection::Stage`](project_domain::PatchDirection)) o toglie
-    /// dallo stage ([`PatchDirection::Unstage`](project_domain::PatchDirection)) solo le righe
-    /// `selection.lines` di un file: `index.stage_lines` e `index.unstage_lines`. **Non tocca
-    /// mai il worktree.**
+    /// Stages ([`PatchDirection::Stage`](project_domain::PatchDirection)) or unstages
+    /// ([`PatchDirection::Unstage`](project_domain::PatchDirection)) only the lines
+    /// `selection.lines` of a file: `index.stage_lines` and `index.unstage_lines`. **Never
+    /// touches the worktree.**
     ///
-    /// Rilegge il diff del file ([`LineSelection::diff_spec`]), controlla che sia quello visto
-    /// (`selection.digest`) e costruisce la patch con [`line_patch`] (vedi lì gli errori), poi
-    /// calcola il nuovo contenuto in stage con [`apply_patch`] (rigoroso: ogni hunk solo alla
-    /// sua posizione) e lo scrive nell'indice. Come stage e unstage: prima un backup se la
-    /// versione in stage esiste solo nell'indice (es. righe di un file `MM`), e il ref nel
-    /// risultato; il `CliBackend` ricontrolla l'indice prima di scrivere, rilegge la voce dopo
-    /// e con l'indice bloccato dà [`EngineError::IndexLocked`]. Un errore prima della scrittura
-    /// non cambia niente.
+    /// Rereads the file's diff ([`LineSelection::diff_spec`]), checks that it is the one seen
+    /// (`selection.digest`) and builds the patch with [`line_patch`] (see there for the errors), then
+    /// computes the new staged content with [`apply_patch`] (strict: each hunk only at
+    /// its position) and writes it to the index. Like stage and unstage: first a backup if the
+    /// staged version exists only in the index (e.g. lines of an `MM` file), and the ref in the
+    /// result; the `CliBackend` rechecks the index before writing, rereads the entry afterwards
+    /// and with the index locked gives [`EngineError::IndexLocked`]. An error before the write
+    /// changes nothing.
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError>;
 
-    /// Crea un commit con quello che è in stage (`commit.create`), o con `request.amend`
-    /// riscrive l'ultimo. Il worktree non si tocca; dopo, l'indice è uguale al nuovo HEAD.
+    /// Creates a commit with what is staged (`commit.create`), or with `request.amend`
+    /// rewrites the last one. The worktree is not touched; afterwards, the index equals the new HEAD.
     ///
-    /// Prima di scrivere: [`CommitRequest::check_message`], [`check_commit_state`] (conflitti,
-    /// operazioni in corso, niente da committare, `amend` senza commit o durante un merge) e,
-    /// con `amend`, [`check_amend_published`] sui branch remoti e i tag che contengono HEAD
-    /// ([`amend_impact`]; gli altri branch e tag che lo contengono vanno in `also_on`). Con
-    /// `amend` il commit riscritto è salvato in un ref di backup
-    /// (`refs/project/backup/amend-...`, nel risultato) prima di scrivere; se il backup non
-    /// riesce non si committa. Il `CliBackend` esegue `git commit` con hook e firma secondo la
-    /// configurazione dell'utente: un hook che rifiuta o una firma che non riesce danno
-    /// [`EngineError::Git`] con tutto quello che hanno scritto, e nessun commit.
+    /// Before writing: [`CommitRequest::check_message`], [`check_commit_state`] (conflicts,
+    /// operations in progress, nothing to commit, `amend` without a commit or during a merge) and,
+    /// with `amend`, [`check_amend_published`] on the remote branches and tags that contain HEAD
+    /// ([`amend_impact`]; the other branches and tags that contain it go in `also_on`). With
+    /// `amend` the rewritten commit is saved in a backup ref
+    /// (`refs/project/backup/amend-...`, in the result) before writing; if the backup
+    /// fails nothing is committed. The `CliBackend` runs `git commit` with hooks and signing per the
+    /// user's configuration: a rejecting hook or a failing signature gives
+    /// [`EngineError::Git`] with everything they wrote, and no commit.
     ///
-    /// Primo commit di un branch e HEAD staccata funzionano (con HEAD staccata si sposta
-    /// HEAD, nessun branch). Senza identità (`user.name`/`user.email`) l'errore è quello di
-    /// git: nessun nome inventato.
+    /// The first commit of a branch and detached HEAD work (with detached HEAD it moves
+    /// HEAD, no branch). Without an identity (`user.name`/`user.email`) the error is git's:
+    /// no invented name.
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError>;
 
-    /// Sposta HEAD e i ref come chiede `request` (`edit.undo` e `edit.redo`, §7): tutti insieme
-    /// o nessuno, e **solo** se ora valgono `expected`. Indice e worktree non si toccano.
-    /// Restituisce i ref di backup creati.
+    /// Moves HEAD and the refs as `request` asks (`edit.undo` and `edit.redo`, §7): all together
+    /// or none, and **only** if `expected` holds now. Index and worktree are not touched.
+    /// Returns the backup refs created.
     ///
-    /// Prima di scrivere: [`RefRestore::check`] (operazioni in corso, nomi, cambi di HEAD non
-    /// supportati); poi HEAD e i ref attuali confrontati con `expected`
-    /// ([`RefRestore::conflicts`]): se qualcosa è cambiato da fuori,
-    /// [`EngineError::UndoConflict`] e niente cambia. Ogni commit di
-    /// [`RefRestore::abandoned`] che dopo non sarebbe più raggiungibile né dai nuovi valori
-    /// né da altri ref (backup compresi) si salva in `refs/project/backup/<undo|redo>-...`;
-    /// se il backup non riesce non si sposta niente. Il `CliBackend` scrive con una sola
-    /// transazione `git update-ref --stdin` (`start`, `update`/`create`/`delete` con il valore
-    /// vecchio, `commit`) e il messaggio `request.reflog`; se la transazione fallisce perché
-    /// un ref è cambiato nel frattempo, ancora [`EngineError::UndoConflict`]. Un problema
-    /// scoperto dopo una transazione riuscita (HEAD cambiata da un altro processo proprio in
-    /// quell'istante) va in [`RestoreOutcome::warnings`].
+    /// Before writing: [`RefRestore::check`] (operations in progress, names, unsupported
+    /// HEAD changes); then HEAD and the current refs compared with `expected`
+    /// ([`RefRestore::conflicts`]): if something changed from outside,
+    /// [`EngineError::UndoConflict`] and nothing changes. Every commit of
+    /// [`RefRestore::abandoned`] that afterwards would no longer be reachable from the new values
+    /// or from other refs (backups included) is saved in `refs/project/backup/<undo|redo>-...`;
+    /// if the backup fails nothing is moved. The `CliBackend` writes with a single
+    /// `git update-ref --stdin` transaction (`start`, `update`/`create`/`delete` with the old
+    /// value, `commit`) and the message `request.reflog`; if the transaction fails because
+    /// a ref changed in the meantime, again [`EngineError::UndoConflict`]. A problem
+    /// found after a successful transaction (HEAD changed by another process at exactly
+    /// that instant) goes in [`RestoreOutcome::warnings`].
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
 
-    /// Scarta le modifiche non in stage dei file `paths` (`worktree.discard`, §7): il worktree
-    /// torna come l'indice, come `git restore --worktree`. **L'indice non si tocca.**
+    /// Discards the unstaged changes of the files `paths` (`worktree.discard`, §7): the worktree
+    /// goes back as the index, like `git restore --worktree`. **The index is not touched.**
     ///
-    /// I file sono quelli di [`discard_plan`] sullo stato letto ora (vedi lì i rifiuti: non
-    /// tracciati chiesti per nome, sottomoduli, conflitti, `intent-to-add`, branch senza
-    /// commit, niente da scartare); i non tracciati dentro una cartella non si toccano. Prima di
-    /// scrivere il worktree si salva con `git stash create` in un ref nuovo
-    /// `refs/project/backup/discard-...` (nel risultato, con il commit e i file); se il backup
-    /// non riesce, o non contiene il contenuto attuale di tutti i file, niente si scarta.
-    /// `paths` vuoto non fa niente (errore: niente da scartare).
+    /// The files are those of [`discard_plan`] on the state read now (see there for the refusals: untracked
+    /// files requested by name, submodules, conflicts, `intent-to-add`, branch without
+    /// commits, nothing to discard); untracked files inside a folder are not touched. Before
+    /// writing, the worktree is saved with `git stash create` in a new ref
+    /// `refs/project/backup/discard-...` (in the result, with the commit and the files); if the backup
+    /// fails, or does not contain the current content of all files, nothing is discarded.
+    /// Empty `paths` does nothing (error: nothing to discard).
     ///
-    /// `expected` è il piano mostrato a chi ha confermato ([`discard_plan`] su uno stato letto
-    /// prima): se il piano calcolato ora è diverso (un file in più o in meno, un'altra
-    /// modifica, un'altra versione in stage), [`EngineError::NotAllowed`] e niente cambia.
+    /// `expected` is the plan shown to whoever confirmed ([`discard_plan`] on a state read
+    /// earlier): if the plan computed now is different (one file more or less, another
+    /// change, another staged version), [`EngineError::NotAllowed`] and nothing changes.
     fn discard(
         &mut self,
         paths: &[RepoPath],
         expected: &[DiscardedFile],
     ) -> Result<DiscardOutcome, EngineError>;
 
-    /// Annulla (`request.redo == false`) o rifà uno scarto (`edit.undo`/`edit.redo` di una voce
-    /// di `worktree.discard`). L'indice non si tocca.
+    /// Undoes (`request.redo == false`) or redoes a discard (`edit.undo`/`edit.redo` of an entry
+    /// of `worktree.discard`). The index is not touched.
     ///
-    /// Undo: ogni file deve avere ancora nell'indice la voce registrata
-    /// ([`WorktreeRestore::index_conflicts`]) e il worktree uguale all'indice (come l'ha lasciato
-    /// lo scarto); poi torna com'era nel commit `request.stash` (un file che lì non c'è, perché
-    /// era eliminato, si cancella). Redo: stessa voce dell'indice e worktree uguale a
-    /// `request.stash` (come l'ha lasciato l'undo); poi torna alla versione in stage. Se un file
-    /// è cambiato, [`EngineError::UndoConflict`] e niente cambia.
+    /// Undo: every file must still have the recorded entry in the index
+    /// ([`WorktreeRestore::index_conflicts`]) and the worktree equal to the index (as the discard
+    /// left it); then it goes back as it was in commit `request.stash` (a file that is not there, because
+    /// it was deleted, is removed). Redo: same index entry and worktree equal to
+    /// `request.stash` (as the undo left it); then it goes back to the staged version. If a file
+    /// changed, [`EngineError::UndoConflict`] and nothing changes.
     fn restore_worktree(
         &mut self,
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
 
-    // --- Branch (S24). I nomi sono brevi (`feature/x`), già controllati dal comando con
-    // [`check_branch_name`] / [`check_new_branch_name`]; ai backend arrivano solo come
-    // `refs/heads/<nome>` o dopo `--end-of-options`, così un nome che inizia con `-` non
-    // diventa un'opzione.
+    // --- Branches (S24). Names are short (`feature/x`), already checked by the command with
+    // [`check_branch_name`] / [`check_new_branch_name`]; backends receive them only as
+    // `refs/heads/<name>` or after `--end-of-options`, so a name starting with `-` does not
+    // become an option.
 
-    /// Quanti commit raggiungibili da `tip` non lo sono da nessuno di `into` (`git rev-list
-    /// --count <tip> ^<into>...`): 0 vuol dire che `tip` è unito. Lettura, per la conferma di
+    /// How many commits reachable from `tip` are reachable from none of `into` (`git rev-list
+    /// --count <tip> ^<into>...`): 0 means `tip` is merged. A read, for the confirmation of
     /// `branch.delete`.
     fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError>;
 
-    /// Crea il branch locale `name` sul commit `target` (`branch.create`), **solo se non
-    /// esiste** (`update-ref refs/heads/<nome> <id> ""`: un ref esistente non si sovrascrive
-    /// mai, nemmeno se creato da un altro processo nell'istante prima). HEAD, indice e
-    /// worktree non si toccano; nessun upstream. Un nome già preso (anche da un ref che lo
-    /// contiene, come `a` per `a/b`) dà [`EngineError::NotAllowed`]; un nome che git rifiuta
+    /// Creates the local branch `name` on commit `target` (`branch.create`), **only if it does not
+    /// exist** (`update-ref refs/heads/<name> <id> ""`: an existing ref is never
+    /// overwritten, not even if created by another process the instant before). HEAD, index and
+    /// worktree are not touched; no upstream. A name already taken (also by a ref that
+    /// contains it, like `a` for `a/b`) gives [`EngineError::NotAllowed`]; a name git rejects gives
     /// [`EngineError::InvalidParams`].
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError>;
 
-    /// Porta HEAD su `target` aggiornando indice e worktree (`git switch`): il branch locale
-    /// (nome completo, deve esistere) o un commit con HEAD staccata (per l'undo di un checkout
-    /// fatto da HEAD staccata). `branch.checkout` e il suo undo/redo.
+    /// Moves HEAD to `target` updating index and worktree (`git switch`): the local branch
+    /// (full name, must exist) or a commit with detached HEAD (for the undo of a checkout
+    /// made from detached HEAD). `branch.checkout` and its undo/redo.
     ///
-    /// **Non perde mai modifiche locali**: mai `--force`, `--discard-changes` né `--merge`.
-    /// Le modifiche che non toccano i file diversi fra HEAD e `target` restano (come in git);
-    /// se un file modificato (in stage o no), non tracciato o ignorato verrebbe sovrascritto,
-    /// [`EngineError::CheckoutConflict`] con i file e niente cambia. Rifiutati prima di
-    /// toccare qualcosa ([`EngineError::NotAllowed`]): operazioni in corso, file in conflitto,
-    /// `target` che non esiste. Restituisce gli avvisi scoperti dopo un checkout riuscito
-    /// (es. HEAD diversa da `target` per un hook `post-checkout`).
+    /// **Never loses local changes**: never `--force`, `--discard-changes` or `--merge`.
+    /// Changes that do not touch the files that differ between HEAD and `target` stay (as in git);
+    /// if a modified (staged or not), untracked or ignored file would be overwritten,
+    /// [`EngineError::CheckoutConflict`] with the files and nothing changes. Rejected before
+    /// touching anything ([`EngineError::NotAllowed`]): operations in progress, conflicted files,
+    /// a `target` that does not exist. Returns the warnings found after a successful checkout
+    /// (e.g. HEAD different from `target` because of a `post-checkout` hook).
     fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError>;
 
-    /// Elimina il branch locale `name`, solo se vale ancora `expected` (`branch.delete`).
-    /// Prima salva il commit in un ref di backup nuovo `refs/project/backup/delete-...` (nel
-    /// risultato); se il backup non riesce non si elimina niente. Toglie poi la configurazione
-    /// `branch.<nome>.*` (upstream, ...), come `git branch -d`. Rifiutato
-    /// ([`EngineError::NotAllowed`], niente cambia) se è il branch di HEAD o se è aperto in un
-    /// altro worktree, o se non vale più `expected`. Il controllo "unito o no" lo fa il comando
+    /// Deletes the local branch `name`, only if `expected` still holds (`branch.delete`).
+    /// First it saves the commit in a new backup ref `refs/project/backup/delete-...` (in the
+    /// result); if the backup fails nothing is deleted. Then it removes the `branch.<name>.*`
+    /// configuration (upstream, ...), like `git branch -d`. Rejected
+    /// ([`EngineError::NotAllowed`], nothing changes) if it is the branch of HEAD or if it is open in
+    /// another worktree, or if `expected` no longer holds. The "merged or not" check is done by the command
     /// ([`GitBackend::unmerged_count`]).
     fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError>;
 
-    /// Rinomina il branch locale `from` in `to` (`branch.rename` e il suo undo/redo), solo se
-    /// `from` vale ancora `expected` e `to` non esiste (mai sovrascritto). Come `git branch
-    /// -m`: reflog e configurazione `branch.<nome>.*` seguono il branch, e HEAD (anche di altri
-    /// worktree) che puntava a `from` punta a `to`. Indice e worktree non si toccano.
-    /// Restituisce gli avvisi scoperti dopo la rinomina riuscita. Rifiuti
-    /// ([`EngineError::NotAllowed`], niente cambia): `from` assente o cambiato, `to` già
-    /// presente; un nome `to` che git rifiuta: [`EngineError::InvalidParams`].
+    /// Renames the local branch `from` to `to` (`branch.rename` and its undo/redo), only if
+    /// `from` still equals `expected` and `to` does not exist (never overwritten). Like `git branch
+    /// -m`: reflog and `branch.<name>.*` configuration follow the branch, and HEAD (also of other
+    /// worktrees) that pointed to `from` points to `to`. Index and worktree are not touched.
+    /// Returns the warnings found after the successful rename. Refusals
+    /// ([`EngineError::NotAllowed`], nothing changes): `from` missing or changed, `to` already
+    /// present; a `to` name that git rejects: [`EngineError::InvalidParams`].
     fn rename_branch(
         &mut self,
         from: &str,
         to: &str,
         expected: &Oid,
     ) -> Result<RestoreOutcome, EngineError>;
-    /// La configurazione `branch.<name>.*` del repo per undo e redo di `branch.delete`, dopo
-    /// che il ref è stato ricreato o eliminato. `remove == false` (undo): riscrive `entries`,
-    /// solo se il repo non ha già voci `branch.<name>.*` (altrimenti non scrive niente e lo dice
-    /// in un avviso). `remove == true` (redo): toglie la sezione, solo se contiene esattamente
-    /// `entries` (quello che l'undo ha rimesso); una configurazione diversa resta, con un
-    /// avviso. Restituisce gli avvisi: il ref è già spostato, quindi un problema qui non è un
-    /// errore dell'operazione.
+    /// The repo's `branch.<name>.*` configuration for undo and redo of `branch.delete`, after
+    /// the ref was recreated or deleted. `remove == false` (undo): writes `entries` back,
+    /// only if the repo has no `branch.<name>.*` entries yet (otherwise it writes nothing and says so
+    /// in a warning). `remove == true` (redo): removes the section, only if it contains exactly
+    /// `entries` (what the undo put back); a different configuration stays, with a
+    /// warning. Returns the warnings: the ref has already been moved, so a problem here is not an
+    /// error of the operation.
     fn restore_branch_config(
         &mut self,
         name: &str,
         entries: &[ConfigEntry],
         remove: bool,
-    ) -> Vec<String>;
+    ) -> Vec<Message>;
 
-    /// I nomi dei remoti configurati (`git remote`), in ordine di nome. Lettura.
+    /// The names of the configured remotes (`git remote`), in name order. A read.
     fn remotes(&self) -> Result<Vec<String>, EngineError>;
 
-    /// Scarica dal remoto `request.remote` (`git fetch --progress`, §6): oggetti nuovi e branch
-    /// remoti (`refs/remotes/<remote>/...`) e tag come dice la configurazione del remoto, più
-    /// `FETCH_HEAD`. Mai i branch locali, l'indice o il worktree (salvo un refspec configurato
-    /// apposta verso `refs/heads/`, che il comando segnala). Con `request.branch` solo quel
-    /// branch del remoto (`refs/heads/<branch>`), che aggiorna il suo branch remoto come dice il
-    /// refspec configurato. Comando lento: l'avanzamento va a `job` ([`JobContext::report`]);
-    /// se `job` è annullato il processo si ferma e il risultato è
-    /// [`EngineError::Cancelled`]. Errori: credenziali → [`EngineError::Auth`], remoto non
-    /// raggiungibile → [`EngineError::RemoteUnreachable`], branch che il remoto non ha →
-    /// [`EngineError::NotAllowed`], altro → [`EngineError::Git`]. Il remoto è già controllato
-    /// dal comando (configurato, nome valido).
+    /// Downloads from the remote `request.remote` (`git fetch --progress`, §6): new objects and remote
+    /// branches (`refs/remotes/<remote>/...`) and tags as the remote's configuration says, plus
+    /// `FETCH_HEAD`. Never the local branches, the index or the worktree (except a refspec configured
+    /// on purpose towards `refs/heads/`, which the command reports). With `request.branch` only that
+    /// branch of the remote (`refs/heads/<branch>`), which updates its remote branch as the configured
+    /// refspec says. Slow command: progress goes to `job` ([`JobContext::report`]);
+    /// if `job` is cancelled the process stops and the result is
+    /// [`EngineError::Cancelled`]. Errors: credentials → [`EngineError::Auth`], remote not
+    /// reachable → [`EngineError::RemoteUnreachable`], branch the remote does not have →
+    /// [`EngineError::NotAllowed`], other → [`EngineError::Git`]. The remote is already checked
+    /// by the command (configured, valid name).
     fn fetch(
         &mut self,
         request: &FetchRequest,
         job: &JobContext,
     ) -> Result<FetchOutcome, EngineError>;
 
-    // --- Pull e push (S26). I nomi arrivano già controllati dal comando.
+    // --- Pull and push (S26). Names arrive already checked by the command.
 
-    /// L'upstream configurato del branch locale `branch` (nome breve): `branch.<nome>.remote`,
-    /// `branch.<nome>.merge` e il branch remoto locale che lo rispecchia. `None` se il branch
-    /// non ha un upstream. Lettura.
+    /// The configured upstream of the local branch `branch` (short name): `branch.<name>.remote`,
+    /// `branch.<name>.merge` and the local remote branch that mirrors it. `None` if the branch
+    /// has no upstream. A read.
     fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError>;
 
-    /// La configurazione della strategia di pull per il branch `branch` (`branch.<nome>.rebase`
-    /// o `pull.rebase`, `pull.ff`), con i valori com'erano scritti. Lettura.
+    /// The pull strategy configuration for the branch `branch` (`branch.<name>.rebase`
+    /// or `pull.rebase`, `pull.ff`), with the values as written. A read.
     fn pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError>;
 
-    /// Tutti i valori della chiave `key` della configurazione (tutte le fonti, come la legge
-    /// git: `git config --get-all`), nell'ordine; vuoto se non c'è. Lettura. Le chiavi le
-    /// costruisce il motore da nomi già controllati (es. `branch.<nome>.pushRemote`,
-    /// `remote.<nome>.fetch`).
+    /// All the values of the configuration key `key` (all sources, as git reads it:
+    /// `git config --get-all`), in order; empty if none. A read. The keys are
+    /// built by the engine from already checked names (e.g. `branch.<name>.pushRemote`,
+    /// `remote.<name>.fetch`).
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError>;
 
-    /// Al più `limit` commit raggiungibili da `tip` ma da nessuno di `exclude`, dal più recente
-    /// (`git log <tip> --not <exclude>...`). Lettura: per la conferma di un force push (i
-    /// commit che il remoto perderebbe).
+    /// At most `limit` commits reachable from `tip` but from none of `exclude`, most recent first
+    /// (`git log <tip> --not <exclude>...`). A read: for the confirmation of a force push (the
+    /// commits the remote would lose).
     fn missing_commits(
         &self,
         tip: &Oid,
@@ -368,194 +368,194 @@ pub trait GitBackend: Send {
         limit: usize,
     ) -> Result<Vec<Commit>, EngineError>;
 
-    /// Integra l'upstream nel branch dopo il fetch (`remote.pull`): fast-forward, merge o
-    /// rebase secondo `request.mode`. Prima di scrivere: [`check_pull_state`] sullo stato letto
-    /// ora, il branch deve valere `request.expected` (e, con `request.current`, essere il branch
-    /// di HEAD; altrimenti non deve essere aperto in un altro worktree) e un ref di backup
-    /// `refs/project/backup/pull-...` sul valore di prima (nel risultato). Fast-forward del
-    /// branch attivo: `git merge --ff-only`, che non sovrascrive modifiche locali
-    /// ([`EngineError::NotAllowed`] con i file, niente cambia); di un altro branch:
-    /// `update-ref` con il valore vecchio. Merge e rebase: mai `--autostash`. Un **merge**
-    /// fermo (conflitti, hook, firma) **resta in corso** come con [`GitBackend::merge`]:
-    /// [`PullOutcome::in_progress`] con i file in conflitto, il branch com'era e il backup
-    /// tenuto. Un **rebase** fermo si annulla (`--abort`) e il risultato è
-    /// [`EngineError::PullConflict`] con i file (niente cambia, il backup si toglie). Non si
-    /// annulla a metà: il fetch, che si può annullare, è già fatto.
+    /// Integrates the upstream into the branch after the fetch (`remote.pull`): fast-forward, merge or
+    /// rebase according to `request.mode`. Before writing: [`check_pull_state`] on the state read
+    /// now, the branch must equal `request.expected` (and, with `request.current`, be the branch
+    /// of HEAD; otherwise it must not be open in another worktree) and a backup ref
+    /// `refs/project/backup/pull-...` on the previous value (in the result). Fast-forward of the
+    /// active branch: `git merge --ff-only`, which does not overwrite local changes
+    /// ([`EngineError::NotAllowed`] with the files, nothing changes); of another branch:
+    /// `update-ref` with the old value. Merge and rebase: never `--autostash`. A **merge**
+    /// that stops (conflicts, hooks, signing) **stays in progress** as with [`GitBackend::merge`]:
+    /// [`PullOutcome::in_progress`] with the conflicted files, the branch as it was and the backup
+    /// kept. A **rebase** that stops is aborted (`--abort`) and the result is
+    /// [`EngineError::PullConflict`] with the files (nothing changes, the backup is removed). It is not
+    /// cancelled midway: the fetch, which can be cancelled, is already done.
     fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError>;
 
-    /// Undo e redo di un pull sul branch attivo: come [`GitBackend::restore_refs`] (un solo ref,
-    /// il branch di HEAD, da `expected` a `target`, con gli stessi controlli e i backup dei
-    /// commit abbandonati), ma aggiorna anche indice e worktree come `git reset --keep`: i
-    /// file diversi fra i due commit tornano come in `target`, solo se non hanno modifiche
-    /// locali (altrimenti [`EngineError::NotAllowed`] e niente cambia); le altre modifiche
-    /// restano. Non sovrascrive mai un file non tracciato o ignorato.
+    /// Undo and redo of a pull on the active branch: like [`GitBackend::restore_refs`] (a single ref,
+    /// the branch of HEAD, from `expected` to `target`, with the same checks and the backups of
+    /// abandoned commits), but it also updates index and worktree like `git reset --keep`: the
+    /// files that differ between the two commits go back as in `target`, only if they have no local
+    /// changes (otherwise [`EngineError::NotAllowed`] and nothing changes); the other changes
+    /// stay. It never overwrites an untracked or ignored file.
     fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
 
-    /// Pubblica il branch sul remoto (`remote.push`, lento come il fetch: avanzamento e
-    /// annullamento da `job`): solo `refs/heads/<branch>:refs/heads/<remote_branch>`, mai tag
-    /// o altri ref, con `--set-upstream` se chiesto e `--force-with-lease` con l'oid atteso se
-    /// `request.lease` (mai `--force`). Prima di un force, il backup di `request.backup`.
-    /// Errori: rifiutato (non fast-forward, lease, hook `pre-push`, remoto) →
-    /// [`EngineError::PushRejected`] e niente cambia; credenziali → [`EngineError::Auth`];
-    /// remoto non raggiungibile → [`EngineError::RemoteUnreachable`]; annullato →
+    /// Publishes the branch to the remote (`remote.push`, slow like the fetch: progress and
+    /// cancellation from `job`): only `refs/heads/<branch>:refs/heads/<remote_branch>`, never tags
+    /// or other refs, with `--set-upstream` if requested and `--force-with-lease` with the expected oid if
+    /// `request.lease` (never `--force`). Before a force, the backup of `request.backup`.
+    /// Errors: rejected (not fast-forward, lease, `pre-push` hook, remote) →
+    /// [`EngineError::PushRejected`] and nothing changes; credentials → [`EngineError::Auth`];
+    /// remote not reachable → [`EngineError::RemoteUnreachable`]; cancelled →
     /// [`EngineError::Cancelled`].
     fn push(&mut self, request: &PushRequest, job: &JobContext)
     -> Result<PushOutcome, EngineError>;
 
-    // --- Gestione dei remoti (S27). Il nome arriva già controllato dal comando; le scritture
-    // della configurazione toccano solo il file del repo (`git config --local`).
+    // --- Remote management (S27). The name arrives already checked by the command; configuration
+    // writes touch only the repo file (`git config --local`).
 
-    /// Quello che c'è del remoto `name` ([`RemoteSnapshot`]): `remote.<name>.*` del file del
-    /// repo, i branch remoti `refs/remotes/<name>/...` (non simbolici, esclusi quelli di un
-    /// remoto `<name>/...`; [`owned_by`]), dove punta `refs/remotes/<name>/HEAD` e i dipendenti
-    /// ([`remote_dependents`], `remote.pushDefault`). Tutto vuoto se il remoto non c'è.
-    /// Lettura. Un valore non UTF-8 (non si potrebbe rimettere) dà [`EngineError::NotAllowed`].
+    /// What exists of the remote `name` ([`RemoteSnapshot`]): `remote.<name>.*` of the repo
+    /// file, the remote branches `refs/remotes/<name>/...` (not symbolic, excluding those of a
+    /// remote `<name>/...`; [`owned_by`]), where `refs/remotes/<name>/HEAD` points and the dependents
+    /// ([`remote_dependents`], `remote.pushDefault`). All empty if the remote does not exist.
+    /// A read. A non-UTF-8 value (it could not be put back) gives [`EngineError::NotAllowed`].
     fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError>;
 
-    /// Aggiunge il remoto `name` con `url` (`git remote add --end-of-options <name> <url>`: URL
-    /// e refspec di default `+refs/heads/*:refs/remotes/<name>/*`), senza fetch. Nome e URL già
-    /// controllati ([`check_new_remote_name`], [`check_remote_url`]); un remoto con quel nome
-    /// che esiste già dà [`EngineError::NotAllowed`], un nome o un URL che git rifiuta
+    /// Adds the remote `name` with `url` (`git remote add --end-of-options <name> <url>`: URL
+    /// and default refspec `+refs/heads/*:refs/remotes/<name>/*`), without fetch. Name and URL already
+    /// checked ([`check_new_remote_name`], [`check_remote_url`]); a remote with that name
+    /// that already exists gives [`EngineError::NotAllowed`], a name or URL that git rejects gives
     /// [`EngineError::InvalidParams`].
     fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError>;
 
-    /// Toglie la configurazione del remoto di `snapshot` (dopo che [`remove_remote`] ha tolto i
-    /// branch remoti): la sezione `remote.<nome>`, il ref simbolico `refs/remotes/<nome>/HEAD`
-    /// se `snapshot.head`, e le voci di `snapshot.upstreams` e `remote.pushDefault` se
-    /// `snapshot.push_default` (solo con quei valori). Restituisce gli avvisi: i ref sono già
-    /// tolti, quindi un problema qui non è un errore dell'operazione.
-    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
+    /// Removes the configuration of the remote of `snapshot` (after [`remove_remote`] removed the
+    /// remote branches): the section `remote.<name>`, the symbolic ref `refs/remotes/<name>/HEAD`
+    /// if `snapshot.head`, and the entries of `snapshot.upstreams` and `remote.pushDefault` if
+    /// `snapshot.push_default` (only with those values). Returns the warnings: the refs have already been
+    /// removed, so a problem here is not an error of the operation.
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message>;
 
-    /// Il contrario di [`GitBackend::remove_remote_config`] (dopo che [`restore_remote`] ha
-    /// rimesso i branch remoti): riscrive `snapshot.config`, il ref simbolico, le voci di
-    /// `snapshot.upstreams` e `remote.pushDefault` se `snapshot.push_default`. Restituisce gli
-    /// avvisi.
-    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String>;
+    /// The opposite of [`GitBackend::remove_remote_config`] (after [`restore_remote`] put the
+    /// remote branches back): writes back `snapshot.config`, the symbolic ref, the entries of
+    /// `snapshot.upstreams` and `remote.pushDefault` if `snapshot.push_default`. Returns the
+    /// warnings.
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message>;
 
-    /// Le voci `remote.<name>.*` che git legge **fuori** dal file del repo (configurazione
-    /// globale o di sistema, `include`, `config.worktree`), una per riga con chiave e
-    /// provenienza: `remote.remove` le rifiuta, perché toglierebbe solo una parte del remoto.
-    /// Lettura.
+    /// The `remote.<name>.*` entries that git reads **outside** the repo file (global or
+    /// system configuration, `include`, `config.worktree`), one per line with key and
+    /// origin: `remote.remove` rejects them, because it would remove only part of the remote.
+    /// A read.
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError>;
 
-    // --- Stash (S28). Uno stash arriva sempre come id: la posizione `stash@{n}` cambia a ogni
-    // push e drop, e il backend la ricalcola subito prima di scrivere.
+    // --- Stash (S28). A stash always arrives as an id: the position `stash@{n}` changes on every
+    // push and drop, and the backend recomputes it right before writing.
 
-    /// L'elenco degli stash, dal più recente (`stash@{0}`), dal reflog di `refs/stash`. Vuoto
-    /// se non ce ne sono. Lettura.
+    /// The list of stashes, most recent first (`stash@{0}`), from the reflog of `refs/stash`. Empty
+    /// if there are none. A read.
     fn stashes(&self) -> Result<Vec<StashEntry>, EngineError>;
 
-    /// Mette da parte le modifiche (`git stash push`): le salva in un nuovo stash in cima
-    /// all'elenco e riporta indice e worktree come HEAD (con `keep_index` l'indice resta, e il
-    /// worktree come l'indice), per i file scelti. Prima: [`check_stash_push`]. Niente da
-    /// mettere da parte (git non crea lo stash) → [`EngineError::NotAllowed`]. Restituisce il
-    /// nuovo stash.
+    /// Sets changes aside (`git stash push`): saves them in a new stash at the top
+    /// of the list and brings index and worktree back to HEAD (with `keep_index` the index stays, and the
+    /// worktree as the index), for the chosen files. First: [`check_stash_push`]. Nothing to
+    /// set aside (git does not create the stash) → [`EngineError::NotAllowed`]. Returns the
+    /// new stash.
     fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError>;
 
-    /// Applica lo stash `request.id` a indice e worktree (`git stash apply`), senza toglierlo
-    /// dall'elenco. Prima: [`check_stash_apply`] e i file che lo stash cambia o rimette non
-    /// devono avere modifiche locali né essere occupati ([`stash_local_changes`], più i file
-    /// del worktree che lo stato non mostra): altrimenti [`EngineError::NotAllowed`] e niente
-    /// cambia. Uno stash che non è più nell'elenco → [`EngineError::NotAllowed`]. Un merge che
-    /// si ferma in conflitto non è un errore: i file in conflitto restano (come li lascia git)
-    /// e sono in [`StashApplied::conflicts`].
+    /// Applies the stash `request.id` to index and worktree (`git stash apply`), without removing it
+    /// from the list. First: [`check_stash_apply`] and the files the stash changes or restores must
+    /// have no local changes nor be occupied ([`stash_local_changes`], plus the worktree
+    /// files the status does not show): otherwise [`EngineError::NotAllowed`] and nothing
+    /// changes. A stash that is no longer in the list → [`EngineError::NotAllowed`]. A merge that
+    /// stops on conflict is not an error: the conflicted files stay (as git leaves them)
+    /// and are in [`StashApplied::conflicts`].
     fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError>;
 
-    /// Elimina lo stash `request.id` dall'elenco (`git stash drop stash@{n}`, con `n` letto
-    /// subito prima), dopo averne salvato il commit in un ref di backup nuovo se
-    /// `request.backup` (se il backup non riesce non si elimina niente). Uno stash che non è
-    /// più nell'elenco → [`EngineError::NotAllowed`]. Indice e worktree non si toccano.
+    /// Removes the stash `request.id` from the list (`git stash drop stash@{n}`, with `n` read
+    /// right before), after saving its commit in a new backup ref if
+    /// `request.backup` (if the backup fails nothing is removed). A stash that is no
+    /// longer in the list → [`EngineError::NotAllowed`]. Index and worktree are not touched.
     fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError>;
 
-    /// Rimette il commit `id` in cima all'elenco degli stash con il messaggio `message`
-    /// (`git stash store`): l'undo di `stash.drop`. Indice e worktree non si toccano.
+    /// Puts commit `id` back at the top of the stash list with the message `message`
+    /// (`git stash store`): the undo of `stash.drop`. Index and worktree are not touched.
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError>;
 
-    // --- Merge (S29). Il comando risolve la rev, sceglie il modo e controlla lo stato
-    // ([`check_merge_state`]); il backend ricontrolla prima di scrivere.
+    // --- Merge (S29). The command resolves the rev, picks the mode and checks the state
+    // ([`check_merge_state`]); the backend rechecks before writing.
 
-    /// Unisce `request.target` nel branch di HEAD (`merge.start`): fast-forward (`git merge
-    /// --ff-only`) o commit di merge con `request.message`. Prima di scrivere:
-    /// [`check_merge_state`] sullo stato letto ora, HEAD sul branch `request.branch` con valore
-    /// `request.expected`, nessun file che il merge porta al posto di un non tracciato o
-    /// ignorato, e un ref di backup `refs/project/backup/merge-...` sul valore di prima (nel
-    /// risultato; tolto se niente cambia). Mai `--autostash`. Se git rifiuta perché
-    /// sovrascriverebbe modifiche o non tracciati → [`EngineError::NotAllowed`] con i file, niente
-    /// cambia. **Un merge che si ferma (conflitti, hook `pre-merge-commit`) resta in corso**:
-    /// non è un errore, [`MergeOutcome::in_progress`] e i file in [`MergeOutcome::conflicts`].
+    /// Merges `request.target` into the branch of HEAD (`merge.start`): fast-forward (`git merge
+    /// --ff-only`) or merge commit with `request.message`. Before writing:
+    /// [`check_merge_state`] on the state read now, HEAD on branch `request.branch` with value
+    /// `request.expected`, no file the merge brings in place of an untracked or
+    /// ignored one, and a backup ref `refs/project/backup/merge-...` on the previous value (in the
+    /// result; removed if nothing changes). Never `--autostash`. If git refuses because it
+    /// would overwrite changes or untracked files → [`EngineError::NotAllowed`] with the files, nothing
+    /// changes. **A merge that stops (conflicts, `pre-merge-commit` hook) stays in progress**:
+    /// it is not an error, [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`].
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
 
-    /// Annulla il merge in corso (`merge.abort`, `git merge --abort`): indice e worktree tornano
-    /// come HEAD per i file del merge. Prima salva indice e worktree (conflitti e risoluzioni
-    /// comprese) in un ref nuovo `refs/project/backup/merge-abort-...` ([`MergeAborted`]); se il
-    /// backup non riesce non si annulla niente. Senza un merge in corso
-    /// ([`check_merging`]) → [`EngineError::NotAllowed`]. La conferma la chiede il comando.
+    /// Aborts the merge in progress (`merge.abort`, `git merge --abort`): index and worktree go back
+    /// as HEAD for the files of the merge. First it saves index and worktree (conflicts and
+    /// resolutions included) in a new ref `refs/project/backup/merge-abort-...` ([`MergeAborted`]); if the
+    /// backup fails nothing is aborted. Without a merge in progress
+    /// ([`check_merging`]) → [`EngineError::NotAllowed`]. The command asks for confirmation.
     fn merge_abort(&mut self) -> Result<MergeAborted, EngineError>;
 
-    /// L'operazione in corso con i suoi dati (commit in ingresso, `MERGE_MSG`, base del
-    /// rebase), per `repo.operation`. Lettura.
+    /// The operation in progress with its data (incoming commit, `MERGE_MSG`, rebase
+    /// base), for `repo.operation`. A read.
     fn operation_state(&self) -> Result<OperationState, EngineError>;
 
-    // --- Cherry-pick e revert (S31, `impl-docs/git/cherry-pick.md`). Il comando risolve la
-    // rev e il genitore e controlla lo stato ([`check_pick_state`]); il backend ricontrolla.
+    // --- Cherry-pick and revert (S31, `impl-docs/git/cherry-pick.md`). The command resolves the
+    // rev and the parent and checks the state ([`check_pick_state`]); the backend rechecks.
 
-    /// Applica (cherry-pick) o annulla (revert) il commit `request.commit` sul branch di HEAD
-    /// con un commit nuovo. Prima di scrivere: [`check_pick_state`] sullo stato letto ora, HEAD
-    /// sul branch `request.branch` con valore `request.expected`, nessun file che l'operazione
-    /// porta al posto di un non tracciato o ignorato, nessun file `--assume-unchanged` che
-    /// cambia, e un ref di backup `refs/project/backup/<cherry-pick|revert>-...` sul valore di
-    /// prima (nel risultato; tolto se niente cambia). Risultato vuoto (commit già applicato) →
-    /// [`EngineError::NotAllowed`], niente in corso e il backup tolto. **Un conflitto (o un hook
-    /// che rifiuta il commit) lascia l'operazione in corso**: non è un errore,
-    /// [`MergeOutcome::in_progress`] e i file in [`MergeOutcome::conflicts`].
+    /// Applies (cherry-pick) or reverts (revert) the commit `request.commit` on the branch of HEAD
+    /// with a new commit. Before writing: [`check_pick_state`] on the state read now, HEAD
+    /// on branch `request.branch` with value `request.expected`, no file the operation
+    /// brings in place of an untracked or ignored one, no `--assume-unchanged` file that
+    /// changes, and a backup ref `refs/project/backup/<cherry-pick|revert>-...` on the previous
+    /// value (in the result; removed if nothing changes). Empty result (commit already applied) →
+    /// [`EngineError::NotAllowed`], nothing in progress and the backup removed. **A conflict (or a hook
+    /// that rejects the commit) leaves the operation in progress**: it is not an error,
+    /// [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`].
     fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError>;
 
-    /// Annulla il cherry-pick o il revert in corso (`git cherry-pick --abort`, `git revert
-    /// --abort`) come [`GitBackend::merge_abort`]: prima salva indice e worktree in un ref
-    /// nuovo `refs/project/backup/<cherry-pick|revert>-abort-...`; se il backup non riesce non
-    /// si annulla niente. Rifiuta ([`check_picking`]) un'altra operazione o una sequenza di più
-    /// commit avviata da terminale. La conferma la chiede il comando.
+    /// Aborts the cherry-pick or revert in progress (`git cherry-pick --abort`, `git revert
+    /// --abort`) like [`GitBackend::merge_abort`]: first it saves index and worktree in a new
+    /// ref `refs/project/backup/<cherry-pick|revert>-abort-...`; if the backup fails nothing
+    /// is aborted. It rejects ([`check_picking`]) another operation or a sequence of several
+    /// commits started from the terminal. The command asks for confirmation.
     fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError>;
 
-    // --- Editor dei conflitti (S30, `impl-docs/git/conflitti.md`).
+    // --- Conflict editor (S30, `impl-docs/git/conflicts.md`).
 
-    /// Le versioni del file in conflitto `path` per `conflict.show`: stadi 1/2/3 dell'indice
-    /// (byte senza filtri, `None` se lo stadio manca), byte del file del worktree (`None` se
-    /// non c'è) e `conflict-marker-size`. Lettura. `path` non in conflitto, sottomodulo, link o
-    /// cartella nel worktree → [`EngineError::NotAllowed`] ([`check_conflict`]).
+    /// The versions of the conflicted file `path` for `conflict.show`: stages 1/2/3 of the index
+    /// (unfiltered bytes, `None` if the stage is missing), bytes of the worktree file (`None` if
+    /// absent) and `conflict-marker-size`. A read. `path` not conflicted, submodule, link or
+    /// folder in the worktree → [`EngineError::NotAllowed`] ([`check_conflict`]).
     fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError>;
 
-    /// Risolve il conflitto di `request.path` (`conflict.resolve`): scrive `request.content`
-    /// nel worktree (o cancella il file se `None`) e lo mette in stage come
-    /// [`GitBackend::stage`] di quel solo percorso. Prima di scrivere, senza cambiare niente:
-    /// [`check_conflict`], [`check_digest`] sui byte del worktree letti ora
-    /// ([`EngineError::StaleDiff`]), indice bloccato ([`EngineError::IndexLocked`]); poi il
-    /// backup dei byte del worktree (se c'è il file) in `refs/project/backup/conflict-...`: se
-    /// non riesce non si scrive. Un errore dopo il backup lo nomina.
+    /// Resolves the conflict of `request.path` (`conflict.resolve`): writes `request.content`
+    /// to the worktree (or deletes the file if `None`) and stages it like
+    /// [`GitBackend::stage`] of that single path. Before writing, without changing anything:
+    /// [`check_conflict`], [`check_digest`] on the worktree bytes read now
+    /// ([`EngineError::StaleDiff`]), locked index ([`EngineError::IndexLocked`]); then the
+    /// backup of the worktree bytes (if the file exists) in `refs/project/backup/conflict-...`: if it
+    /// fails nothing is written. An error after the backup names it.
     fn resolve_conflict(
         &mut self,
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError>;
 }
 
-/// Cosa confrontare in [`GitBackend::diff`]: parametri di `diff.worktree`, `diff.index` e
-/// `diff.commit` (§4). `path`, se c'è, limita il diff a quel file.
+/// What to compare in [`GitBackend::diff`]: parameters of `diff.worktree`, `diff.index` and
+/// `diff.commit` (§4). `path`, if present, limits the diff to that file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffSpec {
-    /// Worktree rispetto all'indice: le modifiche non in stage (`git diff`). I file non
-    /// tracciati non compaiono.
+    /// Worktree relative to the index: the unstaged changes (`git diff`). Untracked files
+    /// do not appear.
     Worktree { path: Option<RepoPath> },
-    /// Indice rispetto a HEAD: le modifiche in stage (`git diff --cached`). Su un branch senza
-    /// commit il confronto è con l'albero vuoto (ogni file in stage è aggiunto).
+    /// Index relative to HEAD: the staged changes (`git diff --cached`). On a branch without
+    /// commits the comparison is with the empty tree (every staged file is added).
     Index { path: Option<RepoPath> },
-    /// Il commit a cui porta `rev` rispetto al **primo genitore**, anche per i merge; un
-    /// commit radice rispetto all'albero vuoto. Gli stessi file di
+    /// The commit `rev` leads to relative to the **first parent**, also for merges; a
+    /// root commit relative to the empty tree. The same files as
     /// [`GitBackend::show_commit`].
     Commit { rev: String, path: Option<RepoPath> },
 }
 
 impl DiffSpec {
-    /// Il file a cui è limitato il diff, se c'è.
+    /// The file the diff is limited to, if any.
     pub fn path(&self) -> Option<&RepoPath> {
         match self {
             DiffSpec::Worktree { path } | DiffSpec::Index { path } => path.as_ref(),
@@ -564,70 +564,66 @@ impl DiffSpec {
     }
 }
 
-/// Apre un repository dato il percorso. L'app lo inietta nella sessione: desktop e CLI usano
-/// `CliOpener` di `project-git`, la versione web [`MemoryOpener`].
+/// Opens a repository given the path. The app injects it into the session: desktop and CLI use
+/// `CliOpener` of `project-git`, the web version [`MemoryOpener`].
 pub trait RepoOpener: Send + Sync {
-    /// [`EngineError::RepoNotFound`] se al percorso non c'è un repository.
+    /// [`EngineError::RepoNotFound`] if there is no repository at the path.
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;
 }
 
-/// Una pagina del log: parametri di `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,
+/// A page of the log: parameters of `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,
 /// "stashes"?}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogQuery {
-    /// Commit da saltare dall'inizio del log.
+    /// Commits to skip from the start of the log.
     pub skip: usize,
-    /// Numero massimo di commit; `None` = tutti.
+    /// Maximum number of commits; `None` = all.
     pub limit: Option<usize>,
-    /// Da dove partire: nome di un ref (`main`, `origin/main`, `v1.0`, `refs/heads/main`),
-    /// `HEAD` o un id (anche abbreviato, almeno 4 cifre). `None` = HEAD.
+    /// Where to start: name of a ref (`main`, `origin/main`, `v1.0`, `refs/heads/main`),
+    /// `HEAD` or an id (also abbreviated, at least 4 digits). `None` = HEAD.
     pub rev: Option<String>,
-    /// Parte da tutti i branch locali, i branch remoti, i tag e HEAD (anche staccata), come
-    /// `git log --branches --remotes --tags HEAD`. Gli altri ref (`refs/stash`, i backup in
-    /// `refs/project/backup/`, le note) non ci sono. Esclude `rev`.
+    /// Starts from all local branches, remote branches, tags and HEAD (also detached), like
+    /// `git log --branches --remotes --tags HEAD`. The other refs (`refs/stash`, the backups in
+    /// `refs/project/backup/`, notes) are not included. Excludes `rev`.
     pub all: bool,
-    /// Solo con `all`: parte anche dalle basi degli stash ([`StashEntry::base`], il commit su
-    /// cui ognuno è stato creato), così il grafo ha sempre il commit a cui la UI aggancia uno
-    /// stash, anche se nessun branch lo contiene più. I commit degli stash (e quelli dell'indice
-    /// e dei non tracciati che hanno per genitori) restano fuori: l'elenco è `stash.list`.
+    /// Only with `all`: also starts from the stash bases ([`StashEntry::base`], the commit
+    /// each was created on), so the graph always has the commit the UI attaches a
+    /// stash to, even if no branch contains it anymore. The commits of the stashes (and those of the index
+    /// and untracked files that have them as parents) stay out: the list is `stash.list`.
     pub stashes: bool,
 }
 
 impl LogQuery {
-    /// Errore se i parametri si contraddicono: `rev` e `all` insieme, `stashes` senza `all`.
+    /// Error if the parameters contradict each other: `rev` and `all` together, `stashes` without `all`.
     pub fn check(&self) -> Result<(), EngineError> {
         if self.all && self.rev.is_some() {
             return Err(EngineError::InvalidParams {
                 id: "repo.log",
-                reason: "`rev` e `all` sono alternativi: `all` parte già da tutti i branch, i \
-                         tag e HEAD"
-                    .to_owned(),
+                reason: msg!("engine-log-rev-and-all"),
             });
         }
         if self.stashes && !self.all {
             return Err(EngineError::InvalidParams {
                 id: "repo.log",
-                reason: "`stashes` aggiunge le basi degli stash al grafo di tutti i ref: va \
-                         insieme ad `\"all\": true`"
-                    .to_owned(),
+                reason: msg!("engine-log-stashes-without-all"),
             });
         }
         Ok(())
     }
 
-    /// Stessa pagina, a partire da tutti i branch, i tag e HEAD.
+    /// Same page, starting from all branches, tags and HEAD.
     pub fn from_all_refs(mut self) -> Self {
         self.all = true;
         self
     }
 
-    /// Tutto il log da HEAD.
+    /// The whole log from HEAD.
     pub fn all() -> Self {
         Self::default()
     }
 
-    /// `limit` commit dopo i primi `skip`, da HEAD.
+    /// `limit` commits after the first `skip`, from HEAD.
     pub fn page(skip: usize, limit: usize) -> Self {
         Self {
             skip,
@@ -638,13 +634,13 @@ impl LogQuery {
         }
     }
 
-    /// Stessa pagina, con anche le basi degli stash (va con [`LogQuery::from_all_refs`]).
+    /// Same page, with the stash bases too (goes with [`LogQuery::from_all_refs`]).
     pub fn with_stashes(mut self) -> Self {
         self.stashes = true;
         self
     }
 
-    /// Stessa pagina, a partire da `rev`.
+    /// Same page, starting from `rev`.
     pub fn from_rev(mut self, rev: impl Into<String>) -> Self {
         self.rev = Some(rev.into());
         self

@@ -1,8 +1,8 @@
-//! L2 — modello dei dati e logica di dominio.
+//! L2 — data model and domain logic.
 //!
-//! Il modulo [`git`] contiene i tipi del client git e i parser dell'output di git (vedi
-//! `impl-docs/ARCHITETTURA-git.md` §3), esportati anche dalla radice del crate. Nessuna
-//! dipendenza da UI, piattaforma o I/O: i parser lavorano su byte in memoria.
+//! The [`git`] module holds the git client types and the parsers for git's output (see
+//! `impl-docs/ARCHITECTURE-git.md` §3), also exported from the crate root. No
+//! dependency on UI, platform or I/O: the parsers work on in-memory bytes.
 
 pub mod git;
 
@@ -17,36 +17,34 @@ pub use git::{
     parse_status, resolve_all, resolve_block,
 };
 
-/// Errori di dominio.
+/// Domain errors.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DomainError {
-    #[error("identificatore git `{input}` non valido: {reason}")]
+    #[error("invalid git identifier `{input}`: {reason}")]
     InvalidOid { input: String, reason: String },
-    /// L'output di un comando git non ha il formato atteso dal parser.
-    #[error("output di `git {command}` non valido: {reason}")]
+    /// The output of a git command does not have the format the parser expects.
+    #[error("invalid output of `git {command}`: {reason}")]
     InvalidGitOutput {
-        /// Il sottocomando git, es. `log`.
+        /// The git subcommand, e.g. `log`.
         command: &'static str,
         reason: String,
     },
-    /// Il file non si presta a una patch per righe (binario, sottomodulo, in conflitto, ...).
-    #[error(
-        "impossibile mettere in stage o togliere dallo stage singole righe di `{path}`: {reason}"
-    )]
+    /// The file does not lend itself to a per-line patch (binary, submodule, conflicted, ...).
+    #[error("cannot stage or unstage single lines of `{path}`: {reason}")]
     UnsupportedPatch {
-        /// Il percorso, da mostrare.
+        /// The path, for display.
         path: String,
         reason: String,
     },
-    /// Le righe selezionate non corrispondono a righe cambiate del diff.
-    #[error("selezione di righe non valida per `{path}`: {reason}")]
+    /// The selected lines do not match changed lines of the diff.
+    #[error("invalid line selection for `{path}`: {reason}")]
     InvalidLineSelection {
-        /// Il percorso, da mostrare.
+        /// The path, for display.
         path: String,
         reason: String,
     },
-    /// I marcatori di conflitto di un file non formano blocchi validi (blocco non chiuso,
-    /// marcatori fuori ordine), o una risoluzione non si applica al blocco.
-    #[error("conflitto non valido: {reason}")]
+    /// A file's conflict markers do not form valid blocks (unclosed block,
+    /// markers out of order), or a resolution does not apply to the block.
+    #[error("invalid conflict: {reason}")]
     InvalidConflict { reason: String },
 }

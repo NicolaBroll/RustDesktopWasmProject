@@ -1,6 +1,6 @@
 [package]
 name = "project-ui"
-description = "L6: interfaccia egui, indipendente dal target"
+description = "L6: egui interface, target-independent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-project-i18n = { workspace = true, features = ["test-italiano"] }
+project-i18n = { workspace = true }
 
 [lints]
 workspace = true

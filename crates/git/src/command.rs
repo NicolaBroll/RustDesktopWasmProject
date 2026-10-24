@@ -1,5 +1,5 @@
-//! Esecuzione di `git` secondo le regole di §5: mai una shell, argomenti separati, opzioni e
-//! ambiente fissi.
+//! Running `git` per the rules of §5: never a shell, separate arguments, fixed options and
+//! environment.
 
 use project_engine::EngineError;
 use std::ffi::{OsStr, OsString};
@@ -9,8 +9,8 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-/// Variabili che dicono a git quale repo usare: ereditate (es. da un hook git che avvia l'app)
-/// prevarrebbero su `-C` e farebbero leggere un altro repo. Si tolgono sempre.
+/// Variables that tell git which repo to use: inherited (e.g. from a git hook that starts the app)
+/// they would override `-C` and make git read another repo. Always removed.
 const REPO_ENV: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -21,16 +21,16 @@ const REPO_ENV: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
-/// Configurazione passata dall'ambiente (`git -c` di un processo git che avvia l'app, oppure
-/// `GIT_CONFIG_COUNT` con `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`): vale come la riga di
-/// comando, quindi prevale sulla config del repo, e un `core.worktree` iniettato così
-/// sposterebbe le scritture in un'altra cartella. Si tolgono sempre, insieme a ogni
-/// `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*` ereditata ([`inherited_config_vars`]). Le variabili
-/// impostate apposta con [`Git::set_env`] (es. `GIT_CONFIG_GLOBAL` nei test) restano.
+/// Configuration passed through the environment (`git -c` of a git process that starts the app, or
+/// `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`): it counts like the
+/// command line, so it overrides the repo config, and a `core.worktree` injected this way
+/// would move writes to another directory. Always removed, together with every inherited
+/// `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*` ([`inherited_config_vars`]). Variables
+/// set on purpose with [`Git::set_env`] (e.g. `GIT_CONFIG_GLOBAL` in tests) stay.
 const CONFIG_ENV: &[&str] = &["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"];
 
-/// Le variabili `GIT_CONFIG_KEY_*` e `GIT_CONFIG_VALUE_*` fra `vars` (i nomi delle variabili
-/// d'ambiente del processo).
+/// The `GIT_CONFIG_KEY_*` and `GIT_CONFIG_VALUE_*` variables among `vars` (the names of the
+/// process environment variables).
 fn inherited_config_vars(vars: impl Iterator<Item = OsString>) -> Vec<OsString> {
     vars.filter(|key| {
         key.to_str()
@@ -39,15 +39,15 @@ fn inherited_config_vars(vars: impl Iterator<Item = OsString>) -> Vec<OsString> 
     .collect()
 }
 
-/// Date di autore e committer ereditate (es. un'app avviata da un hook git o da uno script che
-/// le imposta): darebbero a ogni commit, e ai commit di backup, la data di allora invece di
-/// quella attuale. Si tolgono sempre. Nome ed email (`GIT_AUTHOR_NAME`, `GIT_COMMITTER_EMAIL`,
-/// ...) invece restano, come per git da terminale: sono l'identità scelta dall'utente.
+/// Inherited author and committer dates (e.g. an app started by a git hook or by a script that
+/// sets them): they would give every commit, and the backup commits, that old date instead of
+/// the current one. Always removed. Name and email (`GIT_AUTHOR_NAME`, `GIT_COMMITTER_EMAIL`,
+/// ...) stay instead, as for git from a terminal: they are the identity chosen by the user.
 const DATE_ENV: &[&str] = &["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"];
 
-/// Variabili che cambiano il significato dei pathspec (glob, maiuscole, letterali): i percorsi
-/// passati a git devono valere per quello che sono. Si tolgono sempre; dove servono percorsi
-/// letterali si passa `--literal-pathspecs`.
+/// Variables that change the meaning of pathspecs (glob, case, literal): the paths
+/// passed to git must mean what they are. Always removed; where literal paths are needed
+/// `--literal-pathspecs` is passed.
 const PATHSPEC_ENV: &[&str] = &[
     "GIT_LITERAL_PATHSPECS",
     "GIT_GLOB_PATHSPECS",
@@ -55,7 +55,7 @@ const PATHSPEC_ENV: &[&str] = &[
     "GIT_ICASE_PATHSPECS",
 ];
 
-/// Come avviare `git`: il programma e le variabili d'ambiente aggiunte da chi lo configura.
+/// How to start `git`: the program and the environment variables added by whoever configures it.
 #[derive(Debug, Clone)]
 pub(crate) struct Git {
     program: OsString,
@@ -74,9 +74,9 @@ impl Git {
         self.env.push((key, value));
     }
 
-    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args> <paths>`, con stdin
-    /// vuoto, `GIT_TERMINAL_PROMPT=0` e `LC_ALL=C`. Il resto dell'ambiente si eredita (SSH
-    /// agent, credential helper). `paths` vanno dopo un `--` che chi chiama mette in fondo ad
+    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args> <paths>`, with empty
+    /// stdin, `GIT_TERMINAL_PROMPT=0` and `LC_ALL=C`. The rest of the environment is inherited (SSH
+    /// agent, credential helper). `paths` go after a `--` that the caller puts at the end of
     /// `args`.
     fn command(&self, dir: Option<&Path>, args: &[&str], paths: &[&OsStr]) -> Command {
         let mut cmd = Command::new(&self.program);
@@ -108,13 +108,13 @@ impl Git {
         cmd
     }
 
-    /// Esegue git e restituisce l'output qualunque sia il codice di uscita. Errore solo se il
-    /// programma non si avvia.
+    /// Runs git and returns the output whatever the exit code. Error only if the
+    /// program does not start.
     pub(crate) fn output(&self, dir: Option<&Path>, args: &[&str]) -> Result<Output, EngineError> {
         self.output_with_paths(dir, args, &[])
     }
 
-    /// Come [`Git::output`], con `paths` dopo `args` (che deve finire con `--`).
+    /// Like [`Git::output`], with `paths` after `args` (which must end with `--`).
     pub(crate) fn output_with_paths(
         &self,
         dir: Option<&Path>,
@@ -123,22 +123,30 @@ impl Git {
     ) -> Result<Output, EngineError> {
         debug_assert!(paths.is_empty() || args.last() == Some(&"--"));
         self.command(dir, args, paths).output().map_err(|e| {
-            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+            EngineError::GitNotFound(msg!(
+                "engine-git-spawn",
+                program = self.program.to_string_lossy(),
+                error = e
+            ))
         })
     }
 
-    /// Come [`Git::output`], con argomenti che non sono UTF-8 (es. `--path=<percorso>`).
+    /// Like [`Git::output`], with arguments that are not UTF-8 (e.g. `--path=<path>`).
     pub(crate) fn output_os(
         &self,
         dir: Option<&Path>,
         args: &[&OsStr],
     ) -> Result<Output, EngineError> {
         self.command(dir, &[], args).output().map_err(|e| {
-            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+            EngineError::GitNotFound(msg!(
+                "engine-git-spawn",
+                program = self.program.to_string_lossy(),
+                error = e
+            ))
         })
     }
 
-    /// Come [`Git::output_os`], con in più le variabili `env` solo per questa esecuzione.
+    /// Like [`Git::output_os`], with the extra variables `env` for this run only.
     pub(crate) fn output_os_env(
         &self,
         dir: Option<&Path>,
@@ -150,13 +158,17 @@ impl Git {
             cmd.env(key, value);
         }
         cmd.output().map_err(|e| {
-            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+            EngineError::GitNotFound(msg!(
+                "engine-git-spawn",
+                program = self.program.to_string_lossy(),
+                error = e
+            ))
         })
     }
 
-    /// Come [`Git::output`], ma scrive `input` su stdin di git (es. i percorsi per
-    /// `--pathspec-from-file=-`, o un messaggio di commit). stdin viene scritto da un thread a
-    /// parte, così un output grande non blocca git mentre aspetta di leggere.
+    /// Like [`Git::output`], but writes `input` to git's stdin (e.g. the paths for
+    /// `--pathspec-from-file=-`, or a commit message). stdin is written by a separate
+    /// thread, so large output does not block git while it waits to read.
     pub(crate) fn output_with_input(
         &self,
         dir: Option<&Path>,
@@ -166,8 +178,8 @@ impl Git {
         self.output_with_input_env(dir, args, input, &[])
     }
 
-    /// Come [`Git::output_with_input`], con in più le variabili `env` solo per questa
-    /// esecuzione (es. `GIT_INDEX_FILE` per un indice temporaneo).
+    /// Like [`Git::output_with_input`], with the extra variables `env` for this
+    /// run only (e.g. `GIT_INDEX_FILE` for a temporary index).
     pub(crate) fn output_with_input_env(
         &self,
         dir: Option<&Path>,
@@ -176,7 +188,11 @@ impl Git {
         env: &[(&str, &OsStr)],
     ) -> Result<Output, EngineError> {
         let not_found = |e: std::io::Error| {
-            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+            EngineError::GitNotFound(msg!(
+                "engine-git-spawn",
+                program = self.program.to_string_lossy(),
+                error = e
+            ))
         };
         let mut cmd = self.command(dir, args, &[]);
         for (key, value) in env {
@@ -186,10 +202,10 @@ impl Git {
         let mut stdin = child
             .stdin
             .take()
-            .expect("stdin è stato chiesto con `Stdio::piped`");
+            .expect("stdin was requested with `Stdio::piped`");
         std::thread::scope(|scope| {
-            // Se git termina prima di leggere tutto (es. per un errore) la scrittura fallisce:
-            // conta il codice di uscita di git, non l'errore di scrittura.
+            // If git exits before reading everything (e.g. because of an error) the write fails:
+            // the git exit code counts, not the write error.
             scope.spawn(move || {
                 let _ = stdin.write_all(input);
             });
@@ -197,13 +213,13 @@ impl Git {
         })
     }
 
-    /// Esegue git e restituisce stdout; un codice di uscita diverso da zero dà
-    /// [`EngineError::Git`] con il testo di stderr.
+    /// Runs git and returns stdout; a non-zero exit code gives
+    /// [`EngineError::Git`] with the stderr text.
     pub(crate) fn run(&self, dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, EngineError> {
         self.run_with_paths(dir, args, &[])
     }
 
-    /// Come [`Git::run`], con `paths` dopo `args` (che deve finire con `--`).
+    /// Like [`Git::run`], with `paths` after `args` (which must end with `--`).
     pub(crate) fn run_with_paths(
         &self,
         dir: Option<&Path>,
@@ -219,48 +235,48 @@ impl Git {
     }
 }
 
-/// Un pezzo dello stderr di un comando lento: il testo fino a un `\r` o un `\n`, e se finiva
-/// con `\n` (riga finita) o no (riga di avanzamento che git riscrive al prossimo `\r`).
+/// A piece of the stderr of a slow command: the text up to a `\r` or a `\n`, and whether it ended
+/// with `\n` (finished line) or not (progress line that git rewrites at the next `\r`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Segment {
     pub(crate) text: String,
     pub(crate) newline: bool,
 }
 
-/// Come è finito un comando lento ([`Git::run_streaming`]).
+/// How a slow command ended ([`Git::run_streaming`]).
 #[derive(Debug)]
 pub(crate) struct Streamed {
     pub(crate) status: ExitStatus,
-    /// Vero se il processo è stato fermato perché annullato.
+    /// True if the process was stopped because it was cancelled.
     pub(crate) cancelled: bool,
-    /// stdout, se chiesto (`capture_stdout`), altrimenti vuoto.
+    /// stdout, if requested (`capture_stdout`), otherwise empty.
     pub(crate) stdout: Vec<u8>,
 }
 
-/// Dopo l'uscita di git, quanto aspettare che stderr si chiuda: un processo figlio rimasto in
-/// background (es. un master SSH con `ControlPersist`) può tenerlo aperto per minuti.
+/// After git exits, how long to wait for stderr to close: a child process left in the
+/// background (e.g. an SSH master with `ControlPersist`) can keep it open for minutes.
 const PIPE_GRACE: Duration = Duration::from_secs(1);
-/// Dopo SIGTERM, quanto aspettare prima di SIGKILL.
+/// After SIGTERM, how long to wait before SIGKILL.
 const TERM_GRACE: Duration = Duration::from_secs(3);
-/// Ogni quanto controllare annullamento e uscita mentre non arriva output.
+/// How often to check for cancellation and exit while no output arrives.
 const POLL: Duration = Duration::from_millis(50);
 
 impl Git {
-    /// Esegue un comando lento (`git fetch --progress`) leggendo stderr mentre gira: ogni
-    /// pezzo separato da `\r` o `\n` va a `on_segment`, sul thread di chi chiama. stdin è
-    /// chiuso (`/dev/null`), `GIT_TERMINAL_PROMPT=0` e, su Unix, il processo parte in una
-    /// sessione nuova (`setsid`) **senza terminale di controllo**: né git né ssh né un
-    /// credential helper possono aprire `/dev/tty` per chiedere qualcosa, quindi il comando
-    /// non resta mai ad aspettare input (le richieste grafiche, `SSH_ASKPASS`/`GIT_ASKPASS`,
-    /// restano possibili). stdout si scarta.
+    /// Runs a slow command (`git fetch --progress`) reading stderr while it runs: each
+    /// piece separated by `\r` or `\n` goes to `on_segment`, on the caller's thread. stdin is
+    /// closed (`/dev/null`), `GIT_TERMINAL_PROMPT=0` and, on Unix, the process starts in a
+    /// new session (`setsid`) **with no controlling terminal**: neither git nor ssh nor a
+    /// credential helper can open `/dev/tty` to ask for anything, so the command
+    /// never waits for input (graphical prompts, `SSH_ASKPASS`/`GIT_ASKPASS`,
+    /// remain possible). stdout is discarded.
     ///
-    /// Se `cancelled()` diventa vero il comando si ferma: SIGTERM al gruppo di processi (git,
-    /// ssh, `git-remote-http`, `index-pack`: git toglie i propri file `.lock` quando lo
-    /// riceve), dopo [`TERM_GRACE`] SIGKILL; su altri sistemi `kill`.
+    /// If `cancelled()` becomes true the command stops: SIGTERM to the process group (git,
+    /// ssh, `git-remote-http`, `index-pack`: git removes its own `.lock` files when it
+    /// receives it), after [`TERM_GRACE`] SIGKILL; on other systems `kill`.
     ///
-    /// Con `capture_stdout` stdout si legge (da un altro thread) e torna in
-    /// [`Streamed::stdout`] (es. `git push --porcelain`); dopo l'uscita di git si aspetta al più
-    /// [`PIPE_GRACE`] che si chiuda. Altrimenti si scarta.
+    /// With `capture_stdout` stdout is read (from another thread) and returned in
+    /// [`Streamed::stdout`] (e.g. `git push --porcelain`); after git exits we wait at most
+    /// [`PIPE_GRACE`] for it to close. Otherwise it is discarded.
     pub(crate) fn run_streaming(
         &self,
         dir: &Path,
@@ -270,7 +286,11 @@ impl Git {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Streamed, EngineError> {
         let not_found = |e: std::io::Error| {
-            EngineError::GitNotFound(format!("{}: {e}", self.program.to_string_lossy()))
+            EngineError::GitNotFound(msg!(
+                "engine-git-spawn",
+                program = self.program.to_string_lossy(),
+                error = e
+            ))
         };
         let mut cmd = self.command(Some(dir), args, &[]);
         if !capture_stdout {
@@ -281,7 +301,7 @@ impl Git {
         let stderr = child
             .stderr
             .take()
-            .expect("stderr è stato chiesto con `Stdio::piped`");
+            .expect("stderr was requested with `Stdio::piped`");
         let stdout_receiver = child.stdout.take().map(|mut out| {
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
@@ -292,8 +312,8 @@ impl Git {
             receiver
         });
         let (sender, receiver) = mpsc::channel();
-        // Il thread finisce quando stderr si chiude; se un processo rimasto in background lo
-        // tiene aperto, resta bloccato senza che il comando lo aspetti.
+        // The thread ends when stderr closes; if a process left in the background keeps it
+        // open, it stays blocked without the command waiting for it.
         std::thread::spawn(move || split_segments(stderr, |segment| sender.send(segment).is_ok()));
 
         let mut exited: Option<(ExitStatus, Instant)> = None;
@@ -343,8 +363,8 @@ impl Git {
     }
 }
 
-/// Legge `input` fino alla fine e lo divide in pezzi a ogni `\r` o `\n` (i pezzi vuoti si
-/// saltano); `emit` restituisce `false` per smettere.
+/// Reads `input` to the end and splits it into pieces at every `\r` or `\n` (empty pieces are
+/// skipped); `emit` returns `false` to stop.
 pub(crate) fn split_segments(mut input: impl Read, mut emit: impl FnMut(Segment) -> bool) {
     let mut pending = Vec::new();
     let mut buf = [0u8; 4096];
@@ -378,14 +398,14 @@ pub(crate) fn split_segments(mut input: impl Read, mut emit: impl FnMut(Segment)
     }
 }
 
-/// Su Unix il processo parte in una sessione nuova, senza terminale di controllo (`setsid`):
-/// non può aprire `/dev/tty`, ed è capo del suo gruppo di processi, che [`terminate`] ferma
-/// tutto insieme.
+/// On Unix the process starts in a new session, with no controlling terminal (`setsid`):
+/// it cannot open `/dev/tty`, and it leads its own process group, which [`terminate`] stops
+/// all together.
 #[cfg(unix)]
 fn detach_from_terminal(cmd: &mut Command) {
     use std::os::unix::process::CommandExt as _;
-    // SAFETY: fra `fork` ed `exec` si chiama solo `setsid`, che è async-signal-safe e non
-    // alloca.
+    // SAFETY: between `fork` and `exec` only `setsid` is called, which is async-signal-safe and does not
+    // allocate.
     unsafe {
         cmd.pre_exec(|| {
             if libc::setsid() == -1 {
@@ -399,13 +419,13 @@ fn detach_from_terminal(cmd: &mut Command) {
 #[cfg(not(unix))]
 fn detach_from_terminal(_cmd: &mut Command) {}
 
-/// SIGTERM al gruppo di processi di `child` (git e i suoi figli: ssh, helper, `index-pack`).
+/// SIGTERM to the process group of `child` (git and its children: ssh, helpers, `index-pack`).
 #[cfg(unix)]
 fn terminate(child: &mut Child) {
     signal_group(child, libc::SIGTERM);
 }
 
-/// SIGKILL al gruppo di processi di `child`.
+/// SIGKILL to the process group of `child`.
 #[cfg(unix)]
 fn kill(child: &mut Child) {
     signal_group(child, libc::SIGKILL);
@@ -414,8 +434,8 @@ fn kill(child: &mut Child) {
 #[cfg(unix)]
 fn signal_group(child: &mut Child, signal: libc::c_int) {
     if let Ok(pid) = libc::pid_t::try_from(child.id()) {
-        // SAFETY: `kill` non tocca la memoria; con `setsid` il gruppo ha l'id del processo.
-        // Se il gruppo non c'è più l'errore si ignora.
+        // SAFETY: `kill` does not touch memory; with `setsid` the group has the process id.
+        // If the group no longer exists the error is ignored.
         unsafe {
             libc::kill(-pid, signal);
         }
@@ -432,15 +452,18 @@ fn kill(child: &mut Child) {
     let _ = child.kill();
 }
 
-/// [`EngineError::Git`] per un comando non riuscito, con il sottocomando e stderr; se git non ha
-/// potuto prendere il lock dell'indice, [`EngineError::IndexLocked`].
+/// [`EngineError::Git`] for a failed command, with the subcommand and stderr; if git could not
+/// take the index lock, [`EngineError::IndexLocked`].
 pub(crate) fn failure(args: &[&str], output: &Output) -> EngineError {
-    let mut stderr = stderr_text(output);
+    let stderr = stderr_text(output);
     if let Some(lock) = locked_index(&stderr) {
         return EngineError::IndexLocked { lock };
     }
     if stderr.is_empty() {
-        stderr = format!("terminato con {}", output.status);
+        return EngineError::GitWithReason {
+            command: subcommand(args).to_owned(),
+            reason: msg!("engine-git-exit-status", status = output.status.to_string()),
+        };
     }
     EngineError::Git {
         command: subcommand(args).to_owned(),
@@ -448,8 +471,8 @@ pub(crate) fn failure(args: &[&str], output: &Output) -> EngineError {
     }
 }
 
-/// Il file di lock nel messaggio di git `fatal: Unable to create '<lock>': File exists.` (con
-/// `LC_ALL=C` il testo è sempre questo), se è il lock dell'indice.
+/// The lock file in git's message `fatal: Unable to create '<lock>': File exists.` (with
+/// `LC_ALL=C` the text is always this), if it is the index lock.
 fn locked_index(stderr: &str) -> Option<String> {
     const START: &str = "Unable to create '";
     const END: &str = "': File exists.";
@@ -459,18 +482,18 @@ fn locked_index(stderr: &str) -> Option<String> {
     lock.ends_with("index.lock").then(|| lock.to_owned())
 }
 
-/// stderr senza spazi iniziali e finali (convertito con `from_utf8_lossy`).
+/// stderr without leading and trailing spaces (converted with `from_utf8_lossy`).
 pub(crate) fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_owned()
 }
 
-/// Il primo argomento che non è un'opzione globale, es. `status` in
-/// `--no-optional-locks status ...` o in `-c diff.x=y status ...`.
+/// The first argument that is not a global option, e.g. `status` in
+/// `--no-optional-locks status ...` or in `-c diff.x=y status ...`.
 fn subcommand<'a>(args: &[&'a str]) -> &'a str {
     let mut args = args.iter().copied();
     while let Some(arg) = args.next() {
         if arg == "-c" {
-            // Il valore di `-c` non è il sottocomando.
+            // The value of `-c` is not the subcommand.
             args.next();
         } else if !arg.starts_with('-') {
             return arg;
@@ -479,14 +502,14 @@ fn subcommand<'a>(args: &[&'a str]) -> &'a str {
     ""
 }
 
-/// Un percorso stampato da git su una riga (es. `rev-parse --show-toplevel`), senza l'a capo
-/// finale. I byte non UTF-8 restano tali dove il sistema lo permette.
+/// A path printed by git on a line (e.g. `rev-parse --show-toplevel`), without the trailing
+/// newline. Non-UTF-8 bytes stay as they are where the system allows.
 pub(crate) fn path_from_output(line: &[u8]) -> PathBuf {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     os_from_bytes(line).into()
 }
 
-/// Byte di un percorso (es. un `RepoPath`) come argomento per git.
+/// Bytes of a path (e.g. a `RepoPath`) as an argument for git.
 #[cfg(unix)]
 pub(crate) fn os_from_bytes(bytes: &[u8]) -> OsString {
     use std::ffi::OsStr;
@@ -496,7 +519,7 @@ pub(crate) fn os_from_bytes(bytes: &[u8]) -> OsString {
 
 #[cfg(not(unix))]
 pub(crate) fn os_from_bytes(bytes: &[u8]) -> OsString {
-    // Su Windows git stampa i percorsi in UTF-8.
+    // On Windows git prints paths in UTF-8.
     OsString::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
@@ -544,8 +567,8 @@ mod tests {
         assert_eq!(value("GIT_TERMINAL_PROMPT"), Some(Some("0".as_ref())));
         assert_eq!(value("LC_ALL"), Some(Some("C".as_ref())));
         assert_eq!(value("GIT_CONFIG_NOSYSTEM"), Some(Some("1".as_ref())));
-        // Ereditate da un hook git farebbero leggere un altro repo: tolte.
-        // Così come quelle che cambiano il significato dei pathspec.
+        // Inherited from a git hook they would make git read another repo: removed.
+        // Likewise those that change the meaning of pathspecs.
         for key in REPO_ENV
             .iter()
             .chain(PATHSPEC_ENV)
@@ -596,17 +619,17 @@ mod tests {
     fn input_goes_to_stdin() {
         let git = Git::new("git");
         let out = git
-            .output_with_input(None, &["hash-object", "--stdin"], b"ciao\n")
+            .output_with_input(None, &["hash-object", "--stdin"], b"hello\n")
             .unwrap();
-        // `printf 'ciao\n' | git hash-object --stdin`
+        // `printf 'hello\n' | git hash-object --stdin`
         assert!(out.status.success());
-        assert_eq!(out.stdout, b"887ae9333d92a1d72400c210546e28baa1050e44\n");
+        assert_eq!(out.stdout, b"ce013625030ba8dba906f756967f9e9ca394464a\n");
     }
 
     #[test]
     fn stderr_is_split_at_carriage_returns_and_newlines() {
         let input: &[u8] = b"Receiving objects:  50% (1/2)\rReceiving objects: 100% (2/2), done.\n\
-            From /r\n\r\nultima";
+            From /r\n\r\nlast";
         let mut seen = Vec::new();
         split_segments(input, |s| {
             seen.push((s.text, s.newline));
@@ -618,7 +641,7 @@ mod tests {
                 ("Receiving objects:  50% (1/2)".to_owned(), false),
                 ("Receiving objects: 100% (2/2), done.".to_owned(), true),
                 ("From /r".to_owned(), true),
-                ("ultima".to_owned(), true),
+                ("last".to_owned(), true),
             ]
         );
     }

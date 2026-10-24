@@ -1,4 +1,4 @@
-# Scartare le modifiche fuori stage (discard.rs).
+# Discarding unstaged changes (discard.rs).
 
 discard-reason-conflict = File in conflitto: va risolto prima, non si scarta da qui
 discard-reason-untracked = File non tracciato: non si scarta (vorrebbe dire cancellarlo, senza backup)

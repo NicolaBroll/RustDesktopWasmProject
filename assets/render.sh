@@ -1,10 +1,10 @@
 #!/bin/sh
-# Rigenera i PNG dagli SVG di questa cartella con Chrome headless (ImageMagick disegna male
-# gradienti e curve). Uso: assets/render.sh [percorso di chrome]
+# Regenerates the PNGs from the SVGs in this folder with headless Chrome (ImageMagick renders
+# gradients and curves poorly). Usage: assets/render.sh [path to chrome]
 set -eu
 chrome=${1:-$(command -v google-chrome || command -v chromium || echo /opt/google/chrome/chrome)}
 here=$(cd "$(dirname "$0")" && pwd)
-render() { # <svg> <png> <larghezza> <altezza>
+render() { # <svg> <png> <width> <height>
     tmp=$(mktemp -d)
     printf '<html><body style="margin:0"><img src="file://%s/%s" width="%s" height="%s" style="display:block"></body></html>' \
         "$here" "$1" "$3" "$4" > "$tmp/p.html"

@@ -1,7 +1,7 @@
 use super::*;
 
-/// La finestra di un'operazione non riuscita: cosa è successo, cosa fare, il testo di git. Non
-/// blocca il resto della finestra; `dismiss` la chiude.
+/// The window of a failed operation: what happened, what to do, git's text. It does not
+/// block the rest of the window; `dismiss` closes it.
 pub(crate) fn failure_window(
     ctx: &egui::Context,
     id: &str,
@@ -30,9 +30,9 @@ pub(crate) fn failure_window(
     }
 }
 
-/// La finestra di pull e push: errore, conflitto, rifiuto o conferma del force. `writing`:
-/// c'è una scrittura in corso; `can_write`: nessuna scrittura né dialogo, i pulsanti che
-/// riprovano sono attivi.
+/// The pull and push window: error, conflict, rejection or force confirmation. `writing`:
+/// a write is in progress; `can_write`: no write and no dialog, the buttons that
+/// retry are enabled.
 pub(crate) fn sync_window(
     ctx: &egui::Context,
     window: &Window,
@@ -42,7 +42,7 @@ pub(crate) fn sync_window(
 ) {
     match window {
         Window::Failure(failure) => {
-            failure_window(ctx, "errore-sync", failure, Action::DismissSync, actions);
+            failure_window(ctx, "sync-error", failure, Action::DismissSync, actions);
         }
         Window::Conflict(conflict) => conflict_window(ctx, conflict, can_write, actions),
         Window::Rejected(rejected) => rejected_window(ctx, rejected, can_write, actions),
@@ -50,11 +50,11 @@ pub(crate) fn sync_window(
     }
 }
 
-/// Altezza massima dell'elenco dei file in conflitto; oltre si scorre.
+/// Maximum height of the conflicted file list; beyond it scrolls.
 pub(super) const CONFLICT_LIST_HEIGHT: f32 = 160.0;
 
-/// Pull fermo in conflitto e già annullato dal motore (oggi solo il rebase: il merge fermo resta
-/// in corso e si risolve dal riquadro dell'operazione).
+/// Pull stopped on a conflict and already aborted by the engine (today only the rebase: a stopped merge stays
+/// in progress and is resolved from the operation panel).
 pub(super) fn conflict_window(
     ctx: &egui::Context,
     conflict: &sync::Conflict,
@@ -64,7 +64,7 @@ pub(super) fn conflict_window(
     let mut open = true;
     let operation = conflict.operation.to_string();
     egui::Window::new(tr!("sync-conflict-title"))
-        .id(egui::Id::unique("conflitto-pull"))
+        .id(egui::Id::unique("pull-conflict"))
         .collapsible(false)
         .resizable(false)
         .default_width(460.0)
@@ -86,7 +86,7 @@ pub(super) fn conflict_window(
             });
             let row = ui.text_style_height(&egui::TextStyle::Monospace);
             egui::ScrollArea::vertical()
-                .id_salt("conflitto-file")
+                .id_salt("conflict-file")
                 .max_height(CONFLICT_LIST_HEIGHT)
                 .auto_shrink([false, true])
                 .show_rows(ui, row, n, |ui, range| {
@@ -125,8 +125,8 @@ pub(super) fn conflict_window(
     }
 }
 
-/// Push rifiutato: cosa è successo e cosa fare. Non fast-forward: "Pull" e, come seconda
-/// scelta, "Forza (con lease)…"; lease scaduto: "Fetch".
+/// Push rejected: what happened and what to do. Not fast-forward: "Pull" and, as a second
+/// choice, "Force (with lease)..."; stale lease: "Fetch".
 pub(super) fn rejected_window(
     ctx: &egui::Context,
     rejected: &sync::Rejected,
@@ -135,7 +135,7 @@ pub(super) fn rejected_window(
 ) {
     let mut open = true;
     egui::Window::new(tr!("sync-rejected-title"))
-        .id(egui::Id::unique("push-rifiutato"))
+        .id(egui::Id::unique("push-rejected"))
         .collapsible(false)
         .resizable(false)
         .default_width(440.0)
@@ -196,14 +196,14 @@ pub(super) fn rejected_window(
     }
 }
 
-/// Conferma del push forzato: il remoto perderebbe commit che il branch non ha.
+/// Confirmation of the forced push: the remote would lose commits that the branch does not have.
 pub(super) fn confirm_force(
     ctx: &egui::Context,
     confirm: &sync::ConfirmForce,
     writing: bool,
     actions: &mut Vec<Action>,
 ) {
-    let modal = egui::Modal::new(egui::Id::unique("conferma-force")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("force-confirm")).show(ctx, |ui| {
         ui.set_max_width(480.0);
         ui.heading(
             RichText::new(match &confirm.branch {
@@ -230,7 +230,7 @@ pub(super) fn confirm_force(
         ui.add_space(6.0);
         ui.strong(tr!("sync-force-confirm-lost"));
         egui::ScrollArea::vertical()
-            .id_salt("force-motivo")
+            .id_salt("force-reason")
             .max_height(160.0)
             .show(ui, |ui| {
                 ui.add(egui::Label::new(RichText::new(&confirm.reason).monospace()).wrap());

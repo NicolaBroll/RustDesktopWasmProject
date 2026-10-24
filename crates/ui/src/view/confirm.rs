@@ -1,11 +1,11 @@
 use super::*;
 
-/// Quanti file in conflitto elencare nella conferma; gli altri diventano "e altri N".
+/// How many conflicted files to list in the confirmation; the others become "and N more".
 pub(super) const CONFIRM_LIST: usize = 8;
 
-/// Conferma prima di mettere in stage file in conflitto: spiega che vengono segnati risolti.
+/// Confirmation before staging conflicted files: explains that they are marked resolved.
 pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: &mut Vec<Action>) {
-    let modal = egui::Modal::new(egui::Id::unique("conferma-scrittura")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("write-confirm")).show(ctx, |ui| {
         ui.set_max_width(440.0);
         let n = write.conflicts.len();
         ui.heading(tr!("confirm-resolve-title", n = n));
@@ -40,13 +40,13 @@ pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: 
     }
 }
 
-/// Altezza massima dell'elenco dei file nella conferma dello scarto; oltre si scorre.
+/// Maximum height of the file list in the discard confirmation; beyond it, it scrolls.
 pub(super) const DISCARD_LIST_HEIGHT: f32 = 160.0;
 
-/// Conferma prima di scartare le modifiche fuori stage: elenca i file e spiega come si
-/// annulla.
+/// Confirmation before discarding unstaged changes: lists the files and explains how to
+/// undo.
 pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &mut Vec<Action>) {
-    let modal = egui::Modal::new(egui::Id::unique("conferma-scarto")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("discard-confirm")).show(ctx, |ui| {
         ui.set_max_width(460.0);
         let n = pending.paths.len();
         ui.heading(tr!("confirm-discard-title"));
@@ -58,7 +58,7 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
         ui.strong(tr!("confirm-discard-files", n = n));
         let row = ui.text_style_height(&egui::TextStyle::Monospace);
         egui::ScrollArea::vertical()
-            .id_salt("scarto-file")
+            .id_salt("discard-files")
             .max_height(DISCARD_LIST_HEIGHT)
             .auto_shrink([false, true])
             .show_rows(ui, row, n, |ui, range| {
@@ -85,14 +85,14 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
     }
 }
 
-/// Conferma prima di riscrivere con amend un commit già su un branch remoto.
+/// Confirmation before rewriting with amend a commit already on a remote branch.
 pub(crate) fn confirm_amend(
     ctx: &egui::Context,
     confirm: &ConfirmAmend,
     left_behind: &[String],
     actions: &mut Vec<Action>,
 ) {
-    let modal = egui::Modal::new(egui::Id::unique("conferma-amend")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("amend-confirm")).show(ctx, |ui| {
         ui.set_max_width(460.0);
         ui.heading(tr!("confirm-amend-title"));
         ui.add_space(6.0);

@@ -20,21 +20,21 @@ fn snapshot_remove_and_write_round_trip() {
     assert_eq!(
         snapshot.config,
         [
-            entry("remote.origin.url", "https://example.com/progetto.git"),
+            entry("remote.origin.url", "https://example.com/project.git"),
             entry("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"),
             entry("remote.origin.tagOpt", "--no-tags"),
         ]
     );
-    // `refs/remotes/origin/a/x` è del remoto `origin/a`.
+    // `refs/remotes/origin/a/x` belongs to the remote `origin/a`.
     let names: Vec<&str> = snapshot.refs.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(
         names,
         [
-            "refs/remotes/origin/feature/grafo",
+            "refs/remotes/origin/feature/graph",
             "refs/remotes/origin/main"
         ]
     );
-    assert_eq!(snapshot.upstream_branches(), ["feature/grafo", "main"]);
+    assert_eq!(snapshot.upstream_branches(), ["feature/graph", "main"]);
     assert!(snapshot.push_default);
     assert_eq!(snapshot.head, None);
 

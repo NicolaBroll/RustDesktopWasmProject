@@ -1,17 +1,17 @@
-//! Editor dei conflitti (S30): un file in conflitto si apre al posto del grafo o del diff, con
-//! le tre versioni (base, nostra, loro) in alto e il risultato modificabile in basso. Solo
-//! dati, senza egui: si prova con test unitari. Contratto in `impl-docs/git/conflitti.md`.
+//! Conflict editor (S30): a conflicted file opens in place of the graph or the diff, with
+//! the three versions (base, ours, theirs) on top and the editable result below. Data
+//! only, no egui: tested with unit tests. Contract in `impl-docs/git/conflicts.md`.
 //!
-//! - **Lettura**: `conflict.show` dà le versioni e il `digest` del file del worktree; il testo
-//!   del worktree si analizza con [`parse_conflicts`]. Se è testo e si analizza, il risultato
-//!   parte da lì ed è modificabile; altrimenti (binario, file assente, marcatori rotti) si
-//!   offrono solo "Usa nostra" / "Usa loro" (e "Elimina il file" quando un lato l'ha eliminato).
-//! - **Scelte**: i blocchi sono quelli del testo **attuale** del risultato, rianalizzato a ogni
-//!   modifica; una scelta sostituisce un blocco con [`resolve_block`] (o tutti con
-//!   [`resolve_all`]), il resto, modifiche a mano comprese, resta.
-//! - **Segna come risolto**: `conflict.resolve` con il `digest` letto e il testo. Se restano
-//!   marcatori si chiede conferma in due tempi; anche "Elimina il file" chiede conferma. Un
-//!   `StaleDiff` (il file è cambiato dopo la lettura) rilegge il file.
+//! - **Reading**: `conflict.show` gives the versions and the `digest` of the worktree file; the worktree
+//!   text is parsed with [`parse_conflicts`]. If it is text and parses, the result
+//!   starts from there and is editable; otherwise (binary, missing file, broken markers) only
+//!   "Use ours" / "Use theirs" are offered (and "Delete the file" when a side deleted it).
+//! - **Choices**: the blocks are those of the **current** text of the result, reparsed on every
+//!   edit; a choice replaces a block with [`resolve_block`] (or all with
+//!   [`resolve_all`]), the rest, manual edits included, stays.
+//! - **Mark as resolved**: `conflict.resolve` with the `digest` read and the text. If markers
+//!   remain a two-step confirmation is asked; "Delete the file" also asks for confirmation. A
+//!   `StaleDiff` (the file changed after reading) rereads the file.
 
 use crate::ErrorKind;
 use crate::{Action, App, Done, Request};
@@ -22,15 +22,15 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// L'id del comando che legge le versioni del file in conflitto.
+/// The id of the command that reads the versions of the conflicted file.
 pub const SHOW: &str = "conflict.show";
-/// L'id del comando che risolve il conflitto di un file.
+/// The id of the command that resolves the conflict of a file.
 pub const RESOLVE: &str = "conflict.resolve";
 
-/// Una versione del file (`base`, `ours`, `theirs` o `worktree` di `conflict.show`).
+/// A version of the file (`base`, `ours`, `theirs` or `worktree` of `conflict.show`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Version {
-    /// Il contenuto, se è UTF-8 valido e senza NUL.
+    /// The content, if it is valid UTF-8 without NUL.
     pub text: Option<String>,
     #[serde(default)]
     pub binary: bool,
@@ -38,7 +38,7 @@ pub struct Version {
     pub size: u64,
 }
 
-/// Risultato di `conflict.show`.
+/// Result of `conflict.show`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Shown {
     pub path: RepoPath,
@@ -51,14 +51,14 @@ pub struct Shown {
     pub digest: String,
 }
 
-/// Una delle tre colonne in alto, già divisa in righe (la vista le mostra virtualizzate).
+/// One of the three columns on top, already split into lines (the view shows them virtualized).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Column {
-    /// Il testo, una voce per riga.
+    /// The text, one entry per line.
     Text(Vec<String>),
-    /// Lo stadio manca (il file non c'era da quel lato).
+    /// The stage is missing (the file was not there on that side).
     Missing,
-    /// Il contenuto non è testo.
+    /// The content is not text.
     Binary(u64),
 }
 
@@ -74,48 +74,48 @@ impl Column {
     }
 }
 
-/// Il lato da usare per intero quando il file non si modifica qui.
+/// The side to use whole when the file is not edited here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
     Ours,
     Theirs,
 }
 
-/// Un blocco di conflitto del risultato attuale, per la sua riga di pulsanti.
+/// A conflict block of the current result, for its row of buttons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockInfo {
-    /// L'indice da passare a [`resolve_block`].
+    /// The index to pass to [`resolve_block`].
     pub index: usize,
-    /// La riga (da 1) del marcatore `<<<<<<<` nel risultato.
+    /// The line (from 1) of the `<<<<<<<` marker in the result.
     pub line: usize,
-    /// Il blocco ha la versione base (stile `diff3`): c'è il pulsante "Base".
+    /// The block has the base version (`diff3` style): the "Base" button is there.
     pub has_base: bool,
 }
 
-/// Cosa aspetta la conferma in due tempi.
+/// What awaits the two-step confirmation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pending {
-    /// Il risultato contiene ancora questi blocchi di marcatori.
+    /// The result still contains these blocks of markers.
     Markers(usize),
-    /// Il file va eliminato.
+    /// The file is to be deleted.
     Delete,
 }
 
-/// Le versioni lette e il risultato in lavorazione.
+/// The versions read and the result being worked on.
 #[derive(Debug, Clone)]
 pub struct Loaded {
     pub shown: Shown,
     pub base: Column,
     pub ours: Column,
     pub theirs: Column,
-    /// Le etichette dei marcatori del file letto (`<<<<<<< HEAD`, `>>>>>>> feature`), se ci sono.
+    /// The labels of the markers of the file read (`<<<<<<< HEAD`, `>>>>>>> feature`), if any.
     pub ours_label: Option<String>,
     pub theirs_label: Option<String>,
-    /// Il risultato modificabile: `None` se il file del worktree non è testo, manca o non si
-    /// analizza (allora solo "Usa nostra" / "Usa loro").
+    /// The editable result: `None` if the worktree file is not text, is missing or does not
+    /// parse (then only "Use ours" / "Use theirs").
     result: Option<String>,
-    /// L'analisi del risultato attuale: `Err` se i marcatori sono rotti (niente pulsanti per
-    /// blocco, il testo resta modificabile).
+    /// The parse of the current result: `Err` if the markers are broken (no per-block buttons,
+    /// the text stays editable).
     parsed: Result<ConflictText, String>,
 }
 
@@ -151,12 +151,12 @@ impl Loaded {
         }
     }
 
-    /// Il risultato modificabile, se il file si modifica qui.
+    /// The editable result, if the file is edited here.
     pub fn result(&self) -> Option<&str> {
         self.result.as_deref()
     }
 
-    /// I blocchi del risultato attuale; vuoto se non si analizza o non è modificabile.
+    /// The blocks of the current result; empty if it does not parse or is not editable.
     pub fn blocks(&self) -> Vec<BlockInfo> {
         let (Some(text), Ok(parsed)) = (&self.result, &self.parsed) else {
             return Vec::new();
@@ -175,13 +175,13 @@ impl Loaded {
             .collect()
     }
 
-    /// Perché il risultato attuale non si analizza (marcatori rotti a mano), se è così.
+    /// Why the current result does not parse (markers broken by hand), if so.
     pub fn parse_error(&self) -> Option<&str> {
         self.result.as_ref()?;
         self.parsed.as_ref().err().map(String::as_str)
     }
 
-    /// Il testo di un lato, se è testo: per "Usa nostra" / "Usa loro".
+    /// The text of a side, if it is text: for "Use ours" / "Use theirs".
     pub fn side_text(&self, pick: Pick) -> Option<&str> {
         let version = match pick {
             Pick::Ours => self.shown.ours.as_ref(),
@@ -190,7 +190,7 @@ impl Loaded {
         version?.text.as_deref()
     }
 
-    /// Vero se un lato ha eliminato il file: si offre "Elimina il file".
+    /// True if a side deleted the file: "Delete the file" is offered.
     pub fn can_delete(&self) -> bool {
         matches!(
             self.shown.kind,
@@ -204,7 +204,7 @@ impl Loaded {
         self.result = Some(text);
     }
 
-    /// Applica una sostituzione pura al risultato attuale; `false` se non si può.
+    /// Applies a pure replacement to the current result; `false` if it cannot.
     fn replace(
         &mut self,
         f: impl FnOnce(&[u8], &ConflictText) -> Result<Vec<u8>, project_domain::DomainError>,
@@ -219,7 +219,7 @@ impl Loaded {
     }
 }
 
-/// A che punto è la lettura del file.
+/// How far the reading of the file has got.
 #[derive(Debug, Clone)]
 pub enum Load {
     Loading,
@@ -227,23 +227,23 @@ pub enum Load {
     Ready(Box<Loaded>),
 }
 
-/// L'editor aperto su un file.
+/// The editor open on a file.
 #[derive(Debug, Clone)]
 pub struct Editor {
     pub path: RepoPath,
-    /// Il numero della lettura attesa: le risposte vecchie si scartano.
+    /// The number of the awaited reading: old answers are discarded.
     seq: u64,
     pub load: Load,
-    /// La conferma in due tempi aperta, se c'è.
+    /// The open two-step confirmation, if any.
     pub pending: Option<Pending>,
-    /// Vero mentre `conflict.resolve` è in corso.
+    /// True while `conflict.resolve` is in flight.
     pub sending: bool,
-    /// L'ultimo errore (rifiuto, file cambiato), mostrato nell'editor.
+    /// The last error (refusal, changed file), shown in the editor.
     pub error: Option<String>,
 }
 
 impl Editor {
-    /// Le versioni lette, se sono arrivate.
+    /// The versions read, if they arrived.
     pub fn loaded(&self) -> Option<&Loaded> {
         match &self.load {
             Load::Ready(loaded) => Some(loaded),
@@ -259,13 +259,13 @@ impl Editor {
     }
 }
 
-/// Cosa è arrivato da `conflict.resolve`.
+/// What arrived from `conflict.resolve`.
 #[derive(Debug)]
 pub enum Received {
-    /// Risolto: l'editor è chiuso; lo stato nuovo e il messaggio per la barra.
+    /// Resolved: the editor is closed; the new state and the message for the bar.
     Done { status: Box<Status>, notice: String },
-    /// Rifiutato: l'errore è nell'editor. Con `reread` si rilegge il file (era cambiato), con
-    /// `reload` lo stato (qualcosa può essere cambiato).
+    /// Rejected: the error is in the editor. With `reread` the file is reread (it changed), with
+    /// `reload` the state (something may have changed).
     Failed {
         message: String,
         reread: Option<(Value, u64)>,
@@ -273,7 +273,7 @@ pub enum Received {
     },
 }
 
-/// Risultato di `conflict.resolve`.
+/// Result of `conflict.resolve`.
 #[derive(Deserialize)]
 struct Resolved {
     status: Status,
@@ -281,7 +281,7 @@ struct Resolved {
     index_backup: Option<String>,
 }
 
-/// Lo stato dell'editor dei conflitti: al più un file aperto.
+/// State of the conflict editor: at most one open file.
 #[derive(Debug, Default)]
 pub struct ConflictBox {
     editor: Option<Editor>,
@@ -289,18 +289,18 @@ pub struct ConflictBox {
 }
 
 impl ConflictBox {
-    /// L'editor aperto, se c'è.
+    /// The open editor, if any.
     pub fn editor(&self) -> Option<&Editor> {
         self.editor.as_ref()
     }
 
-    /// Vero mentre `conflict.resolve` è in corso.
+    /// True while `conflict.resolve` is in flight.
     pub fn busy(&self) -> bool {
         self.editor.as_ref().is_some_and(|e| e.sending)
     }
 
-    /// Apre l'editor su `path`: i parametri di `conflict.show` e il numero della lettura.
-    /// `None` se è già aperto su quel file (le modifiche restano) o se un invio è in corso.
+    /// Opens the editor on `path`: the parameters of `conflict.show` and the reading number.
+    /// `None` if it is already open on that file (the edits stay) or if a send is in progress.
     pub fn open(&mut self, path: RepoPath) -> Option<(Value, u64)> {
         if self.busy() {
             return None;
@@ -323,7 +323,7 @@ impl ConflictBox {
         Some((json!({ "path": path }), self.seq))
     }
 
-    /// "Ricomincia": rilegge il file, le scelte e le modifiche fatte qui si perdono.
+    /// "Start over": rereads the file, the choices and edits made here are lost.
     pub fn restart(&mut self) -> Option<(Value, u64)> {
         let editor = self.editor.as_mut().filter(|e| !e.sending)?;
         self.seq += 1;
@@ -333,14 +333,14 @@ impl ConflictBox {
         Some((json!({ "path": editor.path }), self.seq))
     }
 
-    /// Chiude l'editor; non durante un invio.
+    /// Closes the editor; not during a send.
     pub fn close(&mut self) {
         if !self.busy() {
             self.editor = None;
         }
     }
 
-    /// La risposta di `conflict.show` per la lettura `seq`.
+    /// The answer of `conflict.show` for reading `seq`.
     pub fn receive_show(&mut self, seq: u64, result: Result<Value, String>) {
         let Some(editor) = self.editor.as_mut().filter(|e| e.seq == seq) else {
             return;
@@ -359,8 +359,8 @@ impl ConflictBox {
         };
     }
 
-    /// Un nuovo stato: se il file aperto non è più in conflitto (risolto altrove, merge
-    /// annullato) l'editor si chiude.
+    /// A new state: if the open file is no longer conflicted (resolved elsewhere, merge
+    /// aborted) the editor closes.
     pub fn follow_status(&mut self, status: &Status) {
         let still = |path: &RepoPath| {
             status
@@ -376,7 +376,7 @@ impl ConflictBox {
         }
     }
 
-    /// Il risultato modificato a mano.
+    /// The result edited by hand.
     pub fn set_result(&mut self, text: String) {
         if let Some(editor) = &mut self.editor {
             editor.pending = None;
@@ -388,13 +388,13 @@ impl ConflictBox {
         }
     }
 
-    /// Sostituisce il blocco `index` del risultato attuale con `choice`. `false` se non si può
-    /// (il testo non si analizza, il blocco non c'è, "Base" senza base).
+    /// Replaces block `index` of the current result with `choice`. `false` if it cannot
+    /// (the text does not parse, the block is not there, "Base" without base).
     pub fn choose(&mut self, index: usize, choice: Choice) -> bool {
         self.edit(|text, parsed| resolve_block(text, parsed, index, choice))
     }
 
-    /// Sostituisce tutti i blocchi con la stessa scelta.
+    /// Replaces all blocks with the same choice.
     pub fn choose_all(&mut self, choice: Choice) -> bool {
         self.edit(|text, parsed| resolve_all(text, parsed, choice))
     }
@@ -422,8 +422,8 @@ impl ConflictBox {
         }
     }
 
-    /// "Segna come risolto" con il risultato: i parametri di `conflict.resolve` e la
-    /// descrizione. Se restano marcatori `None` e si apre la conferma ([`Pending::Markers`]).
+    /// "Mark as resolved" with the result: the parameters of `conflict.resolve` and the
+    /// description. If markers remain `None` and the confirmation opens ([`Pending::Markers`]).
     pub fn resolve(&mut self) -> Option<(Value, String)> {
         let editor = self.editor.as_mut().filter(|e| !e.sending)?;
         let loaded = editor.loaded()?;
@@ -436,7 +436,7 @@ impl ConflictBox {
         self.send_result()
     }
 
-    /// "Usa nostra" / "Usa loro": il testo di quel lato come risultato, subito.
+    /// "Use ours" / "Use theirs": the text of that side as the result, right away.
     pub fn use_side(&mut self, pick: Pick) -> Option<(Value, String)> {
         let editor = self.editor.as_mut().filter(|e| !e.sending)?;
         let loaded = editor.loaded()?;
@@ -454,7 +454,7 @@ impl ConflictBox {
         Some(self.sending(params, label))
     }
 
-    /// "Elimina il file": apre la conferma ([`Pending::Delete`]).
+    /// "Delete the file": opens the confirmation ([`Pending::Delete`]).
     pub fn delete(&mut self) {
         if let Some(editor) = self.editor.as_mut().filter(|e| !e.sending)
             && editor.loaded().is_some_and(Loaded::can_delete)
@@ -463,7 +463,7 @@ impl ConflictBox {
         }
     }
 
-    /// La conferma in due tempi è stata data: i parametri da mandare.
+    /// The two-step confirmation was given: the parameters to send.
     pub fn confirm(&mut self) -> Option<(Value, String)> {
         let editor = self.editor.as_mut().filter(|e| !e.sending)?;
         match editor.pending.take()? {
@@ -481,7 +481,7 @@ impl ConflictBox {
         }
     }
 
-    /// La conferma in due tempi è stata rifiutata.
+    /// The two-step confirmation was declined.
     pub fn cancel(&mut self) {
         if let Some(editor) = &mut self.editor {
             editor.pending = None;
@@ -509,7 +509,7 @@ impl ConflictBox {
         (params, label)
     }
 
-    /// La risposta di `conflict.resolve`.
+    /// The answer of `conflict.resolve`.
     pub fn receive_resolve(
         &mut self,
         result: Result<Value, String>,
@@ -557,8 +557,8 @@ impl ConflictBox {
                 if let Some(editor) = &mut self.editor {
                     editor.error = Some(message.clone());
                 }
-                // Rifiuti senza scritture: si rilegge solo lo stato se qualcosa può essere
-                // cambiato (errore di git dopo il backup, risultato illeggibile).
+                // Refusals without writes: only the state is reread if something may have
+                // changed (git error after the backup, unreadable result).
                 let reload = !matches!(
                     kind,
                     Some(
@@ -579,7 +579,7 @@ impl ConflictBox {
 }
 
 impl App {
-    /// Le azioni dell'editor dei conflitti, smistate da [`App::apply`].
+    /// The actions of the conflict editor, dispatched by [`App::apply`].
     pub(crate) fn apply_conflict(&mut self, action: Action) {
         let generation = self.generation;
         let writing = self.executor.writing().is_some();
@@ -614,7 +614,7 @@ impl App {
             | Action::UseSide(_)
             | Action::DeleteConflicted
             | Action::ConfirmConflict => {}
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
         if let Some((params, seq)) = read {
             self.submit(SHOW, params, Request::ConflictShow(generation, seq));
@@ -628,8 +628,8 @@ impl App {
         }
     }
 
-    /// Risposta di `conflict.resolve`: stato nuovo (il riquadro dell'operazione si rilegge e
-    /// "Continua" si attiva quando non restano conflitti), oppure l'errore nell'editor.
+    /// Answer of `conflict.resolve`: new state (the operation box rereads and
+    /// "Continue" becomes active when no conflicts remain), or the error in the editor.
     pub(crate) fn receive_conflict(&mut self, generation: u64, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;

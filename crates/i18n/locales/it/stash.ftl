@@ -1,5 +1,5 @@
-# Stash: sezione, pannello, dialoghi e messaggi (stash.rs, view/stash_view.rs).
-# $name: il nome dello stash (stash@{0}); $title: il suo messaggio senza il prefisso di git.
+# Stash: section, panel, dialogs and messages (stash.rs, view/stash_view.rs).
+# $name: the stash name (stash@{0}); $title: its message without git's prefix.
 
 stash-origin-branch = su { $branch } · { $base }
 stash-origin-detached = HEAD staccata · { $base }

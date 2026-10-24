@@ -1,45 +1,45 @@
-//! Commit (`commit.create`): parametri, risultato e controlli comuni ai backend
+//! Commit (`commit.create`): parameters, result and checks shared by the backends
 //! (`impl-docs/git/commit.md`).
 //!
-//! I backend chiamano gli stessi controlli prima di scrivere, così `MemoryBackend` e
-//! `CliBackend` rifiutano gli stessi casi con gli stessi errori: messaggio vuoto, conflitti
-//! nell'indice, rebase/cherry-pick/revert in corso, niente da committare, `amend` senza commit
-//! o durante un merge, `amend` di un commit già pubblicato senza `"confirm": true`.
+//! The backends call the same checks before writing, so `MemoryBackend` and
+//! `CliBackend` reject the same cases with the same errors: empty message, conflicts
+//! in the index, rebase/cherry-pick/revert in progress, nothing to commit, `amend` without a commit
+//! or during a merge, `amend` of an already published commit without `"confirm": true`.
 
 use crate::EngineError;
 use project_domain::{Commit, EntryKind, Oid, Operation, Status};
 use serde::{Deserialize, Serialize};
 
-/// Id del comando, usato negli errori dei parametri.
+/// Id of the command, used in parameter errors.
 const COMMAND: &str = "commit.create";
 
-/// Parametri di `commit.create`: `{"message": string, "amend"?: bool, "confirm"?: bool}`.
+/// Parameters of `commit.create`: `{"message": string, "amend"?: bool, "confirm"?: bool}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommitRequest {
-    /// Il messaggio, passato a git com'è (via stdin, `git commit -F -`). La pulizia la fa git
-    /// secondo `commit.cleanup` dell'utente: senza configurazione, con `-F` vale `whitespace`
-    /// (spazi in fondo alle righe, righe vuote iniziali, finali e ripetute tolte; le righe che
-    /// iniziano con `#` **restano**, es. `#123 corregge ...`).
+    /// The message, passed to git as is (via stdin, `git commit -F -`). Cleanup is done by git
+    /// according to the user's `commit.cleanup`: with no configuration, with `-F` it is `whitespace`
+    /// (trailing spaces on lines, leading, trailing and repeated blank lines removed; lines
+    /// starting with `#` **stay**, e.g. `#123 fixes ...`).
     pub message: String,
-    /// Riscrive l'ultimo commit (`git commit --amend`) invece di crearne uno nuovo: stesso
-    /// autore e stessi genitori, albero dall'indice, messaggio nuovo.
+    /// Rewrites the last commit (`git commit --amend`) instead of creating a new one: same
+    /// author and same parents, tree from the index, new message.
     #[serde(default)]
     pub amend: bool,
-    /// Necessario solo con `amend` di un commit già pubblicato (raggiungibile da un branch
-    /// remoto): senza, [`EngineError::ConfirmRequired`]. Altrove è ignorato.
+    /// Needed only with `amend` of an already published commit (reachable from a remote
+    /// branch): without it, [`EngineError::ConfirmRequired`]. Ignored elsewhere.
     #[serde(default)]
     pub confirm: bool,
-    /// Non è un parametro di `commit.create`: lo imposta `cherry_pick.continue` /
-    /// `revert.continue` ([`CommitRequest::concluding`]) per concludere con il commit il
-    /// cherry-pick o il revert in corso (con `CHERRY_PICK_HEAD` git tiene l'autore originale).
-    /// `None`: un cherry-pick o un revert in corso rifiutano il commit.
+    /// Not a parameter of `commit.create`: set by `cherry_pick.continue` /
+    /// `revert.continue` ([`CommitRequest::concluding`]) to conclude the cherry-pick or the
+    /// revert in progress with the commit (with `CHERRY_PICK_HEAD` git keeps the original author).
+    /// `None`: a cherry-pick or revert in progress rejects the commit.
     #[serde(skip)]
     pub conclude: Option<Operation>,
 }
 
 impl CommitRequest {
-    /// Un commit nuovo con `message`.
+    /// A new commit with `message`.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -49,81 +49,81 @@ impl CommitRequest {
         }
     }
 
-    /// Lo stesso, per concludere l'operazione `op` in corso (cherry-pick o revert, da
-    /// `*.continue`): [`check_commit_state`] la lascia passare.
+    /// The same, to conclude the operation `op` in progress (cherry-pick or revert, from
+    /// `*.continue`): [`check_commit_state`] lets it through.
     pub fn concluding(mut self, op: Operation) -> Self {
         self.conclude = Some(op);
         self
     }
 
-    /// Lo stesso, come `amend` dell'ultimo commit.
+    /// The same, as `amend` of the last commit.
     pub fn amend(mut self) -> Self {
         self.amend = true;
         self
     }
 
-    /// Lo stesso, con `"confirm": true`.
+    /// The same, with `"confirm": true`.
     pub fn confirmed(mut self) -> Self {
         self.confirm = true;
         self
     }
 
-    /// [`EngineError::InvalidParams`] per un messaggio vuoto o di soli spazi (git lo
-    /// rifiuterebbe comunque: niente `--allow-empty-message`) o con un byte NUL (git non lo
-    /// accetta in un messaggio). Un messaggio di soli commenti passa: con la pulizia
-    /// `whitespace` (il default con `-F`) è un messaggio valido; se `commit.cleanup` dell'utente
-    /// toglie i commenti e non resta niente, git rifiuta il commit e il backend dà lo stesso
-    /// errore ([`EngineError::empty_commit_message`]).
+    /// [`EngineError::InvalidParams`] for an empty or whitespace-only message (git would
+    /// reject it anyway: no `--allow-empty-message`) or one with a NUL byte (git does not
+    /// accept it in a message). A comment-only message passes: with the `whitespace` cleanup
+    /// (the default with `-F`) it is a valid message; if the user's `commit.cleanup`
+    /// strips comments and nothing is left, git rejects the commit and the backend gives the same
+    /// error ([`EngineError::empty_commit_message`]).
     pub fn check_message(&self) -> Result<(), EngineError> {
         let reason = if self.message.trim().is_empty() {
-            "il messaggio è vuoto: scrivere almeno l'oggetto del commit"
+            msg!("engine-commit-message-empty")
         } else if self.message.contains('\0') {
-            "il messaggio contiene un byte NUL"
+            msg!("engine-commit-message-nul")
         } else {
             return Ok(());
         };
         Err(EngineError::InvalidParams {
             id: COMMAND,
-            reason: reason.to_owned(),
+            reason,
         })
     }
 }
 
-/// Risultato di [`GitBackend::commit`](crate::GitBackend::commit). `commit.create` aggiunge lo
-/// stato (`status`).
+/// Result of [`GitBackend::commit`](crate::GitBackend::commit). `commit.create` adds the
+/// state (`status`).
 ///
-/// Ha i valori prima e dopo che servono al diario delle operazioni (§7): il ref spostato
-/// (`branch`, o HEAD staccata), il suo valore prima (`previous`) e dopo (`commit.id`).
+/// It has the before and after values needed by the operation journal (§7): the moved ref
+/// (`branch`, or detached HEAD), its value before (`previous`) and after (`commit.id`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitOutcome {
-    /// Il commit creato, come in `repo.log`.
+    /// The created commit, as in `repo.log`.
     pub commit: Commit,
-    /// HEAD prima del commit; `None` per il primo commit di un branch. Con `amend`, il commit
-    /// riscritto.
+    /// HEAD before the commit; `None` for the first commit of a branch. With `amend`, the
+    /// rewritten commit.
     pub previous: Option<Oid>,
-    /// Il branch spostato, nome completo (es. `refs/heads/main`); `None` con HEAD staccata.
+    /// The moved branch, full name (e.g. `refs/heads/main`); `None` with detached HEAD.
     pub branch: Option<String>,
-    /// Solo con `amend`: il ref di backup (`refs/project/backup/amend-...`) che punta al commit
-    /// riscritto, salvato prima di scrivere. `None` anche se l'`amend` ha prodotto lo stesso
-    /// commit (`commit.id == previous`: niente è cambiato e il backup è stato tolto).
+    /// Only with `amend`: the backup ref (`refs/project/backup/amend-...`) pointing at the
+    /// rewritten commit, saved before writing. `None` also if the `amend` produced the same
+    /// commit (`commit.id == previous`: nothing changed and the backup was removed).
     pub backup: Option<String>,
-    /// Solo con `amend`: gli altri branch locali e i tag (nomi completi) che contengono il
-    /// commit riscritto e che quindi, dopo l'`amend`, restano sulla storia vecchia (divergono
-    /// da HEAD). Vuoto se nessuno. Campo aggiunto dopo la prima versione: chi lo legge da un
-    /// JSON più vecchio lo trova vuoto.
+    /// Only with `amend`: the other local branches and tags (full names) that contain the
+    /// rewritten commit and therefore, after the `amend`, stay on the old history (they diverge
+    /// from HEAD). Empty if none. Field added after the first version: whoever reads it from an
+    /// older JSON finds it empty.
     #[serde(default)]
     pub also_on: Vec<String>,
 }
 
-/// Come si dividono i ref che contengono il commit da riscrivere con `amend` (`containing`,
-/// nomi completi da `refs/heads/`, `refs/remotes/`, `refs/tags/`; `branch` è quello corrente):
-/// `(pubblicati, anche_su)`.
+/// How the refs containing the commit to rewrite with `amend` are split (`containing`,
+/// full names from `refs/heads/`, `refs/remotes/`, `refs/tags/`; `branch` is the current one):
+/// `(published, also_on)`.
 ///
-/// - Pubblicati (chiedono `"confirm": true`, [`check_amend_published`]): i branch remoti e i
-///   tag. Un tag resterebbe sul commit vecchio. Un push senza ref di tracciamento (push per
-///   URL, o ref remoti cancellati) non si vede: il commit risulta non pubblicato.
-/// - Anche su (`also_on` del risultato): gli altri branch locali e i tag, che dopo l'`amend`
-///   divergono da HEAD.
+/// - Published (they ask for `"confirm": true`, [`check_amend_published`]): remote branches and
+///   tags. A tag would stay on the old commit. A push without a tracking ref (push by
+///   URL, or deleted remote refs) is not seen: the commit counts as unpublished.
+/// - Also on (`also_on` of the result): the other local branches and tags, which after the `amend`
+///   diverge from HEAD.
 pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>, Vec<String>) {
     let published = containing
         .iter()
@@ -141,22 +141,22 @@ pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>
     (published, also_on)
 }
 
-/// I controlli sullo stato prima di un commit, uguali per tutti i backend. `has_head` dice se
-/// HEAD ha già un commit. Niente è stato modificato quando danno errore.
+/// The state checks before a commit, the same for all backends. `has_head` says whether
+/// HEAD already has a commit. Nothing has been modified when they fail.
 ///
-/// - File in conflitto nell'indice → [`EngineError::NotAllowed`] (git rifiuterebbe comunque).
-/// - Rebase, cherry-pick, revert o `git am` in corso → [`EngineError::NotAllowed`]: `git commit`
-///   concluderebbe o cambierebbe l'operazione in modi poco visibili (un cherry-pick prenderebbe
-///   l'autore del commit originale e chiuderebbe l'operazione; durante un rebase il commit
-///   finirebbe nella sequenza). Cherry-pick e revert si concludono con `*.continue` ([`CommitRequest::concluding`]); gli altri da
-///   terminale.
-/// - Merge in corso: il commit è il **commit di merge** (git aggiunge `MERGE_HEAD` ai genitori),
-///   anche con l'indice uguale a HEAD (merge senza modifiche, es. `-s ours`). Con `amend` è
-///   rifiutato, come fa git.
-/// - Bisect in corso: niente di speciale, il commit si fa.
-/// - `amend` senza commit in HEAD → [`EngineError::NotAllowed`].
-/// - Senza `amend`, niente in stage (e nessun merge in corso) → [`EngineError::NothingToCommit`]:
-///   mai un commit vuoto. Un file `intent-to-add` (`git add -N`) non conta, come per git.
+/// - Conflicted files in the index → [`EngineError::NotAllowed`] (git would reject it anyway).
+/// - Rebase, cherry-pick, revert or `git am` in progress → [`EngineError::NotAllowed`]: `git commit`
+///   would conclude or change the operation in hard-to-see ways (a cherry-pick would take
+///   the original commit's author and close the operation; during a rebase the commit
+///   would end up in the sequence). Cherry-pick and revert conclude with `*.continue` ([`CommitRequest::concluding`]); the others from the
+///   terminal.
+/// - Merge in progress: the commit is the **merge commit** (git adds `MERGE_HEAD` to the parents),
+///   even with the index equal to HEAD (merge without changes, e.g. `-s ours`). With `amend` it is
+///   rejected, as git does.
+/// - Bisect in progress: nothing special, the commit is made.
+/// - `amend` without a commit in HEAD → [`EngineError::NotAllowed`].
+/// - Without `amend`, nothing staged (and no merge in progress) → [`EngineError::NothingToCommit`]:
+///   never an empty commit. An `intent-to-add` file (`git add -N`) does not count, as for git.
 pub fn check_commit_state(
     status: &Status,
     has_head: bool,
@@ -170,10 +170,9 @@ pub fn check_commit_state(
         .map(|e| format!("`{}`", e.path))
         .collect();
     if !conflicts.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file in conflitto, niente committato: risolverli e metterli in stage \
-             (`index.stage`) prima del commit: {}",
-            conflicts.join(", ")
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-commit-conflicts",
+            files = conflicts.join(", ")
         )));
     }
     match status.operation {
@@ -183,33 +182,25 @@ pub fn check_commit_state(
             && matches!(op, Operation::CherryPick | Operation::Revert)
             && !amend) =>
         {
-            let name = match op {
-                Operation::Rebase => "un rebase",
-                Operation::CherryPick => "un cherry-pick",
-                Operation::Am => "un `git am`",
-                _ => "un revert",
+            // The selector of `engine-commit-operation`.
+            let operation = match op {
+                Operation::Rebase => "rebase",
+                Operation::CherryPick => "cherry-pick",
+                Operation::Am => "am",
+                _ => "revert",
             };
-            return Err(EngineError::NotAllowed(format!(
-                "è in corso {name}: un commit da qui lo cambierebbe in modo poco visibile, \
-                 niente committato. Concludere o annullare l'operazione (anche da terminale) e \
-                 riprovare"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-commit-operation",
+                operation = operation
             )));
         }
         Some(Operation::Merge) if amend => {
-            return Err(EngineError::NotAllowed(
-                "è in corso un merge: non si può fare `amend` dell'ultimo commit, niente \
-                 committato. Il commit senza `amend` conclude il merge"
-                    .to_owned(),
-            ));
+            return Err(EngineError::NotAllowed(msg!("engine-commit-amend-merge")));
         }
         _ => {}
     }
     if amend && !has_head {
-        return Err(EngineError::NotAllowed(
-            "`amend` senza un commit da riscrivere: il branch non ha ancora commit, niente \
-             committato"
-                .to_owned(),
-        ));
+        return Err(EngineError::NotAllowed(msg!("engine-commit-amend-unborn")));
     }
     let merging = status.operation == Some(Operation::Merge);
     if !amend && !merging && !status.entries.iter().any(|e| e.is_staged()) {
@@ -218,10 +209,10 @@ pub fn check_commit_state(
     Ok(())
 }
 
-/// Con `amend` di un commit già pubblicato (`published`: i branch remoti e i tag da cui è
-/// raggiungibile, vedi [`amend_impact`]) serve `"confirm": true`: chi ha già scaricato il commit
-/// si troverebbe una storia diversa, il push successivo andrebbe forzato e un tag resterebbe sul
-/// commit vecchio. Senza conferma, [`EngineError::ConfirmRequired`] con i ref.
+/// With `amend` of an already published commit (`published`: the remote branches and tags it is
+/// reachable from, see [`amend_impact`]) `"confirm": true` is needed: whoever already downloaded the commit
+/// would find a different history, the next push would have to be forced and a tag would stay on the
+/// old commit. Without confirmation, [`EngineError::ConfirmRequired`] with the refs.
 pub fn check_amend_published(
     request: &CommitRequest,
     published: &[String],
@@ -232,21 +223,15 @@ pub fn check_amend_published(
     let names: Vec<String> = published.iter().map(|n| format!("`{n}`")).collect();
     Err(EngineError::ConfirmRequired {
         command: COMMAND,
-        reason: format!(
-            "`amend` riscriverebbe un commit già pubblicato o con un tag (raggiungibile da \
-             {}): chi lo ha già scaricato vedrebbe una storia diversa, il push andrebbe forzato \
-             e i tag resterebbero sul commit vecchio. Il commit riscritto resterebbe in un ref \
-             di backup",
-            names.join(", ")
-        ),
+        reason: msg!("engine-commit-amend-published", refs = names.join(", ")),
         expected: None,
     })
 }
 
-/// Il messaggio come lo pulisce git con `--cleanup=whitespace` (il default di `git commit -F`):
-/// spazi in fondo alle righe tolti, righe vuote iniziali e finali tolte, più righe vuote di
-/// seguito ridotte a una, un a capo finale. Le righe di commento restano. Serve al
-/// `MemoryBackend`, che non ha git; il `CliBackend` lascia fare a git.
+/// The message as git cleans it with `--cleanup=whitespace` (the default of `git commit -F`):
+/// trailing spaces on lines removed, leading and trailing blank lines removed, consecutive blank lines
+/// reduced to one, a final newline. Comment lines stay. Used by the
+/// `MemoryBackend`, which has no git; the `CliBackend` leaves it to git.
 pub fn cleanup_message(message: &str) -> String {
     let mut out = String::new();
     let mut blank = false;
@@ -266,9 +251,9 @@ pub fn cleanup_message(message: &str) -> String {
     out
 }
 
-/// `(oggetto, corpo)` di un messaggio pulito, come `%s` e `%b` di git: l'oggetto è il primo
-/// paragrafo con le righe unite da uno spazio, il corpo il resto dopo le righe vuote, senza a
-/// capo finali.
+/// `(subject, body)` of a cleaned message, like git's `%s` and `%b`: the subject is the first
+/// paragraph with its lines joined by a space, the body the rest after the blank lines, without
+/// trailing newlines.
 pub fn split_message(message: &str) -> (String, String) {
     let mut lines = message.lines();
     let mut summary = Vec::new();
@@ -298,32 +283,29 @@ mod tests {
             let err = CommitRequest::new(bad).check_message().unwrap_err();
             assert!(matches!(err, EngineError::InvalidParams { .. }), "{bad:?}");
         }
-        for good in ["x", "# solo un commento", "#123 corregge\n"] {
+        for good in ["x", "# just a comment", "#123 fixes\n"] {
             CommitRequest::new(good).check_message().unwrap();
         }
     }
 
     #[test]
     fn cleanup_like_git_whitespace() {
-        // `printf '...' | git commit -F -` con `--cleanup=whitespace`.
+        // `printf '...' | git commit -F -` with `--cleanup=whitespace`.
         assert_eq!(
-            cleanup_message("\n# commento\n\nTitolo  \n\n\ncorpo\n# altro\n\n"),
-            "# commento\n\nTitolo\n\ncorpo\n# altro\n"
+            cleanup_message("\n# comment\n\nTitle  \n\n\nbody\n# other\n\n"),
+            "# comment\n\nTitle\n\nbody\n# other\n"
         );
-        assert_eq!(cleanup_message("solo"), "solo\n");
+        assert_eq!(cleanup_message("only"), "only\n");
         assert_eq!(cleanup_message("  \n"), "");
     }
 
     #[test]
     fn split_like_git_format() {
         assert_eq!(
-            split_message("Titolo\nsu due righe\n\n\nCorpo\n\naltro\n"),
-            (
-                "Titolo su due righe".to_owned(),
-                "Corpo\n\naltro".to_owned()
-            )
+            split_message("Title\non two lines\n\n\nBody\n\nother\n"),
+            ("Title on two lines".to_owned(), "Body\n\nother".to_owned())
         );
-        assert_eq!(split_message("solo\n"), ("solo".to_owned(), String::new()));
+        assert_eq!(split_message("only\n"), ("only".to_owned(), String::new()));
     }
 
     fn status_with(entries: Vec<StatusEntry>, operation: Option<Operation>) -> Status {
@@ -338,7 +320,7 @@ mod tests {
         let sample = MemoryBackend::sample().status().unwrap();
         check_commit_state(&sample, true, &CommitRequest::new("m")).unwrap();
         check_commit_state(&sample, true, &CommitRequest::new("m").amend()).unwrap();
-        // Solo modifiche fuori stage e non tracciati: niente da committare.
+        // Only unstaged changes and untracked files: nothing to commit.
         let unstaged: Vec<_> = sample
             .entries
             .iter()
@@ -350,13 +332,13 @@ mod tests {
             check_commit_state(&status, true, &CommitRequest::new("m")),
             Err(EngineError::NothingToCommit)
         ));
-        // Ma con `amend` si cambia solo il messaggio.
+        // But with `amend` only the message changes.
         check_commit_state(&status, true, &CommitRequest::new("m").amend()).unwrap();
         assert!(matches!(
             check_commit_state(&status, false, &CommitRequest::new("m").amend()),
             Err(EngineError::NotAllowed(_))
         ));
-        // Un merge senza modifiche si conclude; non si fa `amend`.
+        // A merge without changes concludes; no `amend`.
         let merging = status_with(unstaged, Some(Operation::Merge));
         check_commit_state(&merging, true, &CommitRequest::new("m")).unwrap();
         assert!(check_commit_state(&merging, true, &CommitRequest::new("m").amend()).is_err());
@@ -369,7 +351,7 @@ mod tests {
             let status = status_with(sample.entries.clone(), Some(op));
             let err = check_commit_state(&status, true, &CommitRequest::new("m")).unwrap_err();
             assert!(matches!(err, EngineError::NotAllowed(_)), "{op:?}");
-            // Solo `*.continue` conclude cherry-pick e revert (mai con `amend`).
+            // Only `*.continue` concludes cherry-pick and revert (never with `amend`).
             let concluding = CommitRequest::new("m").concluding(op);
             let ok = check_commit_state(&status, true, &concluding).is_ok();
             assert_eq!(
@@ -381,7 +363,7 @@ mod tests {
         }
         let status = status_with(sample.entries.clone(), Some(Operation::Bisect));
         check_commit_state(&status, true, &CommitRequest::new("m")).unwrap();
-        // Un conflitto blocca tutto.
+        // A conflict blocks everything.
         let mut entries = sample.entries.clone();
         entries.push(StatusEntry {
             path: RepoPath::from("c.txt"),
@@ -411,7 +393,7 @@ mod tests {
     #[test]
     fn amend_impact_splits_published_and_diverging_refs() {
         let refs: Vec<String> = [
-            "refs/heads/altro",
+            "refs/heads/another",
             "refs/heads/main",
             "refs/remotes/origin/main",
             "refs/tags/v1",
@@ -420,12 +402,12 @@ mod tests {
         .into();
         let (published, also_on) = amend_impact(&refs, Some("refs/heads/main"));
         assert_eq!(published, ["refs/remotes/origin/main", "refs/tags/v1"]);
-        assert_eq!(also_on, ["refs/heads/altro", "refs/tags/v1"]);
-        // Con HEAD staccata anche `main` diverge.
+        assert_eq!(also_on, ["refs/heads/another", "refs/tags/v1"]);
+        // With detached HEAD `main` diverges too.
         let (_, also_on) = amend_impact(&refs, None);
         assert_eq!(
             also_on,
-            ["refs/heads/altro", "refs/heads/main", "refs/tags/v1"]
+            ["refs/heads/another", "refs/heads/main", "refs/tags/v1"]
         );
     }
 

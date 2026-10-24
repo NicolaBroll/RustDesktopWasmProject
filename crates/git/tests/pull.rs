@@ -1,7 +1,8 @@
-//! Test di integrazione di `remote.pull` (S26) con il `CliBackend` e un remoto locale (`git
-//! init --bare`) su cui un secondo clone pubblica: fast-forward, merge, rebase secondo la
-//! configurazione, conflitti (il merge resta in corso, il rebase si annulla), modifiche locali, branch senza upstream, undo e redo,
-//! branch non attivo, nomi che iniziano con `-`.
+//! Integration tests of `remote.pull` (S26) with the `CliBackend` and a local remote (`git
+//! init --bare`) to which a second clone publishes: fast-forward, merge, rebase according to
+//! the configuration, conflicts (the merge stays in progress, the rebase is aborted), local
+//! changes, branches without upstream, undo and redo, non-checked-out branch, names starting
+//! with `-`.
 
 mod common;
 
@@ -24,8 +25,8 @@ fn pull(r: &Registry, s: &mut Session, params: Value) -> Value {
         .unwrap_or_else(|e| panic!("remote.pull: {e}"))
 }
 
-/// Il remoto bare, un clone che ci pubblica (`other`) e il repo sotto test (`work`): tutti e
-/// due con `main` su `c1` (`a.txt`), che segue `origin/main`.
+/// The bare remote, a clone that publishes to it (`other`) and the repo under test (`work`):
+/// both with `main` on `c1` (`a.txt`), which follows `origin/main`.
 struct Setup {
     _remote: Repo,
     other: Repo,
@@ -37,7 +38,7 @@ fn setup() -> Setup {
     let remote = Repo::bare();
     let other = Repo::new();
     other.add_remote("origin", &remote);
-    let c1 = other.commit_file("a.txt", "uno\n", "primo");
+    let c1 = other.commit_file("a.txt", "one\n", "first");
     other.push("origin", "HEAD", "main");
     other.set_upstream("main", "origin");
     let work = Repo::new();
@@ -53,7 +54,7 @@ fn setup() -> Setup {
     }
 }
 
-/// `other` pubblica un commit su `main` che scrive `file`.
+/// `other` publishes a commit on `main` that writes `file`.
 fn publish(other: &Repo, file: &str, content: &str, message: &str) -> Oid {
     let id = other.commit_file(file, content, message);
     other.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
@@ -86,7 +87,7 @@ fn fast_forward_then_undo_and_redo() {
         _remote: _keep,
         ..
     } = setup();
-    let c2 = publish(&other, "b.txt", "bi\n", "secondo");
+    let c2 = publish(&other, "b.txt", "bi\n", "second");
     let (r, mut s) = open(&work);
 
     let out = pull(&r, &mut s, json!({}));
@@ -113,31 +114,31 @@ fn fast_forward_then_undo_and_redo() {
     assert!(clean(&work));
     assert_eq!(out["can_undo"], true);
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Pull di `main` (fast-forward")
+            .starts_with("Pull of `main` (fast-forward")
     );
     assert_eq!(out["status"]["head"]["Branch"]["target"], c2.to_string());
 
-    // Undo: branch, indice e worktree tornano a `c1`; le modifiche non legate restano.
-    work.write("a.txt", "modifica mia\n");
+    // Undo: branch, index and worktree go back to `c1`; unrelated changes stay.
+    work.write("a.txt", "my change\n");
     let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(undo["undone"]["command"], "remote.pull");
     assert_eq!(work.rev("HEAD"), c1);
     assert_eq!(work.git(&["symbolic-ref", "HEAD"]), "refs/heads/main");
     assert_eq!(read(&work, "b.txt"), None);
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("modifica mia\n"));
-    // `c2` resta su `origin/main`: nessun backup in più.
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("my change\n"));
+    // `c2` stays on `origin/main`: no extra backup.
     assert_eq!(undo["backups"], json!([]));
 
     let redo = r.run("edit.redo", &mut s, json!({})).unwrap();
     assert_eq!(redo["redone"]["command"], "remote.pull");
     assert_eq!(work.rev("HEAD"), c2);
     assert_eq!(read(&work, "b.txt").as_deref(), Some("bi\n"));
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("modifica mia\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("my change\n"));
 
-    // Già aggiornato: niente da fare, niente nel diario.
+    // Already up to date: nothing to do, nothing in the journal.
     let out = pull(&r, &mut s, json!({ "remote": "origin" }));
     assert_eq!(out["strategy"], "up_to_date");
     assert_eq!(out["backup"], Value::Null);
@@ -155,45 +156,45 @@ fn undo_of_a_pull_never_overwrites_local_changes() {
         _remote: _keep,
         ..
     } = setup();
-    let c2 = publish(&other, "a.txt", "due\n", "secondo");
+    let c2 = publish(&other, "a.txt", "two\n", "second");
     let (r, mut s) = open(&work);
     pull(&r, &mut s, json!({}));
     assert_eq!(work.rev("HEAD"), c2);
 
-    // `a.txt` è cambiato dal pull e ora ha una modifica locale: l'undo la perderebbe.
-    work.write("a.txt", "mia\n");
+    // `a.txt` was changed by the pull and now has a local change: the undo would lose it.
+    work.write("a.txt", "mine\n");
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(work.rev("HEAD"), c2);
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("mia\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("mine\n"));
     assert_eq!(
         r.run("edit.history", &mut s, json!({})).unwrap()["can_undo"],
         true
     );
 
-    // Un file che l'undo ricreerebbe e che ora esiste come ignorato: rifiutato anche quello.
+    // A file that the undo would recreate and that now exists as ignored: refused too.
     work.git(&["checkout", "--quiet", "--", "a.txt"]);
     other.git(&["rm", "--quiet", "a.txt"]);
-    other.commit("togli a");
+    other.commit("remove a");
     other.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
     pull(&r, &mut s, json!({}));
     assert!(read(&work, "a.txt").is_none());
     work.write(".git/info/exclude", "a.txt\n");
-    work.write("a.txt", "ignorato ma mio\n");
+    work.write("a.txt", "ignored but mine\n");
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("ignorato ma mio\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("ignored but mine\n"));
     std::fs::remove_file(work.path().join("a.txt")).unwrap();
     r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD"), c2);
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("due\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("two\n"));
 
-    // Il branch spostato da fuori: `UndoConflict`, niente cambia.
+    // The branch moved from outside: `UndoConflict`, nothing changes.
     let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(undo["undone"]["command"], "remote.pull");
     assert_eq!(work.rev("HEAD"), c1);
     r.run("edit.redo", &mut s, json!({})).unwrap();
-    work.commit_file("c.txt", "c\n", "da terminale");
+    work.commit_file("c.txt", "c\n", "from terminal");
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
 }
@@ -207,9 +208,9 @@ fn diverged_branches_merge_by_default() {
         _remote: _keep,
         ..
     } = setup();
-    let c2 = publish(&other, "b.txt", "bi\n", "secondo");
-    let mine = work.commit_file("c.txt", "ci\n", "mio");
-    // Opzioni del merge dalla configurazione che cambierebbero il risultato: neutralizzate.
+    let c2 = publish(&other, "b.txt", "bi\n", "second");
+    let mine = work.commit_file("c.txt", "ci\n", "mine");
+    // Merge options from the configuration that would change the result: neutralized.
     work.git(&["config", "branch.main.mergeOptions", "--squash --no-commit"]);
     work.git(&["config", "merge.ff", "only"]);
     let (r, mut s) = open(&work);
@@ -230,7 +231,7 @@ fn diverged_branches_merge_by_default() {
     assert!(clean(&work));
     assert_eq!(read(&work, "b.txt").as_deref(), Some("bi\n"));
 
-    // Undo: il commit di merge va in un backup, il branch torna a `mine`.
+    // Undo: the merge commit goes into a backup, the branch goes back to `mine`.
     let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD"), mine);
     let saved = undo["backups"].as_array().unwrap();
@@ -240,7 +241,7 @@ fn diverged_branches_merge_by_default() {
     assert_eq!(read(&work, "b.txt"), None);
     let _ = c1;
 
-    // `pull.ff=false`: un commit di merge anche quando si potrebbe fare fast-forward.
+    // `pull.ff=false`: a merge commit even when a fast-forward would be possible.
     let (r, mut s) = open(&work);
     work.git(&["reset", "--quiet", "--hard", "origin/main~1"]);
     work.git(&["config", "pull.ff", "false"]);
@@ -252,13 +253,13 @@ fn diverged_branches_merge_by_default() {
         2
     );
 
-    // `pull.ff=only` con branch divergenti: rifiutato, il branch non si tocca.
+    // `pull.ff=only` with diverged branches: refused, the branch is not touched.
     work.git(&["reset", "--quiet", "--hard", &mine.to_string()]);
     work.git(&["config", "pull.ff", "only"]);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(work.rev("HEAD"), mine);
-    // `strategy` sostituisce la configurazione.
+    // `strategy` overrides the configuration.
     let out = pull(&r, &mut s, json!({ "strategy": "rebase" }));
     assert_eq!(out["strategy"], "rebase");
     assert_eq!(out["strategy_source"], "param");
@@ -272,8 +273,8 @@ fn rebase_from_the_configuration() {
         _remote: _keep,
         ..
     } = setup();
-    let c2 = publish(&other, "b.txt", "bi\n", "secondo");
-    let mine = work.commit_file("c.txt", "ci\n", "mio");
+    let c2 = publish(&other, "b.txt", "bi\n", "second");
+    let mine = work.commit_file("c.txt", "ci\n", "mine");
     work.git(&["config", "pull.rebase", "true"]);
     let (r, mut s) = open(&work);
 
@@ -283,15 +284,15 @@ fn rebase_from_the_configuration() {
     let rebased = work.rev("HEAD");
     assert_ne!(rebased, mine);
     assert_eq!(work.git(&["log", "-1", "--format=%P"]), c2.to_string());
-    assert_eq!(work.git(&["log", "-1", "--format=%s"]), "mio");
+    assert_eq!(work.git(&["log", "-1", "--format=%s"]), "mine");
     assert!(clean(&work));
-    // Il commit di prima è nel backup del pull.
+    // The previous commit is in the pull backup.
     let backup = out["backup"].as_str().unwrap();
     assert_eq!(work.rev(backup), mine);
-    assert!(next_undo(&r, &mut s).contains("rebase su origin/main"));
+    assert!(next_undo(&r, &mut s).contains("rebase onto origin/main"));
 
-    // Undo: torna al commit originale (tenuto dal backup del pull, nessun backup in più per
-    // lui; il commit riscritto sì).
+    // Undo: goes back to the original commit (kept by the pull backup, no extra backup for
+    // it; the rewritten commit gets one).
     let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD"), mine);
     let saved = undo["backups"].as_array().unwrap();
@@ -300,12 +301,12 @@ fn rebase_from_the_configuration() {
     r.run("edit.redo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD"), rebased);
 
-    // `branch.<nome>.rebase` vince su `pull.rebase`.
+    // `branch.<name>.rebase` wins over `pull.rebase`.
     work.git(&["reset", "--quiet", "--hard", &mine.to_string()]);
     work.git(&["config", "branch.main.rebase", "false"]);
     let out = pull(&r, &mut s, json!({}));
     assert_eq!(out["strategy"], "merge");
-    // `interactive`: rifiutato prima del fetch.
+    // `interactive`: refused before the fetch.
     work.git(&["reset", "--quiet", "--hard", &mine.to_string()]);
     work.git(&["config", "branch.main.rebase", "interactive"]);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
@@ -314,7 +315,7 @@ fn rebase_from_the_configuration() {
 }
 
 fn next_undo(r: &Registry, s: &mut Session) -> String {
-    r.run("edit.history", s, json!({})).unwrap()["next_undo"]
+    r.run("edit.history", s, json!({})).unwrap()["next_undo"]["text"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -328,10 +329,10 @@ fn a_merge_conflict_stays_in_progress_then_continue() {
         _remote: _keep,
         ..
     } = setup();
-    let theirs = publish(&other, "a.txt", "loro\n", "loro");
-    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
-    // Un non tracciato qualsiasi non blocca il pull e resta com'è.
-    work.write("appunti.txt", "?\n");
+    let theirs = publish(&other, "a.txt", "theirs\n", "theirs");
+    let mine = work.commit_file("a.txt", "ours\n", "ours");
+    // Any untracked file does not block the pull and stays as it is.
+    work.write("notes.txt", "?\n");
     let (r, mut s) = open(&work);
     let out = pull(&r, &mut s, json!({}));
     assert_eq!(out["strategy"], "merge");
@@ -344,14 +345,14 @@ fn a_merge_conflict_stays_in_progress_then_continue() {
     assert_eq!(out["before"], mine.to_string());
     assert_eq!(out["after"], mine.to_string());
     assert_eq!(out["warnings"], json!([]));
-    // Il backup resta, niente nel diario, il fetch è fatto.
+    // The backup stays, nothing in the journal, the fetch is done.
     let backup = out["backup"].as_str().unwrap().to_owned();
     assert!(backup.starts_with("refs/project/backup/pull-"), "{backup}");
     assert_eq!(backups(&work), vec![backup.clone()]);
     assert_eq!(work.rev(&backup), mine);
     assert_eq!(out["can_undo"], false);
     assert_eq!(work.rev("origin/main"), theirs);
-    // Il merge è in corso: MERGE_HEAD è l'upstream, il messaggio è quello del pull.
+    // The merge is in progress: MERGE_HEAD is the upstream, the message is the pull one.
     assert_eq!(work.rev("HEAD"), mine);
     assert_eq!(work.rev("MERGE_HEAD"), theirs);
     let merge_msg = std::fs::read_to_string(work.path().join(".git/MERGE_MSG")).unwrap();
@@ -366,13 +367,13 @@ fn a_merge_conflict_stays_in_progress_then_continue() {
     assert_eq!(op["incoming"][0]["label"], "origin/main");
     assert_eq!(op["continue"], "merge.continue");
     assert_eq!(op["message"], "Merge remote-tracking branch 'origin/main'");
-    // Un altro pull è rifiutato finché il merge è in corso; anche l'undo.
+    // Another pull is refused while the merge is in progress; so is the undo.
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(r.run("edit.undo", &mut s, json!({})).is_err());
 
-    // Risolto e messo in stage, `merge.continue` fa il commit di merge e va nel diario.
-    work.write("a.txt", "risolto\n");
+    // Resolved and staged, `merge.continue` makes the merge commit and goes into the journal.
+    work.write("a.txt", "resolved\n");
     r.run("index.stage", &mut s, json!({ "paths": ["a.txt"] }))
         .unwrap();
     let done = r.run("merge.continue", &mut s, json!({})).unwrap();
@@ -394,11 +395,11 @@ fn a_merge_conflict_stays_in_progress_then_continue() {
         "{}",
         next_undo(&r, &mut s)
     );
-    assert_eq!(read(&work, "appunti.txt").as_deref(), Some("?\n"));
-    // L'undo riporta il branch a prima del pull, con indice e worktree.
+    assert_eq!(read(&work, "notes.txt").as_deref(), Some("?\n"));
+    // The undo brings the branch back to before the pull, with index and worktree.
     r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD"), mine);
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("ours\n"));
     r.run("edit.redo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD"), merge);
 }
@@ -411,17 +412,17 @@ fn a_merge_conflict_then_abort_is_back_to_before() {
         _remote: _keep,
         ..
     } = setup();
-    publish(&other, "a.txt", "loro\n", "loro");
-    publish(&other, "b.txt", "nuovo\n", "b dal remoto");
-    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
+    publish(&other, "a.txt", "theirs\n", "theirs");
+    publish(&other, "b.txt", "new\n", "b from remote");
+    let mine = work.commit_file("a.txt", "ours\n", "ours");
     let (r, mut s) = open(&work);
     let out = pull(&r, &mut s, json!({ "strategy": "merge" }));
     assert_eq!(out["in_progress"], true);
     assert_eq!(out["conflicts"], json!(["a.txt"]));
-    assert_eq!(read(&work, "b.txt").as_deref(), Some("nuovo\n"));
+    assert_eq!(read(&work, "b.txt").as_deref(), Some("new\n"));
     let backup = out["backup"].as_str().unwrap().to_owned();
 
-    // Senza conferma niente cambia.
+    // Without confirmation nothing changes.
     let err = r.run("merge.abort", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
     assert!(work.path().join(".git/MERGE_HEAD").exists());
@@ -435,16 +436,16 @@ fn a_merge_conflict_then_abort_is_back_to_before() {
             .starts_with("refs/project/backup/merge-abort-"),
         "{aborted}"
     );
-    // Tutto com'era prima del pull: il worktree era pulito.
+    // Everything as it was before the pull: the worktree was clean.
     assert_eq!(work.rev("HEAD"), mine);
     assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("ours\n"));
     assert_eq!(read(&work, "b.txt"), None);
     assert!(!work.path().join(".git/MERGE_HEAD").exists());
     assert_eq!(aborted["can_undo"], false);
-    // Il backup del pull resta (è il branch com'era).
+    // The pull backup stays (it is the branch as it was).
     assert!(backups(&work).contains(&backup), "{:?}", backups(&work));
-    // Il pull si può ripetere.
+    // The pull can be repeated.
     let out = pull(&r, &mut s, json!({}));
     assert_eq!(out["in_progress"], true);
 }
@@ -457,8 +458,8 @@ fn a_rebase_conflict_is_still_aborted_and_reported() {
         _remote: _keep,
         ..
     } = setup();
-    publish(&other, "a.txt", "loro\n", "loro");
-    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
+    publish(&other, "a.txt", "theirs\n", "theirs");
+    let mine = work.commit_file("a.txt", "ours\n", "ours");
     work.git(&["config", "pull.rebase", "true"]);
     let (r, mut s) = open(&work);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
@@ -477,20 +478,20 @@ fn a_rebase_conflict_is_still_aborted_and_reported() {
     assert_eq!(*operation, PullOperation::Rebase);
     assert_eq!(files, &["a.txt"]);
     assert!(message.contains("CONFLICT"), "{message}");
-    // Annullato: tutto com'era, nessuna operazione in corso, nessun backup rimasto.
+    // Aborted: everything as it was, no operation in progress, no backup left.
     assert_eq!(work.rev("HEAD"), mine);
     assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("nostra\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("ours\n"));
     assert!(!work.path().join(".git/MERGE_HEAD").exists());
     assert!(!work.path().join(".git/rebase-merge").exists());
     assert_eq!(backups(&work), Vec::<String>::new());
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
     assert_eq!(history["can_undo"], false);
-    // Il fetch resta fatto.
+    // The fetch stays done.
     assert_ne!(work.rev("origin/main"), work.rev("HEAD~1"));
 }
 
-/// Installa l'hook `name` di `repo` con lo script `body` (dopo `#!/bin/sh`).
+/// Installs the hook `name` of `repo` with the script `body` (after `#!/bin/sh`).
 fn install_hook(repo: &Repo, name: &str, body: &str) -> std::path::PathBuf {
     let hook = repo.path().join(".git/hooks").join(name);
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -505,16 +506,16 @@ fn install_hook(repo: &Repo, name: &str, body: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_failed_rebase_abort_keeps_the_backup() {
-    // L'hook `post-checkout` (il rebase lo esegue dopo il checkout dell'upstream) lascia
-    // `index.lock`: il pick si ferma e anche `rebase --abort` fallisce, il rebase resta in corso.
+    // The `post-checkout` hook (the rebase runs it after checking out the upstream) leaves
+    // `index.lock`: the pick stops and `rebase --abort` fails too, the rebase stays in progress.
     let Setup {
         other,
         work,
         _remote: _keep,
         ..
     } = setup();
-    publish(&other, "b.txt", "b\n", "dal remoto");
-    let mine = work.commit_file("c.txt", "c\n", "mio");
+    publish(&other, "b.txt", "b\n", "from remote");
+    let mine = work.commit_file("c.txt", "c\n", "mine");
     install_hook(
         &work,
         "post-checkout",
@@ -524,18 +525,21 @@ fn a_failed_rebase_abort_keeps_the_backup() {
     let err = r
         .run("remote.pull", &mut s, json!({ "strategy": "rebase" }))
         .unwrap_err();
-    assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    assert!(matches!(err, EngineError::GitWithReason { .. }), "{err}");
     let text = err.to_string();
-    assert!(text.contains("--abort` non è riuscito"), "{text}");
+    assert!(text.contains("--abort` failed"), "{text}");
     let kept = backups(&work);
     assert_eq!(kept.len(), 1, "{kept:?}");
     assert!(kept[0].starts_with("refs/project/backup/pull-"), "{kept:?}");
-    assert!(text.contains(&kept[0]), "l'errore nomina il backup: {text}");
+    assert!(
+        text.contains(&kept[0]),
+        "the error names the backup: {text}"
+    );
     assert_eq!(work.rev(&kept[0]), mine);
     assert!(work.path().join(".git/rebase-merge").exists());
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
     assert_eq!(history["can_undo"], false);
-    // Pulizia da terminale: tolto il lock, il rebase si annulla e il branch è com'era.
+    // Cleanup from the terminal: with the lock removed, the rebase aborts and the branch is as it was.
     std::fs::remove_file(work.path().join(".git/index.lock")).unwrap();
     std::fs::remove_file(work.path().join(".git/hooks/post-checkout")).unwrap();
     work.git(&["rebase", "--abort"]);
@@ -553,13 +557,13 @@ fn a_non_utf8_conflict_is_listed_once() {
         ..
     } = setup();
     let name = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
-    std::fs::write(other.path().join(name), "loro\n").unwrap();
+    std::fs::write(other.path().join(name), "theirs\n").unwrap();
     other.git(&["add", "-A"]);
-    other.commit("loro");
+    other.commit("theirs");
     other.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
-    std::fs::write(work.path().join(name), "nostra\n").unwrap();
+    std::fs::write(work.path().join(name), "ours\n").unwrap();
     work.git(&["add", "-A"]);
-    work.commit("nostra");
+    work.commit("ours");
     let (r, mut s) = open(&work);
     let out = pull(&r, &mut s, json!({}));
     assert_eq!(out["in_progress"], true);
@@ -579,8 +583,8 @@ fn a_merge_stopped_by_a_hook_stays_in_progress() {
         _remote: _keep,
         ..
     } = setup();
-    publish(&other, "b.txt", "b\n", "dal remoto");
-    let mine = work.commit_file("c.txt", "c\n", "mio");
+    publish(&other, "b.txt", "b\n", "from remote");
+    let mine = work.commit_file("c.txt", "c\n", "mine");
     let hook = install_hook(&work, "pre-merge-commit", "echo no >&2\nexit 1\n");
     let (r, mut s) = open(&work);
     let out = pull(&r, &mut s, json!({}));
@@ -591,7 +595,7 @@ fn a_merge_stopped_by_a_hook_stays_in_progress() {
     assert_eq!(out["can_undo"], false);
     let op = r.run("repo.operation", &mut s, json!({})).unwrap();
     assert_eq!(op["ready"], true);
-    // Tolto l'hook, `merge.continue` conclude (`git commit` non usa `pre-merge-commit`).
+    // With the hook removed, `merge.continue` finishes (`git commit` does not use `pre-merge-commit`).
     std::fs::remove_file(&hook).unwrap();
     r.run("merge.continue", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD^1"), mine);
@@ -607,44 +611,44 @@ fn local_changes_block_the_pull() {
         _remote: _keep,
         ..
     } = setup();
-    let c2 = publish(&other, "a.txt", "due\n", "secondo");
+    let c2 = publish(&other, "a.txt", "two\n", "second");
     let (r, mut s) = open(&work);
 
-    // Fast-forward che sovrascriverebbe una modifica locale: git rifiuta, niente cambia.
-    work.write("a.txt", "mia\n");
+    // Fast-forward that would overwrite a local change: git refuses, nothing changes.
+    work.write("a.txt", "mine\n");
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(err.to_string().contains("`a.txt`"), "{err}");
     assert_eq!(work.rev("HEAD"), c1);
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("mia\n"));
-    assert_eq!(work.rev("origin/main"), c2, "il fetch è fatto");
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("mine\n"));
+    assert_eq!(work.rev("origin/main"), c2, "the fetch is done");
     assert_eq!(backups(&work), Vec::<String>::new());
 
-    // Un non tracciato che il pull creerebbe: rifiutato, il file resta.
+    // An untracked file that the pull would create: refused, the file stays.
     work.git(&["checkout", "--quiet", "--", "a.txt"]);
-    publish(&other, "nuovo.txt", "loro\n", "nuovo");
-    work.write("nuovo.txt", "mio\n");
+    publish(&other, "new.txt", "theirs\n", "new");
+    work.write("new.txt", "mine\n");
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert_eq!(read(&work, "nuovo.txt").as_deref(), Some("mio\n"));
+    assert_eq!(read(&work, "new.txt").as_deref(), Some("mine\n"));
     assert_eq!(work.rev("HEAD"), c1);
-    std::fs::remove_file(work.path().join("nuovo.txt")).unwrap();
+    std::fs::remove_file(work.path().join("new.txt")).unwrap();
 
-    // Un merge con qualunque modifica ai file tracciati: rifiutato prima di scrivere.
-    work.commit_file("c.txt", "c\n", "mio");
+    // A merge with any change to tracked files: refused before writing.
+    work.commit_file("c.txt", "c\n", "mine");
     let mine = work.rev("HEAD");
-    work.write("c.txt", "modifica\n");
+    work.write("c.txt", "change\n");
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(err.to_string().contains("autostash"), "{err}");
     assert_eq!(work.rev("HEAD"), mine);
-    assert_eq!(read(&work, "c.txt").as_deref(), Some("modifica\n"));
-    // Un non tracciato qualsiasi invece non blocca.
+    assert_eq!(read(&work, "c.txt").as_deref(), Some("change\n"));
+    // Any untracked file, instead, does not block.
     work.git(&["checkout", "--quiet", "--", "c.txt"]);
-    work.write("appunti.txt", "?\n");
+    work.write("notes.txt", "?\n");
     let out = pull(&r, &mut s, json!({}));
     assert_eq!(out["strategy"], "merge");
-    assert_eq!(read(&work, "appunti.txt").as_deref(), Some("?\n"));
+    assert_eq!(read(&work, "notes.txt").as_deref(), Some("?\n"));
 }
 
 #[test]
@@ -656,29 +660,29 @@ fn no_upstream_detached_head_and_operations_in_progress() {
         ..
     } = setup();
     let (r, mut s) = open(&work);
-    work.branch("solo");
-    work.checkout("solo");
+    work.branch("only");
+    work.checkout("only");
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     let text = err.to_string();
     assert!(text.contains("--set-upstream-to"), "{text}");
     assert!(text.contains("remote.push"), "{text}");
 
-    // `remote` diverso da quello dell'upstream.
+    // `remote` different from the upstream's one.
     work.checkout("main");
     let err = r
-        .run("remote.pull", &mut s, json!({ "remote": "altro" }))
+        .run("remote.pull", &mut s, json!({ "remote": "elsewhere" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
     work.detach(c1);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("staccata"), "{err}");
+    assert!(err.to_string().contains("detached"), "{err}");
 
-    // Un merge in corso.
+    // A merge in progress.
     work.checkout("main");
-    let (theirs, _) = (work.diverge("lato", "a.txt", "x\n", "y\n"), ());
-    work.conflict("lato");
+    let (theirs, _) = (work.diverge("side", "a.txt", "x\n", "y\n"), ());
+    work.conflict("side");
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     let _ = theirs;
@@ -706,30 +710,30 @@ fn a_branch_that_is_not_checked_out_only_fast_forwards() {
         _remote: _keep,
         ..
     } = setup();
-    // Un branch `-f` sul remoto e in locale (creato con `update-ref`: git non accetta più un
-    // nome così per un branch nuovo), che segue `origin/-f`.
+    // A `-f` branch on the remote and locally (created with `update-ref`: git no longer accepts
+    // such a name for a new branch), which follows `origin/-f`.
     other.branch("feat");
     other.checkout("feat");
-    other.commit_file("f.txt", "f\n", "su -f");
+    other.commit_file("f.txt", "f\n", "on -f");
     other.git(&["push", "--quiet", "origin", "refs/heads/feat:refs/heads/-f"]);
     work.git(&["update-ref", "refs/heads/-f", &c1.to_string()]);
     work.git(&["config", "branch.-f.remote", "origin"]);
     work.git(&["config", "branch.-f.merge", "refs/heads/-f"]);
-    let f2 = other.commit_file("f.txt", "ff\n", "ancora su -f");
+    let f2 = other.commit_file("f.txt", "ff\n", "again on -f");
     other.git(&["push", "--quiet", "origin", "refs/heads/feat:refs/heads/-f"]);
     let (r, mut s) = open(&work);
 
     let out = pull(&r, &mut s, json!({ "branch": "-f" }));
     assert_eq!(out["strategy"], "fast_forward");
     assert_eq!(work.rev("refs/heads/-f"), f2);
-    // HEAD e worktree non si toccano.
+    // HEAD and worktree are not touched.
     assert_eq!(work.rev("HEAD"), c1);
     assert!(read(&work, "f.txt").is_none());
     assert!(clean(&work));
     r.run("edit.undo", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("refs/heads/-f"), c1);
 
-    // Divergente: solo dal branch stesso.
+    // Diverged: only from the branch itself.
     work.git(&[
         "update-ref",
         "refs/heads/-f",
@@ -750,7 +754,7 @@ fn cancel_and_unreachable_remote() {
         c1,
         _remote: remote,
     } = setup();
-    publish(&other, "b.txt", "b\n", "secondo");
+    publish(&other, "b.txt", "b\n", "second");
     let (r, mut s) = open(&work);
     let token = project_engine::CancelToken::new();
     token.cancel();
@@ -771,8 +775,8 @@ fn cancel_and_unreachable_remote() {
         ),
         "{err}"
     );
-    assert_eq!(work.rev("origin/main"), c1, "niente scaricato");
-    let missing = work.path().join("non-esiste.git");
+    assert_eq!(work.rev("origin/main"), c1, "nothing downloaded");
+    let missing = work.path().join("does-not-exist.git");
     work.git(&["remote", "set-url", "origin", missing.to_str().unwrap()]);
     let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
     assert!(
@@ -783,21 +787,21 @@ fn cancel_and_unreachable_remote() {
     drop(remote);
 }
 
-/// `work` ignora `*.env` e ha un suo `segreto.env`; il remoto aggiunge `segreto.env`
-/// tracciato con un altro contenuto.
+/// `work` ignores `*.env` and has its own `secret.env`; the remote adds a tracked
+/// `secret.env` with different content.
 fn ignored_secret(other: &Repo, work: &Repo) {
     work.write(".git/info/exclude", "*.env\n");
-    work.write("segreto.env", "la mia chiave\n");
-    other.write("segreto.env", "quella del remoto\n");
-    other.stage(&["segreto.env"]);
-    other.commit("aggiungi segreto.env");
+    work.write("secret.env", "my key\n");
+    other.write("secret.env", "the remote one\n");
+    other.stage(&["secret.env"]);
+    other.commit("add secret.env");
     other.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
 }
 
 #[test]
 fn ignored_files_are_never_overwritten() {
-    // Fast-forward, rebase e un merge che finirebbe in conflitto su un altro file: rifiutati
-    // prima di scrivere, il file ignorato resta identico.
+    // Fast-forward, rebase and a merge that would end in conflict on another file: refused
+    // before writing, the ignored file stays identical.
     for case in ["ff", "rebase", "merge_conflict"] {
         let Setup {
             other,
@@ -807,12 +811,12 @@ fn ignored_files_are_never_overwritten() {
         } = setup();
         match case {
             "rebase" => {
-                work.commit_file("c.txt", "c\n", "mio");
+                work.commit_file("c.txt", "c\n", "mine");
                 work.git(&["config", "pull.rebase", "true"]);
             }
             "merge_conflict" => {
-                publish(&other, "a.txt", "loro\n", "loro");
-                work.commit_file("a.txt", "nostra\n", "nostra");
+                publish(&other, "a.txt", "theirs\n", "theirs");
+                work.commit_file("a.txt", "ours\n", "ours");
             }
             _ => {}
         }
@@ -821,18 +825,18 @@ fn ignored_files_are_never_overwritten() {
         let (r, mut s) = open(&work);
         let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{case}: {err}");
-        assert!(err.to_string().contains("segreto.env"), "{case}: {err}");
+        assert!(err.to_string().contains("secret.env"), "{case}: {err}");
         assert_eq!(
-            read(&work, "segreto.env").as_deref(),
-            Some("la mia chiave\n"),
+            read(&work, "secret.env").as_deref(),
+            Some("my key\n"),
             "{case}"
         );
         assert_eq!(work.rev("HEAD"), head, "{case}");
         assert!(clean(&work), "{case}");
         assert_eq!(backups(&work), Vec::<String>::new(), "{case}");
 
-        // Spostato il file, il pull riesce (salvo il conflitto, che resta in corso).
-        std::fs::remove_file(work.path().join("segreto.env")).unwrap();
+        // With the file moved away, the pull succeeds (except the conflict, which stays in progress).
+        std::fs::remove_file(work.path().join("secret.env")).unwrap();
         let out = pull(&r, &mut s, json!({}));
         assert_eq!(
             out["in_progress"],
@@ -840,8 +844,8 @@ fn ignored_files_are_never_overwritten() {
             "{case}: {out}"
         );
         assert_eq!(
-            read(&work, "segreto.env").as_deref(),
-            Some("quella del remoto\n"),
+            read(&work, "secret.env").as_deref(),
+            Some("the remote one\n"),
             "{case}"
         );
     }
@@ -855,26 +859,26 @@ fn a_conflict_resolved_by_rerere_is_still_a_conflict() {
         _remote: _keep,
         ..
     } = setup();
-    publish(&other, "a.txt", "loro\n", "loro");
-    let mine = work.commit_file("a.txt", "nostra\n", "nostra");
+    publish(&other, "a.txt", "theirs\n", "theirs");
+    let mine = work.commit_file("a.txt", "ours\n", "ours");
     work.git(&["config", "rerere.enabled", "true"]);
     work.git(&["config", "rerere.autoUpdate", "true"]);
-    // Una risoluzione registrata da rerere per lo stesso conflitto.
+    // A resolution recorded by rerere for the same conflict.
     work.git(&["fetch", "--quiet", "origin"]);
     work.git_fails(&["merge", "--no-edit", "origin/main"]);
-    work.write("a.txt", "risolto\n");
+    work.write("a.txt", "resolved\n");
     work.stage(&["a.txt"]);
     work.git(&["commit", "--quiet", "--no-edit"]);
     work.git(&["reset", "--quiet", "--hard", &mine.to_string()]);
 
     let (r, mut s) = open(&work);
     let out = pull(&r, &mut s, json!({}));
-    // Il merge resta fermo e il file conta come conflitto anche se rerere l'ha già risolto
-    // (in stage): va controllato e poi concluso con `merge.continue`.
+    // The merge stays stopped and the file counts as a conflict even if rerere already resolved
+    // it (staged): it must be checked and then finished with `merge.continue`.
     assert_eq!(out["in_progress"], true);
     assert_eq!(out["conflicts"], json!(["a.txt"]));
     assert_eq!(work.rev("HEAD"), mine);
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("risolto\n"));
+    assert_eq!(read(&work, "a.txt").as_deref(), Some("resolved\n"));
     assert!(work.path().join(".git/MERGE_HEAD").exists());
     r.run("merge.continue", &mut s, json!({})).unwrap();
     assert_eq!(work.rev("HEAD^1"), mine);
@@ -882,9 +886,9 @@ fn a_conflict_resolved_by_rerere_is_still_a_conflict() {
 
 #[test]
 fn rebase_never_deletes_an_ignored_file_added_and_removed_by_local_commits() {
-    // C1 committa `x.env` per sbaglio, C2 lo toglie e lo ignora; il file vero resta nel
-    // worktree. Il rebase riapplicherebbe C1 (scrive `x.env`) e C2 (lo cancella).
-    // Lo stesso per un file rinominato (`y.env` → `z.txt`) e per uno tolto e ricreato.
+    // C1 commits `x.env` by mistake, C2 removes it and ignores it; the real file stays in the
+    // worktree. The rebase would reapply C1 (writes `x.env`) and C2 (deletes it).
+    // The same for a renamed file (`y.env` -> `z.txt`) and for one removed and recreated.
     for case in ["added_then_removed", "renamed", "recreated"] {
         let Setup {
             other,
@@ -897,27 +901,27 @@ fn rebase_never_deletes_an_ignored_file_added_and_removed_by_local_commits() {
             "renamed" => "y.env",
             _ => "w.env",
         };
-        work.commit_file(file, "per sbaglio\n", "C1");
+        work.commit_file(file, "by mistake\n", "C1");
         match case {
             "renamed" => {
                 work.git(&["mv", file, "z.txt"]);
-                work.commit("C2: rinomina");
+                work.commit("C2: rename");
             }
             "recreated" => {
                 work.git(&["rm", "--quiet", file]);
-                work.commit("C2: togli");
-                work.commit_file(file, "di nuovo\n", "C3: rimetti");
+                work.commit("C2: remove");
+                work.commit_file(file, "again\n", "C3: put back");
                 work.git(&["rm", "--quiet", file]);
-                work.commit("C4: togli ancora");
+                work.commit("C4: remove again");
             }
             _ => {
                 work.git(&["rm", "--quiet", file]);
-                work.commit("C2: togli");
+                work.commit("C2: remove");
             }
         }
         work.write(".git/info/exclude", "*.env\n");
         work.write(file, "MYSECRET\n");
-        publish(&other, "b.txt", "b\n", "dal remoto");
+        publish(&other, "b.txt", "b\n", "from remote");
         let head = work.rev("HEAD");
         let (r, mut s) = open(&work);
         let err = r
@@ -928,12 +932,12 @@ fn rebase_never_deletes_an_ignored_file_added_and_removed_by_local_commits() {
         assert_eq!(read(&work, file).as_deref(), Some("MYSECRET\n"), "{case}");
         assert_eq!(work.rev("HEAD"), head, "{case}");
         assert_eq!(backups(&work), Vec::<String>::new(), "{case}");
-        // Con `--rebase-merges` lo stesso.
+        // The same with `--rebase-merges`.
         work.git(&["config", "pull.rebase", "merges"]);
         let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{case}: {err}");
         assert_eq!(read(&work, file).as_deref(), Some("MYSECRET\n"), "{case}");
-        // Il merge non passa da quegli alberi: il file resta e il pull riesce.
+        // The merge does not go through those trees: the file stays and the pull succeeds.
         let out = pull(&r, &mut s, json!({ "strategy": "merge" }));
         assert_eq!(out["strategy"], "merge");
         assert_eq!(read(&work, file).as_deref(), Some("MYSECRET\n"), "{case}");
@@ -942,25 +946,25 @@ fn rebase_never_deletes_an_ignored_file_added_and_removed_by_local_commits() {
 
 #[test]
 fn rebase_never_deletes_an_ignored_file_modified_locally_and_removed_upstream() {
-    // La base traccia `x.env`; l'upstream lo toglie (e lo ignora). In locale un commit lo
-    // modifica e uno successivo lo toglie; il file vero resta nel worktree, ignorato. Il
-    // rebase si fermerebbe su un conflitto modify/delete scrivendo `x.env`, e l'abort lo
-    // cancellerebbe.
+    // The base tracks `x.env`; the upstream removes it (and ignores it). Locally one commit
+    // modifies it and a later one removes it; the real file stays in the worktree, ignored. The
+    // rebase would stop on a modify/delete conflict writing `x.env`, and the abort would
+    // delete it.
     let Setup {
         other,
         work,
         _remote: _keep,
         ..
     } = setup();
-    publish(&other, "x.env", "base\n", "base con x.env");
+    publish(&other, "x.env", "base\n", "base with x.env");
     work.git(&["fetch", "--quiet", "origin"]);
     work.git(&["merge", "--quiet", "--ff-only", "origin/main"]);
     other.git(&["rm", "--quiet", "x.env"]);
-    other.commit("togli x.env");
+    other.commit("remove x.env");
     other.git(&["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
-    work.commit_file("x.env", "modificato\n", "C1: modifica");
+    work.commit_file("x.env", "modified\n", "C1: modify");
     work.git(&["rm", "--quiet", "x.env"]);
-    work.commit("C2: togli");
+    work.commit("C2: remove");
     work.write(".git/info/exclude", "*.env\n");
     work.write("x.env", "MYSECRET\n");
     let head = work.rev("HEAD");

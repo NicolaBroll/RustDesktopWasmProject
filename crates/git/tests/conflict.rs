@@ -1,9 +1,9 @@
-//! Test di integrazione di `conflict.show` e `conflict.resolve` (S30) con il `CliBackend`:
-//! merge in conflitto → versioni → risoluzione → `repo.operation` pronto → `merge.continue`;
-//! digest vecchio, file non in conflitto, indice bloccato, link nel worktree (niente scritto);
-//! `delete` per `DeletedByThem`, file assente per `DeletedByUs`; backup leggibile con `git show`;
-//! stile diff3 e `conflict-marker-size`; file non UTF-8; nomi con spazi e `-` iniziale; modo
-//! eseguibile e permessi; backup che fallisce; scrittura che fallisce dopo il backup.
+//! Integration tests of `conflict.show` and `conflict.resolve` (S30) with the `CliBackend`:
+//! conflicting merge -> versions -> resolution -> `repo.operation` ready -> `merge.continue`;
+//! stale digest, file not in conflict, locked index, link in the worktree (nothing written);
+//! `delete` for `DeletedByThem`, missing file for `DeletedByUs`; backup readable with `git show`;
+//! diff3 style and `conflict-marker-size`; non-UTF-8 files; names with spaces and a leading
+//! `-`; executable mode and permissions; failing backup; write that fails after the backup.
 
 mod common;
 
@@ -57,8 +57,8 @@ fn show_resolve_and_continue() {
     let shown = show(&r, &mut s, "a.txt");
     assert_eq!(shown["kind"], "BothModified");
     assert_eq!(shown["base"]["text"], "base\n");
-    assert_eq!(shown["ours"]["text"], "nostra\n");
-    assert_eq!(shown["theirs"]["text"], "loro\n");
+    assert_eq!(shown["ours"]["text"], "ours\n");
+    assert_eq!(shown["theirs"]["text"], "theirs\n");
     let worktree = std::fs::read(repo.path().join("a.txt")).unwrap();
     assert_eq!(
         shown["worktree"]["text"],
@@ -73,7 +73,7 @@ fn show_resolve_and_continue() {
     assert_eq!(shown["marker_size"], 7);
     assert_eq!(shown["digest"], worktree_digest(Some(&worktree)));
 
-    let out = resolve(&r, &mut s, "a.txt", &shown["digest"], "unita\n");
+    let out = resolve(&r, &mut s, "a.txt", &shown["digest"], "merged\n");
     let backup = out["backup"].as_str().unwrap().to_owned();
     assert!(
         backup.starts_with("refs/project/backup/conflict-"),
@@ -81,7 +81,7 @@ fn show_resolve_and_continue() {
     );
     assert_eq!(out["index_backup"], Value::Null);
     assert_eq!(backups(&repo), std::slice::from_ref(&backup));
-    // Il backup: il file con i marcatori, senza genitori.
+    // The backup: the file with the markers, without parents.
     assert_eq!(
         repo.git(&["show", &format!("{backup}:a.txt")]).into_bytes(),
         worktree.trim_ascii_end()
@@ -89,7 +89,7 @@ fn show_resolve_and_continue() {
     assert_eq!(repo.git(&["rev-list", "--count", &backup]), "1");
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "unita\n"
+        "merged\n"
     );
     assert_eq!(unmerged(&repo), "");
     assert_eq!(repo.git(&["status", "--porcelain"]), "M  a.txt");
@@ -97,7 +97,7 @@ fn show_resolve_and_continue() {
     let op = run(&r, &mut s, "repo.operation", json!({}));
     assert_eq!(op["ready"], true);
     run(&r, &mut s, "merge.continue", json!({}));
-    assert_eq!(repo.git(&["show", "HEAD:a.txt"]), "unita");
+    assert_eq!(repo.git(&["show", "HEAD:a.txt"]), "merged");
     assert_eq!(repo.git(&["rev-list", "--count", "--merges", "HEAD"]), "1");
 }
 
@@ -106,7 +106,7 @@ fn stale_digest_writes_nothing() {
     let repo = repo_with_merge_conflict();
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "a.txt");
-    repo.write("a.txt", "cambiato da fuori\n");
+    repo.write("a.txt", "changed from outside\n");
     let err = r
         .run(
             "conflict.resolve",
@@ -117,7 +117,7 @@ fn stale_digest_writes_nothing() {
     assert!(matches!(err, EngineError::StaleDiff { .. }), "{err}");
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "cambiato da fuori\n"
+        "changed from outside\n"
     );
     assert!(backups(&repo).is_empty());
     assert_ne!(unmerged(&repo), "");
@@ -126,10 +126,10 @@ fn stale_digest_writes_nothing() {
 #[test]
 fn not_in_conflict_is_refused() {
     let repo = repo_with_merge_conflict();
-    repo.write("nuovo.txt", "n\n");
+    repo.write("new.txt", "n\n");
     let (r, mut s) = open(&repo);
     let digest = worktree_digest(Some(b"n\n"));
-    for path in ["nuovo.txt", "manca.txt"] {
+    for path in ["new.txt", "missing.txt"] {
         let err = r
             .run("conflict.show", &mut s, json!({ "path": path }))
             .unwrap_err();
@@ -144,7 +144,7 @@ fn not_in_conflict_is_refused() {
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     }
     assert_eq!(
-        std::fs::read_to_string(repo.path().join("nuovo.txt")).unwrap(),
+        std::fs::read_to_string(repo.path().join("new.txt")).unwrap(),
         "n\n"
     );
     assert!(backups(&repo).is_empty());
@@ -201,18 +201,18 @@ fn link_in_worktree_is_refused() {
 fn delete_for_deleted_by_them() {
     let repo = Repo::new();
     repo.commit_file("a.txt", "base\n", "base");
-    repo.branch("via");
-    repo.checkout("via");
+    repo.branch("removed");
+    repo.checkout("removed");
     repo.git(&["rm", "--quiet", "a.txt"]);
-    repo.commit("via a.txt");
+    repo.commit("remove a.txt");
     repo.checkout("main");
-    repo.commit_file("a.txt", "nostra\n", "nostra");
-    repo.conflict("via");
+    repo.commit_file("a.txt", "ours\n", "ours");
+    repo.conflict("removed");
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "a.txt");
     assert_eq!(shown["kind"], "DeletedByThem");
     assert_eq!(shown["theirs"], Value::Null);
-    assert_eq!(shown["ours"]["text"], "nostra\n");
+    assert_eq!(shown["ours"]["text"], "ours\n");
     let out = run(
         &r,
         &mut s,
@@ -220,7 +220,7 @@ fn delete_for_deleted_by_them() {
         json!({ "path": "a.txt", "digest": shown["digest"], "delete": true }),
     );
     let backup = out["backup"].as_str().unwrap();
-    assert_eq!(repo.git(&["show", &format!("{backup}:a.txt")]), "nostra");
+    assert_eq!(repo.git(&["show", &format!("{backup}:a.txt")]), "ours");
     assert!(!repo.path().join("a.txt").exists());
     assert_eq!(repo.git(&["status", "--porcelain"]), "D  a.txt");
     assert_eq!(run(&r, &mut s, "repo.operation", json!({}))["ready"], true);
@@ -232,13 +232,13 @@ fn delete_for_deleted_by_them() {
 fn deleted_by_us_with_missing_file() {
     let repo = Repo::new();
     repo.commit_file("dir/a.txt", "base\n", "base");
-    repo.branch("altro");
-    repo.checkout("altro");
-    repo.commit_file("dir/a.txt", "loro\n", "loro");
+    repo.branch("other");
+    repo.checkout("other");
+    repo.commit_file("dir/a.txt", "theirs\n", "theirs");
     repo.checkout("main");
     repo.git(&["rm", "--quiet", "dir/a.txt"]);
-    repo.commit("via");
-    repo.conflict("altro");
+    repo.commit("remove");
+    repo.conflict("other");
     std::fs::remove_dir_all(repo.path().join("dir")).unwrap();
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "dir/a.txt");
@@ -246,11 +246,11 @@ fn deleted_by_us_with_missing_file() {
     assert_eq!(shown["ours"], Value::Null);
     assert_eq!(shown["worktree"], Value::Null);
     assert_eq!(shown["digest"], worktree_digest(None));
-    let out = resolve(&r, &mut s, "dir/a.txt", &shown["digest"], "tenuto\n");
+    let out = resolve(&r, &mut s, "dir/a.txt", &shown["digest"], "kept\n");
     assert_eq!(out["backup"], Value::Null);
     assert_eq!(
         std::fs::read_to_string(repo.path().join("dir/a.txt")).unwrap(),
-        "tenuto\n"
+        "kept\n"
     );
     assert_eq!(repo.git(&["status", "--porcelain"]), "A  dir/a.txt");
 }
@@ -260,13 +260,13 @@ fn diff3_style_and_marker_size() {
     let repo = Repo::new();
     repo.commit_file(".gitattributes", "*.txt conflict-marker-size=10\n", "attr");
     repo.commit_file("a.txt", "base\n", "base");
-    repo.diverge("altro", "a.txt", "nostra\n", "loro\n");
+    repo.diverge("other", "a.txt", "ours\n", "theirs\n");
     repo.git_fails(&[
         "-c",
         "merge.conflictStyle=diff3",
         "merge",
         "--no-edit",
-        "altro",
+        "other",
     ]);
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "a.txt");
@@ -284,16 +284,16 @@ fn non_utf8_is_binary() {
     write(b"caf\xe9\n");
     repo.stage(&["l.txt"]);
     repo.commit("base");
-    repo.branch("altro");
-    repo.checkout("altro");
-    write(b"caf\xe8 loro\n");
+    repo.branch("other");
+    repo.checkout("other");
+    write(b"caf\xe8 theirs\n");
     repo.stage(&["l.txt"]);
-    repo.commit("loro");
+    repo.commit("theirs");
     repo.checkout("main");
-    write(b"caf\xe0 nostra\n");
+    write(b"caf\xe0 ours\n");
     repo.stage(&["l.txt"]);
-    repo.commit("nostra");
-    repo.conflict("altro");
+    repo.commit("ours");
+    repo.conflict("other");
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "l.txt");
     for side in ["base", "ours", "theirs", "worktree"] {
@@ -302,7 +302,7 @@ fn non_utf8_is_binary() {
     }
     assert_eq!(shown["base"]["size"], 5);
     let before = std::fs::read(repo.path().join("l.txt")).unwrap();
-    let out = resolve(&r, &mut s, "l.txt", &shown["digest"], "caffè\n");
+    let out = resolve(&r, &mut s, "l.txt", &shown["digest"], "caf\u{e9}\n");
     let backup = out["backup"].as_str().unwrap();
     let saved = repo
         .git_output(&["show", &format!("{backup}:l.txt")])
@@ -310,7 +310,7 @@ fn non_utf8_is_binary() {
     assert_eq!(saved, before);
     assert_eq!(
         std::fs::read(repo.path().join("l.txt")).unwrap(),
-        "caffè\n".as_bytes()
+        "caf\u{e9}\n".as_bytes()
     );
 }
 
@@ -319,16 +319,16 @@ fn special_names() {
     let repo = Repo::new();
     let name = "-a b.txt";
     repo.commit_file(name, "base\n", "base");
-    repo.diverge("altro", name, "nostra\n", "loro\n");
-    repo.conflict("altro");
+    repo.diverge("other", name, "ours\n", "theirs\n");
+    repo.conflict("other");
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, name);
-    assert_eq!(shown["ours"]["text"], "nostra\n");
-    resolve(&r, &mut s, name, &shown["digest"], "unita\n");
+    assert_eq!(shown["ours"]["text"], "ours\n");
+    resolve(&r, &mut s, name, &shown["digest"], "merged\n");
     assert_eq!(unmerged(&repo), "");
     assert_eq!(
         std::fs::read_to_string(repo.path().join(name)).unwrap(),
-        "unita\n"
+        "merged\n"
     );
     let entries = repo.git(&["ls-files", "-s"]);
     assert_eq!(entries.lines().count(), 1, "{entries}");
@@ -345,27 +345,27 @@ fn executable_bit_is_kept() {
     std::fs::set_permissions(&file, perms).unwrap();
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "a.txt");
-    resolve(&r, &mut s, "a.txt", &shown["digest"], "unita\n");
+    resolve(&r, &mut s, "a.txt", &shown["digest"], "merged\n");
     let mode = std::fs::metadata(&file).unwrap().permissions().mode();
     assert_eq!(mode & 0o111, 0o111, "{mode:o}");
 }
 
-/// La cartella in sola lettura: il backup è fatto, la scrittura fallisce, l'errore lo nomina e
-/// il file resta com'era.
+/// The read-only folder: the backup is made, the write fails, the error names it and the file
+/// stays as it was.
 #[cfg(unix)]
 #[test]
 fn write_failure_after_backup_names_it() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     repo.commit_file("d/a.txt", "base\n", "base");
-    repo.diverge("altro", "d/a.txt", "nostra\n", "loro\n");
-    repo.conflict("altro");
+    repo.diverge("other", "d/a.txt", "ours\n", "theirs\n");
+    repo.conflict("other");
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "d/a.txt");
     let dir = repo.path().join("d");
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-    if std::fs::write(dir.join("prova"), "").is_ok() {
-        // Root: la cartella resta scrivibile.
+    if std::fs::write(dir.join("probe"), "").is_ok() {
+        // Root: the folder stays writable.
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         return;
     }
@@ -388,7 +388,7 @@ fn write_failure_after_backup_names_it() {
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
 }
 
-/// I permessi del file sostituito restano quelli (0600 non diventa leggibile da altri).
+/// The permissions of the replaced file stay the same (0600 does not become readable by others).
 #[cfg(unix)]
 #[test]
 fn permissions_are_kept() {
@@ -398,40 +398,40 @@ fn permissions_are_kept() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "a.txt");
-    resolve(&r, &mut s, "a.txt", &shown["digest"], "unita\n");
+    resolve(&r, &mut s, "a.txt", &shown["digest"], "merged\n");
     let mode = std::fs::metadata(&file).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600, "{mode:o}");
 }
 
-/// `DeletedByUs` con il file assente e il lato loro eseguibile: il file nuovo è eseguibile.
+/// `DeletedByUs` with the file missing and their side executable: the new file is executable.
 #[cfg(unix)]
 #[test]
 fn missing_file_takes_mode_of_remaining_stage() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     repo.commit_file("a.sh", "base\n", "base");
-    repo.branch("altro");
-    repo.checkout("altro");
-    repo.write("a.sh", "loro\n");
+    repo.branch("other");
+    repo.checkout("other");
+    repo.write("a.sh", "theirs\n");
     let file = repo.path().join("a.sh");
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
     repo.git(&["add", "a.sh"]);
-    repo.commit("loro");
+    repo.commit("theirs");
     repo.checkout("main");
     repo.git(&["rm", "--quiet", "a.sh"]);
-    repo.commit("via");
-    repo.conflict("altro");
+    repo.commit("remove");
+    repo.conflict("other");
     std::fs::remove_file(&file).unwrap();
     let (r, mut s) = open(&repo);
     let shown = show(&r, &mut s, "a.sh");
-    resolve(&r, &mut s, "a.sh", &shown["digest"], "tenuto\n");
+    resolve(&r, &mut s, "a.sh", &shown["digest"], "kept\n");
     assert_eq!(
         repo.git(&["ls-files", "-s", "a.sh"]).split(' ').next(),
         Some("100755")
     );
 }
 
-/// Il ref del backup non si può creare: niente si scrive, il conflitto resta, nessun temporaneo.
+/// The backup ref cannot be created: nothing is written, the conflict stays, no temporary file.
 #[test]
 fn backup_failure_writes_nothing() {
     let repo = repo_with_merge_conflict();

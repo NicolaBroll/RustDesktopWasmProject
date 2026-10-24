@@ -1,6 +1,6 @@
-//! Disegno dell'editor dei conflitti (S30): le tre versioni in alto, il risultato modificabile
-//! in basso con i pulsanti per blocco. Le funzioni leggono il modello
-//! ([`crate::conflict`]) e producono [`Action`]; non cambiano niente direttamente.
+//! Drawing of the conflict editor (S30): the three versions on top, the editable result
+//! below with per-block buttons. The functions read the model
+//! ([`crate::conflict`]) and produce [`Action`]; they change nothing directly.
 
 use super::stage_view::conflict_name;
 use crate::Action;
@@ -9,14 +9,14 @@ use egui::{RichText, Ui};
 use project_domain::Choice;
 use project_i18n::tr;
 
-/// Altezza di una riga di pulsanti di un blocco.
+/// Height of a row of buttons of a block.
 const BLOCK_ROW: f32 = 24.0;
-/// Quante righe di blocchi si vedono al massimo; le altre scorrendo.
+/// How many rows of blocks are visible at most; the others by scrolling.
 const BLOCK_ROWS: f32 = 4.0;
 
-/// L'editor del file in conflitto, al posto del grafo. `incoming`: il nome di ciò che sta
-/// entrando (per l'intestazione di "loro" se il marcatore non lo dice). `can_write`: nessuna
-/// scrittura né dialogo in corso.
+/// The editor of the conflicted file, in place of the graph. `incoming`: the name of what is
+/// coming in (for the "theirs" header if the marker does not say it). `can_write`: no
+/// write or dialog in progress.
 pub(crate) fn conflict_editor(
     ui: &mut Ui,
     editor: &Editor,
@@ -168,7 +168,7 @@ fn loaded_editor(
     footer_row(ui, editor, loaded, can_write, actions);
 }
 
-/// Una delle tre versioni, sola lettura, righe virtualizzate.
+/// One of the three versions, read-only, virtualized rows.
 fn column(ui: &mut Ui, id: &str, title: &str, column: &Column, height: f32) {
     ui.strong(title);
     let weak = |ui: &mut Ui, text: &str| {
@@ -200,14 +200,14 @@ fn column(ui: &mut Ui, id: &str, title: &str, column: &Column, height: f32) {
     }
 }
 
-/// Una riga di pulsanti per ogni blocco del risultato attuale.
+/// A row of buttons for each block of the current result.
 fn block_rows(ui: &mut Ui, blocks: &[BlockInfo], enabled: bool, actions: &mut Vec<Action>) {
     if blocks.is_empty() {
         return;
     }
     let height = BLOCK_ROW * (blocks.len() as f32).min(BLOCK_ROWS);
     egui::ScrollArea::vertical()
-        .id_salt("blocchi-conflitto")
+        .id_salt("conflict-blocks")
         .max_height(height)
         .auto_shrink([false, true])
         .show_rows(ui, BLOCK_ROW, blocks.len(), |ui, range| {
@@ -259,7 +259,7 @@ fn block_rows(ui: &mut Ui, blocks: &[BlockInfo], enabled: bool, actions: &mut Ve
         });
 }
 
-/// Il file non si modifica qui (binario, assente, marcatori non leggibili): solo i lati interi.
+/// The file is not edited here (binary, absent, unreadable markers): only whole sides.
 fn sides_only(ui: &mut Ui, loaded: &Loaded, enabled: bool, actions: &mut Vec<Action>) {
     let why = match &loaded.shown.worktree {
         None => tr!("conflict-sides-missing"),
@@ -288,7 +288,7 @@ fn sides_only(ui: &mut Ui, loaded: &Loaded, enabled: bool, actions: &mut Vec<Act
     });
 }
 
-/// In fondo: errore, conferma in due tempi, "Segna come risolto", "Elimina il file".
+/// At the bottom: error, two-step confirmation, "Mark as resolved", "Delete the file".
 fn footer_row(
     ui: &mut Ui,
     editor: &Editor,

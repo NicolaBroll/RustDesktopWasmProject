@@ -1,8 +1,8 @@
-//! Versione di git e controllo della versione minima.
+//! Git version and minimum-version check.
 
 use std::fmt;
 
-/// Versione di git, letta da `git --version`.
+/// Git version, read from `git --version`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GitVersion {
     pub major: u32,
@@ -11,7 +11,7 @@ pub struct GitVersion {
 }
 
 impl GitVersion {
-    /// Versione minima supportata: serve, ad esempio, `rev-parse --end-of-options` (2.30).
+    /// Minimum supported version: needed, for example, by `rev-parse --end-of-options` (2.30).
     pub const MIN: Self = Self::new(2, 30, 0);
 
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
@@ -22,8 +22,8 @@ impl GitVersion {
         }
     }
 
-    /// Legge l'output di `git --version`, es. `git version 2.43.0`, anche con suffissi come
-    /// `2.45.1.windows.1`, `2.39.3 (Apple Git-146)` o `2.50.0.rc1`. La patch, se manca, vale 0.
+    /// Parses the output of `git --version`, e.g. `git version 2.43.0`, also with suffixes like
+    /// `2.45.1.windows.1`, `2.39.3 (Apple Git-146)` o `2.50.0.rc1`. The patch, if missing, is 0.
     pub fn parse(output: &str) -> Option<Self> {
         let version = output.trim().strip_prefix("git version ")?;
         let version = version.split_whitespace().next()?;
@@ -34,13 +34,13 @@ impl GitVersion {
         Some(Self::new(major, minor, patch))
     }
 
-    /// Vero se la versione è almeno [`GitVersion::MIN`].
+    /// True if the version is at least [`GitVersion::MIN`].
     pub fn is_supported(self) -> bool {
         self >= Self::MIN
     }
 }
 
-/// Le cifre iniziali di `part` (`"0-rc1"` → 0); `None` se non inizia con una cifra.
+/// The leading digits of `part` (`"0-rc1"` → 0); `None` if it does not start with a digit.
 fn leading_number(part: &str) -> Option<u32> {
     let end = part
         .find(|c: char| !c.is_ascii_digit())

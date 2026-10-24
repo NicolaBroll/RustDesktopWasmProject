@@ -1,7 +1,7 @@
-//! Comandi dei branch locali (S24): `branch.create`, `branch.checkout`, `branch.delete`,
-//! `branch.rename`. I controlli che non dipendono dal backend sono qui; scritture e controlli
-//! sotto lock nei backend ([`GitBackend`](crate::GitBackend)). Ogni comando riuscito che cambia
-//! qualcosa entra nel diario: `edit.undo` lo annulla (§7).
+//! Commands of the local branches (S24): `branch.create`, `branch.checkout`, `branch.delete`,
+//! `branch.rename`. The checks that do not depend on the backend are here; writes and checks
+//! under lock are in the backends ([`GitBackend`](crate::GitBackend)). Every successful command that changes
+//! something enters the journal: `edit.undo` undoes it (§7).
 
 use super::{Out, journal_state, to_json};
 use crate::commands::parse_params;
@@ -13,7 +13,7 @@ use project_domain::{Head, Oid, RefInfo};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Parametri di `branch.create`.
+/// Parameters of `branch.create`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateParams {
@@ -22,26 +22,26 @@ struct CreateParams {
     start: Option<String>,
 }
 
-/// Parametri di `branch.checkout`.
+/// Parameters of `branch.checkout`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NameParams {
     name: String,
 }
 
-/// Parametri di `branch.delete`.
+/// Parameters of `branch.delete`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeleteParams {
     name: String,
     #[serde(default)]
     confirm: bool,
-    /// L'id completo del commit su cui chi chiede ha visto il branch.
+    /// The full id of the commit on which the caller saw the branch.
     #[serde(default)]
     expected: Option<String>,
 }
 
-/// Parametri di `branch.rename`.
+/// Parameters of `branch.rename`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenameParams {
@@ -49,27 +49,21 @@ struct RenameParams {
     new_name: String,
 }
 
-/// Il branch locale `full` fra i ref, `None` se non c'è.
+/// The local branch `full` among the refs, `None` if there is none.
 fn find<'a>(refs: &'a [RefInfo], full: &str) -> Option<&'a RefInfo> {
     refs.iter().find(|r| r.name == full)
 }
 
 fn missing(name: &str) -> EngineError {
-    EngineError::NotAllowed(format!(
-        "non esiste un branch locale `{}`, niente modificato",
-        name.escape_debug()
-    ))
+    EngineError::NotAllowed(msg!("engine-branch-no-local", name = name.escape_debug()))
 }
 
 fn taken(name: &str) -> EngineError {
-    EngineError::NotAllowed(format!(
-        "esiste già un branch `{}`, niente modificato (un branch non si sovrascrive)",
-        name.escape_debug()
-    ))
+    EngineError::NotAllowed(msg!("engine-branch-exists", name = name.escape_debug()))
 }
 
-/// Aggiunge a `out` i ref aggiornati (come `repo.refs`) o, se non si rileggono, `refs: null`
-/// e `refs_error`: l'operazione è comunque fatta.
+/// Adds to `out` the updated refs (as `repo.refs`) or, if they cannot be re-read, `refs: null`
+/// and `refs_error`: the operation is done anyway.
 fn with_refs(out: &mut Value, refs: Result<Vec<RefInfo>, EngineError>) {
     match refs {
         Ok(refs) => out["refs"] = to_json(refs),
@@ -80,13 +74,13 @@ fn with_refs(out: &mut Value, refs: Result<Vec<RefInfo>, EngineError>) {
     }
 }
 
-/// Crea il branch `name` su `start` (una rev: id, anche abbreviato, nome di branch o tag;
-/// HEAD se manca), senza cambiare branch (vedi
-/// [`GitBackend::create_branch`](crate::GitBackend::create_branch)). Un branch esistente non si
-/// sovrascrive mai. L'operazione va nel diario: `edit.undo` elimina il branch, solo se nel
-/// frattempo non è stato spostato.
+/// Creates the branch `name` at `start` (a rev: id, also abbreviated, branch or tag name;
+/// HEAD if missing), without switching branch (see
+/// [`GitBackend::create_branch`](crate::GitBackend::create_branch)). An existing branch is never
+/// overwritten. The operation goes into the journal: `edit.undo` deletes the branch, only if in the
+/// meantime it was not moved.
 ///
-/// Risultato: `{"branch": "refs/heads/<name>", "target": oid, "refs": [RefInfo], "can_undo",
+/// Result: `{"branch": "refs/heads/<name>", "target": oid, "refs": [RefInfo], "can_undo",
 /// "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
     const ID: &str = "branch.create";
@@ -102,11 +96,9 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
                 .map(|c| c.id)
                 .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?
         }
-        None => head.target().ok_or_else(|| {
-            EngineError::NotAllowed(
-                "HEAD non ha ancora commit: indicare `start`, o creare prima un commit".to_owned(),
-            )
-        })?,
+        None => head
+            .target()
+            .ok_or_else(|| EngineError::NotAllowed(msg!("engine-branch-unborn-start")))?,
     };
     let full = branch_ref(&name);
     if find(&repo.refs()?, &full).is_some() {
@@ -125,20 +117,20 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// Passa al branch locale `name` (`git switch`, vedi
-/// [`GitBackend::checkout`](crate::GitBackend::checkout)): indice e worktree diventano quelli
-/// del branch, le modifiche locali che non toccano i file diversi restano. Non forza mai: se
-/// una modifica locale (o un file non tracciato o ignorato) verrebbe sovrascritta,
-/// [`EngineError::CheckoutConflict`] con i file e niente cambia. Rifiutato
-/// ([`EngineError::NotAllowed`]) durante merge, rebase, cherry-pick, revert, bisect o `git am`,
-/// e con file in conflitto. Il branch già attivo: nessun cambiamento (`changed: false`), niente
-/// nel diario.
+/// Switches to the local branch `name` (`git switch`, see
+/// [`GitBackend::checkout`](crate::GitBackend::checkout)): index and worktree become those
+/// of the branch, local changes that do not touch the differing files stay. It never forces: if
+/// a local change (or an untracked or ignored file) would be overwritten,
+/// [`EngineError::CheckoutConflict`] with the files and nothing changes. Refused
+/// ([`EngineError::NotAllowed`]) during merge, rebase, cherry-pick, revert, bisect or `git am`,
+/// and with conflicted files. The branch already active: no change (`changed: false`), nothing
+/// in the journal.
 ///
-/// Va nel diario (tranne quando si lascia un branch senza commit, dove tornare vorrebbe dire
-/// svuotare l'indice): `edit.undo` torna a HEAD di prima (branch o commit staccato) con un
-/// altro checkout altrettanto sicuro, solo se HEAD è ancora sul branch.
+/// It goes into the journal (except when leaving a branch without commits, where going back would mean
+/// emptying the index): `edit.undo` returns to the previous HEAD (branch or detached commit) with another
+/// equally safe checkout, only if HEAD is still on the branch.
 ///
-/// Risultato: `{"branch": "refs/heads/<name>", "previous": HeadState, "changed": bool,
+/// Result: `{"branch": "refs/heads/<name>", "previous": HeadState, "changed": bool,
 /// "warnings": [string], "status": Status | null, "can_undo", "can_redo", "next_undo",
 /// "next_redo"}`.
 pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
@@ -147,7 +139,7 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
     check_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
-    check_no_operation(ID, "cambierebbe branch", status.operation)?;
+    check_no_operation(ID, msg!("engine-busy-checkout"), status.operation)?;
     let full = branch_ref(&name);
     if find(&repo.refs()?, &full).is_none() {
         return Err(missing(&name));
@@ -159,7 +151,7 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
     if changed {
         let outcome = repo.checkout(&target)?;
         warnings = outcome.warnings;
-        // Da un branch senza commit non si torna indietro senza svuotare l'indice: niente voce.
+        // There is no going back from a branch without commits without emptying the index: no entry.
         let unborn = matches!(status.head, Head::Branch { target: None, .. });
         if !unborn {
             journal.record(JournalEntry::checkout(before.clone(), target));
@@ -180,21 +172,21 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// Elimina il branch locale `name` (vedi
-/// [`GitBackend::delete_branch`](crate::GitBackend::delete_branch)). Rifiutato
-/// ([`EngineError::NotAllowed`]) per il branch di HEAD, un branch aperto in un altro worktree e
-/// durante un'operazione in corso. Se il branch ha commit che non sono né in HEAD né nel suo
-/// upstream (se c'è), cioè non è unito, serve `"confirm": true`. Con `expected` (id completo del
-/// commit su cui il branch è stato mostrato) il branch deve puntare ancora lì, controllato prima
-/// della conferma e dell'eliminazione: altrimenti [`EngineError::NotAllowed`] e niente cambia,
-/// così una conferma vale solo per il commit visto: senza,
-/// [`EngineError::ConfirmRequired`] con il numero di commit e niente cambia. Prima di eliminare
-/// salva sempre il commit in `refs/project/backup/delete-...`; l'operazione va nel diario e
-/// `edit.undo` ricrea il branch sullo stesso commit. La configurazione `branch.<name>.*`
-/// (upstream, descrizione, ...) si toglie come con `git branch -d`, ma resta nella voce del
-/// diario: l'undo la riscrive (se nel frattempo non ne è comparsa una nuova), il redo la toglie.
+/// Deletes the local branch `name` (see
+/// [`GitBackend::delete_branch`](crate::GitBackend::delete_branch)). Refused
+/// ([`EngineError::NotAllowed`]) for the branch of HEAD, a branch open in another worktree and
+/// during an operation in progress. If the branch has commits that are neither in HEAD nor in its
+/// upstream (if any), i.e. it is not merged, `"confirm": true` is needed. With `expected` (full id of the
+/// commit on which the branch was shown) the branch must still point there, checked before
+/// the confirmation and the deletion: otherwise [`EngineError::NotAllowed`] and nothing changes,
+/// so a confirmation holds only for the commit seen: without it,
+/// [`EngineError::ConfirmRequired`] with the number of commits and nothing changes. Before deleting
+/// it always saves the commit in `refs/project/backup/delete-...`; the operation goes into the journal and
+/// `edit.undo` recreates the branch on the same commit. The `branch.<name>.*` configuration
+/// (upstream, description, ...) is removed as with `git branch -d`, but stays in the journal
+/// entry: undo rewrites it (if a new one has not appeared in the meantime), redo removes it.
 ///
-/// Risultato: `{"branch": "refs/heads/<name>", "target": oid, "unmerged": n, "backup": string,
+/// Result: `{"branch": "refs/heads/<name>", "target": oid, "unmerged": n, "backup": string,
 /// "removed_config": [{"key", "value"}], "warnings": [string], "refs": [RefInfo], "can_undo", "can_redo", "next_undo",
 /// "next_redo"}`.
 pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
@@ -212,11 +204,10 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
                 .flatten()
                 .ok_or_else(|| EngineError::InvalidParams {
                     id: ID,
-                    reason: format!(
-                        "`expected` deve essere l'id completo ({} cifre esadecimali) del commit \
-                         del branch: `{}`",
-                        Oid::HEX_LEN,
-                        hex.escape_debug()
+                    reason: msg!(
+                        "engine-branch-expected-hex",
+                        len = Oid::HEX_LEN,
+                        value = hex.escape_debug()
                     ),
                 })
         })
@@ -226,25 +217,26 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
     let full = branch_ref(&name);
     let head = HeadState::from_head(&status.head);
     if head == HeadState::Branch(full.clone()) {
-        return Err(EngineError::NotAllowed(format!(
-            "`{}` è il branch attivo (HEAD), niente eliminato: passare prima a un altro branch",
-            name.escape_debug()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-branch-delete-active",
+            name = name.escape_debug()
         )));
     }
-    check_no_operation(ID, "eliminerebbe un branch", status.operation)?;
+    check_no_operation(ID, msg!("engine-busy-branch-delete"), status.operation)?;
     let refs = repo.refs()?;
     let branch = find(&refs, &full).ok_or_else(|| missing(&name))?;
     let target = branch.target;
     if let Some(seen) = expected
         && seen != target
     {
-        return Err(EngineError::NotAllowed(format!(
-            "il branch `{}` si è spostato da quando è stato visto: era {seen}, ora punta a \
-             {target}. Niente eliminato; rileggere i branch e riprovare",
-            name.escape_debug()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-branch-moved",
+            name = name.escape_debug(),
+            seen = seen,
+            target = target
         )));
     }
-    // Unito: raggiungibile da HEAD o dal suo upstream, come per `git branch -d`.
+    // Merged: reachable from HEAD or from its upstream, as for `git branch -d`.
     let upstream = branch
         .upstream
         .as_ref()
@@ -258,17 +250,17 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
     let unmerged = repo.unmerged_count(&target, &into)?;
     if unmerged > 0 && !confirm {
         let reference = match upstream {
-            Some(up) => format!("né in HEAD né nell'upstream `{}`", up.name),
-            None => "in HEAD".to_owned(),
+            Some(up) => msg!("engine-branch-not-in-upstream", upstream = up.name),
+            None => msg!("engine-branch-not-in-head"),
         };
         return Err(EngineError::ConfirmRequired {
             command: ID,
-            reason: format!(
-                "il branch `{}` non è unito: {unmerged} commit (fino a {}) non sono {reference}. \
-                 Eliminandolo resterebbero solo nel backup `refs/project/backup/delete-...` \
-                 salvato prima, e `edit.undo` lo ricreerebbe",
-                name.escape_debug(),
-                crate::git::short(&target),
+            reason: msg!(
+                "engine-branch-unmerged",
+                name = name.escape_debug(),
+                unmerged = unmerged,
+                tip = crate::git::short(&target),
+                reference = reference
             ),
             expected: None,
         });
@@ -292,14 +284,14 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// Rinomina il branch locale `name` in `new_name` (vedi
-/// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch)): mai sopra un branch
-/// esistente; reflog, upstream e HEAD (se era il branch attivo) seguono. Rifiutato durante
-/// un'operazione in corso. Va nel diario: `edit.undo` rinomina di nuovo, solo se nel frattempo
-/// nessuno ha toccato i due nomi.
+/// Renames the local branch `name` to `new_name` (see
+/// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch)): never over an
+/// existing branch; reflog, upstream and HEAD (if it was the active branch) follow. Refused during
+/// an operation in progress. It goes into the journal: `edit.undo` renames back, only if in the meantime
+/// nobody touched the two names.
 ///
-/// Risultato: `{"branch": "refs/heads/<new_name>", "previous": "refs/heads/<name>", "target":
-/// oid, "head": bool (era il branch attivo), "warnings": [string], "refs": [RefInfo],
+/// Result: `{"branch": "refs/heads/<new_name>", "previous": "refs/heads/<name>", "target":
+/// oid, "head": bool (it was the active branch), "warnings": [string], "refs": [RefInfo],
 /// "can_undo", "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
     const ID: &str = "branch.rename";
@@ -309,12 +301,12 @@ pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
     if name == new_name {
         return Err(EngineError::InvalidParams {
             id: ID,
-            reason: "`new_name` è uguale a `name`".to_owned(),
+            reason: msg!("engine-branch-same-name"),
         });
     }
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
-    check_no_operation(ID, "rinominerebbe un branch", status.operation)?;
+    check_no_operation(ID, msg!("engine-busy-branch-rename"), status.operation)?;
     let (from, to) = (branch_ref(&name), branch_ref(&new_name));
     let refs = repo.refs()?;
     let target = find(&refs, &from).ok_or_else(|| missing(&name))?.target;
@@ -356,7 +348,7 @@ mod tests {
 
     const FILE: u32 = 0o100644;
 
-    /// Il repo di esempio con il worktree pulito (nessuna modifica, nessun non tracciato).
+    /// The sample repo with a clean worktree (no changes, no untracked files).
     fn clean_sample() -> MemoryBackend {
         let mut repo = MemoryBackend::sample();
         repo.set_entries(Vec::new());
@@ -390,7 +382,7 @@ mod tests {
         s.repo().unwrap().head().unwrap()
     }
 
-    /// Il nome breve del branch di HEAD, `None` se staccata.
+    /// The short name of the branch of HEAD, `None` if detached.
     fn on(s: &Session) -> Option<String> {
         match head(s) {
             Head::Branch { name, .. } => Some(name),
@@ -411,10 +403,10 @@ mod tests {
         assert_eq!(out["target"], main.to_string());
         assert_eq!(out["can_undo"], true);
         assert!(
-            out["next_undo"]
+            out["next_undo"]["text"]
                 .as_str()
                 .unwrap()
-                .starts_with("Crea branch `nuovo` su ")
+                .starts_with("Create branch `nuovo` at ")
         );
         assert!(
             out["refs"]
@@ -424,30 +416,30 @@ mod tests {
                 .any(|r| r["name"] == "refs/heads/nuovo")
         );
         assert_eq!(branch(&s, "nuovo"), Some(main));
-        // HEAD non cambia.
+        // HEAD does not change.
         assert_eq!(on(&s).as_deref(), Some("main"));
 
-        let grafo = branch(&s, "feature/grafo").unwrap();
+        let graph_tip = branch(&s, "feature/graph").unwrap();
         let out = run(
             &r,
             &mut s,
             "branch.create",
-            json!({ "name": "da-grafo", "start": "feature/grafo" }),
+            json!({ "name": "from-graph", "start": "feature/graph" }),
         );
-        assert_eq!(out["target"], grafo.to_string());
-        let short = &grafo.to_string()[..8];
+        assert_eq!(out["target"], graph_tip.to_string());
+        let short = &graph_tip.to_string()[..8];
         let out = run(
             &r,
             &mut s,
             "branch.create",
-            json!({ "name": "da-id", "start": short }),
+            json!({ "name": "from-id", "start": short }),
         );
-        assert_eq!(out["target"], grafo.to_string());
+        assert_eq!(out["target"], graph_tip.to_string());
 
         run(&r, &mut s, "edit.undo", json!({}));
-        assert_eq!(branch(&s, "da-id"), None);
+        assert_eq!(branch(&s, "from-id"), None);
         run(&r, &mut s, "edit.redo", json!({}));
-        assert_eq!(branch(&s, "da-id"), Some(grafo));
+        assert_eq!(branch(&s, "from-id"), Some(graph_tip));
     }
 
     #[test]
@@ -456,8 +448,8 @@ mod tests {
         let refs = s.repo().unwrap().refs().unwrap();
         for (params, want_invalid) in [
             (json!({ "name": "main" }), false),
-            (json!({ "name": "feature" }), false), // `feature/grafo` esiste
-            (json!({ "name": "main/sotto" }), false),
+            (json!({ "name": "feature" }), false), // `feature/graph` esiste
+            (json!({ "name": "main/under" }), false),
             (json!({ "name": "-x" }), true),
             (json!({ "name": "--force" }), true),
             (json!({ "name": "HEAD" }), true),
@@ -481,14 +473,14 @@ mod tests {
             .run(
                 "branch.create",
                 &mut s,
-                json!({ "name": "x", "start": "nessuno" }),
+                json!({ "name": "x", "start": "missing" }),
             )
             .unwrap_err();
         assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
         assert_eq!(s.repo().unwrap().refs().unwrap(), refs);
         assert!(!s.journal().unwrap().can_undo());
 
-        // Senza commit serve `start`.
+        // Without commits `start` is needed.
         let (r, mut s) = open(MemoryBackend::new());
         let err = r
             .run("branch.create", &mut s, json!({ "name": "x" }))
@@ -499,28 +491,31 @@ mod tests {
     #[test]
     fn checkout_switches_and_undo_comes_back() {
         let (r, mut s) = open(clean_sample());
-        let grafo = branch(&s, "feature/grafo").unwrap();
+        let graph_tip = branch(&s, "feature/graph").unwrap();
         let out = run(
             &r,
             &mut s,
             "branch.checkout",
-            json!({ "name": "feature/grafo" }),
+            json!({ "name": "feature/graph" }),
         );
-        assert_eq!(out["branch"], "refs/heads/feature/grafo");
+        assert_eq!(out["branch"], "refs/heads/feature/graph");
         assert_eq!(out["previous"], json!({ "branch": "refs/heads/main" }));
         assert_eq!(out["changed"], true);
         assert_eq!(out["warnings"], json!([]));
-        assert_eq!(out["status"]["head"]["Branch"]["name"], "feature/grafo");
-        assert_eq!(out["next_undo"], "Checkout di `feature/grafo` (da `main`)");
-        assert_eq!(head_oid(&s), grafo);
+        assert_eq!(out["status"]["head"]["Branch"]["name"], "feature/graph");
+        assert_eq!(
+            out["next_undo"]["text"],
+            "Checkout of `feature/graph` (from `main`)"
+        );
+        assert_eq!(head_oid(&s), graph_tip);
         assert!(s.repo().unwrap().status().unwrap().entries.is_empty());
 
-        // Già sul branch: niente cambia, niente nel diario.
+        // Already on the branch: nothing changes, nothing in the journal.
         let out = run(
             &r,
             &mut s,
             "branch.checkout",
-            json!({ "name": "feature/grafo" }),
+            json!({ "name": "feature/graph" }),
         );
         assert_eq!(out["changed"], false);
         assert_eq!(s.journal().unwrap().done().len(), 1);
@@ -529,9 +524,9 @@ mod tests {
         assert_eq!(out["undone"]["command"], "branch.checkout");
         assert_eq!(on(&s).as_deref(), Some("main"));
         run(&r, &mut s, "edit.redo", json!({}));
-        assert_eq!(on(&s).as_deref(), Some("feature/grafo"));
+        assert_eq!(on(&s).as_deref(), Some("feature/graph"));
 
-        // Undo rifiutato se HEAD è cambiata da fuori.
+        // Undo refused if HEAD changed from outside.
         let main = branch(&s, "main").unwrap();
         s.repo_mut()
             .unwrap()
@@ -549,20 +544,20 @@ mod tests {
             .run(
                 "branch.checkout",
                 &mut s,
-                json!({ "name": "feature/grafo" }),
+                json!({ "name": "feature/graph" }),
             )
             .unwrap_err();
         let EngineError::CheckoutConflict { target, files, .. } = &err else {
             panic!("{err}");
         };
-        assert_eq!(target, "feature/grafo");
+        assert_eq!(target, "feature/graph");
         assert!(!files.is_empty());
-        assert!(err.to_string().contains("Niente modificato"), "{err}");
+        assert!(err.to_string().contains("Nothing changed"), "{err}");
         assert_eq!(s.repo().unwrap().status().unwrap(), status);
         assert!(!s.journal().unwrap().can_undo());
 
         for (params, invalid) in [
-            (json!({ "name": "nessuno" }), false),
+            (json!({ "name": "missing" }), false),
             (json!({ "name": "a b" }), true),
             (json!({}), true),
         ] {
@@ -581,7 +576,7 @@ mod tests {
     fn checkout_keeps_changes_to_files_that_do_not_differ() {
         let mut repo = clean_sample();
         let main = repo.head().unwrap().target().unwrap();
-        // Un branch sullo stesso commit: nessun file diverso, le modifiche restano.
+        // A branch on the same commit: no differing files, the changes stay.
         repo.set_branch("gemello", main);
         let sample = MemoryBackend::sample();
         let entries = sample.status().unwrap().entries;
@@ -602,7 +597,7 @@ mod tests {
             .run(
                 "branch.checkout",
                 &mut s,
-                json!({ "name": "feature/grafo" }),
+                json!({ "name": "feature/graph" }),
             )
             .unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
@@ -629,7 +624,7 @@ mod tests {
             .run(
                 "branch.checkout",
                 &mut s,
-                json!({ "name": "feature/grafo" }),
+                json!({ "name": "feature/graph" }),
             )
             .unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
@@ -639,21 +634,21 @@ mod tests {
     fn delete_needs_confirm_when_unmerged_and_undo_recreates() {
         let mut repo = MemoryBackend::sample();
         let main = repo.head().unwrap().target().unwrap();
-        // `feature/grafo` (commit 9) è nell'upstream e in `main`? Un branch con un commit
-        // tutto suo non lo è.
+        // Is `feature/graph` (commit 9) in the upstream and in `main`? A branch with a commit
+        // all its own is not.
         let tip = repo
             .commit(&crate::CommitRequest::new("Solo qui"))
             .unwrap()
             .commit
             .id;
-        repo.set_branch("solo", tip);
+        repo.set_branch("only", tip);
         repo.set_branch("main", main);
         repo.set_head_branch("main");
         let (r, mut s) = open(repo);
         let refs = s.repo().unwrap().refs().unwrap();
 
         let err = r
-            .run("branch.delete", &mut s, json!({ "name": "solo" }))
+            .run("branch.delete", &mut s, json!({ "name": "only" }))
             .unwrap_err();
         let EngineError::ConfirmRequired {
             command, reason, ..
@@ -666,24 +661,24 @@ mod tests {
         assert_eq!(s.repo().unwrap().refs().unwrap(), refs);
         assert!(!s.journal().unwrap().can_undo());
 
-        // `expected` diverso dalla punta (anche con la conferma), abbreviato o non valido:
-        // niente cambia.
+        // `expected` different from the tip (even with the confirmation), abbreviated or invalid:
+        // nothing changes.
         let short = &tip.to_string()[..10];
         for (params, invalid) in [
             (
-                json!({ "name": "solo", "confirm": true, "expected": main.to_string() }),
+                json!({ "name": "only", "confirm": true, "expected": main.to_string() }),
                 false,
             ),
             (
-                json!({ "name": "solo", "expected": main.to_string() }),
+                json!({ "name": "only", "expected": main.to_string() }),
                 false,
             ),
             (
-                json!({ "name": "solo", "confirm": true, "expected": short }),
+                json!({ "name": "only", "confirm": true, "expected": short }),
                 true,
             ),
             (
-                json!({ "name": "solo", "confirm": true, "expected": "x".repeat(40) }),
+                json!({ "name": "only", "confirm": true, "expected": "x".repeat(40) }),
                 true,
             ),
         ] {
@@ -702,12 +697,12 @@ mod tests {
         }
         assert_eq!(s.repo().unwrap().refs().unwrap(), refs);
         assert!(!s.journal().unwrap().can_undo());
-        // Senza conferma, con `expected` giusto: resta la richiesta di conferma.
+        // Without confirmation, with the right `expected`: the confirmation request remains.
         let err = r
             .run(
                 "branch.delete",
                 &mut s,
-                json!({ "name": "solo", "expected": tip.to_string() }),
+                json!({ "name": "only", "expected": tip.to_string() }),
             )
             .unwrap_err();
         assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
@@ -716,64 +711,64 @@ mod tests {
             &r,
             &mut s,
             "branch.delete",
-            json!({ "name": "solo", "confirm": true, "expected": tip.to_string().to_uppercase() }),
+            json!({ "name": "only", "confirm": true, "expected": tip.to_string().to_uppercase() }),
         );
-        assert_eq!(out["branch"], "refs/heads/solo");
+        assert_eq!(out["branch"], "refs/heads/only");
         assert_eq!(out["target"], tip.to_string());
         assert_eq!(out["unmerged"], 1);
         assert_eq!(out["backup"], "refs/project/backup/delete-1");
-        assert_eq!(branch(&s, "solo"), None);
+        assert_eq!(branch(&s, "only"), None);
 
         let out = run(&r, &mut s, "edit.undo", json!({}));
         assert_eq!(out["undone"]["command"], "branch.delete");
         assert_eq!(out["undone"]["backup"], "refs/project/backup/delete-1");
-        assert_eq!(branch(&s, "solo"), Some(tip));
+        assert_eq!(branch(&s, "only"), Some(tip));
         run(&r, &mut s, "edit.redo", json!({}));
-        assert_eq!(branch(&s, "solo"), None);
+        assert_eq!(branch(&s, "only"), None);
         run(&r, &mut s, "edit.undo", json!({}));
 
-        // Un branch con lo stesso nome creato nel frattempo: l'undo non lo sovrascrive.
+        // A branch with the same name created in the meantime: undo does not overwrite it.
         run(
             &r,
             &mut s,
             "branch.delete",
-            json!({ "name": "solo", "confirm": true }),
+            json!({ "name": "only", "confirm": true }),
         );
         let (repo, _) = s.repo_and_journal().unwrap();
-        repo.create_branch("solo", &main).unwrap();
+        repo.create_branch("only", &main).unwrap();
         let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
         assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
-        assert_eq!(branch(&s, "solo"), Some(main));
+        assert_eq!(branch(&s, "only"), Some(main));
     }
 
     #[test]
     fn delete_of_a_merged_branch_needs_no_confirm_but_the_current_is_refused() {
         let (r, mut s) = open(MemoryBackend::sample());
-        let grafo = branch(&s, "feature/grafo").unwrap();
+        let graph_tip = branch(&s, "feature/graph").unwrap();
         let out = run(
             &r,
             &mut s,
             "branch.delete",
-            json!({ "name": "feature/grafo" }),
+            json!({ "name": "feature/graph" }),
         );
         assert_eq!(out["unmerged"], 0);
-        assert_eq!(out["target"], grafo.to_string());
-        assert_eq!(branch(&s, "feature/grafo"), None);
+        assert_eq!(out["target"], graph_tip.to_string());
+        assert_eq!(branch(&s, "feature/graph"), None);
         assert_eq!(
             out["removed_config"],
             json!([
-                { "key": "branch.feature/grafo.remote", "value": "origin" },
-                { "key": "branch.feature/grafo.merge", "value": "refs/heads/feature/grafo" }
+                { "key": "branch.feature/graph.remote", "value": "origin" },
+                { "key": "branch.feature/graph.merge", "value": "refs/heads/feature/graph" }
             ])
         );
-        // L'undo rimette branch e upstream, il redo li toglie.
+        // Undo puts back branch and upstream, redo removes them.
         let upstream = |s: &Session| {
             s.repo()
                 .unwrap()
                 .refs()
                 .unwrap()
                 .into_iter()
-                .find(|r| r.name == "refs/heads/feature/grafo")
+                .find(|r| r.name == "refs/heads/feature/graph")
                 .and_then(|r| r.upstream)
                 .map(|u| u.name)
         };
@@ -781,21 +776,21 @@ mod tests {
         assert_eq!(out["warnings"], json!([]));
         assert_eq!(
             upstream(&s).as_deref(),
-            Some("refs/remotes/origin/feature/grafo")
+            Some("refs/remotes/origin/feature/graph")
         );
         run(&r, &mut s, "edit.redo", json!({}));
-        assert_eq!(branch(&s, "feature/grafo"), None);
+        assert_eq!(branch(&s, "feature/graph"), None);
         run(&r, &mut s, "edit.undo", json!({}));
         assert_eq!(
             upstream(&s).as_deref(),
-            Some("refs/remotes/origin/feature/grafo")
+            Some("refs/remotes/origin/feature/graph")
         );
         run(&r, &mut s, "edit.redo", json!({}));
 
         let refs = s.repo().unwrap().refs().unwrap();
         for (params, invalid) in [
             (json!({ "name": "main", "confirm": true }), false),
-            (json!({ "name": "nessuno", "confirm": true }), false),
+            (json!({ "name": "missing", "confirm": true }), false),
             (json!({ "name": "a b" }), true),
         ] {
             let err = r.run("branch.delete", &mut s, params.clone()).unwrap_err();
@@ -821,11 +816,14 @@ mod tests {
         assert_eq!(out["branch"], "refs/heads/principale");
         assert_eq!(out["previous"], "refs/heads/main");
         assert_eq!(out["head"], true);
-        assert_eq!(out["next_undo"], "Rinomina branch `main` in `principale`");
+        assert_eq!(
+            out["next_undo"]["text"],
+            "Rename branch `main` to `principale`"
+        );
         assert_eq!(branch(&s, "main"), None);
         assert_eq!(branch(&s, "principale"), Some(main));
         assert_eq!(on(&s).as_deref(), Some("principale"));
-        // L'upstream segue il branch.
+        // The upstream follows the branch.
         let refs = s.repo().unwrap().refs().unwrap();
         let renamed = refs
             .iter()
@@ -843,13 +841,13 @@ mod tests {
         run(&r, &mut s, "edit.redo", json!({}));
         assert_eq!(on(&s).as_deref(), Some("principale"));
 
-        // Rifiuti: nome già preso, uguale, non valido, branch assente.
+        // Refusals: name already taken, same, invalid, missing branch.
         for (params, invalid) in [
             (
-                json!({ "name": "principale", "new_name": "feature/grafo" }),
+                json!({ "name": "principale", "new_name": "feature/graph" }),
                 false,
             ),
-            (json!({ "name": "nessuno", "new_name": "x" }), false),
+            (json!({ "name": "missing", "new_name": "x" }), false),
             (
                 json!({ "name": "principale", "new_name": "principale" }),
                 true,
@@ -865,7 +863,7 @@ mod tests {
             );
         }
 
-        // Undo rifiutato se il nome è stato ripreso nel frattempo.
+        // Undo refused if the name was taken again in the meantime.
         let (repo, _) = s.repo_and_journal().unwrap();
         repo.create_branch("main", &main).unwrap();
         let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();

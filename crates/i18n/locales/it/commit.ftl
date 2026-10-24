@@ -1,4 +1,4 @@
-# Messaggio di commit e risposta di commit.create (commit.rs), menu dei commit (view/commits.rs).
+# Commit message and commit.create response (commit.rs), commit menu (view/commits.rs).
 
 commit-blocked-busy = Attendere la fine dell'operazione in corso
 commit-blocked-conflicts = Ci sono file in conflitto: risolverli e metterli in stage prima di committare
@@ -24,7 +24,7 @@ commit-failed-kept = Commit non riuscito: { $error } Il messaggio scritto è con
 commit-unexpected-result = { $command }: risultato inatteso: { $error }
 commit-failed = Commit non riuscito: { $error }
 
-# Lista dei commit e menu del commit (view/commits.rs).
+# Commit list and commit menu (view/commits.rs).
 commit-list-loading = Caricamento dei commit…
 commit-list-empty = Nessun commit.
 commit-list-seeking = Ricerca del commit { $id } nei commit più vecchi…

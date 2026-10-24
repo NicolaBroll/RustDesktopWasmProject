@@ -1,22 +1,22 @@
-//! Stato della lista dei commit: pagine di `repo.log` caricate durante lo scorrimento e
-//! selezione da mouse e tastiera, corsie del grafo. Solo dati, senza egui: si prova con test
-//! unitari.
+//! State of the commit list: pages of `repo.log` loaded while scrolling, and
+//! mouse and keyboard selection, graph lanes. Data only, no egui: tested with unit
+//! tests.
 
 use project_domain::{Commit, GraphLayout, Oid, layout_graph};
 use serde_json::{Value, json};
 
-/// Commit chiesti a ogni pagina di `repo.log`.
+/// Commits requested for each page of `repo.log`.
 pub const PAGE: usize = 500;
 
-/// Fin dove si caricano pagine per trovare il commit di un ref cliccato (vedi
-/// [`CommitList::seek`]): oltre si dice che non è tra quelli caricati.
+/// How far pages are loaded to find the commit of a clicked ref (see
+/// [`CommitList::seek`]): beyond that it says it is not among the loaded ones.
 pub const SEEK_LIMIT: usize = 20 * PAGE;
 
-/// Quante righe prima della fine dei commit caricati si chiede la pagina seguente.
+/// How many rows before the end of the loaded commits the next page is requested.
 const PREFETCH: usize = PAGE / 2;
 
-/// Una richiesta di pagina: `skip` e `limit` di `repo.log`, più l'epoca della lista a cui
-/// appartiene (vedi [`CommitList::reset`]).
+/// A page request: `skip` and `limit` of `repo.log`, plus the epoch of the list it
+/// belongs to (see [`CommitList::reset`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageRequest {
     pub skip: usize,
@@ -25,55 +25,55 @@ pub struct PageRequest {
 }
 
 impl PageRequest {
-    /// I parametri di `repo.log`: il grafo parte da tutti i ref (branch locali e remoti, tag,
-    /// HEAD), così si vedono anche i branch non uniti e quelli appena scaricati, e dalle basi
-    /// degli stash, così ogni stash ha la sua riga anche se nessun branch la contiene più.
+    /// The parameters of `repo.log`: the graph starts from all refs (local and remote branches, tags,
+    /// HEAD), so unmerged and just-fetched branches show up too, and from the bases
+    /// of the stashes, so every stash has its row even if no branch contains it anymore.
     pub fn params(&self) -> Value {
         json!({ "skip": self.skip, "limit": self.limit, "all": true, "stashes": true })
     }
 }
 
-/// Esito di [`CommitList::seek`].
+/// Outcome of [`CommitList::seek`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Seek {
-    /// Il commit era caricato ed è selezionato.
+    /// The commit was loaded and is selected.
     Selected,
-    /// Non ancora caricato: si cerca nelle pagine seguenti. C'è la pagina da chiedere, o
-    /// `None` se una pagina è già in arrivo (la ricerca continua quando arriva).
+    /// Not loaded yet: it is searched in the following pages. Here is the page to request, or
+    /// `None` if a page is already on its way (the search continues when it arrives).
     Loading(Option<PageRequest>),
-    /// Non è tra i commit caricati e non si cerca oltre.
+    /// It is not among the loaded commits and the search goes no further.
     Missing,
 }
 
-/// Dove si attacca la riga "Modifiche non committate": il commit di HEAD nella lista.
+/// Where the "Uncommitted changes" row attaches: the HEAD commit in the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Anchor {
-    /// Riga di HEAD tra i commit.
+    /// HEAD row among the commits.
     pub index: usize,
-    /// Colonna di HEAD nel grafo.
+    /// HEAD column in the graph.
     pub column: usize,
-    /// Vero se nelle righe sopra HEAD la sua colonna è libera: si può tirare un tratto dalla
-    /// riga delle modifiche fino a HEAD senza coprire altri archi.
+    /// True if in the rows above HEAD its column is free: a line can be drawn from the
+    /// changes row down to HEAD without covering other edges.
     pub free_above: bool,
 }
 
-/// I commit caricati finora e il commit selezionato.
+/// The commits loaded so far and the selected commit.
 #[derive(Debug, Default)]
 pub struct CommitList {
     commits: Vec<Commit>,
-    /// Corsie del grafo di tutti i commit caricati, una riga per commit. Si ricalcolano quando
-    /// arriva una pagina, non a ogni frame: una corsia può dipendere da commit di pagine
-    /// diverse.
+    /// Graph lanes of all loaded commits, one row per commit. They are recomputed when
+    /// a page arrives, not on every frame: a lane may depend on commits from different
+    /// pages.
     graph: GraphLayout,
     has_more: bool,
-    /// La pagina chiesta e non ancora arrivata.
+    /// The requested page that has not arrived yet.
     loading: Option<PageRequest>,
-    /// Cresce a ogni [`CommitList::reset`]: le pagine chieste prima si scartano.
+    /// Grows at every [`CommitList::reset`]: pages requested before are discarded.
     epoch: u64,
     selected: Option<usize>,
-    /// Riga da portare in vista al prossimo frame (dopo un movimento da tastiera).
+    /// Row to bring into view on the next frame (after a keyboard move).
     scroll_to: Option<usize>,
-    /// Il commit cercato nelle pagine seguenti (vedi [`CommitList::seek`]).
+    /// The commit being searched in the following pages (see [`CommitList::seek`]).
     seeking: Option<Oid>,
 }
 
@@ -82,12 +82,12 @@ impl CommitList {
         &self.commits
     }
 
-    /// Le corsie del grafo: `graph().rows[i]` è la riga di `commits()[i]`.
+    /// The graph lanes: `graph().rows[i]` is the row of `commits()[i]`.
     pub fn graph(&self) -> &GraphLayout {
         &self.graph
     }
 
-    /// Vero se dopo l'ultimo commit caricato ce ne sono altri.
+    /// True if there are more commits after the last loaded one.
     pub fn has_more(&self) -> bool {
         self.has_more
     }
@@ -104,8 +104,8 @@ impl CommitList {
         self.commits.get(self.selected?)
     }
 
-    /// Ricomincia dalla prima pagina (repo aperto o aggiornato) e la restituisce da chiedere.
-    /// I commit già caricati restano visibili finché non arriva la nuova prima pagina.
+    /// Starts again from the first page (repo opened or refreshed) and returns it to be requested.
+    /// The commits already loaded stay visible until the new first page arrives.
     pub fn reset(&mut self) -> PageRequest {
         self.epoch += 1;
         self.seeking = None;
@@ -118,8 +118,8 @@ impl CommitList {
         request
     }
 
-    /// La pagina seguente da chiedere se la riga `visible_end` (esclusa) è vicina alla fine dei
-    /// commit caricati; `None` se non serve o se una pagina è già in arrivo.
+    /// The next page to request if row `visible_end` (excluded) is near the end of the
+    /// loaded commits; `None` if not needed or if a page is already on its way.
     pub fn next_page(&mut self, visible_end: usize) -> Option<PageRequest> {
         if !self.has_more || self.loading.is_some() || visible_end + PREFETCH < self.commits.len() {
             return None;
@@ -133,9 +133,9 @@ impl CommitList {
         Some(request)
     }
 
-    /// Una pagina arrivata. Se è la prima sostituisce la lista e mantiene selezionato lo
-    /// stesso commit (o il primo); le altre si aggiungono in fondo. Le pagine di un'epoca
-    /// passata o che non attaccano alla fine della lista si scartano: restituisce `false`.
+    /// A page that arrived. If it is the first it replaces the list and keeps the same commit
+    /// selected (or the first); the others are appended at the end. Pages of a past epoch
+    /// or that do not attach to the end of the list are discarded: returns `false`.
     pub fn receive(&mut self, request: PageRequest, commits: Vec<Commit>, has_more: bool) -> bool {
         if self.loading != Some(request) {
             return false;
@@ -155,7 +155,7 @@ impl CommitList {
         true
     }
 
-    /// La pagina chiesta non è arrivata (errore): si può chiedere di nuovo.
+    /// The requested page did not arrive (error): it can be requested again.
     pub fn failed(&mut self, request: PageRequest) {
         if self.loading == Some(request) {
             self.loading = None;
@@ -163,14 +163,14 @@ impl CommitList {
         }
     }
 
-    /// Il commit cercato nelle pagine seguenti, se c'è una ricerca in corso.
+    /// The commit being searched in the following pages, if a search is in progress.
     pub fn seeking(&self) -> Option<Oid> {
         self.seeking
     }
 
-    /// Seleziona il commit `id` (clic su un ref) e lo porta in vista. Se non è ancora caricato
-    /// e ci sono altre pagine, lo cerca chiedendole una dopo l'altra, fino a
-    /// [`SEEK_LIMIT`] commit: chi riceve una pagina richiama `seek` con [`CommitList::seeking`].
+    /// Selects commit `id` (click on a ref) and brings it into view. If it is not loaded yet
+    /// and there are more pages, it searches by requesting them one after the other, up to
+    /// [`SEEK_LIMIT`] commits: whoever receives a page calls `seek` again with [`CommitList::seeking`].
     pub fn seek(&mut self, id: Oid) -> Seek {
         self.seeking = None;
         if let Some(index) = self.position(id) {
@@ -194,7 +194,7 @@ impl CommitList {
         Seek::Loading(Some(request))
     }
 
-    /// Dove attaccare la riga delle modifiche: riga e colonna del commit `head`, se è caricato.
+    /// Where to attach the changes row: row and column of commit `head`, if loaded.
     pub fn anchor(&self, head: Oid) -> Option<Anchor> {
         let index = self.position(head)?;
         let column = self.graph.rows.get(index)?.column;
@@ -216,7 +216,7 @@ impl CommitList {
         self.commits.iter().position(|c| c.id == id)
     }
 
-    /// Seleziona la riga `index` (clic del mouse); fuori dalla lista non fa niente.
+    /// Selects row `index` (mouse click); outside the list it does nothing.
     pub fn select(&mut self, index: usize) {
         self.seeking = None;
         if index < self.commits.len() {
@@ -224,7 +224,7 @@ impl CommitList {
         }
     }
 
-    /// Seleziona il commit `id` e lo porta in vista; `false` se non è tra quelli caricati.
+    /// Selects commit `id` and brings it into view; `false` if it is not among the loaded ones.
     pub fn select_id(&mut self, id: Oid) -> bool {
         self.seeking = None;
         match self.position(id) {
@@ -237,8 +237,8 @@ impl CommitList {
         }
     }
 
-    /// Sposta la selezione di `delta` righe (negativo verso l'alto), restando nella lista, e
-    /// la porta in vista. Senza selezione parte dalla prima riga.
+    /// Moves the selection by `delta` rows (negative upwards), staying in the list, and
+    /// brings it into view. Without a selection it starts from the first row.
     pub fn move_selection(&mut self, delta: isize) {
         self.seeking = None;
         let Some(last) = self.commits.len().checked_sub(1) else {
@@ -252,7 +252,7 @@ impl CommitList {
         self.scroll_to = Some(index);
     }
 
-    /// Seleziona la prima riga (`true`) o l'ultima caricata (`false`).
+    /// Selects the first row (`true`) or the last loaded one (`false`).
     pub fn select_edge(&mut self, first: bool) {
         self.seeking = None;
         if let Some(last) = self.commits.len().checked_sub(1) {
@@ -262,12 +262,12 @@ impl CommitList {
         }
     }
 
-    /// La riga da portare in vista, senza consumarla.
+    /// The row to bring into view, without consuming it.
     pub fn peek_scroll_to(&self) -> Option<usize> {
         self.scroll_to
     }
 
-    /// La riga da portare in vista, una volta sola: dopo averla disegnata.
+    /// The row to bring into view, only once: after it has been drawn.
     pub fn take_scroll_to(&mut self) -> Option<usize> {
         self.scroll_to.take()
     }
@@ -297,7 +297,7 @@ mod tests {
         }
     }
 
-    /// Una pagina di una storia di `total` commit, come la darebbe `repo.log`.
+    /// A page of a history of `total` commits, as `repo.log` would give it.
     fn page(request: PageRequest, total: usize) -> (Vec<Commit>, bool) {
         let end = (request.skip + request.limit).min(total);
         let commits = (request.skip.min(end)..end).map(commit).collect();
@@ -314,11 +314,15 @@ mod tests {
         let total = 50_000;
         let mut list = CommitList::default();
         let first = list.reset();
-        assert_eq!(list.next_page(0), None, "la prima pagina è già in arrivo");
+        assert_eq!(
+            list.next_page(0),
+            None,
+            "the first page is already on its way"
+        );
         load(&mut list, first, total);
         assert_eq!(list.selected(), Some(0));
 
-        // Righe visibili lontane dalla fine: niente pagine.
+        // Visible rows far from the end: no pages.
         assert_eq!(list.next_page(10), None);
 
         let mut requests = 1;
@@ -327,7 +331,7 @@ mod tests {
             visible_end += 40;
             if let Some(request) = list.next_page(visible_end) {
                 assert_eq!(request.skip, list.commits().len());
-                assert_eq!(list.next_page(visible_end), None, "una pagina alla volta");
+                assert_eq!(list.next_page(visible_end), None, "one page at a time");
                 load(&mut list, request, total);
                 requests += 1;
             }
@@ -341,19 +345,19 @@ mod tests {
 
     #[test]
     fn graph_spans_every_loaded_page() {
-        // Una storia lineare con un branch che si apre nella prima pagina e si chiude con un
-        // merge nella seconda: la corsia del branch deve attraversare il confine tra le pagine.
+        // A linear history with a branch that opens in the first page and closes with a
+        // merge in the second: the branch lane must cross the boundary between the pages.
         let total = PAGE + 100;
         let merge = PAGE + 10;
         let mut history: Vec<Commit> = (0..total)
             .map(|n| {
                 let mut c = commit(n);
-                // Commit n ha come genitore n + 1 (la lista va dal più recente).
+                // Commit n has n + 1 as parent (the list goes from the most recent).
                 if n + 1 < total {
                     c.parents.push(commit(n + 1).id);
                 }
                 if n == 5 {
-                    // Il merge in cima porta dentro il branch che parte da `merge`.
+                    // The merge on top brings in the branch that starts from `merge`.
                     c.parents.push(commit(total + 1).id);
                 }
                 c
@@ -373,8 +377,8 @@ mod tests {
         assert_eq!(list.graph(), &layout_graph(&history));
         assert_eq!(list.graph().rows.len(), list.commits().len());
         assert_eq!(list.graph().width, 2);
-        // Il branch converge nella corsia 0 sul commit `merge` (riga `merge + 1`, spostata dal
-        // commit del branch), nella seconda pagina: il tratto sta nella riga prima.
+        // The branch converges into lane 0 on commit `merge` (row `merge + 1`, shifted by the
+        // branch commit), in the second page: the line is in the previous row.
         let before = &list.graph().rows[merge];
         assert!(before.segments.iter().any(|s| s.from == 1 && s.to == 0));
     }
@@ -385,7 +389,7 @@ mod tests {
         let first = list.reset();
         load(&mut list, first, 2_000);
         let second = list.next_page(PAGE).unwrap();
-        // Aggiorna mentre la seconda pagina è in arrivo.
+        // Refresh while the second page is on its way.
         let fresh = list.reset();
         let (commits, more) = page(second, 2_000);
         assert!(!list.receive(second, commits, more));
@@ -401,7 +405,7 @@ mod tests {
         list.select(5);
         let id = list.selected_commit().unwrap().id;
 
-        // Il nuovo log ha due commit in più in cima: la selezione segue il commit.
+        // The new log has two more commits on top: the selection follows the commit.
         let request = list.reset();
         let mut commits: Vec<Commit> = (0..100).map(commit).collect();
         commits.insert(0, commit(1000));
@@ -425,7 +429,7 @@ mod tests {
     fn keyboard_moves_stay_inside_the_list() {
         let mut list = CommitList::default();
         list.move_selection(1);
-        assert_eq!(list.selected(), None, "lista vuota");
+        assert_eq!(list.selected(), None, "empty list");
 
         let first = list.reset();
         load(&mut list, first, 30);
@@ -443,7 +447,7 @@ mod tests {
         assert_eq!(list.selected(), Some(29));
 
         list.select(500);
-        assert_eq!(list.selected(), Some(29), "clic fuori dalla lista");
+        assert_eq!(list.selected(), Some(29), "click outside the list");
         assert!(list.select_id(commit(4).id));
         assert_eq!((list.selected(), list.take_scroll_to()), (Some(4), Some(4)));
         assert!(!list.select_id(commit(999).id));
@@ -458,16 +462,20 @@ mod tests {
         assert_eq!(list.seek(commit(3).id), Seek::Selected);
         assert_eq!((list.selected(), list.take_scroll_to()), (Some(3), Some(3)));
 
-        // Il commit 1700 è nella quarta pagina: si chiedono le pagine una dopo l'altra, come
-        // fa la UI quando arriva ognuna.
+        // Commit 1700 is in the fourth page: the pages are requested one after the other, as
+        // the UI does when each one arrives.
         let target = commit(1_700).id;
         let Seek::Loading(Some(mut request)) = list.seek(target) else {
-            panic!("deve chiedere la pagina seguente")
+            panic!("must ask for the next page")
         };
         let mut pages = 0;
         loop {
             assert_eq!(request.skip, list.commits().len());
-            assert_eq!(list.next_page(list.commits().len()), None, "già in arrivo");
+            assert_eq!(
+                list.next_page(list.commits().len()),
+                None,
+                "already on its way"
+            );
             load(&mut list, request, total);
             pages += 1;
             let id = list.seeking().expect("ricerca in corso");
@@ -482,13 +490,13 @@ mod tests {
         assert_eq!(list.take_scroll_to(), Some(1_700));
         assert_eq!(list.seeking(), None);
 
-        // Con una pagina già in arrivo si aspetta quella; un clic su una riga ferma la ricerca.
+        // With a page already on its way that one is awaited; a click on a row stops the search.
         let pending = list.next_page(list.commits().len()).unwrap();
         assert_eq!(list.seek(commit(2_900).id), Seek::Loading(None));
         list.select(0);
         assert_eq!(list.seeking(), None);
         load(&mut list, pending, total);
-        // Un commit che non c'è: si carica fino alla fine e poi si dice che manca.
+        // A commit that does not exist: it loads up to the end and then says it is missing.
         let missing = commit(99_999).id;
         while let Seek::Loading(Some(request)) = list.seek(missing) {
             load(&mut list, request, total);
@@ -510,7 +518,7 @@ mod tests {
         assert_eq!(list.commits().len(), SEEK_LIMIT);
         assert_eq!(list.seek(target), Seek::Missing);
         assert_eq!(list.seeking(), None);
-        // Un aggiornamento ferma una ricerca in corso.
+        // A refresh stops a search in progress.
         let mut list = CommitList::default();
         let first = list.reset();
         load(&mut list, first, total);
@@ -538,7 +546,7 @@ mod tests {
             (registry, session)
         }
 
-        /// La prima pagina del log come la chiede la UI.
+        /// The first page of the log as the UI requests it.
         fn load(registry: &Registry, session: &mut Session) -> CommitList {
             let mut list = CommitList::default();
             let request = list.reset();
@@ -565,7 +573,7 @@ mod tests {
             let (registry, mut session) = open(MemoryBackend::sample());
             let list = load(&registry, &mut session);
             assert_eq!(list.commits().len(), 12);
-            assert_eq!(list.commits()[0].id, oid(12), "HEAD in cima");
+            assert_eq!(list.commits()[0].id, oid(12), "HEAD on top");
             let head = list.anchor(oid(12)).unwrap();
             assert_eq!((head.index, head.column), (0, 0));
 
@@ -574,15 +582,15 @@ mod tests {
                 .unwrap();
             let mut list = load(&registry, &mut session);
             assert_eq!(list.commits().len(), 13);
-            // Il commit 13 di `origin/feature/grafo` è il più recente: viene prima di HEAD.
+            // Commit 13 of `origin/feature/graph` is the most recent: it comes before HEAD.
             assert_eq!(list.commits()[0].id, oid(13));
-            let grafo = target(&registry, &mut session, "refs/remotes/origin/feature/grafo");
-            assert_eq!(grafo, oid(13));
-            assert_eq!(list.seek(grafo), Seek::Selected);
+            let graph_tip = target(&registry, &mut session, "refs/remotes/origin/feature/graph");
+            assert_eq!(graph_tip, oid(13));
+            assert_eq!(list.seek(graph_tip), Seek::Selected);
             assert_eq!(list.selected_commit().unwrap().id, oid(13));
 
-            // HEAD è nella riga 1, in una sua colonna libera sopra di lui: la riga delle
-            // modifiche si attacca lì, non al commit 13.
+            // HEAD is in row 1, in a free column of its own above it: the changes row
+            // attaches there, not to commit 13.
             let head = list.anchor(oid(12)).unwrap();
             assert_eq!(head.index, 1);
             assert_ne!(head.column, list.graph().rows[0].column);
@@ -598,21 +606,21 @@ mod tests {
             let extra = Commit {
                 id: Oid::from_bytes([0xee; 20]),
                 parents: vec![base.id],
-                summary: "Prova non unita".to_owned(),
+                summary: "Unmerged test".to_owned(),
                 ..base
             };
             repo.set_changes(extra.id, Vec::new());
-            repo.set_branch("esperimento", extra.id);
+            repo.set_branch("experiment", extra.id);
             repo.insert_commit(extra.clone());
             let (registry, mut session) = open(repo);
             let mut list = load(&registry, &mut session);
             assert_eq!(list.commits().len(), 13);
             assert!(list.commits().iter().any(|c| c.id == extra.id));
-            let branch = target(&registry, &mut session, "refs/heads/esperimento");
+            let branch = target(&registry, &mut session, "refs/heads/experiment");
             assert_eq!(list.seek(branch), Seek::Selected);
-            assert_eq!(list.selected_commit().unwrap().summary, "Prova non unita");
-            // Il commit del branch è più vecchio di HEAD (stessa data del genitore): HEAD resta
-            // in cima, con la riga delle modifiche attaccata.
+            assert_eq!(list.selected_commit().unwrap().summary, "Unmerged test");
+            // The branch commit is older than HEAD (same date as the parent): HEAD stays
+            // on top, with the changes row attached.
             let head = list.anchor(oid(12)).unwrap();
             assert_eq!(head.index, 0);
             assert!(head.free_above);

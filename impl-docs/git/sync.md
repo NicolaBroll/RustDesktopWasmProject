@@ -1,133 +1,135 @@
-# Fetch, pull e push
+# Fetch, pull and push
 
-Parte di [ARCHITETTURA-git.md](../ARCHITETTURA-git.md): principi (§1), regole per ogni chiamata a
-git (§5), comandi lenti (§6) e diario (§7) sono lì; qui il contratto dei comandi, il `CliBackend` e
-undo e backup di questa funzione. "§n" rimanda sempre al documento principale.
+Part of [ARCHITECTURE-git.md](../ARCHITECTURE-git.md): principles (§1), rules for every call to
+git (§5), slow commands (§6) and the journal (§7) are there; here are the command contract, the `CliBackend` and
+undo and backup of this function. "§n" always refers to the main document.
 
-## Comandi
+## Commands
 
 ### `remote.fetch`
 
-Parametri: `{"remote"?, "branch"?}`.
+Parameters: `{"remote"?, "branch"?}`.
 
-Lento (§6), scrive (`writes`: branch remoti, tag, `FETCH_HEAD`). `remote`: il **nome** di un remoto
-configurato (`GitBackend::remotes`, cioè `git remote`), controllato con `check_remote_name` (come
-git: `refs/remotes/<nome>/x` dev'essere un nome di ref valido; un `-` iniziale è ammesso) e cercato
-fra i configurati prima di chiamare il backend: un nome che non c'è → `NotAllowed` con l'elenco dei
-remoti (mai passato a git, che lo userebbe come URL o percorso). Senza `remote`: quello
-dell'upstream del branch attivo, altrimenti `origin`, altrimenti l'unico remoto (`default_remote`;
-nessuno o ambiguo → `NotAllowed`). `branch`: nome breve di un branch **del remoto**
-(`check_branch_name`), scaricato da solo come `refs/heads/<branch>`; il remoto non lo ha →
-`NotAllowed`. Errori: credenziali rifiutate o da chiedere → `Auth { remote, message }`; remoto non
-raggiungibile (cartella che non c'è, host, rete, repository inesistente sul server) →
-`RemoteUnreachable { remote, message }`; annullato → `Cancelled`; altro → `Git`. Risultato:
+Slow (§6), writes (`writes`: remote branches, tags, `FETCH_HEAD`). `remote`: the **name** of a configured
+remote (`GitBackend::remotes`, i.e. `git remote`), checked with `check_remote_name` (like
+git: `refs/remotes/<name>/x` must be a valid ref name; a leading `-` is allowed) and looked up
+among the configured ones before calling the backend: a name that does not exist → `NotAllowed` with the list of
+remotes (never passed to git, which would use it as a URL or path). Without `remote`: that of the
+upstream of the active branch, otherwise `origin`, otherwise the only remote (`default_remote`;
+none or ambiguous → `NotAllowed`). `branch`: short name of a branch **of the remote**
+(`check_branch_name`), downloaded alone as `refs/heads/<branch>`; if the remote does not have it →
+`NotAllowed`. Errors: rejected credentials or credentials to be requested → `Auth { remote, message }`; remote not
+reachable (directory that does not exist, host, network, repository nonexistent on the server) →
+`RemoteUnreachable { remote, message }`; cancelled → `Cancelled`; other → `Git`. Result:
 `{"remote", "branch": string | null, "updated": [{"name", "before": oid | null, "after": oid |
-null}] | null, "messages": [string], "warnings": [string], "refs": [RefInfo] | null,
-"refs_error"?}`: `updated` sono i ref cambiati (confronto di `refs()` prima e dopo, un tag annotato
-con il commit puntato; `null` con `refs_error` se i ref non si rileggono: il fetch è fatto),
-`messages` le righe di git che non sono avanzamento (`From <url>`, ` * [new branch] ...`),
-`warnings` i ref fuori da `refs/remotes/` e `refs/tags/` spostati da un refspec configurato (es. un
-mirror verso `refs/heads/`). Non va nel diario (§7). Dettagli del `CliBackend` più sotto.
+null}] | null, "messages": [string], "warnings": [Message], "refs": [RefInfo] | null,
+"refs_error"?}`: `updated` are the changed refs (comparison of `refs()` before and after, an annotated tag
+with the commit pointed to; `null` with `refs_error` if the refs cannot be re-read: the fetch is done),
+`warnings` are `Message` objects `{"text", "key", "args"?}` (English text plus Fluent key and
+arguments, see `impl-docs/i18n.md`), like the journal `description` and `next_undo`/`next_redo` in every result;
+`messages` the git lines that are not progress (`From <url>`, ` * [new branch] ...`),
+`warnings` the refs outside `refs/remotes/` and `refs/tags/` moved by a configured refspec (e.g. a
+mirror toward `refs/heads/`). It does not go into the journal (§7). `CliBackend` details below.
 
 ### `remote.pull`
 
-Parametri: `{"remote"?, "branch"?, "strategy"?}`.
+Parameters: `{"remote"?, "branch"?, "strategy"?}`.
 
-Lento (§6), scrive (`writes`), entra nel diario (§7). Fetch del solo branch dell'upstream con
-`GitBackend::fetch` (avanzamento e annullamento come `remote.fetch`; annullato durante il fetch →
-`Cancelled { command: "remote.pull" }` anche se il fetch è finito, prima di integrare), poi
-l'integrazione in locale con `GitBackend::pull`, che non si interrompe. **Scelta: non `git pull`**,
-ma fetch + merge/rebase guidati dal motore: così il comando sa cosa è arrivato prima di scrivere,
-sceglie la strategia, controlla lo stato e salva il backup. `branch`: nome breve del branch locale
-(HEAD se manca; HEAD staccata senza `branch` → `NotAllowed`); un branch che non è quello di HEAD si
-può solo portare avanti (fast-forward del ref con `update-ref` e il valore vecchio, senza toccare il
-worktree; divergente → `NotAllowed` che chiede di passarci; aperto in un altro worktree →
-`NotAllowed`). `remote`: se c'è dev'essere quello dell'upstream (`NotAllowed` altrimenti): il pull
-integra sempre l'upstream. Upstream da `branch.<nome>.remote`/`.merge` (`GitBackend::upstream`);
-senza → `NotAllowed` che dice come impostarlo (`git branch --set-upstream-to=<remoto>/<branch>`) o
-di pubblicare il branch con `remote.push`; upstream locale (`.`), `merge` che non è un branch,
-nessun refspec che lo mappa in `refs/remotes/` → `NotAllowed`, niente scaricato. **Strategia**
-(`PullSettings::policy`, letta prima del fetch): `strategy` (`merge`, `rebase`, `ff_only`)
-sostituisce la configurazione; altrimenti `branch.<nome>.rebase`, poi `pull.rebase` (`true` →
-rebase, `merges` → `--rebase-merges`, `false` → merge, `interactive` → `NotAllowed`) e `pull.ff`
-(`only` → solo fast-forward, `false` → sempre un commit di merge); **senza configurazione merge**
-(scelta: git ≥ 2.33 rifiuterebbe i branch divergenti; un merge non riscrive niente e si annulla).
-Poi (`pull_mode`, da `ahead`/`behind` con `unmerged_count`): niente da fare se il branch contiene
-l'upstream (`up_to_date`, niente nel diario), fast-forward se può, altrimenti merge o rebase
-(`ff_only` divergente → `NotAllowed`). **Controlli** (`check_pull_state`, prima del fetch per HEAD e
-di nuovo nel backend): operazione in corso o file in conflitto → `NotAllowed`; merge e rebase con
-qualunque modifica ai file tracciati → `NotAllowed` (mai `--autostash`; i non tracciati vanno bene);
-il fast-forward accetta modifiche che non toccano i file cambiati, e se git rifiuta perché
-sovrascriverebbe modifiche o non tracciati → `NotAllowed` con i file. **Backup**: prima di scrivere
-`refs/project/backup/pull-...` sul branch com'era (tolto se poi niente cambia).
+Slow (§6), writes (`writes`), goes into the journal (§7). Fetch of only the upstream branch with
+`GitBackend::fetch` (progress and cancellation like `remote.fetch`; cancelled during the fetch →
+`Cancelled { command: "remote.pull" }` even if the fetch finished, before integrating), then
+the local integration with `GitBackend::pull`, which is not interrupted. **Choice: not `git pull`**,
+but fetch + merge/rebase driven by the engine: this way the command knows what arrived before writing,
+chooses the strategy, checks the state and saves the backup. `branch`: short name of the local branch
+(HEAD if missing; detached HEAD without `branch` → `NotAllowed`); a branch that is not HEAD's can
+only be fast-forwarded (ref fast-forward with `update-ref` and the old value, without touching the
+worktree; diverged → `NotAllowed` asking to switch to it; open in another worktree →
+`NotAllowed`). `remote`: if present it must be the upstream's (`NotAllowed` otherwise): the pull
+always integrates the upstream. Upstream from `branch.<name>.remote`/`.merge` (`GitBackend::upstream`);
+without → `NotAllowed` saying how to set it (`git branch --set-upstream-to=<remote>/<branch>`) or
+to publish the branch with `remote.push`; local upstream (`.`), `merge` that is not a branch,
+no refspec mapping it into `refs/remotes/` → `NotAllowed`, nothing downloaded. **Strategy**
+(`PullSettings::policy`, read before the fetch): `strategy` (`merge`, `rebase`, `ff_only`)
+overrides the configuration; otherwise `branch.<name>.rebase`, then `pull.rebase` (`true` →
+rebase, `merges` → `--rebase-merges`, `false` → merge, `interactive` → `NotAllowed`) and `pull.ff`
+(`only` → fast-forward only, `false` → always a merge commit); **without configuration, merge**
+(choice: git ≥ 2.33 would refuse diverged branches; a merge rewrites nothing and can be aborted).
+Then (`pull_mode`, from `ahead`/`behind` with `unmerged_count`): nothing to do if the branch contains
+the upstream (`up_to_date`, nothing in the journal), fast-forward if possible, otherwise merge or rebase
+(`ff_only` diverged → `NotAllowed`). **Checks** (`check_pull_state`, before the fetch for HEAD and
+again in the backend): operation in progress or conflicted files → `NotAllowed`; merge and rebase with
+any change to tracked files → `NotAllowed` (never `--autostash`; untracked files are fine);
+the fast-forward accepts changes that do not touch the changed files, and if git refuses because it would
+overwrite changes or untracked files → `NotAllowed` with the files. **Backup**: before writing
+`refs/project/backup/pull-...` on the branch as it was (removed if afterwards nothing changes).
 
-**Merge fermo** (scelta, dopo S29): un pull in merge che si ferma (conflitti, anche se `rerere`
-li ha già risolti; un hook `pre-merge-commit`/`commit-msg` o la firma che falliscono dopo un merge
-senza conflitti) **resta in corso** come con `merge.start` ([merge.md](merge.md)): non è un
-errore, il risultato ha `"in_progress": true`, i file in `conflicts` (vuoto per hook e firma) e il
-testo di git in `message`; il branch non si è mosso (`after == before`), il backup
-`refs/project/backup/pull-...` resta e niente entra nel diario. Il fetch è fatto. Si esce come da
-un `merge.start` fermo: `merge.continue` (dopo aver risolto e messo in stage i file con
-`index.stage`; il messaggio è quello del pull, `Merge remote-tracking branch 'origin/main'`, che
-git mette in `MERGE_MSG` con il blocco `# Conflicts:`, tolto da `merge.continue`) entra nel
-diario come un merge concluso (`Merge di origin/main in `main``); `merge.abort` (con `confirm`)
-riporta indice e worktree a HEAD, cioè com'erano prima del pull, perché il pull in merge parte
-solo da un worktree senza modifiche ai file tracciati (i non tracciati restano: `merge --abort` non
-li tocca). `repo.operation` dà il banner (`incoming` è il commit dell'upstream, `label` il nome
-del branch remoto). Il nome dell'altro lato nei marcatori del `CliBackend` è l'id dell'upstream
-(`>>>>>>> <oid>`: a git arriva solo l'id, come per `merge.start`).
+**Stopped merge** (choice, after S29): a pull in merge that stops (conflicts, even if `rerere`
+already resolved them; a `pre-merge-commit`/`commit-msg` hook or signing that fail after a merge
+without conflicts) **stays in progress** as with `merge.start` ([merge.md](merge.md)): it is not an
+error, the result has `"in_progress": true`, the files in `conflicts` (empty for hook and signing) and
+git's text in `message`; the branch has not moved (`after == before`), the backup
+`refs/project/backup/pull-...` stays and nothing goes into the journal. The fetch is done. You exit as from
+a stopped `merge.start`: `merge.continue` (after resolving and staging the files with
+`index.stage`; the message is the pull's, `Merge remote-tracking branch 'origin/main'`, which
+git puts in `MERGE_MSG` with the `# Conflicts:` block, removed by `merge.continue`) goes into the
+journal as a concluded merge (`Merge of origin/main into `main``); `merge.abort` (with `confirm`)
+returns index and worktree to HEAD, i.e. as they were before the pull, because the pull in merge starts
+only from a worktree without changes to tracked files (untracked files stay: `merge --abort` does not
+touch them). `repo.operation` gives the banner (`incoming` is the upstream commit, `label` the name
+of the remote branch). The name of the other side in the `CliBackend` markers is the upstream id
+(`>>>>>>> <oid>`: only the id reaches git, as for `merge.start`).
 
-**Rebase fermo** (scelta, per ora): si **annulla subito** (`--abort`: il worktree era pulito,
-quindi torna identico) e l'errore è `PullConflict { branch, upstream, operation: rebase, files,
-message }`; un rebase lasciato in corso non avrebbe uscita dal client finché S32 non porta
-`rebase.abort`/`rebase.continue` (allora si lascerà in corso anche lui). `operation: merge` resta
-nel tipo ma non arriva più dai backend. Anche il rebase fermo per un altro motivo (hook, commit
-vuoto) si annulla, con un errore `Git`.
+**Stopped rebase** (choice, for now): it is **aborted immediately** (`--abort`: the worktree was clean,
+so it returns identical) and the error is `PullConflict { branch, upstream, operation: rebase, files,
+message }`; a rebase left in progress would have no way out of the client until S32 brings
+`rebase.abort`/`rebase.continue` (then it too will be left in progress). `operation: merge` stays
+in the type but no longer comes from the backends. A rebase stopped for another reason (hook, empty
+commit) is also aborted, with a `Git` error.
 
-Errori del fetch: `Auth`, `RemoteUnreachable`, `Cancelled`. Risultato: `{"branch", "remote",
+Fetch errors: `Auth`, `RemoteUnreachable`, `Cancelled`. Result: `{"branch", "remote",
 "upstream", "strategy": "fast_forward" | "merge" | "rebase" | "up_to_date", "strategy_source":
 "param" | "config" | "default", "before", "after", "ahead", "behind", "in_progress": bool,
-"conflicts": [percorso], "message": string, "backup": string | null, "fetch": {"updated",
+"conflicts": [path], "message": string, "backup": string | null, "fetch": {"updated",
 "messages"}, "warnings", "status" | null, "refs" | null, "can_undo", "can_redo", "next_undo",
-"next_redo"}` (`in_progress`/`conflicts`/`message` come in `merge.start`: `false`, `[]`, `""`
-se il pull non è fermo). Dettagli del `CliBackend` e undo più sotto.
+"next_redo"}` (`in_progress`/`conflicts`/`message` as in `merge.start`: `false`, `[]`, `""`
+if the pull is not stopped). `CliBackend` and undo details below.
 
 ### `remote.push`
 
-Parametri: `{"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}`.
+Parameters: `{"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}`.
 
-Lento (§6), scrive (`writes`), **non** entra nel diario (un push non si annulla: il remoto è di
-altri; il risultato dice cosa è cambiato). Pubblica solo
-`refs/heads/<branch>:refs/heads/<remote_branch>` (refspec esplicito: mai tag, `--all`, `--mirror`,
-`--tags`, qualunque sia `push.default`, `remote.<nome>.push`, `push.followTags`). `branch`: HEAD se
-manca (staccata → `NotAllowed`). **Remoto** come lo sceglie `git push` (risultato `remote_source`):
-`remote` (`param`), altrimenti `branch.<nome>.pushRemote` (`push_remote`), `remote.pushDefault`
-(`push_default`), il remoto dell'upstream (`upstream`), `origin` (`origin`) o l'unico remoto
-(`only`); più remoti senza `origin` → `NotAllowed`; un remoto della configurazione che non è
-configurato → `NotAllowed` che nomina la chiave; un remoto con `remote.<r>.mirror=true` →
-`NotAllowed` (un mirror pubblica tutti i ref insieme). **Destinazione**: se il remoto è quello
-dell'upstream, il branch dell'upstream (con un nome diverso dal branch → `NotAllowed`, come
-`push.default=simple`) e il branch remoto locale dell'upstream; altrimenti lo stesso nome, e il
-branch remoto locale si ricava dai refspec di fetch del remoto (`tracking_ref` su
-`remote.<r>.fetch`, anche con refspec non standard e negativi; nessuno → nessun branch remoto
-locale). **Primo push** (nessun upstream): `--set-upstream` verso il remoto scelto (l'upstream si
-imposta solo se il push riesce); con un upstream l'upstream non cambia mai (es. pubblicando su
-`fork` per `remote.pushDefault`). **Force**: solo con `"force": true`, sempre e solo
-`--force-with-lease=refs/heads/<b>:<oid>` con l'oid del branch remoto locale letto prima (vuoto se
-non c'è: il branch non deve esistere), mai `--force` né `+refspec`; se il remoto perderebbe commit
-che il branch non ha (`unmerged_count` del branch remoto locale) serve `"confirm": true` **con
-`"expected"`**, l'id completo (40 cifre) del branch remoto locale mostrato nella conferma: senza,
-`ConfirmRequired` con i commit (`missing_commits`, al più 10), l'id letto ora e la frase fissa
-`"expected": "<id>"` da ripetere. La conferma vale solo per quel commit: se `expected` non è il
-branch remoto locale letto ora (un fetch nel frattempo) → di nuovo `ConfirmRequired` con l'id nuovo,
-niente pubblicato; il lease usa `expected`. Prima del push il branch remoto locale si salva in
-`refs/project/backup/push-...` (tolto se il push è rifiutato). `confirm` senza `expected`,
-`confirm`/`expected` senza `force`, `expected` non completo → `InvalidParams`. `--force-if-includes`
-non serve: con un oid esplicito git lo ignora. Errori: `PushRejected { remote, branch, reason:
-non_fast_forward | stale_lease | remote_rejected | hook | other, message }` (non fast-forward
-suggerisce `remote.pull`; lease: il remoto si è spostato, fare fetch), niente cambia in locale;
-`Auth`, `RemoteUnreachable`, `Cancelled` (annullato a metà: il remoto potrebbe aver già aggiornato
-il branch, rileggere con un fetch). Risultato: `{"remote", "remote_source": "param" | "push_remote"
+Slow (§6), writes (`writes`), does **not** go into the journal (a push cannot be undone: the remote belongs to
+others; the result says what changed). Publishes only
+`refs/heads/<branch>:refs/heads/<remote_branch>` (explicit refspec: never tags, `--all`, `--mirror`,
+`--tags`, whatever `push.default`, `remote.<name>.push`, `push.followTags` say). `branch`: HEAD if
+missing (detached → `NotAllowed`). **Remote** as `git push` chooses it (result `remote_source`):
+`remote` (`param`), otherwise `branch.<name>.pushRemote` (`push_remote`), `remote.pushDefault`
+(`push_default`), the upstream's remote (`upstream`), `origin` (`origin`) or the only remote
+(`only`); several remotes without `origin` → `NotAllowed`; a remote from the configuration that is not
+configured → `NotAllowed` naming the key; a remote with `remote.<r>.mirror=true` →
+`NotAllowed` (a mirror publishes all refs together). **Destination**: if the remote is the
+upstream's, the upstream's branch (with a name different from the branch → `NotAllowed`, like
+`push.default=simple`) and the upstream's local remote branch; otherwise the same name, and the local
+remote branch is derived from the remote's fetch refspecs (`tracking_ref` on
+`remote.<r>.fetch`, even with non-standard and negative refspecs; none → no local
+remote branch). **First push** (no upstream): `--set-upstream` toward the chosen remote (the upstream is
+set only if the push succeeds); with an upstream the upstream never changes (e.g. when publishing to
+`fork` because of `remote.pushDefault`). **Force**: only with `"force": true`, always and only
+`--force-with-lease=refs/heads/<b>:<oid>` with the oid of the local remote branch read beforehand (empty if
+it does not exist: the branch must not exist), never `--force` or `+refspec`; if the remote would lose commits
+that the branch lacks (`unmerged_count` of the local remote branch) `"confirm": true` is required **with
+`"expected"`**, the full id (40 digits) of the local remote branch shown in the confirmation: without it,
+`ConfirmRequired` with the commits (`missing_commits`, at most 10), the id read now and the fixed phrase
+`"expected": "<id>"` to repeat. The confirmation is valid only for that commit: if `expected` is not the
+local remote branch read now (a fetch in the meantime) → `ConfirmRequired` again with the new id,
+nothing published; the lease uses `expected`. Before the push the local remote branch is saved in
+`refs/project/backup/push-...` (removed if the push is rejected). `confirm` without `expected`,
+`confirm`/`expected` without `force`, `expected` not full → `InvalidParams`. `--force-if-includes`
+is not needed: with an explicit oid git ignores it. Errors: `PushRejected { remote, branch, reason:
+non_fast_forward | stale_lease | remote_rejected | hook | other, message }` (non-fast-forward
+suggests `remote.pull`; lease: the remote moved, do a fetch), nothing changes locally;
+`Auth`, `RemoteUnreachable`, `Cancelled` (cancelled midway: the remote may already have updated
+the branch, re-read with a fetch). Result: `{"remote", "remote_source": "param" | "push_remote"
 | "push_default" | "upstream" | "origin" | "only", "branch", "remote_branch", "kind": "new" |
 "fast_forward" | "forced" | "up_to_date", "summary", "before": oid | null, "after", "set_upstream",
 "forced", "lost": [Commit], "backup": string | null, "updated" | null, "messages", "warnings",
@@ -136,141 +138,141 @@ il branch, rileggere con un fetch). Risultato: `{"remote", "remote_source": "par
 ## CliBackend: fetch
 
 **Fetch** (`remote.fetch`, S25): `git fetch --progress --end-of-options <remote>
-[refs/heads/<branch>]`. Il remoto (sempre un remoto configurato, mai un URL) e il branch
-vanno dopo `--end-of-options`: un remoto che si chiama `-x` o `--upload-pack=false` non
-diventa un'opzione (test con questi nomi). Il branch è un refspec senza destinazione, senza
-`:` né `+`: non scrive ref locali, e il branch remoto si aggiorna con il refspec configurato.
-Niente `--prune`, `--force`, `--tags`, `--update-head-ok`, `--recurse-submodules`: tag,
-pulizia dei branch remoti spariti (`fetch.prune`, `remote.<nome>.prune`) e sottomoduli come
-dice la configurazione dell'utente, come `git fetch` da terminale. **Nessuna richiesta di
-input**, mai: stdin chiuso, `GIT_TERMINAL_PROMPT=0` e, su Unix, il processo parte in una
-sessione nuova (`setsid`, dipendenza `libc`) senza terminale di controllo, così né git, né
-ssh (passphrase, conferma della chiave dell'host), né un credential helper possono aprire
-`/dev/tty` e aspettare, anche se CLI o server MCP sono avviati da un terminale. Restano le
-richieste grafiche (`SSH_ASKPASS` con un display, `GIT_ASKPASS`, `core.askPass`) e i
-credential helper che non chiedono niente (cache, keychain, libsecret, GCM); senza, una
-credenziale mancante fallisce subito con `Auth`. stderr si legge mentre git gira
-(`Git::run_streaming`): diviso a ogni `\r` e `\n`, le righe di avanzamento vanno al
-`JobContext` (§6), le altre, solo quelle chiuse da `\n`, sono i `messages` del risultato o il
-testo dell'errore. Errori riconosciuti dal testo (`LC_ALL=C`, `progress::remote_error`):
-`Auth` per "Authentication failed", "could not read Username/Password", "terminal prompts
+[refs/heads/<branch>]`. The remote (always a configured remote, never a URL) and the branch
+go after `--end-of-options`: a remote called `-x` or `--upload-pack=false` does not
+become an option (tests with these names). The branch is a refspec without destination, without
+`:` or `+`: it writes no local refs, and the remote branch is updated with the configured refspec.
+No `--prune`, `--force`, `--tags`, `--update-head-ok`, `--recurse-submodules`: tags,
+pruning of vanished remote branches (`fetch.prune`, `remote.<name>.prune`) and submodules as
+the user's configuration says, like `git fetch` from the terminal. **No input
+requests**, ever: stdin closed, `GIT_TERMINAL_PROMPT=0` and, on Unix, the process starts in a new
+session (`setsid`, `libc` dependency) without a controlling terminal, so neither git, nor
+ssh (passphrase, host key confirmation), nor a credential helper can open
+`/dev/tty` and wait, even if the CLI or MCP server are started from a terminal. Graphical
+requests remain (`SSH_ASKPASS` with a display, `GIT_ASKPASS`, `core.askPass`) and credential
+helpers that ask nothing (cache, keychain, libsecret, GCM); without them, a missing
+credential fails immediately with `Auth`. stderr is read while git runs
+(`Git::run_streaming`): split at every `\r` and `\n`, the progress lines go to the
+`JobContext` (§6), the others, only those closed by `\n`, are the result's `messages` or the
+error text. Errors recognized from the text (`LC_ALL=C`, `progress::remote_error`):
+`Auth` for "Authentication failed", "could not read Username/Password", "terminal prompts
 disabled", "Permission denied (publickey...)", "Host key verification failed", HTTP 401/403;
-`NotAllowed` per "couldn't find remote ref"; `RemoteUnreachable` per "does not appear to be a
+`NotAllowed` for "couldn't find remote ref"; `RemoteUnreachable` for "does not appear to be a
 git repository", "Could not resolve host", "Connection refused/timed out", "repository not
-found", HTTP 404, "unable to access", "Could not read from remote repository" (guardati dopo
-quelli di `Auth`, che li precedono nello stesso stderr). Dopo l'uscita di git il backend
-aspetta al massimo un secondo che stderr si chiuda: un processo rimasto in background (un
-master ssh con `ControlPersist`) non blocca il comando. Annullamento: vedi §6. Limiti: su
-Windows niente `setsid` (non c'è `/dev/tty`; l'annullamento usa `kill`); la configurazione
-del repo può dare remoti con URL fuori dalla radice del server MCP (il fetch legge da lì, come
-da terminale).
+found", HTTP 404, "unable to access", "Could not read from remote repository" (checked after
+the `Auth` ones, which precede them in the same stderr). After git exits the backend
+waits at most one second for stderr to close: a process left in the background (an ssh
+master with `ControlPersist`) does not block the command. Cancellation: see §6. Limits: on
+Windows no `setsid` (there is no `/dev/tty`; cancellation uses `kill`); the repo's
+configuration can give remotes with URLs outside the MCP server's root (the fetch reads from there, as
+from the terminal).
 
 ## CliBackend: pull
 
-**Pull** (`remote.pull`, S26): dopo il fetch di `refs/heads/<merge>` (come sopra), il backup
-e poi, con `GIT_REFLOG_ACTION=project: remote.pull`, `GIT_EDITOR=:` e `GIT_SEQUENCE_EDITOR=:`:
-fast-forward del branch attivo `git -c core.fsmonitor=false merge --ff-only --no-autostash
---no-overwrite-ignore --no-edit --end-of-options <oid>` (git rifiuta prima di scrivere se sovrascriverebbe modifiche
-o non tracciati); di un altro branch `update-ref -m ... refs/heads/<b> <nuovo> <vecchio>`;
+**Pull** (`remote.pull`, S26): after the fetch of `refs/heads/<merge>` (as above), the backup
+and then, with `GIT_REFLOG_ACTION=project: remote.pull`, `GIT_EDITOR=:` and `GIT_SEQUENCE_EDITOR=:`:
+fast-forward of the active branch `git -c core.fsmonitor=false merge --ff-only --no-autostash
+--no-overwrite-ignore --no-edit --end-of-options <oid>` (git refuses before writing if it would overwrite changes
+or untracked files); of another branch `update-ref -m ... refs/heads/<b> <new> <old>`;
 merge `git -c core.fsmonitor=false merge --no-autostash --no-overwrite-ignore --no-edit --commit --no-squash
---ff|--no-ff -F <file> --end-of-options <oid>` (il messaggio, `Merge remote-tracking branch 'origin/main'` più ` into
-<b>` fuori da `main`/`master`, da un file temporaneo nella cartella git: `git merge` non legge
-`-F -` da stdin, e il suo percorso va a git come `OsStr`; `--ff`/`--no-ff`, `--commit`, `--no-squash` espliciti contro `merge.ff` e
-`branch.<nome>.mergeOptions`); rebase `git -c
+--ff|--no-ff -F <file> --end-of-options <oid>` (the message, `Merge remote-tracking branch 'origin/main'` plus ` into
+<b>` outside `main`/`master`, from a temporary file in the git directory: `git merge` does not read
+`-F -` from stdin, and its path goes to git as `OsStr`; explicit `--ff`/`--no-ff`, `--commit`, `--no-squash` against `merge.ff` and
+`branch.<name>.mergeOptions`); rebase `git -c
 core.fsmonitor=false -c rebase.updateRefs=false rebase --no-autostash --no-autosquash [--rebase-merges]
---end-of-options <oid>` (`rebase.updateRefs` sposterebbe altri branch fuori dal diario; senza il
-fork-point di `git pull --rebase`: con un upstream riscritto il rebase di solito si ferma in
-conflitto, e si annulla). **File ignorati**: git sovrascrive senza dirlo un file ignorato che
-l'upstream aggiunge (e un merge annullato lo cancellerebbe); il rebase non ha
-`--no-overwrite-ignore`. Per questo, per il branch attivo e prima del backup, i file che
-l'upstream porta e HEAD non ha (`diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD
-<upstream>`) non devono esistere nel worktree, né al posto di una loro cartella
-(`symlink_metadata`): altrimenti `NotAllowed` con i file e niente cambia (per fast-forward e
-merge è una seconda difesa dopo `--no-overwrite-ignore`). Per il rebase (anche
-`--rebase-merges`) contano anche i file toccati da ognuno dei commit da riapplicare e che
-HEAD non ha (`git log -m --no-renames --format= -z --name-only <upstream>..HEAD`): il rebase
-passa per gli alberi intermedi, quindi un file che un commit locale aggiunge e uno successivo
-toglie (o rinomina, o toglie e ricrea), o che un commit locale modifica mentre l'upstream lo
-toglie (conflitto modify/delete, poi `rebase --abort`), verrebbe scritto e poi cancellato
-insieme all'ignorato che c'era al suo posto. Il merge passa solo da HEAD al
-risultato e non ne ha bisogno. Il `MemoryBackend` fa lo stesso controllo sugli alberi dei
-commit da riapplicare. Hook (`pre-merge-commit`, `commit-msg`, `post-merge`,
-`post-rewrite`) e firma seguono la configurazione. Fermo (conflitto o altro): file in conflitto
-dallo stato e quelli che git dice in conflitto (`Merge conflict in <file>`, e con
-`rerere.autoUpdate` `Resolved '<file>' using previous resolution`: anche un conflitto risolto
-da rerere lascia il merge/rebase fermo e conta come conflitto; `stopped_conflicts`, la stessa
-funzione di `merge.start`; un nome dell'output si aggiunge solo se nessun percorso dello stato ha
-lo stesso testo, così un nome non UTF-8 non compare due volte). Merge (`MERGE_HEAD` dopo `git
-merge`): nessun `--abort`, risultato `in_progress`, con gli stessi controlli del merge riuscito
-come `warnings` (HEAD ancora sul branch, il branch ancora sul valore di prima, `MERGE_HEAD`
-uguale all'upstream atteso). Rebase: `git rebase --abort` e `PullConflict`; se l'annullamento
-non riesce un errore che lo dice, e il backup resta (non si toglie mai con un'operazione in
-corso: l'errore lo nomina). Uscita non zero senza operazione in corso: se il branch è com'era
-niente è partito, errore (`NotAllowed` se git rifiuta per non sovrascrivere file) e il backup si
-toglie; se il branch si è spostato lo stesso, l'errore lo dice e nomina il backup, che resta, e
-niente entra nel diario. Dopo: il branch deve contenere l'upstream, HEAD sul branch, altrimenti
-`warnings`. File `--assume-unchanged` diversi fra i due commit → `NotAllowed` (git li
-sovrascriverebbe senza controllarli).
+--end-of-options <oid>` (`rebase.updateRefs` would move other branches outside the journal; without the
+fork-point of `git pull --rebase`: with a rewritten upstream the rebase usually stops on
+conflict, and is aborted). **Ignored files**: git overwrites without saying so an ignored file that
+the upstream adds (and an aborted merge would delete it); the rebase has no
+`--no-overwrite-ignore`. For this reason, for the active branch and before the backup, the files the
+upstream brings and HEAD does not have (`diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD
+<upstream>`) must not exist in the worktree, nor in place of one of their directories
+(`symlink_metadata`): otherwise `NotAllowed` with the files and nothing changes (for fast-forward and
+merge it is a second defense after `--no-overwrite-ignore`). For the rebase (also
+`--rebase-merges`) the files touched by each of the commits to reapply and that
+HEAD does not have also count (`git log -m --no-renames --format= -z --name-only <upstream>..HEAD`): the rebase
+goes through the intermediate trees, so a file that a local commit adds and a later one
+removes (or renames, or removes and recreates), or that a local commit modifies while the upstream
+removes it (modify/delete conflict, then `rebase --abort`), would be written and then deleted
+together with the ignored file that was in its place. The merge goes only from HEAD to the
+result and does not need it. The `MemoryBackend` does the same check on the trees of the
+commits to reapply. Hooks (`pre-merge-commit`, `commit-msg`, `post-merge`,
+`post-rewrite`) and signing follow the configuration. Stopped (conflict or other): conflicted files
+from the status and those git reports as conflicted (`Merge conflict in <file>`, and with
+`rerere.autoUpdate` `Resolved '<file>' using previous resolution`: even a conflict resolved
+by rerere leaves the merge/rebase stopped and counts as a conflict; `stopped_conflicts`, the same
+function as `merge.start`; a name from the output is added only if no path in the status has
+the same text, so a non-UTF-8 name does not appear twice). Merge (`MERGE_HEAD` after `git
+merge`): no `--abort`, result `in_progress`, with the same checks as a successful merge
+as `warnings` (HEAD still on the branch, the branch still at its previous value, `MERGE_HEAD`
+equal to the expected upstream). Rebase: `git rebase --abort` and `PullConflict`; if the abort
+fails an error that says so, and the backup stays (it is never removed with an operation in
+progress: the error names it). Non-zero exit without an operation in progress: if the branch is as it was
+nothing started, error (`NotAllowed` if git refuses so as not to overwrite files) and the backup is
+removed; if the branch moved anyway, the error says so and names the backup, which stays, and
+nothing goes into the journal. Afterwards: the branch must contain the upstream, HEAD on the branch, otherwise
+`warnings`. `--assume-unchanged` files that differ between the two commits → `NotAllowed` (git would
+overwrite them without checking).
 
 ## CliBackend: push
 
 **Push** (`remote.push`, S26): `git push --porcelain --progress --no-follow-tags
 --recurse-submodules=check [--set-upstream] [--force-with-lease=refs/heads/<dst>:<oid>]
---end-of-options <remote> refs/heads/<b>:refs/heads/<dst>`, con l'ambiente del fetch (nessun
-terminale, stdin chiuso, `setsid`). `--recurse-submodules=check` al posto di un eventuale
-`push.recurseSubmodules=on-demand`, che pubblicherebbe anche i sottomoduli (e rifiuta un push
-che riferisce commit di sottomoduli non pubblicati). Mai `--no-verify`: gli hook `pre-push`
-girano. stderr come il fetch (avanzamento al `JobContext`, il resto in `messages` o
-nell'errore); l'esito dallo stdout di `--porcelain` (`Git::run_streaming` con
-`capture_stdout`): la riga `<flag>\t<da>:<a>\t<riassunto>` del ref (` ` fast-forward, `+`
-forzato, `*` nuovo, `=` già aggiornato, `!` rifiutato: `non-fast-forward`/`fetch first`,
-`stale info`, `remote rejected`). Uscita non zero senza quella riga: `Auth`/`RemoteUnreachable`
-dal testo come il fetch, altrimenti con "failed to push some refs" un hook `pre-push` (o il
-controllo dei sottomoduli): `PushRejected` con l'output dell'hook.
+--end-of-options <remote> refs/heads/<b>:refs/heads/<dst>`, with the fetch environment (no
+terminal, stdin closed, `setsid`). `--recurse-submodules=check` in place of any
+`push.recurseSubmodules=on-demand`, which would also publish the submodules (and refuses a push
+that references unpublished submodule commits). Never `--no-verify`: `pre-push` hooks
+run. stderr like the fetch (progress to the `JobContext`, the rest in `messages` or
+in the error); the outcome from the stdout of `--porcelain` (`Git::run_streaming` with
+`capture_stdout`): the ref's line `<flag>\t<from>:<to>\t<summary>` (` ` fast-forward, `+`
+forced, `*` new, `=` already up to date, `!` rejected: `non-fast-forward`/`fetch first`,
+`stale info`, `remote rejected`). Non-zero exit without that line: `Auth`/`RemoteUnreachable`
+from the text like the fetch, otherwise with "failed to push some refs" a `pre-push` hook (or the
+submodule check): `PushRejected` with the hook's output.
 
-## Undo del pull
+## Undo of the pull
 
-`remote.pull` entra nel diario quando sposta il branch: voce `remote.pull` con il branch da
-`before` ad `after`, HEAD uguale prima e dopo, il backup `refs/project/backup/pull-...` (il
-branch com'era, salvato prima di scrivere) e la descrizione `Pull di `main` (fast-forward: da
-a1b2c3d a e4f5a6b)` / `(merge di origin/main: ...)` / `(rebase su origin/main: ...)`. Il fetch
-fatto dal pull no, come `remote.fetch`.
+`remote.pull` goes into the journal when it moves the branch: `remote.pull` entry with the branch from
+`before` to `after`, HEAD equal before and after, the backup `refs/project/backup/pull-...` (the
+branch as it was, saved before writing) and the description `Pull of `main` (fast-forward: from
+a1b2c3d to e4f5a6b)` / `(merge of origin/main: ...)` / `(rebase onto origin/main: ...)`. The fetch
+done by the pull does not, like `remote.fetch`.
 
-- **Branch attivo: undo e redo con indice e worktree** (`GitBackend::reset_branch`): spostare
-  solo il ref (come per un commit) lascerebbe nel worktree i file del pull, che sembrerebbero
-  modifiche locali da annullare a mano. Prima gli stessi controlli di `restore_refs`
-  (operazione in corso, HEAD e branch come li ha lasciati il pull, altrimenti `UndoConflict`) e
-  i backup dei commit abbandonati (il commit di merge, i commit riscritti dal rebase:
-  `refs/project/backup/undo-...`), poi `git -c core.fsmonitor=false reset --keep <oid>`: i file
-  diversi fra i due commit tornano com'erano, **solo se non hanno modifiche locali** (altrimenti
-  `NotAllowed` e la voce resta), le altre modifiche restano, e un non tracciato non si
-  sovrascrive. Prima ancora si controlla che nessun file da ricreare esista nel worktree
-  (`reset --keep` sovrascriverebbe un ignorato) e i file `--assume-unchanged`. Limite: fra il
-  controllo dei ref e `reset` resta un istante in cui un altro processo potrebbe spostare il
-  branch (`reset` aggiorna con il valore letto da sé); il commit spostato da fuori resterebbe nel
-  reflog. Il redo è lo stesso spostamento al contrario (il commit di dopo è tenuto dal backup
-  dell'undo).
-- **Branch non attivo**: solo il ref (fast-forward), undo e redo con `restore_refs`.
-- Un push non si annulla da qui; dopo un push l'undo di un pull precedente resta possibile
-  (controlla solo il branch locale), ma il remoto ha già i commit.
+- **Active branch: undo and redo with index and worktree** (`GitBackend::reset_branch`): moving
+  only the ref (as for a commit) would leave the pull's files in the worktree, which would look like
+  local changes to undo by hand. First the same checks as `restore_refs`
+  (operation in progress, HEAD and branch as the pull left them, otherwise `UndoConflict`) and
+  the backups of the abandoned commits (the merge commit, the commits rewritten by the rebase:
+  `refs/project/backup/undo-...`), then `git -c core.fsmonitor=false reset --keep <oid>`: the files
+  that differ between the two commits return as they were, **only if they have no local changes** (otherwise
+  `NotAllowed` and the entry stays), the other changes stay, and an untracked file is not
+  overwritten. Even before that it is checked that no file to recreate exists in the worktree
+  (`reset --keep` would overwrite an ignored one) and `--assume-unchanged` files. Limit: between the
+  ref check and `reset` there remains an instant in which another process could move the
+  branch (`reset` updates with the value it reads itself); the commit moved from outside would remain in the
+  reflog. The redo is the same move in reverse (the later commit is kept by the undo's
+  backup).
+- **Non-active branch**: only the ref (fast-forward), undo and redo with `restore_refs`.
+- A push cannot be undone from here; after a push the undo of a previous pull remains possible
+  (it checks only the local branch), but the remote already has the commits.
 
-Il `MemoryBackend` fa lo stesso con i suoi controlli del checkout; registra i backup dei pull in
-`commit_backups` (`refs/project/backup/pull-<n>`) e quelli dei force push (`push-<n>`). Il merge
-del pull in memoria è quello di `merge.start` (`merge_three_way`): con conflitti lascia il merge in
-corso (voci `u` con i marcatori `>>>>>>> origin/main`, `MERGE_HEAD`, `MERGE_MSG`); il rebase in
-conflitto non cambia niente e dà `PullConflict`.
+The `MemoryBackend` does the same with its checkout checks; it records pull backups in
+`commit_backups` (`refs/project/backup/pull-<n>`) and those of force pushes (`push-<n>`). The pull's
+in-memory merge is that of `merge.start` (`merge_three_way`): with conflicts it leaves the merge in
+progress (`u` entries with `>>>>>>> origin/main` markers, `MERGE_HEAD`, `MERGE_MSG`); the rebase in
+conflict changes nothing and gives `PullConflict`.
 
-**Merge fermo e diario**: il pull fermo non entra nel diario (il branch non si è mosso) e finché
-il merge è in corso `edit.undo`/`edit.redo` sono rifiutati (operazione in corso). La voce arriva
-con `merge.continue` (undo come un merge concluso, [merge.md](merge.md)); `merge.abort` non entra
-nel diario, e `can_undo` dopo l'abort riguarda la voce precedente.
+**Stopped merge and journal**: the stopped pull does not go into the journal (the branch has not moved) and while
+the merge is in progress `edit.undo`/`edit.redo` are refused (operation in progress). The entry arrives
+with `merge.continue` (undo like a concluded merge, [merge.md](merge.md)); `merge.abort` does not go into
+the journal, and `can_undo` after the abort refers to the previous entry.
 
-## Il fetch non entra nel diario
+## The fetch does not go into the journal
 
-**Il fetch non entra nel diario** (scelta, S25): sposta solo branch remoti e tag, che
-rispecchiano il remoto. Riportarli indietro farebbe vedere un remoto che non esiste più (e il
-fetch successivo li rimetterebbe dov'erano), e niente di locale va perso: gli oggetti si
-aggiungono soltanto, branch locali, indice e worktree non si toccano, e un branch remoto tolto
-da `fetch.prune` è sparito dal remoto. Le voci già nel diario non ne risentono: controllano solo
-HEAD e i ref che hanno spostato. L'eccezione è un refspec configurato verso `refs/heads/` (un
-mirror): il valore di prima resta nel reflog del ref e il risultato lo segnala in `warnings`.
+**The fetch does not go into the journal** (choice, S25): it moves only remote branches and tags, which
+mirror the remote. Moving them back would show a remote that no longer exists (and the next
+fetch would put them back where they were), and nothing local is lost: objects are only
+added, local branches, index and worktree are not touched, and a remote branch removed
+by `fetch.prune` has disappeared from the remote. Entries already in the journal are not affected: they check only
+HEAD and the refs they moved. The exception is a refspec configured toward `refs/heads/` (a
+mirror): the previous value stays in the ref's reflog and the result reports it in `warnings`.

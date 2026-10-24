@@ -1,5 +1,5 @@
-//! Disegno dei pannelli. Le funzioni leggono la vista e producono [`Action`]; non cambiano
-//! niente direttamente.
+//! Drawing of the panels. The functions read the view and produce [`Action`]; they do not change
+//! anything directly.
 
 use crate::branch::{self, Dialog, NameKind, Start};
 use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
@@ -53,27 +53,27 @@ pub(crate) use sync_view::{failure_window, sync_window};
 use top_bar::*;
 pub(crate) use top_bar::{status_bar, top_bar, welcome};
 
-/// L'operazione di rete in corso (fetch, pull o push), per la barra.
+/// The network operation in progress (fetch, pull or push), for the bar.
 pub(crate) struct Network {
-    /// Cosa si sta facendo, es. `Pull di «main»`.
+    /// What is being done, e.g. `Pull of "main"`.
     pub what: String,
-    /// Vero dopo "Interrompi", finché il comando non risponde.
+    /// True after "Cancel", until the command answers.
     pub cancelling: bool,
-    /// L'ultimo avanzamento ricevuto.
+    /// The latest progress received.
     pub progress: Option<Progress>,
-    /// Cosa succede interrompendo.
+    /// What happens by cancelling.
     pub stop_hint: String,
-    /// L'azione di "Interrompi".
+    /// The "Cancel" action.
     pub cancel: Action,
 }
 
-/// Il testo di git in una finestra, se c'è.
+/// The git text in a window, if any.
 pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
     if let Some(git) = git.filter(|g| !g.trim().is_empty()) {
         ui.add_space(6.0);
         ui.label(tr!("common-git-message"));
         egui::ScrollArea::vertical()
-            .id_salt("testo-git")
+            .id_salt("git-text")
             .max_height(140.0)
             .show(ui, |ui| {
                 ui.add(egui::Label::new(RichText::new(git.trim_end()).monospace()).wrap());
@@ -81,12 +81,12 @@ pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
     }
 }
 
-/// Quando una voce che scrive è spenta perché si aspetta: il motivo.
+/// When an entry that writes is disabled because it is waiting: the reason.
 fn wait() -> String {
     tr!("common-wait")
 }
 
-/// Id breve cliccabile: seleziona il commit nella lista.
+/// Short clickable id: selects the commit in the list.
 fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
     let response = ui
         .link(RichText::new(id.short()).monospace())
@@ -96,7 +96,7 @@ fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
     }
 }
 
-/// Colore della lettera del tipo di modifica.
+/// Color of the letter of the change type.
 fn change_color(change: Change) -> Color32 {
     match change {
         Change::Added => Color32::from_rgb(0x3f, 0xb9, 0x50),
@@ -110,8 +110,8 @@ fn change_color(change: Change) -> Color32 {
     }
 }
 
-/// Percorso su una riga, tagliato con `…` se non entra in `width`. Per rinomine e copie
-/// l'origine è più tenue.
+/// Path on one line, cut with `…` if it does not fit in `width`. For renames and copies
+/// the origin is dimmer.
 fn path_job(
     file: &ChangedFile,
     font: &FontId,

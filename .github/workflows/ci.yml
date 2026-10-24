@@ -3,8 +3,8 @@ name: ci
 on:
   push:
     branches: [master]
-  # Le pull request verso dev (una per step) per ora non passano dalla CI: la build si verifica
-  # in locale con `cargo xtask ci`.
+  # Pull requests to dev (one per step) do not go through CI for now: the build is verified
+  # locally with `cargo xtask ci`.
   pull_request:
     branches: [master]
 
@@ -18,5 +18,5 @@ jobs:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # Lo stesso comando che si usa in locale.
+      # The same command used locally.
       - run: cargo xtask ci

@@ -3,45 +3,45 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::fmt;
 
-/// Percorso di un file nel repo, relativo alla radice e con `/` come separatore, così come lo
-/// scrive git.
+/// Path of a file in the repo, relative to the root and with `/` as separator, exactly as
+/// git writes it.
 ///
-/// Tiene i byte esatti: su Unix un nome di file può non essere UTF-8 e va ripassato a git
-/// identico. Per mostrarlo si usa [`RepoPath::to_string_lossy`] (o `Display`), che sostituisce
-/// i byte non validi con `U+FFFD`.
+/// It keeps the exact bytes: on Unix a file name may not be UTF-8 and must be passed back to git
+/// identical. To display it use [`RepoPath::to_string_lossy`] (or `Display`), which replaces
+/// invalid bytes with `U+FFFD`.
 ///
-/// In JSON è una stringa se i byte sono UTF-8 valido, altrimenti un array di byte
-/// (es. `[99, 97, 255]`); in lettura accetta entrambe le forme.
+/// In JSON it is a string if the bytes are valid UTF-8, otherwise a byte array
+/// (e.g. `[99, 97, 255]`); when reading it accepts both forms.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct RepoPath(Vec<u8>);
 
 impl RepoPath {
-    /// Costruisce un percorso dai byte grezzi.
+    /// Builds a path from raw bytes.
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
         Self(bytes.into())
     }
 
-    /// I byte esatti del percorso, da ripassare a git.
+    /// The exact bytes of the path, to pass back to git.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
-    /// Consuma il percorso e restituisce i byte.
+    /// Consumes the path and returns the bytes.
     pub fn into_bytes(self) -> Vec<u8> {
         self.0
     }
 
-    /// Il percorso come testo, se è UTF-8 valido.
+    /// The path as text, if it is valid UTF-8.
     pub fn to_str(&self) -> Option<&str> {
         std::str::from_utf8(&self.0).ok()
     }
 
-    /// Testo da mostrare: i byte non UTF-8 diventano `U+FFFD`. Non va ripassato a git.
+    /// Text to display: non-UTF-8 bytes become `U+FFFD`. Not to be passed back to git.
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.0)
     }
 
-    /// Ultimo componente del percorso (dopo l'ultimo `/`), per la UI.
+    /// Last component of the path (after the last `/`), for the UI.
     pub fn file_name(&self) -> &[u8] {
         match self.0.iter().rposition(|&b| b == b'/') {
             Some(i) => &self.0[i + 1..],
@@ -88,15 +88,11 @@ impl Serialize for RepoPath {
 
 impl<'de> Deserialize<'de> for RepoPath {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_bytes(
-            deserializer,
-            "un percorso come stringa o come array di byte",
-        )
-        .map(Self)
+        deserialize_bytes(deserializer, "a path as a string or as a byte array").map(Self)
     }
 }
 
-/// Serializza dei byte come stringa se sono UTF-8 valido, altrimenti come array di byte.
+/// Serializes bytes as a string if they are valid UTF-8, otherwise as a byte array.
 pub(super) fn serialize_bytes<S: Serializer>(
     bytes: &[u8],
     serializer: S,
@@ -107,7 +103,7 @@ pub(super) fn serialize_bytes<S: Serializer>(
     }
 }
 
-/// Legge dei byte scritti da [`serialize_bytes`]: una stringa o un array di byte.
+/// Reads bytes written by [`serialize_bytes`]: a string or a byte array.
 pub(super) fn deserialize_bytes<'de, D: Deserializer<'de>>(
     deserializer: D,
     expecting: &'static str,

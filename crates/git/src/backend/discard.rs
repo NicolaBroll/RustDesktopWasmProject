@@ -1,25 +1,25 @@
-//! `worktree.discard` e il suo undo/redo sul [`CliBackend`] (passi e garanzie
+//! `worktree.discard` and its undo/redo on the [`CliBackend`] (steps and guarantees
 //! in `impl-docs/git/discard.md`).
 //!
-//! Scarto, in quest'ordine, e niente si scrive nel worktree se un passo fallisce:
+//! Discard, in this order, and nothing is written to the worktree if a step fails:
 //!
-//! 1. stato senza `core.fsmonitor`, [`discard_plan`] e confronto con il piano confermato;
-//!    l'indice (`ls-files -s`) deve avere le voci dello stato;
-//! 2. ogni cartella del percorso di ogni file è una cartella vera e il file non è una cartella
-//!    (un non tracciato, ignorato o link al suo posto verrebbe cancellato da `git restore`);
-//! 3. `index.lock` → [`EngineError::IndexLocked`] subito;
-//! 4. `git stash create` (senza fsmonitor, identità fissa dei backup);
-//! 5. i file i cui byte non sono quelli che `git restore` ricreerebbe dal commit (filtri,
-//!    `core.autocrlf=input`) si salvano senza filtri in un commit figlio (`raw`);
-//! 6. il ref `refs/project/backup/discard-...` (su `raw` se c'è, altrimenti sullo stash);
-//! 7. ricontrollo di indice e cartelle, e **ultima verifica** che il backup abbia esattamente
-//!    il worktree attuale (modo con `git diff <stash>`, byte come al passo 5);
-//! 8. `git restore --worktree --no-overlay` dei soli file del piano (percorsi su stdin).
+//! 1. status without `core.fsmonitor`, [`discard_plan`] and comparison with the confirmed plan;
+//!    the index (`ls-files -s`) must have the entries of the status;
+//! 2. every folder in the path of every file is a real folder and the file is not a folder
+//!    (an untracked, ignored or link in its place would be deleted by `git restore`);
+//! 3. `index.lock` → [`EngineError::IndexLocked`] right away;
+//! 4. `git stash create` (without fsmonitor, fixed backup identity);
+//! 5. the files whose bytes are not the ones `git restore` would recreate from the commit (filters,
+//!    `core.autocrlf=input`) are saved without filters in a child commit (`raw`);
+//! 6. the ref `refs/project/backup/discard-...` (on `raw` if there is one, otherwise on the stash);
+//! 7. recheck of index and folders, and **last verification** that the backup has exactly
+//!    the current worktree (mode with `git diff <stash>`, bytes as in step 5);
+//! 8. `git restore --worktree --no-overlay` of only the files of the plan (paths on stdin).
 //!
-//! Undo: HEAD (controllata dal diario), voce dell'indice registrata e worktree uguale
-//! all'indice; poi `git restore --source=<stash>` e i file di `raw` riscritti con i loro byte.
-//! Redo: voce dell'indice e worktree uguale al backup, poi di nuovo `restore --worktree`. Dopo
-//! la scrittura si rilegge: un file non come atteso va in `warnings`.
+//! Undo: HEAD (checked by the journal), recorded index entry and worktree equal to
+//! the index; then `git restore --source=<stash>` and the `raw` files rewritten with their bytes.
+//! Redo: index entry and worktree equal to the backup, then `restore --worktree` again. After
+//! the write it is re-read: a file not as expected goes in `warnings`.
 
 use super::CliBackend;
 use crate::command::{failure, os_from_bytes, stderr_text};
@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-/// I byte di un percorso del sistema (la destinazione di un link), come li salva git.
+/// The bytes of a system path (the target of a link), as git stores them.
 #[cfg(unix)]
 fn os_bytes(s: &OsStr) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
@@ -44,8 +44,8 @@ fn os_bytes(s: &OsStr) -> Vec<u8> {
     s.to_string_lossy().replace('\\', "/").into_bytes()
 }
 
-/// Messaggio del commit di `git stash create`: fisso, nessun dato dell'utente.
-const STASH_MESSAGE: &str = "project: backup del worktree prima di worktree.discard";
+/// Commit message of `git stash create`: fixed, no user data.
+const STASH_MESSAGE: &str = "project: backup of the worktree before worktree.discard";
 
 impl CliBackend {
     /// [`GitBackend::discard`](project_engine::GitBackend::discard).
@@ -67,17 +67,17 @@ impl CliBackend {
         let backup = self.create_backup_ref(
             "discard",
             &raw.unwrap_or(stash).to_string(),
-            "project: backup del worktree prima di worktree.discard",
+            "project: backup of the worktree before worktree.discard",
         )?;
         self.check_discard_index(&files)?;
-        // Ultimo passo prima di scrivere: il backup ha esattamente quello che c'è ora.
+        // Last step before writing: the backup has exactly what is there now.
         self.check_real_dirs(&targets)?;
         let missing = self.not_as_in_backup(&stash, raw.as_ref(), &targets)?;
         if !missing.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "il backup del worktree (`{backup}`) non ha il contenuto attuale di {} (un file \
-                 cambiato proprio adesso?): niente scartato, riprovare",
-                list(&missing)
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-discard-backup-incomplete",
+                backup = backup,
+                files = list(&missing)
             )));
         }
         let args = ["restore", "--worktree", "--no-overlay"];
@@ -105,10 +105,10 @@ impl CliBackend {
         let status = self.status_for_write()?;
         let index = self.index_listing()?;
         let mut conflicts = request.index_conflicts(|p| index.get(p).map(|e| (e.mode, e.oid)));
-        // Prima di leggere i file: un file al posto di una cartella dà un rifiuto chiaro.
+        // Before reading the files: a file in place of a folder gives a clear refusal.
         self.check_real_dirs(&paths)?;
         let changed: Vec<RepoPath> = if request.redo {
-            // Come l'ha lasciato l'undo: i byte del backup.
+            // As the undo left it: the backup bytes.
             self.not_as_in_backup(&request.stash, request.raw.as_ref(), &paths)?
         } else {
             paths
@@ -143,34 +143,42 @@ impl CliBackend {
             vec!["restore", &source, "--worktree", "--no-overlay"]
         };
         let kept = || {
-            format!(
-                "il worktree prima dello scarto resta nel commit {}",
-                request.raw.unwrap_or(request.stash)
+            msg!(
+                "engine-discard-backup-kept",
+                commit = request.raw.unwrap_or(request.stash)
             )
         };
         let out = self.output_with_paths(&args, &paths)?;
         if !out.status.success() {
-            return Err(EngineError::Git {
+            return Err(EngineError::GitWithReason {
                 command: "restore".to_owned(),
-                stderr: format!("{}; {}", stderr_text(&out), kept()),
+                reason: msg!(
+                    "engine-note-semicolon",
+                    text = stderr_text(&out),
+                    note = kept()
+                ),
             });
         }
         if !request.redo
             && let Some(raw) = &request.raw
         {
-            // I file salvati byte per byte: si riscrivono quei byte, senza filtri.
+            // The files saved byte for byte: those bytes are rewritten, without filters.
             for (path, entry) in self.ls_tree(raw, &paths)? {
                 let content = self.blob(&entry.1)?;
                 std::fs::write(self.worktree_path(&path), content).map_err(|e| {
-                    EngineError::Git {
+                    EngineError::GitWithReason {
                         command: "restore".to_owned(),
-                        stderr: format!("`{path}` non si riscrive ({e}); {}", kept()),
+                        reason: msg!(
+                            "engine-note-semicolon",
+                            text = msg!("engine-discard-rewrite-failed", path = path, error = e),
+                            note = kept()
+                        ),
                     }
                 })?;
             }
         }
 
-        // Si rilegge: i file sono come chiesto?
+        // Re-read: are the files as requested?
         let wrong = if request.redo {
             self.differing(None, &paths)?
         } else {
@@ -179,13 +187,12 @@ impl CliBackend {
         let warnings = if wrong.is_empty() {
             Vec::new()
         } else {
-            vec![format!(
-                "dopo `{}` {} non {} come atteso (un filtro `clean`/`smudge` o un altro \
-                 programma?); {}",
-                request.command,
-                list(&wrong),
-                if wrong.len() == 1 { "è" } else { "sono" },
-                kept()
+            vec![msg!(
+                "engine-discard-not-as-expected",
+                command = request.command,
+                files = list(&wrong),
+                n = wrong.len(),
+                note = kept()
             )]
         };
         Ok(RestoreOutcome {
@@ -198,10 +205,10 @@ impl CliBackend {
         self.workdir.join(os_from_bytes(path.as_bytes()))
     }
 
-    /// Ogni cartella del percorso di ogni file è una cartella vera, e il file non è una
-    /// cartella. Al posto di una cartella può esserci un file o un link non tracciato (o
-    /// ignorato: `git status` non lo dice), e `git restore` lo cancellerebbe per ricreare il
-    /// file: niente si scrive.
+    /// Every folder in the path of every file is a real folder, and the file is not a
+    /// folder. In place of a folder there can be an untracked file or link (or
+    /// ignored: `git status` does not say), and `git restore` would delete it to recreate the
+    /// file: nothing is written.
     fn check_real_dirs(&self, paths: &[RepoPath]) -> Result<(), EngineError> {
         let mut bad = Vec::new();
         for path in paths {
@@ -216,7 +223,7 @@ impl CliBackend {
                         blocked = true;
                         break;
                     }
-                    // La cartella non c'è: git la crea, niente da perdere più in giù.
+                    // The folder does not exist: git creates it, nothing to lose further down.
                     Err(_) => {
                         blocked = true;
                         break;
@@ -234,19 +241,17 @@ impl CliBackend {
         }
         bad.sort();
         bad.dedup();
-        Err(EngineError::NotAllowed(format!(
-            "nel worktree {} non {} come se lo aspetta git (un file o un link al posto di una \
-             cartella, o una cartella al posto di un file): ricreare i file lo cancellerebbe, e \
-             il backup non lo contiene. Niente scritto: spostarlo e ripetere",
-            list(&bad),
-            if bad.len() == 1 { "è" } else { "sono" },
+        Err(EngineError::NotAllowed(msg!(
+            "engine-discard-in-the-way-git",
+            files = list(&bad),
+            n = bad.len()
         )))
     }
 
-    /// I file di `paths` il cui worktree non è quello del backup: il contenuto che `git
-    /// restore --source=<stash>` ricreerebbe (con i filtri `smudge` e le conversioni di fine
-    /// riga), o i byte salvati in `raw`, e lo stesso modo (`git diff <stash>`). Un file che nel
-    /// backup non c'è non deve esserci.
+    /// The files of `paths` whose worktree is not the backup's: the content that `git
+    /// restore --source=<stash>` would recreate (with the `smudge` filters and line-ending
+    /// conversions), or the bytes saved in `raw`, and the same mode (`git diff <stash>`). A file that is not
+    /// in the backup must not exist.
     fn not_as_in_backup(
         &self,
         stash: &Oid,
@@ -275,12 +280,16 @@ impl CliBackend {
         Ok(out)
     }
 
-    /// Cosa c'è nel worktree in `path`: `None` se niente, `(true, destinazione)` per un link,
-    /// `(false, byte)` per un file. Una cartella conta come un contenuto che non torna mai.
+    /// What is in the worktree at `path`: `None` if nothing, `(true, target)` for a link,
+    /// `(false, bytes)` for a file. A folder counts as content that never matches.
     fn disk(path: &Path) -> Result<Option<(bool, Vec<u8>)>, EngineError> {
-        let io = |e: std::io::Error| EngineError::Git {
+        let io = |e: std::io::Error| EngineError::GitWithReason {
             command: "restore".to_owned(),
-            stderr: format!("`{}` non si legge: {e}", path.display()),
+            reason: msg!(
+                "engine-discard-unreadable",
+                path = path.display(),
+                error = e
+            ),
         };
         let meta = match std::fs::symlink_metadata(path) {
             Ok(m) => m,
@@ -297,9 +306,9 @@ impl CliBackend {
         }
     }
 
-    /// I byte che `git restore` scriverebbe per la voce `entry` (modo, blob) in `path`: un link
-    /// ha per destinazione il contenuto del blob, un file passa dai filtri
-    /// (`cat-file --filters --path=<path>`, gli attributi di quel percorso).
+    /// The bytes `git restore` would write for the entry `entry` (mode, blob) at `path`: a link
+    /// has the blob content as its target, a file goes through the filters
+    /// (`cat-file --filters --path=<path>`, the attributes of that path).
     fn checkout_bytes(
         &self,
         path: &RepoPath,
@@ -327,8 +336,8 @@ impl CliBackend {
         Ok((false, out.stdout))
     }
 
-    /// Le voci (modo, id) di `paths` nell'albero del commit `commit` (`ls-tree -r -z
-    /// --full-tree`, percorsi alla lettera); un percorso che non c'è manca.
+    /// The entries (mode, id) of `paths` in the tree of commit `commit` (`ls-tree -r -z
+    /// --full-tree`, paths literal); a path that does not exist is missing.
     fn ls_tree(
         &self,
         commit: &Oid,
@@ -350,7 +359,7 @@ impl CliBackend {
         let out = self.git.run_with_paths(Some(&self.workdir), &args, &os)?;
         let mut map = BTreeMap::new();
         for record in out.split(|&b| b == 0).filter(|r| !r.is_empty()) {
-            // `<modo> <tipo> <id>\t<percorso>`
+            // `<mode> <type> <id>\t<path>`
             let bad = || super::failure_text(&args[1..], record);
             let tab = record.iter().position(|&b| b == b'\t').ok_or_else(bad)?;
             let fields: Vec<&[u8]> = record[..tab].split(|&b| b == b' ').collect();
@@ -369,12 +378,12 @@ impl CliBackend {
         Ok(map)
     }
 
-    /// Se per qualche file regolare i byte del worktree non sono quelli che `git restore`
-    /// ricreerebbe da `stash` (es. CRLF con `core.autocrlf=input`, che il filtro `clean` toglie
-    /// e lo `smudge` non rimette), li salva senza filtri (`hash-object -w --no-filters`) in un
-    /// commit con i soli quei file e genitore `stash`, che l'undo usa per riscriverli identici.
-    /// `None` se non serve. Un link o un tipo di file diverso dal backup è un errore: il
-    /// backup non lo rappresenta.
+    /// If for some regular file the worktree bytes are not the ones `git restore`
+    /// would recreate from `stash` (e.g. CRLF with `core.autocrlf=input`, which the `clean` filter removes
+    /// and `smudge` does not put back), saves them without filters (`hash-object -w --no-filters`) in a
+    /// commit with only those files and parent `stash`, which undo uses to rewrite them identically.
+    /// `None` if not needed. A link or a file type different from the backup is an error: the
+    /// backup does not represent it.
     fn save_raw(&self, stash: &Oid, paths: &[RepoPath]) -> Result<Option<Oid>, EngineError> {
         let in_stash = self.ls_tree(stash, paths)?;
         let mut raw = Vec::new();
@@ -392,10 +401,10 @@ impl CliBackend {
             }
         }
         if !wrong.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "il backup del worktree (`git stash create`, {stash}) non ha il contenuto attuale \
-                 di {} (un file cambiato proprio adesso?): niente scartato, riprovare",
-                list(&wrong)
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-discard-backup-incomplete-stash",
+                stash = stash,
+                files = list(&wrong)
             )));
         }
         if raw.is_empty() {
@@ -424,9 +433,9 @@ impl CliBackend {
         let tree = String::from_utf8_lossy(tree.trim_ascii_end()).into_owned();
         let parent = stash.to_string();
         let mut message = String::from(
-            "Backup del worktree byte per byte, senza filtri, prima di worktree.discard\n\n\
-             Il genitore è il commit di `git stash create`; qui i file i cui byte non sono \
-             quelli che git ricreerebbe da lì:\n\n",
+            "Byte-for-byte backup of the worktree, without filters, before worktree.discard\n\n\
+             The parent is the `git stash create` commit; here are the files whose bytes are not \
+             the ones git would recreate from it:\n\n",
         );
         for (path, _, _) in &raw {
             message.push_str(&format!("{path}\n"));
@@ -448,8 +457,8 @@ impl CliBackend {
         Ok(Some(Oid::from_hex(commit.trim_ascii_end())?))
     }
 
-    /// Le voci dell'indice dei file da scartare sono ancora quelle dello stato (modo e id):
-    /// se un altro processo git le ha cambiate, errore senza scrivere.
+    /// The index entries of the files to discard are still those of the status (mode and id):
+    /// if another git process changed them, error without writing.
     fn check_discard_index(&self, files: &[DiscardedFile]) -> Result<(), EngineError> {
         let index = self.index_listing()?;
         let same = files
@@ -458,17 +467,13 @@ impl CliBackend {
         if same {
             Ok(())
         } else {
-            Err(EngineError::NotAllowed(
-                "l'indice è cambiato mentre si preparava lo scarto (un altro processo git?): \
-                 niente scartato, riprovare"
-                    .to_owned(),
-            ))
+            Err(EngineError::NotAllowed(msg!("engine-discard-index-moved")))
         }
     }
 
-    /// `git stash create`: il commit con il worktree e l'indice attuali (non tocca né l'uno
-    /// né l'altro, né `refs/stash`). Senza `core.fsmonitor`, che se non è aggiornato farebbe
-    /// saltare un file cambiato, e con l'identità fissa dei backup (riesce anche senza
+    /// `git stash create`: the commit with the current worktree and index (touches neither
+    /// of them, nor `refs/stash`). Without `core.fsmonitor`, which if stale would
+    /// skip a changed file, and with the fixed backup identity (works even without
     /// `user.name`).
     fn stash_create(&self) -> Result<Oid, EngineError> {
         let args = [
@@ -486,12 +491,14 @@ impl CliBackend {
             .git
             .output_with_input_env(Some(&self.workdir), &args, b"", &identity)?;
         if !out.status.success() {
-            // Indice bloccato nel frattempo: `IndexLocked`, come per le altre scritture.
+            // Index locked in the meantime: `IndexLocked`, as for the other writes.
             return Err(match failure(&args, &out) {
-                EngineError::Git { command, stderr } => EngineError::Git {
+                EngineError::Git { command, stderr } => EngineError::GitWithReason {
                     command,
-                    stderr: format!(
-                        "{stderr}; il backup del worktree non si può creare, niente scartato"
+                    reason: msg!(
+                        "engine-note-semicolon",
+                        text = stderr,
+                        note = msg!("engine-discard-no-backup")
                     ),
                 },
                 other => other,
@@ -499,22 +506,20 @@ impl CliBackend {
         }
         let hex = out.stdout.trim_ascii();
         if hex.is_empty() {
-            // Nessuna modifica secondo git: lo stato letto prima non è più quello attuale.
-            return Err(EngineError::NotAllowed(
-                "`git stash create` non ha trovato modifiche da salvare (il worktree è cambiato \
-                 nel frattempo?): niente scartato, rileggere lo stato"
-                    .to_owned(),
-            ));
+            // No changes according to git: the status read earlier is no longer the current one.
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-discard-nothing-saved"
+            )));
         }
         Ok(Oid::from_hex(hex)?)
     }
 
-    /// I file di `paths` il cui worktree è diverso dal commit `commit` (o dall'indice, con
-    /// `None`): `git diff --name-only -z [<commit>] -- <paths>`, senza fsmonitor, rinomine,
-    /// diff esterni né textconv. Qui **non** si usa `diff.autoRefreshIndex=false` (come nelle
-    /// altre letture): senza il confronto del contenuto che quell'opzione spegne, un file
-    /// cambiato solo nei dati di `stat` (riscritto uguale) comparirebbe fra i diversi.
-    /// `--no-optional-locks` evita comunque che git riscriva l'indice per aggiornarli.
+    /// The files of `paths` whose worktree differs from commit `commit` (or from the index, with
+    /// `None`): `git diff --name-only -z [<commit>] -- <paths>`, without fsmonitor, renames,
+    /// external diffs or textconv. Here `diff.autoRefreshIndex=false` is **not** used (unlike the
+    /// other reads): without the content comparison that option turns off, a file
+    /// changed only in its `stat` data (rewritten identical) would appear among the differing ones.
+    /// `--no-optional-locks` still prevents git from rewriting the index to update them.
     fn differing(
         &self,
         commit: Option<&Oid>,
@@ -549,12 +554,16 @@ impl CliBackend {
     }
 }
 
-/// Aggiunge a un errore di git il ref del backup, che resta.
+/// Appends to a git error the backup ref, which stays.
 fn with_backup(err: EngineError, backup: &str) -> EngineError {
     match err {
-        EngineError::Git { command, stderr } => EngineError::Git {
+        EngineError::Git { command, stderr } => EngineError::GitWithReason {
             command,
-            stderr: format!("{stderr}; il worktree prima dello scarto è salvato in `{backup}`"),
+            reason: msg!(
+                "engine-note-semicolon",
+                text = stderr,
+                note = msg!("engine-discard-backup-saved", backup = backup)
+            ),
         },
         other => other,
     }

@@ -1,0 +1,15 @@
+# Undo and redo (`journal.rs`).
+engine-undo-stash-head = HEAD: should have been { $expected } at commit { $base }, now it is { $now } at commit { $commit }
+engine-undo-stash-head-unborn = HEAD: should have been { $expected } at commit { $base }, now it is { $now }
+engine-undo-nothing-to-redo = nothing to redo: no undone operation
+engine-undo-nothing = nothing to undo: no ref operation in this session's journal
+engine-undo-bad-entry = invalid journal entry: `{ $description }`, nothing changed
+engine-undo-stash-index = the undo cannot put back stash { $short_id } with the split between staged and unstaged: the current index is no longer the one it started from (this happens with a push with `paths` when other files were staged too: git puts the whole index in the stash). Nothing changed, the entry stays in the journal; to get the changes back, `stash.pop` without `restore_index` (everything goes back to unstaged)
+engine-undo-stash-gone = stash { $short_id } is no longer in the list
+engine-undo-stash-present = stash { $short_id } is already in the list
+engine-undo-stash-not-dropped = the undo applied stash { $short_id } (the changes are back in the files) but could not remove it from the list ({ $error }): do not repeat the undo; drop the stash with `stash.drop`. The entry stays in the journal
+engine-undo-stash-conflicts = the undo applied stash { $short_id } but conflicted files remain ({ $files }): the stash stays in the list; resolve the conflicts with `index.stage`
+engine-undo-delete-worktree-branch = `{ $command }` would delete `{ $name }`, the current branch of worktree `{ $worktree }`: nothing changed
+engine-undo-head-changed-after = after `{ $command }` HEAD is { $head } instead of { $target }: another process changed it during the operation; check HEAD before continuing (no commit is lost)
+engine-undo-head-unreadable-after = after `{ $command }` HEAD cannot be read ({ $error }): check the repository
+engine-undo-head-reflog-grew = during `{ $command }` another process changed HEAD ({ $n } new entries in the HEAD reflog instead of one): if it had gone back to a branch (`git checkout`), it is now { $target }; redo the checkout if needed (no commit is lost, see `git reflog HEAD`)

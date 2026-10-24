@@ -1,5 +1,5 @@
-//! Disegno della vista del diff, al posto del grafo (`impl-docs/ARCHITETTURA-git.md` §8).
-//! Legge lo stato di [`crate::diff`] e produce [`Action`]; non cambia niente direttamente.
+//! Drawing of the diff view, in place of the graph (`impl-docs/ARCHITECTURE-git.md` §8).
+//! Reads the state of [`crate::diff`] and produces [`Action`]; changes nothing directly.
 
 use crate::diff::{
     DiffDoc, DiffSource, DiffTarget, Pane, Row, display_line, file_summary, file_title,
@@ -11,21 +11,21 @@ use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use project_domain::LineKind;
 use project_i18n::tr;
 
-/// Altezza di una riga del diff: tutte uguali, per `show_rows`.
+/// Height of a diff row: all equal, for `show_rows`.
 const ROW_HEIGHT: f32 = 18.0;
-/// Margine prima del testo e tra le colonne.
+/// Margin before the text and between columns.
 const PAD: f32 = 6.0;
 
-/// Cosa serve alla vista per la selezione di righe.
+/// What the view needs for the row selection.
 #[derive(Clone, Copy)]
 pub(crate) struct LinesUi<'a> {
-    /// Le righe selezionate del diff aperto.
+    /// The selected rows of the open diff.
     pub selection: Option<&'a LineSelection>,
-    /// Falso durante una scrittura o con una conferma aperta.
+    /// False during a write or with a confirmation open.
     pub can_write: bool,
 }
 
-/// La selezione parziale per il diff caricato: se si può, e i pulsanti.
+/// The partial selection for the loaded diff: whether it is possible, and the buttons.
 struct LineState<'a> {
     partial: Partial,
     selection: &'a LineSelection,
@@ -95,7 +95,7 @@ pub(crate) fn diff_panel(
     }
 }
 
-/// Chiudi, percorso e commit, righe aggiunte e tolte.
+/// Close, path and commit, rows added and removed.
 fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         if ui
@@ -133,8 +133,8 @@ fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<A
     });
 }
 
-/// Sotto la barra del diff: i pulsanti delle righe selezionate, oppure perché il file non si
-/// può dividere in righe.
+/// Under the diff bar: the buttons for the selected rows, or why the file cannot be
+/// split into rows.
 fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
     if let Partial::Unavailable(reason) = &state.partial {
         ui.horizontal(|ui| {
@@ -198,7 +198,7 @@ fn removed_text(ui: &Ui) -> Color32 {
     }
 }
 
-/// Colori e misure letti una volta per frame.
+/// Colors and measures read once per frame.
 struct Style {
     mono: FontId,
     title: FontId,
@@ -214,11 +214,11 @@ struct Style {
     hunk_text: Color32,
     file_bg: Color32,
     gutter_bg: Color32,
-    /// Tinta delle righe selezionate e colore della barra a sinistra.
+    /// Tint of the selected rows and color of the bar on the left.
     selected_bg: Color32,
     selected_bar: Color32,
     hover_bg: Color32,
-    /// Larghezza della colonna dei numeri (due numeri e il segno).
+    /// Width of the number column (two numbers and the sign).
     gutter_w: f32,
     number_w: usize,
 }
@@ -245,7 +245,7 @@ impl Style {
             )
         };
         let number_w = doc.number_width;
-        // `vecchio nuovo +`, con margini.
+        // `old new +`, with margins.
         let gutter_w = (2 * number_w + 2) as f32 * char_w + 4.0 * PAD;
         Self {
             mono,
@@ -287,8 +287,8 @@ impl Style {
     }
 }
 
-/// Le righe del diff, virtualizzate: si disegnano solo quelle visibili, anche con migliaia di
-/// righe. Il testo scorre in orizzontale; i numeri di riga restano fermi a sinistra.
+/// The diff rows, virtualized: only the visible ones are drawn, even with thousands of
+/// rows. The text scrolls horizontally; the line numbers stay fixed on the left.
 fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Action>) {
     let style = Style::new(ui, doc);
     let buttons = state.buttons;
@@ -297,7 +297,7 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
     if state.selection.is_dragging() && !down {
         actions.push(Action::DragLines(Drag::End));
     }
-    // Larghezza del contenuto: la riga più larga, più il segno di taglio.
+    // Width of the content: the widest row, plus the cut sign.
     let text_w = (doc.max_cols + 28) as f32 * style.char_w;
     let content_w = style.gutter_w + PAD + text_w;
     egui::ScrollArea::both()
@@ -315,7 +315,7 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
                     Sense::hover()
                 };
                 let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), sense);
-                // I numeri restano visibili a sinistra anche scorrendo in orizzontale.
+                // The numbers stay visible on the left even when scrolling horizontally.
                 let gutter_left = rect.left().max(ui.clip_rect().left());
                 let gutter = Rect::from_min_size(
                     pos2(gutter_left, rect.top()),
@@ -350,7 +350,7 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
         });
 }
 
-/// Come evidenziare una riga cambiata.
+/// How to highlight a changed row.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mark {
     None,
@@ -358,7 +358,7 @@ enum Mark {
     Selected,
 }
 
-/// "Stage hunk"/"Unstage hunk" a destra dell'intestazione, nella parte visibile.
+/// "Stage hunk"/"Unstage hunk" on the right of the header, in the visible part.
 fn hunk_button(ui: &mut Ui, rect: Rect, hunk: usize, b: LineButtons, actions: &mut Vec<Action>) {
     let right = rect.right().min(ui.clip_rect().right()) - PAD;
     let cell = Rect::from_min_max(pos2(right - 140.0, rect.top()), pos2(right, rect.bottom()));
@@ -401,7 +401,7 @@ fn paint_row(
         Row::File(f) => {
             let file = &doc.diff.files[*f];
             painter.rect_filled(rect, 0.0, style.file_bg);
-            // Il titolo resta visibile scorrendo: parte dal bordo sinistro della vista.
+            // The title stays visible while scrolling: it starts from the left edge of the view.
             let left = gutter.left() + PAD;
             let title = painter.text(
                 pos2(left, mid),
@@ -476,7 +476,7 @@ fn paint_row(
                 style,
             );
 
-            // Colonna dei numeri sopra il testo, opaca: copre il testo che le scorre sotto.
+            // Number column above the text, opaque: it covers the text scrolling under it.
             painter.rect_filled(gutter, 0.0, style.gutter_bg);
             if let Some(fill) = gutter_fill {
                 painter.rect_filled(gutter, 0.0, fill);
@@ -489,7 +489,7 @@ fn paint_row(
             );
             if mark == Mark::Selected {
                 painter.rect_filled(gutter, 0.0, style.selected_bg);
-                // Barra piena a sinistra e bordo: la selezione si vede anche senza colori.
+                // Full bar on the left and border: the selection is visible even without colors.
                 let bar = Rect::from_min_size(gutter.left_top(), vec2(4.0, ROW_HEIGHT));
                 painter.rect_filled(bar, 0.0, style.selected_bar);
                 painter.rect_stroke(
@@ -514,8 +514,8 @@ fn paint_row(
     }
 }
 
-/// Il contenuto di una riga, con tab espansi, caratteri di controllo tenui e il segno di
-/// taglio se è troppo lunga.
+/// The content of a row, with expanded tabs, dim control characters and the cut sign
+/// if it is too long.
 fn paint_text(ui: &Ui, content: &str, at: egui::Pos2, style: &Style) {
     let shown = display_line(content);
     let format = |color| egui::TextFormat {

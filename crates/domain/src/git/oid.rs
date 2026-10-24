@@ -3,35 +3,35 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-/// Identificatore di un oggetto git (SHA-1, 20 byte).
+/// Identifier of a git object (SHA-1, 20 bytes).
 ///
-/// Si legge da 40 cifre esadecimali. In ingresso sono accettate sia minuscole sia maiuscole
-/// (come fa git stesso); in uscita (`Display`, JSON) è sempre in minuscolo, così due `Oid`
-/// uguali hanno sempre la stessa forma testuale.
+/// Read from 40 hexadecimal digits. On input both lowercase and uppercase are accepted
+/// (as git itself does); on output (`Display`, JSON) it is always lowercase, so two equal `Oid`s
+/// always have the same textual form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Oid([u8; 20]);
 
 impl Oid {
-    /// Numero di byte di un `Oid` SHA-1.
+    /// Number of bytes of a SHA-1 `Oid`.
     pub const LEN: usize = 20;
-    /// Numero di cifre esadecimali della forma completa.
+    /// Number of hexadecimal digits of the full form.
     pub const HEX_LEN: usize = 40;
-    /// Numero di cifre della forma abbreviata restituita da [`Oid::short`].
+    /// Number of digits of the short form returned by [`Oid::short`].
     pub const SHORT_LEN: usize = 7;
 
-    /// Costruisce un `Oid` dai 20 byte grezzi.
+    /// Builds an `Oid` from the 20 raw bytes.
     pub const fn from_bytes(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
 
-    /// I 20 byte grezzi.
+    /// The 20 raw bytes.
     pub const fn as_bytes(&self) -> &[u8; 20] {
         &self.0
     }
 
-    /// Legge 40 cifre esadecimali (minuscole o maiuscole) da byte, ad esempio da un campo
-    /// dell'output di git. Nessuno spazio o a capo è ammesso: chi chiama deve già aver
-    /// separato il campo.
+    /// Reads 40 hexadecimal digits (lowercase or uppercase) from bytes, for example from a field
+    /// of git's output. No whitespace or newline is allowed: the caller must already have
+    /// split the field.
     pub fn from_hex(hex: &[u8]) -> Result<Self, DomainError> {
         let invalid = |reason: String| DomainError::InvalidOid {
             input: String::from_utf8_lossy(hex).into_owned(),
@@ -39,7 +39,7 @@ impl Oid {
         };
         if hex.len() != Self::HEX_LEN {
             return Err(invalid(format!(
-                "servono {} cifre esadecimali, trovate {}",
+                "{} hex digits are needed, found {}",
                 Self::HEX_LEN,
                 hex.len()
             )));
@@ -48,10 +48,7 @@ impl Oid {
         for (i, pair) in hex.as_chunks::<2>().0.iter().enumerate() {
             let digit = |pos: usize| {
                 hex_value(pair[pos]).ok_or_else(|| {
-                    invalid(format!(
-                        "carattere non esadecimale in posizione {}",
-                        i * 2 + pos + 1
-                    ))
+                    invalid(format!("non-hex character at position {}", i * 2 + pos + 1))
                 })
             };
             bytes[i] = (digit(0)? << 4) | digit(1)?;
@@ -59,7 +56,7 @@ impl Oid {
         Ok(Self(bytes))
     }
 
-    /// Forma abbreviata per la UI: le prime [`Oid::SHORT_LEN`] cifre in minuscolo.
+    /// Short form for the UI: the first [`Oid::SHORT_LEN`] digits in lowercase.
     pub fn short(&self) -> String {
         let mut s = self.to_string();
         s.truncate(Self::SHORT_LEN);
@@ -107,7 +104,7 @@ impl<'de> Deserialize<'de> for Oid {
             type Value = Oid;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("una stringa di 40 cifre esadecimali")
+                f.write_str("a string of 40 hex digits")
             }
 
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Oid, E> {

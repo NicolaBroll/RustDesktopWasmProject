@@ -1,4 +1,4 @@
-# Testo dei file cambiati (format.rs).
+# Changed file text (format.rs).
 
 format-change-added = aggiunto
 format-change-deleted = eliminato

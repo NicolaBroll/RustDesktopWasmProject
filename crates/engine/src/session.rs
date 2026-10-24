@@ -2,31 +2,31 @@ use crate::{EngineError, GitBackend, JobContext, Journal, RepoOpener};
 use std::fmt;
 use std::sync::Arc;
 
-/// La sessione di lavoro su un repository: l'opener iniettato dall'app, il repo aperto e il
-/// suo diario delle operazioni ([`Journal`], per `edit.undo`/`edit.redo`).
+/// The working session on a repository: the opener injected by the app, the open repo and its
+/// journal of operations ([`Journal`], for `edit.undo`/`edit.redo`).
 ///
-/// I comandi del [`Registry`](crate::Registry) la ricevono come `&mut Session`; `repo.open`
-/// apre un repo con l'opener, gli altri comandi leggono quello aperto. Il diario è in memoria
-/// e appartiene al repo aperto: aprire un repo (anche lo stesso) ne parte uno vuoto.
+/// The commands of the [`Registry`](crate::Registry) receive it as `&mut Session`; `repo.open`
+/// opens a repo with the opener, the other commands read the open one. The journal is in memory
+/// and belongs to the open repo: opening a repo (even the same one) starts an empty one.
 pub struct Session {
     opener: Arc<dyn RepoOpener>,
     repo: Option<OpenRepo>,
-    /// Avanzamento e annullamento del comando in corso: quello passato a
-    /// [`Registry::run_with`](crate::Registry::run_with), vuoto fuori da un comando e con
+    /// Progress and cancellation of the running command: the one passed to
+    /// [`Registry::run_with`](crate::Registry::run_with), empty outside a command and with
     /// [`Registry::run`](crate::Registry::run).
     job: JobContext,
 }
 
 struct OpenRepo {
-    /// Il percorso come è stato passato a `repo.open`.
+    /// The path as it was passed to `repo.open`.
     path: String,
     backend: Box<dyn GitBackend>,
     journal: Journal,
 }
 
 impl Session {
-    /// Sessione senza repo aperto. Desktop e CLI passano `CliOpener` di `project-git`, la
-    /// versione web e i test un [`MemoryOpener`](crate::MemoryOpener).
+    /// Session with no open repo. Desktop and CLI pass `CliOpener` from `project-git`, the
+    /// web version and the tests a [`MemoryOpener`](crate::MemoryOpener).
     pub fn new(opener: Arc<dyn RepoOpener>) -> Self {
         Self {
             opener,
@@ -35,11 +35,11 @@ impl Session {
         }
     }
 
-    /// Apre il repo al percorso `path` e sostituisce quello aperto. Se l'apertura fallisce il
-    /// repo aperto prima resta com'è.
+    /// Opens the repo at `path` and replaces the open one. If opening fails the
+    /// previously open repo stays as it is.
     pub fn open(&mut self, path: &str) -> Result<(), EngineError> {
         let backend = self.opener.open(path)?;
-        // La numerazione delle voci continua: un id non indica mai due voci diverse.
+        // Entry numbering continues: an id never refers to two different entries.
         let next_id = self.repo.as_ref().map_or(0, |r| r.journal.next_id());
         self.repo = Some(OpenRepo {
             path: path.to_owned(),
@@ -49,12 +49,12 @@ impl Session {
         Ok(())
     }
 
-    /// Il percorso del repo aperto, `None` se non ce n'è uno.
+    /// The path of the open repo, `None` if there is none.
     pub fn path(&self) -> Option<&str> {
         self.repo.as_ref().map(|repo| repo.path.as_str())
     }
 
-    /// Il repo aperto; [`EngineError::NoRepo`] se non ce n'è uno.
+    /// The open repo; [`EngineError::NoRepo`] if there is none.
     pub fn repo(&self) -> Result<&dyn GitBackend, EngineError> {
         self.repo
             .as_ref()
@@ -62,8 +62,8 @@ impl Session {
             .ok_or(EngineError::NoRepo)
     }
 
-    /// Il repo aperto, per i comandi che lo modificano; [`EngineError::NoRepo`] se non ce n'è
-    /// uno.
+    /// The open repo, for the commands that modify it; [`EngineError::NoRepo`] if there is
+    /// none.
     pub fn repo_mut(&mut self) -> Result<&mut dyn GitBackend, EngineError> {
         match self.repo.as_mut() {
             Some(repo) => Ok(repo.backend.as_mut()),
@@ -71,7 +71,7 @@ impl Session {
         }
     }
 
-    /// Il diario delle operazioni del repo aperto; [`EngineError::NoRepo`] se non ce n'è uno.
+    /// The journal of operations of the open repo; [`EngineError::NoRepo`] if there is none.
     pub fn journal(&self) -> Result<&Journal, EngineError> {
         self.repo
             .as_ref()
@@ -79,8 +79,8 @@ impl Session {
             .ok_or(EngineError::NoRepo)
     }
 
-    /// Il repo aperto e il suo diario insieme, per i comandi che scrivono e registrano
-    /// l'operazione (o la annullano); [`EngineError::NoRepo`] se non c'è un repo.
+    /// The open repo and its journal together, for the commands that write and record
+    /// the operation (or undo it); [`EngineError::NoRepo`] if there is no repo.
     pub fn repo_and_journal(&mut self) -> Result<(&mut dyn GitBackend, &mut Journal), EngineError> {
         match self.repo.as_mut() {
             Some(repo) => Ok((repo.backend.as_mut(), &mut repo.journal)),
@@ -90,14 +90,14 @@ impl Session {
 }
 
 impl Session {
-    /// Avanzamento e annullamento del comando in corso (§6): i comandi lenti lo passano al
-    /// backend. Vuoto (nessun avanzamento, mai annullato) se il comando è stato lanciato con
+    /// Progress and cancellation of the running command (§6): slow commands pass it to the
+    /// backend. Empty (no progress, never cancelled) if the command was launched with
     /// [`Registry::run`](crate::Registry::run).
     pub fn job(&self) -> &JobContext {
         &self.job
     }
 
-    /// Il contesto del comando che sta per partire (o, dopo, quello vuoto).
+    /// The context of the command about to start (or, afterwards, the empty one).
     pub(crate) fn set_job(&mut self, job: JobContext) {
         self.job = job;
     }
@@ -142,11 +142,11 @@ mod tests {
         journal.record(JournalEntry::commit(&out, false).unwrap());
         assert!(s.journal().unwrap().can_undo());
 
-        // Un'apertura non riuscita lascia repo e diario.
+        // A failed open leaves repo and journal untouched.
         assert!(s.open("altrove").is_err());
         assert_eq!(s.journal().unwrap().done().len(), 1);
 
-        // Riaprire (anche lo stesso repo) azzera il diario; gli id continuano.
+        // Reopening (even the same repo) resets the journal; ids continue.
         s.open(MemoryOpener::SAMPLE_PATH).unwrap();
         assert!(!s.journal().unwrap().can_undo());
         let (repo, journal) = s.repo_and_journal().unwrap();

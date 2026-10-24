@@ -1,4 +1,4 @@
-//! Test delle corsie del grafo: casi fissi, un log reale di git e test di proprietà.
+//! Graph lane tests: fixed cases, a real git log and property tests.
 
 use std::collections::BTreeSet;
 
@@ -6,15 +6,15 @@ use proptest::prelude::*;
 
 use super::*;
 
-/// Oid sintetico riconoscibile: tutti i byte valgono `n`, tranne i primi due che portano
-/// l'indice (così si possono creare più di 256 commit distinti).
+/// Recognizable synthetic Oid: all bytes are `n`, except the first two which carry
+/// the index (so more than 256 distinct commits can be created).
 fn id(n: u16) -> Oid {
     let mut bytes = [0xab; 20];
     bytes[..2].copy_from_slice(&n.to_be_bytes());
     Oid::from_bytes(bytes)
 }
 
-/// Grafo descritto come `(commit, genitori)`, in ordine topologico dal più recente.
+/// Graph described as `(commit, parents)`, in topological order, most recent first.
 fn layout(nodes: &[(u16, &[u16])]) -> GraphLayout {
     let owned: Vec<(Oid, Vec<Oid>)> = nodes
         .iter()
@@ -37,15 +37,15 @@ fn segments(layout: &GraphLayout) -> Vec<Vec<GraphSegment>> {
     layout.rows.iter().map(|r| r.segments.clone()).collect()
 }
 
-// --- Casi fissi -------------------------------------------------------------------------
+// --- Fixed cases ------------------------------------------------------------------------
 
 #[test]
-fn nessun_commit() {
+fn no_commits() {
     assert_eq!(layout(&[]), GraphLayout::default());
 }
 
 #[test]
-fn storia_lineare_in_una_colonna() {
+fn linear_history_in_one_column() {
     let g = layout(&[(3, &[2]), (2, &[1]), (1, &[])]);
     assert_eq!(columns(&g), [0, 0, 0]);
     assert_eq!(
@@ -56,8 +56,8 @@ fn storia_lineare_in_una_colonna() {
 }
 
 #[test]
-fn due_branch_convergono_sulla_base() {
-    // d e c partono da b.
+fn two_branches_converge_on_the_base() {
+    // d and c start from b.
     let g = layout(&[(4, &[2]), (3, &[2]), (2, &[1]), (1, &[])]);
     assert_eq!(columns(&g), [0, 1, 0, 0]);
     assert_eq!(
@@ -73,8 +73,8 @@ fn due_branch_convergono_sulla_base() {
 }
 
 #[test]
-fn merge_apre_una_diramazione() {
-    // m unisce a (primo genitore) e f; f parte da a.
+fn merge_opens_a_fork() {
+    // m merges a (first parent) and f; f starts from a.
     let g = layout(&[(9, &[1, 5]), (5, &[1]), (1, &[])]);
     assert_eq!(columns(&g), [0, 1, 0]);
     assert_eq!(
@@ -89,8 +89,8 @@ fn merge_apre_una_diramazione() {
 }
 
 #[test]
-fn octopus_merge_con_tre_genitori() {
-    // m unisce p1, p2, p3, che partono tutti da r.
+fn octopus_merge_with_three_parents() {
+    // m merges p1, p2, p3, which all start from r.
     let g = layout(&[(9, &[1, 2, 3]), (3, &[0]), (2, &[0]), (1, &[0]), (0, &[])]);
     assert_eq!(columns(&g), [0, 2, 1, 0, 0]);
     assert_eq!(
@@ -107,9 +107,9 @@ fn octopus_merge_con_tre_genitori() {
 }
 
 #[test]
-fn merge_su_un_genitore_gia_atteso_riusa_la_sua_corsia() {
-    // t (colonna 0) aspetta a; m (colonna 1) unisce b e a: il secondo genitore va sulla
-    // corsia 0, che aspetta già a, senza aprirne una nuova.
+fn merge_on_an_already_awaited_parent_reuses_its_lane() {
+    // t (column 0) waits for a; m (column 1) merges b and a: the second parent goes on
+    // lane 0, which already waits for a, without opening a new one.
     let g = layout(&[(7, &[1]), (8, &[2, 1]), (2, &[1]), (1, &[])]);
     assert_eq!(columns(&g), [0, 1, 1, 0]);
     assert_eq!(
@@ -125,8 +125,8 @@ fn merge_su_un_genitore_gia_atteso_riusa_la_sua_corsia() {
 }
 
 #[test]
-fn piu_radici() {
-    // Due storie indipendenti intrecciate: x1→x0 e y1→y0.
+fn several_roots() {
+    // Two independent interleaved histories: x1→x0 and y1→y0.
     let g = layout(&[(11, &[10]), (21, &[20]), (10, &[]), (20, &[])]);
     assert_eq!(columns(&g), [0, 1, 0, 1]);
     assert_eq!(
@@ -142,28 +142,28 @@ fn piu_radici() {
 }
 
 #[test]
-fn una_radice_libera_la_corsia_per_il_commit_successivo() {
-    // a→b; c è una radice a sé; dopo c la corsia 1 si libera e d (nuova punta) la riusa.
+fn a_root_frees_its_lane_for_the_next_commit() {
+    // a→b; c is a root on its own; after c lane 1 becomes free and d (new tip) reuses it.
     let g = layout(&[(1, &[2]), (3, &[]), (4, &[2]), (2, &[])]);
     assert_eq!(columns(&g), [0, 1, 1, 0]);
     assert_eq!(g.width, 2);
 }
 
 #[test]
-fn genitore_assente_resta_sospeso() {
-    // Log troncato: il genitore 0 non compare.
+fn missing_parent_stays_dangling() {
+    // Truncated log: parent 0 does not appear.
     let g = layout(&[(2, &[1]), (1, &[0])]);
     assert_eq!(segments(&g), [vec![seg(0, 0, 0)], vec![seg(0, 0, 0)]]);
 }
 
 #[test]
-fn genitori_duplicati_disegnati_una_volta() {
+fn duplicate_parents_drawn_once() {
     let g = layout(&[(2, &[1, 1]), (1, &[])]);
     assert_eq!(segments(&g), [vec![seg(0, 0, 0)], vec![]]);
 }
 
 #[test]
-fn layout_graph_usa_id_e_genitori_dei_commit() {
+fn layout_graph_uses_commit_ids_and_parents() {
     let sig = Signature {
         name: "T".into(),
         email: "t@e".into(),
@@ -186,20 +186,20 @@ fn layout_graph_usa_id_e_genitori_dei_commit() {
 }
 
 #[test]
-fn serde_andata_e_ritorno() {
+fn serde_round_trip() {
     let g = layout(&[(9, &[1, 5]), (5, &[1]), (1, &[])]);
-    let json = serde_json::to_string(&g).expect("serializza");
-    let back: GraphLayout = serde_json::from_str(&json).expect("deserializza");
+    let json = serde_json::to_string(&g).expect("serializes");
+    let back: GraphLayout = serde_json::from_str(&json).expect("deserializes");
     assert_eq!(back, g);
 }
 
-// --- Log reale ---------------------------------------------------------------------------
+// --- Real log ----------------------------------------------------------------------------
 
-/// Output reale di git (2.43.0) su un repo con branch, merge, octopus merge di tre branch e
-/// una seconda radice (`--orphan`):
+/// Real git output (2.43.0) on a repo with branches, merges, an octopus merge of three branches and
+/// a second root (`--orphan`):
 /// `git log --all --topo-order --format='%H %P' > log-topo-parents.txt`.
 ///
-/// `git log --all --topo-order --graph --format=%s` sullo stesso repo:
+/// `git log --all --topo-order --graph --format=%s` on the same repo:
 /// ```text
 /// * d
 /// *---.   octopus
@@ -225,7 +225,7 @@ fn serde_andata_e_ritorno() {
 /// ```
 const LOG_TOPO: &[u8] = include_bytes!("testdata/log-topo-parents.txt");
 
-/// Legge le righe `<oid> <genitori...>` di `git log --format='%H %P'`.
+/// Reads the `<oid> <parents...>` lines of `git log --format='%H %P'`.
 fn parse_parents(bytes: &[u8]) -> Vec<(Oid, Vec<Oid>)> {
     bytes
         .split(|&b| b == b'\n')
@@ -234,15 +234,15 @@ fn parse_parents(bytes: &[u8]) -> Vec<(Oid, Vec<Oid>)> {
             let mut oids = line
                 .split(|&b| b == b' ')
                 .filter(|f| !f.is_empty())
-                .map(|f| Oid::from_hex(f).expect("oid valido nel file di esempio"));
-            let id = oids.next().expect("riga con almeno un oid");
+                .map(|f| Oid::from_hex(f).expect("valid oid in the sample file"));
+            let id = oids.next().expect("line with at least one oid");
             (id, oids.collect())
         })
         .collect()
 }
 
 #[test]
-fn corsie_di_un_log_reale() {
+fn lanes_of_a_real_log() {
     let nodes = parse_parents(LOG_TOPO);
     assert_eq!(nodes.len(), 13);
     let g = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
@@ -250,59 +250,59 @@ fn corsie_di_un_log_reale() {
     // d, octopus, x3, x2, x1, merge feat, f2, f1, c, b, a, r2, r1
     assert_eq!(columns(&g), [0, 0, 3, 2, 1, 0, 1, 1, 0, 0, 0, 0, 0]);
     assert_eq!(g.width, 4);
-    // L'octopus apre tre diramazioni.
+    // The octopus opens three forks.
     assert_eq!(
         g.rows[1].segments,
         [seg(0, 0, 0), seg(0, 1, 1), seg(0, 2, 2), seg(0, 3, 3)]
     );
-    // Le quattro corsie convergono sul merge di feat.
+    // The four lanes converge on the merge of feat.
     assert_eq!(
         g.rows[4].segments,
         [seg(0, 0, 0), seg(1, 0, 1), seg(2, 0, 2), seg(3, 0, 3)]
     );
-    // La radice `a` chiude tutto: nessun tratto verso la seconda storia.
+    // The root `a` closes everything: no segment towards the second history.
     assert!(g.rows[10].segments.is_empty());
 }
 
-/// Output reale di [`LOG_ARGS`] (generato da `testdata/log.sh`), letto con [`parse_log`]:
-/// le corsie si calcolano direttamente sui [`Commit`] del parser.
+/// Real output of [`LOG_ARGS`] (generated by `testdata/log.sh`), read with [`parse_log`]:
+/// the lanes are computed directly on the parser's [`Commit`]s.
 #[test]
-fn corsie_dei_commit_di_parse_log() {
-    let commits = parse_log(include_bytes!("testdata/log.bin")).expect("log di esempio valido");
+fn lanes_of_parse_log_commits() {
+    let commits = parse_log(include_bytes!("testdata/log.bin")).expect("valid sample log");
     assert!(
         commits.iter().any(|c| c.parents.len() > 1),
-        "il log contiene un merge"
+        "the log contains a merge"
     );
     let g = layout_graph(&commits);
     let nodes: Vec<(Oid, Vec<Oid>)> = commits.iter().map(|c| (c.id, c.parents.clone())).collect();
     check_invariants(&nodes, &g);
-    assert!(g.width >= 2, "il merge apre una seconda corsia");
+    assert!(g.width >= 2, "the merge opens a second lane");
 }
 
-// --- Invarianti --------------------------------------------------------------------------
+// --- Invariants --------------------------------------------------------------------------
 
-/// Dove finisce un arco seguito tratto per tratto.
+/// Where an edge ends up when followed segment by segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum End {
-    /// Nel commit della riga indicata.
+    /// In the commit of the given row.
     Row(usize),
-    /// Oltre l'ultima riga (genitore assente dall'input).
+    /// Past the last row (parent absent from the input).
     Dangling,
 }
 
-/// Verifica gli invarianti di §3 leggendo solo il risultato:
-/// - una riga per commit, colonne dentro `width`, `width` minima;
-/// - dal commit escono tanti tratti quanti genitori distinti (nessuna corsia passa sotto il
-///   commit, quindi nessun commit occupa due colonne né ne copre un'altra);
-/// - ogni arco genitore–figlio è disegnato una sola volta: seguendo i tratti si arriva
-///   esattamente ai genitori, ognuno una volta;
-/// - continuità: ogni tratto che non entra in un commit prosegue in un solo tratto, e ogni
-///   tratto è raggiungibile da un commit;
-/// - riuso delle corsie libere: una nuova punta e ogni nuova diramazione prendono le colonne
-///   libere più a sinistra; la larghezza è limitata dal numero di archi aperti.
+/// Checks the invariants of §3 by reading only the result:
+/// - one row per commit, columns within `width`, minimal `width`;
+/// - from the commit come out as many segments as distinct parents (no lane passes under the
+///   commit, so no commit occupies two columns nor covers another);
+/// - every parent–child edge is drawn exactly once: following the segments leads
+///   exactly to the parents, each once;
+/// - continuity: every segment that does not enter a commit continues in a single segment, and every
+///   segment is reachable from a commit;
+/// - reuse of free lanes: a new tip and every new fork take the leftmost
+///   free columns; the width is bounded by the number of open edges.
 fn check_invariants(nodes: &[(Oid, Vec<Oid>)], layout: &GraphLayout) {
     let rows = &layout.rows;
-    assert_eq!(rows.len(), nodes.len(), "una riga per commit");
+    assert_eq!(rows.len(), nodes.len(), "one row per commit");
 
     let max_col = rows
         .iter()
@@ -310,11 +310,7 @@ fn check_invariants(nodes: &[(Oid, Vec<Oid>)], layout: &GraphLayout) {
             std::iter::once(r.column).chain(r.segments.iter().flat_map(|s| [s.from, s.to]))
         })
         .max();
-    assert_eq!(
-        layout.width,
-        max_col.map_or(0, |m| m + 1),
-        "larghezza minima"
-    );
+    assert_eq!(layout.width, max_col.map_or(0, |m| m + 1), "minimal width");
 
     let index: std::collections::HashMap<Oid, usize> = nodes
         .iter()
@@ -326,7 +322,7 @@ fn check_invariants(nodes: &[(Oid, Vec<Oid>)], layout: &GraphLayout) {
     let mut visited: Vec<Vec<bool>> = rows.iter().map(|r| vec![false; r.segments.len()]).collect();
 
     for (i, row) in rows.iter().enumerate() {
-        // Tratti che passano accanto: una sola partenza per colonna.
+        // Segments passing next to it: a single start per column.
         let through: Vec<usize> = row
             .segments
             .iter()
@@ -334,12 +330,12 @@ fn check_invariants(nodes: &[(Oid, Vec<Oid>)], layout: &GraphLayout) {
             .map(|s| s.from)
             .collect();
         let unique: BTreeSet<usize> = through.iter().copied().collect();
-        assert_eq!(unique.len(), through.len(), "riga {i}: corsie sovrapposte");
+        assert_eq!(unique.len(), through.len(), "row {i}: overlapping lanes");
         for s in &row.segments {
-            assert!(s.lane == s.from || s.lane == s.to, "riga {i}: corsia {s:?}");
+            assert!(s.lane == s.from || s.lane == s.to, "row {i}: lane {s:?}");
         }
 
-        // Continuità con la riga precedente.
+        // Continuity with the previous row.
         if i > 0 {
             let arriving: BTreeSet<usize> = rows[i - 1]
                 .segments
@@ -349,11 +345,11 @@ fn check_invariants(nodes: &[(Oid, Vec<Oid>)], layout: &GraphLayout) {
                 .collect();
             assert_eq!(
                 arriving, unique,
-                "riga {i}: tratti interrotti o senza origine"
+                "row {i}: broken segments or without an origin"
             );
         }
 
-        // Archi uscenti dal commit: uno per genitore distinto, ciascuno arriva al genitore.
+        // Edges leaving the commit: one per distinct parent, each arrives at the parent.
         let mut parents: Vec<Oid> = Vec::new();
         for p in &nodes[i].1 {
             if !parents.contains(p) {
@@ -375,20 +371,20 @@ fn check_invariants(nodes: &[(Oid, Vec<Oid>)], layout: &GraphLayout) {
         }
         expected.sort();
         reached.sort();
-        assert_eq!(reached, expected, "riga {i}: archi verso i genitori");
+        assert_eq!(reached, expected, "row {i}: edges towards the parents");
     }
 
     for (i, v) in visited.iter().enumerate() {
         assert!(
             v.iter().all(|&x| x),
-            "riga {i}: tratto non raggiungibile da un commit"
+            "row {i}: segment not reachable from a commit"
         );
     }
 
     check_lane_reuse(layout);
 }
 
-/// Segue un arco a partire dal tratto `k` della riga `i` fino al commit in cui entra.
+/// Follows an edge starting from segment `k` of row `i` to the commit it enters.
 fn follow(rows: &[GraphRow], mut i: usize, mut k: usize, visited: &mut [Vec<bool>]) -> End {
     loop {
         visited[i][k] = true;
@@ -405,32 +401,32 @@ fn follow(rows: &[GraphRow], mut i: usize, mut k: usize, visited: &mut [Vec<bool
             .iter()
             .position(|s| s.from == to && s.from != next.column)
             .unwrap_or_else(|| {
-                panic!("riga {i}: il tratto che arriva in colonna {to} non prosegue")
+                panic!("row {i}: the segment arriving at column {to} does not continue")
             });
     }
 }
 
-/// Le colonne libere vengono riusate da sinistra e la larghezza resta limitata.
+/// Free columns are reused from the left and the width stays bounded.
 fn check_lane_reuse(layout: &GraphLayout) {
     let rows = &layout.rows;
     let mut max_open = 0;
     for (i, row) in rows.iter().enumerate() {
         max_open = max_open.max(row.segments.len());
 
-        // Colonne occupate quando arriva il commit: dove arrivano i tratti della riga sopra.
+        // Columns occupied when the commit arrives: where the segments of the row above arrive.
         let incoming: BTreeSet<usize> = match i {
             0 => BTreeSet::new(),
             _ => rows[i - 1].segments.iter().map(|s| s.to).collect(),
         };
         if !incoming.contains(&row.column) {
-            // Nuova punta: prima colonna libera.
+            // New tip: first free column.
             let first_free = (0..).find(|c| !incoming.contains(c)).unwrap_or(0);
             assert_eq!(
                 row.column, first_free,
-                "riga {i}: nuova punta non nella prima colonna libera"
+                "row {i}: new tip not in the first free column"
             );
         } else {
-            // Colonna del commit: la prima delle corsie che lo aspettavano.
+            // Column of the commit: the first of the lanes that were waiting for it.
             let first_waiting = rows[i - 1]
                 .segments
                 .iter()
@@ -440,11 +436,11 @@ fn check_lane_reuse(layout: &GraphLayout) {
             assert_eq!(
                 Some(row.column),
                 first_waiting,
-                "riga {i}: colonna del commit"
+                "row {i}: column of the commit"
             );
         }
 
-        // Nuove diramazioni: uscenti su corsie diverse da quella del commit e non già aperte.
+        // New forks: leaving on lanes different from the commit's and not already open.
         let through: BTreeSet<usize> = row
             .segments
             .iter()
@@ -465,20 +461,20 @@ fn check_lane_reuse(layout: &GraphLayout) {
         assert_eq!(
             new_lanes.into_iter().collect::<Vec<_>>(),
             free,
-            "riga {i}: diramazioni non nelle prime colonne libere"
+            "row {i}: forks not in the first free columns"
         );
     }
     assert!(
         layout.width <= max_open + 1,
-        "larghezza {} oltre gli archi aperti ({max_open}) + 1",
+        "width {} beyond the open edges ({max_open}) + 1",
         layout.width
     );
 }
 
-// --- Test di proprietà ---------------------------------------------------------------------
+// --- Property tests ------------------------------------------------------------------------
 
-/// Grafo casuale in ordine topologico: ogni commit ha da 0 a 4 genitori scelti tra i commit
-/// successivi; qualche genitore manca dall'input (log troncato).
+/// Random graph in topological order: each commit has 0 to 4 parents chosen among the following
+/// commits; some parent is missing from the input (truncated log).
 fn arb_graph() -> impl Strategy<Value = Vec<(Oid, Vec<Oid>)>> {
     prop::collection::vec(prop::collection::vec((any::<u16>(), 0u8..12), 0..5), 0..60).prop_map(
         |spec| {
@@ -504,8 +500,8 @@ fn arb_graph() -> impl Strategy<Value = Vec<(Oid, Vec<Oid>)>> {
     )
 }
 
-/// Come [`arb_graph`] ma con storie "realistiche": pochi merge, spesso il genitore è il commit
-/// subito dopo, così le corsie restano aperte a lungo e si riusano.
+/// Like [`arb_graph`] but with "realistic" histories: few merges, the parent is often the commit
+/// right after, so lanes stay open for a long time and get reused.
 fn arb_history() -> impl Strategy<Value = Vec<(Oid, Vec<Oid>)>> {
     prop::collection::vec((0u8..10, any::<u16>(), any::<u16>()), 1..80).prop_map(|spec| {
         let n = spec.len();
@@ -530,19 +526,19 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     #[test]
-    fn invarianti_su_grafi_casuali(nodes in arb_graph()) {
+    fn invariants_on_random_graphs(nodes in arb_graph()) {
         let g = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
         check_invariants(&nodes, &g);
     }
 
     #[test]
-    fn invarianti_su_storie_casuali(nodes in arb_history()) {
+    fn invariants_on_random_histories(nodes in arb_history()) {
         let g = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
         check_invariants(&nodes, &g);
     }
 
     #[test]
-    fn deterministico(nodes in arb_graph()) {
+    fn deterministic(nodes in arb_graph()) {
         let a = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
         let b = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
         prop_assert_eq!(a, b);

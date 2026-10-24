@@ -1,18 +1,18 @@
-//! Stringhe "C-quoted" di git: i nomi di file nelle intestazioni dei diff.
+//! git's "C-quoted" strings: file names in diff headers.
 //!
-//! git mette un nome tra virgolette, con escape in stile C, se contiene `"`, `\`, un carattere
-//! di controllo (`0x00`–`0x1f`, `0x7f`) e, con `core.quotePath=true` (predefinito), un byte non
-//! ASCII. Gli escape sono `\a \b \t \n \v \f \r \" \\` e, per gli altri byte, tre cifre ottali
-//! (`\377`). Lo spazio non richiede le virgolette.
+//! git puts a name in quotes, with C-style escapes, if it contains `"`, `\`, a control
+//! character (`0x00`–`0x1f`, `0x7f`) and, with `core.quotePath=true` (the default), a non-ASCII
+//! byte. The escapes are `\a \b \t \n \v \f \r \" \\` and, for other bytes, three octal digits
+//! (`\377`). A space does not require quotes.
 
-/// Vero se git metterebbe `name` tra virgolette con `core.quotePath=false`.
+/// True if git would quote `name` with `core.quotePath=false`.
 pub(super) fn needs_quoting(name: &[u8]) -> bool {
     name.iter()
         .any(|&b| b == b'"' || b == b'\\' || b < 0x20 || b == 0x7f)
 }
 
-/// Scrive `prefix` seguito da `name` come fa git con `core.quotePath=false`: così com'è se non
-/// serve, altrimenti tutto tra virgolette (prefisso compreso, es. `"a/con\ttab"`).
+/// Writes `prefix` followed by `name` as git does with `core.quotePath=false`: as is if no quotes
+/// are needed, otherwise everything quoted (prefix included, e.g. `"a/with\ttab"`).
 pub(super) fn write_quoted(out: &mut Vec<u8>, prefix: &[u8], name: &[u8]) {
     if !needs_quoting(prefix) && !needs_quoting(name) {
         out.extend_from_slice(prefix);
@@ -49,12 +49,12 @@ pub(super) fn write_quoted(out: &mut Vec<u8>, prefix: &[u8], name: &[u8]) {
     out.push(b'"');
 }
 
-/// Legge una stringa tra virgolette all'inizio di `input` (che deve iniziare con `"`).
-/// Restituisce i byte decodificati e quanti byte di `input` ha consumato (virgolette comprese).
+/// Reads a quoted string at the start of `input` (which must start with `"`).
+/// Returns the decoded bytes and how many bytes of `input` it consumed (quotes included).
 pub(super) fn unquote_prefix(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
     let show = || String::from_utf8_lossy(input).into_owned();
     let Some(body) = input.strip_prefix(b"\"") else {
-        return Err(format!("`{}` non inizia con `\"`", show()));
+        return Err(format!("`{}` does not start with `\"`", show()));
     };
     let mut out = Vec::with_capacity(body.len());
     let mut i = 0;
@@ -81,7 +81,7 @@ pub(super) fn unquote_prefix(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
                             }
                             _ => {
                                 return Err(format!(
-                                    "escape ottale non valido in `{}`: servono tre cifre da 0 a 7",
+                                    "invalid octal escape in `{}`: three digits from 0 to 7 are needed",
                                     show()
                                 ));
                             }
@@ -92,7 +92,7 @@ pub(super) fn unquote_prefix(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
                     }
                     other => {
                         return Err(format!(
-                            "escape `\\{}` sconosciuto in `{}`",
+                            "unknown escape `\\{}` in `{}`",
                             char::from(other),
                             show()
                         ));
@@ -107,11 +107,11 @@ pub(super) fn unquote_prefix(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
             }
         }
     }
-    Err(format!("virgolette non chiuse in `{}`", show()))
+    Err(format!("unclosed quotes in `{}`", show()))
 }
 
-/// Legge un nome che occupa tutto `input`: tra virgolette (e allora non deve seguire altro) o
-/// così com'è.
+/// Reads a name that fills all of `input`: quoted (and then nothing else may follow) or
+/// as is.
 pub(super) fn unquote(input: &[u8]) -> Result<Vec<u8>, String> {
     if !input.starts_with(b"\"") {
         return Ok(input.to_vec());
@@ -119,7 +119,7 @@ pub(super) fn unquote(input: &[u8]) -> Result<Vec<u8>, String> {
     let (name, used) = unquote_prefix(input)?;
     if used != input.len() {
         return Err(format!(
-            "testo dopo le virgolette chiuse in `{}`",
+            "text after the closing quote in `{}`",
             String::from_utf8_lossy(input)
         ));
     }

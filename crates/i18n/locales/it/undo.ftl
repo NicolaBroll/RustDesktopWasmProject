@@ -1,4 +1,4 @@
-# Annulla e Ripeti (discard.rs, UndoOp).
+# Undo and Redo (discard.rs, UndoOp).
 
 undo-undo = Annulla
 undo-redo = Ripeti

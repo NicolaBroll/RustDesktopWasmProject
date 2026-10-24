@@ -3,41 +3,41 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::fmt;
 
-/// Testo letto dall'output di git che può non essere UTF-8, come il contenuto di una riga di un
-/// diff: tiene i byte esatti, per poterli riscrivere identici (es. in una patch).
+/// Text read from git's output that may not be UTF-8, such as the content of a diff line:
+/// it keeps the exact bytes, so they can be written back identical (e.g. in a patch).
 ///
-/// Per mostrarlo si usa [`ByteText::to_string_lossy`] (o `Display`). In JSON ha la stessa forma
-/// di [`super::RepoPath`]: una stringa se i byte sono UTF-8 valido, altrimenti un array di byte.
+/// To display it use [`ByteText::to_string_lossy`] (or `Display`). In JSON it has the same form
+/// as [`super::RepoPath`]: a string if the bytes are valid UTF-8, otherwise a byte array.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct ByteText(Vec<u8>);
 
 impl ByteText {
-    /// Costruisce il testo dai byte grezzi.
+    /// Builds the text from raw bytes.
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
         Self(bytes.into())
     }
 
-    /// I byte esatti.
+    /// The exact bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
-    /// Consuma il testo e restituisce i byte.
+    /// Consumes the text and returns the bytes.
     pub fn into_bytes(self) -> Vec<u8> {
         self.0
     }
 
-    /// Vero se non ci sono byte.
+    /// True if there are no bytes.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Il testo, se è UTF-8 valido.
+    /// The text, if it is valid UTF-8.
     pub fn to_str(&self) -> Option<&str> {
         std::str::from_utf8(&self.0).ok()
     }
 
-    /// Testo da mostrare: i byte non UTF-8 diventano `U+FFFD`.
+    /// Text to display: non-UTF-8 bytes become `U+FFFD`.
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.0)
     }
@@ -81,6 +81,6 @@ impl Serialize for ByteText {
 
 impl<'de> Deserialize<'de> for ByteText {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_bytes(deserializer, "un testo come stringa o come array di byte").map(Self)
+        deserialize_bytes(deserializer, "a text as a string or as a byte array").map(Self)
     }
 }

@@ -1,18 +1,18 @@
-//! Comandi dei remoti (S25): `remote.fetch`. Comando lento (§6): l'avanzamento e
-//! l'annullamento arrivano da [`Session::job`].
+//! Commands of the remotes (S25): `remote.fetch`. Slow command (§6): progress and
+//! cancellation arrive from [`Session::job`].
 
 use super::{Out, to_json};
 use crate::commands::parse_params;
 use crate::{
-    EngineError, FetchRequest, Session, check_branch_name, check_remote_name, default_remote,
-    unknown_remote,
+    EngineError, FetchRequest, Message, Session, check_branch_name, check_remote_name,
+    default_remote, unknown_remote,
 };
 use project_domain::{Oid, RefInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// Parametri di `remote.fetch`.
+/// Parameters of `remote.fetch`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FetchParams {
@@ -22,8 +22,8 @@ struct FetchParams {
     branch: Option<String>,
 }
 
-/// Un ref cambiato dal fetch: `before`/`after` `null` = il ref non c'era / non c'è più (un
-/// branch remoto tolto da `fetch.prune` configurato).
+/// A ref changed by the fetch: `before`/`after` `null` = the ref did not exist / no longer exists (a
+/// remote-tracking branch removed by a configured `fetch.prune`).
 #[derive(Debug, Serialize)]
 pub(super) struct RefUpdate {
     name: String,
@@ -31,16 +31,16 @@ pub(super) struct RefUpdate {
     after: Option<Oid>,
 }
 
-/// Il valore di ogni ref per il confronto prima/dopo: per un tag annotato conta anche l'oggetto
-/// tag (un tag spostato su un altro oggetto con lo stesso commit è cambiato).
+/// The value of each ref for the before/after comparison: for an annotated tag the tag
+/// object counts too (a tag moved to another object with the same commit has changed).
 fn values(refs: &[RefInfo]) -> BTreeMap<&str, (Oid, Option<Oid>)> {
     refs.iter()
         .map(|r| (r.name.as_str(), (r.target, r.tag_object)))
         .collect()
 }
 
-/// I ref diversi fra `before` e `after`, in ordine di nome. Il valore riportato è il commit (per
-/// un tag annotato, quello puntato).
+/// The refs that differ between `before` and `after`, in name order. The reported value is the commit (for
+/// an annotated tag, the one pointed to).
 pub(super) fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
     let (old, new) = (values(before), values(after));
     let mut names: Vec<&str> = old.keys().chain(new.keys()).copied().collect();
@@ -57,39 +57,43 @@ pub(super) fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
         .collect()
 }
 
-/// Avviso per un ref fuori da `refs/remotes/` e `refs/tags/` spostato dal fetch: succede solo
-/// con un refspec configurato apposta (es. un mirror verso `refs/heads/`). Il valore di prima
-/// resta nel reflog di quel ref.
-pub(super) fn unexpected(update: &RefUpdate) -> Option<String> {
+/// Warning for a ref outside `refs/remotes/` and `refs/tags/` moved by the fetch: it only happens
+/// with a refspec configured on purpose (e.g. a mirror to `refs/heads/`). The previous value
+/// stays in that ref's reflog.
+pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
     let expected =
         update.name.starts_with("refs/remotes/") || update.name.starts_with("refs/tags/");
     if expected {
         return None;
     }
-    let show = |v: Option<Oid>| v.map_or_else(|| "assente".to_owned(), |id| id.to_string());
-    Some(format!(
-        "il fetch ha cambiato `{}` (da {} a {}) per un refspec configurato in \
-         `remote.<nome>.fetch`: il valore di prima è nel reflog del ref",
-        update.name,
-        show(update.before),
-        show(update.after)
+    let show = |v: Option<Oid>| {
+        v.map_or_else(
+            || msg!("engine-ref-missing"),
+            |id| Message::plain(id.to_string()),
+        )
+    };
+    Some(msg!(
+        "engine-remote-fetch-unexpected-ref",
+        name = update.name,
+        before = show(update.before),
+        after = show(update.after)
     ))
 }
 
-/// Scarica dal remoto `remote` (vedi [`GitBackend::fetch`](crate::GitBackend::fetch)): commit
-/// nuovi, branch remoti e tag come dice la configurazione; con `branch` solo quel branch del
-/// remoto. `remote` è il nome di un remoto **configurato** (mai un URL o un percorso:
-/// [`EngineError::NotAllowed`] se non c'è); se manca, quello dell'upstream del branch attivo,
-/// altrimenti `origin`, altrimenti l'unico remoto. Non tocca branch locali, indice, worktree:
-/// non va nel diario delle operazioni (i branch remoti rispecchiano il remoto; il fetch dopo
-/// un undo li riporterebbe dov'erano). Nessun `--prune` da qui: vale `fetch.prune` /
-/// `remote.<nome>.prune` della configurazione.
+/// Fetches from the remote `remote` (see [`GitBackend::fetch`](crate::GitBackend::fetch)): new
+/// commits, remote-tracking branches and tags as the configuration says; with `branch` only that branch of the
+/// remote. `remote` is the name of a **configured** remote (never a URL or a path:
+/// [`EngineError::NotAllowed`] if there is none); if missing, the one of the active branch's upstream,
+/// otherwise `origin`, otherwise the only remote. It does not touch local branches, index, worktree:
+/// it does not go into the journal of operations (the remote-tracking branches mirror the remote; a fetch after
+/// an undo would bring them back to where they were). No `--prune` from here: the configuration's `fetch.prune` /
+/// `remote.<name>.prune` applies.
 ///
-/// Comando lento: l'avanzamento va al [`JobContext`](crate::JobContext) di
-/// [`Registry::run_with`](crate::Registry::run_with); annullato, dà
-/// [`EngineError::Cancelled`] (i ref già aggiornati da git restano).
+/// Slow command: progress goes to the [`JobContext`](crate::JobContext) of
+/// [`Registry::run_with`](crate::Registry::run_with); cancelled, it gives
+/// [`EngineError::Cancelled`] (the refs already updated by git stay).
 ///
-/// Risultato: `{"remote", "branch": string | null, "updated": [{"name", "before", "after"}] |
+/// Result: `{"remote", "branch": string | null, "updated": [{"name", "before", "after"}] |
 /// null, "messages": [string], "warnings": [string], "refs": [RefInfo] | null, "refs_error"?}`.
 pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
     const ID: &str = "remote.fetch";
@@ -125,7 +129,7 @@ pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
     match repo.refs() {
         Ok(after) => {
             let updated = changes(&before, &after);
-            let warnings: Vec<String> = updated.iter().filter_map(unexpected).collect();
+            let warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
             out["updated"] = to_json(updated);
             out["warnings"] = to_json(warnings);
             out["refs"] = to_json(after);
@@ -185,54 +189,54 @@ mod tests {
         assert_eq!(
             out["updated"],
             json!([{
-                "name": "refs/remotes/origin/feature/grafo",
+                "name": "refs/remotes/origin/feature/graph",
                 "before": oid(9).to_string(),
                 "after": oid(13).to_string(),
             }])
         );
         assert_eq!(out["warnings"], json!([]));
         let messages = out["messages"].as_array().unwrap();
-        assert_eq!(messages[0], "From https://example.com/progetto.git");
+        assert_eq!(messages[0], "From https://example.com/project.git");
         assert!(
             messages[1]
                 .as_str()
                 .unwrap()
-                .contains("feature/grafo -> origin/feature/grafo")
+                .contains("feature/graph -> origin/feature/graph")
         );
         assert_eq!(
-            target(&out, "refs/remotes/origin/feature/grafo").unwrap(),
+            target(&out, "refs/remotes/origin/feature/graph").unwrap(),
             oid(13).to_string()
         );
-        // Il commit nuovo è nel repo, e `feature/grafo` è indietro di uno.
+        // The new commit is in the repo, and `feature/graph` is behind by one.
         let log = r
             .run(
                 "repo.log",
                 &mut s,
-                json!({ "rev": "origin/feature/grafo", "limit": 1 }),
+                json!({ "rev": "origin/feature/graph", "limit": 1 }),
             )
             .unwrap();
-        assert_eq!(log["commits"][0]["summary"], "Corsie: un colore per branch");
-        // Solo su `origin/feature/grafo`: il grafo lo mostra con `all`, non da HEAD.
+        assert_eq!(log["commits"][0]["summary"], "Lanes: one color per branch");
+        // Only on `origin/feature/graph`: the graph shows it with `all`, not from HEAD.
         let mut summary = |params: Value| {
             r.run("repo.log", &mut s, params).unwrap()["commits"][0]["summary"].clone()
         };
         assert_eq!(
             summary(json!({ "all": true, "limit": 1 })),
-            "Corsie: un colore per branch"
+            "Lanes: one color per branch"
         );
-        assert_eq!(summary(json!({ "limit": 1 })), "Pannello dei commit");
+        assert_eq!(summary(json!({ "limit": 1 })), "Commit panel");
         let local = out["refs"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|r| r["name"] == "refs/heads/feature/grafo")
+            .find(|r| r["name"] == "refs/heads/feature/graph")
             .unwrap();
         assert_eq!(local["upstream"]["behind"], 1);
-        // Non va nel diario: niente da annullare.
+        // It does not go into the journal: nothing to undo.
         let history = r.run("edit.history", &mut s, json!({})).unwrap();
         assert_eq!(history["can_undo"], false);
 
-        // Il secondo fetch non porta niente.
+        // The second fetch brings nothing.
         let again = r
             .run("remote.fetch", &mut s, json!({ "remote": "origin" }))
             .unwrap();
@@ -253,11 +257,11 @@ mod tests {
         assert_eq!(out["branch"], "main");
         assert_eq!(out["updated"], json!([]));
         let out = r
-            .run("remote.fetch", &mut s, json!({ "branch": "feature/grafo" }))
+            .run("remote.fetch", &mut s, json!({ "branch": "feature/graph" }))
             .unwrap();
         assert_eq!(
             out["updated"][0]["name"],
-            "refs/remotes/origin/feature/grafo"
+            "refs/remotes/origin/feature/graph"
         );
 
         let err = r
@@ -291,7 +295,7 @@ mod tests {
     #[test]
     fn unknown_and_invalid_remotes_never_reach_the_backend() {
         let (r, mut s) = sample();
-        // Un nome che non è un remoto configurato (git lo userebbe come URL o percorso).
+        // A name that is not a configured remote (git would use it as a URL or path).
         for remote in ["altro", "tmp/repo", "-x", "--upload-pack=x"] {
             let err = r
                 .run("remote.fetch", &mut s, json!({ "remote": remote }))
@@ -328,7 +332,7 @@ mod tests {
         let mut repo = MemoryBackend::new();
         let (r, mut s) = opened_with(repo.clone());
         let err = r.run("remote.fetch", &mut s, json!({})).unwrap_err();
-        assert!(err.to_string().contains("non ha remoti"), "{err}");
+        assert!(err.to_string().contains("has no remotes"), "{err}");
 
         repo.add_remote("a", "/a");
         repo.add_remote("b", "/b");
@@ -336,7 +340,7 @@ mod tests {
         let err = r.run("remote.fetch", &mut s, json!({})).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
-        // Con l'upstream del branch attivo su `b`, si usa `b`.
+        // With the active branch's upstream on `b`, `b` is used.
         repo.set_upstream("main", "b/main");
         let (r, mut s) = opened_with(repo);
         let out = r.run("remote.fetch", &mut s, json!({})).unwrap();
@@ -364,15 +368,15 @@ mod tests {
             matches!(err, EngineError::RemoteUnreachable { .. }),
             "{err}"
         );
-        // Niente è cambiato.
+        // Nothing changed.
         let refs = r.run("repo.refs", &mut s, json!({})).unwrap();
-        let grafo = refs
+        let graph_tip = refs
             .as_array()
             .unwrap()
             .iter()
-            .find(|r| r["name"] == "refs/remotes/origin/feature/grafo")
+            .find(|r| r["name"] == "refs/remotes/origin/feature/graph")
             .unwrap();
-        assert_eq!(grafo["target"], oid(9).to_string());
+        assert_eq!(graph_tip["target"], oid(9).to_string());
     }
 
     #[test]
@@ -388,7 +392,7 @@ mod tests {
         assert_eq!(last.phase, "Receiving objects");
         assert_eq!(last.percent, Some(100));
         assert!(last.done);
-        // Dopo il comando la sessione torna a un contesto vuoto.
+        // After the command the session goes back to an empty context.
         assert!(!s.job().is_cancelled());
 
         let (r, mut s) = sample();
@@ -408,7 +412,7 @@ mod tests {
             refs.as_array()
                 .unwrap()
                 .iter()
-                .any(|r| r["name"] == "refs/remotes/origin/feature/grafo"
+                .any(|r| r["name"] == "refs/remotes/origin/feature/graph"
                     && r["target"] == oid(9).to_string())
         );
     }

@@ -1,37 +1,37 @@
-//! Merge sul [`MemoryBackend`] (`merge.start`, `merge.abort`, `merge.continue`, S29), con gli
-//! stessi controlli del `CliBackend`.
+//! Merge on the [`MemoryBackend`] (`merge.start`, `merge.abort`, `merge.continue`, S29), with the
+//! same checks as the `CliBackend`.
 //!
-//! Come il pull in memoria, il merge lavora file per file: un file cambiato in modo diverso
-//! dai due lati è un conflitto (anche se git saprebbe unire le righe). Come nel pull in merge
-//! (al contrario del pull in rebase, che si annulla), **un conflitto lascia il merge in corso**: i file uniti senza conflitti sono in stage, quelli
-//! in conflitto diventano voci `u` dello stato (con i marcatori nel worktree se i contenuti
-//! sono noti), `MERGE_HEAD` e `MERGE_MSG` sono tenuti in [`MemoryMerge`]. Il commit
-//! ([`GitBackend::commit`](crate::GitBackend::commit)) con un merge in corso crea il commit di
-//! merge; l'annullamento salva indice e worktree in un commit di backup a forma di stash e riporta tutti i file
-//! tracciati a HEAD (più severo di `git merge --abort`, che tiene le modifiche fuori stage dei
-//! file che il merge non ha toccato: qui finiscono solo nel backup).
+//! Like the in-memory pull, the merge works file by file: a file changed differently
+//! on the two sides is a conflict (even if git could merge the lines). As in the pull in merge mode
+//! (unlike the pull in rebase mode, which is aborted), **a conflict leaves the merge in progress**: files merged without conflicts are staged, those
+//! in conflict become `u` entries of the status (with markers in the worktree if the contents
+//! are known), `MERGE_HEAD` and `MERGE_MSG` are kept in [`MemoryMerge`]. The commit
+//! ([`GitBackend::commit`](crate::GitBackend::commit)) with a merge in progress creates the merge
+//! commit; the abort saves index and worktree in a stash-shaped backup commit and brings all the tracked
+//! files back to HEAD (stricter than `git merge --abort`, which keeps the unstaged changes of the
+//! files the merge did not touch: here they end up only in the backup).
 
 use super::commit::Tree;
 use super::write::{TreeEntry, ZERO, entry_order, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend};
-use crate::EngineError;
 use crate::git::{
     BACKUP_PREFIX, GitBackend, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState,
     PickKind, check_merge_state, check_merging, check_picking, short, split_message,
 };
+use crate::{EngineError, Message};
 use project_domain::{
     Change, Commit, Conflict, EntryKind, Oid, Operation, RepoPath, Signature, StatusEntry,
     UnmergedInfo,
 };
 
-/// Il merge in corso: `MERGE_HEAD` e `MERGE_MSG`.
+/// The merge in progress: `MERGE_HEAD` and `MERGE_MSG`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MemoryMerge {
     pub(super) heads: Vec<Oid>,
     pub(super) message: String,
 }
 
-/// Un file in conflitto: le versioni della base, nostra e loro (assenti se il file non c'è).
+/// A conflicted file: the base, ours and theirs versions (absent if the file is not there).
 pub(super) struct Conflicted {
     pub(super) path: RepoPath,
     base: Option<TreeEntry>,
@@ -39,8 +39,8 @@ pub(super) struct Conflicted {
     pub(super) theirs: Option<TreeEntry>,
 }
 
-/// Il merge a tre vie file per file: l'albero unito (nei file in conflitto la versione nostra)
-/// e i conflitti.
+/// The file-by-file three-way merge: the merged tree (in conflicted files the "ours" version)
+/// and the conflicts.
 pub(super) fn merge_partial(base: &Tree, ours: &Tree, theirs: &Tree) -> (Tree, Vec<Conflicted>) {
     let mut paths: Vec<&RepoPath> = base
         .keys()
@@ -81,10 +81,7 @@ impl MemoryBackend {
     ) -> Result<MergeOutcome, EngineError> {
         check_merge_state(&self.status()?, &request.mode)?;
         if self.head != HeadRef::Branch(request.branch.clone()) {
-            return Err(EngineError::NotAllowed(
-                "HEAD è cambiata mentre si preparava il merge: niente modificato, riprovare"
-                    .to_owned(),
-            ));
+            return Err(EngineError::NotAllowed(msg!("engine-merge-head-moved")));
         }
         let full = format!("{HEADS}{}", request.branch);
         self.check_value(&full, &request.expected)?;
@@ -93,10 +90,9 @@ impl MemoryBackend {
         }
         let mut work = self.clone();
         let overwritten = |files: Vec<String>| {
-            EngineError::NotAllowed(format!(
-                "il merge sovrascriverebbe modifiche locali o file non tracciati ({}): \
-                 committarli, metterli da parte o spostarli e riprovare; niente modificato",
-                files
+            EngineError::NotAllowed(msg!(
+                "engine-merge-overwrite",
+                files = files
                     .iter()
                     .map(|f| format!("`{f}`"))
                     .collect::<Vec<_>>()
@@ -114,10 +110,10 @@ impl MemoryBackend {
         match request.mode {
             MergeMode::FastForward => {
                 if !work.reachable(request.target).contains(&request.expected) {
-                    return Err(EngineError::NotAllowed(format!(
-                        "`{}` non contiene `{}`: il fast-forward non si può fare, niente \
-                         modificato",
-                        request.target_name, request.branch
+                    return Err(EngineError::NotAllowed(msg!(
+                        "engine-merge-not-fast-forward",
+                        target_name = request.target_name,
+                        branch = request.branch
                     )));
                 }
                 let new_tree = work.tree_at(request.target);
@@ -137,7 +133,7 @@ impl MemoryBackend {
                     request.target,
                     &request.target_name,
                     &request.message,
-                    "il merge",
+                    msg!("engine-merge-what-merge"),
                 )?;
                 outcome.after = merged.after;
                 outcome.in_progress = merged.in_progress;
@@ -159,12 +155,12 @@ impl MemoryBackend {
         Ok(outcome)
     }
 
-    /// Il commit di merge di `target` in HEAD (il branch `full`, che vale `expected`), file per
-    /// file: senza conflitti il commit con `message` e il branch spostato; con conflitti il
-    /// merge **resta in corso** (file uniti in stage, voci `u` con i marcatori, `MERGE_HEAD` e
-    /// `MERGE_MSG` con il blocco `# Conflicts:`), il branch com'era. `what` per l'errore se il
-    /// merge scriverebbe sopra modifiche locali o non tracciati ([`EngineError::NotAllowed`],
-    /// niente cambia). Usato da `merge.start` e da `remote.pull`.
+    /// The merge commit of `target` into HEAD (the branch `full`, which equals `expected`), file by
+    /// file: without conflicts the commit with `message` and the moved branch; with conflicts the
+    /// merge **stays in progress** (merged files staged, `u` entries with markers, `MERGE_HEAD` and
+    /// `MERGE_MSG` with the `# Conflicts:` block), the branch as it was. `what` for the error if the
+    /// merge would write over local changes or untracked files ([`EngineError::NotAllowed`],
+    /// nothing changes). Used by `merge.start` and `remote.pull`.
     pub(super) fn merge_three_way(
         &mut self,
         full: &str,
@@ -172,7 +168,7 @@ impl MemoryBackend {
         target: Oid,
         target_name: &str,
         message: &str,
-        what: &str,
+        what: Message,
     ) -> Result<MergeOutcome, EngineError> {
         let base = self
             .merge_base(expected, target)
@@ -180,8 +176,8 @@ impl MemoryBackend {
             .unwrap_or_default();
         let (merged, conflicts) =
             merge_partial(&base, &self.tree_at(expected), &self.tree_at(target));
-        // Nel worktree vanno anche i file in conflitto presenti solo da loro: non devono essere
-        // al posto di un non tracciato.
+        // The conflicted files present only on their side also go in the worktree: they must not be
+        // in place of an untracked file.
         let mut written = merged.clone();
         for c in &conflicts {
             if let Some(entry) = c.ours.or(c.theirs) {
@@ -190,10 +186,10 @@ impl MemoryBackend {
         }
         let (_, files) = self.switch_plan(&written);
         if !files.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "{what} sovrascriverebbe modifiche locali o file non tracciati ({}): \
-                 committarli, metterli da parte o spostarli e riprovare; niente modificato",
-                files
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-merge-blocked",
+                what = what,
+                files = files
                     .iter()
                     .map(|f| format!("`{f}`"))
                     .collect::<Vec<_>>()
@@ -238,9 +234,9 @@ impl MemoryBackend {
         Ok(outcome)
     }
 
-    /// Una voce `u` per il conflitto `c`, con il contenuto del worktree come lo lascia git: i
-    /// marcatori se i due lati hanno il file (e i contenuti sono noti), altrimenti il lato che
-    /// c'è.
+    /// A `u` entry for the conflict `c`, with the worktree content as git leaves it: the
+    /// markers if both sides have the file (and the contents are known), otherwise the side
+    /// that exists.
     pub(super) fn add_conflict(&mut self, c: &Conflicted, theirs_label: &str) {
         let (conflict, x, y) = match (c.base, c.ours, c.theirs) {
             (None, Some(_), Some(_)) => (Conflict::BothAdded, Change::Added, Change::Added),
@@ -323,12 +319,12 @@ impl MemoryBackend {
         self.abort_operation(kind.git(), kind.abort_command())
     }
 
-    /// L'annullamento dell'operazione in corso (già controllata) di `merge.abort`,
-    /// `cherry_pick.abort` e `revert.abort`: `what` è il nome nel backup
-    /// (`refs/project/backup/<what>-abort-<n>`), `command` l'id del comando.
+    /// The abort of the operation in progress (already checked) of `merge.abort`,
+    /// `cherry_pick.abort` and `revert.abort`: `what` is the name in the backup
+    /// (`refs/project/backup/<what>-abort-<n>`), `command` the command id.
     fn abort_operation(&mut self, what: &str, command: &str) -> Result<MergeAborted, EngineError> {
-        // Come `git merge --abort` (`reset --merge`): rifiutato se un file in stage ha anche
-        // modifiche fuori stage.
+        // Like `git merge --abort` (`reset --merge`): rejected if a staged file also has
+        // unstaged changes.
         let mixed: Vec<String> = self
             .entries
             .iter()
@@ -336,19 +332,17 @@ impl MemoryBackend {
             .map(|e| format!("`{}`", e.path))
             .collect();
         if !mixed.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "git non annulla l'operazione in corso: file in stage con anche modifiche fuori \
-                 stage ({}). Metterle in stage (`index.stage`) o scartarle \
-                 (`worktree.discard`) e riprovare; niente modificato, `{command}` non ha \
-                 annullato niente",
-                mixed.join(", ")
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-merge-abort-mixed",
+                files = mixed.join(", "),
+                command = command
             )));
         }
-        let head = self.head_target().ok_or_else(|| {
-            EngineError::NotAllowed("HEAD non ha un commit: niente annullato".to_owned())
-        })?;
-        // Il backup: l'indice (i conflitti con la versione nostra) e sopra il worktree dei file
-        // cambiati o in conflitto.
+        let head = self
+            .head_target()
+            .ok_or_else(|| EngineError::NotAllowed(msg!("engine-merge-abort-unborn")))?;
+        // The backup: the index (conflicts with our version) and on top the worktree of the files
+        // changed or in conflict.
         let index_tree = self.index_tree();
         let mut tree = index_tree.clone();
         let mut files = Vec::new();
@@ -376,7 +370,7 @@ impl MemoryBackend {
             }
         }
         let message = format!(
-            "project: backup di indice e worktree prima di {command} (di {})",
+            "project: backup of index and worktree before {command} (of {})",
             self.merge_state
                 .as_ref()
                 .map(|m| m.heads.iter().map(short).collect::<Vec<_>>().join(", "))
@@ -388,10 +382,10 @@ impl MemoryBackend {
             time: self.next_time(),
             offset_min: 0,
         };
-        // Come uno stash (e come il `CliBackend`): un commit con l'indice sopra HEAD, e il
-        // backup con il worktree che ha per genitori HEAD e quel commit.
+        // Like a stash (and like the `CliBackend`): a commit with the index on top of HEAD, and the
+        // backup with the worktree whose parents are HEAD and that commit.
         let first = self.tree_at(head);
-        let index_message = format!("project: indice prima di {command}");
+        let index_message = format!("project: index before {command}");
         let index_id = self.new_commit_id(&[head], &index_message, &index_tree, backup_sig.time);
         self.insert_commit(Commit {
             id: index_id,
@@ -423,7 +417,7 @@ impl MemoryBackend {
         let backup = format!("{prefix}{n}");
         self.commit_backups.push((backup.clone(), id));
 
-        // `reset --merge` a HEAD: restano solo non tracciati e ignorati.
+        // `reset --merge` to HEAD: only untracked and ignored files remain.
         let entries = std::mem::take(&mut self.entries);
         for entry in &entries {
             if !matches!(entry.kind, EntryKind::Untracked | EntryKind::Ignored) {

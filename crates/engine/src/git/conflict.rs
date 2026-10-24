@@ -1,26 +1,26 @@
-//! Editor dei conflitti (`conflict.show`, `conflict.resolve`, S30): tipi e controlli comuni ai
-//! backend (`impl-docs/git/conflitti.md`).
+//! Conflict editor (`conflict.show`, `conflict.resolve`, S30): types and checks shared by the
+//! backends (`impl-docs/git/conflicts.md`).
 //!
-//! Il comando legge le versioni di un file in conflitto con
-//! [`GitBackend::conflict_versions`](super::GitBackend::conflict_versions) e le mostra con un
-//! [`worktree_digest`] dei byte del worktree; `conflict.resolve` ripassa quel digest e il
-//! backend ([`GitBackend::resolve_conflict`](super::GitBackend::resolve_conflict)) scrive il
-//! file solo se il worktree è ancora quello visto, dopo un backup dei suoi byte.
+//! The command reads the versions of a conflicted file with
+//! [`GitBackend::conflict_versions`](super::GitBackend::conflict_versions) and shows them with a
+//! [`worktree_digest`] of the worktree bytes; `conflict.resolve` passes that digest back and the
+//! backend ([`GitBackend::resolve_conflict`](super::GitBackend::resolve_conflict)) writes the
+//! file only if the worktree is still the one that was seen, after a backup of its bytes.
 
 use crate::EngineError;
 use project_domain::{Conflict, EntryKind, RepoPath, Status, UnmergedInfo};
 use serde::Serialize;
 
-/// Dimensione dei marcatori di conflitto se l'attributo `conflict-marker-size` non c'è.
+/// Size of the conflict markers if the `conflict-marker-size` attribute is not set.
 pub const DEFAULT_MARKER_SIZE: usize = 7;
 
-/// Modo di un sottomodulo nell'indice.
+/// Mode of a submodule in the index.
 const SUBMODULE_MODE: u32 = 0o160000;
-/// Tipo di oggetto di un link simbolico.
+/// Object type of a symbolic link.
 const SYMLINK_MODE: u32 = 0o120000;
 
-/// Le versioni di un file in conflitto ([`GitBackend::conflict_versions`](super::GitBackend::conflict_versions)):
-/// byte senza filtri degli stadi 1/2/3 dell'indice e del worktree, `None` se mancano.
+/// The versions of a conflicted file ([`GitBackend::conflict_versions`](super::GitBackend::conflict_versions)):
+/// unfiltered bytes of stages 1/2/3 of the index and of the worktree, `None` if missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictVersions {
     pub path: RepoPath,
@@ -29,12 +29,12 @@ pub struct ConflictVersions {
     pub ours: Option<Vec<u8>>,
     pub theirs: Option<Vec<u8>>,
     pub worktree: Option<Vec<u8>>,
-    /// Dall'attributo `conflict-marker-size` ([`DEFAULT_MARKER_SIZE`] se manca o non è valido).
+    /// From the `conflict-marker-size` attribute ([`DEFAULT_MARKER_SIZE`] if missing or not valid).
     pub marker_size: usize,
 }
 
-/// Una versione per `conflict.show`: `text` se i byte sono UTF-8 valido senza NUL, altrimenti
-/// `None` e `binary`.
+/// A version for `conflict.show`: `text` if the bytes are valid UTF-8 without NUL, otherwise
+/// `None` and `binary`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VersionText {
     pub text: Option<String>,
@@ -56,30 +56,30 @@ impl VersionText {
     }
 }
 
-/// Cosa chiede `conflict.resolve` al backend.
+/// What `conflict.resolve` asks of the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictResolution {
     pub path: RepoPath,
-    /// Il [`worktree_digest`] visto da `conflict.show`.
+    /// The [`worktree_digest`] seen by `conflict.show`.
     pub digest: String,
-    /// I byte da scrivere nel worktree; `None` cancella il file (`delete`).
+    /// The bytes to write in the worktree; `None` deletes the file (`delete`).
     pub content: Option<Vec<u8>>,
 }
 
-/// Esito di [`GitBackend::resolve_conflict`](super::GitBackend::resolve_conflict).
+/// Outcome of [`GitBackend::resolve_conflict`](super::GitBackend::resolve_conflict).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConflictResolved {
-    /// Il ref del backup dei byte del worktree (`refs/project/backup/conflict-...`), `None` se
-    /// il file non c'era.
+    /// The backup ref of the worktree bytes (`refs/project/backup/conflict-...`), `None` if
+    /// the file was not there.
     pub backup: Option<String>,
-    /// Il ref del backup dell'indice di `index.stage`, se c'è stato.
+    /// The backup ref of the index from `index.stage`, if there was one.
     pub index_backup: Option<String>,
 }
 
-/// Identifica i byte del worktree mostrati da `conflict.show`: FNV-1a a 128 bit (come
-/// [`file_digest`](super::file_digest)), 32 cifre esadecimali. Il file assente ha un valore
-/// suo: si calcola su un byte di tipo (`0` assente, `1` presente) seguito dai byte, così
-/// nessun contenuto ha il digest del file assente.
+/// Identifies the worktree bytes shown by `conflict.show`: 128-bit FNV-1a (like
+/// [`file_digest`](super::file_digest)), 32 hex digits. The missing file has a value
+/// of its own: computed over a type byte (`0` missing, `1` present) followed by the bytes, so
+/// no content has the digest of the missing file.
 pub fn worktree_digest(content: Option<&[u8]>) -> String {
     const OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
@@ -91,9 +91,9 @@ pub fn worktree_digest(content: Option<&[u8]>) -> String {
     format!("{hash:032x}")
 }
 
-/// La dimensione dei marcatori dal valore dell'attributo `conflict-marker-size` (`None`,
-/// `unspecified`, `set`, `unset` o un numero): un numero positivo, altrimenti
-/// [`DEFAULT_MARKER_SIZE`] (come git, che legge il numero con `atoi`).
+/// The marker size from the value of the `conflict-marker-size` attribute (`None`,
+/// `unspecified`, `set`, `unset` or a number): a positive number, otherwise
+/// [`DEFAULT_MARKER_SIZE`] (like git, which reads the number with `atoi`).
 pub fn marker_size(value: Option<&str>) -> usize {
     value
         .and_then(|v| v.trim().parse::<usize>().ok())
@@ -101,8 +101,8 @@ pub fn marker_size(value: Option<&str>) -> usize {
         .unwrap_or(DEFAULT_MARKER_SIZE)
 }
 
-/// Il conflitto di `path` nello stato: deve essere una voce `u` di un file (non un
-/// sottomodulo, non un link nel worktree), altrimenti [`EngineError::NotAllowed`].
+/// The conflict of `path` in the status: it must be a `u` entry of a file (not a
+/// submodule, not a link in the worktree), otherwise [`EngineError::NotAllowed`].
 pub fn check_conflict<'a>(
     command: &str,
     status: &'a Status,
@@ -116,9 +116,10 @@ pub fn check_conflict<'a>(
             _ => None,
         })
         .ok_or_else(|| {
-            EngineError::NotAllowed(format!(
-                "`{path}` non è un file in conflitto: {command} lavora solo sui file non uniti \
-                 di un merge (o rebase, cherry-pick...) fermo; niente modificato"
+            EngineError::NotAllowed(msg!(
+                "engine-conflict-not-conflicted",
+                path = path,
+                command = command
             ))
         })?;
     let modes = [
@@ -128,9 +129,9 @@ pub fn check_conflict<'a>(
         info.mode_worktree,
     ];
     if info.submodule.is_some() || modes.contains(&SUBMODULE_MODE) {
-        return Err(EngineError::NotAllowed(format!(
-            "`{path}` è un sottomodulo in conflitto: l'editor dei conflitti lavora solo sui \
-             file; risolverlo scegliendo il commit del sottomodulo e mettendolo in stage"
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-conflict-submodule",
+            path = path
         )));
     }
     if info.mode_worktree & 0o170000 == SYMLINK_MODE {
@@ -139,31 +140,27 @@ pub fn check_conflict<'a>(
     Ok(info)
 }
 
-/// Il digest visto (`expected`) è ancora quello del worktree (`content`), altrimenti
-/// [`EngineError::StaleDiff`]. `note` si aggiunge al motivo (es. il backup già salvato).
+/// The seen digest (`expected`) is still that of the worktree (`content`), otherwise
+/// [`EngineError::StaleDiff`].
 pub fn check_digest(
     path: &RepoPath,
     expected: &str,
     content: Option<&[u8]>,
-    note: &str,
 ) -> Result<(), EngineError> {
     if worktree_digest(content) == expected {
         return Ok(());
     }
     Err(EngineError::StaleDiff {
         path: path.to_string(),
-        reason: format!("il file del worktree è cambiato dopo `conflict.show`, rileggerlo{note}"),
+        reason: msg!("engine-conflict-worktree-changed"),
     })
 }
 
 impl EngineError {
-    /// [`EngineError::NotAllowed`] per un percorso in conflitto che nel worktree è un link
-    /// simbolico o una cartella.
+    /// [`EngineError::NotAllowed`] for a conflicted path that in the worktree is a symbolic
+    /// link or a folder.
     pub fn not_a_file(path: &RepoPath) -> Self {
-        EngineError::NotAllowed(format!(
-            "`{path}` nel worktree è un link simbolico o una cartella, non un file: l'editor \
-             dei conflitti lavora solo sui file; niente modificato"
-        ))
+        EngineError::NotAllowed(msg!("engine-conflict-not-a-file", path = path))
     }
 }
 
@@ -194,11 +191,11 @@ mod tests {
     #[test]
     fn text_or_binary() {
         assert_eq!(
-            VersionText::of(b"ciao\n"),
+            VersionText::of(b"hello\n"),
             VersionText {
-                text: Some("ciao\n".into()),
+                text: Some("hello\n".into()),
                 binary: false,
-                size: 5
+                size: 6
             }
         );
         assert!(VersionText::of(b"a\0b").binary);

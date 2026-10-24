@@ -1,7 +1,7 @@
 use super::*;
 
-/// La sezione "Remoti": i remoti configurati (`remote.list`), con fetch e rimozione per
-/// ciascuno, e "Aggiungi remoto…".
+/// The "Remotes" section: the configured remotes (`remote.list`), with fetch and removal for
+/// each one, and "Add remote...".
 pub(super) fn remotes_section(
     ui: &mut Ui,
     repo: &RepoView,
@@ -14,7 +14,7 @@ pub(super) fn remotes_section(
         None => tr!("remotes-section"),
     };
     egui::CollapsingHeader::new(title)
-        .id_salt("sezione-remoti")
+        .id_salt("remotes-section")
         .default_open(true)
         .show(ui, |ui| {
             match list {
@@ -23,7 +23,7 @@ pub(super) fn remotes_section(
                 }
                 Some(list) => {
                     for remote in list {
-                        ui.push_id(("remoto", &remote.name), |ui| {
+                        ui.push_id(("remote", &remote.name), |ui| {
                             remote_row(ui, remote, can_write, actions);
                         });
                     }
@@ -56,8 +56,8 @@ pub(super) fn remotes_section(
         });
 }
 
-/// Una riga della sezione "Remoti": nome, etichette, quanti branch, URL (mascherato dal
-/// motore) e il menu con fetch e rimozione.
+/// A row of the "Remotes" section: name, labels, how many branches, URL (masked by the
+/// engine) and the menu with fetch and removal.
 pub(super) fn remote_row(ui: &mut Ui, remote: &Remote, can_write: bool, actions: &mut Vec<Action>) {
     let tooltip = remote.tooltip();
     ui.horizontal(|ui| {
@@ -93,7 +93,7 @@ pub(super) fn remote_row(ui: &mut Ui, remote: &Remote, can_write: bool, actions:
     ui.add_space(2.0);
 }
 
-/// Il menu di un remoto: fetch e rimozione.
+/// The menu of a remote: fetch and removal.
 pub(super) fn remote_menu(
     ui: &mut Ui,
     remote: &Remote,
@@ -128,15 +128,15 @@ pub(super) fn remote_menu(
     }
 }
 
-/// Il dialogo dei remoti aperto: aggiunta o conferma della rimozione. `progress`: l'ultimo
-/// avanzamento del fetch dell'aggiunta in corso.
+/// The open remotes dialog: add or removal confirmation. `progress`: the latest
+/// progress of the fetch of the add in progress.
 pub(crate) fn remote_dialog(
     ctx: &egui::Context,
     dialog: &remotes::Dialog,
     progress: Option<&Progress>,
     actions: &mut Vec<Action>,
 ) {
-    let modal = egui::Modal::new(egui::Id::unique("dialogo-remoti")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("remotes-dialog")).show(ctx, |ui| {
         ui.set_max_width(480.0);
         match dialog {
             remotes::Dialog::Add(add) => add_remote_dialog(ui, add, progress, actions),
@@ -166,14 +166,14 @@ pub(super) fn add_remote_dialog(
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let mut fields: AddFields = dialog.fields.clone();
     let mut changed = false;
-    egui::Grid::new("campi-remoto")
+    egui::Grid::new("remote-fields")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
             ui.label(tr!("remotes-add-name"));
             let name = ui.add(
                 egui::TextEdit::singleline(&mut fields.name)
-                    .id(ui.make_persistent_id("nome-remoto"))
+                    .id(ui.make_persistent_id("remote-name"))
                     .hint_text(tr!("remotes-add-name-hint"))
                     .desired_width(320.0)
                     .interactive(!dialog.sending),
@@ -185,18 +185,18 @@ pub(super) fn add_remote_dialog(
             ui.end_row();
             ui.label(tr!("remotes-add-url"));
             if dialog.url_masked() {
-                // Durante l'invio, o dopo "Nascondi": l'URL mascherato, in sola lettura.
+                // During the submit, or after "Hide": the masked URL, read-only.
                 let mut shown = dialog.shown_url();
                 ui.add(
                     egui::TextEdit::singleline(&mut shown)
-                        .id(ui.make_persistent_id("url-remoto-mascherato"))
+                        .id(ui.make_persistent_id("remote-url-masked"))
                         .desired_width(320.0)
                         .interactive(false),
                 );
             } else {
                 let url = ui.add(
                     egui::TextEdit::singleline(&mut fields.url)
-                        .id(ui.make_persistent_id("url-remoto"))
+                        .id(ui.make_persistent_id("remote-url"))
                         .hint_text(tr!("remotes-add-url-hint"))
                         .desired_width(320.0)
                         .interactive(!dialog.sending),

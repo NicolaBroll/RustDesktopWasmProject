@@ -1,5 +1,5 @@
-//! Backup dell'indice prima di stage e unstage (§1 e §7): le versioni in stage che non sono né
-//! in HEAD né nel worktree si salvano in un ref `refs/project/backup/...` prima di scrivere.
+//! Index backup before stage and unstage (§1 and §7): the staged versions that are neither in
+//! HEAD nor in the worktree are saved in a `refs/project/backup/...` ref before writing.
 
 mod common;
 
@@ -11,7 +11,7 @@ fn paths(list: &[&str]) -> Vec<RepoPath> {
     list.iter().map(|p| RepoPath::from(*p)).collect()
 }
 
-/// I ref di backup, in ordine.
+/// The backup refs, in order.
 fn backups(repo: &Repo) -> Vec<String> {
     let out = repo.git(&[
         "for-each-ref",
@@ -30,14 +30,14 @@ fn index_bytes(repo: &Repo) -> Vec<u8> {
     std::fs::read(repo.path().join(".git/index")).unwrap()
 }
 
-/// Un repo con `a.txt` committato.
+/// A repo with `a.txt` committed.
 fn base() -> Repo {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "in HEAD\n", "primo");
+    repo.commit_file("a.txt", "in HEAD\n", "first");
     repo
 }
 
-/// Nessun indice temporaneo rimasto nella cartella git.
+/// No temporary index left in the git folder.
 fn assert_no_temp_index(repo: &Repo) {
     let left: Vec<_> = std::fs::read_dir(repo.path().join(".git"))
         .unwrap()
@@ -54,43 +54,43 @@ fn assert_no_temp_index(repo: &Repo) {
 #[test]
 fn unstage_added_then_deleted_keeps_a_backup() {
     let repo = base();
-    repo.write("nuovo.txt", "esiste solo in stage\n");
-    repo.stage(&["nuovo.txt"]);
-    std::fs::remove_file(repo.path().join("nuovo.txt")).unwrap();
+    repo.write("new.txt", "exists only in the index\n");
+    repo.stage(&["new.txt"]);
+    std::fs::remove_file(repo.path().join("new.txt")).unwrap();
     let mut backend = repo.open();
     assert_eq!(backend.status().unwrap().entries[0].index.letter(), 'A');
 
-    let backup = backend.unstage(&paths(&["nuovo.txt"])).unwrap().unwrap();
+    let backup = backend.unstage(&paths(&["new.txt"])).unwrap().unwrap();
     assert!(backup.starts_with("refs/project/backup/index-"), "{backup}");
     assert!(
         backend.status().unwrap().entries.is_empty(),
-        "il file non c'è più"
+        "the file is gone"
     );
-    // Il contenuto si recupera dal ref; il commit ha HEAD come genitore.
-    assert_eq!(show(&repo, &backup, "nuovo.txt"), "esiste solo in stage");
+    // The content can be recovered from the ref; the commit has HEAD as parent.
+    assert_eq!(show(&repo, &backup, "new.txt"), "exists only in the index");
     assert_eq!(repo.rev(&format!("{backup}^")), repo.rev("HEAD"));
     let message = repo.git(&["log", "-1", "--format=%B", &backup]);
     assert!(message.contains("index.unstage"), "{message}");
-    assert!(message.contains("nuovo.txt"), "{message}");
+    assert!(message.contains("new.txt"), "{message}");
     assert_no_temp_index(&repo);
 }
 
 #[test]
 fn stage_added_then_deleted_keeps_a_backup() {
     let repo = base();
-    repo.write("nuovo.txt", "esiste solo in stage\n");
-    repo.stage(&["nuovo.txt"]);
-    std::fs::remove_file(repo.path().join("nuovo.txt")).unwrap();
+    repo.write("new.txt", "exists only in the index\n");
+    repo.stage(&["new.txt"]);
+    std::fs::remove_file(repo.path().join("new.txt")).unwrap();
     let mut backend = repo.open();
-    let backup = backend.stage(&paths(&["nuovo.txt"])).unwrap().unwrap();
+    let backup = backend.stage(&paths(&["new.txt"])).unwrap().unwrap();
     assert!(backend.status().unwrap().entries.is_empty());
-    assert_eq!(show(&repo, &backup, "nuovo.txt"), "esiste solo in stage");
+    assert_eq!(show(&repo, &backup, "new.txt"), "exists only in the index");
 }
 
 #[test]
 fn unstage_modified_then_deleted_keeps_a_backup() {
     let repo = base();
-    repo.write("a.txt", "versione in stage\n");
+    repo.write("a.txt", "staged version\n");
     repo.stage(&["a.txt"]);
     std::fs::remove_file(repo.path().join("a.txt")).unwrap();
     let mut backend = repo.open();
@@ -103,54 +103,51 @@ fn unstage_modified_then_deleted_keeps_a_backup() {
         ),
         ('.', 'D')
     );
-    assert_eq!(show(&repo, &backup, "a.txt"), "versione in stage");
+    assert_eq!(show(&repo, &backup, "a.txt"), "staged version");
 }
 
 #[test]
 fn staged_version_unique_to_the_index_is_saved_on_stage_and_unstage() {
     let repo = base();
-    repo.write("a.txt", "versione in stage\n");
+    repo.write("a.txt", "staged version\n");
     repo.stage(&["a.txt"]);
-    repo.write("a.txt", "versione nel worktree\n");
+    repo.write("a.txt", "worktree version\n");
     let mut backend = repo.open();
 
-    // Stage di `MM`: la versione in stage sparirebbe.
+    // Stage of `MM`: the staged version would disappear.
     let first = backend.stage(&paths(&["a.txt"])).unwrap().unwrap();
-    assert_eq!(show(&repo, &first, "a.txt"), "versione in stage");
-    assert_eq!(repo.git(&["show", ":a.txt"]), "versione nel worktree");
+    assert_eq!(show(&repo, &first, "a.txt"), "staged version");
+    assert_eq!(repo.git(&["show", ":a.txt"]), "worktree version");
 
-    repo.write("a.txt", "terza versione\n");
+    repo.write("a.txt", "third version\n");
     let second = backend.unstage(&paths(&["a.txt"])).unwrap().unwrap();
-    assert_ne!(first, second, "un backup non sovrascrive mai un altro");
-    assert_eq!(show(&repo, &second, "a.txt"), "versione nel worktree");
-    assert_eq!(show(&repo, &first, "a.txt"), "versione in stage");
+    assert_ne!(first, second, "a backup never overwrites another");
+    assert_eq!(show(&repo, &second, "a.txt"), "worktree version");
+    assert_eq!(show(&repo, &first, "a.txt"), "staged version");
     assert_eq!(backups(&repo).len(), 2);
 }
 
 #[test]
 fn files_inside_a_requested_folder_count_too() {
     let repo = base();
-    repo.write("dir/x.txt", "x in stage\n");
+    repo.write("dir/x.txt", "x staged\n");
     repo.stage(&["dir/x.txt"]);
-    repo.write("dir/x.txt", "x nel worktree\n");
+    repo.write("dir/x.txt", "x in worktree\n");
     let mut backend = repo.open();
     let backup = backend.stage(&paths(&["dir"])).unwrap().unwrap();
-    assert_eq!(show(&repo, &backup, "dir/x.txt"), "x in stage");
+    assert_eq!(show(&repo, &backup, "dir/x.txt"), "x staged");
 }
 
 #[test]
 fn nothing_at_risk_means_no_backup() {
     let repo = base();
-    repo.write("a.txt", "modificato\n");
-    repo.write("nuovo.txt", "nuovo\n");
-    repo.write("staged.txt", "in stage e uguale nel worktree\n");
+    repo.write("a.txt", "modified\n");
+    repo.write("new.txt", "new\n");
+    repo.write("staged.txt", "staged and equal in the worktree\n");
     repo.stage(&["staged.txt"]);
     let mut backend = repo.open();
-    assert_eq!(
-        backend.stage(&paths(&["a.txt", "nuovo.txt"])).unwrap(),
-        None
-    );
-    // `A.`: la versione in stage è anche nel worktree.
+    assert_eq!(backend.stage(&paths(&["a.txt", "new.txt"])).unwrap(), None);
+    // `A.`: the staged version is also in the worktree.
     assert_eq!(
         backend.unstage(&paths(&["staged.txt", "a.txt"])).unwrap(),
         None
@@ -161,10 +158,10 @@ fn nothing_at_risk_means_no_backup() {
 #[test]
 fn failed_backup_leaves_the_index_untouched() {
     let repo = base();
-    repo.write("a.txt", "versione in stage\n");
+    repo.write("a.txt", "staged version\n");
     repo.stage(&["a.txt"]);
-    repo.write("a.txt", "versione nel worktree\n");
-    // Un file dove andrebbe la cartella dei ref di backup: `update-ref` non può crearlo.
+    repo.write("a.txt", "worktree version\n");
+    // A file where the backup refs folder would go: `update-ref` cannot create it.
     std::fs::write(repo.path().join(".git/refs/project"), "").unwrap();
     let mut backend = repo.open();
     let before = index_bytes(&repo);
@@ -179,47 +176,47 @@ fn failed_backup_leaves_the_index_untouched() {
             matches!(&err, EngineError::Git { command, .. } if command == "update-ref"),
             "{err}"
         );
-        assert_eq!(index_bytes(&repo), before, "l'indice non si tocca");
+        assert_eq!(index_bytes(&repo), before, "the index is not touched");
         assert_eq!(backend.status().unwrap(), status);
     }
-    assert_eq!(repo.git(&["show", ":a.txt"]), "versione in stage");
+    assert_eq!(repo.git(&["show", ":a.txt"]), "staged version");
     assert_no_temp_index(&repo);
 }
 
 #[test]
 fn backup_works_with_conflicts_elsewhere_in_the_index() {
     let repo = repo_with_merge_conflict();
-    repo.write("b.txt", "b in stage\n");
+    repo.write("b.txt", "b staged\n");
     repo.stage(&["b.txt"]);
-    repo.write("b.txt", "b nel worktree\n");
+    repo.write("b.txt", "b in worktree\n");
     let mut backend = repo.open();
-    // `git write-tree` sull'indice vero fallirebbe per il conflitto in `a.txt`.
+    // `git write-tree` on the real index would fail because of the conflict in `a.txt`.
     let backup = backend.stage(&paths(&["b.txt"])).unwrap().unwrap();
-    assert_eq!(show(&repo, &backup, "b.txt"), "b in stage");
-    assert_eq!(repo.git(&["show", ":b.txt"]), "b nel worktree");
+    assert_eq!(show(&repo, &backup, "b.txt"), "b staged");
+    assert_eq!(repo.git(&["show", ":b.txt"]), "b in worktree");
 }
 
 #[test]
 fn backup_on_a_branch_without_commits_has_no_parent() {
     let repo = Repo::new();
-    repo.write("a.txt", "in stage\n");
+    repo.write("a.txt", "staged\n");
     repo.stage(&["a.txt"]);
-    repo.write("a.txt", "nel worktree\n");
+    repo.write("a.txt", "in worktree\n");
     let mut backend = repo.open();
     let backup = backend.unstage(&paths(&["a.txt"])).unwrap().unwrap();
-    assert_eq!(show(&repo, &backup, "a.txt"), "in stage");
+    assert_eq!(show(&repo, &backup, "a.txt"), "staged");
     let parents = repo.git(&["log", "-1", "--format=%P", &backup]);
     assert_eq!(parents, "");
 }
 
-/// `a.txt` con una versione in stage e un'altra nel worktree, nascosta da `flag`
-/// (`--assume-unchanged` o `--skip-worktree`): `git status` dà `M.`.
+/// `a.txt` with one version in the index and another in the worktree, hidden by `flag`
+/// (`--assume-unchanged` or `--skip-worktree`): `git status` gives `M.`.
 fn hidden_worktree_change(flag: &str) -> Repo {
     let repo = base();
-    repo.write("a.txt", "versione in stage\n");
+    repo.write("a.txt", "staged version\n");
     repo.stage(&["a.txt"]);
     repo.git(&["update-index", flag, "a.txt"]);
-    repo.write("a.txt", "versione nel worktree\n");
+    repo.write("a.txt", "worktree version\n");
     repo
 }
 
@@ -235,13 +232,13 @@ fn assume_unchanged_and_skip_worktree_files_are_at_risk() {
                 status.entries[0].worktree.letter()
             ),
             ('M', '.'),
-            "{flag}: git non vede il worktree"
+            "{flag}: git does not see the worktree"
         );
         let backup = backend
             .unstage(&paths(&["a.txt"]))
             .unwrap()
-            .unwrap_or_else(|| panic!("{flag}: nessun backup"));
-        assert_eq!(show(&repo, &backup, "a.txt"), "versione in stage", "{flag}");
+            .unwrap_or_else(|| panic!("{flag}: no backup"));
+        assert_eq!(show(&repo, &backup, "a.txt"), "staged version", "{flag}");
         assert_eq!(repo.git(&["show", ":a.txt"]), "in HEAD", "{flag}");
     }
 }
@@ -259,15 +256,15 @@ fn split_index_leaves_no_shared_index_behind() {
             .filter(|n| n.starts_with("sharedindex."))
             .collect()
     };
-    repo.write("a.txt", "versione in stage\n");
+    repo.write("a.txt", "staged version\n");
     repo.stage(&["a.txt"]);
-    repo.write("a.txt", "versione nel worktree\n");
+    repo.write("a.txt", "worktree version\n");
     let before = shared();
-    assert!(!before.is_empty(), "lo split index è attivo");
+    assert!(!before.is_empty(), "split index is active");
     let mut backend = repo.open();
     assert!(backend.unstage(&paths(&["a.txt"])).unwrap().is_some());
     let after = shared();
-    // L'indice temporaneo non ha lasciato un suo `sharedindex.*`.
+    // The temporary index did not leave a `sharedindex.*` of its own.
     let new: Vec<_> = after.iter().filter(|n| !before.contains(n)).collect();
     assert!(new.is_empty(), "{new:?}");
     assert_no_temp_index(&repo);

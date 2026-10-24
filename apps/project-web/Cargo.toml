@@ -1,6 +1,6 @@
 [package]
 name = "project-web"
-description = "L7: app web (wasm), build con trunk"
+description = "L7: web app (wasm), built with trunk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

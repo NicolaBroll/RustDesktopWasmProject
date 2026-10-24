@@ -1,6 +1,6 @@
 use super::*;
 
-/// Ultimo componente del percorso, per il titolo.
+/// Last component of the path, for the title.
 pub(super) fn repo_name(path: &str) -> &str {
     path.trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
@@ -17,8 +17,8 @@ pub(super) fn head_text(head: &Head) -> String {
     }
 }
 
-/// Avanti e indietro rispetto all'upstream (`↑2 ↓1`, `upstream sparito`), con la spiegazione
-/// al passaggio del mouse; niente se il branch è allineato.
+/// Ahead and behind the upstream (`↑2 ↓1`, `upstream gone`), with the explanation
+/// on hover; nothing if the branch is aligned.
 pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
     let (short, long) = remotes::ahead_behind(upstream);
     if short.is_empty() {
@@ -34,8 +34,8 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
     ui.label(text).on_hover_text(long);
 }
 
-/// `writing`: c'è una scrittura in corso, Annulla, Ripeti, Aggiorna, Fetch, Pull e Push
-/// aspettano. `network`: il fetch, pull o push in corso con il suo ultimo avanzamento.
+/// `writing`: a write is in progress, Undo, Redo, Refresh, Fetch, Pull and Push
+/// wait. `network`: the fetch, pull or push in progress with its latest progress.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
@@ -82,7 +82,7 @@ fn repo_bar(
             }
         }
         ui.separator();
-        // Con un'operazione in corso (merge, rebase...) il motore rifiuta undo e redo.
+        // With an operation in progress (merge, rebase...) the engine refuses undo and redo.
         let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
         for op in [UndoOp::Undo, UndoOp::Redo] {
             let available = op.available(&repo.history);
@@ -117,7 +117,7 @@ fn repo_bar(
     }
 }
 
-/// Il pulsante "Fetch" e, con più remoti, il menu per sceglierne uno.
+/// The "Fetch" button and, with several remotes, the menu to choose one.
 pub(super) fn fetch_buttons(
     ui: &mut Ui,
     repo: &RepoView,
@@ -151,8 +151,8 @@ pub(super) fn fetch_buttons(
     }
 }
 
-/// I pulsanti "Pull" e "Push" del branch attivo. Mai un push forzato da qui: il force si
-/// propone solo nella finestra di un push rifiutato.
+/// The "Pull" and "Push" buttons of the active branch. Never a forced push from here: force is
+/// offered only in the window of a rejected push.
 pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
     let branch = match &repo.head {
         Head::Branch {
@@ -202,8 +202,8 @@ pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions:
     }
 }
 
-/// Il fetch, pull o push in corso: cosa, fase, barra (se git dà la percentuale) e
-/// "Interrompi".
+/// The fetch, pull or push in progress: what, phase, bar (if git gives the percentage) and
+/// "Stop".
 pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
     ui.spinner();
     ui.strong(&network.what);
@@ -232,8 +232,8 @@ pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<
     }
 }
 
-/// `write` è la scrittura in corso, descritta: ha la precedenza sugli altri comandi. `notice`
-/// è un messaggio informativo, mostrato se non c'è niente in corso né un errore.
+/// `write` is the write in progress, described: it takes precedence over the other commands. `notice`
+/// is an informational message, shown if there is nothing in progress and no error.
 pub(crate) fn status_bar(
     ui: &mut Ui,
     running: &[Job],
@@ -287,10 +287,10 @@ mod tests {
 
     #[test]
     fn repo_name_is_the_last_component() {
-        assert_eq!(repo_name("/home/ada/progetto"), "progetto");
-        assert_eq!(repo_name("/home/ada/progetto/"), "progetto");
+        assert_eq!(repo_name("/home/ada/project"), "project");
+        assert_eq!(repo_name("/home/ada/project/"), "project");
         assert_eq!(repo_name(r"C:\repo\app"), "app");
-        assert_eq!(repo_name("esempio"), "esempio");
+        assert_eq!(repo_name("example"), "example");
         assert_eq!(repo_name("/"), "/");
     }
 }

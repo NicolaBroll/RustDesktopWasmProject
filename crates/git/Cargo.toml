@@ -1,6 +1,6 @@
 [package]
 name = "project-git"
-description = "L6: backend git che esegue il comando `git` di sistema"
+description = "L6: git backend that runs the system `git` command"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,8 +10,8 @@ publish.workspace = true
 project-domain.workspace = true
 project-engine.workspace = true
 
-# `setsid` e i segnali per i comandi lenti (fetch): niente terminale di controllo, annullamento
-# con SIGTERM al gruppo di processi.
+# `setsid` and signals for slow commands (fetch): no controlling terminal, cancellation
+# with SIGTERM to the process group.
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 

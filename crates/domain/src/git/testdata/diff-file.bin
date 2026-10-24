@@ -1,70 +1,70 @@
-diff --git a/binario-eliminato.bin b/binario-eliminato.bin
+diff --git a/binary-deleted.bin b/binary-deleted.bin
 deleted file mode 100644
 index 10184ab13114a381a3b145b343df56cca96eecb5..0000000000000000000000000000000000000000
-Binary files a/binario-eliminato.bin and /dev/null differ
-diff --git a/binario-nuovo.bin b/binario-nuovo.bin
+Binary files a/binary-deleted.bin and /dev/null differ
+diff --git a/binary-new.bin b/binary-new.bin
 new file mode 100644
 index 0000000000000000000000000000000000000000..a0a6934810b3cc294c283c71a1a1cfbfb92de42e
-Binary files /dev/null and b/binario-nuovo.bin differ
-diff --git a/eliminato.txt b/eliminato.txt
+Binary files /dev/null and b/binary-new.bin differ
+diff --git a/deleted.txt b/deleted.txt
 deleted file mode 100644
-index 011355cd13f96a63fb7f8d26539d03ae0c87a49a..0000000000000000000000000000000000000000
---- a/eliminato.txt
+index 0e0107847aa7106364654d7602743428ee7dd225..0000000000000000000000000000000000000000
+--- a/deleted.txt
 +++ /dev/null
 @@ -1,2 +0,0 @@
--da eliminare
--seconda
-diff --git a/eseguibile.sh b/eseguibile.sh
+-to delete
+-second
+diff --git a/empty-deleted.txt b/empty-new.txt
+similarity index 100%
+rename from empty-deleted.txt
+rename to empty-new.txt
+diff --git a/executable.sh b/executable.sh
 old mode 100644
 new mode 100755
-diff --git a/immagine.gif b/immagine.gif
+diff --git a/image.gif b/image.gif
 index cfbd6f138d42e3bca81560188913a7f1132808af..7f1b8e397dabe915759090c506c5ad3c874956f0 100644
-Binary files a/immagine.gif and b/immagine.gif differ
-diff --git a/nuovo.txt b/nuovo.txt
-new file mode 100644
-index 0000000000000000000000000000000000000000..b31b0b130d568d7e685646a4c191c5b7d11d49ea
---- /dev/null
-+++ b/nuovo.txt
-@@ -0,0 +1 @@
-+nuovo
-diff --git a/rinomina-esatta.txt b/rinominata-esatta.txt
-similarity index 100%
-rename from rinomina-esatta.txt
-rename to rinominata-esatta.txt
-diff --git a/rinomina-modificata.txt b/rinominata-modificata.txt
-similarity index 86%
-rename from rinomina-modificata.txt
-rename to rinominata-modificata.txt
-index 7335c645a2ec265ad9402bea6b1ef5373583d0fb..9a51ecd21a2604ec37dd3b7dfa4441c2244a3d01 100644
---- a/rinomina-modificata.txt
-+++ b/rinominata-modificata.txt
-@@ -2,3 +2,4 @@ contenuto modificato poco, abbastanza lungo
- riga due
- riga tre
- riga quattro
-+riga cinque
-diff --git a/rinomina-modo.sh b/rinominato-modo.sh
-old mode 100644
-new mode 100755
-similarity index 100%
-rename from rinomina-modo.sh
-rename to rinominato-modo.sh
-diff --git a/tipo.txt b/tipo.txt
+Binary files a/image.gif and b/image.gif differ
+diff --git a/kind.txt b/kind.txt
 deleted file mode 100644
-index 66577300bec4c9f6d9bfa954997056c99c19ea09..0000000000000000000000000000000000000000
---- a/tipo.txt
+index f70531baf6da14a4e407140ba63b201edd827491..0000000000000000000000000000000000000000
+--- a/kind.txt
 +++ /dev/null
 @@ -1 +0,0 @@
--diventa un link
-diff --git a/tipo.txt b/tipo.txt
+-becomes a link
+diff --git a/kind.txt b/kind.txt
 new file mode 120000
-index 0000000000000000000000000000000000000000..eff3c244ce6adf3689cbdd1ecace015f5007668b
+index 0000000000000000000000000000000000000000..c0528fd6cc988c0a40ce0be11bc192fc8dc5346e
 --- /dev/null
-+++ b/tipo.txt
++++ b/kind.txt
 @@ -0,0 +1 @@
-+nuovo.txt
++new.txt
 \ No newline at end of file
-diff --git a/vuoto-eliminato.txt b/vuoto-nuovo.txt
+diff --git a/new.txt b/new.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3e757656cf36eca53338e520d134963a44f793f8
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1 @@
++new
+diff --git a/rename-exact.txt b/renamed-exact.txt
 similarity index 100%
-rename from vuoto-eliminato.txt
-rename to vuoto-nuovo.txt
+rename from rename-exact.txt
+rename to renamed-exact.txt
+diff --git a/rename-mode.sh b/renamed-mode.sh
+old mode 100644
+new mode 100755
+similarity index 100%
+rename from rename-mode.sh
+rename to renamed-mode.sh
+diff --git a/rename-modified.txt b/renamed-modified.txt
+similarity index 87%
+rename from rename-modified.txt
+rename to renamed-modified.txt
+index 5a1b55ef34f8b095d001a618d74a9e1aae5b9d28..e03ad72246027463317c2ab1c13f673e0512d5be 100644
+--- a/rename-modified.txt
++++ b/renamed-modified.txt
+@@ -2,3 +2,4 @@ content slightly modified, long enough
+ line two
+ line three
+ line four
++line five

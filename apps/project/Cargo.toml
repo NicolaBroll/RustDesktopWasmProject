@@ -1,6 +1,6 @@
 [package]
 name = "project"
-description = "L7: app desktop"
+description = "L7: desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

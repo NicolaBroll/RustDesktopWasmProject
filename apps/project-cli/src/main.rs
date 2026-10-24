@@ -1,4 +1,4 @@
-//! L7 — CLI: catalogo comandi, esecuzione in batch, REPL `eval`, server MCP.
+//! L7 — CLI: command catalog, batch execution, `eval` REPL, MCP server.
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(version, about = "Riga di comando di BinariGit")]
+#[command(version, about = "BinariGit command line")]
 struct Cli {
-    /// Repository da aprire prima di `run` ed `eval` (come `repo.open`).
-    #[arg(long, global = true, value_name = "PERCORSO")]
+    /// Repository to open before `run` and `eval` (like `repo.open`).
+    #[arg(long, global = true, value_name = "PATH")]
     repo: Option<String>,
     #[command(subcommand)]
     command: Command,
@@ -20,23 +20,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Elenca i comandi disponibili.
+    /// Lists the available commands.
     Commands {
-        /// Filtra per testo nell'id o nel titolo.
+        /// Filters by text in the id or title.
         #[arg(long)]
         search: Option<String>,
     },
-    /// Esegue una sequenza di comandi e stampa i risultati (JSON, uno per riga).
+    /// Runs a sequence of commands and prints the results (JSON, one per line).
     Run {
-        /// Comando come `id` oppure `id=<json>`; ripetibile.
+        /// Command as `id` or `id=<json>`; repeatable.
         #[arg(long = "cmd", required = true)]
         commands: Vec<String>,
     },
-    /// Legge comandi `id=<json>` da stdin, uno per riga, e stampa i risultati.
+    /// Reads `id=<json>` commands from stdin, one per line, and prints the results.
     Eval,
-    /// Avvia il server MCP su stdin/stdout, con il repository della radice già aperto.
+    /// Starts the MCP server on stdin/stdout, with the root repository already open.
     Mcp {
-        /// Cartella a cui sono confinati tutti i percorsi, anche la ricerca dei repository.
+        /// Folder all paths are confined to, including the repository search.
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
         Command::Commands { search } => {
             let registry = Registry::builtin();
             for spec in registry.search(search.as_deref().unwrap_or_default()) {
-                let writes = if spec.writes { "  [modifica]" } else { "" };
+                let writes = if spec.writes { "  [writes]" } else { "" };
                 println!(
                     "{:<20} {:<34} {}{writes}",
                     spec.id, spec.title, spec.params_help
@@ -74,7 +74,7 @@ fn main() -> anyhow::Result<()> {
                 if line.trim().is_empty() || line.trim_start().starts_with('#') {
                     continue;
                 }
-                // In modalità interattiva un errore non interrompe la sessione.
+                // In interactive mode an error does not end the session.
                 let reply = match execute(&registry, &mut session, &line) {
                     Ok(result) => serde_json::json!({ "ok": result }),
                     Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
@@ -85,18 +85,18 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Mcp { root } => {
             if repo.is_some() {
-                anyhow::bail!("`mcp` non usa `--repo`: apre il repository di `--root`");
+                anyhow::bail!("`mcp` does not use `--repo`: it opens the repository of `--root`");
             }
             let root = root
                 .canonicalize()
-                .with_context(|| format!("radice {}", root.display()))?;
+                .with_context(|| format!("root {}", root.display()))?;
             let opener = CliOpener::new().confine_to(&root);
             let mut server = project_mcp::Server::new(&root, Arc::new(opener))
-                .with_context(|| format!("radice {}", root.display()))?;
-            // Senza repo nella radice il server parte lo stesso: si può usare `open_repo`.
+                .with_context(|| format!("root {}", root.display()))?;
+            // Without a repo in the root the server starts anyway: `open_repo` can be used.
             match server.open_root() {
-                Ok(_) => eprintln!("repository aperto: {}", root.display()),
-                Err(e) => eprintln!("nessun repository aperto: {e}"),
+                Ok(_) => eprintln!("repository open: {}", root.display()),
+                Err(e) => eprintln!("no repository open: {e}"),
             }
             server.serve(io::stdin().lock(), io::stdout().lock())?;
             Ok(())
@@ -112,11 +112,11 @@ fn execute(
     let Invocation { id, params } = text.parse()?;
     registry
         .run_with(&id, session, params, progress_on_stderr())
-        .with_context(|| format!("comando `{id}`"))
+        .with_context(|| format!("command `{id}`"))
 }
 
-/// L'avanzamento dei comandi lenti (`remote.fetch`) su stderr, su una riga riscritta con `\r`,
-/// solo se stderr è un terminale: stdout resta il JSON dei risultati.
+/// Progress of slow commands (`remote.fetch`) on stderr, on a line rewritten with `\r`,
+/// only if stderr is a terminal: stdout stays the JSON of the results.
 fn progress_on_stderr() -> JobContext {
     if !io::stderr().is_terminal() {
         return JobContext::new();
@@ -127,7 +127,7 @@ fn progress_on_stderr() -> JobContext {
     })
 }
 
-/// Sessione che apre i repo con il `git` di sistema, con `repo` già aperto se c'è.
+/// Session that opens repos with the system `git`, with `repo` already open if there is one.
 fn session(repo: Option<&str>) -> anyhow::Result<Session> {
     let mut session = Session::new(Arc::new(CliOpener::new()));
     if let Some(path) = repo {

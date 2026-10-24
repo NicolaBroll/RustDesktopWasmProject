@@ -1,10 +1,10 @@
-//! Ogni chiave usata nel codice della UI esiste in tutte le lingue. Le chiavi passano sempre
-//! dalla macro `tr!` con un letterale (`tr!("merge-close")`): qui si leggono dai sorgenti.
+//! Every key used in the UI code exists in all languages. Keys always go through the `tr!`
+//! macro with a literal (`tr!("merge-close")`): here they are read from the sources.
 
 use project_i18n::Lang;
 use std::path::Path;
 
-/// Le chiavi di `tr!("…"` nel testo, con la riga; un `tr!(` senza letterale è un errore.
+/// The `tr!("…"` keys in the text, with the line; a `tr!(` without a literal is an error.
 fn keys(source: &str) -> Vec<(usize, Result<String, String>)> {
     let mut found = Vec::new();
     for (start, _) in source.match_indices("tr!(") {
@@ -47,15 +47,18 @@ fn every_key_used_by_the_ui_exists() {
                     used += 1;
                     for lang in Lang::ALL {
                         if !project_i18n::get(lang).has(&key) {
-                            errors.push(format!("{name}:{line}: «{key}» manca in {}", lang.code()));
+                            errors.push(format!(
+                                "{name}:{line}: «{key}» is missing in {}",
+                                lang.code()
+                            ));
                         }
                     }
                 }
-                Err(text) => errors.push(format!("{name}:{line}: tr! senza letterale: {text}")),
+                Err(text) => errors.push(format!("{name}:{line}: tr! without a literal: {text}")),
             }
         }
     }
-    assert!(used > 0, "nessuna chiave trovata");
+    assert!(used > 0, "no key found");
     assert!(errors.is_empty(), "\n{}", errors.join("\n"));
 }
 

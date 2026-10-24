@@ -1,29 +1,29 @@
-//! Remoti sul [`CliBackend`] (`remote.fetch`, S25), secondo §5 e §6:
+//! Remotes on the [`CliBackend`] (`remote.fetch`, S25), following §5 and §6:
 //!
-//! - `git fetch --progress --end-of-options <remote> [refs/heads/<branch>]`: il remoto è il nome
-//!   di un remoto configurato (controllato dal comando) e, come il branch, arriva dopo
-//!   `--end-of-options`, così un remoto che si chiama `-x` o `--upload-pack=...` non diventa
-//!   un'opzione. Il branch va come `refs/heads/<branch>`, senza `:` né `+`: nessun ref locale
-//!   come destinazione, e il branch remoto si aggiorna con il refspec configurato;
-//! - `-c protocol.ext.allow=never -c protocol.fd.allow=never` (anche per il push): un remoto
-//!   configurato a mano con `ext::`/`fd::` non esegue comandi, qualunque sia `protocol.allow`;
-//! - niente `--prune`, `--force`, `--tags`, `--update-head-ok`: tag e pulizia come dice la
-//!   configurazione (`fetch.prune`, `remote.<nome>.tagOpt`, ...);
-//! - stdin chiuso, `GIT_TERMINAL_PROMPT=0` e nessun terminale di controllo (`setsid`): il fetch
-//!   non aspetta mai una risposta da tastiera (vedi `Git::run_streaming`); credential helper,
-//!   `ssh-agent` e `SSH_ASKPASS` funzionano come sempre;
-//! - stderr letto mentre git gira: le righe di avanzamento (`\r`) vanno al `JobContext`, le
-//!   altre righe nel risultato o nell'errore.
+//! - `git fetch --progress --end-of-options <remote> [refs/heads/<branch>]`: the remote is the name
+//!   of a configured remote (checked by the command) and, like the branch, comes after
+//!   `--end-of-options`, so a remote named `-x` or `--upload-pack=...` does not become
+//!   an option. The branch goes as `refs/heads/<branch>`, without `:` or `+`: no local ref
+//!   as destination, and the remote branch is updated with the configured refspec;
+//! - `-c protocol.ext.allow=never -c protocol.fd.allow=never` (for push too): a remote
+//!   configured by hand with `ext::`/`fd::` does not run commands, whatever `protocol.allow` says;
+//! - no `--prune`, `--force`, `--tags`, `--update-head-ok`: tags and pruning follow the
+//!   configuration (`fetch.prune`, `remote.<name>.tagOpt`, ...);
+//! - stdin closed, `GIT_TERMINAL_PROMPT=0` and no controlling terminal (`setsid`): the fetch
+//!   never waits for an answer from the keyboard (see `Git::run_streaming`); credential helpers,
+//!   `ssh-agent` and `SSH_ASKPASS` work as usual;
+//! - stderr read while git runs: progress lines (`\r`) go to the `JobContext`, the
+//!   other lines into the result or the error.
 //!
 //! Push (`remote.push`, S26): `git push --porcelain --progress --no-follow-tags
 //! --recurse-submodules=check [--set-upstream] [--force-with-lease=refs/heads/<dst>:<oid>]
-//! --end-of-options <remote> refs/heads/<branch>:refs/heads/<dst>`, con lo stesso ambiente del
-//! fetch. Il refspec esplicito pubblica solo quel branch (`push.default`, `remote.<nome>.push`
-//! non contano), `--no-follow-tags` neutralizza `push.followTags`, `--recurse-submodules=check`
-//! un `push.recurseSubmodules=on-demand` che pubblicherebbe anche i sottomoduli (e rifiuta un
-//! push che riferisce commit di sottomoduli non pubblicati). Mai `--force`, `+refspec`,
-//! `--mirror`, `--all`, `--tags`, `--no-verify`: gli hook `pre-push` girano. L'esito si legge
-//! dallo stdout di `--porcelain` (`<flag>\t<da>:<a>\t<riassunto>`).
+//! --end-of-options <remote> refs/heads/<branch>:refs/heads/<dst>`, with the same environment as
+//! the fetch. The explicit refspec publishes only that branch (`push.default`, `remote.<name>.push`
+//! do not count), `--no-follow-tags` neutralizes `push.followTags`, `--recurse-submodules=check`
+//! neutralizes a `push.recurseSubmodules=on-demand` that would also publish the submodules (and
+//! refuses a push that refers to unpublished submodule commits). Never `--force`, `+refspec`,
+//! `--mirror`, `--all`, `--tags`, `--no-verify`: the `pre-push` hooks run. The outcome is read
+//! from the stdout of `--porcelain` (`<flag>\t<from>:<to>\t<summary>`).
 
 use super::CliBackend;
 use crate::command::{Segment, failure};
@@ -35,8 +35,8 @@ use project_engine::{
 use std::process::Output;
 
 impl CliBackend {
-    /// I nomi dei remoti (`git remote`, uno per riga), in ordine. Un nome non UTF-8 si salta:
-    /// non si potrebbe indicare in JSON.
+    /// The remote names (`git remote`, one per line), in order. A non-UTF-8 name is skipped:
+    /// it could not be given in JSON.
     pub(super) fn remote_names(&self) -> Result<Vec<String>, EngineError> {
         let out = self.run(&["remote"])?;
         let mut names: Vec<String> = out
@@ -75,8 +75,8 @@ impl CliBackend {
             false,
             |Segment { text, newline }| match parse_progress(&text) {
                 Some(progress) => job.report(&progress),
-                // Una riga riscritta con `\r` che non è avanzamento (raro) non si tiene: la
-                // versione finale arriva con `\n`.
+                // A line rewritten with `\r` that is not progress (rare) is not kept: the
+                // final version arrives with `\n`.
                 None if newline && !text.trim().is_empty() => {
                     lines.push(text.trim_end().to_owned())
                 }
@@ -94,7 +94,7 @@ impl CliBackend {
             if let Some(error) = remote_error(&request.remote, &stderr) {
                 return Err(error);
             }
-            // Il testo vuoto lo sostituisce `failure` con il codice di uscita.
+            // `failure` replaces empty text with the exit code.
             return Err(failure(
                 &args,
                 &Output {
@@ -140,14 +140,14 @@ impl CliBackend {
         args.extend(lease.as_deref());
         args.extend(["--end-of-options", &request.remote, &refspec]);
 
-        // Prima di un force, i commit che il remoto perderebbe (come li conosce il branch
-        // remoto locale) in un ref di backup.
+        // Before a force, the commits the remote would lose (as known by the local
+        // remote branch) go into a backup ref.
         let backup = match request.backup {
             Some(oid) => Some(self.create_backup_ref(
                 "push",
                 &oid.to_string(),
                 &format!(
-                    "project: backup di {}/{} prima di un force push",
+                    "project: backup of {}/{} before a force push",
                     request.remote, request.remote_branch
                 ),
             )?),
@@ -177,7 +177,7 @@ impl CliBackend {
             &|| job.is_cancelled(),
         )?;
         if streamed.cancelled {
-            // Il remoto potrebbe aver già aggiornato il branch: il backup resta.
+            // The remote may have already updated the branch: the backup stays.
             return Err(EngineError::Cancelled {
                 command: "remote.push",
             });
@@ -257,8 +257,8 @@ impl CliBackend {
     }
 }
 
-/// La riga di `git push --porcelain` per il ref `dst` del remoto: il flag (` ` fast-forward,
-/// `+` forzato, `*` nuovo, `=` già aggiornato, `!` rifiutato, `-` eliminato) e il riassunto.
+/// The `git push --porcelain` line for the remote ref `dst`: the flag (` ` fast-forward,
+/// `+` forced, `*` new, `=` up to date, `!` rejected, `-` deleted) and the summary.
 fn porcelain_status(stdout: &str, dst: &str) -> Option<(char, String)> {
     stdout.lines().find_map(|line| {
         let mut fields = line.splitn(3, '\t');
@@ -272,7 +272,7 @@ fn porcelain_status(stdout: &str, dst: &str) -> Option<(char, String)> {
     })
 }
 
-/// Il motivo di un rifiuto dal riassunto di `--porcelain` (`[rejected] (non-fast-forward)`,
+/// The reason for a rejection from the summary of `--porcelain` (`[rejected] (non-fast-forward)`,
 /// `[rejected] (stale info)`, `[remote rejected] (pre-receive hook declined)`, ...).
 fn rejection(summary: &str) -> PushRejection {
     if summary.contains("non-fast-forward") || summary.contains("fetch first") {

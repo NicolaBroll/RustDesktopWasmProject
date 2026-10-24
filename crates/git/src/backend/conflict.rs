@@ -1,76 +1,84 @@
-//! Editor dei conflitti sul [`CliBackend`] (`conflict.show`, `conflict.resolve`, S30), secondo
-//! §5 e `impl-docs/git/conflitti.md`.
+//! Conflict editor on the [`CliBackend`] (`conflict.show`, `conflict.resolve`, S30), per
+//! §5 and `impl-docs/git/conflicts.md`.
 //!
-//! - versioni: gli id degli stadi 1/2/3 dal record `u` dello stato (`git status
-//!   --porcelain=v2`, gli stessi di `ls-files -s`), i byte con `git cat-file blob <id>` (senza
-//!   filtri); il worktree letto dal file system (un link o una cartella, anche fra le cartelle
-//!   del percorso, → `NotAllowed`); `conflict-marker-size` con `git check-attr -z --stdin`;
-//! - risoluzione: controlli (conflitto, digest, indice bloccato), backup dei byte del worktree
-//!   (`hash-object -w --no-filters --stdin`, albero in un indice temporaneo, `commit-tree` senza
-//!   genitori con l'identità dei backup, ref nuovo `refs/project/backup/conflict-...`), file
-//!   temporaneo nella stessa cartella e `rename` dopo aver ricontrollato il digest, poi lo stage
-//!   di [`GitBackend::stage`] (`git add` del solo percorso, con il suo backup dell'indice).
+//! - versions: the ids of stages 1/2/3 from the `u` record of the status (`git status
+//!   --porcelain=v2`, the same as `ls-files -s`), the bytes with `git cat-file blob <id>` (no
+//!   filters); the worktree read from the file system (a link or a directory, also among the
+//!   directories of the path, → `NotAllowed`); `conflict-marker-size` with `git check-attr -z --stdin`;
+//! - resolution: checks (conflict, digest, locked index), backup of the worktree bytes
+//!   (`hash-object -w --no-filters --stdin`, tree in a temporary index, `commit-tree` with no
+//!   parents using the backup identity, new ref `refs/project/backup/conflict-...`), temporary
+//!   file in the same directory and `rename` after rechecking the digest, then the stage
+//!   of [`GitBackend::stage`] (`git add` of the path only, with its index backup).
 
 use super::{BACKUP_IDENTITY, CliBackend};
 use crate::command::os_from_bytes;
 use project_domain::RepoPath;
 use project_engine::{
-    ConflictResolution, ConflictResolved, ConflictVersions, EngineError, GitBackend, StagedVersion,
-    check_conflict, check_digest, marker_size,
+    ConflictResolution, ConflictResolved, ConflictVersions, EngineError, GitBackend, Message,
+    StagedVersion, check_conflict, check_digest, marker_size,
 };
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Modo di un file eseguibile nell'indice.
+/// Mode of an executable file in the index.
 const EXECUTABLE: u32 = 0o100755;
-/// Modo di un file normale nell'indice.
+/// Mode of a regular file in the index.
 const REGULAR: u32 = 0o100644;
 
-/// Un file letto dal worktree: i byte e il modo per l'indice.
+/// A file read from the worktree: the bytes and the mode for the index.
 struct WorktreeFile {
     bytes: Vec<u8>,
     mode: u32,
 }
 
-/// Aggiunge a un errore arrivato dopo il backup il nome del ref che lo contiene.
+/// Adds to an error that arrived after the backup the name of the ref that holds it.
 fn naming_backup(error: EngineError, backup: &Option<String>) -> EngineError {
     let Some(backup) = backup else {
         return error;
     };
-    let note = format!(
-        " (il file del worktree com'era prima è salvato in `{backup}`: `git show \
-         {backup}:<percorso>`)"
-    );
+    let note = msg!("engine-conflict-backup-note", backup = backup);
     match error {
-        EngineError::Git { command, stderr } => EngineError::Git {
+        EngineError::Git { command, stderr } => EngineError::GitWithReason {
             command,
-            stderr: stderr + &note,
+            reason: msg!("engine-note-paren", text = stderr, note = note),
         },
-        EngineError::NotAllowed(reason) => EngineError::NotAllowed(reason + &note),
+        EngineError::GitWithReason { command, reason } => EngineError::GitWithReason {
+            command,
+            reason: msg!("engine-note-paren", text = reason, note = note),
+        },
+        EngineError::NotAllowed(reason) => {
+            EngineError::NotAllowed(msg!("engine-note-paren", text = reason, note = note))
+        }
         EngineError::StaleDiff { path, reason } => EngineError::StaleDiff {
             path,
-            reason: reason + &note,
+            reason: msg!("engine-note-paren", text = reason, note = note),
         },
-        other => EngineError::Git {
+        other => EngineError::GitWithReason {
             command: "add".to_owned(),
-            stderr: format!("{other}{note}"),
+            reason: msg!("engine-note-paren", text = other, note = note),
         },
     }
 }
 
-/// Un errore di I/O sul file del worktree.
-fn io_error(what: &str, path: &RepoPath, error: std::io::Error) -> EngineError {
-    EngineError::Git {
+/// An I/O error on the worktree file.
+fn io_error(what: Message, path: &RepoPath, error: std::io::Error) -> EngineError {
+    EngineError::GitWithReason {
         command: "add".to_owned(),
-        stderr: format!("{what} `{path}` non riuscito: {error}"),
+        reason: msg!(
+            "engine-conflict-io",
+            what = what,
+            path = path,
+            error = error
+        ),
     }
 }
 
 impl CliBackend {
-    /// Il percorso del file nel worktree, dopo aver controllato che nessuna cartella del
-    /// percorso sia un link simbolico (si scriverebbe fuori dal repo, o in un altro file).
+    /// The path of the file in the worktree, after checking that no directory of the
+    /// path is a symbolic link (it would write outside the repo, or into another file).
     fn conflict_file_path(&self, path: &RepoPath) -> Result<PathBuf, EngineError> {
         let bytes = path.as_bytes();
         for (i, _) in bytes.iter().enumerate().filter(|(_, b)| **b == b'/') {
@@ -84,18 +92,19 @@ impl CliBackend {
         Ok(self.workdir.join(os_from_bytes(bytes)))
     }
 
-    /// Il file del worktree: `None` se non c'è; un link o una cartella → `NotAllowed`.
+    /// The worktree file: `None` if absent; a link or a directory → `NotAllowed`.
     fn read_conflict_file(&self, path: &RepoPath) -> Result<Option<WorktreeFile>, EngineError> {
         let full = self.conflict_file_path(path)?;
         let meta = match full.symlink_metadata() {
             Ok(meta) => meta,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(io_error("lettura di", path, e)),
+            Err(e) => return Err(io_error(msg!("engine-conflict-io-read"), path, e)),
         };
         if !meta.is_file() {
             return Err(EngineError::not_a_file(path));
         }
-        let bytes = std::fs::read(&full).map_err(|e| io_error("lettura di", path, e))?;
+        let bytes =
+            std::fs::read(&full).map_err(|e| io_error(msg!("engine-conflict-io-read"), path, e))?;
         Ok(Some(WorktreeFile {
             bytes,
             mode: if is_executable(&meta) {
@@ -106,13 +115,13 @@ impl CliBackend {
         }))
     }
 
-    /// `conflict-marker-size` di `path` (`git check-attr -z --stdin`, percorso su stdin).
+    /// `conflict-marker-size` of `path` (`git check-attr -z --stdin`, path on stdin).
     fn conflict_marker_size(&self, path: &RepoPath) -> Result<usize, EngineError> {
         let mut input = path.as_bytes().to_vec();
         input.push(0);
         let args = ["check-attr", "-z", "--stdin", "conflict-marker-size"];
         let out = self.run_input(&args, &input, &[])?;
-        // `<percorso> NUL <attributo> NUL <valore> NUL`
+        // `<path> NUL <attribute> NUL <value> NUL`
         let value = out
             .split(|&b| b == 0)
             .nth(2)
@@ -120,7 +129,7 @@ impl CliBackend {
         Ok(marker_size(value.as_deref()))
     }
 
-    /// Lo stadio `oid` se c'è (modo diverso da 0).
+    /// The stage `oid` if present (mode other than 0).
     fn stage_bytes(
         &self,
         mode: u32,
@@ -132,8 +141,8 @@ impl CliBackend {
         self.blob(oid).map(Some)
     }
 
-    /// Il backup dei byte del worktree: un commit senza genitori con il solo file al suo
-    /// percorso, in un ref nuovo `refs/project/backup/conflict-...`.
+    /// The backup of the worktree bytes: a commit with no parents holding only the file at its
+    /// path, in a new ref `refs/project/backup/conflict-...`.
     fn conflict_backup(&self, path: &RepoPath, file: &WorktreeFile) -> Result<String, EngineError> {
         let oid = self.hash_blob(&file.bytes)?;
         let tree = self.backup_tree(&[StagedVersion {
@@ -142,8 +151,8 @@ impl CliBackend {
             oid,
         }])?;
         let message = format!(
-            "Backup del worktree prima di conflict.resolve\n\nIl file in conflitto com'era nel \
-             worktree (marcatori e modifiche a mano compresi):\n\n{path}\n"
+            "Backup of the worktree before conflict.resolve\n\nThe conflicted file as it was in the \
+             worktree (markers and manual edits included):\n\n{path}\n"
         );
         let identity: Vec<(&str, &OsStr)> = BACKUP_IDENTITY
             .iter()
@@ -155,14 +164,14 @@ impl CliBackend {
         self.create_backup_ref(
             "conflict",
             &commit,
-            "project: backup del worktree prima di conflict.resolve",
+            "project: backup of the worktree before conflict.resolve",
         )
     }
 
-    /// Scrive `content` al posto del file `path` (o lo cancella con `None`), dopo aver
-    /// ricontrollato che il worktree sia ancora quello di `digest`. Il file nuovo prende i
-    /// permessi di quello che sostituisce; se non c'era, è eseguibile quando lo stadio rimasto
-    /// lo è (`executable`).
+    /// Writes `content` in place of the file `path` (or deletes it with `None`), after
+    /// rechecking that the worktree is still the one of `digest`. The new file takes the
+    /// permissions of the one it replaces; if there was none, it is executable when the
+    /// remaining stage is (`executable`).
     fn write_resolution(
         &self,
         request: &ConflictResolution,
@@ -177,22 +186,22 @@ impl CliBackend {
                 path,
                 &request.digest,
                 now.as_ref().map(|f| f.bytes.as_slice()),
-                "",
             )
         };
         let Some(content) = &request.content else {
             recheck()?;
             if before.is_some() {
-                std::fs::remove_file(&full).map_err(|e| io_error("cancellazione di", path, e))?;
+                std::fs::remove_file(&full)
+                    .map_err(|e| io_error(msg!("engine-conflict-io-delete"), path, e))?;
             }
             return Ok(());
         };
         let dir = full.parent().unwrap_or(&self.workdir).to_path_buf();
         if before.is_none() {
-            // Prima del ricontrollo: dopo uno `StaleDiff` non restano cartelle vuote.
+            // Before the recheck: after a `StaleDiff` no empty directories are left.
             recheck()?;
             std::fs::create_dir_all(&dir)
-                .map_err(|e| io_error("creazione della cartella di", path, e))?;
+                .map_err(|e| io_error(msg!("engine-conflict-io-mkdir"), path, e))?;
         }
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -206,10 +215,10 @@ impl CliBackend {
                 .write(true)
                 .create_new(true)
                 .open(&temp)
-                .map_err(|e| io_error("scrittura di", path, e))?;
+                .map_err(|e| io_error(msg!("engine-conflict-io-write"), path, e))?;
             file.write_all(content)
                 .and_then(|()| file.sync_all())
-                .map_err(|e| io_error("scrittura di", path, e))?;
+                .map_err(|e| io_error(msg!("engine-conflict-io-write"), path, e))?;
             drop(file);
             let perms = match before {
                 Some(_) => std::fs::metadata(&full)
@@ -218,9 +227,10 @@ impl CliBackend {
             };
             perms
                 .and_then(|r| r)
-                .map_err(|e| io_error("scrittura di", path, e))?;
+                .map_err(|e| io_error(msg!("engine-conflict-io-write"), path, e))?;
             recheck()?;
-            std::fs::rename(&temp, &full).map_err(|e| io_error("scrittura di", path, e))
+            std::fs::rename(&temp, &full)
+                .map_err(|e| io_error(msg!("engine-conflict-io-write"), path, e))
         })();
         if result.is_err() {
             let _ = std::fs::remove_file(&temp);
@@ -258,7 +268,6 @@ impl CliBackend {
             path,
             &request.digest,
             before.as_ref().map(|f| f.bytes.as_slice()),
-            "",
         )?;
         self.check_index_unlocked()?;
         let backup = match &before {
@@ -288,8 +297,8 @@ fn is_executable(_meta: &std::fs::Metadata) -> bool {
     false
 }
 
-/// Un file nuovo senza un file da sostituire: eseguibile o no (il resto dalla `umask`, come i
-/// file che scrive git).
+/// A new file with no file to replace: executable or not (the rest from the `umask`, like the
+/// files git writes).
 #[cfg(unix)]
 fn set_executable(file: &std::path::Path, executable: bool) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;

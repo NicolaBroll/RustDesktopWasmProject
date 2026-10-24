@@ -1,10 +1,11 @@
-//! Test di integrazione degli stash (S28: `stash.list`, `stash.push`, `stash.apply`,
-//! `stash.pop`, `stash.drop` e il loro undo/redo) con il `CliBackend` su repo temporanei:
-//! push con le opzioni (non tracciati, `keep_index`, percorsi, messaggio che inizia con `-`),
-//! undo del push che rimette anche la divisione fra in stage e no, rifiuti senza cambiare
-//! niente (modifiche locali, non tracciati e ignorati al posto dei file dello stash: casi in cui
-//! `git stash apply` scriverebbe a metà), conflitti lasciati con lo stash tenuto, `restore_index`
-//! che non si applica, drop con conferma, backup e undo, basi degli stash nel grafo.
+//! Integration tests of stashes (S28: `stash.list`, `stash.push`, `stash.apply`,
+//! `stash.pop`, `stash.drop` and their undo/redo) with the `CliBackend` on temporary repos:
+//! push with options (untracked, `keep_index`, paths, message starting with `-`),
+//! undo of the push that also restores the staged/unstaged split, refusals that change
+//! nothing (local changes, untracked and ignored files in place of the stash's files: cases in
+//! which `git stash apply` would write halfway), conflicts left with the stash kept,
+//! `restore_index` that does not apply, drop with confirmation, backup and undo, stash bases in
+//! the graph.
 
 mod common;
 
@@ -25,12 +26,12 @@ fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-/// Stato (con i non tracciati e gli ignorati), contenuto dei file e ref: per vedere che niente
-/// cambia, o che tutto torna com'era.
+/// Status (with untracked and ignored files), file contents and refs: to see that nothing
+/// changes, or that everything is back as it was.
 fn snapshot(repo: &Repo) -> (String, Vec<(String, String)>, String) {
     let status = repo.git(&["status", "--porcelain", "-uall", "--ignored"]);
     let mut files = Vec::new();
-    for name in ["a.txt", "b.txt", "nuovo.txt", "dir/u.txt", "x.log", "c.txt"] {
+    for name in ["a.txt", "b.txt", "new.txt", "dir/u.txt", "x.log", "c.txt"] {
         if let Ok(content) = std::fs::read_to_string(repo.path().join(name)) {
             files.push((name.to_owned(), content));
         }
@@ -39,24 +40,24 @@ fn snapshot(repo: &Repo) -> (String, Vec<(String, String)>, String) {
     (status, files, refs)
 }
 
-/// Un repo con due file committati e ogni tipo di modifica: `a.txt` cambiato in stage e poi
-/// ancora fuori (`MM`), `b.txt` cambiato fuori stage, `nuovo.txt` aggiunto in stage,
-/// `dir/u.txt` non tracciato, `x.log` ignorato.
+/// A repo with two committed files and every kind of change: `a.txt` changed in the index and
+/// then again outside (`MM`), `b.txt` changed outside the index, `new.txt` added to the index,
+/// `dir/u.txt` untracked, `x.log` ignored.
 fn dirty() -> Repo {
     let repo = Repo::new();
-    repo.commit_file(".gitignore", "*.log\n", "ignora i log");
+    repo.commit_file(".gitignore", "*.log\n", "ignore the logs");
     repo.write("a.txt", "a\n");
     repo.write("b.txt", "b\n");
     repo.stage(&["a.txt", "b.txt"]);
-    repo.commit("due file");
-    repo.write("a.txt", "a in stage\n");
+    repo.commit("two files");
+    repo.write("a.txt", "a staged\n");
     repo.stage(&["a.txt"]);
-    repo.write("a.txt", "a fuori stage\n");
-    repo.write("b.txt", "b fuori stage\n");
-    repo.write("nuovo.txt", "nuovo\n");
-    repo.stage(&["nuovo.txt"]);
-    repo.write("dir/u.txt", "non tracciato\n");
-    repo.write("x.log", "ignorato\n");
+    repo.write("a.txt", "a unstaged\n");
+    repo.write("b.txt", "b unstaged\n");
+    repo.write("new.txt", "new\n");
+    repo.stage(&["new.txt"]);
+    repo.write("dir/u.txt", "untracked\n");
+    repo.write("x.log", "ignored\n");
     repo
 }
 
@@ -75,25 +76,25 @@ fn push_list_undo_and_redo() {
         &r,
         &mut s,
         "stash.push",
-        json!({ "message": "-x --all prova", "include_untracked": true }),
+        json!({ "message": "-x --all test", "include_untracked": true }),
     );
     let stash = out["stash"].clone();
-    assert_eq!(stash["message"], "On main: -x --all prova");
+    assert_eq!(stash["message"], "On main: -x --all test");
     assert_eq!(stash["branch"], "main");
     assert_eq!(stash["base"], head.to_string());
     assert_eq!(stash["untracked"], true);
     assert_eq!(stash["id"], repo.rev("refs/stash").to_string());
     assert_eq!(out["stashes"], json!([stash]));
-    // Resta solo l'ignorato; niente `--all`.
+    // Only the ignored file remains; no `--all`.
     assert_eq!(
         repo.git(&["status", "--porcelain", "-uall", "--ignored"]),
         "!! x.log"
     );
     assert_eq!(
         repo.git(&["stash", "list"]),
-        "stash@{0}: On main: -x --all prova"
+        "stash@{0}: On main: -x --all test"
     );
-    // Il commit dello stash si legge come un commit: i file tracciati rispetto alla base.
+    // The stash commit reads like a commit: the tracked files relative to the base.
     let show = run(&r, &mut s, "commit.show", json!({ "id": stash["id"] }));
     let files: Vec<&str> = show["files"]
         .as_array()
@@ -101,11 +102,11 @@ fn push_list_undo_and_redo() {
         .iter()
         .map(|f| f["path"].as_str().unwrap())
         .collect();
-    assert_eq!(files, ["a.txt", "b.txt", "nuovo.txt"]);
+    assert_eq!(files, ["a.txt", "b.txt", "new.txt"]);
     let list = run(&r, &mut s, "stash.list", json!({}));
     assert_eq!(list["stashes"], json!([stash]));
 
-    // Undo: tutto come prima, anche in stage e fuori, con il commit dello stash nel backup.
+    // Undo: everything as before, staged and unstaged, with the stash commit in the backup.
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["undone"]["command"], "stash.push");
     assert_eq!(snapshot(&repo).0, before.0);
@@ -115,12 +116,12 @@ fn push_list_undo_and_redo() {
     assert_eq!(repo.rev(&backup).to_string(), stash["id"]);
     assert_eq!(repo.git(&["stash", "list"]), "");
 
-    // Redo: di nuovo da parte, con gli stessi parametri.
+    // Redo: stashed again, with the same parameters.
     let redo = run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(redo["redone"]["command"], "stash.push");
     assert_eq!(
         repo.git(&["stash", "list"]),
-        "stash@{0}: On main: -x --all prova"
+        "stash@{0}: On main: -x --all test"
     );
     assert_eq!(
         redo["redone"]["stash"]["id"],
@@ -135,30 +136,30 @@ fn push_with_keep_index_and_paths() {
     let repo = dirty();
     let (r, mut s) = open(&repo);
     run(&r, &mut s, "stash.push", json!({ "keep_index": true }));
-    // L'indice resta, il worktree come l'indice.
+    // The index stays, the worktree matches the index.
     assert_eq!(
         repo.git(&["status", "--porcelain", "-uall"]),
-        "M  a.txt\nA  nuovo.txt\n?? dir/u.txt"
+        "M  a.txt\nA  new.txt\n?? dir/u.txt"
     );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "a in stage\n"
+        "a staged\n"
     );
 
     let repo = dirty();
     let (r, mut s) = open(&repo);
-    // Un percorso che inizia con `-` e uno vero: vanno a git su stdin, alla lettera.
+    // A path starting with `-` and a real one: they go to git on stdin, literally.
     let err = r
         .run("stash.push", &mut s, json!({ "paths": ["-x"] }))
         .unwrap_err();
     assert!(
-        matches!(&err, EngineError::NotAllowed(m) if m.contains("niente da mettere da parte")),
+        matches!(&err, EngineError::NotAllowed(m) if m.contains("nothing to stash")),
         "{err}"
     );
     let out = run(&r, &mut s, "stash.push", json!({ "paths": ["b.txt"] }));
     assert_eq!(
         repo.git(&["status", "--porcelain", "-uall"]),
-        "MM a.txt\nA  nuovo.txt\n?? dir/u.txt"
+        "MM a.txt\nA  new.txt\n?? dir/u.txt"
     );
     assert!(
         out["stash"]["message"]
@@ -171,10 +172,10 @@ fn push_with_keep_index_and_paths() {
 
 #[test]
 fn push_refusals_change_nothing() {
-    // Niente da mettere da parte (solo un ignorato e, senza `include_untracked`, un non
-    // tracciato).
+    // Nothing to stash (only an ignored file and, without `include_untracked`, an untracked
+    // one).
     let repo = Repo::new();
-    repo.commit_file(".gitignore", "*.log\n", "ignora");
+    repo.commit_file(".gitignore", "*.log\n", "ignore");
     repo.write("x.log", "?\n");
     repo.write("u.txt", "?\n");
     let (r, mut s) = open(&repo);
@@ -182,7 +183,7 @@ fn push_refusals_change_nothing() {
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(repo.git(&["stash", "list"]), "");
 
-    // Un file `intent-to-add`: git non saprebbe salvarlo.
+    // An `intent-to-add` file: git would not know how to save it.
     repo.write("i.txt", "x\n");
     repo.git(&["add", "-N", "i.txt"]);
     let before = snapshot(&repo);
@@ -190,21 +191,21 @@ fn push_refusals_change_nothing() {
     assert!(err.to_string().contains("intent-to-add"), "{err}");
     assert_eq!(snapshot(&repo), before);
 
-    // Merge in conflitto.
+    // Conflicting merge.
     let repo = common::repo_with_merge_conflict();
     let (r, mut s) = open(&repo);
     let before = snapshot(&repo);
     let err = r.run("stash.push", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("è in corso un merge"), "{err}");
+    assert!(err.to_string().contains("a merge is in progress"), "{err}");
     assert_eq!(snapshot(&repo), before);
 
-    // Branch senza commit.
+    // Branch without commits.
     let repo = Repo::new();
     repo.write("a.txt", "x\n");
     repo.stage(&["a.txt"]);
     let (r, mut s) = open(&repo);
     let err = r.run("stash.push", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("non ha ancora commit"), "{err}");
+    assert!(err.to_string().contains("has no commits yet"), "{err}");
 }
 
 #[test]
@@ -220,20 +221,20 @@ fn apply_and_pop() {
     )["stash"]["id"]
         .clone();
 
-    // Apply senza indice: tutto fuori stage tranne il file nuovo, lo stash resta.
+    // Apply without index: everything unstaged except the new file, the stash stays.
     let out = run(&r, &mut s, "stash.apply", json!({ "expected": id }));
     assert_eq!(out["conflicts"], json!([]));
     assert_eq!(out["dropped"], false);
     assert_eq!(out["stashes"][0]["id"], id);
     assert_eq!(
         repo.git(&["status", "--porcelain", "-uall"]),
-        " M a.txt\n M b.txt\nA  nuovo.txt\n?? dir/u.txt"
+        " M a.txt\n M b.txt\nA  new.txt\n?? dir/u.txt"
     );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
-        "a fuori stage\n"
+        "a unstaged\n"
     );
-    // Non è nel diario: il prossimo undo è il push.
+    // Not in the journal: the next undo is the push.
     assert_eq!(
         run(&r, &mut s, "edit.history", json!({}))["done"]
             .as_array()
@@ -241,7 +242,7 @@ fn apply_and_pop() {
             .len(),
         1
     );
-    // Di nuovo sopra le stesse modifiche: rifiutato prima di git, niente cambia.
+    // Again on top of the same changes: refused before git, nothing changes.
     let now = snapshot(&repo);
     let err = r.run("stash.pop", &mut s, json!({})).unwrap_err();
     assert!(
@@ -250,7 +251,7 @@ fn apply_and_pop() {
     );
     assert_eq!(snapshot(&repo), now);
 
-    // Pop con l'indice da un worktree pulito: tutto come all'inizio, con il backup.
+    // Pop with the index from a clean worktree: everything as at the start, with the backup.
     repo.git(&["reset", "--hard", "--quiet"]);
     repo.git(&["clean", "-fdq"]);
     let out = run(
@@ -270,8 +271,8 @@ fn apply_and_pop() {
 
 #[test]
 fn files_in_the_way_block_the_apply_before_git_writes() {
-    // `git stash apply` con un non tracciato dello stash già presente rimetterebbe i file
-    // tracciati e poi fallirebbe: qui niente cambia.
+    // `git stash apply` with an untracked file of the stash already present would restore the
+    // tracked files and then fail: here nothing changes.
     let repo = dirty();
     let (r, mut s) = open(&repo);
     run(
@@ -280,7 +281,7 @@ fn files_in_the_way_block_the_apply_before_git_writes() {
         "stash.push",
         json!({ "include_untracked": true }),
     );
-    repo.write("dir/u.txt", "un altro\n");
+    repo.write("dir/u.txt", "another\n");
     let before = snapshot(&repo);
     let err = r.run("stash.apply", &mut s, json!({})).unwrap_err();
     assert!(
@@ -289,7 +290,7 @@ fn files_in_the_way_block_the_apply_before_git_writes() {
     );
     assert_eq!(snapshot(&repo), before);
 
-    // Un file al posto della cartella di un non tracciato dello stash.
+    // A file in place of the folder of an untracked file of the stash.
     std::fs::remove_dir_all(repo.path().join("dir")).unwrap();
     repo.write("dir", "file\n");
     let err = r.run("stash.apply", &mut s, json!({})).unwrap_err();
@@ -298,22 +299,22 @@ fn files_in_the_way_block_the_apply_before_git_writes() {
         "{err}"
     );
 
-    // Un ignorato al posto di un file che lo stash aggiunge: git lo sovrascriverebbe.
+    // An ignored file in place of a file the stash adds: git would overwrite it.
     let repo = Repo::new();
-    repo.commit_file(".gitignore", "*.log\n", "ignora");
-    repo.write("nuovo.log", "in stash\n");
-    repo.git(&["add", "-f", "nuovo.log"]);
+    repo.commit_file(".gitignore", "*.log\n", "ignore");
+    repo.write("new.log", "in stash\n");
+    repo.git(&["add", "-f", "new.log"]);
     let (r, mut s) = open(&repo);
     run(&r, &mut s, "stash.push", json!({}));
-    repo.write("nuovo.log", "ignorato, da non perdere\n");
+    repo.write("new.log", "ignored, do not lose\n");
     let err = r.run("stash.pop", &mut s, json!({})).unwrap_err();
     assert!(
-        matches!(&err, EngineError::NotAllowed(m) if m.contains("`nuovo.log`")),
+        matches!(&err, EngineError::NotAllowed(m) if m.contains("`new.log`")),
         "{err}"
     );
     assert_eq!(
-        std::fs::read_to_string(repo.path().join("nuovo.log")).unwrap(),
-        "ignorato, da non perdere\n"
+        std::fs::read_to_string(repo.path().join("new.log")).unwrap(),
+        "ignored, do not lose\n"
     );
     assert_eq!(repo.git(&["stash", "list"]).lines().count(), 1);
 }
@@ -321,13 +322,13 @@ fn files_in_the_way_block_the_apply_before_git_writes() {
 #[test]
 fn conflicts_are_left_and_pop_keeps_the_stash() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "uno\ndue\ntre\n", "primo");
-    repo.write("a.txt", "uno\nDUE dallo stash\ntre\n");
+    repo.commit_file("a.txt", "one\ntwo\nthree\n", "first");
+    repo.write("a.txt", "one\nTWO from the stash\nthree\n");
     repo.write("b.txt", "b\n");
     repo.stage(&["b.txt"]);
     let (r, mut s) = open(&repo);
     let id = run(&r, &mut s, "stash.push", json!({}))["stash"]["id"].clone();
-    repo.commit_file("a.txt", "uno\nDUE da main\ntre\n", "cambia a");
+    repo.commit_file("a.txt", "one\nTWO from main\nthree\n", "change a");
 
     let out = run(&r, &mut s, "stash.pop", json!({}));
     assert_eq!(out["conflicts"], json!(["a.txt"]));
@@ -335,38 +336,38 @@ fn conflicts_are_left_and_pop_keeps_the_stash() {
     assert_eq!(out["backup"], Value::Null);
     assert_eq!(out["stashes"][0]["id"], id);
     assert!(
-        out["warnings"][0]
+        out["warnings"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("resta nell'elenco"),
+            .contains("stays in the list"),
         "{out}"
     );
     let a = std::fs::read_to_string(repo.path().join("a.txt")).unwrap();
     assert!(
-        a.contains("<<<<<<<") && a.contains("DUE dallo stash"),
+        a.contains("<<<<<<<") && a.contains("TWO from the stash"),
         "{a}"
     );
     assert!(repo.git(&["status", "--porcelain"]).contains("UU a.txt"));
     assert_eq!(repo.git(&["stash", "list"]).lines().count(), 1);
-    // Con il conflitto aperto, niente stash.
+    // With the conflict open, no stash.
     let err = r.run("stash.apply", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("in conflitto"), "{err}");
+    assert!(err.to_string().contains("conflicted"), "{err}");
 }
 
 #[test]
 fn restore_index_that_does_not_apply_changes_nothing() {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "a\nb\nc\n", "primo");
+    repo.commit_file("a.txt", "a\nb\nc\n", "first");
     repo.write("a.txt", "a\nS\nc\n");
     repo.stage(&["a.txt"]);
     let (r, mut s) = open(&repo);
     run(&r, &mut s, "stash.push", json!({}));
-    repo.commit_file("a.txt", "a\nT\nc\n", "cambia a");
+    repo.commit_file("a.txt", "a\nT\nc\n", "change a");
     let before = snapshot(&repo);
     let err = r
         .run("stash.apply", &mut s, json!({ "restore_index": true }))
         .unwrap_err();
-    assert!(err.to_string().contains("senza `restore_index`"), "{err}");
+    assert!(err.to_string().contains("without `restore_index`"), "{err}");
     assert_eq!(snapshot(&repo), before);
 }
 
@@ -375,7 +376,7 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
     let repo = dirty();
     let (r, mut s) = open(&repo);
     let first = run(&r, &mut s, "stash.push", json!({ "paths": ["b.txt"] }))["stash"].clone();
-    let second = run(&r, &mut s, "stash.push", json!({ "message": "il resto" }))["stash"].clone();
+    let second = run(&r, &mut s, "stash.push", json!({ "message": "the rest" }))["stash"].clone();
     let refs = repo.git(&["for-each-ref"]);
 
     let err = r
@@ -389,11 +390,11 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
         .run("stash.drop", &mut s, json!({ "index": 1, "confirm": true }))
         .unwrap_err();
     assert!(matches!(err2, EngineError::InvalidParams { .. }), "{err2}");
-    // Con dei percorsi git mette nello stash comunque tutto l'indice: anche `a.txt` e
-    // `nuovo.txt`, che erano in stage (e restano nel worktree).
-    assert!(err.to_string().contains("3 file tracciati"), "{err}");
+    // With paths git stashes the whole index anyway: also `a.txt` and
+    // `new.txt`, which were staged (and stay in the worktree).
+    assert!(err.to_string().contains("3 tracked files"), "{err}");
     assert_eq!(repo.git(&["for-each-ref"]), refs);
-    // La conferma vale per lo stash visto.
+    // The confirmation holds for the stash that was seen.
     let err = r
         .run(
             "stash.drop",
@@ -401,7 +402,7 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
             json!({ "index": 1, "expected": second["id"], "confirm": true }),
         )
         .unwrap_err();
-    assert!(err.to_string().contains("ora è `stash@{0}`"), "{err}");
+    assert!(err.to_string().contains("is now `stash@{0}`"), "{err}");
 
     let out = run(
         &r,
@@ -418,14 +419,14 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
         second["id"].as_str().unwrap()
     );
 
-    // Undo: in cima.
+    // Undo: back on top.
     run(&r, &mut s, "edit.undo", json!({}));
     let list = run(&r, &mut s, "stash.list", json!({}));
     assert_eq!(list["stashes"][0]["id"], first["id"]);
     assert_eq!(list["stashes"][0]["message"], first["message"]);
     assert_eq!(list["stashes"][1]["id"], second["id"]);
-    // Redo: di nuovo via, ovunque sia. Il backup del drop è stato tolto a mano: se ne fa uno
-    // nuovo prima di eliminare.
+    // Redo: dropped again, wherever it is. The drop backup was removed by hand: a new one is
+    // made before dropping.
     repo.git(&["update-ref", "-d", &backup]);
     let redo = run(&r, &mut s, "edit.redo", json!({}));
     let again = redo["backups"][0].as_str().unwrap().to_owned();
@@ -436,7 +437,7 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
         second["id"].as_str().unwrap()
     );
     run(&r, &mut s, "edit.undo", json!({}));
-    // E si applica ancora.
+    // And it still applies.
     let out = run(&r, &mut s, "stash.pop", json!({ "expected": first["id"] }));
     assert_eq!(out["dropped"], true);
     assert!(repo.git(&["status", "--porcelain"]).contains(" M b.txt"));
@@ -447,7 +448,7 @@ fn undo_of_a_push_is_refused_once_head_moved() {
     let repo = dirty();
     let (r, mut s) = open(&repo);
     run(&r, &mut s, "stash.push", json!({}));
-    repo.commit_file("c.txt", "c\n", "da terminale");
+    repo.commit_file("c.txt", "c\n", "from the terminal");
     let before = snapshot(&repo);
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(
@@ -460,13 +461,13 @@ fn undo_of_a_push_is_refused_once_head_moved() {
 #[test]
 fn log_reaches_the_stash_bases() {
     let repo = Repo::new();
-    let first = repo.commit_file("a.txt", "a\n", "primo");
-    let base = repo.commit_file("a.txt", "b\n", "secondo");
+    let first = repo.commit_file("a.txt", "a\n", "first");
+    let base = repo.commit_file("a.txt", "b\n", "second");
     repo.write("a.txt", "c\n");
     let (r, mut s) = open(&repo);
     let stash = run(&r, &mut s, "stash.push", json!({}))["stash"].clone();
     assert_eq!(stash["base"], base.to_string());
-    // `main` torna indietro: la base resta solo come genitore dello stash.
+    // `main` goes back: the base stays only as the parent of the stash.
     repo.git(&["reset", "--hard", "--quiet", &first.to_string()]);
     let ids = |out: &Value| -> Vec<String> {
         out["commits"]
@@ -485,22 +486,22 @@ fn log_reaches_the_stash_bases() {
         json!({ "all": true, "stashes": true }),
     );
     assert_eq!(ids(&with), [base.to_string(), first.to_string()]);
-    // Il backend dice lo stesso.
+    // The backend says the same.
     let backend = repo.open();
     assert_eq!(backend.stashes().unwrap()[0].base, base);
 }
 
 #[test]
 fn push_refuses_assume_unchanged_files() {
-    // `git stash push` non vedrebbe la modifica di `b.txt` e poi la cancellerebbe.
+    // `git stash push` would not see the change to `b.txt` and then would delete it.
     let repo = Repo::new();
     repo.write("a.txt", "a\n");
     repo.write("b.txt", "b\n");
     repo.stage(&["a.txt", "b.txt"]);
-    repo.commit("due file");
+    repo.commit("two files");
     repo.git(&["update-index", "--assume-unchanged", "b.txt"]);
-    repo.write("a.txt", "a cambiato\n");
-    repo.write("b.txt", "b cambiato, da non perdere\n");
+    repo.write("a.txt", "a changed\n");
+    repo.write("b.txt", "b changed, do not lose\n");
     let (r, mut s) = open(&repo);
     for params in [
         json!({}),
@@ -515,11 +516,11 @@ fn push_refuses_assume_unchanged_files() {
         );
     }
     assert_eq!(repo.git(&["stash", "list"]), "");
-    // Fuori dai percorsi scelti non conta.
+    // Outside the chosen paths it does not matter.
     run(&r, &mut s, "stash.push", json!({ "paths": ["a.txt"] }));
     assert_eq!(
         std::fs::read_to_string(repo.path().join("b.txt")).unwrap(),
-        "b cambiato, da non perdere\n"
+        "b changed, do not lose\n"
     );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
@@ -529,41 +530,41 @@ fn push_refuses_assume_unchanged_files() {
 
 #[test]
 fn apply_does_not_follow_directory_renames_onto_an_ignored_file() {
-    // Lo stash aggiunge `old/x.log`; poi HEAD rinomina `old` in `new`, dove c'è un `x.log`
-    // ignorato: con la rilevazione delle cartelle rinominate git lo sovrascriverebbe.
+    // The stash adds `old/x.log`; then HEAD renames `old` to `new`, where there is an ignored
+    // `x.log`: with directory rename detection git would overwrite it.
     let repo = Repo::new();
-    repo.commit_file(".gitignore", "*.log\n", "ignora");
+    repo.commit_file(".gitignore", "*.log\n", "ignore");
     repo.commit_file("old/a.txt", "a\n", "old");
-    repo.write("old/x.log", "dallo stash\n");
+    repo.write("old/x.log", "from the stash\n");
     repo.git(&["add", "-f", "old/x.log"]);
     let (r, mut s) = open(&repo);
     run(&r, &mut s, "stash.push", json!({}));
     repo.git(&["mv", "old", "new"]);
-    repo.commit("rinomina la cartella");
-    repo.write("new/x.log", "ignorato, da non perdere\n");
+    repo.commit("rename the folder");
+    repo.write("new/x.log", "ignored, do not lose\n");
     let out = run(&r, &mut s, "stash.pop", json!({}));
     assert_eq!(out["conflicts"], json!([]));
     assert_eq!(out["dropped"], true);
     assert_eq!(
         std::fs::read_to_string(repo.path().join("new/x.log")).unwrap(),
-        "ignorato, da non perdere\n"
+        "ignored, do not lose\n"
     );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("old/x.log")).unwrap(),
-        "dallo stash\n"
+        "from the stash\n"
     );
 }
 
-/// `a.txt` cambiato solo in stage, `b.txt` solo fuori stage.
+/// `a.txt` changed only in the index, `b.txt` only outside it.
 fn staged_and_unstaged() -> Repo {
     let repo = Repo::new();
     repo.write("a.txt", "a\n");
     repo.write("b.txt", "b\n");
     repo.stage(&["a.txt", "b.txt"]);
-    repo.commit("due file");
-    repo.write("a.txt", "a in stage\n");
+    repo.commit("two files");
+    repo.write("a.txt", "a staged\n");
     repo.stage(&["a.txt"]);
-    repo.write("b.txt", "b fuori stage\n");
+    repo.write("b.txt", "b unstaged\n");
     repo
 }
 
@@ -574,13 +575,13 @@ fn undo_of_keep_index_and_paths_pushes() {
         let before = snapshot(&repo);
         let (r, mut s) = open(&repo);
         run(&r, &mut s, "stash.push", params.clone());
-        // `a.txt` resta in stage (anche con `paths`, ma git lo mette pure nello stash).
+        // `a.txt` stays staged (also with `paths`, but git puts it in the stash too).
         assert_eq!(repo.git(&["status", "--porcelain"]), "M  a.txt", "{params}");
         let undo = run(&r, &mut s, "edit.undo", json!({}));
         assert_eq!(undo["undone"]["command"], "stash.push", "{params}");
         assert_eq!(snapshot(&repo).0, before.0, "{params}");
         assert_eq!(snapshot(&repo).1, before.1, "{params}");
-        // E il pop dopo un push così.
+        // And the pop after such a push.
         run(&r, &mut s, "edit.redo", json!({}));
         let out = run(&r, &mut s, "stash.pop", json!({ "restore_index": true }));
         assert_eq!(out["dropped"], true, "{params}");
@@ -590,13 +591,13 @@ fn undo_of_keep_index_and_paths_pushes() {
 
 #[test]
 fn untracked_to_put_back_blocks_even_when_the_status_shows_it() {
-    // Lo stash ha il non tracciato `p` e una modifica a `t.txt`. Poi `p` è committato, tolto
-    // dall'indice (`D.`), ignorato e riscritto: `git stash apply` farebbe il merge di `t.txt` e
-    // poi fallirebbe su `p`. Qui niente cambia.
+    // The stash has the untracked file `p` and a change to `t.txt`. Then `p` is committed,
+    // removed from the index (`D.`), ignored and rewritten: `git stash apply` would merge
+    // `t.txt` and then fail on `p`. Here nothing changes.
     let repo = Repo::new();
-    repo.commit_file("t.txt", "t\n", "primo");
-    repo.write("p", "dallo stash\n");
-    repo.write("t.txt", "t cambiato\n");
+    repo.commit_file("t.txt", "t\n", "first");
+    repo.write("p", "from the stash\n");
+    repo.write("t.txt", "t changed\n");
     let (r, mut s) = open(&repo);
     run(
         &r,
@@ -604,7 +605,7 @@ fn untracked_to_put_back_blocks_even_when_the_status_shows_it() {
         "stash.push",
         json!({ "include_untracked": true }),
     );
-    repo.commit_file("p", "committato\n", "p");
+    repo.commit_file("p", "committed\n", "p");
     repo.git(&["rm", "--cached", "--quiet", "p"]);
     repo.write(".git/info/exclude", "p\n");
     repo.write("p", "LOCAL\n");
@@ -623,15 +624,15 @@ fn untracked_to_put_back_blocks_even_when_the_status_shows_it() {
 
 #[test]
 fn undo_of_a_paths_push_with_other_staged_files_explains_the_way_out() {
-    // `a.txt` e `b.txt` in stage, push di `b.txt`: git mette nello stash tutto l'indice, e
-    // `pop --index` non si applica sopra l'indice che ha già `a.txt`.
+    // `a.txt` and `b.txt` staged, push of `b.txt`: git stashes the whole index, and
+    // `pop --index` does not apply on top of an index that already has `a.txt`.
     let repo = Repo::new();
     repo.write("a.txt", "a\n");
     repo.write("b.txt", "b\n");
     repo.stage(&["a.txt", "b.txt"]);
-    repo.commit("due file");
-    repo.write("a.txt", "a in stage\n");
-    repo.write("b.txt", "b in stage\n");
+    repo.commit("two files");
+    repo.write("a.txt", "a staged\n");
+    repo.write("b.txt", "b staged\n");
     repo.stage(&["a.txt", "b.txt"]);
     let (r, mut s) = open(&repo);
     run(&r, &mut s, "stash.push", json!({ "paths": ["b.txt"] }));
@@ -639,16 +640,16 @@ fn undo_of_a_paths_push_with_other_staged_files_explains_the_way_out() {
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     let text = err.to_string();
     assert!(
-        text.contains("`stash.pop` senza `restore_index`") && !text.contains("riprovare senza"),
+        text.contains("`stash.pop` without `restore_index`") && !text.contains("try again without"),
         "{text}"
     );
     assert_eq!(snapshot(&repo), before);
     assert_eq!(run(&r, &mut s, "edit.history", json!({}))["can_undo"], true);
-    // La via d'uscita indicata funziona.
+    // The suggested way out works.
     let out = run(&r, &mut s, "stash.pop", json!({}));
     assert_eq!(out["dropped"], true);
     assert_eq!(
         std::fs::read_to_string(repo.path().join("b.txt")).unwrap(),
-        "b in stage\n"
+        "b staged\n"
     );
 }

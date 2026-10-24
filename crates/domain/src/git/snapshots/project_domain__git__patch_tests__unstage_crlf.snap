@@ -6,7 +6,7 @@ diff --git a/crlf.txt b/crlf.txt
 --- a/crlf.txt
 +++ b/crlf.txt
 @@ -1,3 +1,3 @@
- UNO␍
- due␍
--TRE␍
-+tre␍
+ ONE␍
+ two␍
+-THREE␍
++three␍

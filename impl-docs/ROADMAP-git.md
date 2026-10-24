@@ -1,357 +1,362 @@
-# Client git: roadmap a step
+# Git client: step-by-step roadmap
 
-Architettura in [ARCHITETTURA-git.md](ARCHITETTURA-git.md) e, per funzione, in [git/](git/). Ogni step è piccolo, si chiude con
-`cargo xtask ci` verde e lascia il progetto funzionante. Il campo **Obiettivo** si può usare così
-com'è come obiettivo di una sessione; **Fatto quando** dice come verificarlo. I rimandi `§` sono alle sezioni dell'architettura.
+Architecture in [ARCHITECTURE-git.md](ARCHITECTURE-git.md) and, per function, in [git/](git/). Each step is small, closes with
+a green `cargo xtask ci` and leaves the project working. The **Goal** field can be used as is
+as the goal of a session; **Done when** says how to verify it. The `§` references point to sections of the architecture.
 
-Regole valide per tutti gli step:
+Rules that apply to every step:
 
-- Lavorare solo sui crate indicati; se serve toccarne altri, dirlo prima.
-- Nuove dipendenze nel `[workspace.dependencies]` del `Cargo.toml` radice, verificando la
-  versione corrente.
-- Aggiornare la casella dello step in questo file quando è finito.
-- Gli step che scrivono nel repo dell'utente (da S18 in poi) passano da `safety-reviewer` prima
-  della consegna.
-- Consegna di ogni step: `cargo xtask ci` verde in locale, pull request verso `dev` e squash
-  merge. La CI di GitHub per ora gira solo sulle pull request verso `master`, non su quelle verso
-  `dev`. Lo step successivo riparte dal `dev` aggiornato; `dev` andrà in `master` con una pull
+- Work only on the indicated crates; if others need touching, say so first.
+- New dependencies go in the `[workspace.dependencies]` of the root `Cargo.toml`, checking the
+  current version.
+- Update the step's checkbox in this file when it is finished.
+- Steps that write to the user's repo (from S18 on) go through `safety-reviewer` before
+  delivery.
+- Delivery of every step: green `cargo xtask ci` locally, pull request to `dev` and squash
+  merge. For now GitHub CI only runs on pull requests to `master`, not on those to
+  `dev`. The next step restarts from the updated `dev`; `dev` will go into `master` with a pull
   request.
-- **Il web è una demo, non un prodotto** (scelta del 2026-10-23): l'app wasm gira solo sul
-  `MemoryBackend` con un repo finto e serve come demo da un link e come banco di prova della UI
-  (clic e screenshot con Playwright). Niente funzioni pensate solo per il web, niente backend git
-  per il browser. Il vincolo che engine, dominio e UI compilino per wasm resta finché costa
-  poco; se diventa un ostacolo, prima si aggiungono test di interazione sulla UI desktop
-  (`egui_kittest`), poi si può togliere.
+- **The web is a demo, not a product** (decision of 2026-10-23): the wasm app only runs on the
+  `MemoryBackend` with a fake repo and serves as a demo from a link and as a test bench for the UI
+  (clicks and screenshots with Playwright). No features designed only for the web, no git backend
+  for the browser. The constraint that engine, domain and UI compile for wasm stays as long as it costs
+  little; if it becomes an obstacle, first add interaction tests on the desktop UI
+  (`egui_kittest`), then it can be dropped.
 
-## Fase 0 — Preparazione
+## Phase 0 — Preparation
 
-### S00 — CI sul branch principale
-- [x] **Agente:** `git-engine`
-- **Obiettivo:** il workflow `.github/workflows/ci.yml` ascolta i push su `main`, ma il branch
-  principale del repo è `master`. Farlo partire sui push a `master`.
-- **Fatto quando:** il trigger `push` di `ci.yml` indica `master`.
+### S00 — CI on the main branch
+- [x] **Agent:** `git-engine`
+- **Goal:** the `.github/workflows/ci.yml` workflow listens to pushes on `main`, but the repo's
+  main branch is `master`. Make it run on pushes to `master`.
+- **Done when:** the `push` trigger of `ci.yml` names `master`.
 
-## Fase 1 — Leggere un repo
+## Phase 1 — Reading a repo
 
-### S01 — Tipi git nel dominio
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** aggiungere in `crates/domain` un modulo `git` con `Oid` (parsing ed esadecimale,
-  `Display`, `serde` come stringa), `Signature`, `Commit`, `RefKind`, `RefInfo`, `Upstream`,
-  `Head`. L'esempio "lista di voci" resta com'è.
-- **Fatto quando:** test su parsing di `Oid` validi e non validi e round-trip JSON; CI verde.
+### S01 — Git types in the domain
+- [x] **Agent:** `git-domain`
+- **Goal:** add to `crates/domain` a `git` module with `Oid` (hexadecimal parsing,
+  `Display`, `serde` as a string), `Signature`, `Commit`, `RefKind`, `RefInfo`, `Upstream`,
+  `Head`. The "list of entries" example stays as it is.
+- **Done when:** tests on parsing valid and invalid `Oid`s and JSON round-trip; CI green.
 
-### S02 — Parser del log
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** funzione pura `parse_log(&[u8]) -> Result<Vec<Commit>, DomainError>` per il
-  formato `-z` a campi fissi descritto in §3, più la costante con la stringa `--format`.
-- **Fatto quando:** test con output catturato da un repo vero (commit di merge, commit radice,
-  corpo vuoto, corpo su più righe, autore non UTF-8); CI verde.
+### S02 — Log parser
+- [x] **Agent:** `git-domain`
+- **Goal:** pure function `parse_log(&[u8]) -> Result<Vec<Commit>, DomainError>` for the
+  fixed-field `-z` format described in §3, plus the constant with the `--format` string.
+- **Done when:** tests with output captured from a real repo (merge commit, root commit,
+  empty body, multi-line body, non-UTF-8 author); CI green.
 
-### S03 — Parser dello stato
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** `Status`, `StatusEntry`, `Operation` e `parse_status(&[u8])` per
+### S03 — Status parser
+- [x] **Agent:** `git-domain`
+- **Goal:** `Status`, `StatusEntry`, `Operation` and `parse_status(&[u8])` for
   `git status --porcelain=v2 -z --branch --untracked-files=all`.
-- **Fatto quando:** test su file modificati, in stage, rinominati, non tracciati, in conflitto,
-  HEAD staccata, branch senza upstream, ahead/behind; CI verde.
+- **Done when:** tests on modified, staged, renamed, untracked, conflicted files,
+  detached HEAD, branch without upstream, ahead/behind; CI green.
 
-### S04 — Parser dei ref
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** formato di `git for-each-ref` (costante) e `parse_refs(&[u8])` per branch locali,
-  remoti, tag e stash, con upstream e ahead/behind.
-- **Fatto quando:** test con output catturato; CI verde.
+### S04 — Ref parser
+- [x] **Agent:** `git-domain`
+- **Goal:** `git for-each-ref` format (constant) and `parse_refs(&[u8])` for local branches,
+  remotes, tags and stash, with upstream and ahead/behind.
+- **Done when:** tests with captured output; CI green.
 
-### S05 — Trait del backend e `MemoryBackend`
-- [x] **Agente:** `git-engine`
-- **Obiettivo:** in `crates/engine` i trait `GitBackend` (sola lettura: `head`, `refs`, `log`,
-  `status`) e `RepoOpener`, più `MemoryBackend` con un costruttore di repo di esempio (una
-  dozzina di commit con due branch e un merge).
-- **Fatto quando:** test che leggono il repo di esempio dal `MemoryBackend`; CI verde.
+### S05 — Backend trait and `MemoryBackend`
+- [x] **Agent:** `git-engine`
+- **Goal:** in `crates/engine` the `GitBackend` trait (read-only: `head`, `refs`, `log`,
+  `status`) and `RepoOpener`, plus `MemoryBackend` with a sample repo constructor (a
+  dozen commits with two branches and a merge).
+- **Done when:** tests that read the sample repo from the `MemoryBackend`; CI green.
 
-### S06 — Crate `project-git` con `CliBackend` in lettura
-- [x] **Agente:** `git-engine`
-- **Obiettivo:** nuovo crate `crates/git` (`project-git`, L6, dichiarato in
-  `xtask/src/layers.rs`) con `CliBackend` e `CliOpener` che implementano i trait di S05 eseguendo
-  `git` secondo le regole di §5 e usando i parser di S02–S04. Controllo della versione minima.
-- **Fatto quando:** test di integrazione su un repo temporaneo creato dal test (vedi §9);
-  `cargo xtask layers` passa; CI verde.
+### S06 — `project-git` crate with read-only `CliBackend`
+- [x] **Agent:** `git-engine`
+- **Goal:** new crate `crates/git` (`project-git`, L6, declared in
+  `xtask/src/layers.rs`) with `CliBackend` and `CliOpener` implementing the S05 traits by running
+  `git` according to the rules of §5 and using the S02–S04 parsers. Minimum version check.
+- **Done when:** integration tests on a temporary repo created by the test (see §9);
+  `cargo xtask layers` passes; CI green.
 
-### S07 — Helper per gli scenari di test
-- [x] **Agente:** `git-scenarios`
-- **Obiettivo:** in `crates/git/tests/common/` un helper che crea repo temporanei in ambiente
-  deterministico (§9) con funzioni tipo `commit_file`, `branch`, `merge`, `conflict`. Riscrivere
-  i test di S06 con l'helper.
-- **Fatto quando:** i test usano l'helper e passano due volte di fila con lo stesso risultato;
-  CI verde.
+### S07 — Helpers for test scenarios
+- [x] **Agent:** `git-scenarios`
+- **Goal:** in `crates/git/tests/common/` a helper that creates temporary repos in a
+  deterministic environment (§9) with functions like `commit_file`, `branch`, `merge`, `conflict`. Rewrite
+  the S06 tests with the helper.
+- **Done when:** the tests use the helper and pass twice in a row with the same result;
+  CI green.
 
-### S08 — Sessione del repo e comandi di lettura
-- [x] **Agente:** `git-engine`
-- **Obiettivo:** `Session` contiene il backend aperto e il `RepoOpener` iniettato. Comandi
-  `repo.open`, `repo.status`, `repo.refs`, `repo.log` (paginato). Rimuovere l'esempio "lista di
-  voci" (`Document`, `item.*`, `document.*`): è un cambio voluto del catalogo, da annotare nel
-  commit. Aggiornare UI e app quanto basta perché compilino (la UI mostra un messaggio
-  provvisorio).
-- **Fatto quando:** test dei comandi sul `MemoryBackend`; `project-cli commands` mostra il nuovo
-  catalogo; CI verde.
+### S08 — Repo session and read commands
+- [x] **Agent:** `git-engine`
+- **Goal:** `Session` holds the open backend and the injected `RepoOpener`. Commands
+  `repo.open`, `repo.status`, `repo.refs`, `repo.log` (paginated). Remove the "list of
+  entries" example (`Document`, `item.*`, `document.*`): it is an intended change of the catalog, to be noted in the
+  commit. Update UI and apps just enough for them to compile (the UI shows a temporary
+  message).
+- **Done when:** command tests on the `MemoryBackend`; `project-cli commands` shows the new
+  catalog; CI green.
 
-### S09 — CLI e MCP sul repo
-- [x] **Agente:** `git-engine`
-- **Obiettivo:** `project-cli --repo <percorso> run --cmd repo.status` e `eval` usano
-  `CliOpener`; `mcp --root <dir>` apre il repo nella radice e confina i percorsi lì.
-  Sostituire `open_document`/`save_document` con `open_repo`. Aggiornare README e `AGENTS.md`.
-- **Fatto quando:** test end-to-end in `apps/project-cli/tests` su un repo temporaneo; CI verde.
+### S09 — CLI and MCP on the repo
+- [x] **Agent:** `git-engine`
+- **Goal:** `project-cli --repo <path> run --cmd repo.status` and `eval` use
+  `CliOpener`; `mcp --root <dir>` opens the repo at the root and confines paths there.
+  Replace `open_document`/`save_document` with `open_repo`. Update README and `AGENTS.md`.
+- **Done when:** end-to-end tests in `apps/project-cli/tests` on a temporary repo; CI green.
 
-## Fase 2 — Vedere
+## Phase 2 — Seeing
 
-### S10 — Lavoro in background
-- [x] **Agente:** `egui-ui`
-- **Obiettivo:** `Platform::spawn` (§6) con implementazione a thread sul desktop ed esecuzione
-  immediata sul web. Nella UI, un esecutore che manda comandi alla sessione condivisa e riceve i
-  risultati da un canale, con stato "in corso" visibile.
-- **Fatto quando:** test del motore o della UI con un comando finto lento; la UI resta reattiva;
-  CI verde.
+### S10 — Background work
+- [x] **Agent:** `egui-ui`
+- **Goal:** `Platform::spawn` (§6) with a thread implementation on desktop and immediate
+  execution on the web. In the UI, an executor that sends commands to the shared session and receives
+  the results from a channel, with a visible "in progress" state.
+- **Done when:** engine or UI test with a slow fake command; the UI stays responsive;
+  CI green.
 
-### S11 — Layout principale
-- [x] **Agente:** `egui-ui`
-- **Obiettivo:** barra in alto, colonna sinistra con i ref, lista dei commit al centro (senza
-  grafo), pannello dettagli a destra (§8). Desktop: apertura di un repo con il dialogo cartelle.
-  Web: `MemoryBackend` con il repo di esempio.
-- **Fatto quando:** `make run` apre un repo vero e mostra branch e commit; screenshot della build
-  web con Playwright; CI verde.
+### S11 — Main layout
+- [x] **Agent:** `egui-ui`
+- **Goal:** top bar, left column with the refs, commit list in the center (without
+  graph), details panel on the right (§8). Desktop: opening a repo with the folder dialog.
+  Web: `MemoryBackend` with the sample repo.
+- **Done when:** `make run` opens a real repo and shows branches and commits; screenshot of the web
+  build with Playwright; CI green.
 
-### S12 — Lista dei commit virtualizzata
-- [x] **Agente:** `egui-ui`
-- **Obiettivo:** `ScrollArea::show_rows` con caricamento a pagine di `repo.log` durante lo
-  scorrimento; selezione con mouse e tastiera.
-- **Fatto quando:** un repo con almeno 50.000 commit scorre fluido (verifica a mano, annotata nel
-  commit); CI verde.
+### S12 — Virtualized commit list
+- [x] **Agent:** `egui-ui`
+- **Goal:** `ScrollArea::show_rows` with page-by-page loading of `repo.log` while
+  scrolling; selection with mouse and keyboard.
+- **Done when:** a repo with at least 50,000 commits scrolls smoothly (manual check, noted in the
+  commit); CI green.
 
-### S13 — Corsie del grafo
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** algoritmo delle corsie (§3) come funzione pura, con test di proprietà
-  (`proptest`) sugli invarianti e casi fissi (lineare, branch, merge, ottopus merge, più radici).
-- **Fatto quando:** test passano; CI verde.
+### S13 — Graph lanes
+- [x] **Agent:** `git-domain`
+- **Goal:** lane algorithm (§3) as a pure function, with property tests
+  (`proptest`) on the invariants and fixed cases (linear, branch, merge, octopus merge, several roots).
+- **Done when:** tests pass; CI green.
 
-### S14 — Disegno del grafo
-- [x] **Agente:** `egui-ui`
-- **Obiettivo:** disegnare corsie e archi accanto alla lista dei commit, con un colore per corsia
-  e le etichette dei ref sulla riga del commit.
-- **Fatto quando:** screenshot web del repo di esempio con merge visibile; CI verde.
+### S14 — Drawing the graph
+- [x] **Agent:** `egui-ui`
+- **Goal:** draw lanes and edges next to the commit list, with one color per lane
+  and the ref labels on the commit's row.
+- **Done when:** web screenshot of the sample repo with a visible merge; CI green.
 
-### S15 — Dettagli del commit
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** comando `commit.show` (metadati e file cambiati con `git diff-tree`) e pannello
-  dettagli nella UI.
-- **Fatto quando:** test del comando su repo temporaneo; il pannello mostra i dati del commit
-  selezionato; CI verde.
+### S15 — Commit details
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `commit.show` command (metadata and files changed with `git diff-tree`) and details
+  panel in the UI.
+- **Done when:** command test on a temporary repo; the panel shows the data of the selected
+  commit; CI green.
 
-### S16 — Parser del diff
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** `Diff`, `FileDiff`, `Hunk`, `Line` e `parse_diff(&[u8])` per unified diff,
-  con rinomine, file nuovi ed eliminati, binari, "no newline at end of file".
-- **Fatto quando:** test con output catturati; CI verde.
+### S16 — Diff parser
+- [x] **Agent:** `git-domain`
+- **Goal:** `Diff`, `FileDiff`, `Hunk`, `Line` and `parse_diff(&[u8])` for unified diff,
+  with renames, new and deleted files, binaries, "no newline at end of file".
+- **Done when:** tests with captured output; CI green.
 
-### S17 — Vista del diff
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** comandi `diff.worktree`, `diff.index`, `diff.commit`; vista con numeri di riga,
-  colori per aggiunte e rimozioni, intestazioni degli hunk.
-- **Fatto quando:** test dei comandi; il diff si apre dal pannello dettagli; CI verde.
+### S17 — Diff view
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `diff.worktree`, `diff.index`, `diff.commit` commands; view with line numbers,
+  colors for additions and removals, hunk headers.
+- **Done when:** command tests; the diff opens from the details panel; CI green.
 
-## Fase 3 — Modificare in locale
+## Phase 3 — Changing locally
 
-### S18 — Stage e unstage di file
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `index.stage`, `index.unstage` e area di stage nella UI (riga "modifiche non
-  committate" in cima alla lista).
-- **Fatto quando:** test di integrazione; revisione di `safety-reviewer`; CI verde.
+### S18 — Stage and unstage of files
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `index.stage`, `index.unstage` and stage area in the UI ("uncommitted changes" row
+  at the top of the list).
+- **Done when:** integration tests; `safety-reviewer` review; CI green.
 
-### S19 — Costruttore di patch
-- [x] **Agente:** `git-domain`
-- **Obiettivo:** costruttore di patch per righe selezionate (§3), in entrambe le direzioni
-  (stage e unstage).
-- **Fatto quando:** snapshot `insta` e test che applicano la patch con `git apply --check` su un
-  repo temporaneo; CI verde.
+### S19 — Patch builder
+- [x] **Agent:** `git-domain`
+- **Goal:** patch builder for selected lines (§3), in both directions
+  (stage and unstage).
+- **Done when:** `insta` snapshots and tests that apply the patch with `git apply --check` on a
+  temporary repo; CI green.
 
-### S20 — Stage per hunk e per riga
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `index.stage_lines`, `index.unstage_lines`: patch del costruttore applicata
-  da un applicatore rigoroso nel motore (ogni hunk solo alla sua posizione) e scritta con
-  `hash-object --no-filters` / `update-index --index-info`; selezione di hunk e righe nella
-  vista del diff.
-- **Fatto quando:** test di integrazione su file con più hunk; revisione di `safety-reviewer`;
-  CI verde.
+### S20 — Stage by hunk and by line
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `index.stage_lines`, `index.unstage_lines`: builder patch applied
+  by a strict applier in the engine (each hunk only at its position) and written with
+  `hash-object --no-filters` / `update-index --index-info`; hunk and line selection in the
+  diff view.
+- **Done when:** integration tests on files with several hunks; `safety-reviewer` review;
+  CI green.
 
 ### S21 — Commit
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `commit.create` (messaggio via stdin, opzione `amend`), con hook e firma
-  secondo la configurazione dell'utente; casella del messaggio nell'area di stage.
-- **Fatto quando:** test di integrazione, anche con un hook `pre-commit` che fallisce; CI verde.
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `commit.create` (message via stdin, `amend` option), with hooks and signing
+  according to the user's configuration; message box in the stage area.
+- **Done when:** integration tests, also with a failing `pre-commit` hook; CI green.
 
-### S22 — Diario delle operazioni e undo
-- [x] **Agente:** `git-engine`
-- **Obiettivo:** diario (§7) per i comandi che spostano ref; `edit.undo` e `edit.redo` con
-  controllo che i ref non siano cambiati nel frattempo.
-- **Fatto quando:** test: commit poi undo riporta il branch al commit precedente; undo rifiutato
-  se il ref è stato spostato da fuori; revisione di `safety-reviewer`; CI verde.
+### S22 — Operation journal and undo
+- [x] **Agent:** `git-engine`
+- **Goal:** journal (§7) for the commands that move refs; `edit.undo` and `edit.redo` with
+  a check that the refs have not changed in the meantime.
+- **Done when:** tests: commit then undo brings the branch back to the previous commit; undo refused
+  if the ref was moved from outside; `safety-reviewer` review; CI green.
 
-### S23 — Scartare modifiche con backup
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `worktree.discard` con `confirm`, backup `git stash create` e ref di backup
-  (§7), annullabile con `edit.undo`; conferma nella UI.
-- **Fatto quando:** test: scarta, poi undo ripristina il file identico; senza `confirm` non
-  succede nulla; revisione di `safety-reviewer`; CI verde.
+### S23 — Discarding changes with backup
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `worktree.discard` with `confirm`, `git stash create` backup and backup ref
+  (§7), undoable with `edit.undo`; confirmation in the UI.
+- **Done when:** tests: discard, then undo restores the file identical; without `confirm` nothing
+  happens; `safety-reviewer` review; CI green.
 
-### S24 — Branch
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `branch.create`, `branch.checkout` (errore chiaro con modifiche in conflitto),
-  `branch.delete` (`confirm` se non unito), `branch.rename`; menu contestuale nella colonna dei
-  ref.
-- **Fatto quando:** test di integrazione, anche con nomi che iniziano con `-`; revisione di
-  `safety-reviewer`; CI verde.
+### S24 — Branches
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `branch.create`, `branch.checkout` (clear error with conflicting changes),
+  `branch.delete` (`confirm` if not merged), `branch.rename`; context menu in the refs
+  column.
+- **Done when:** integration tests, also with names starting with `-`; `safety-reviewer` review;
+  CI green.
 
-## Fase 4 — Remoti
+## Phase 4 — Remotes
 
 ### S25 — Fetch
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `remote.fetch` in background con avanzamento da stderr (`--progress`) ed errori
-  di autenticazione riconosciuti; pulsante nella barra.
-- **Fatto quando:** test con un remoto locale (`git init --bare` in cartella temporanea); CI verde.
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `remote.fetch` in the background with progress from stderr (`--progress`) and recognized
+  authentication errors; button in the bar.
+- **Done when:** tests with a local remote (`git init --bare` in a temporary folder); CI green.
 
-### S25b — Grafo di tutti i ref
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** il grafo mostra anche i commit dei branch non uniti e quelli appena scaricati
-  su `origin/*`: `repo.log {"all": true}` parte da branch locali e remoti, tag e HEAD (anche
-  staccata), senza stash né backup; la UI lo usa per il grafo.
-- **Fatto quando:** test di integrazione (branch non unito, branch remoto dopo un fetch, stash e
-  backup esclusi, HEAD staccata, pagine contigue) e sul `MemoryBackend`; CI verde.
+### S25b — Graph of all refs
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** the graph also shows the commits of unmerged branches and those just downloaded
+  on `origin/*`: `repo.log {"all": true}` starts from local and remote branches, tags and HEAD (also
+  detached), without stashes or backups; the UI uses it for the graph.
+- **Done when:** integration tests (unmerged branch, remote branch after a fetch, stash and
+  backups excluded, detached HEAD, contiguous pages) and on the `MemoryBackend`; CI green.
 
-### S26 — Pull e push
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `remote.pull` (strategia secondo la configurazione: merge o rebase) e
-  `remote.push` (impostazione dell'upstream al primo push; `--force-with-lease` solo con
+### S26 — Pull and push
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `remote.pull` (strategy according to the configuration: merge or rebase) and
+  `remote.push` (setting the upstream on the first push; `--force-with-lease` only with
   `confirm`).
-- **Fatto quando:** test con remoto locale, anche push rifiutato perché non fast-forward;
-  revisione di `safety-reviewer`; CI verde.
+- **Done when:** tests with a local remote, also a push rejected because it is not fast-forward;
+  `safety-reviewer` review; CI green.
 
-### S27 — Gestione dei remoti
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `remote.list`, `remote.add`, `remote.remove`; ahead/behind visibili accanto ai
-  branch.
-- **Fatto quando:** test di integrazione; CI verde.
+### S27 — Remote management
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `remote.list`, `remote.add`, `remote.remove`; ahead/behind visible next to the
+  branches.
+- **Done when:** integration tests; CI green.
 
-## Fase 5 — Funzioni avanzate
+## Phase 5 — Advanced features
 
 ### S28 — Stash
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `stash.push`, `stash.apply`, `stash.pop`, `stash.drop` (`confirm`); stash nella
-  colonna sinistra e nel grafo.
-- **Fatto quando:** test di integrazione; revisione di `safety-reviewer`; CI verde.
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `stash.push`, `stash.apply`, `stash.pop`, `stash.drop` (`confirm`); stashes in the
+  left column and in the graph.
+- **Done when:** integration tests; `safety-reviewer` review; CI green.
 
-### S29 — Merge e stato "in corso"
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `merge.start`, `merge.abort`, `merge.continue`; banner nella UI quando il repo è
-  in merge, rebase, cherry-pick o revert, con i file in conflitto.
-- **Fatto quando:** test con lo scenario di conflitto di S07; CI verde.
-- [x] Parte `git-engine`: comandi `merge.start`, `merge.continue`, `merge.abort` e la lettura
-  `repo.operation` per il banner ([git/merge.md](git/merge.md)).
-- [x] Parte `egui-ui`: riquadro dell'operazione in corso con i file in conflitto, "Continua il
-  merge…" e "Annulla il merge…" (con conferma), "Unisci in «branch»" dai menu di branch, tag e
-  commit; demo web con un branch in conflitto (§8 dell'architettura).
-- [x] Seguito (`git-engine`): `remote.pull` in merge che si ferma in conflitto lascia il merge in
-  corso come `merge.start` (`in_progress`, `conflicts`; si esce con `merge.continue` o
-  `merge.abort`) invece di annullarlo; in rebase resta annullato fino a S32
+### S29 — Merge and the "in progress" state
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `merge.start`, `merge.abort`, `merge.continue`; banner in the UI when the repo is
+  in merge, rebase, cherry-pick or revert, with the conflicted files.
+- **Done when:** tests with the S07 conflict scenario; CI green.
+- [x] `git-engine` part: commands `merge.start`, `merge.continue`, `merge.abort` and the
+  `repo.operation` read for the banner ([git/merge.md](git/merge.md)).
+- [x] `egui-ui` part: in-progress operation panel with the conflicted files, "Continue the
+  merge…" and "Abort the merge…" (with confirmation), "Merge into «branch»" from the branch, tag and
+  commit menus; web demo with a conflicting branch (§8 of the architecture).
+- [x] Follow-up (`git-engine`): `remote.pull` in a merge that stops on conflict leaves the merge in
+  progress like `merge.start` (`in_progress`, `conflicts`; you leave with `merge.continue` or
+  `merge.abort`) instead of aborting it; in a rebase it stays aborted until S32
   ([git/sync.md](git/sync.md)).
 
-### S30 — Editor dei conflitti
-- [x] **Agente:** `egui-ui`, con `git-domain` per il parser dei marcatori
-- **Obiettivo:** vista a tre parti (base, nostra, loro) e risultato modificabile; scelta per
-  blocco; segna come risolto con `index.stage`.
-- **Fatto quando:** test del parser dei marcatori di conflitto; risoluzione completa di un
-  conflitto dalla UI; CI verde.
+### S30 — Conflict editor
+- [x] **Agent:** `egui-ui`, with `git-domain` for the marker parser
+- **Goal:** three-part view (base, ours, theirs) and editable result; choice per
+  block; marks as resolved with `index.stage`.
+- **Done when:** conflict marker parser tests; complete resolution of a
+  conflict from the UI; CI green.
 
-### S30b — Nome e identità visiva
-- [x] **Agente:** nessuno (piccolo, fatto in sessione)
-- **Obiettivo:** l'app si chiama **BinariGit**: nome visibile nella finestra desktop, nel
-  `<title>` web, nella CLI e nel README; icona, logo e banner in `assets/` (SVG sorgenti, PNG
-  generati con `assets/render.sh`); icona della finestra (`viewport.icon`) e favicon web.
-  I nomi tecnici restano: crate e binari `project-*`, ref `refs/project/backup/...`, identità
-  dei backup, id dei comandi.
-- **Fatto quando:** l'app desktop e quella web mostrano nome e icona; CI verde.
+### S30b — Name and visual identity
+- [x] **Agent:** none (small, done in session)
+- **Goal:** the app is called **BinariGit**: name visible in the desktop window, in the web
+  `<title>`, in the CLI and in the README; icon, logo and banner in `assets/` (source SVGs, PNGs
+  generated with `assets/render.sh`); window icon (`viewport.icon`) and web favicon.
+  The technical names stay: crates and binaries `project-*`, refs `refs/project/backup/...`, backup
+  identity, command ids.
+- **Done when:** the desktop and web apps show name and icon; CI green.
 
-### S31 — Cherry-pick e revert
-- [x] **Agente:** `git-engine`, poi `egui-ui`
-- **Obiettivo:** `commit.cherry_pick`, `commit.revert` dal menu contestuale del commit, con
-  gestione dei conflitti di S29.
-- **Fatto quando:** test di integrazione; CI verde.
-- [x] Parte `git-engine`: comandi `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue`,
-  `cherry_pick.abort`, `revert.continue`, `revert.abort` e `continue`/`abort` di
-  `repo.operation` per cherry-pick e revert ([git/cherry-pick.md](git/cherry-pick.md)).
-- [x] Parte `egui-ui`: "Cherry-pick su «branch»" e "Revert" nel menu del commit (dialogo del
-  genitore per un commit di merge); riquadro dell'operazione con i comandi `continue`/`abort` di
-  `repo.operation` per merge, cherry-pick e revert (`crates/ui/src/pick.rs`).
+### S31 — Cherry-pick and revert
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `commit.cherry_pick`, `commit.revert` from the commit's context menu, with
+  the conflict handling of S29.
+- **Done when:** integration tests; CI green.
+- [x] `git-engine` part: commands `commit.cherry_pick`, `commit.revert`, `cherry_pick.continue`,
+  `cherry_pick.abort`, `revert.continue`, `revert.abort` and `continue`/`abort` of
+  `repo.operation` for cherry-pick and revert ([git/cherry-pick.md](git/cherry-pick.md)).
+- [x] `egui-ui` part: "Cherry-pick onto «branch»" and "Revert" in the commit menu (parent
+  dialog for a merge commit); operation panel with the `continue`/`abort` commands of
+  `repo.operation` for merge, cherry-pick and revert (`crates/ui/src/pick.rs`).
 
-### S31b — Lingue (i18n): infrastruttura e UI
-- [x] **Agente:** `egui-ui` (infrastruttura e primi moduli), poi più `egui-ui` in parallelo sui
-  moduli restanti
-- **Obiettivo:** l'app in **italiano e inglese** con [Fluent](https://projectfluent.org/).
-  Crate nuovo `project-i18n` (L0, nessuna dipendenza dai crate del progetto): file `.ftl` per
-  lingua e per area (`crates/i18n/locales/{it,en}/<area>.ftl`, inclusi con `include_str!`, così
-  funziona anche in wasm), `Lang` (`It`, `En`), traduzione con chiave e parametri (plurali di
-  Fluent: "1 file" / "3 file"). Lingua dell'app: **inglese**, non si sceglie; l'italiano resta
-  (già tradotto) per i test della UI. Tutti i testi della UI egui passano dalle chiavi.
-  Restano come sono: CLI, MCP, descrizioni dei comandi del catalogo, documenti, testo di git.
-- **Fatto quando:** test che le due lingue hanno le stesse chiavi e che ogni chiave usata nel
-  codice esiste; nessun testo visibile scritto nel codice della UI; screenshot in inglese; CI
-  verde.
-- [x] UI migrata: crate `project-i18n` (Fluent, `tr!`), un'area `.ftl` per funzione in
-  `crates/i18n/locales/{it,en}/` (comprese `app` e `common`), app sempre in inglese, italiano
-  solo nei test della UI (feature `test-italiano`) ([i18n.md](i18n.md)). Restano in italiano
-  gli errori del motore (S31c).
+### S31b — Languages (i18n): infrastructure and UI
+- [x] **Agent:** `egui-ui` (infrastructure and first modules), then several `egui-ui` in parallel on the
+  remaining modules
+- **Goal:** the app in **Italian and English** with [Fluent](https://projectfluent.org/).
+  New crate `project-i18n` (L0, no dependency on project crates): `.ftl` files per
+  language and per area (`crates/i18n/locales/{it,en}/<area>.ftl`, included with `include_str!`, so
+  it also works in wasm), `Lang` (`It`, `En`), translation with key and parameters (Fluent
+  plurals: "1 file" / "3 files"). App language: **English**, not selectable; Italian stays
+  as a second Fluent language. All the egui UI texts go through keys.
+  These stay as they are: CLI, MCP, descriptions of the catalog commands, documents, git text.
+- **Done when:** tests that the two languages have the same keys and that every key used in
+  code exists; no visible text written in the UI code; screenshot in English; CI
+  green.
+- [x] UI migrated: crate `project-i18n` (Fluent, `tr!`), one `.ftl` area per function in
+  `crates/i18n/locales/{it,en}/` (including `app` and `common`), app always in English, Italian
+  only as a second Fluent language ([i18n.md](i18n.md)). The engine errors remained to do (S31c).
 
-### S31c — Lingue (i18n): messaggi di errore del motore
-- [ ] **Agente:** `git-engine`
-- **Obiettivo:** gli errori di `EngineError` mostrati all'utente (`NotAllowed`,
-  `ConfirmRequired`, `InvalidParams`... ) portano una chiave e i parametri invece del testo
-  già composto; `Display` resta il testo italiano di oggi (CLI, MCP e test non cambiano), la UI
-  li mostra in inglese come il resto. Il testo di git (`stderr`) resta com'è.
-- **Fatto quando:** nessun messaggio di errore composto con `format!` nel motore e nei backend;
-  test che ogni chiave esiste nelle due lingue; CI verde.
+### S31c — Languages (i18n): engine error messages
+- [x] **Agent:** `git-engine` — `Message` (key + parameters, `msg!` macro) in `EngineError`,
+  `engine*.ftl` areas in it/en, `GitWithReason`, key and parameter tests; the UI uses
+  `EngineError::text()`. `warnings` and journal descriptions are also `Message`s (in JSON
+  `{"text", "key", "args"}`). All the program's text (UI, CLI, MCP, catalog, core,
+  domain, `MemoryBackend`) is in English; Italian exists only as a second Fluent language
+  (`crates/i18n/locales/it`). The whole repository (program text, comments, tests, docs) is now
+  in English; the `test-italiano` feature is gone and the UI tests run in English.
+- **Goal:** the `EngineError` errors shown to the user (`NotAllowed`,
+  `ConfirmRequired`, `InvalidParams`... ) carry a key and parameters instead of the already
+  composed text; `Display` is the English text (CLI, MCP, tests), the UI shows them in its
+  language. Git's text (`stderr`) stays as it is.
+- **Done when:** no error message composed with `format!` in the engine and backends;
+  tests that every key exists in the two languages; CI green.
 
-### S32 — Rebase interattivo
-- [ ] **Agente:** `git-domain` (piano), `git-engine` (esecuzione)
-- **Obiettivo:** piano di rebase (pick, reword, squash, fixup, drop, riordino) come dati puri;
-  esecuzione con `GIT_SEQUENCE_EDITOR` che scrive il piano; `rebase.abort` e `rebase.continue`.
-  Con questi, anche `remote.pull` in rebase fermo in conflitto resterà in corso invece di
-  annullarsi (come già il merge, [git/sync.md](git/sync.md)).
-- **Fatto quando:** test di integrazione per ogni azione del piano; revisione di
-  `safety-reviewer`; CI verde.
+### S32 — Interactive rebase
+- [ ] **Agent:** `git-domain` (plan), `git-engine` (execution)
+- **Goal:** rebase plan (pick, reword, squash, fixup, drop, reordering) as pure data;
+  execution with `GIT_SEQUENCE_EDITOR` writing the plan; `rebase.abort` and `rebase.continue`.
+  With these, `remote.pull` in a rebase stopped on conflict will also stay in progress instead of
+  aborting (like the merge already does, [git/sync.md](git/sync.md)).
+- **Done when:** integration tests for every plan action; `safety-reviewer` review;
+  CI green.
 
-### S33 — Rebase con trascinamento
-- [ ] **Agente:** `egui-ui`
-- **Obiettivo:** riordinare, unire ed eliminare commit trascinandoli nella lista, con anteprima
-  del piano prima di eseguire.
-- **Fatto quando:** screenshot web con il piano in anteprima; il rebase eseguito dalla UI dà lo
-  stesso risultato del test di S32; CI verde.
+### S33 — Rebase by dragging
+- [ ] **Agent:** `egui-ui`
+- **Goal:** reorder, combine and delete commits by dragging them in the list, with a plan
+  preview before running.
+- **Done when:** web screenshot with the plan in preview; the rebase run from the UI gives the
+  same result as the S32 test; CI green.
 
-### S34 — Blame e cronologia di un file
-- [ ] **Agente:** `git-domain` (parser `--porcelain`), poi `git-engine` e `egui-ui`
-- **Obiettivo:** `file.blame`, `file.log` (con `--follow`) e relative viste.
-- **Fatto quando:** test del parser e dei comandi; CI verde.
+### S34 — Blame and file history
+- [ ] **Agent:** `git-domain` (`--porcelain` parser), then `git-engine` and `egui-ui`
+- **Goal:** `file.blame`, `file.log` (with `--follow`) and their views.
+- **Done when:** parser and command tests; CI green.
 
-### S35 — Più repo e repo recenti
-- [ ] **Agente:** `egui-ui`
-- **Obiettivo:** schede con più repo aperti; elenco dei repo recenti salvato tra un avvio e
-  l'altro.
-- **Fatto quando:** riapertura dell'app con le schede precedenti; CI verde.
+### S35 — Multiple repos and recent repos
+- [ ] **Agent:** `egui-ui`
+- **Goal:** tabs with several open repos; list of recent repos saved between one launch and
+  the next.
+- **Done when:** reopening the app with the previous tabs; CI green.
 
-### S36 — Repo enormi con `gix`
-- [ ] **Agente:** `git-engine`
-- **Obiettivo:** misurare `repo.log` sul kernel Linux; se lento, leggere il log con `gix` nel
-  `CliBackend` mantenendo lo stesso risultato.
-- **Fatto quando:** confronto dei tempi annotato nel commit; i test di integrazione danno lo
-  stesso risultato con le due letture; CI verde.
+### S36 — Huge repos with `gix`
+- [ ] **Agent:** `git-engine`
+- **Goal:** measure `repo.log` on the Linux kernel; if slow, read the log with `gix` in the
+  `CliBackend` keeping the same result.
+- **Done when:** timing comparison noted in the commit; the integration tests give the
+  same result with the two readings; CI green.
 
-### S37 — Packaging Linux
-- [ ] **Agente:** `git-engine`
-- **Obiettivo:** AppImage e pacchetto deb (vedi anche [ROADMAP.md](../ROADMAP.md)) con
+### S37 — Linux packaging
+- [ ] **Agent:** `git-engine`
+- **Goal:** AppImage and deb package (see also [ROADMAP.md](../ROADMAP.md)) with
   `SHA256SUMS.txt`.
-- **Fatto quando:** il pacchetto si installa e avvia su Ubuntu pulito; CI verde.
+- **Done when:** the package installs and starts on a clean Ubuntu; CI green.

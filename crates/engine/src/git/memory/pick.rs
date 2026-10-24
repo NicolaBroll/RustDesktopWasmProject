@@ -1,13 +1,13 @@
-//! Cherry-pick e revert sul [`MemoryBackend`] (`commit.cherry_pick`, `commit.revert`, S31), con
-//! gli stessi controlli del `CliBackend`.
+//! Cherry-pick and revert on the [`MemoryBackend`] (`commit.cherry_pick`, `commit.revert`, S31), with
+//! the same checks as the `CliBackend`.
 //!
-//! Come il merge in memoria, file per file: la patch del commit (dal genitore scelto al commit;
-//! per il revert all'inverso) si applica a HEAD, e un file che HEAD ha cambiato in modo diverso
-//! è un conflitto. Senza conflitti un commit nuovo sopra HEAD (per il cherry-pick con l'autore
-//! originale); con conflitti l'operazione **resta in corso** come il merge (voci `u`, i file
-//! senza conflitti in stage, `CHERRY_PICK_HEAD`/`REVERT_HEAD` e `MERGE_MSG` in
-//! [`MemoryMerge`]). Un risultato uguale a HEAD (commit già applicato) è
-//! [`EngineError::NotAllowed`] e non cambia niente.
+//! Like the in-memory merge, file by file: the commit's patch (from the chosen parent to the commit;
+//! for revert, inverted) is applied to HEAD, and a file that HEAD changed differently
+//! is a conflict. Without conflicts a new commit on top of HEAD (for cherry-pick with the original
+//! author); with conflicts the operation **stays in progress** like the merge (`u` entries, the files
+//! without conflicts staged, `CHERRY_PICK_HEAD`/`REVERT_HEAD` and `MERGE_MSG` in
+//! [`MemoryMerge`]). A result equal to HEAD (commit already applied) is
+//! [`EngineError::NotAllowed`] and changes nothing.
 
 use super::merge::{MemoryMerge, merge_partial};
 use super::{HEADS, HeadRef, MemoryBackend};
@@ -27,9 +27,9 @@ impl MemoryBackend {
         let kind = request.kind;
         check_pick_state(&self.status()?, kind)?;
         if self.head != HeadRef::Branch(request.branch.clone()) {
-            return Err(EngineError::NotAllowed(format!(
-                "HEAD è cambiata mentre si preparava `{}`: niente modificato, riprovare",
-                kind.command()
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pick-head-moved",
+                command = kind.command()
             )));
         }
         let full = format!("{HEADS}{}", request.branch);
@@ -48,7 +48,7 @@ impl MemoryBackend {
         if conflicts.is_empty() && merged == ours {
             return Err(pick_empty_error(kind, &request.commit));
         }
-        // Nel worktree vanno anche i file in conflitto presenti solo da loro.
+        // The conflicted files present only on their side also go in the worktree.
         let mut written = merged.clone();
         for c in &conflicts {
             if let Some(entry) = c.ours.or(c.theirs) {
@@ -57,11 +57,10 @@ impl MemoryBackend {
         }
         let (_, files) = self.switch_plan(&written);
         if !files.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "`{}` sovrascriverebbe modifiche locali o file non tracciati ({}): committarli, \
-                 metterli da parte o spostarli e riprovare; niente modificato",
-                kind.command(),
-                files
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pick-overwrite",
+                command = kind.command(),
+                files = files
                     .iter()
                     .map(|f| format!("`{f}`"))
                     .collect::<Vec<_>>()
@@ -90,7 +89,7 @@ impl MemoryBackend {
             work.rebase_entries(&index);
             outcome.after = id;
         } else {
-            // Le etichette dei marcatori come git: `<id> (<oggetto>)`, `parent of ...` per il
+            // The marker labels like git: `<id> (<subject>)`, `parent of ...` for the
             // revert.
             let label = format!("{} ({})", short(&request.commit), picked.summary);
             let label = match kind {

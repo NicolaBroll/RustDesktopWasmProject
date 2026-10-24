@@ -1,16 +1,16 @@
-//! L0 — tipi di base condivisi da tutti i livelli: errori e parsing dell'input.
+//! L0 — base types shared by all layers: errors and input parsing.
 //!
-//! Questo crate non dipende da nessun altro crate del workspace.
+//! This crate does not depend on any other crate in the workspace.
 
 mod invocation;
 
 pub use invocation::{Invocation, is_valid_command_id};
 
-/// Errori di livello L0.
+/// L0 errors.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CoreError {
-    #[error("id di comando non valido: `{0}` (ammessi: a-z, 0-9, `.`, `_`, `-`)")]
+    #[error("invalid command id: `{0}` (allowed: a-z, 0-9, `.`, `_`, `-`)")]
     InvalidCommandId(String),
-    #[error("parametri JSON non validi per `{id}`: {reason}")]
+    #[error("invalid JSON parameters for `{id}`: {reason}")]
     InvalidParams { id: String, reason: String },
 }

@@ -1,8 +1,8 @@
-//! Le patch per righe del costruttore del dominio (`project_domain::build_patch`) applicate
-//! davvero all'indice con `git apply` e gli argomenti di `APPLY_ARGS`, su repo veri.
+//! The line patches of the domain builder (`project_domain::build_patch`) actually applied
+//! to the index with `git apply` and the `APPLY_ARGS` arguments, on real repos.
 //!
-//! Ogni patch si prova prima con `--check`, poi si applica; il risultato si legge dall'indice
-//! con `git show :<percorso>` e si confronta byte per byte. Il worktree non deve cambiare.
+//! Each patch is first tried with `--check`, then applied; the result is read from the index
+//! with `git show :<path>` and compared byte for byte. The worktree must not change.
 
 mod common;
 
@@ -32,8 +32,8 @@ fn git(repo: &Repo) -> Command {
     cmd
 }
 
-/// Il file `path` del diff del worktree (per lo stage) o dell'indice (per l'unstage), letto
-/// con il backend come farà il comando.
+/// The file `path` of the worktree diff (for stage) or the index diff (for unstage), read
+/// with the backend as the command will do.
 fn diff_file(repo: &Repo, path: &[u8], direction: PatchDirection) -> FileDiff {
     let path = Some(RepoPath::from_bytes(path));
     let spec = match direction {
@@ -41,24 +41,24 @@ fn diff_file(repo: &Repo, path: &[u8], direction: PatchDirection) -> FileDiff {
         PatchDirection::Unstage => DiffSpec::Index { path },
     };
     let mut diff = repo.open().diff(&spec).unwrap();
-    assert_eq!(diff.files.len(), 1, "un file nel diff");
+    assert_eq!(diff.files.len(), 1, "one file in the diff");
     diff.files.remove(0)
 }
 
-/// Il riferimento della riga di `file` con quel prefisso (`'-'` o `'+'`) e contenuto.
+/// The reference of the line of `file` with that prefix (`'-'` or `'+'`) and content.
 fn line(file: &FileDiff, prefix: char, content: &[u8]) -> LineRef {
     let kind = match prefix {
         '-' => LineKind::Removed,
         '+' => LineKind::Added,
-        _ => panic!("prefisso `{prefix}`"),
+        _ => panic!("prefix `{prefix}`"),
     };
     let mut found = file
         .hunks
         .iter()
         .flat_map(|h| &h.lines)
         .filter(|l| l.kind == kind && l.content.as_bytes() == content);
-    let l = found.next().expect("riga presente nel diff");
-    assert!(found.next().is_none(), "riga unica");
+    let l = found.next().expect("line present in the diff");
+    assert!(found.next().is_none(), "unique line");
     l.line_ref().unwrap()
 }
 
@@ -69,7 +69,7 @@ fn lines(file: &FileDiff, picks: &[(char, &str)]) -> Vec<LineRef> {
         .collect()
 }
 
-/// `git apply <APPLY_ARGS> [--check]` con la patch su stdin.
+/// `git apply <APPLY_ARGS> [--check]` with the patch on stdin.
 fn git_apply(repo: &Repo, patch: &[u8], check: bool) {
     let mut cmd = git(repo);
     cmd.arg("apply").args(APPLY_ARGS);
@@ -93,7 +93,7 @@ fn git_apply(repo: &Repo, patch: &[u8], check: bool) {
     );
 }
 
-/// Costruisce la patch per le righe scelte, la prova e la applica; restituisce la patch.
+/// Builds the patch for the chosen lines, tries it and applies it; returns the patch.
 fn apply_lines(
     repo: &Repo,
     path: &[u8],
@@ -104,7 +104,7 @@ fn apply_lines(
     let refs = pick(&file);
     let patch = build_patch(&file, &refs, direction)
         .unwrap()
-        .expect("patch non vuota");
+        .expect("non-empty patch");
     let worktree = std::fs::read(repo.path().join(os(path))).ok();
     let bytes = patch.to_patch();
     git_apply(repo, &bytes, true);
@@ -112,7 +112,7 @@ fn apply_lines(
     assert_eq!(
         std::fs::read(repo.path().join(os(path))).ok(),
         worktree,
-        "il worktree non cambia"
+        "the worktree does not change"
     );
     patch
 }
@@ -129,7 +129,7 @@ fn unstage(repo: &Repo, path: &str, picks: &[(char, &str)]) -> FileDiff {
     })
 }
 
-/// Il contenuto di `path` nell'indice; `None` se non c'è.
+/// The content of `path` in the index; `None` if absent.
 fn index(repo: &Repo, path: &[u8]) -> Option<Vec<u8>> {
     let mut spec = b":".to_vec();
     spec.extend_from_slice(path);
@@ -145,7 +145,7 @@ fn index_str(repo: &Repo, path: &str) -> Option<String> {
     index(repo, path.as_bytes()).map(|b| String::from_utf8(b).unwrap())
 }
 
-/// Il modo di `path` nell'indice (`git ls-files -s`).
+/// The mode of `path` in the index (`git ls-files -s`).
 fn index_mode(repo: &Repo, path: &str) -> String {
     let out = git(repo)
         .args(["ls-files", "-s", "--", path])
@@ -158,50 +158,55 @@ fn numbered(n: usize, changed: &[(usize, &str)]) -> String {
     (1..=n)
         .map(|i| match changed.iter().find(|(j, _)| *j == i) {
             Some((_, text)) => format!("{text}\n"),
-            None => format!("riga {i}\n"),
+            None => format!("line {i}\n"),
         })
         .collect()
 }
 
 #[test]
-fn stage_e_unstage_di_righe_in_piu_hunk() {
+fn stage_and_unstage_of_lines_in_several_hunks() {
     let repo = Repo::new();
     repo.commit_file("f.txt", &numbered(30, &[]), "base");
-    // Hunk 1: due righe cambiate vicine; hunk 2: una riga a metà; hunk 3: in fondo.
+    // Hunk 1: two changed lines close together; hunk 2: one line in the middle; hunk 3: at the end.
     repo.write(
         "f.txt",
         &numbered(
             30,
-            &[(2, "due"), (3, "tre"), (15, "quindici"), (29, "ventinove")],
+            &[
+                (2, "two"),
+                (3, "three"),
+                (15, "fifteen"),
+                (29, "twentynine"),
+            ],
         ),
     );
     let file = diff_file(&repo, b"f.txt", PatchDirection::Stage);
     assert_eq!(file.hunks.len(), 3);
 
-    // Solo `riga 2 → due` del primo hunk e tutto il terzo.
+    // Only `line 2 → two` of the first hunk and the whole third.
     stage(
         &repo,
         "f.txt",
         &[
-            ('-', "riga 2"),
-            ('+', "due"),
-            ('-', "riga 29"),
-            ('+', "ventinove"),
+            ('-', "line 2"),
+            ('+', "two"),
+            ('-', "line 29"),
+            ('+', "twentynine"),
         ],
     );
     assert_eq!(
         index_str(&repo, "f.txt").unwrap(),
-        numbered(30, &[(2, "due"), (29, "ventinove")])
+        numbered(30, &[(2, "two"), (29, "twentynine")])
     );
 
-    // Unstage della riga 29: torna com'era in HEAD, la riga 2 resta in stage.
-    unstage(&repo, "f.txt", &[('-', "riga 29"), ('+', "ventinove")]);
+    // Unstage of line 29: back to what it was in HEAD, line 2 stays staged.
+    unstage(&repo, "f.txt", &[('-', "line 29"), ('+', "twentynine")]);
     assert_eq!(
         index_str(&repo, "f.txt").unwrap(),
-        numbered(30, &[(2, "due")])
+        numbered(30, &[(2, "two")])
     );
 
-    // Stage del resto, poi unstage di tutto: l'indice torna uguale a HEAD.
+    // Stage the rest, then unstage everything: the index equals HEAD again.
     let rest = diff_file(&repo, b"f.txt", PatchDirection::Stage).line_refs();
     apply_lines(&repo, b"f.txt", PatchDirection::Stage, |_| rest);
     assert_eq!(
@@ -213,14 +218,14 @@ fn stage_e_unstage_di_righe_in_piu_hunk() {
 }
 
 #[test]
-fn modifica_parziale_di_un_gruppo() {
+fn partial_change_of_a_group() {
     let repo = Repo::new();
     repo.commit_file("f.txt", "a\nx\ny\nb\n", "base");
     repo.write("f.txt", "a\nX\nY\nb\n");
-    // Solo `x → X`: la riga `y` resta dopo `X`.
+    // Only `x → X`: line `y` stays after `X`.
     stage(&repo, "f.txt", &[('-', "x"), ('+', "X")]);
     assert_eq!(index_str(&repo, "f.txt").unwrap(), "a\nX\ny\nb\n");
-    // Solo la riga tolta `y`, poi solo l'aggiunta `Y`.
+    // Only the removed line `y`, then only the added `Y`.
     stage(&repo, "f.txt", &[('-', "y")]);
     assert_eq!(index_str(&repo, "f.txt").unwrap(), "a\nX\nb\n");
     stage(&repo, "f.txt", &[('+', "Y")]);
@@ -228,95 +233,95 @@ fn modifica_parziale_di_un_gruppo() {
 }
 
 #[test]
-fn hunk_adiacenti() {
+fn adjacent_hunks() {
     let repo = Repo::new();
     repo.commit_file("f.txt", &numbered(20, &[]), "base");
-    // Righe 4 e 12: fra i due contesti di 3 righe resta una riga sola (la 8).
-    repo.write("f.txt", &numbered(20, &[(4, "quattro"), (12, "dodici")]));
+    // Lines 4 and 12: between the two 3-line contexts only one line remains (line 8).
+    repo.write("f.txt", &numbered(20, &[(4, "four"), (12, "twelve")]));
     assert_eq!(
         diff_file(&repo, b"f.txt", PatchDirection::Stage)
             .hunks
             .len(),
         2
     );
-    stage(&repo, "f.txt", &[('-', "riga 12"), ('+', "dodici")]);
+    stage(&repo, "f.txt", &[('-', "line 12"), ('+', "twelve")]);
     assert_eq!(
         index_str(&repo, "f.txt").unwrap(),
-        numbered(20, &[(12, "dodici")])
+        numbered(20, &[(12, "twelve")])
     );
-    stage(&repo, "f.txt", &[('-', "riga 4"), ('+', "quattro")]);
+    stage(&repo, "f.txt", &[('-', "line 4"), ('+', "four")]);
     assert_eq!(
         index_str(&repo, "f.txt").unwrap(),
-        numbered(20, &[(4, "quattro"), (12, "dodici")])
+        numbered(20, &[(4, "four"), (12, "twelve")])
     );
-    // E indietro, prima il primo hunk.
-    unstage(&repo, "f.txt", &[('-', "riga 4"), ('+', "quattro")]);
+    // And back, the first hunk first.
+    unstage(&repo, "f.txt", &[('-', "line 4"), ('+', "four")]);
     assert_eq!(
         index_str(&repo, "f.txt").unwrap(),
-        numbered(20, &[(12, "dodici")])
+        numbered(20, &[(12, "twelve")])
     );
 }
 
 #[test]
-fn fine_file_senza_a_capo() {
+fn end_of_file_without_newline() {
     let repo = Repo::new();
-    repo.commit_file("coda.txt", "a\nb", "base");
-    repo.write("coda.txt", "a\nb\nc");
-    // Solo la nuova ultima riga: `b` prende l'a capo.
-    stage(&repo, "coda.txt", &[('+', "c")]);
-    assert_eq!(index_str(&repo, "coda.txt").unwrap(), "a\nb\nc");
-    unstage(&repo, "coda.txt", &[('+', "c")]);
-    assert_eq!(index_str(&repo, "coda.txt").unwrap(), "a\nb\n");
-    // L'unstage della riga `b` con l'a capo e il ritorno di quella senza.
-    unstage(&repo, "coda.txt", &[('-', "b"), ('+', "b")]);
-    assert_eq!(index_str(&repo, "coda.txt").unwrap(), "a\nb");
+    repo.commit_file("tail.txt", "a\nb", "base");
+    repo.write("tail.txt", "a\nb\nc");
+    // Only the new last line: `b` gets the newline.
+    stage(&repo, "tail.txt", &[('+', "c")]);
+    assert_eq!(index_str(&repo, "tail.txt").unwrap(), "a\nb\nc");
+    unstage(&repo, "tail.txt", &[('+', "c")]);
+    assert_eq!(index_str(&repo, "tail.txt").unwrap(), "a\nb\n");
+    // Unstaging line `b` with the newline and the return of the one without.
+    unstage(&repo, "tail.txt", &[('-', "b"), ('+', "b")]);
+    assert_eq!(index_str(&repo, "tail.txt").unwrap(), "a\nb");
 
-    // Riga senza a capo aggiunta in fondo, la vecchia resta.
-    repo.commit_file("toglie.txt", "uno\ndue\n", "toglie");
-    repo.write("toglie.txt", "uno\nDUE");
-    stage(&repo, "toglie.txt", &[('+', "DUE")]);
-    assert_eq!(index_str(&repo, "toglie.txt").unwrap(), "uno\ndue\nDUE");
-    stage(&repo, "toglie.txt", &[('-', "due")]);
-    assert_eq!(index_str(&repo, "toglie.txt").unwrap(), "uno\nDUE");
+    // Line without newline added at the end, the old one stays.
+    repo.commit_file("removes.txt", "one\ntwo\n", "removes");
+    repo.write("removes.txt", "one\nTWO");
+    stage(&repo, "removes.txt", &[('+', "TWO")]);
+    assert_eq!(index_str(&repo, "removes.txt").unwrap(), "one\ntwo\nTWO");
+    stage(&repo, "removes.txt", &[('-', "two")]);
+    assert_eq!(index_str(&repo, "removes.txt").unwrap(), "one\nTWO");
 }
 
 #[test]
-fn crlf_e_contenuto_non_utf8() {
+fn crlf_and_non_utf8_content() {
     let repo = Repo::new();
-    let base: &[u8] = b"uno\r\ndue\r\ncaff\xe8\r\n";
+    let base: &[u8] = b"one\r\ntwo\r\ncafe\xe8\r\n";
     std::fs::write(repo.path().join("crlf.txt"), base).unwrap();
     repo.stage(&["crlf.txt"]);
     repo.commit("base");
     std::fs::write(
         repo.path().join("crlf.txt"),
-        b"UNO\r\ndue\r\ncaff\xe8\r\nquattro\xff\r\n",
+        b"ONE\r\ntwo\r\ncafe\xe8\r\nfour\xff\r\n",
     )
     .unwrap();
     apply_lines(&repo, b"crlf.txt", PatchDirection::Stage, |f| {
-        vec![line(f, '+', b"quattro\xff\r")]
+        vec![line(f, '+', b"four\xff\r")]
     });
     assert_eq!(
         index(&repo, b"crlf.txt").unwrap(),
-        b"uno\r\ndue\r\ncaff\xe8\r\nquattro\xff\r\n"
+        b"one\r\ntwo\r\ncafe\xe8\r\nfour\xff\r\n"
     );
     apply_lines(&repo, b"crlf.txt", PatchDirection::Unstage, |f| {
-        vec![line(f, '+', b"quattro\xff\r")]
+        vec![line(f, '+', b"four\xff\r")]
     });
     assert_eq!(index(&repo, b"crlf.txt").unwrap(), base);
 }
 
 #[test]
-fn nomi_tra_virgolette_con_spazi_e_non_utf8() {
+fn quoted_names_with_spaces_and_non_utf8() {
     let repo = Repo::new();
-    let mut names: Vec<&[u8]> = vec![b"con\ttab.txt", b"con spazio.txt", b"vir\"golette.txt"];
+    let mut names: Vec<&[u8]> = vec![b"with\ttab.txt", b"with space.txt", b"quo\"tes.txt"];
     if cfg!(unix) {
-        names.push(b"caff\xff.txt");
+        names.push(b"cafe\xff.txt");
     }
     for name in &names {
         std::fs::write(repo.path().join(os(name)), "a\nb\n").unwrap();
     }
     repo.git(&["add", "-A"]);
-    repo.commit("nomi");
+    repo.commit("names");
     for name in &names {
         std::fs::write(repo.path().join(os(name)), "a\nB\nc\n").unwrap();
         apply_lines(&repo, name, PatchDirection::Stage, |f| {
@@ -331,107 +336,107 @@ fn nomi_tra_virgolette_con_spazi_e_non_utf8() {
 }
 
 #[test]
-fn file_nuovo_con_intent_to_add() {
+fn new_file_with_intent_to_add() {
     let repo = Repo::new();
     repo.commit_file("base.txt", "base\n", "base");
-    repo.write("nuovo.txt", "uno\ndue\ntre\n");
-    repo.git(&["add", "-N", "nuovo.txt"]);
-    let p = stage(&repo, "nuovo.txt", &[('+', "due")]);
+    repo.write("new.txt", "one\ntwo\nthree\n");
+    repo.git(&["add", "-N", "new.txt"]);
+    let p = stage(&repo, "new.txt", &[('+', "two")]);
     assert_eq!(p.change, Change::Added);
-    assert_eq!(index_str(&repo, "nuovo.txt").unwrap(), "due\n");
-    // Ora il file è nell'indice: il resto è una modifica.
-    stage(&repo, "nuovo.txt", &[('+', "uno")]);
-    assert_eq!(index_str(&repo, "nuovo.txt").unwrap(), "uno\ndue\n");
+    assert_eq!(index_str(&repo, "new.txt").unwrap(), "two\n");
+    // Now the file is in the index: the rest is a change.
+    stage(&repo, "new.txt", &[('+', "one")]);
+    assert_eq!(index_str(&repo, "new.txt").unwrap(), "one\ntwo\n");
 }
 
 #[test]
-fn file_eliminato_dal_worktree() {
+fn file_deleted_from_the_worktree() {
     let repo = Repo::new();
-    repo.commit_file("via.txt", "uno\ndue\ntre\n", "base");
-    std::fs::remove_file(repo.path().join("via.txt")).unwrap();
-    // Parziale: il file resta nell'indice senza la riga scelta.
-    let p = stage(&repo, "via.txt", &[('-', "due")]);
+    repo.commit_file("gone.txt", "one\ntwo\nthree\n", "base");
+    std::fs::remove_file(repo.path().join("gone.txt")).unwrap();
+    // Partial: the file stays in the index without the chosen line.
+    let p = stage(&repo, "gone.txt", &[('-', "two")]);
     assert_eq!(p.change, Change::Modified);
-    assert_eq!(index_str(&repo, "via.txt").unwrap(), "uno\ntre\n");
-    // Tutte le righe rimaste: il file esce dall'indice.
-    let p = apply_lines(&repo, b"via.txt", PatchDirection::Stage, |f| f.line_refs());
+    assert_eq!(index_str(&repo, "gone.txt").unwrap(), "one\nthree\n");
+    // All the remaining lines: the file leaves the index.
+    let p = apply_lines(&repo, b"gone.txt", PatchDirection::Stage, |f| f.line_refs());
     assert_eq!(p.change, Change::Deleted);
-    assert_eq!(index(&repo, b"via.txt"), None);
+    assert_eq!(index(&repo, b"gone.txt"), None);
 }
 
 #[test]
-fn unstage_di_file_nuovo_ed_eliminato() {
+fn unstage_of_new_and_deleted_file() {
     let repo = Repo::new();
-    repo.commit_file("vecchio.txt", "v1\nv2\nv3\n", "base");
-    repo.write("nuovo.txt", "n1\nn2\nn3\n");
-    repo.stage(&["nuovo.txt"]);
-    repo.git(&["rm", "--cached", "--quiet", "vecchio.txt"]);
+    repo.commit_file("old.txt", "v1\nv2\nv3\n", "base");
+    repo.write("new.txt", "n1\nn2\nn3\n");
+    repo.stage(&["new.txt"]);
+    repo.git(&["rm", "--cached", "--quiet", "old.txt"]);
 
-    // File nuovo in stage: parziale lo lascia nell'indice, totale lo toglie.
-    let p = unstage(&repo, "nuovo.txt", &[('+', "n2")]);
+    // New staged file: partial leaves it in the index, total removes it.
+    let p = unstage(&repo, "new.txt", &[('+', "n2")]);
     assert_eq!(p.change, Change::Modified);
-    assert_eq!(index_str(&repo, "nuovo.txt").unwrap(), "n1\nn3\n");
-    let p = apply_lines(&repo, b"nuovo.txt", PatchDirection::Unstage, |f| {
+    assert_eq!(index_str(&repo, "new.txt").unwrap(), "n1\nn3\n");
+    let p = apply_lines(&repo, b"new.txt", PatchDirection::Unstage, |f| {
         f.line_refs()
     });
     assert_eq!(p.change, Change::Deleted);
-    assert_eq!(index(&repo, b"nuovo.txt"), None);
-    assert!(repo.path().join("nuovo.txt").exists());
+    assert_eq!(index(&repo, b"new.txt"), None);
+    assert!(repo.path().join("new.txt").exists());
 
-    // File eliminato in stage: torna nell'indice con le sole righe scelte.
-    let p = unstage(&repo, "vecchio.txt", &[('-', "v1"), ('-', "v3")]);
+    // File deleted in the index: it returns to the index with only the chosen lines.
+    let p = unstage(&repo, "old.txt", &[('-', "v1"), ('-', "v3")]);
     assert_eq!(p.change, Change::Added);
-    assert_eq!(index_str(&repo, "vecchio.txt").unwrap(), "v1\nv3\n");
+    assert_eq!(index_str(&repo, "old.txt").unwrap(), "v1\nv3\n");
 }
 
 #[test]
-fn unstage_in_una_rinomina() {
+fn unstage_in_a_rename() {
     let repo = Repo::new();
     let base = numbered(8, &[]);
-    repo.commit_file("vecchio.txt", &base, "base");
-    repo.git(&["mv", "vecchio.txt", "nuovo nome.txt"]);
-    repo.write("nuovo nome.txt", &numbered(8, &[(7, "sette")]));
-    repo.stage(&["nuovo nome.txt"]);
-    let file = diff_file(&repo, b"nuovo nome.txt", PatchDirection::Unstage);
+    repo.commit_file("old.txt", &base, "base");
+    repo.git(&["mv", "old.txt", "new name.txt"]);
+    repo.write("new name.txt", &numbered(8, &[(7, "seven")]));
+    repo.stage(&["new name.txt"]);
+    let file = diff_file(&repo, b"new name.txt", PatchDirection::Unstage);
     assert_eq!(file.change, Change::Renamed);
 
-    let p = unstage(&repo, "nuovo nome.txt", &[('-', "riga 7"), ('+', "sette")]);
+    let p = unstage(&repo, "new name.txt", &[('-', "line 7"), ('+', "seven")]);
     assert_eq!(p.change, Change::Modified);
-    // La rinomina resta: il percorso nuovo ha il contenuto di HEAD, il vecchio non torna.
-    assert_eq!(index_str(&repo, "nuovo nome.txt").unwrap(), base);
-    assert_eq!(index(&repo, b"vecchio.txt"), None);
+    // The rename stays: the new path has the HEAD content, the old one does not come back.
+    assert_eq!(index_str(&repo, "new name.txt").unwrap(), base);
+    assert_eq!(index(&repo, b"old.txt"), None);
 }
 
 #[cfg(unix)]
 #[test]
-fn il_modo_non_cambia() {
+fn the_mode_does_not_change() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
-    repo.commit_file("script.sh", "uno\n", "base");
-    repo.write("script.sh", "uno\ndue\n");
+    repo.commit_file("script.sh", "one\n", "base");
+    repo.write("script.sh", "one\ntwo\n");
     let path = repo.path().join("script.sh");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     let file = diff_file(&repo, b"script.sh", PatchDirection::Stage);
     assert_eq!(file.new_mode, Some(0o100755));
-    stage(&repo, "script.sh", &[('+', "due")]);
-    assert_eq!(index_str(&repo, "script.sh").unwrap(), "uno\ndue\n");
+    stage(&repo, "script.sh", &[('+', "two")]);
+    assert_eq!(index_str(&repo, "script.sh").unwrap(), "one\ntwo\n");
     assert_eq!(index_mode(&repo, "script.sh"), "100644");
 }
 
 #[test]
-fn configurazione_degli_spazi_neutralizzata() {
+fn whitespace_configuration_neutralized() {
     let repo = Repo::new();
     repo.commit_file("f.txt", "a  b\nc\n", "base");
     repo.git(&["config", "apply.whitespace", "error"]);
     repo.git(&["config", "apply.ignoreWhitespace", "change"]);
-    // Una riga con spazi finali: con `apply.whitespace=error` git la rifiuterebbe.
-    repo.write("f.txt", "a  b\nc\nspazi finali   \n");
-    stage(&repo, "f.txt", &[('+', "spazi finali   ")]);
+    // A line with trailing spaces: with `apply.whitespace=error` git would reject it.
+    repo.write("f.txt", "a  b\nc\ntrailing spaces   \n");
+    stage(&repo, "f.txt", &[('+', "trailing spaces   ")]);
     assert_eq!(
         index_str(&repo, "f.txt").unwrap(),
-        "a  b\nc\nspazi finali   \n"
+        "a  b\nc\ntrailing spaces   \n"
     );
-    // Con `apply.ignoreWhitespace=change` un preimage diverso solo negli spazi passerebbe.
+    // With `apply.ignoreWhitespace=change` a preimage differing only in spaces would pass.
     let file = diff_file(&repo, b"f.txt", PatchDirection::Unstage);
     let patch = build_patch(&file, &file.line_refs(), PatchDirection::Unstage)
         .unwrap()
@@ -450,6 +455,6 @@ fn configurazione_degli_spazi_neutralizzata() {
     child.stdin.take().unwrap().write_all(&altered).unwrap();
     assert!(
         !child.wait().unwrap().success(),
-        "preimage diverso accettato"
+        "different preimage accepted"
     );
 }

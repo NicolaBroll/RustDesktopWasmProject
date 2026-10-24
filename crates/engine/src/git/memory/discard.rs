@@ -1,9 +1,9 @@
-//! `worktree.discard` e il suo undo/redo sul [`MemoryBackend`], con gli stessi controlli del
+//! `worktree.discard` and its undo/redo on the [`MemoryBackend`], with the same checks as the
 //! `CliBackend` ([`discard_plan`], [`WorktreeRestore::index_conflicts`]).
 //!
-//! Il "commit di `git stash create`" è un id finto registrato in
-//! [`MemoryBackend::worktree_backups`] con il ref `refs/project/backup/discard-<n>`, la voce
-//! dello stato e il contenuto del worktree di ogni file scartato (`None` se era eliminato).
+//! The "commit of `git stash create`" is a fake id registered in
+//! [`MemoryBackend::worktree_backups`] with the ref `refs/project/backup/discard-<n>`, the status
+//! entry and the worktree content of every discarded file (`None` if it was deleted).
 
 use super::MemoryBackend;
 use super::write::{entry_order, tracked_info};
@@ -15,15 +15,15 @@ use crate::git::{
 use project_domain::{Change, EntryKind, Oid, RepoPath, StatusEntry};
 use std::collections::BTreeMap;
 
-/// Un file salvato dal backup di uno scarto: la voce dello stato prima dello scarto e il
-/// contenuto del worktree (`None` = il file era eliminato).
+/// A file saved by the backup of a discard: the status entry before the discard and the
+/// worktree content (`None` = the file was deleted).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashedFile {
     pub entry: StatusEntry,
     pub content: Option<Vec<u8>>,
 }
 
-/// Il backup di uno scarto: nome del ref, commit (finto) e file salvati.
+/// The backup of a discard: ref name, (fake) commit and saved files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeStash {
     pub name: String,
@@ -32,17 +32,17 @@ pub struct WorktreeStash {
 }
 
 impl MemoryBackend {
-    /// I backup del worktree salvati da `worktree.discard`, in ordine.
+    /// The worktree backups saved by `worktree.discard`, in order.
     pub fn worktree_backups(&self) -> &[WorktreeStash] {
         &self.worktree_backups
     }
 
-    /// Il contenuto del file `path` nel worktree, se c'è (e se è noto).
+    /// The content of file `path` in the worktree, if present (and if known).
     pub fn worktree_file(&self, path: &RepoPath) -> Option<&[u8]> {
         self.worktree.get(path).map(Vec::as_slice)
     }
 
-    /// [`GitBackend::discard`]. Un errore non cambia niente.
+    /// [`GitBackend::discard`]. An error changes nothing.
     pub(super) fn discard_paths(
         &mut self,
         paths: &[RepoPath],
@@ -78,7 +78,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::restore_worktree`]. Un errore non cambia niente.
+    /// [`GitBackend::restore_worktree`]. An error changes nothing.
     pub(super) fn restore_discarded(
         &mut self,
         request: &WorktreeRestore,
@@ -88,22 +88,22 @@ impl MemoryBackend {
             .iter()
             .find(|b| b.stash == request.stash)
             .cloned()
-            .ok_or_else(|| EngineError::Git {
+            .ok_or_else(|| EngineError::GitWithReason {
                 command: "restore".to_owned(),
-                stderr: format!("backup del worktree {} non trovato", request.stash),
+                reason: msg!("engine-memory-backup-missing", stash = request.stash),
             })?;
         let index = self.index_tree();
         let mut conflicts = request.index_conflicts(|p| index.get(p).copied());
         for file in &request.files {
             let saved = stash.files.get(&file.path);
             let as_expected = if request.redo {
-                // Come l'ha lasciato l'undo: la voce e il contenuto salvati.
+                // As the undo left it: the saved entry and content.
                 saved.is_some_and(|s| {
                     self.tracked_entry(&file.path).map(|e| e.worktree) == Some(s.entry.worktree)
                         && self.worktree.get(&file.path) == s.content.as_ref()
                 })
             } else {
-                // Come l'ha lasciato lo scarto: uguale all'indice.
+                // As the discard left it: equal to the index.
                 saved.is_some()
                     && !self.entries.iter().any(|e| {
                         e.path == file.path
@@ -125,8 +125,8 @@ impl MemoryBackend {
             let Some(saved_info) = tracked_info(&saved.entry) else {
                 continue;
             };
-            // L'indice è quello registrato; HEAD si rilegge (la voce si ricalcola rispetto a
-            // quello attuale).
+            // The index is the recorded one; HEAD is reread (the entry is recomputed against
+            // the current one).
             let mut entry = match self.entries.iter().position(|e| e.path == file.path) {
                 Some(i) => self.entries.remove(i),
                 None => StatusEntry {
@@ -145,7 +145,7 @@ impl MemoryBackend {
             };
             let mut info = tracked_info(&entry)
                 .cloned()
-                .expect("voce di un file tracciato");
+                .expect("entry of a tracked file");
             info.mode_worktree = saved_info.mode_worktree;
             entry.worktree = saved.entry.worktree;
             match &saved.content {
@@ -159,7 +159,7 @@ impl MemoryBackend {
         Ok(())
     }
 
-    /// La voce di un file tracciato (non in conflitto, non tracciato o ignorato) con percorso
+    /// The entry of a tracked file (not conflicted, untracked or ignored) with path
     /// `path`.
     fn tracked_entry(&self, path: &RepoPath) -> Option<&StatusEntry> {
         self.entries
@@ -167,7 +167,7 @@ impl MemoryBackend {
             .find(|e| e.path == *path && tracked_info(e).is_some())
     }
 
-    /// Riporta il worktree di `files` alla versione in stage e ricalcola le voci.
+    /// Brings the worktree of `files` back to the staged version and recomputes the entries.
     fn discard_files(&mut self, files: &[DiscardedFile]) {
         for file in files {
             let Some(i) = self
@@ -180,7 +180,7 @@ impl MemoryBackend {
             let mut entry = self.entries.remove(i);
             let mut info = tracked_info(&entry)
                 .cloned()
-                .expect("voce di un file tracciato");
+                .expect("entry of a tracked file");
             match self.blobs.get(&info.oid_index).cloned() {
                 Some(content) => self.worktree.insert(file.path.clone(), content),
                 None => self.worktree.remove(&file.path),

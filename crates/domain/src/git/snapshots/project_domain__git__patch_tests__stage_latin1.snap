@@ -6,6 +6,6 @@ diff --git a/latin1.txt b/latin1.txt
 --- a/latin1.txt
 +++ b/latin1.txt
 @@ -1,2 +1,3 @@
- caff⟨e8⟩
- seconda
-+terza
+ caf⟨e9⟩
+ second
++third

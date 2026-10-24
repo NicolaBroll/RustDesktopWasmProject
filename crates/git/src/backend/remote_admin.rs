@@ -1,27 +1,28 @@
-//! Gestione dei remoti sul [`CliBackend`] (`remote.list`, `remote.add`, `remote.remove`, S27),
-//! secondo §5:
+//! Remote management on the [`CliBackend`] (`remote.list`, `remote.add`, `remote.remove`, S27),
+//! following §5:
 //!
-//! - lettura con un solo `git config --local -z --get-regexp` (solo il file del repo: niente
-//!   configurazione globale né `include`) per `remote.<nome>.*`, `remote.pushdefault` e
-//!   `branch.*.(remote|merge|pushremote)`, più `for-each-ref refs/remotes/<nome>/` e `git
-//!   symbolic-ref -q refs/remotes/<nome>/HEAD`;
-//! - `git remote add --end-of-options <nome> <url>`: nome e URL (già controllati dal motore)
-//!   non diventano mai opzioni; git aggiunge `remote.<nome>.url` e il refspec di default; nessun
-//!   fetch (`-f` mai);
-//! - la rimozione **non** usa `git remote remove`: i branch remoti li toglie il motore con una
-//!   transazione `update-ref --stdin` con i valori letti (`GitBackend::restore_refs`), e qui si
-//!   tolgono esattamente le voci salvate nel diario: `git config --local --remove-section
-//!   --end-of-options remote.<nome>`, `git config --local --fixed-value --unset-all
-//!   --end-of-options <chiave> <valore>` per upstream, `pushRemote` e `remote.pushDefault`, e
-//!   `git symbolic-ref --delete refs/remotes/<nome>/HEAD`. Così niente sparisce senza essere
-//!   stato salvato (con `git remote remove` git sceglierebbe da sé cosa togliere);
-//! - il ripristino: `git config --local --add --end-of-options <chiave> <valore>` per ogni voce
-//!   e `git symbolic-ref -m <reflog> refs/remotes/<nome>/HEAD <ref>`.
+//! - reading with a single `git config --local -z --get-regexp` (only the repo file: no
+//!   global configuration nor `include`) for `remote.<name>.*`, `remote.pushdefault` and
+//!   `branch.*.(remote|merge|pushremote)`, plus `for-each-ref refs/remotes/<name>/` and `git
+//!   symbolic-ref -q refs/remotes/<name>/HEAD`;
+//! - `git remote add --end-of-options <name> <url>`: name and URL (already checked by the engine)
+//!   never become options; git adds `remote.<name>.url` and the default refspec; no
+//!   fetch (never `-f`);
+//! - removal does **not** use `git remote remove`: the remote branches are removed by the engine with a
+//!   `update-ref --stdin` transaction with the values read (`GitBackend::restore_refs`), and here
+//!   exactly the entries saved in the journal are removed: `git config --local --remove-section
+//!   --end-of-options remote.<name>`, `git config --local --fixed-value --unset-all
+//!   --end-of-options <key> <value>` for upstream, `pushRemote` and `remote.pushDefault`, and
+//!   `git symbolic-ref --delete refs/remotes/<name>/HEAD`. So nothing disappears without having been
+//!   saved (with `git remote remove` git would choose by itself what to remove);
+//! - restoring: `git config --local --add --end-of-options <key> <value>` for each entry
+//!   and `git symbolic-ref -m <reflog> refs/remotes/<name>/HEAD <ref>`.
 
 use super::CliBackend;
 use super::branch::regex_escape;
 use crate::command::{failure, path_from_output};
 use project_domain::Oid;
+use project_engine::Message;
 use project_engine::{
     ConfigEntry, EngineError, REMOTES_PREFIX, RemoteRef, RemoteSnapshot, mask_url, owned_by,
     remote_dependents,
@@ -69,9 +70,9 @@ impl CliBackend {
                 continue;
             }
             let Ok(refname) = std::str::from_utf8(refname) else {
-                return Err(EngineError::NotAllowed(format!(
-                    "il remoto `{name}` ha un branch remoto con un nome non UTF-8: non si può \
-                     salvare per l'undo, niente modificato"
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-remote-ref-not-utf8",
+                    name = name
                 )));
             };
             if owned_by(name, &remotes, refname) {
@@ -104,9 +105,9 @@ impl CliBackend {
         })
     }
 
-    /// Le voci della configurazione del file del repo con la chiave che corrisponde a `pattern`
-    /// (`git config --local -z --get-regexp`), nell'ordine del file. Un valore non UTF-8 non si
-    /// potrebbe riscrivere: [`EngineError::NotAllowed`].
+    /// The entries of the repo file configuration whose key matches `pattern`
+    /// (`git config --local -z --get-regexp`), in file order. A non-UTF-8 value could not
+    /// be written back: [`EngineError::NotAllowed`].
     fn local_config(&self, pattern: &str) -> Result<Vec<ConfigEntry>, EngineError> {
         let args = [
             "config",
@@ -134,9 +135,9 @@ impl CliBackend {
                 Some(Ok(v)) => Some(v),
                 None => None,
                 Some(Err(_)) => {
-                    return Err(EngineError::NotAllowed(format!(
-                        "il valore di `{key}` non è UTF-8: non si può salvare per l'undo, niente \
-                         modificato (correggerlo con `git config`)"
+                    return Err(EngineError::NotAllowed(msg!(
+                        "engine-remote-config-not-utf8",
+                        key = key
                     )));
                 }
             };
@@ -152,40 +153,43 @@ impl CliBackend {
         if out.status.success() {
             return Ok(());
         }
-        // stderr potrebbe ripetere l'URL: mai le credenziali in un errore.
+        // stderr may repeat the URL: never credentials in an error.
         let stderr = String::from_utf8_lossy(&out.stderr).replace(url, &mask_url(url).0);
         if stderr.contains("already exists") {
-            Err(EngineError::NotAllowed(format!(
-                "esiste già un remoto `{}`, niente modificato",
-                name.escape_debug()
+            Err(EngineError::NotAllowed(msg!(
+                "engine-remote-exists",
+                name = name.escape_debug()
             )))
         } else if stderr.contains("not a valid remote name") {
             Err(EngineError::InvalidParams {
                 id: "remote.add",
-                reason: format!(
-                    "git non accetta il nome del remoto `{}`: {}",
-                    name.escape_debug(),
-                    stderr.trim()
+                reason: msg!(
+                    "engine-remote-git-rejects-name",
+                    name = name.escape_debug(),
+                    stderr = stderr.trim()
                 ),
             })
         } else {
             let stderr = stderr.trim();
-            Err(EngineError::Git {
-                command: "remote".to_owned(),
-                stderr: if stderr.is_empty() {
-                    format!("terminato con {}", out.status)
-                } else {
-                    stderr.to_owned()
-                },
+            Err(if stderr.is_empty() {
+                EngineError::GitWithReason {
+                    command: "remote".to_owned(),
+                    reason: msg!("engine-git-exit-status", status = out.status.to_string()),
+                }
+            } else {
+                EngineError::Git {
+                    command: "remote".to_owned(),
+                    stderr: stderr.to_owned(),
+                }
             })
         }
     }
 
     /// [`GitBackend::remote_config_elsewhere`](project_engine::GitBackend::remote_config_elsewhere):
-    /// tutte le fonti con gli `include` (`git config -z --show-scope --show-origin --includes
-    /// --get-regexp`), meno quelle del file del repo (`--local --show-origin`, senza
-    /// `include`). Un file incluso dal file del repo ha ambito `local` ma un'altra provenienza.
-    /// Contano anche i file del formato vecchio `.git/remotes/<nome>` e `.git/branches/<nome>`.
+    /// all sources with the `include`s (`git config -z --show-scope --show-origin --includes
+    /// --get-regexp`), minus those of the repo file (`--local --show-origin`, without
+    /// `include`). A file included by the repo file has scope `local` but another origin.
+    /// The files of the old format `.git/remotes/<name>` and `.git/branches/<name>` also count.
     pub(super) fn remote_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         let pattern = format!("^remote\\.{}\\.[^.]+$", regex_escape(name));
         let records = |extra: &[&str]| -> Result<Vec<Vec<u8>>, EngineError> {
@@ -201,21 +205,21 @@ impl CliBackend {
             }
             Ok(out.stdout.split(|&b| b == 0).map(<[u8]>::to_vec).collect())
         };
-        // `--local`: origine, chiave+valore.
+        // `--local`: origin, key+value.
         let local: Vec<Vec<u8>> = records(&["--local"])?
             .chunks(2)
             .filter_map(|c| c.first().cloned())
             .collect();
         let all = records(&["--show-scope", "--includes"])?;
         let mut out = Vec::new();
-        // Il formato vecchio: `.git/remotes/<nome>` e `.git/branches/<nome>` (git li legge
-        // ancora come remoti, `git config` no).
+        // The old format: `.git/remotes/<name>` and `.git/branches/<name>` (git still reads them
+        // as remotes, `git config` does not).
         for dir in ["remotes", "branches"] {
             let rel = format!("{dir}/{name}");
             let path = self.run(&["rev-parse", "--git-path", &rel])?;
             let path = self.workdir.join(path_from_output(&path));
             if path.is_file() {
-                out.push(format!("il file `{}` (formato vecchio)", path.display()));
+                out.push(format!("the file `{}` (old format)", path.display()));
             }
         }
         for chunk in all.chunks(3) {
@@ -237,15 +241,18 @@ impl CliBackend {
     }
 
     /// [`GitBackend::remove_remote_config`](project_engine::GitBackend::remove_remote_config).
-    pub(super) fn drop_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+    pub(super) fn drop_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         let name = &snapshot.name;
         let mut warnings = Vec::new();
         if let Some(target) = &snapshot.head {
             let head_ref = format!("{REMOTES_PREFIX}{name}/HEAD");
             let args = ["symbolic-ref", "--delete", "--end-of-options", &head_ref];
             if let Err(e) = self.config_call(&args, &[]) {
-                warnings.push(format!(
-                    "`{head_ref}` (verso `{target}`) non si è tolto: {e}"
+                warnings.push(msg!(
+                    "engine-remote-head-not-removed",
+                    head_ref = head_ref,
+                    target = target,
+                    error = e
                 ));
             }
         }
@@ -259,8 +266,10 @@ impl CliBackend {
                 &section,
             ];
             if let Err(e) = self.config_call(&args, &["no such section"]) {
-                warnings.push(format!(
-                    "la configurazione `remote.{name}.*` non si è tolta: {e}"
+                warnings.push(msg!(
+                    "engine-remote-config-not-removed",
+                    name = name,
+                    error = e
                 ));
             }
         }
@@ -281,16 +290,20 @@ impl CliBackend {
                 ]),
                 None => args.extend(["--unset-all", "--end-of-options", &entry.key]),
             }
-            // Codice 5: la voce non c'è più.
+            // Code 5: the entry is gone.
             if let Err(e) = self.config_call(&args, &[]) {
-                warnings.push(format!("`{}` non si è tolto: {e}", entry.key));
+                warnings.push(msg!(
+                    "engine-remote-key-not-removed",
+                    key = entry.key,
+                    error = e
+                ));
             }
         }
         warnings
     }
 
     /// [`GitBackend::write_remote_config`](project_engine::GitBackend::write_remote_config).
-    pub(super) fn put_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+    pub(super) fn put_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         let name = &snapshot.name;
         let mut warnings = Vec::new();
         let push_default = ConfigEntry {
@@ -314,24 +327,31 @@ impl CliBackend {
                 value,
             ];
             if let Err(e) = self.config_call(&args, &[]) {
-                warnings.push(format!("`{}` non è stato riscritto: {e}", entry.key));
+                warnings.push(msg!(
+                    "engine-remote-key-not-written",
+                    key = entry.key,
+                    error = e
+                ));
             }
         }
         if let Some(target) = &snapshot.head {
             let head_ref = format!("{REMOTES_PREFIX}{name}/HEAD");
-            let reflog = format!("project: ripristino di {head_ref}");
+            let reflog = format!("project: restoring {head_ref}");
             let args = ["symbolic-ref", "-m", &reflog, &head_ref, target];
             if let Err(e) = self.config_call(&args, &[]) {
-                warnings.push(format!(
-                    "`{head_ref}` non è stato rimesso (verso `{target}`): {e}"
+                warnings.push(msg!(
+                    "engine-remote-head-not-put-back",
+                    head_ref = head_ref,
+                    target = target,
+                    error = e
                 ));
             }
         }
         warnings
     }
 
-    /// Esegue `args`; riuscito anche con il codice 5 di `git config --unset` (niente da
-    /// togliere) o se stderr contiene uno dei testi `ok`.
+    /// Runs `args`; succeeds also with code 5 of `git config --unset` (nothing to
+    /// remove) or if stderr contains one of the `ok` texts.
     fn config_call(&self, args: &[&str], ok: &[&str]) -> Result<(), EngineError> {
         let out = self.git.output(Some(&self.workdir), args)?;
         let stderr = String::from_utf8_lossy(&out.stderr);

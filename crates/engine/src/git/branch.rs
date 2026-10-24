@@ -1,117 +1,128 @@
-//! Branch locali (`branch.create`, `branch.checkout`, `branch.delete`, `branch.rename`, S24):
-//! controlli comuni ai backend (`impl-docs/git/branch.md`).
+//! Local branches (`branch.create`, `branch.checkout`, `branch.delete`, `branch.rename`, S24):
+//! checks shared by the backends (`impl-docs/git/branch.md`).
 //!
-//! I nomi passati ai comandi sono **brevi** (`feature/x`, non `refs/heads/feature/x`); il nome
-//! completo lo costruisce [`branch_ref`]. Un nome nuovo (creazione, rinomina) deve essere un
-//! nome di branch valido per git ([`check_new_branch_name`]: niente `-` iniziale, niente `HEAD`,
-//! le regole di `git check-ref-format`); un branch esistente si può indicare anche se il nome
-//! non sarebbe più accettato oggi (es. `-x`, creato con `update-ref`), purché sia un nome di ref
-//! valido ([`check_branch_name`]): così si può ancora rinominarlo o eliminarlo.
+//! The names passed to the commands are **short** (`feature/x`, not `refs/heads/feature/x`); the
+//! full name is built by [`branch_ref`]. A new name (creation, rename) must be a
+//! branch name valid for git ([`check_new_branch_name`]: no leading `-`, no `HEAD`,
+//! the rules of `git check-ref-format`); an existing branch can be named even if the name
+//! would no longer be accepted today (e.g. `-x`, created with `update-ref`), as long as it is a valid ref name
+//! ([`check_branch_name`]): so it can still be renamed or deleted.
 
 use super::valid_ref_name;
-use crate::EngineError;
+use crate::{EngineError, Message};
 use project_domain::Operation;
 use serde::{Deserialize, Serialize};
 
-/// Prefisso dei branch locali.
+/// Prefix of local branches.
 pub const HEADS_PREFIX: &str = "refs/heads/";
 
-/// Il nome completo del branch locale `name` (`refs/heads/<name>`).
+/// The full name of the local branch `name` (`refs/heads/<name>`).
 pub fn branch_ref(name: &str) -> String {
     format!("{HEADS_PREFIX}{name}")
 }
 
-/// Il nome breve di un branch locale: `refs/heads/x` → `x`; un altro nome resta com'è.
+/// The short name of a local branch: `refs/heads/x` → `x`; any other name stays as is.
 pub fn branch_short(full: &str) -> &str {
     full.strip_prefix(HEADS_PREFIX).unwrap_or(full)
 }
 
-/// Il nome di un branch esistente (`branch.checkout`, `branch.delete`, il `name` di
-/// `branch.rename`): un nome breve che dà un nome di ref valido ([`valid_ref_name`]). Un nome
-/// che inizia con `-` è accettato (può esistere, creato con `update-ref`): ai backend arriva
-/// sempre dopo `--end-of-options` o come `refs/heads/<nome>`. Altrimenti
+/// The name of an existing branch (`branch.checkout`, `branch.delete`, the `name` of
+/// `branch.rename`): a short name that gives a valid ref name ([`valid_ref_name`]). A name
+/// starting with `-` is accepted (it may exist, created with `update-ref`): backends always receive it
+/// after `--end-of-options` or as `refs/heads/<name>`. Otherwise
 /// [`EngineError::InvalidParams`].
 pub fn check_branch_name(id: &'static str, name: &str) -> Result<(), EngineError> {
     let reason = if name.is_empty() {
-        Some("il nome del branch è vuoto")
+        Some(msg!("engine-branch-name-empty"))
     } else if name.starts_with("refs/") {
-        Some("usare il nome breve del branch (senza `refs/heads/`)")
+        Some(msg!("engine-branch-name-full"))
     } else if !valid_ref_name(&branch_ref(name)) {
-        Some("non è un nome di branch valido")
+        Some(msg!("engine-branch-name-invalid"))
     } else {
         None
     };
     match reason {
         Some(reason) => Err(EngineError::InvalidParams {
             id,
-            reason: format!("{reason}: `{}`", name.escape_debug()),
+            reason: msg!(
+                "engine-with-name",
+                reason = reason,
+                name = name.escape_debug().to_string()
+            ),
         }),
         None => Ok(()),
     }
 }
 
-/// Il nome di un branch **nuovo** (`branch.create`, il `new_name` di `branch.rename`): come
-/// [`check_branch_name`] e in più le regole di `git check-ref-format --branch`, che git
-/// applica ai nomi nuovi: non inizia con `-`, non è `HEAD` né `@`. Il `CliBackend` lo fa
-/// verificare anche da git prima di scrivere. Altrimenti [`EngineError::InvalidParams`].
+/// The name of a **new** branch (`branch.create`, the `new_name` of `branch.rename`): like
+/// [`check_branch_name`] plus the rules of `git check-ref-format --branch`, which git
+/// applies to new names: it does not start with `-`, and is not `HEAD` or `@`. The `CliBackend` also has
+/// git verify it before writing. Otherwise [`EngineError::InvalidParams`].
 pub fn check_new_branch_name(id: &'static str, name: &str) -> Result<(), EngineError> {
     check_branch_name(id, name)?;
     let reason = if name.starts_with('-') {
-        Some("un nome di branch non può iniziare con `-`")
+        Some(msg!("engine-branch-name-dash"))
     } else if name == "HEAD" || name == "@" {
-        Some("nome riservato da git")
+        Some(msg!("engine-branch-name-reserved"))
     } else {
         None
     };
     match reason {
         Some(reason) => Err(EngineError::InvalidParams {
             id,
-            reason: format!("{reason}: `{}`", name.escape_debug()),
+            reason: msg!(
+                "engine-with-name",
+                reason = reason,
+                name = name.escape_debug().to_string()
+            ),
         }),
         None => Ok(()),
     }
 }
 
-/// [`EngineError::NotAllowed`] se è in corso un'operazione (merge, rebase, cherry-pick, revert,
-/// bisect, `git am`): `command` `what` (es. "cambierebbe branch") a metà dell'operazione.
+/// [`EngineError::NotAllowed`] if an operation is in progress (merge, rebase, cherry-pick, revert,
+/// bisect, `git am`): `command` `what` (e.g. msg!("engine-busy-checkout")) in the middle of the operation.
 pub fn check_no_operation(
     command: &str,
-    what: &str,
+    what: Message,
     operation: Option<Operation>,
 ) -> Result<(), EngineError> {
     let Some(op) = operation else {
         return Ok(());
     };
-    let name = match op {
-        Operation::Merge => "un merge",
-        Operation::Rebase => "un rebase",
-        Operation::CherryPick => "un cherry-pick",
-        Operation::Revert => "un revert",
-        Operation::Bisect => "un bisect",
-        Operation::Am => "un `git am`",
+    // The selector of `engine-operation-in-progress`.
+    let operation = match op {
+        Operation::Merge => "merge",
+        Operation::Rebase => "rebase",
+        Operation::CherryPick => "cherry-pick",
+        Operation::Revert => "revert",
+        Operation::Bisect => "bisect",
+        Operation::Am => "am",
     };
-    Err(EngineError::NotAllowed(format!(
-        "è in corso {name}: `{command}` {what} a metà dell'operazione, niente modificato. \
-         Concludere o annullare l'operazione e riprovare"
+    Err(EngineError::NotAllowed(msg!(
+        "engine-operation-in-progress",
+        operation = operation,
+        command = command,
+        what = what
     )))
 }
 
-/// Esito di [`GitBackend::delete_branch`](crate::GitBackend::delete_branch).
+/// Outcome of [`GitBackend::delete_branch`](crate::GitBackend::delete_branch).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchDeleted {
-    /// Il ref di backup sul commit del branch (`refs/project/backup/delete-...`), creato prima
-    /// di eliminarlo.
+    /// The backup ref on the branch's commit (`refs/project/backup/delete-...`), created before
+    /// deleting it.
     pub backup: String,
-    /// La configurazione `branch.<nome>.*` del repo tolta con il branch (upstream,
-    /// descrizione, ...), nell'ordine del file: `edit.undo` la riscrive.
+    /// The repo's `branch.<name>.*` configuration removed with the branch (upstream,
+    /// description, ...), in file order: `edit.undo` writes it back.
     pub config: Vec<ConfigEntry>,
-    /// Avvisi su qualcosa che non è riuscito **dopo** l'eliminazione (es. la configurazione
-    /// `branch.<nome>.*` non tolta, o un valore non UTF-8 non salvato). Di solito vuoto.
-    pub warnings: Vec<String>,
+    /// Warnings about something that failed **after** the deletion (e.g. the `branch.<name>.*`
+    /// configuration not removed, or a non-UTF-8 value not saved). Usually empty.
+    pub warnings: Vec<Message>,
 }
 
-/// Una voce della configurazione del repo, es. `{"key": "branch.x.remote", "value":
-/// "origin"}`. `value` `null` per una chiave senza valore (`[branch "x"] flag`, vale `true`).
+/// An entry of the repo configuration, e.g. `{"key": "branch.x.remote", "value":
+/// "origin"}`. `value` is `null` for a key without a value (`[branch "x"] flag`, means `true`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigEntry {
     pub key: String,
@@ -159,13 +170,13 @@ mod tests {
 
     #[test]
     fn operations() {
-        check_no_operation("branch.checkout", "cambierebbe branch", None).unwrap();
+        check_no_operation("branch.checkout", msg!("engine-busy-checkout"), None).unwrap();
         let err = check_no_operation(
             "branch.checkout",
-            "cambierebbe branch",
+            msg!("engine-busy-checkout"),
             Some(Operation::Rebase),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("un rebase"), "{err}");
+        assert!(err.to_string().contains("a rebase"), "{err}");
     }
 }

@@ -1,203 +1,203 @@
 # Stash
 
-Parte di [ARCHITETTURA-git.md](../ARCHITETTURA-git.md): principi (§1), regole per ogni chiamata a
-git (§5), comandi lenti (§6) e diario (§7) sono lì; qui il contratto dei comandi, il `CliBackend` e
-undo e backup di questa funzione. "§n" rimanda sempre al documento principale.
+Part of [ARCHITECTURE-git.md](../ARCHITECTURE-git.md): principles (§1), rules for every call to
+git (§5), slow commands (§6) and the journal (§7) are there; here are the command contract, the `CliBackend` and
+undo and backup of this function. "§n" always refers to the main document.
 
-## Comandi
+## Commands
 
 ### `stash.list`
 
-Parametri: `{}`.
+Parameters: `{}`.
 
-Sola lettura. Risultato: `{"stashes": [{"index": n, "name": "stash@{n}", "id", "base", "message",
-"branch": string | null, "time", "untracked": bool}]}`, dal più recente, dal reflog di `refs/stash`
-(vuoto se non c'è). `base`: il primo genitore, il commit di HEAD quando lo stash è stato creato (la
-UI disegna lo stash accanto a questo commit; con `repo.log {"all": true, "stashes": true}` è sempre
-nel grafo); `message`: il messaggio del reflog come in `git stash list` (`On <branch>: <msg>` o `WIP
-on <branch>: <id> <oggetto>`); `branch` letto da lì (`null` con HEAD staccata o un altro formato);
-`time`: data del commit dello stash; `untracked`: ha il terzo genitore con i non tracciati. I file
-tracciati di uno stash si leggono con `commit.show`/`diff.commit` sull'`id` (confronto con `base`:
-il worktree salvato, in stage o no); i non tracciati non ci sono. `refs/stash` resta anche in
-`repo.refs` (`kind: "Stash"`, lo stash più recente).
+Read-only. Result: `{"stashes": [{"index": n, "name": "stash@{n}", "id", "base", "message",
+"branch": string | null, "time", "untracked": bool}]}`, from the most recent, from the reflog of `refs/stash`
+(empty if it does not exist). `base`: the first parent, the HEAD commit when the stash was created (the
+UI draws the stash next to this commit; with `repo.log {"all": true, "stashes": true}` it is always
+in the graph); `message`: the reflog message as in `git stash list` (`On <branch>: <msg>` or `WIP
+on <branch>: <id> <subject>`); `branch` read from there (`null` with detached HEAD or another format);
+`time`: date of the stash commit; `untracked`: it has the third parent with the untracked files. The tracked
+files of a stash are read with `commit.show`/`diff.commit` on the `id` (comparison with `base`:
+the saved worktree, staged or not); the untracked ones are not there. `refs/stash` also remains in
+`repo.refs` (`kind: "Stash"`, the most recent stash).
 
 ### `stash.push`
 
-Parametri: `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}`.
+Parameters: `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}`.
 
-Scrive (`writes`), entra nel diario (§7). `git stash push` (vedi "CliBackend"): salva le modifiche ai file
-tracciati (in stage e no) e, con `include_untracked`, i non tracciati (mai gli ignorati: niente
-`--all`), poi riporta indice e worktree come HEAD (con `keep_index` l'indice resta e il worktree
-diventa come l'indice). `paths`: lista non vuota di percorsi alla lettera, come `index.stage` (**git
-mette comunque nello stash tutto l'indice**: le modifiche in stage degli altri file restano nel
-worktree ma sono anche nello stash, e applicarlo le riporta). `message`: una riga, senza caratteri
-di controllo (`InvalidParams`); vuoto = assente (git scrive `WIP on ...`). Rifiutati prima di git
-(`check_stash_push`, `NotAllowed`, niente cambia): operazione in corso, file in conflitto, branch
-senza commit, file `intent-to-add` (git non riesce a salvarli), file `--assume-unchanged` fra quelli
-scelti (solo `CliBackend`, vedi sotto: git non ne salverebbe le modifiche e poi le cancellerebbe con il
-reset del worktree), niente da mettere da parte fra i file scelti (anche se git non crea lo stash:
-`refs/stash` invariato). Risultato: `{"stash": StashEntry, "stashes": [StashEntry], "status",
-...diario}`.
+Writes (`writes`), goes into the journal (§7). `git stash push` (see "CliBackend"): saves changes to tracked
+files (staged or not) and, with `include_untracked`, untracked files (never ignored ones: no
+`--all`), then returns index and worktree to HEAD (with `keep_index` the index stays and the worktree
+becomes like the index). `paths`: non-empty list of literal paths, like `index.stage` (**git
+still puts the whole index in the stash**: staged changes of other files stay in the
+worktree but are also in the stash, and applying it brings them back). `message`: one line, without control
+characters (`InvalidParams`); empty = absent (git writes `WIP on ...`). Refused before git
+(`check_stash_push`, `NotAllowed`, nothing changes): operation in progress, conflicted files, branch
+without commits, `intent-to-add` files (git cannot save them), `--assume-unchanged` files among those
+chosen (`CliBackend` only, see below: git would not save their changes and would then delete them with the
+worktree reset), nothing to set aside among the chosen files (even if git does not create the stash:
+`refs/stash` unchanged). Result: `{"stash": StashEntry, "stashes": [StashEntry], "status",
+...journal}`.
 
 ### `stash.apply` / `stash.pop`
 
-Parametri: `{"index"?, "expected"?, "restore_index"?}`.
+Parameters: `{"index"?, "expected"?, "restore_index"?}`.
 
-Scrivono (`writes`), **non** entrano nel diario (§7). Lo stash è `stash@{index}` (0 se manca; non
-c'è → `NotAllowed` che dice quanti sono); `expected`: l'id **completo** dello stash visto
-(altrimenti `InvalidParams`), se l'elenco è cambiato → `NotAllowed` che dice dov'è ora (consigliato:
-la UI lo passa sempre). Al backend arriva l'id. `restore_index`: rimette anche la divisione fra in
-stage e no (`--index`); senza, tutto torna fuori stage tranne i file nuovi, che git lascia in stage.
-**Mai sopra modifiche locali** (controlli prima di git, `NotAllowed` e niente cambia): operazione in
-corso, file in conflitto, una modifica (in stage o no) a un file che lo stash cambia (rispetto alla
-base, nel worktree o nell'indice salvati), un non tracciato o ignorato al posto di un file che lo
-stash aggiunge o di un non tracciato che rimette (anche al posto di una sua cartella), file
-`--assume-unchanged` che lo stash cambia. **Eccezione**: un file senza modifiche fuori stage la cui
-voce dell'indice è la stessa nell'indice e nel worktree salvati dallo stash (`<id>^2` e `<id>`; modo
-0: assente da tutti e due) ha già la versione dello stash e non blocca: è il caso dei file rimasti
-in stage dopo un push con `keep_index`, o con `paths` (git salva comunque tutto l'indice); senza,
-l'undo di quei push e il pop dopo un `keep_index` sarebbero sempre rifiutati. Un file `MM` rimasto
-con `keep_index` resta bloccato (il worktree dello stash è diverso: git andrebbe in conflitto).
-Servono perché `git stash apply` non controlla tutto prima di scrivere: con un non tracciato dello
-stash già presente rimette i file tracciati e poi fallisce, e rifiutando per una modifica locale ha
-già rimesso i non tracciati. `restore_index` che non si applica sopra l'indice attuale (HEAD
-cambiato dalla base) → `NotAllowed` che suggerisce di riprovare senza. **Conflitti** (scelta): se
-HEAD ha cambiato gli stessi file dalla base il merge si ferma e i file restano in conflitto come li
-lascia git (`conflicts`; nessuna operazione in corso, solo voci `U` nell'indice); niente si perde,
-perché quei file non avevano modifiche locali (controllo sopra) e lo stash resta nell'elenco: `pop`
-non lo elimina (`dropped: false`, con un avviso). Si risolvono con `index.stage` del file (poi
-l'editor dei conflitti, S30); finché ci sono, apply e push sono rifiutati. `pop` senza conflitti:
-drop come `stash.drop` (backup `refs/project/backup/stash-...` prima). Un drop che fallisce **dopo**
-l'apply non è un errore del pop (`StashPopped::drop_error`): l'apply è fatto e non va ripetuto, il
-risultato ha `dropped: false` e un avviso "applicato ma non tolto dall'elenco". Risultato:
-`{"stash": StashEntry, "conflicts": [percorso], "dropped": bool, "backup": string | null,
+They write (`writes`), do **not** go into the journal (§7). The stash is `stash@{index}` (0 if missing; not
+found → `NotAllowed` saying how many there are); `expected`: the **full** id of the stash seen
+(otherwise `InvalidParams`), if the list has changed → `NotAllowed` saying where it is now (recommended:
+the UI always passes it). The id reaches the backend. `restore_index`: also restores the split between
+staged and not (`--index`); without it, everything comes back unstaged except new files, which git leaves staged.
+**Never over local changes** (checks before git, `NotAllowed` and nothing changes): operation in
+progress, conflicted files, a change (staged or not) to a file the stash changes (relative to the
+base, in the saved worktree or index), an untracked or ignored file in place of a file the
+stash adds or of an untracked file it restores (even in place of one of its directories),
+`--assume-unchanged` files the stash changes. **Exception**: a file without unstaged changes whose
+index entry is the same in the index and in the worktree saved by the stash (`<id>^2` and `<id>`; mode
+0: absent from both) already has the stash's version and does not block: this is the case of files left
+staged after a push with `keep_index`, or with `paths` (git saves the whole index anyway); without it,
+the undo of those pushes and the pop after a `keep_index` would always be refused. An `MM` file left
+with `keep_index` stays blocked (the stash's worktree is different: git would conflict).
+They are needed because `git stash apply` does not check everything before writing: with an untracked file of the
+stash already present it restores the tracked files and then fails, and refusing because of a local change it has
+already restored the untracked files. `restore_index` that does not apply over the current index (HEAD
+changed from the base) → `NotAllowed` suggesting to retry without it. **Conflicts** (choice): if
+HEAD has changed the same files since the base the merge stops and the files stay conflicted as git
+leaves them (`conflicts`; no operation in progress, only `U` entries in the index); nothing is lost,
+because those files had no local changes (check above) and the stash stays in the list: `pop`
+does not delete it (`dropped: false`, with a warning). They are resolved with `index.stage` of the file (then
+the conflict editor, S30); while they exist, apply and push are refused. `pop` without conflicts:
+drop like `stash.drop` (backup `refs/project/backup/stash-...` first). A drop that fails **after**
+the apply is not an error of the pop (`StashPopped::drop_error`): the apply is done and must not be repeated, the
+result has `dropped: false` and a warning "applied but not removed from the list". Result:
+`{"stash": StashEntry, "conflicts": [path], "dropped": bool, "backup": string | null,
 "warnings", "stashes", "status"}`.
 
 ### `stash.drop`
 
-Parametri: `{"index"?, "expected", "confirm"}`.
+Parameters: `{"index"?, "expected", "confirm"}`.
 
-Scrive (`writes`), entra nel diario (§7). Stash scelto come `stash.apply`. Chiede **sempre**
-`"confirm": true` **con `"expected"`**, l'id completo dello stash: senza `confirm`,
-`ConfirmRequired` con posizione, id, messaggio, numero di file tracciati e se ha non tracciati, e
-l'id in `expected` (come per il force di `remote.push`); `confirm` senza `expected` →
-`InvalidParams`; niente cambia. La conferma vale solo per lo stash visto (`expected` diverso da
-`stash@{index}` → `NotAllowed`). Prima un backup del commit in `refs/project/backup/stash-<s>-<ns>`
-(se non riesce non si elimina niente). Risultato: `{"stash": StashEntry, "backup": string,
-"warnings", "stashes", ...diario}`.
+Writes (`writes`), goes into the journal (§7). Stash chosen like `stash.apply`. It **always** requires
+`"confirm": true` **with `"expected"`**, the full id of the stash: without `confirm`,
+`ConfirmRequired` with position, id, message, number of tracked files and whether it has untracked ones, and
+the id in `expected` (as for the force of `remote.push`); `confirm` without `expected` →
+`InvalidParams`; nothing changes. The confirmation is valid only for the stash seen (`expected` different from
+`stash@{index}` → `NotAllowed`). First a backup of the commit in `refs/project/backup/stash-<s>-<ns>`
+(if it fails nothing is deleted). Result: `{"stash": StashEntry, "backup": string,
+"warnings", "stashes", ...journal}`.
 
 ## CliBackend
 
-**Stash** (`stash.*`, S28). Elenco: `git log --walk-reflogs -z --no-show-signature
---no-color --format=tformat:%H%x00%P%x00%ct%x00%gs --end-of-options refs/stash --` (4 campi
-per record, ognuno terminato da NUL; solo se `refs/stash` esiste). Push: prima `ls-files -v`: un file
-`--assume-unchanged` (lettera minuscola) fra quelli scelti → `NotAllowed`, sempre, senza
-guardare il contenuto (`git stash push` non ne vede le modifiche e poi riporta il worktree a
-HEAD con un reset: le perderebbe), prima degli altri controlli. Poi `git -c
+**Stash** (`stash.*`, S28). List: `git log --walk-reflogs -z --no-show-signature
+--no-color --format=tformat:%H%x00%P%x00%ct%x00%gs --end-of-options refs/stash --` (4 fields
+per record, each terminated by NUL; only if `refs/stash` exists). Push: first `ls-files -v`: an
+`--assume-unchanged` file (lowercase letter) among those chosen → `NotAllowed`, always, without
+looking at the content (`git stash push` does not see its changes and then resets the worktree to
+HEAD: it would lose them), before the other checks. Then `git -c
 core.fsmonitor=false [--literal-pathspecs] stash push [--include-untracked]
 --keep-index|--no-keep-index [--message=<msg>] [--pathspec-from-file=- --pathspec-file-nul]`
-(percorsi su stdin). **Eccezione alla regola dei messaggi via stdin**: `git stash` non legge il
-messaggio da stdin né da un file, quindi va in un solo argomento `--message=<testo>` (una riga
-senza caratteri di controllo, controllata dal motore), che git non può leggere come un'altra
-opzione. Lo stash nuovo si riconosce da `refs/stash` prima e dopo (git esce con 0 anche con
-"No local changes to save"); se git fallisce dopo aver creato lo stash, l'errore lo nomina.
-Apply: i file che lo stash tocca (`diff-tree -r -z --name-only --no-renames <base> <id>` e
-`<base> <id>^2`) e i non tracciati che rimette (`ls-tree -r -z --name-only --full-tree
---end-of-options <id>^3`, **senza `--` finale**: `ls-tree` lo prenderebbe per un percorso)
-confrontati con lo stato e con il file system (`symlink_metadata`: un file che lo stash
-aggiunge non deve esistere, nemmeno ignorato, e le sue cartelle devono essere cartelle vere),
-con l'eccezione dei file che hanno già la versione dello stash (voci di `ls-tree -r -z
---full-tree <id>^2` e `<id>` uguali alla voce dell'indice), poi `git -c core.fsmonitor=false
--c merge.directoryRenames=false stash apply [--index] --end-of-options <id>` (l'id, mai
-`stash@{n}`). `merge.directoryRenames=false`: con la rilevazione delle cartelle rinominate un
-file che lo stash aggiunge in `old/` finirebbe in `new/` se HEAD ha rinominato la cartella, e
-sovrascriverebbe un ignorato che c'è lì, che i controlli non vedono (guardano `old/`). Uscita non zero con voci `U` nello stato o `CONFLICT` nell'output: i conflitti
-(risultato, non errore); "conflicts in index" (`--index`): `NotAllowed`, niente modificato.
-Solo se il repo cambia fra i controlli e git, che allora ha già scritto una parte: "already
-exists, no checkout" → `NotAllowed` che dice che l'apply è **rimasto a metà** (git ha già fatto
-il merge dei tracciati, i non tracciati elencati non sono stati rimessi); "would be
-overwritten" → `NotAllowed` con i soli file del blocco subito dopo il messaggio (non il
-riepilogo dello stato che git stampa dopo), "niente modificato" solo se lo stash non ha non
-tracciati, altrimenti avvisa che git potrebbe averli già rimessi. I non tracciati da rimettere
-si controllano sul file system sempre, anche se lo stato li mostra (es. `D.` con il file
-ignorato nel worktree), e l'eccezione dei file che hanno già la versione dello stash vale solo
-per i tracciati. Drop: backup
-`update-ref <ref> <id> ""`, ricontrollo che `stash@{n}` sia ancora l'id, `git stash drop
---quiet --end-of-options stash@{n}` (se fallisce il backup si toglie); git non ha un drop con
-il valore atteso, quindi resta l'istante fra il ricontrollo e `drop`, e dopo l'elenco si
-confronta con quello atteso (diverso → `warnings`). Store (undo di un drop): `git stash store
---quiet --message=<msg> <id>` (`store` rifiuta `--end-of-options`; l'id è esadecimale), poi lo
-stash dev'essere in cima.
+(paths on stdin). **Exception to the messages-via-stdin rule**: `git stash` does not read the
+message from stdin or from a file, so it goes in a single `--message=<text>` argument (one line
+without control characters, checked by the engine), which git cannot read as another
+option. The new stash is recognized from `refs/stash` before and after (git exits with 0 even with
+"No local changes to save"); if git fails after creating the stash, the error names it.
+Apply: the files the stash touches (`diff-tree -r -z --name-only --no-renames <base> <id>` and
+`<base> <id>^2`) and the untracked files it restores (`ls-tree -r -z --name-only --full-tree
+--end-of-options <id>^3`, **without a trailing `--`**: `ls-tree` would take it for a path)
+compared with the status and with the file system (`symlink_metadata`: a file the stash
+adds must not exist, not even ignored, and its directories must be real directories),
+with the exception of files that already have the stash's version (entries of `ls-tree -r -z
+--full-tree <id>^2` and `<id>` equal to the index entry), then `git -c core.fsmonitor=false
+-c merge.directoryRenames=false stash apply [--index] --end-of-options <id>` (the id, never
+`stash@{n}`). `merge.directoryRenames=false`: with directory-rename detection a
+file the stash adds in `old/` would end up in `new/` if HEAD renamed the directory, and
+would overwrite an ignored file there, which the checks do not see (they look at `old/`). Non-zero exit with `U` entries in the status or `CONFLICT` in the output: the conflicts
+(a result, not an error); "conflicts in index" (`--index`): `NotAllowed`, nothing modified.
+Only if the repo changes between the checks and git, which then has already written part: "already
+exists, no checkout" → `NotAllowed` saying the apply was **left half done** (git has already done
+the merge of the tracked files, the untracked ones listed were not restored); "would be
+overwritten" → `NotAllowed` with only the files of the block right after the message (not the
+status summary git prints afterwards), "nothing modified" only if the stash has no untracked
+files, otherwise it warns that git may already have restored them. The untracked files to restore
+are always checked on the file system, even if the status shows them (e.g. `D.` with the ignored
+file in the worktree), and the exception for files that already have the stash's version applies only
+to tracked ones. Drop: backup
+`update-ref <ref> <id> ""`, re-check that `stash@{n}` is still the id, `git stash drop
+--quiet --end-of-options stash@{n}` (if it fails the backup is removed); git has no drop with
+the expected value, so the instant between the re-check and `drop` remains, and afterwards the list is
+compared with the expected one (different → `warnings`). Store (undo of a drop): `git stash store
+--quiet --message=<msg> <id>` (`store` rejects `--end-of-options`; the id is hexadecimal), then the
+stash must be at the top.
 
-## Undo e backup
+## Undo and backup
 
-`stash.push` e `stash.drop` entrano nel diario con lo stash (`JournalEntry::stash`, uno
-`StashRecord`: `{"id", "message", "base", "push": StashPush | null}`); la voce non ha `refs`
-(l'elenco degli stash è il reflog di `refs/stash`, e spostare quel ref non basterebbe).
+`stash.push` and `stash.drop` go into the journal with the stash (`JournalEntry::stash`, a
+`StashRecord`: `{"id", "message", "base", "push": StashPush | null}`); the entry has no `refs`
+(the stash list is the reflog of `refs/stash`, and moving that ref would not be enough).
 
-- **Undo di `stash.push` = `pop` di quello stash con `restore_index`** (come `git stash pop
-  --index`): solo se non c'è un'operazione in corso, HEAD è quella della voce **e sul commit
-  `base`** (così il merge non può andare in conflitto: lo stash si riapplica sullo stesso
-  commit) e lo stash è ancora nell'elenco (in qualunque posizione), altrimenti `UndoConflict` e
-  niente cambia. Valgono i controlli di `stash.apply`: se nel frattempo un file dello stash ha
-  modifiche locali, `NotAllowed` e la voce resta. Prima del drop il commit dello stash va in
-  `refs/project/backup/undo-...` (in `backups`). Se l'apply riesce ma il drop no, l'undo dà un
-  errore che dice che lo stash è stato applicato (non va ripetuto; la voce resta nel diario e lo
-  stash va eliminato con `stash.drop`). **Limite**: dopo un push con `paths` mentre anche altri
-  file erano in stage, git ha messo nello stash tutto l'indice, e `pop --index` non si applica
-  sopra l'indice che ha ancora quei file ("conflicts in index"): l'undo è rifiutato (`NotAllowed`,
-  niente cambia, la voce resta) con un messaggio suo che indica la via d'uscita, `stash.pop`
-  senza `restore_index`. Redo = di nuovo `stash.push` con gli stessi
-  parametri, con la stessa HEAD: lo stash nuovo ha di solito un altro id (la voce si aggiorna) e
-  contiene quello che c'è da mettere da parte al momento del redo (di solito quello che l'undo ha
-  rimesso; se nel frattempo sono cambiati altri file, anche quelli, che restano comunque nello
-  stash).
-- **Undo di `stash.drop` = `git stash store`** dello stesso commit (lo tiene il backup del drop),
-  solo se non è già nell'elenco (`UndoConflict`): torna **in cima** (`stash@{0}`), non nella
-  posizione di prima, perché `git stash store` non sa inserire altrove (scelta: riscrivere il
-  reflog di `refs/stash` a mano sarebbe più fragile). Il messaggio è quello del reflog. Redo =
-  di nuovo il drop, ovunque sia ora lo stash; il backup del drop di solito c'è già, ma se non
-  punta più allo stash (tolto o spostato a mano) se ne fa uno nuovo, `refs/project/backup/redo-...`,
-  prima di eliminarlo.
-- **`stash.apply` e `stash.pop` non entrano nel diario** (scelta): cambiano solo indice e
-  worktree, e annullarli vorrebbe dire togliere dai file quello che lo stash ha aggiunto,
-  mescolato alle modifiche che c'erano già (apply e pop sono ammessi con modifiche ad altri file)
-  o fatte dopo: non c'è un modo sicuro. Niente si perde comunque: dopo `apply` lo stash resta
-  nell'elenco, dopo `pop` il suo commit è in `refs/project/backup/stash-...` (e l'undo di uno
-  `stash.push` precedente, con lo stash ormai tolto, è rifiutato con `UndoConflict`). `can_undo`
-  dopo un apply o un pop riguarda quindi la voce di prima, e la UI non deve presentare l'undo
-  come annullamento dell'apply.
-- Un conflitto lasciato da apply/pop non ha uscite automatiche per ora: si risolve file per file
-  con `index.stage` (poi con l'editor dei conflitti, S30). Grazie ai controlli di `stash.apply`
-  i file in conflitto non avevano modifiche locali: la versione "nostra" è quella di HEAD.
-- `refs/stash` è una protezione **volatile** dei commit (vedi in §7 "Backup dei commit
-  annullati"): i backup `refs/project/backup/stash-...` e `undo-...` di drop e pop sono invece
-  ref veri e propri, che una futura pulizia dei backup deve trattare come gli altri.
+- **Undo of `stash.push` = `pop` of that stash with `restore_index`** (like `git stash pop
+  --index`): only if there is no operation in progress, HEAD is the one of the entry **and on the commit
+  `base`** (so the merge cannot conflict: the stash is reapplied on the same
+  commit) and the stash is still in the list (at any position), otherwise `UndoConflict` and
+  nothing changes. The `stash.apply` checks apply: if in the meantime a file of the stash has
+  local changes, `NotAllowed` and the entry stays. Before the drop the stash commit goes into
+  `refs/project/backup/undo-...` (in `backups`). If the apply succeeds but the drop does not, the undo gives an
+  error saying the stash was applied (it must not be repeated; the entry stays in the journal and the
+  stash must be deleted with `stash.drop`). **Limit**: after a push with `paths` while other
+  files were also staged, git put the whole index in the stash, and `pop --index` does not apply
+  over the index that still has those files ("conflicts in index"): the undo is refused (`NotAllowed`,
+  nothing changes, the entry stays) with its own message pointing to the way out, `stash.pop`
+  without `restore_index`. Redo = `stash.push` again with the same
+  parameters, with the same HEAD: the new stash usually has another id (the entry is updated) and
+  contains what there is to set aside at the time of the redo (usually what the undo
+  restored; if in the meantime other files changed, those too, which stay in the
+  stash anyway).
+- **Undo of `stash.drop` = `git stash store`** of the same commit (kept by the drop's backup),
+  only if it is not already in the list (`UndoConflict`): it returns **to the top** (`stash@{0}`), not to the
+  previous position, because `git stash store` cannot insert elsewhere (choice: rewriting the
+  reflog of `refs/stash` by hand would be more fragile). The message is the reflog's. Redo =
+  the drop again, wherever the stash is now; the drop's backup is usually already there, but if it does not
+  point to the stash any more (removed or moved by hand) a new one is made, `refs/project/backup/redo-...`,
+  before deleting it.
+- **`stash.apply` and `stash.pop` do not go into the journal** (choice): they change only index and
+  worktree, and undoing them would mean removing from the files what the stash added,
+  mixed with the changes that were already there (apply and pop are allowed with changes to other files)
+  or made afterwards: there is no safe way. Nothing is lost anyway: after `apply` the stash stays
+  in the list, after `pop` its commit is in `refs/project/backup/stash-...` (and the undo of a
+  previous `stash.push`, with the stash now removed, is refused with `UndoConflict`). `can_undo`
+  after an apply or a pop therefore refers to the previous entry, and the UI must not present undo
+  as undoing the apply.
+- A conflict left by apply/pop has no automatic way out for now: it is resolved file by file
+  with `index.stage` (then with the conflict editor, S30). Thanks to the `stash.apply` checks
+  the conflicted files had no local changes: the "ours" version is that of HEAD.
+- `refs/stash` is a **volatile** protection of commits (see §7 "Backup of undone
+  commits"): the `refs/project/backup/stash-...` and `undo-...` backups of drop and pop are instead
+  real refs, which a future backup cleanup must treat like the others.
 
-Il `MemoryBackend` registra i backup degli stash in `commit_backups`
-(`refs/project/backup/stash-<n>`, `undo-<n>`, `redo-<n>`) e li risolve come ref.
+The `MemoryBackend` records stash backups in `commit_backups`
+(`refs/project/backup/stash-<n>`, `undo-<n>`, `redo-<n>`) and resolves them as refs.
 
 ## UI (`crates/ui/src/stash.rs`)
 
-**Stash (S28, `crates/ui/src/stash.rs`)**. La sezione "Stash" della colonna sinistra viene da
-`stash.list` (letto con ref e stato, riletto dopo undo/redo e preso dalle risposte dei comandi),
-non da `refs/stash`: una riga per stash (`stash@{n}`, messaggio senza il prefisso `On <branch>:`,
-branch e base, "con non tracciati"). Clic: seleziona lo stash (per id, la posizione cambia) e la
-sua base nel grafo; a destra, al posto dei dettagli del commit, il pannello dello stash con le
-azioni e i file tracciati (`commit.show` sull'id; un file apre `diff.commit` sull'id, cioè il
-confronto con la base); i non tracciati si segnalano solo, perché `commit.show` non li vede.
-Menu contestuale e pannello: Applica, Pop, la casella "Rimetti anche lo stage"
-(`restore_index`), Elimina…. Apply, pop e drop mandano sempre `index` ed `expected` dall'elenco
-visto; un `NotAllowed` va nella barra di stato e l'elenco si rilegge. **Apply e pop non entrano
-nel diario**: l'avviso dice "Non si annulla con «Annulla»" e il pulsante Annulla resta quello
-della voce precedente (il suo suggerimento ne mostra la descrizione). `conflicts` non vuoto apre
-una finestra (non modale) con i file e "Vai alle modifiche": si risolvono con lo stage del file. Un pop riuscito con `dropped: false` e senza conflitti (applicato, ma il drop non è
-riuscito) si segnala in rosso con l'avviso del motore, e per quello stash Pop resta spento (le
-modifiche sono già nei file): resta Elimina.
-Elimina va in due tempi come la rimozione di un remoto: senza `confirm` il motore risponde con
-`ConfirmRequired` e il motivo, il dialogo rosso lo mostra, e solo il clic manda `"confirm":
-true`. "Stash…" (barra in alto, testa dell'area di stage, sezione Stash; attivo solo con
-modifiche) apre un dialogo con messaggio facoltativo (una riga: gli a capo diventano spazi),
-"Includi i file non tracciati" e "Tieni lo stage"; un rifiuto resta nel dialogo. Nel grafo ogni
-stash è un'etichetta sulla riga della base, dopo branch e tag, con solo il bordo grigio: il log
-della lista chiede `"all": true, "stashes": true`, e dopo push, drop e pop riuscito si rilegge.
+**Stash (S28, `crates/ui/src/stash.rs`)**. The "Stash" section of the left column comes from
+`stash.list` (read with refs and status, re-read after undo/redo and taken from command responses),
+not from `refs/stash`: one row per stash (`stash@{n}`, message without the `On <branch>:` prefix,
+branch and base, "with untracked"). Click: selects the stash (by id, the position changes) and its
+base in the graph; on the right, in place of the commit details, the stash panel with the
+actions and the tracked files (`commit.show` on the id; a file opens `diff.commit` on the id, i.e. the
+comparison with the base); untracked files are only flagged, because `commit.show` does not see them.
+Context menu and panel: Apply, Pop, the "Also restore the index" checkbox
+(`restore_index`), Delete…. Apply, pop and drop always send `index` and `expected` from the list
+seen; a `NotAllowed` goes in the status bar and the list is re-read. **Apply and pop do not go into
+the journal**: the notice says "Cannot be undone with “Undo”" and the Undo button stays that
+of the previous entry (its tooltip shows its description). A non-empty `conflicts` opens
+a (non-modal) window with the files and "Go to changes": they are resolved by staging the file. A successful pop with `dropped: false` and without conflicts (applied, but the drop did not
+succeed) is flagged in red with the engine's warning, and for that stash Pop stays disabled (the
+changes are already in the files): Delete remains.
+Delete goes in two steps like removing a remote: without `confirm` the engine responds with
+`ConfirmRequired` and the reason, the red dialog shows it, and only the click sends `"confirm":
+true`. "Stash…" (top bar, head of the stage area, Stash section; active only with
+changes) opens a dialog with an optional message (one line: newlines become spaces),
+"Include untracked files" and "Keep index"; a refusal stays in the dialog. In the graph each
+stash is a label on the base row, after branches and tags, with only a gray border: the list's
+log asks for `"all": true, "stashes": true`, and after push, drop and a successful pop it is re-read.

@@ -1,16 +1,16 @@
-//! Diff di righe per [`super::MemoryBackend`]: gli hunk che scriverebbe `git diff` con le
-//! impostazioni predefinite (3 righe di contesto, hunk vicini uniti).
+//! Line diff for [`super::MemoryBackend`]: the hunks `git diff` would write with the
+//! default settings (3 lines of context, nearby hunks merged).
 //!
-//! Usa la sottosequenza comune più lunga, in tempo e memoria `O(n·m)`: basta per i file piccoli
-//! di un repo in memoria, non per file veri.
+//! It uses the longest common subsequence, in `O(n·m)` time and memory: enough for the small files
+//! of an in-memory repo, not for real files.
 
 use project_domain::{ByteText, Hunk, Line, LineKind};
 
-/// Righe di contesto intorno a ogni gruppo di modifiche, come il default di git.
+/// Context lines around each group of changes, like git's default.
 const CONTEXT: usize = 3;
 
-/// Una riga del file: il testo senza a capo, e se l'a capo c'era. Due righe sono uguali solo se
-/// coincidono entrambi, come per git (`x` in fondo al file senza a capo è diversa da `x\n`).
+/// A line of the file: the text without the newline, and whether the newline was there. Two lines are equal only if
+/// both match, as in git (`x` at the end of a file without newline differs from `x\n`).
 #[derive(PartialEq, Eq)]
 struct Source<'a> {
     text: &'a [u8],
@@ -43,19 +43,19 @@ fn split(content: &[u8]) -> Vec<Source<'_>> {
 
 #[derive(Clone, Copy)]
 enum Op {
-    /// Riga uguale: indice nel vecchio e nel nuovo.
+    /// Equal line: index in the old and in the new.
     Equal(usize, usize),
-    /// Riga tolta: indice nel vecchio.
+    /// Removed line: index in the old.
     Delete(usize),
-    /// Riga aggiunta: indice nel nuovo.
+    /// Added line: index in the new.
     Insert(usize),
 }
 
-/// Le operazioni che portano da `a` a `b`; in un blocco cambiato le righe tolte vengono prima
-/// di quelle aggiunte, come in git.
+/// The operations leading from `a` to `b`; in a changed block the removed lines come before
+/// the added ones, as in git.
 fn ops(a: &[Source], b: &[Source]) -> Vec<Op> {
     let (n, m) = (a.len(), b.len());
-    // lcs[i][j]: lunghezza della sottosequenza comune più lunga di a[i..] e b[j..].
+    // lcs[i][j]: length of the longest common subsequence of a[i..] and b[j..].
     let mut lcs = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
@@ -90,13 +90,13 @@ fn number(index: usize) -> u32 {
     u32::try_from(index).unwrap_or(u32::MAX)
 }
 
-/// Gli hunk del diff da `old` a `new` (contenuti interi dei due file). Vuoto se sono uguali.
+/// The hunks of the diff from `old` to `new` (whole contents of the two files). Empty if they are equal.
 pub(super) fn hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
     let (a, b) = (split(old), split(new));
     let ops = ops(&a, &b);
 
-    // Gruppi di modifiche (indici in `ops`, estremi compresi): due modifiche separate da al
-    // massimo 2 × CONTEXT righe uguali finiscono nello stesso hunk.
+    // Groups of changes (indices in `ops`, ends included): two changes separated by at
+    // most 2 × CONTEXT equal lines end up in the same hunk.
     let mut groups: Vec<(usize, usize)> = Vec::new();
     for (i, op) in ops.iter().enumerate() {
         if matches!(op, Op::Equal(..)) {
@@ -108,7 +108,7 @@ pub(super) fn hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
         }
     }
 
-    // Righe del vecchio e del nuovo prima di ogni operazione.
+    // Lines of the old and of the new before each operation.
     let mut before = Vec::with_capacity(ops.len() + 1);
     let (mut old_seen, mut new_seen) = (0, 0);
     for op in &ops {
@@ -154,7 +154,7 @@ pub(super) fn hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
                     }
                 })
                 .collect();
-            // Con zero righe l'inizio è la riga dopo cui si inserisce (0 = inizio del file).
+            // With zero lines the start is the line after which it inserts (0 = start of the file).
             let start_line = |seen: usize, count: usize| number(seen + usize::from(count > 0));
             Hunk {
                 old_start: start_line(old_before, old_count),
@@ -172,7 +172,7 @@ pub(super) fn hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
 mod tests {
     use super::*;
 
-    /// Gli hunk scritti come li scrive git.
+    /// The hunks written the way git writes them.
     fn text(old: &str, new: &str) -> String {
         let mut out = Vec::new();
         for hunk in hunks(old.as_bytes(), new.as_bytes()) {
@@ -182,19 +182,19 @@ mod tests {
     }
 
     #[test]
-    fn uguali_nessun_hunk() {
+    fn equal_gives_no_hunk() {
         assert_eq!(text("a\nb\n", "a\nb\n"), "");
         assert_eq!(text("", ""), "");
     }
 
     #[test]
-    fn file_nuovo_ed_eliminato() {
+    fn new_and_deleted_file() {
         assert_eq!(text("", "a\nb\n"), "@@ -0,0 +1,2 @@\n+a\n+b\n");
         assert_eq!(text("a\n", ""), "@@ -1 +0,0 @@\n-a\n");
     }
 
     #[test]
-    fn modifica_con_contesto() {
+    fn change_with_context() {
         let old = "1\n2\n3\n4\n5\n6\n7\n8\n";
         let new = "1\n2\n3\n4\nCINQUE\n6\n7\n8\n";
         assert_eq!(
@@ -204,29 +204,29 @@ mod tests {
     }
 
     #[test]
-    fn hunk_lontani_restano_separati_quelli_vicini_si_uniscono() {
+    fn far_hunks_stay_separate_near_ones_merge() {
         let file = |changed: &[usize]| -> String {
             (1..=20)
                 .map(|n| match changed.contains(&n) {
-                    true => format!("riga {n} cambiata\n"),
+                    true => format!("line {n} changed\n"),
                     false => format!("{n}\n"),
                 })
                 .collect()
         };
         let old = file(&[]);
-        // Tra le due modifiche 7 righe uguali: due hunk.
+        // Between the two changes 7 equal lines: two hunks.
         let far = text(&old, &file(&[2, 10]));
         assert_eq!(far.matches("@@ -").count(), 2, "{far}");
         assert!(far.starts_with("@@ -1,5 +1,5 @@\n"), "{far}");
         assert!(far.contains("@@ -7,7 +7,7 @@\n"), "{far}");
-        // Con 6 righe uguali: un solo hunk.
+        // With 6 equal lines: a single hunk.
         let near = text(&old, &file(&[2, 9]));
         assert!(near.starts_with("@@ -1,12 +1,12 @@\n"), "{near}");
         assert_eq!(near.matches("@@ -").count(), 1, "{near}");
     }
 
     #[test]
-    fn ultima_riga_senza_a_capo() {
+    fn last_line_without_newline() {
         assert_eq!(
             text("a\nb", "a\nb\n"),
             "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+b\n"
@@ -236,10 +236,10 @@ mod tests {
     }
 
     #[test]
-    fn inserimento_in_mezzo() {
+    fn insertion_in_the_middle() {
         assert_eq!(
-            text("a\nb\n", "a\nnuova\nb\n"),
-            "@@ -1,2 +1,3 @@\n a\n+nuova\n b\n"
+            text("a\nb\n", "a\nnew\nb\n"),
+            "@@ -1,2 +1,3 @@\n a\n+new\n b\n"
         );
     }
 }

@@ -1,37 +1,37 @@
-//! Stash sul [`CliBackend`] (`stash.list`, `stash.push`, `stash.apply`, `stash.pop`,
-//! `stash.drop`, S28), secondo §5:
+//! Stash on the [`CliBackend`] (`stash.list`, `stash.push`, `stash.apply`, `stash.pop`,
+//! `stash.drop`, S28), per §5:
 //!
-//! - elenco: `git log --walk-reflogs -z --format=tformat:%H%x00%P%x00%ct%x00%gs
-//!   --end-of-options refs/stash --` (id, genitori, data, messaggio del reflog: 4 campi per
-//!   record, ognuno terminato da NUL; il quarto NUL lo mette `-z`), solo se `refs/stash` esiste;
+//! - list: `git log --walk-reflogs -z --format=tformat:%H%x00%P%x00%ct%x00%gs
+//!   --end-of-options refs/stash --` (id, parents, date, reflog message: 4 fields per
+//!   record, each terminated by NUL; the fourth NUL is added by `-z`), only if `refs/stash` exists;
 //! - push: `git -c core.fsmonitor=false [--literal-pathspecs] stash push [--include-untracked]
-//!   --keep-index|--no-keep-index [--message=<messaggio>] [--pathspec-from-file=-
-//!   --pathspec-file-nul]`. `git stash` non legge il messaggio da stdin né da un file: va in un
-//!   solo argomento `--message=<testo>` (una riga, senza caratteri di controllo: lo controlla il
-//!   motore), che git non può leggere come un'altra opzione. Mai `--all` (gli ignorati restano);
-//!   lo stash si riconosce dal valore di `refs/stash` prima e dopo (git esce con 0 anche quando
-//!   non c'è niente da mettere da parte);
-//! - apply: `git -c core.fsmonitor=false stash apply [--index] --end-of-options <id>`, con l'id
-//!   e non `stash@{n}` (la posizione può cambiare); prima i controlli di `git/stash.rs` più il
-//!   file system: un file che lo stash aggiunge, o un non tracciato che rimette, non deve
-//!   esistere nel worktree (nemmeno ignorato, né un file al posto di una sua cartella), e i file
-//!   `--assume-unchanged` che lo stash cambia sono rifiutati (git li sovrascriverebbe senza
-//!   controllarli);
-//! - drop: backup `refs/project/backup/<tipo>-...` sull'id, ricontrollo che `stash@{n}` sia
-//!   ancora quell'id, `git stash drop --quiet --end-of-options stash@{n}`; resta l'istante fra il
-//!   ricontrollo e `drop` (git non ha un drop con il valore atteso), e dopo si confronta l'elenco
-//!   con quello atteso (un altro stash tolto per errore è nei `warnings`);
-//! - store (undo di un drop): `git stash store --quiet --message=<messaggio> <id>` (`store` non
-//!   accetta `--end-of-options`; l'id è esadecimale e non può sembrare un'opzione).
+//!   --keep-index|--no-keep-index [--message=<message>] [--pathspec-from-file=-
+//!   --pathspec-file-nul]`. `git stash` does not read the message from stdin or a file: it goes in a
+//!   single argument `--message=<text>` (one line, no control characters: the engine checks
+//!   it), which git cannot read as another option. Never `--all` (ignored files stay);
+//!   the stash is recognized by the value of `refs/stash` before and after (git exits 0 even when
+//!   there is nothing to stash);
+//! - apply: `git -c core.fsmonitor=false stash apply [--index] --end-of-options <id>`, with the id
+//!   and not `stash@{n}` (the position can change); first the checks of `git/stash.rs` plus the
+//!   file system: a file the stash adds, or an untracked one it restores, must not
+//!   exist in the worktree (not even ignored, nor a file in place of one of its directories), and
+//!   `--assume-unchanged` files that the stash changes are refused (git would overwrite them without
+//!   checking);
+//! - drop: backup `refs/project/backup/<kind>-...` on the id, recheck that `stash@{n}` is
+//!   still that id, `git stash drop --quiet --end-of-options stash@{n}`; the instant between the
+//!   recheck and `drop` remains (git has no drop with an expected value), and afterwards the list is compared
+//!   with the expected one (another stash dropped by mistake goes in `warnings`);
+//! - store (undo of a drop): `git stash store --quiet --message=<message> <id>` (`store` does not
+//!   accept `--end-of-options`; the id is hexadecimal and cannot look like an option).
 
 use super::CliBackend;
 use super::sync::conflicted_in_output;
 use crate::command::{failure, stderr_text};
 use project_domain::{EntryKind, Oid, RepoPath};
 use project_engine::{
-    EngineError, INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped,
-    StashEntry, StashPush, check_no_operation, check_stash_apply, check_stash_push, find_stash,
-    path_matches, stash_blocked, stash_local_changes,
+    EngineError, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
+    StashPush, check_no_operation, check_stash_apply, check_stash_push, find_stash, path_matches,
+    stash_blocked, stash_local_changes,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -54,15 +54,15 @@ impl CliBackend {
             "--",
         ];
         let out = self.run(&args)?;
-        let bad = || EngineError::Git {
+        let bad = || EngineError::GitWithReason {
             command: "log".to_owned(),
-            stderr: format!(
-                "elenco degli stash non riconosciuto: `{}`",
-                String::from_utf8_lossy(&out).escape_debug()
+            reason: msg!(
+                "engine-stash-list-unreadable",
+                output = String::from_utf8_lossy(&out).escape_debug()
             ),
         };
         let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
-        // L'ultimo NUL chiude l'ultimo record: dopo resta un campo vuoto.
+        // The last NUL closes the last record: an empty field remains after it.
         let Some((last, fields)) = fields.split_last() else {
             return Err(bad());
         };
@@ -92,10 +92,10 @@ impl CliBackend {
 
     /// [`GitBackend::stash_push`](project_engine::GitBackend::stash_push).
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
-        // `git stash push` non vede le modifiche dei file `--assume-unchanged` (non le salva) e
-        // poi riporta il worktree a HEAD con un reset: le perderebbe. Rifiutati sempre fra i
-        // file scelti, senza guardare il contenuto, prima degli altri controlli (lo stato non li
-        // mostra: sembrerebbe che non ci sia niente da mettere da parte).
+        // `git stash push` does not see changes to `--assume-unchanged` files (it does not save them) and
+        // then resets the worktree to HEAD: it would lose them. Always refused among the
+        // chosen files, without looking at the content, before the other checks (the status does not
+        // show them: it would look like there is nothing to stash).
         let hidden: Vec<String> = self
             .index_listing()?
             .into_iter()
@@ -109,12 +109,9 @@ impl CliBackend {
             .map(|(p, _)| format!("`{p}`"))
             .collect();
         if !hidden.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "file segnati `--assume-unchanged` ({}): git non ne metterebbe da parte le \
-                 modifiche e poi le cancellerebbe riportando il worktree a HEAD. Niente \
-                 modificato; togliere il segno (`git update-index --no-assume-unchanged`) o \
-                 escluderli con `paths`, e riprovare",
-                hidden.join(", ")
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-stash-push-assume-unchanged",
+                files = hidden.join(", ")
             )));
         }
         let status = self.status_for_write()?;
@@ -139,12 +136,12 @@ impl CliBackend {
         let after = self.ref_value(STASH_REF)?;
         if !out.status.success() {
             if let Some(id) = after.filter(|a| Some(*a) != before) {
-                return Err(EngineError::Git {
+                return Err(EngineError::GitWithReason {
                     command: "stash".to_owned(),
-                    stderr: format!(
-                        "lo stash {id} è stato creato, ma poi git si è fermato ({}): le modifiche \
-                         sono nello stash; controllare il worktree prima di riprovare",
-                        stderr_text(&out)
+                    reason: msg!(
+                        "engine-stash-push-stopped",
+                        id = id,
+                        stderr = stderr_text(&out)
                     ),
                 });
             }
@@ -152,9 +149,9 @@ impl CliBackend {
         }
         let Some(id) = after.filter(|a| Some(*a) != before) else {
             let said = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-            return Err(EngineError::NotAllowed(format!(
-                "niente da mettere da parte: git non ha creato lo stash ({}), niente modificato",
-                if said.is_empty() {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-stash-not-created",
+                output = if said.is_empty() {
                     stderr_text(&out)
                 } else {
                     said
@@ -165,17 +162,14 @@ impl CliBackend {
             .into_iter()
             .next()
             .filter(|s| s.id == id)
-            .ok_or_else(|| EngineError::Git {
+            .ok_or_else(|| EngineError::GitWithReason {
                 command: "stash".to_owned(),
-                stderr: format!(
-                    "lo stash {id} è stato creato, ma non è in cima all'elenco (un altro \
-                     processo?): rileggere gli stash"
-                ),
+                reason: msg!("engine-stash-not-on-top", id = id),
             })
     }
 
-    /// I file tracciati che lo stash cambia (rispetto alla base, nel worktree salvato e
-    /// nell'indice salvato) e i non tracciati che rimette.
+    /// The tracked files the stash changes (relative to the base, in the saved worktree and
+    /// in the saved index) and the untracked ones it restores.
     fn stash_targets(
         &self,
         stash: &StashEntry,
@@ -206,8 +200,8 @@ impl CliBackend {
         }
         let mut untracked = Vec::new();
         if stash.untracked {
-            // Niente `--` in fondo: `ls-tree` lo prenderebbe per un percorso (e non darebbe
-            // niente).
+            // No trailing `--`: `ls-tree` would take it for a path (and would return
+            // nothing).
             let tree = format!("{id}^3");
             let args = [
                 "ls-tree",
@@ -229,8 +223,8 @@ impl CliBackend {
         Ok((tracked.into_iter().collect(), untracked))
     }
 
-    /// Le voci (modo, id) dell'albero di `rev`, per percorso (`ls-tree -r -z --full-tree`, senza
-    /// `--` in fondo).
+    /// The entries (mode, id) of the tree of `rev`, by path (`ls-tree -r -z --full-tree`, without a
+    /// trailing `--`).
     fn tree_entries(&self, rev: &str) -> Result<BTreeMap<RepoPath, (u32, Oid)>, EngineError> {
         let args = [
             "ls-tree",
@@ -243,12 +237,12 @@ impl CliBackend {
         let out = self.run(&args)?;
         let mut entries = BTreeMap::new();
         for record in out.split(|&b| b == 0).filter(|r| !r.is_empty()) {
-            // `<modo> <tipo> <id>\t<percorso>`
-            let bad = || EngineError::Git {
+            // `<mode> <type> <id>\t<path>`
+            let bad = || EngineError::GitWithReason {
                 command: "ls-tree".to_owned(),
-                stderr: format!(
-                    "riga non riconosciuta: `{}`",
-                    String::from_utf8_lossy(record)
+                reason: msg!(
+                    "engine-stash-ls-tree-line",
+                    line = String::from_utf8_lossy(record)
                 ),
             };
             let tab = record.iter().position(|&b| b == b'\t').ok_or_else(bad)?;
@@ -268,9 +262,9 @@ impl CliBackend {
         Ok(entries)
     }
 
-    /// Vero se nel worktree c'è qualcosa al posto del file `path` che git dovrebbe creare: il
-    /// file stesso (anche una cartella o un link) o, al posto di una sua cartella, qualcosa che
-    /// non è una cartella vera.
+    /// True if the worktree has something in place of the file `path` that git would have to create: the
+    /// file itself (even a directory or a link) or, in place of one of its directories, something that
+    /// is not a real directory.
     fn occupied(&self, path: &RepoPath) -> bool {
         let full = self
             .workdir
@@ -299,19 +293,20 @@ impl CliBackend {
         request: &StashApply,
     ) -> Result<StashApplied, EngineError> {
         let command = request.command;
-        check_no_operation(command, "applicherebbe lo stash", self.operation())?;
+        check_no_operation(command, msg!("engine-busy-stash-apply"), self.operation())?;
         let list = self.stash_entries()?;
         let stash = find_stash(&list, &request.id).cloned().ok_or_else(|| {
-            EngineError::NotAllowed(format!(
-                "`{command}`: lo stash {} non è più nell'elenco, niente modificato",
-                request.id
+            EngineError::NotAllowed(msg!(
+                "engine-stash-gone",
+                command = command,
+                id = request.id
             ))
         })?;
         let status = self.status_for_write()?;
         check_stash_apply(command, &status)?;
         let (tracked, untracked) = self.stash_targets(&stash)?;
-        // Le voci dell'indice e del worktree salvati: un file in stage che ha già la stessa
-        // voce in tutti e due (es. dopo un push con `keep_index`) non blocca.
+        // The entries of the saved index and worktree: a staged file that already has the same
+        // entry in both (e.g. after a push with `keep_index`) does not block.
         let saved_index = self.tree_entries(&format!("{}^2", stash.id))?;
         let saved_worktree = self.tree_entries(&stash.id.to_string())?;
         let in_stash = |path: &RepoPath, mode: u32, oid: Oid| {
@@ -325,9 +320,9 @@ impl CliBackend {
         let mut blocked = stash_local_changes(&status, &tracked, &untracked, in_stash);
         let index = self.index_listing()?;
         let in_status: BTreeSet<&RepoPath> = status.entries.iter().map(|e| &e.path).collect();
-        // Un file tracciato che lo stash aggiunge, se è nello stato, l'ha già visto
-        // `stash_local_changes`; un non tracciato da rimettere non deve esistere comunque
-        // (anche se lo stato lo mostra, es. `D.` con il file ignorato nel worktree).
+        // A tracked file the stash adds, if it is in the status, was already seen by
+        // `stash_local_changes`; an untracked one to restore must not exist anyway
+        // (even if the status shows it, e.g. `D.` with the ignored file in the worktree).
         let added = tracked
             .iter()
             .filter(|p| !index.contains_key(*p) && !in_status.contains(p));
@@ -345,19 +340,17 @@ impl CliBackend {
             .map(|p| format!("`{p}`"))
             .collect();
         if !hidden.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "file segnati `--assume-unchanged` che lo stash cambia ({}): git ne \
-                 sovrascriverebbe le modifiche senza controllarle. Niente modificato; togliere il \
-                 segno (`git update-index --no-assume-unchanged`) e riprovare",
-                hidden.join(", ")
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-stash-apply-assume-unchanged",
+                files = hidden.join(", ")
             )));
         }
         self.check_index_unlocked()?;
 
         let id = stash.id.to_string();
-        // `merge.directoryRenames=false`: con la rilevazione delle cartelle rinominate un file
-        // che lo stash aggiunge in `old/` finirebbe in `new/` (se HEAD ha rinominato la
-        // cartella) e sovrascriverebbe un ignorato che c'è lì, che i controlli sopra non vedono.
+        // `merge.directoryRenames=false`: with directory-rename detection a file
+        // the stash adds in `old/` would end up in `new/` (if HEAD renamed the
+        // directory) and would overwrite an ignored file there, which the checks above do not see.
         let mut args = vec![
             "-c",
             "core.fsmonitor=false",
@@ -398,14 +391,14 @@ impl CliBackend {
             });
         }
         if text.contains("onflicts in index") {
-            return Err(EngineError::NotAllowed(format!(
-                "{INDEX_NOT_RESTORED} `{}` non si applicano sopra l'indice attuale: niente \
-                 modificato; riprovare senza `restore_index` (tutto torna fuori stage)",
-                stash.name
+            // The key is `INDEX_NOT_RESTORED`: the undo of `stash.push` recognizes it.
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-stash-index-not-restored",
+                name = stash.name
             )));
         }
-        // Solo se il repo è cambiato fra i controlli e git: in questi casi git ha già scritto
-        // una parte.
+        // Only if the repo changed between the checks and git: in these cases git has already written
+        // part of it.
         let quoted = |files: Vec<String>| {
             files
                 .iter()
@@ -414,24 +407,23 @@ impl CliBackend {
                 .join(", ")
         };
         if text.contains("already exists") {
-            // Git ha già fatto il merge dei file tracciati, poi non ha potuto rimettere i non
-            // tracciati: `<file> already exists, no checkout`.
+            // Git already merged the tracked files, then could not restore the untracked
+            // ones: `<file> already exists, no checkout`.
             let files: Vec<String> = text
                 .lines()
                 .filter_map(|l| l.strip_suffix(" already exists, no checkout"))
                 .map(str::to_owned)
                 .collect();
-            return Err(EngineError::NotAllowed(format!(
-                "`{command}` di `{}` è rimasto a metà: git ha già applicato le modifiche ai file \
-                 tracciati, ma non ha rimesso i non tracciati perché ci sono già ({}). Lo stash \
-                 resta nell'elenco; controllare il worktree prima di riprovare",
-                stash.name,
-                quoted(files)
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-stash-apply-untracked-exist",
+                command = command,
+                name = stash.name,
+                files = quoted(files)
             )));
         }
         if text.contains("would be overwritten") {
-            // I file sono le righe con il tab subito dopo il messaggio (dopo git stampa anche
-            // un riepilogo dello stato, con altre righe con il tab).
+            // The files are the lines with a tab right after the message (afterwards git also prints
+            // a status summary, with other lines starting with a tab).
             let files: Vec<String> = text
                 .lines()
                 .skip_while(|l| !l.contains("would be overwritten"))
@@ -440,20 +432,18 @@ impl CliBackend {
                 .map(str::to_owned)
                 .collect();
             return Err(EngineError::NotAllowed(if stash.untracked {
-                format!(
-                    "`{command}` di `{}` rifiutato da git: sovrascriverebbe modifiche locali a \
-                     {}. I file tracciati non sono stati toccati, ma git potrebbe aver già \
-                     rimesso i non tracciati dello stash (l'apply può essere rimasto a metà; sono \
-                     anche nello stash, che resta nell'elenco)",
-                    stash.name,
-                    quoted(files)
+                msg!(
+                    "engine-stash-apply-refused-partly",
+                    command = command,
+                    name = stash.name,
+                    files = quoted(files)
                 )
             } else {
-                format!(
-                    "`{command}` di `{}` rifiutato da git: sovrascriverebbe modifiche locali a \
-                     {}. Niente modificato; committarle, metterle da parte o scartarle e riprovare",
-                    stash.name,
-                    quoted(files)
+                msg!(
+                    "engine-stash-apply-refused",
+                    command = command,
+                    name = stash.name,
+                    files = quoted(files)
                 )
             }));
         }
@@ -465,9 +455,10 @@ impl CliBackend {
         let command = request.command;
         let list = self.stash_entries()?;
         let stash = find_stash(&list, &request.id).cloned().ok_or_else(|| {
-            EngineError::NotAllowed(format!(
-                "`{command}`: lo stash {} non è più nell'elenco, niente eliminato",
-                request.id
+            EngineError::NotAllowed(msg!(
+                "engine-stash-drop-gone",
+                command = command,
+                id = request.id
             ))
         })?;
         let id = stash.id.to_string();
@@ -475,7 +466,7 @@ impl CliBackend {
             Some(kind) => Some(self.create_backup_ref(
                 kind,
                 &id,
-                &format!("project: backup di {} prima di {command}", stash.name),
+                &format!("project: backup of {} before {command}", stash.name),
             )?),
             None => None,
         };
@@ -486,12 +477,12 @@ impl CliBackend {
                     .output(Some(&this.workdir), &["update-ref", "-d", name, &id]);
             }
         };
-        // Subito prima: la posizione è ancora quella.
+        // Right before: the position is still the same.
         if self.resolve(&stash.name)? != Some(stash.id) {
             forget(self);
-            return Err(EngineError::NotAllowed(format!(
-                "l'elenco degli stash è cambiato mentre si preparava `{command}` (un altro \
-                 processo?): lo stash non è stato eliminato, rileggere gli stash e riprovare"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-stash-drop-list-changed",
+                command = command
             )));
         }
         let args = ["stash", "drop", "--quiet", "--end-of-options", &stash.name];
@@ -508,15 +499,19 @@ impl CliBackend {
             .collect();
         match self.stash_entries() {
             Ok(now) if now.iter().map(|s| s.id).eq(expected.iter().copied()) => {}
-            Ok(_) => warnings.push(format!(
-                "dopo `{command}` l'elenco degli stash non è quello atteso (un altro processo lo \
-                 ha cambiato?): rileggerlo; lo stash eliminato è{}",
-                backup
-                    .as_ref()
-                    .map(|b| format!(" in `{b}`"))
-                    .unwrap_or_else(|| " fra i backup".to_owned())
+            Ok(_) => warnings.push(match &backup {
+                Some(b) => msg!(
+                    "engine-stash-list-unexpected",
+                    command = command,
+                    backup = b
+                ),
+                None => msg!("engine-stash-list-unexpected-no-backup", command = command),
+            }),
+            Err(e) => warnings.push(msg!(
+                "engine-stash-list-unreadable-after",
+                command = command,
+                error = e
             )),
-            Err(e) => warnings.push(format!("dopo `{command}` gli stash non si rileggono ({e})")),
         }
         Ok(StashDropped { backup, warnings })
     }
@@ -532,12 +527,9 @@ impl CliBackend {
         }
         match self.stash_entries()?.first() {
             Some(top) if top.id == *id => Ok(()),
-            _ => Err(EngineError::Git {
+            _ => Err(EngineError::GitWithReason {
                 command: "stash".to_owned(),
-                stderr: format!(
-                    "dopo `git stash store` lo stash {id} non è in cima all'elenco: rileggere gli \
-                     stash"
-                ),
+                reason: msg!("engine-stash-store-not-on-top", id = id),
             }),
         }
     }

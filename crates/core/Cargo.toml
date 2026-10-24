@@ -1,6 +1,6 @@
 [package]
 name = "project-core"
-description = "L0: tipi di base, errori, parsing dell'input"
+description = "L0: base types, errors, input parsing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

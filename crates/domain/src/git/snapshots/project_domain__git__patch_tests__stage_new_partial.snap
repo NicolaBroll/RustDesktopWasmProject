@@ -1,0 +1,10 @@
+---
+source: crates/domain/src/git/patch_tests.rs
+expression: "render(&patch(&f, lines, dir))"
+---
+diff --git a/intent.txt b/intent.txt
+new file mode 100644
+--- /dev/null
++++ b/intent.txt
+@@ -0,0 +1 @@
++ready two

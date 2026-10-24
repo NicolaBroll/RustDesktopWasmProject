@@ -4,12 +4,21 @@ set -euo pipefail
 # Named volumes are created root-owned: hand the Claude config dir to the container user.
 sudo chown -R "$(id -u):$(id -g)" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# Google Chrome stable + system deps, used by the Playwright MCP server (see .mcp.json).
+# Google Chrome stable + system deps, used by `assets/render.sh` (Playwright is only the installer).
 # Chrome stable is not tied to a specific Playwright version, unlike the bundled Chromium.
 npx -y playwright@latest install --with-deps chrome
 
-# Pre-fetch the Playwright MCP server so the first Claude session doesn't wait for it.
-npm install -g @playwright/mcp@latest
+# Virtual display and libraries to run the eframe/glow desktop app headless
+# (`make desktop-shot`): xvfb + xauth for `xvfb-run`, x11-utils (xwininfo, xprop) to
+# inspect the window, imagemagick (`import`) for the screenshot, xdotool to click and type in
+# it when exploring the app.
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+    xvfb xauth x11-utils imagemagick xdotool libxkbcommon-x11-0 libgl1-mesa-dri libegl1
 
-# Toolchain web per egui/wasm: target wasm32, clippy/rustfmt e trunk (vedi `make setup`).
+# mingw-w64 (gcc + windres) and zip for `make windows` (cross-compiled Windows build).
+sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 zip
+rustup target add x86_64-pc-windows-gnu
+
+# clippy and rustfmt for `cargo xtask ci` (see `make setup`).
 make setup

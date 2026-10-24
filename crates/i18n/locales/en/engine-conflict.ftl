@@ -1,0 +1,11 @@
+engine-conflict-worktree-changed = the worktree file changed after `conflict.show`, reload it
+engine-conflict-not-a-file = `{ $path }` in the worktree is a symbolic link or a folder, not a file: the conflict editor works only on files; nothing changed
+engine-conflict-submodule = `{ $path }` is a conflicted submodule: the conflict editor works only on files; resolve it by choosing the submodule commit and staging it
+engine-conflict-not-conflicted = `{ $path }` is not a conflicted file: { $command } works only on the unmerged files of a stopped merge (or rebase, cherry-pick...); nothing changed
+engine-conflict-content-or-delete = give exactly one of `content` (the resolved text) and `"delete": true` (the file is deleted)
+engine-conflict-backup-note = the worktree file as it was before is saved in `{ $backup }`: `git show { $backup }:<path>`
+engine-conflict-io = { $what } `{ $path }` failed: { $error }
+engine-conflict-io-read = reading
+engine-conflict-io-delete = deleting
+engine-conflict-io-mkdir = creating the folder of
+engine-conflict-io-write = writing

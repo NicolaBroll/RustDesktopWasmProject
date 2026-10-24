@@ -1,0 +1,18 @@
+one
+<<<<<<< HEAD
+TWO main
+=======
+TWO other
+>>>>>>> other
+three
+four
+five
+six
+seven
+<<<<<<< HEAD
+EIGHT main
+EIGHT extra
+=======
+EIGHT other
+>>>>>>> other
+nine

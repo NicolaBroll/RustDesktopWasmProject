@@ -2,9 +2,9 @@ use crate::CoreError;
 use serde_json::Value;
 use std::str::FromStr;
 
-/// Invocazione testuale di un comando: `id` oppure `id=<json>`.
+/// Textual invocation of a command: `id` or `id=<json>`.
 ///
-/// È il formato usato dalla CLI (`run --cmd`, `eval`) e dai test.
+/// This is the format used by the CLI (`run --cmd`, `eval`) and by tests.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Invocation {
     pub id: String,
@@ -37,7 +37,7 @@ impl FromStr for Invocation {
     }
 }
 
-/// Un id di comando è non vuoto e usa solo `a-z`, `0-9`, `.`, `_`, `-`.
+/// A command id is non-empty and uses only `a-z`, `0-9`, `.`, `_`, `-`.
 pub fn is_valid_command_id(id: &str) -> bool {
     !id.is_empty()
         && id
@@ -59,15 +59,15 @@ mod tests {
 
     #[test]
     fn id_with_json() {
-        let inv: Invocation = r#" item.add = {"text": "a=b"} "#.parse().unwrap();
-        assert_eq!(inv.id, "item.add");
-        assert_eq!(inv.params, json!({"text": "a=b"}));
+        let inv: Invocation = r#" repo.open = {"path": "a=b"} "#.parse().unwrap();
+        assert_eq!(inv.id, "repo.open");
+        assert_eq!(inv.params, json!({"path": "a=b"}));
     }
 
     #[test]
     fn rejects_bad_id() {
         assert!(matches!(
-            "Item.Add".parse::<Invocation>(),
+            "Repo.Open".parse::<Invocation>(),
             Err(CoreError::InvalidCommandId(_))
         ));
         assert!(matches!(
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn rejects_bad_json() {
         assert!(matches!(
-            "item.add={text".parse::<Invocation>(),
+            "repo.open={path".parse::<Invocation>(),
             Err(CoreError::InvalidParams { .. })
         ));
     }

@@ -1,0 +1,36 @@
+engine-branch-delete-current = `{ $name }` is the current branch (HEAD), nothing deleted
+engine-branch-no-local = there is no local branch `{ $name }`, nothing changed
+engine-branch-not-local = `{ $full }` is not a local branch
+engine-branch-checkout-conflicts = there are conflicted files ({ $files }): resolve them before switching branch, nothing changed
+engine-branch-missing = there is no branch `{ $full }`, nothing changed
+engine-branch-changed = `{ $full }` changed: it should have been { $expected }, now it is { $now }; nothing changed
+engine-branch-name-taken = the name `{ $full }` is already taken by `{ $name }`, nothing changed (a ref is never overwritten)
+engine-branch-not-in-upstream = in neither HEAD nor the upstream `{ $upstream }`
+engine-branch-not-in-head = in HEAD
+engine-branch-same-name = `new_name` is the same as `name`
+engine-branch-unmerged = branch `{ $name }` is not merged: { $unmerged ->
+    [one] 1 commit
+   *[other] { $unmerged } commits
+} (up to { $tip }) are not { $reference }. If it were deleted they would remain only in the backup `refs/project/backup/delete-...` saved first, and `edit.undo` would recreate it
+engine-branch-moved = branch `{ $name }` moved since it was seen: it was { $seen }, now it points to { $target }. Nothing deleted; reload the branches and try again
+engine-branch-delete-active = `{ $name }` is the current branch (HEAD), nothing deleted: switch to another branch first
+engine-branch-expected-hex = `expected` must be the full id ({ $len } hexadecimal digits) of the branch commit: `{ $value }`
+engine-branch-unborn-start = HEAD has no commits yet: give `start`, or create a commit first
+engine-branch-exists = a branch `{ $name }` already exists, nothing changed (a branch is never overwritten)
+engine-branch-delete-other-worktree = `{ $name }` is the current branch of worktree `{ $worktree }`, nothing deleted
+engine-branch-assume-unchanged = files marked `--assume-unchanged` that differ in the target branch ({ $files }): git would overwrite their changes without checking them. Nothing changed; remove the mark (`git update-index --no-assume-unchanged`) and try again
+engine-branch-name-taken-git = the name `{ $name }` is already taken, nothing changed (a ref is never overwritten): { $stderr }
+engine-branch-git-rejects-name = git does not accept `{ $name }` as a branch name
+engine-branch-checkout-head-moved = after the checkout HEAD is { $head } instead of { $target }: a `post-checkout` hook or another process changed it; check HEAD before continuing
+engine-branch-checkout-head-unreadable = after the checkout HEAD cannot be read ({ $error })
+engine-branch-config-not-removed-delete = branch deleted, but the `branch.{ $name }.*` configuration was not removed: { $error }
+engine-branch-rename-moved = after the rename `{ $new }` points to { $now } instead of { $expected }: another process moved the branch during the operation
+engine-branch-config-not-utf8 = the value of `{ $key }` is not UTF-8: not saved, `edit.undo` will not put it back
+engine-branch-config-unreadable = the `branch.{ $name }.*` configuration cannot be read ({ $error }): left untouched
+engine-branch-config-changed = the `branch.{ $name }.*` configuration changed after the undo: left as it is
+engine-branch-config-not-removed = the `branch.{ $name }.*` configuration was not removed: { $error }
+engine-branch-config-exists-saved = a `branch.{ $name }.*` configuration already exists: the one saved with the deletion was not rewritten ({ $entries })
+engine-branch-config-exists = a `branch.{ $name }.*` configuration already exists: the saved one was not rewritten
+engine-branch-memory-no-upstream = `branch.{ $name }.*` configuration without upstream: not rewritten in the in-memory repo
+engine-branch-config-partly = the `branch.{ $name }.*` configuration was only partly rewritten: { $error } (saved values: { $entries })
+engine-branch-config-not-written = configuration not rewritten: { $error }

@@ -1,6 +1,6 @@
 [package]
 name = "project"
-description = "L7: app desktop"
+description = "L7: desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,11 +9,17 @@ publish.workspace = true
 [dependencies]
 project-engine.workspace = true
 project-ui.workspace = true
+project-git.workspace = true
 eframe.workspace = true
 egui.workspace = true
 env_logger.workspace = true
 log.workspace = true
 rfd.workspace = true
+pollster.workspace = true
+notify.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

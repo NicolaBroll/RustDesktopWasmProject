@@ -1,0 +1,91 @@
+diff --git a/adds-newline.txt b/adds-newline.txt
+index 4143b641d796b874c3e1422c6d4db1aa5526c0fe..448258188d17f1ad91197e77ebbd5507135eadd5 100644
+--- a/adds-newline.txt
++++ b/adds-newline.txt
+@@ -1,2 +1,2 @@
+ stays
+-no newline
+\ No newline at end of file
++no newline
+diff --git a/both-without.txt b/both-without.txt
+index 733a9c92a1d5c456c7f4c3cea786a15af8670019..9262aa0f6393ba54902fdf7e5e3bdec965348f98 100644
+--- a/both-without.txt
++++ b/both-without.txt
+@@ -1 +1 @@
+-old no newline
+\ No newline at end of file
++new no newline
+\ No newline at end of file
+diff --git a/code.c b/code.c
+index d36507229d9fbdec053a29a3bc64973ca3addbd5..84cac73353bbff5e82a5cdee258ede37a5deaff1 100644
+--- a/code.c
++++ b/code.c
+@@ -1,6 +1,6 @@
+ int main() {
+     line(1);
+-    line(2);
++    line(2); // changed
+     line(3);
+     line(4);
+     line(5);
+@@ -17,6 +17,7 @@ int main() {
+     line(16);
+     line(17);
+     line(18);
++    new();
+     line(19);
+     line(20);
+ }
+diff --git a/crlf.txt b/crlf.txt
+index 4e349b596c5c9d38a82829fafbaf52281c21e319..24fe5dc7f193e822dd1bd11e21bd6a626bcb7980 100644
+--- a/crlf.txt
++++ b/crlf.txt
+@@ -1,2 +1,2 @@
+ one
+-two
++TWO
+diff --git a/fake-headers.txt b/fake-headers.txt
+index 66afe4e6ad51e0cc75571afa96e7d6287e8162b6..19de88908b96feae4211368c15bfa5ad23f0aaab 100644
+--- a/fake-headers.txt
++++ b/fake-headers.txt
+@@ -1,4 +1,5 @@
+ head
+--- dashes
+-++ naÃ¯ve
++--- a/fake
+++++ b/fake
++diff --git a/x b/x
+ tail
+diff --git a/latin1.txt b/latin1.txt
+index ccfdffe695f049c9ac21e2054099103c7a2cf9ff..46555e31a531c03d4a67a2958ed69fa0857a4c99 100644
+--- a/latin1.txt
++++ b/latin1.txt
+@@ -1,2 +1,2 @@
+ café
+-second
++SECOND
+diff --git a/line-empty.txt b/line-empty.txt
+index 48858ad0dcd066353dddb479b11249aaca791448..d7ce4ed9bfacfdf6149338e140add4fe24631065 100644
+--- a/line-empty.txt
++++ b/line-empty.txt
+@@ -1,3 +1,3 @@
+ first
+ 
+-third
++THIRD
+diff --git a/one-line.txt b/one-line.txt
+index 6c542ab1f03bc83117fabc794b04f903d97cbc6f..4994d72ebe0c34f037a6cef7ff5b12cfa7da5c3d 100644
+--- a/one-line.txt
++++ b/one-line.txt
+@@ -1 +1 @@
+-only
++single
+diff --git a/removes-newline.txt b/removes-newline.txt
+index bbb08e3b9a6247b53b1f525f0200e822d4fd0cf3..7ce7d632789b90498e9c368141781f8f2760107a 100644
+--- a/removes-newline.txt
++++ b/removes-newline.txt
+@@ -1,2 +1,2 @@
+ stays
+-with newline
++with newline
+\ No newline at end of file

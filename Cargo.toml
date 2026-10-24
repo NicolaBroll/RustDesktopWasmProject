@@ -13,19 +13,27 @@ publish = false
 all = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
-# Livelli interni
+# Internal layers
 project-core   = { path = "crates/core" }
+project-i18n   = { path = "crates/i18n" }
 project-domain = { path = "crates/domain" }
 project-engine = { path = "crates/engine" }
 project-ui     = { path = "crates/ui" }
 project-mcp    = { path = "crates/mcp" }
+project-git    = { path = "crates/git" }
 
-# Comuni
+# Common
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 log = "0.4"
+libc = "0.2"
 anyhow = "1"
+
+# Languages
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+unic-langid = "0.9"
 
 # UI
 egui = "0.37"
@@ -40,16 +48,15 @@ eframe = { version = "0.37", default-features = false, features = [
 # Desktop
 env_logger = "0.11"
 rfd = "0.17"
+pollster = "0.4"
+notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
 
-# Web
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = "0.3"
-
-# CLI e strumenti
+# CLI and tools
 clap = { version = "4", features = ["derive"] }
 cargo_metadata = "0.23"
 proptest = "1"
+tempfile = "3"
+insta = "1.49"
 
 [profile.release]
 opt-level = 2

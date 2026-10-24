@@ -1,0 +1,15 @@
+# Undo and redo (`journal.rs`).
+engine-undo-stash-head = HEAD: doveva essere { $expected } sul commit { $base }, ora è { $now } sul commit { $commit }
+engine-undo-stash-head-unborn = HEAD: doveva essere { $expected } sul commit { $base }, ora è { $now }
+engine-undo-nothing-to-redo = niente da rifare: nessuna operazione annullata
+engine-undo-nothing = niente da annullare: nessuna operazione sui ref nel diario di questa sessione
+engine-undo-bad-entry = voce del diario non valida: `{ $description }`, niente modificato
+engine-undo-stash-index = l'undo non può rimettere lo stash { $short_id } con la divisione fra in stage e no: l'indice attuale non è più quello da cui è partito (succede con un push con `paths` quando anche altri file erano in stage: git mette nello stash tutto l'indice). Niente modificato, la voce resta nel diario; per riavere le modifiche, `stash.pop` senza `restore_index` (tutto torna fuori stage)
+engine-undo-stash-gone = lo stash { $short_id } non è più nell'elenco
+engine-undo-stash-present = lo stash { $short_id } è già nell'elenco
+engine-undo-stash-not-dropped = l'undo ha applicato lo stash { $short_id } (le modifiche sono di nuovo nei file) ma non è riuscito a toglierlo dall'elenco ({ $error }): non ripetere l'undo; eliminare lo stash con `stash.drop`. La voce resta nel diario
+engine-undo-stash-conflicts = l'undo ha applicato lo stash { $short_id } ma restano file in conflitto ({ $files }): lo stash resta nell'elenco; risolvere i conflitti con `index.stage`
+engine-undo-delete-worktree-branch = `{ $command }` cancellerebbe `{ $name }`, il branch attivo del worktree `{ $worktree }`: niente modificato
+engine-undo-head-changed-after = dopo `{ $command }` HEAD è { $head } invece di { $target }: un altro processo l'ha cambiata durante l'operazione; controllare HEAD prima di continuare (nessun commit è perso)
+engine-undo-head-unreadable-after = dopo `{ $command }` HEAD non si rilegge ({ $error }): controllare il repository
+engine-undo-head-reflog-grew = durante `{ $command }` un altro processo ha cambiato HEAD ({ $n } voci nuove nel reflog di HEAD invece di una): se era tornata su un branch (`git checkout`), ora è { $target }; rifare il checkout se serve (nessun commit è perso, vedi `git reflog HEAD`)

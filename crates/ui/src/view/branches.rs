@@ -1,0 +1,143 @@
+use super::*;
+
+/// The open branch dialog: name (new or rename), delete confirmation,
+/// refused checkout.
+pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut Vec<Action>) {
+    let modal = egui::Modal::new(egui::Id::unique("branch-dialog")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        match dialog {
+            Dialog::Name(dialog) => name_dialog(ui, dialog, actions),
+            Dialog::Delete(delete) => {
+                let discard::Phase::Confirm { reason } = &delete.phase else {
+                    return;
+                };
+                delete_dialog(ui, delete, reason, actions);
+            }
+            Dialog::Refused(refused) => refused_dialog(ui, refused, actions),
+        }
+    });
+    if modal.should_close() {
+        actions.push(Action::CloseBranchDialog);
+    }
+}
+
+pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mut Vec<Action>) {
+    let (title, button) = match &dialog.kind {
+        NameKind::Create(_) => (tr!("branch-new-title"), tr!("branch-create-button")),
+        NameKind::Rename(_) => (tr!("branch-rename-title"), tr!("branch-rename-button")),
+    };
+    ui.heading(title);
+    ui.add_space(6.0);
+    match &dialog.kind {
+        NameKind::Create(start) => {
+            ui.label(tr!(
+                "branch-create-text",
+                start = &start.label,
+                id = start.target.short()
+            ));
+        }
+        NameKind::Rename(old) => {
+            ui.label(tr!("branch-rename-text", name = old));
+        }
+    }
+    ui.add_space(6.0);
+    let id = ui.make_persistent_id("branch-name");
+    // Enter in the field sends the name: read before the field, which would otherwise take it.
+    let enter = ui.memory(|m| m.has_focus(id))
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let mut name = dialog.name.clone();
+    let edit = egui::TextEdit::singleline(&mut name)
+        .id(id)
+        .hint_text(tr!("branch-name-hint"))
+        .desired_width(f32::INFINITY)
+        .interactive(!dialog.sending);
+    let response = ui.add(edit);
+    // The field takes the keyboard on open.
+    if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+        response.request_focus();
+    }
+    if response.changed() {
+        actions.push(Action::BranchName(name));
+    }
+    if let Some(error) = &dialog.error {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let clicked = ui
+            .add_enabled(dialog.can_submit(), egui::Button::new(button))
+            .clicked();
+        if (clicked || enter) && dialog.can_submit() {
+            actions.push(Action::SubmitBranchName);
+        }
+        if ui
+            .add_enabled(!dialog.sending, egui::Button::new(tr!("branch-close")))
+            .clicked()
+        {
+            actions.push(Action::CloseBranchDialog);
+        }
+        if dialog.sending {
+            ui.spinner();
+        }
+    });
+}
+
+pub(super) fn delete_dialog(
+    ui: &mut Ui,
+    delete: &branch::DeleteDialog,
+    reason: &str,
+    actions: &mut Vec<Action>,
+) {
+    ui.heading(tr!(
+        "branch-delete-heading",
+        name = &delete.name,
+        id = delete.target.short()
+    ));
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("branch-delete-unmerged")).wrap());
+    ui.add_space(6.0);
+    ui.strong(tr!("branch-reason"));
+    ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("branch-delete-backup")).wrap());
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let button = egui::Button::new(
+            RichText::new(tr!("branch-delete-button")).color(ui.visuals().strong_text_color()),
+        )
+        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        if ui.add(button).clicked() {
+            actions.push(Action::ConfirmDeleteBranch);
+        }
+        if ui.button(tr!("branch-dont-delete")).clicked() {
+            actions.push(Action::CloseBranchDialog);
+        }
+    });
+}
+
+/// Maximum height of the file list of the refused checkout; beyond it scrolls.
+pub(super) const REFUSED_LIST_HEIGHT: f32 = 160.0;
+
+pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &mut Vec<Action>) {
+    ui.heading(tr!("branch-refused-heading", name = &refused.name));
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("branch-refused-text")).wrap());
+    ui.add_space(6.0);
+    let n = refused.files.len();
+    ui.strong(tr!("branch-refused-files", n = n));
+    let row = ui.text_style_height(&egui::TextStyle::Monospace);
+    egui::ScrollArea::vertical()
+        .id_salt("checkout-files")
+        .max_height(REFUSED_LIST_HEIGHT)
+        .auto_shrink([false, true])
+        .show_rows(ui, row, n, |ui, range| {
+            for path in &refused.files[range] {
+                ui.monospace(path);
+            }
+        });
+    ui.add_space(10.0);
+    if ui.button(tr!("branch-close")).clicked() {
+        actions.push(Action::CloseBranchDialog);
+    }
+}

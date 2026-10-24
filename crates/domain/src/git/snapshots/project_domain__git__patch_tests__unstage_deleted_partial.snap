@@ -1,0 +1,10 @@
+---
+source: crates/domain/src/git/patch_tests.rs
+expression: "render(&patch(&f, lines, dir))"
+---
+diff --git a/deleted.txt b/deleted.txt
+new file mode 100644
+--- /dev/null
++++ b/deleted.txt
+@@ -0,0 +1 @@
++gone two

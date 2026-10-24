@@ -1,31 +1,31 @@
 use super::*;
 use crate::DomainError;
 
-/// Output reale di git, generato in un repo temporaneo con due commit:
+/// Real git output, generated in a temporary repo with two commits:
 /// `git rev-parse HEAD HEAD~1 > rev-parse.txt` (git 2.43.0).
 const REV_PARSE: &[u8] = include_bytes!("testdata/rev-parse.txt");
 
 const HEX: &str = "8b07c4c7c77b9a070f20c81b2948722f1ccfac5d";
 
 fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("oid di test valido")
+    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
 }
 
 fn reason(err: DomainError) -> String {
     match err {
         DomainError::InvalidOid { reason, .. } => reason,
-        other => panic!("errore inatteso: {other:?}"),
+        other => panic!("unexpected error: {other:?}"),
     }
 }
 
 #[test]
-fn legge_oid_dall_output_di_rev_parse() {
+fn reads_oid_from_rev_parse_output() {
     let oids: Vec<Oid> = REV_PARSE
         .split(|&b| b == b'\n')
         .filter(|line| !line.is_empty())
         .map(Oid::from_hex)
         .collect::<Result<_, _>>()
-        .expect("righe valide");
+        .expect("lines valide");
     assert_eq!(oids.len(), 2);
     assert_eq!(oids[0].to_string(), HEX);
     assert_eq!(
@@ -36,7 +36,7 @@ fn legge_oid_dall_output_di_rev_parse() {
 }
 
 #[test]
-fn byte_corrispondono_alle_cifre() {
+fn bytes_match_the_digits() {
     let id = oid(HEX);
     assert_eq!(id.as_bytes()[0], 0x8b);
     assert_eq!(id.as_bytes()[19], 0x5d);
@@ -44,7 +44,7 @@ fn byte_corrispondono_alle_cifre() {
 }
 
 #[test]
-fn accetta_maiuscole_e_stampa_minuscole() {
+fn accepts_uppercase_and_prints_lowercase() {
     let upper = oid(&HEX.to_uppercase());
     assert_eq!(upper, oid(HEX));
     assert_eq!(upper.to_string(), HEX);
@@ -67,62 +67,62 @@ fn round_trip_display_parse() {
 }
 
 #[test]
-fn short_restituisce_sette_cifre() {
+fn short_returns_seven_digits() {
     assert_eq!(oid(HEX).short(), "8b07c4c");
     assert_eq!(oid(&HEX.to_uppercase()).short(), "8b07c4c");
 }
 
 #[test]
-fn rifiuta_stringa_vuota() {
+fn rejects_empty_string() {
     let err = Oid::from_hex(b"").unwrap_err();
-    assert_eq!(reason(err), "servono 40 cifre esadecimali, trovate 0");
+    assert_eq!(reason(err), "40 hex digits are needed, found 0");
 }
 
 #[test]
-fn rifiuta_lunghezza_sbagliata() {
+fn rejects_wrong_length() {
     assert!(Oid::from_hex(&HEX.as_bytes()[..39]).is_err());
     assert!(Oid::from_hex(format!("{HEX}0").as_bytes()).is_err());
-    // forma abbreviata: non è un oid completo
+    // short form: not a full oid
     let err = Oid::from_hex(b"8b07c4c").unwrap_err();
-    assert_eq!(reason(err), "servono 40 cifre esadecimali, trovate 7");
-    // a capo finale, come nell'output grezzo di git
+    assert_eq!(reason(err), "40 hex digits are needed, found 7");
+    // trailing newline, as in git's raw output
     assert!(Oid::from_hex(format!("{HEX}\n").as_bytes()).is_err());
 }
 
 #[test]
-fn rifiuta_caratteri_non_esadecimali() {
+fn rejects_non_hex_characters() {
     let mut bad = HEX.as_bytes().to_vec();
     bad[10] = b'g';
     let err = Oid::from_hex(&bad).unwrap_err();
-    assert_eq!(reason(err), "carattere non esadecimale in posizione 11");
+    assert_eq!(reason(err), "non-hex character at position 11");
 
     let mut bad = HEX.as_bytes().to_vec();
     bad[0] = b' ';
     assert!(Oid::from_hex(&bad).is_err());
 
-    // byte non UTF-8: l'errore riporta l'input in forma leggibile senza panico
+    // non-UTF-8 bytes: the error reports the input in readable form without panicking
     let mut bad = HEX.as_bytes().to_vec();
     bad[39] = 0xff;
     let err = Oid::from_hex(&bad).unwrap_err();
-    assert!(err.to_string().contains("posizione 40"), "{err}");
+    assert!(err.to_string().contains("position 40"), "{err}");
 
-    // 40 byte ma con un carattere multibyte: lunghezza giusta in byte, contenuto no
-    let s = format!("{}è", &HEX[..38]);
+    // 40 bytes but with a multibyte character: right length in bytes, wrong content
+    let s = format!("{}é", &HEX[..38]);
     assert_eq!(s.len(), 40);
     assert!(s.parse::<Oid>().is_err());
 }
 
 #[test]
-fn messaggio_di_errore_in_italiano() {
+fn error_message_in_english() {
     let err = Oid::from_hex(b"xyz").unwrap_err();
     assert_eq!(
         err.to_string(),
-        "identificatore git `xyz` non valido: servono 40 cifre esadecimali, trovate 3"
+        "invalid git identifier `xyz`: 40 hex digits are needed, found 3"
     );
 }
 
 #[test]
-fn oid_in_json_come_stringa() {
+fn oid_in_json_as_string() {
     let id = oid(HEX);
     let json = serde_json::to_string(&id).unwrap();
     assert_eq!(json, format!("\"{HEX}\""));
@@ -132,22 +132,22 @@ fn oid_in_json_come_stringa() {
 }
 
 #[test]
-fn oid_json_non_valido() {
+fn oid_json_invalid() {
     assert!(serde_json::from_str::<Oid>("\"abc\"").is_err());
     assert!(serde_json::from_str::<Oid>("42").is_err());
     assert!(serde_json::from_str::<Oid>("null").is_err());
     let err = serde_json::from_str::<Oid>("\"abc\"").unwrap_err();
-    assert!(err.to_string().contains("non valido"), "{err}");
+    assert!(err.to_string().contains("invalid"), "{err}");
 }
 
 #[test]
-fn oid_ordinabile_per_byte() {
+fn oid_orderable_by_bytes() {
     let a = oid("0000000000000000000000000000000000000001");
     let b = oid("1000000000000000000000000000000000000000");
     assert!(a < b);
 }
 
-fn commit_completo() -> Commit {
+fn full_commit() -> Commit {
     let author = Signature {
         name: "Anna Rossi".into(),
         email: "anna@example.com".into(),
@@ -167,14 +167,14 @@ fn commit_completo() -> Commit {
             offset_min: -300,
         },
         author,
-        summary: "Unisci il branch funzione".into(),
-        body: "Prima riga del corpo.\n\nSeconda riga.".into(),
+        summary: "Merge the feature branch".into(),
+        body: "First line of the body.\n\nSecond line.".into(),
     }
 }
 
 #[test]
 fn commit_round_trip_json() {
-    let commit = commit_completo();
+    let commit = full_commit();
     assert!(commit.is_merge());
     let json = serde_json::to_value(&commit).unwrap();
     assert_eq!(json["id"], HEX);
@@ -188,8 +188,8 @@ fn commit_round_trip_json() {
 }
 
 #[test]
-fn commit_radice_non_e_merge() {
-    let mut commit = commit_completo();
+fn root_commit_is_not_a_merge() {
+    let mut commit = full_commit();
     commit.parents.clear();
     assert!(!commit.is_merge());
     let json = serde_json::to_string(&commit).unwrap();
@@ -197,12 +197,13 @@ fn commit_radice_non_e_merge() {
 }
 
 #[test]
-fn ref_e_head_round_trip_json() {
+fn ref_and_head_round_trip_json() {
     let refs = vec![
         RefInfo {
             name: "refs/heads/main".into(),
             kind: RefKind::LocalBranch,
             target: oid(HEX),
+            tag_object: None,
             upstream: Some(Upstream {
                 name: "refs/remotes/origin/main".into(),
                 ahead: Some(2),
@@ -210,11 +211,12 @@ fn ref_e_head_round_trip_json() {
             }),
         },
         RefInfo {
-            name: "refs/heads/vecchio".into(),
+            name: "refs/heads/old".into(),
             kind: RefKind::LocalBranch,
             target: oid(HEX),
+            tag_object: None,
             upstream: Some(Upstream {
-                name: "refs/remotes/origin/vecchio".into(),
+                name: "refs/remotes/origin/old".into(),
                 ahead: None,
                 behind: None,
             }),
@@ -223,6 +225,7 @@ fn ref_e_head_round_trip_json() {
             name: "refs/tags/v1.0".into(),
             kind: RefKind::Tag,
             target: oid(HEX),
+            tag_object: Some(oid("0123456789abcdef0123456789abcdef01234567")),
             upstream: None,
         },
     ];
@@ -246,11 +249,12 @@ fn ref_e_head_round_trip_json() {
 }
 
 #[test]
-fn nomi_brevi_dei_ref() {
+fn short_ref_names() {
     let mk = |name: &str, kind| RefInfo {
         name: name.into(),
         kind,
         target: oid(HEX),
+        tag_object: None,
         upstream: None,
     };
     assert_eq!(
@@ -263,16 +267,16 @@ fn nomi_brevi_dei_ref() {
     );
     assert_eq!(mk("refs/tags/v1.0", RefKind::Tag).short_name(), "v1.0");
     assert_eq!(mk("refs/stash", RefKind::Stash).short_name(), "stash");
-    assert_eq!(mk("strano", RefKind::Tag).short_name(), "strano");
+    assert_eq!(mk("strange", RefKind::Tag).short_name(), "strange");
 }
 
 #[test]
-fn target_di_head() {
+fn head_target() {
     let id = oid(HEX);
     assert_eq!(Head::Detached(id).target(), Some(id));
-    let vuoto = Head::Branch {
+    let empty = Head::Branch {
         name: "main".into(),
         target: None,
     };
-    assert_eq!(vuoto.target(), None);
+    assert_eq!(empty.target(), None);
 }

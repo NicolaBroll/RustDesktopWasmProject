@@ -1,0 +1,46 @@
+# Commit message and commit.create response (commit.rs), commit menu (view/commits.rs).
+
+commit-blocked-busy = Attendere la fine dell'operazione in corso
+commit-blocked-conflicts = Ci sono file in conflitto: risolverli e metterli in stage prima di committare
+commit-blocked-merge = Merge in corso: si conclude con «Continua il merge…» nel riquadro in alto (o si annulla con «Annulla il merge…»)
+commit-blocked-rebase = Rebase in corso: si conclude con i comandi del rebase, non con un commit
+commit-blocked-cherry-pick = Cherry-pick in corso: si conclude con i comandi del cherry-pick, non con un commit
+commit-blocked-revert = Revert in corso: si conclude con i comandi del revert, non con un commit
+commit-blocked-am = `git am` in corso: si conclude con `git am --continue`, non con un commit
+commit-blocked-operation = Un'operazione in corso impedisce il commit
+commit-blocked-no-commit = Non c'è ancora un commit da modificare
+commit-blocked-nothing-staged = Niente in stage: mettere in stage le modifiche da committare (oppure attivare amend per cambiare solo il messaggio dell'ultimo commit)
+commit-blocked-no-message = Scrivere il messaggio del commit
+commit-amend-label = Amend dell'ultimo commit
+commit-label = Commit
+commit-unchanged = Nessun cambiamento: l'ultimo commit { $id } è rimasto uguale
+commit-created = Commit { $id } creato
+commit-created-backup = Commit { $id } creato; backup del commit precedente in { $backup }
+commit-amended = Commit { $id } creato al posto di { $previous }; backup del commit precedente in { $backup }
+commit-also-on = ; il commit precedente resta su { $refs }
+commit-git-failed = git commit non riuscito: un hook (pre-commit, commit-msg…), la firma o l'identità (user.name, user.email) hanno fermato il commit. Il messaggio scritto è conservato. Output di git:
+commit-no-output = (nessun output)
+commit-failed-kept = Commit non riuscito: { $error } Il messaggio scritto è conservato.
+commit-unexpected-result = { $command }: risultato inatteso: { $error }
+commit-failed = Commit non riuscito: { $error }
+
+# Commit list and commit menu (view/commits.rs).
+commit-list-loading = Caricamento dei commit…
+commit-list-empty = Nessun commit.
+commit-list-seeking = Ricerca del commit { $id } nei commit più vecchi…
+commit-list-loading-more = Caricamento di altri commit…
+commit-new-branch = Nuovo branch da qui…
+commit-new-branch-hint = Crea un branch su { $id } senza passarci
+commit-list-changes = Modifiche non committate
+commit-list-changes-count = { $n } file
+commit-list-changes-staged = { $n } file, { $staged } in stage
+commit-list-changes-hint = Clic: mostra l'area di stage
+commit-current-branch = branch attivo
+commit-cherry-pick-item = Cherry-pick su «{ $into }»
+commit-cherry-pick-merge-item = Cherry-pick su «{ $into }»…
+commit-revert-item = Revert
+commit-revert-merge-item = Revert…
+commit-cherry-pick-hint = Applica le modifiche di «{ $what }» sopra «{ $into }» con un commit nuovo (autore e messaggio originali). Servono file senza modifiche; con conflitti resta in corso (si risolve o si annulla dal riquadro in alto). «Annulla» lo toglie
+commit-cherry-pick-merge-hint = Applica le modifiche di «{ $what }» sopra «{ $into }» con un commit nuovo (autore e messaggio originali). È un commit di merge: si sceglie prima il genitore di riferimento. Servono file senza modifiche; con conflitti resta in corso (si risolve o si annulla dal riquadro in alto). «Annulla» lo toglie
+commit-revert-hint = Crea su «{ $into }» un commit che annulla le modifiche di «{ $what }». Servono file senza modifiche; con conflitti resta in corso (si risolve o si annulla dal riquadro in alto). «Annulla» lo toglie
+commit-revert-merge-hint = Crea su «{ $into }» un commit che annulla le modifiche di «{ $what }». È un commit di merge: si sceglie prima il genitore di riferimento. Servono file senza modifiche; con conflitti resta in corso (si risolve o si annulla dal riquadro in alto). «Annulla» lo toglie

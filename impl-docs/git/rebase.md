@@ -154,6 +154,21 @@ rebase ends or is aborted; `OperationState::rebase` exposes it. A failure to wri
 from the terminal): the continue then concludes like a terminal rebase, without journal entry and
 with the warning.
 
+## UI
+
+`crates/ui/src/rebase.rs` (model, `RebaseBox`), `view/rebase_view.rs`, tests in `rebase_tests.rs`,
+texts in `rebase.ftl`. Commit menu "Interactive rebase from here…": base = first parent of the
+chosen commit, offered only for a commit on HEAD's first-parent history (loaded commits) with the
+merge gate (branch with commits, no operation, no conflicts). The editor reads `rebase.plan` and
+lists the steps **oldest first** as in the git todo (squash/fixup join the row above): drag handle
+(egui dnd) and up/down arrows, action selector, published badge, dropped rows struck through. The
+message is edited for the selected row, only where the plan takes one (`reword`, last
+`squash`/`fixup` of a group; blank = git's default, `None`). The "Result" pane is
+`RebasePlan::result()`; `validate` errors are shown per `PlanErrorReason` (the row highlighted) and,
+like `is_noop`, disable "Run". `rebase.start` → `ConfirmRequired` opens a confirmation with the
+engine's reason and resends with `"confirm": true`; engine refusals stay in the editor; done → notice
+with the backup and Undo; stopped → the stage area and the operation panel, like the pull's rebase.
+
 ## CliBackend
 
 Plan written to `<git dir>/project-rebase-todo` and copied by the sequence editor:

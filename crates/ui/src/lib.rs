@@ -28,6 +28,7 @@ mod lines;
 mod list;
 mod merge;
 mod merge_view;
+mod rebase;
 mod remotes;
 mod stage;
 mod stash;
@@ -47,9 +48,11 @@ use fetch::FetchBox;
 use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
+use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
+use rebase::RebaseBox;
 use remotes::{AddFields, RemotesBox};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -241,6 +244,31 @@ enum Action {
     CloseMergeDialog,
     /// Closes the window of a rejected merge.
     DismissMergeError,
+    /// Opens the interactive rebase editor for the commits after `base` (the parent of the chosen
+    /// commit, shown as `what`).
+    OpenRebase {
+        base: Oid,
+        what: String,
+    },
+    /// Moves step `from` into the gap above row `to` of the rebase plan (`len` = at the bottom).
+    RebaseMove {
+        from: usize,
+        to: usize,
+    },
+    /// The action of a step of the rebase plan.
+    RebaseChoose(usize, RebaseAction),
+    /// The message of a step of the rebase plan.
+    RebaseMessage(usize, String),
+    /// Selects the step whose message is edited.
+    RebaseSelect(usize),
+    /// "Run rebase" (`rebase.start`).
+    RunRebase,
+    /// Confirms rewriting published commits (`"confirm": true`).
+    ConfirmRebase,
+    /// "Back to the plan" from the confirmation.
+    CancelRebaseConfirm,
+    /// Closes the rebase editor.
+    CloseRebase,
     /// Opens the stage area and, in the center, the file's conflict editor.
     OpenConflict(RepoPath),
     /// Closes the conflict editor (unmarked choices are lost).
@@ -326,6 +354,10 @@ enum Request {
     /// `merge.*`, `commit.cherry_pick`, `commit.revert`, `cherry_pick.*`, `revert.*` (the state
     /// is in [`MergeBox`]).
     Merge(u64, merge::Op),
+    /// `rebase.plan` for the editor (the state is in [`RebaseBox`]).
+    RebasePlan(u64),
+    /// `rebase.start` from the editor.
+    Rebase(u64),
     /// `conflict.show` with the read number of [`ConflictBox`].
     ConflictShow(u64, u64),
     /// `conflict.resolve` (the state is in [`ConflictBox`]).
@@ -373,6 +405,8 @@ struct RepoView {
     stash: StashBox,
     /// The merge started, the operation in progress (panel) and the Continue and Abort dialogs.
     merge: MergeBox,
+    /// The interactive rebase editor.
+    rebase: RebaseBox,
     /// The conflict editor, in place of the graph when it is open.
     conflict: ConflictBox,
     /// Grows with every new status: the operation in progress is re-read once per status.
@@ -412,6 +446,7 @@ impl RepoView {
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
             merge: MergeBox::default(),
+            rebase: RebaseBox::default(),
             conflict: ConflictBox::default(),
             status_seq: 0,
             history: History::default(),
@@ -457,6 +492,7 @@ impl RepoView {
             || self.remotes.modal_open()
             || self.stash.modal_open()
             || self.merge.modal_open()
+            || self.rebase.modal_open()
     }
 
     /// The last commit (HEAD), if it is among the loaded ones.
@@ -739,6 +775,15 @@ impl App {
             | Action::SubmitMainline
             | Action::CloseMergeDialog
             | Action::DismissMergeError => self.apply_merge(action),
+            Action::OpenRebase { .. }
+            | Action::RebaseMove { .. }
+            | Action::RebaseChoose(..)
+            | Action::RebaseMessage(..)
+            | Action::RebaseSelect(..)
+            | Action::RunRebase
+            | Action::ConfirmRebase
+            | Action::CancelRebaseConfirm
+            | Action::CloseRebase => self.apply_rebase(action),
             Action::OpenConflict(..)
             | Action::CloseConflict
             | Action::RestartConflict
@@ -1091,6 +1136,20 @@ impl App {
                 self.receive_merge(generation, op, done);
                 continue;
             }
+            // The plan's errors are shown in the editor.
+            if let Request::RebasePlan(generation) = request {
+                if let Some(repo) = self.current(generation) {
+                    if let Err(e) = &done.result {
+                        log::warn!("{}: {e}", done.command);
+                    }
+                    repo.rebase.receive_plan(done.result);
+                }
+                continue;
+            }
+            if let Request::Rebase(generation) = request {
+                self.receive_rebase(generation, done);
+                continue;
+            }
             // The conflict editor shows read errors by itself.
             if let Request::ConflictShow(generation, seq) = request {
                 if let Some(repo) = self.current(generation) {
@@ -1223,6 +1282,8 @@ impl App {
             | Request::Stash(..)
             | Request::Operation(..)
             | Request::Merge(..)
+            | Request::RebasePlan(..)
+            | Request::Rebase(..)
             | Request::ConflictShow(..)
             | Request::ConflictResolve(..) => {}
         }
@@ -1385,6 +1446,9 @@ impl eframe::App for App {
                 }
                 if let Some(dialog) = repo.merge.dialog() {
                     merge_view::merge_dialog(&ctx, repo, dialog, &mut actions);
+                }
+                if let Some(editor) = repo.rebase.editor() {
+                    view::rebase_editor(&ctx, editor, &mut actions);
                 }
                 if let Some(failure) = repo.merge.failure() {
                     view::failure_window(

@@ -889,7 +889,7 @@ fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String
 }
 
 /// The git warnings and the problem after a successful operation: status or refs not reread.
-fn reread_warning(
+pub(crate) fn reread_warning(
     what: &str,
     warnings: &[String],
     status: Option<String>,
@@ -1249,16 +1249,30 @@ impl App {
             return;
         };
         repo.write_label = None;
-        match repo
+        let received = repo
             .merge
-            .receive(op, done.result, done.error_kind, done.error_detail)
-        {
+            .receive(op, done.result, done.error_kind, done.error_detail);
+        self.apply_received(generation, &done.command, received);
+    }
+
+    /// What came back from a merge, cherry-pick, revert or rebase command: the notice, status,
+    /// refs and journal from the response, the log reread if the branch moved.
+    pub(crate) fn apply_received(
+        &mut self,
+        generation: u64,
+        command: &str,
+        received: merge::Received,
+    ) {
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        match received {
             merge::Received::Inline | merge::Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
             merge::Received::Done(outcome) => {
-                log::info!("{}: {}", done.command, outcome.notice);
+                log::info!("{command}: {}", outcome.notice);
                 repo.history = outcome.history.clone();
                 let refs_read = outcome.refs.is_some();
                 if let Some(refs) = outcome.refs {
@@ -1292,7 +1306,7 @@ impl App {
                 }
             }
             merge::Received::Failed { message, reload } => {
-                log::warn!("{}: {message}", done.command);
+                log::warn!("{command}: {message}");
                 self.error = message;
                 self.notice.clear();
                 if reload {

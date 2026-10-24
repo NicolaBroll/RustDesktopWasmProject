@@ -17,6 +17,8 @@ make run          # desktop app
 make desktop-shot # headless screenshot of the desktop app -> target/desktop.png
 make demo-repo    # demo repo to try the app -> target/demo-repo
 make cli ARGS="commands --search repo"
+make appimage     # Linux AppImage -> target/appimage (see packaging/README.md)
+make windows      # Windows zip, cross-compiled -> target/windows
 ```
 
 ## CLI

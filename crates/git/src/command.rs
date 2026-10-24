@@ -91,6 +91,7 @@ impl Git {
             .stderr(Stdio::piped())
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C");
+        no_console_window(&mut cmd);
         for key in REPO_ENV
             .iter()
             .chain(PATHSPEC_ENV)
@@ -479,6 +480,18 @@ fn detach_from_terminal(cmd: &mut Command) {
 #[cfg(not(unix))]
 fn detach_from_terminal(_cmd: &mut Command) {}
 
+/// On Windows a console program started by the GUI app would open a console window for every
+/// git call: `CREATE_NO_WINDOW` keeps it hidden.
+#[cfg(windows)]
+fn no_console_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn no_console_window(_cmd: &mut Command) {}
+
 /// SIGTERM to the process group of `child` (git and its children: ssh, helpers, `index-pack`).
 #[cfg(unix)]
 fn terminate(child: &mut Child) {
@@ -502,6 +515,9 @@ fn signal_group(child: &mut Child, signal: libc::c_int) {
     }
 }
 
+/// Windows has no SIGTERM or process groups here: `TerminateProcess` stops git alone (its
+/// children, e.g. ssh, may outlive it) and git cannot remove its lock files (e.g. `index.lock`),
+/// which may then remain.
 #[cfg(not(unix))]
 fn terminate(child: &mut Child) {
     let _ = child.kill();

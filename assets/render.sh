@@ -17,3 +17,5 @@ render icon.svg icon-512.png 512 512
 render icon.svg favicon-32.png 32 32
 render logo.svg logo.png 1500 512
 render banner.svg banner.png 1280 640
+# Windows icon of the .exe (apps/project/build.rs), from the PNGs rendered above.
+convert "$here/icon-512.png" -define icon:auto-resize=256,64,48,32,16 "$here/icon.ico"

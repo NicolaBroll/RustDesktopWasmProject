@@ -11,7 +11,7 @@
 
 ## Next steps
 
-- [ ] Packaging (`packaging/`): AppImage/deb with `SHA256SUMS.txt`, then signed MSI/DMG.
+- [x] Packaging (`packaging/`): Linux AppImage and Windows zip with `SHA256SUMS.txt` (S37); deb, signed MSI/DMG later.
 - [ ] `cargo deny check` in CI (configuration already in `deny.toml`).
 - [ ] Desktop: non-blocking file dialogs (`rfd::AsyncFileDialog`).
 - [ ] UI control for agents (off by default, loopback only, token).

@@ -1,0 +1,321 @@
+//! Branches on the [`MemoryBackend`] (`branch.create`, `branch.checkout`, `branch.delete`,
+//! `branch.rename` and their undo/redo), with the same refusals as the `CliBackend`.
+//!
+//! The checkout is stricter than git: it refuses ([`EngineError::CheckoutConflict`]) if a file
+//! that differs between HEAD and the destination has any change (staged or not), or if the
+//! destination contains a file that is untracked or ignored in the worktree; git also accepts
+//! some cases where the change matches the destination. The deletion backups
+//! go in [`MemoryBackend::commit_backups`] (`refs/project/backup/delete-<n>`).
+//! The in-memory repo has no extra worktrees or configuration: the upstream follows the
+//! rename and disappears with the deletion, like the `branch.<name>` section in git.
+
+use super::write::TreeEntry;
+use super::{HEADS, HeadRef, MemoryBackend, REMOTES};
+use crate::git::{
+    BACKUP_PREFIX, BranchDeleted, ConfigEntry, HeadState, RestoreOutcome, check_new_branch_name,
+    check_no_operation, short,
+};
+use crate::{EngineError, Message};
+use project_domain::{EntryKind, Oid, RepoPath};
+use std::collections::{BTreeMap, BTreeSet};
+
+impl MemoryBackend {
+    /// Error if `full` cannot be created: it already exists, or a ref exists that contains it or that
+    /// it contains (`a` for `a/b`, `a/b` for `a`), as for git.
+    fn check_free(&self, full: &str) -> Result<(), EngineError> {
+        let clash = self.refs.keys().find(|name| {
+            *name == full
+                || name.starts_with(&format!("{full}/"))
+                || full.starts_with(&format!("{name}/"))
+        });
+        match clash {
+            Some(name) => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-name-taken",
+                full = full,
+                name = name
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// The value of the branch `full`, which must be `expected`.
+    pub(super) fn check_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
+        match self.refs.get(full) {
+            Some(entry) if entry.target == *expected => Ok(()),
+            Some(entry) => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-changed",
+                full = full,
+                expected = short(expected),
+                now = short(&entry.target)
+            ))),
+            None => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-missing",
+                full = full
+            ))),
+        }
+    }
+
+    pub(super) fn unmerged(&self, tip: &Oid, into: &[Oid]) -> usize {
+        let merged: BTreeSet<Oid> = into.iter().flat_map(|id| self.reachable(*id)).collect();
+        self.reachable(*tip).difference(&merged).count()
+    }
+
+    pub(super) fn create_local_branch(
+        &mut self,
+        name: &str,
+        target: &Oid,
+    ) -> Result<(), EngineError> {
+        check_new_branch_name("branch.create", name)?;
+        let full = format!("{HEADS}{name}");
+        self.check_free(&full)?;
+        if !self.commits.contains_key(target) {
+            return Err(EngineError::UnknownRev(target.to_string()));
+        }
+        self.set_ref(full, *target, None);
+        Ok(())
+    }
+
+    pub(super) fn checkout_head(
+        &mut self,
+        target: &HeadState,
+    ) -> Result<RestoreOutcome, EngineError> {
+        check_no_operation(
+            "branch.checkout",
+            msg!("engine-busy-checkout"),
+            self.operation,
+        )?;
+        let unmerged: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
+            .map(|e| e.path.to_string())
+            .collect();
+        if !unmerged.is_empty() {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-checkout-conflicts",
+                files = unmerged.join(", ")
+            )));
+        }
+        let (head, oid, label) = match target {
+            HeadState::Branch(full) => {
+                let name = full.strip_prefix(HEADS).ok_or_else(|| {
+                    EngineError::NotAllowed(msg!("engine-branch-not-local", full = full))
+                })?;
+                let entry = self.refs.get(full).ok_or_else(|| {
+                    EngineError::NotAllowed(msg!("engine-branch-no-local", name = name))
+                })?;
+                (
+                    HeadRef::Branch(name.to_owned()),
+                    entry.target,
+                    name.to_owned(),
+                )
+            }
+            HeadState::Detached(oid) => {
+                if !self.commits.contains_key(oid) {
+                    return Err(EngineError::UnknownRev(oid.to_string()));
+                }
+                (HeadRef::Detached(*oid), *oid, oid.to_string())
+            }
+        };
+        let new_tree = self.tree_at(oid);
+        let (differing, files) = self.switch_plan(&new_tree);
+        if !files.is_empty() {
+            return Err(EngineError::CheckoutConflict {
+                target: label,
+                files,
+                stderr: String::new(),
+            });
+        }
+        let index = self.switch_index(&differing, &new_tree);
+        self.head = head;
+        self.rebase_entries(&index);
+        Ok(RestoreOutcome::default())
+    }
+
+    /// To bring HEAD (index and worktree) to the tree `new_tree`: the files that differ between HEAD and
+    /// `new_tree`, and the files with local changes that would prevent it (any change,
+    /// staged or not, to a differing file; an untracked or ignored one that is a file, a
+    /// folder of a file or a file in place of a folder of `new_tree`).
+    pub(super) fn switch_plan(
+        &self,
+        new_tree: &BTreeMap<RepoPath, TreeEntry>,
+    ) -> (BTreeSet<RepoPath>, Vec<String>) {
+        let old_tree = self.head_tree();
+        let differing: BTreeSet<RepoPath> = old_tree
+            .keys()
+            .chain(new_tree.keys())
+            .filter(|p| old_tree.get(*p) != new_tree.get(*p))
+            .cloned()
+            .collect();
+        let mut files = Vec::new();
+        for entry in &self.entries {
+            let hit = match &entry.kind {
+                // The file itself, a folder of it that becomes a file (`d/x` untracked and
+                // `d` in the destination), or a file in place of a folder of the destination.
+                EntryKind::Untracked | EntryKind::Ignored => {
+                    let path = entry.path.as_bytes();
+                    let inside = |dir: &[u8]| {
+                        path.len() > dir.len() && path.starts_with(dir) && path[dir.len()] == b'/'
+                    };
+                    new_tree.keys().any(|p| {
+                        let p = p.as_bytes();
+                        p == path
+                            || inside(p)
+                            || (p.len() > path.len()
+                                && p.starts_with(path)
+                                && p[path.len()] == b'/')
+                    })
+                }
+                EntryKind::Renamed { original, .. } | EntryKind::Copied { original, .. } => {
+                    differing.contains(&entry.path) || differing.contains(original)
+                }
+                _ => differing.contains(&entry.path),
+            };
+            if hit {
+                files.push(entry.path.to_string());
+            }
+        }
+        (differing, files)
+    }
+
+    /// The index after switching to `new_tree` (the `differing` files taken from there, the others
+    /// as they were), and the worktree of those files becomes clean. To call after [`Self::switch_plan`]
+    /// without conflicted files, then move HEAD and call `rebase_entries` with the index.
+    pub(super) fn switch_index(
+        &mut self,
+        differing: &BTreeSet<RepoPath>,
+        new_tree: &BTreeMap<RepoPath, TreeEntry>,
+    ) -> BTreeMap<RepoPath, TreeEntry> {
+        let mut index = self.index_tree();
+        for path in differing {
+            match new_tree.get(path) {
+                Some(entry) => {
+                    index.insert(path.clone(), *entry);
+                }
+                None => {
+                    index.remove(path);
+                }
+            }
+            self.worktree.remove(path);
+        }
+        index
+    }
+
+    pub(super) fn delete_local_branch(
+        &mut self,
+        name: &str,
+        expected: &Oid,
+    ) -> Result<BranchDeleted, EngineError> {
+        if self.head == HeadRef::Branch(name.to_owned()) {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-delete-current",
+                name = name
+            )));
+        }
+        let full = format!("{HEADS}{name}");
+        self.check_value(&full, expected)?;
+        let prefix = format!("{BACKUP_PREFIX}delete-");
+        let n = self
+            .commit_backups
+            .iter()
+            .filter(|(b, _)| b.starts_with(&prefix))
+            .count()
+            + 1;
+        let backup = format!("{prefix}{n}");
+        self.commit_backups.push((backup.clone(), *expected));
+        self.refs.remove(&full);
+        let config = self.branch_config(name);
+        self.upstreams.remove(&full);
+        Ok(BranchDeleted {
+            backup,
+            config,
+            warnings: Vec::new(),
+        })
+    }
+
+    /// The `branch.<name>.*` "configuration" of the in-memory repo: the upstream, as git
+    /// would write it (`remote` and `merge`).
+    fn branch_config(&self, name: &str) -> Vec<ConfigEntry> {
+        let Some(upstream) = self.upstreams.get(&format!("{HEADS}{name}")) else {
+            return Vec::new();
+        };
+        let rest = upstream.strip_prefix(REMOTES).unwrap_or(upstream);
+        let (remote, branch) = rest.split_once('/').unwrap_or((rest, ""));
+        vec![
+            ConfigEntry {
+                key: format!("branch.{name}.remote"),
+                value: Some(remote.to_owned()),
+            },
+            ConfigEntry {
+                key: format!("branch.{name}.merge"),
+                value: Some(format!("{HEADS}{branch}")),
+            },
+        ]
+    }
+
+    pub(super) fn set_branch_config(
+        &mut self,
+        name: &str,
+        entries: &[ConfigEntry],
+        remove: bool,
+    ) -> Vec<Message> {
+        let current = self.branch_config(name);
+        let full = format!("{HEADS}{name}");
+        if remove {
+            if current == entries {
+                self.upstreams.remove(&full);
+                Vec::new()
+            } else {
+                vec![msg!("engine-branch-config-changed", name = name)]
+            }
+        } else if entries.is_empty() {
+            Vec::new()
+        } else if !current.is_empty() {
+            vec![msg!("engine-branch-config-exists", name = name)]
+        } else {
+            let value = |suffix: &str| {
+                entries
+                    .iter()
+                    .find(|e| e.key == format!("branch.{name}.{suffix}"))
+                    .and_then(|e| e.value.clone())
+            };
+            match (value("remote"), value("merge")) {
+                (Some(remote), Some(merge)) => {
+                    let branch = merge.strip_prefix(HEADS).unwrap_or(&merge).to_owned();
+                    self.upstreams
+                        .insert(full, format!("{REMOTES}{remote}/{branch}"));
+                    Vec::new()
+                }
+                _ => vec![msg!("engine-branch-memory-no-upstream", name = name)],
+            }
+        }
+    }
+
+    pub(super) fn rename_local_branch(
+        &mut self,
+        from: &str,
+        to: &str,
+        expected: &Oid,
+    ) -> Result<RestoreOutcome, EngineError> {
+        check_new_branch_name("branch.rename", to)?;
+        let (old, new) = (format!("{HEADS}{from}"), format!("{HEADS}{to}"));
+        self.check_value(&old, expected)?;
+        let entry = self.refs.remove(&old).expect("controllato sopra");
+        if let Err(e) = self.check_free(&new) {
+            self.refs.insert(old, entry);
+            return Err(e);
+        }
+        self.refs.insert(new.clone(), entry);
+        if let Some(up) = self.upstreams.remove(&old) {
+            self.upstreams.insert(new, up);
+        }
+        if self.head == HeadRef::Branch(from.to_owned()) {
+            self.head = HeadRef::Branch(to.to_owned());
+        }
+        Ok(RestoreOutcome::default())
+    }
+}
+
+#[cfg(test)]
+#[path = "branch_tests.rs"]
+mod tests;

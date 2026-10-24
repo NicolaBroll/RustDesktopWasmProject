@@ -1,28 +1,38 @@
 ---
 name: git-engine
-description: Implementa motore e backend del client git (crates/engine, crates/git, crates/mcp, apps/project-cli, xtask, CI) - trait GitBackend, MemoryBackend, CliBackend che esegue git, sessione, comandi del Registry, CLI e MCP. Usalo per gli step della roadmap assegnati a git-engine.
+description: Implements the engine and backend of the git client (crates/engine, crates/git, crates/mcp, apps/project-cli, xtask, CI) - GitBackend trait, MemoryBackend, CliBackend that runs git, session, Registry commands, CLI and MCP. Use it for the roadmap steps assigned to git-engine.
 ---
 
-Lavori sul client git descritto in `impl-docs/ARCHITETTURA-git.md`; lo step da fare è in
-`impl-docs/ROADMAP-git.md`. Leggi entrambi e `AGENTS.md` prima di iniziare.
+You work on the git client. First read `impl-docs/git/rules.md` (invariants, safety
+checklist, how to keep output small) and the step in `impl-docs/ROADMAP-git.md`; then only the files
+in `impl-docs/git/` for the functions you touch and, from `impl-docs/ARCHITECTURE-git.md`, only the
+sections you need (search with `grep -n`). If whoever launches you points to files and lines, start there.
 
-Ambito: `crates/engine`, `crates/git`, `crates/mcp`, `apps/project-cli`, `xtask`, `.github`.
-La UI la tocchi solo quanto basta perché compili; il resto è di `egui-ui`.
+Branch: every implementation starts from the latest version of `origin/dev` (`AGENTS.md`, "Branches").
+First `git fetch origin dev`; create a new branch with `git checkout -b <name> origin/dev`. If
+you work on an existing branch, check with `git merge-base --is-ancestor origin/dev HEAD` that it
+contains the latest `origin/dev`; if not, stop and say so.
 
-Regole:
-- Ogni operazione è un comando del `Registry` con id stabile e parametri JSON
-  (`#[serde(deny_unknown_fields)]`). Un id pubblicato non si rinomina.
-- Chiamate a git secondo §5 dell'architettura: mai una shell; `-C <repo>`,
-  `-c core.quotePath=false`; `--end-of-options` prima di rev e nomi forniti dall'utente, `--`
-  prima dei percorsi; `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`; messaggi via stdin.
-- Le operazioni che possono far perdere dati chiedono `"confirm": true` e salvano un backup
-  (§7). Senza `confirm` restituiscono un errore che spiega cosa succederebbe.
-- Gli errori di git diventano `EngineError` con il testo di stderr.
-- Un nuovo crate va dichiarato in `xtask/src/layers.rs`. `project-git` è L6 e solo le app L7 lo
-  importano.
-- Ogni comando ha test sul `MemoryBackend`; ogni metodo del `CliBackend` ha test di integrazione
-  su repo temporanei con l'helper di `crates/git/tests/common/` (quando esiste).
-- Se aggiungi o cambi comandi, aggiorna README e `AGENTS.md` dove elencano CLI e strumenti MCP.
+Scope: `crates/engine`, `crates/git`, `crates/mcp`, `apps/project-cli`, `xtask`, `.github`.
+You touch the UI only as much as needed for it to compile; the rest belongs to `egui-ui`.
 
-Chiudi con `cargo xtask ci` verde e spunta lo step in `impl-docs/ROADMAP-git.md`. Nel resoconto
-elenca i comandi nuovi con i parametri: li userà `egui-ui`.
+Rules:
+- Every operation is a `Registry` command with a stable id and JSON parameters
+  (`#[serde(deny_unknown_fields)]`). A published id is never renamed.
+- Calls to git follow §5 of the architecture: never a shell; `-C <repo>`,
+  `-c core.quotePath=false`; `--end-of-options` before user-supplied revs and names, `--`
+  before paths; `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`; messages via stdin.
+- Operations that can lose data require `"confirm": true` and save a backup
+  (§7). Without `confirm` they return an error that explains what would happen.
+- Git errors become `EngineError` with the stderr text.
+- A new crate must be declared in `xtask/src/layers.rs`. `project-git` is L6 and only the L7 apps
+  import it.
+- Every command has tests on the `MemoryBackend`; every `CliBackend` method has integration tests
+  on temporary repos with the helper in `crates/git/tests/common/` (when it exists).
+- If you add or change commands, update the README and `impl-docs/git/cli.md` (CLI examples).
+
+While working, run targeted `cargo test -q -p <crate>`; finish with a green `cargo xtask ci --quiet`
+and tick the step in `impl-docs/ROADMAP-git.md`. Before delivering, go through the checklist in `impl-docs/git/rules.md` one item at a time for every new or
+changed write, with a test for every point you can trigger: it is what `safety-reviewer`
+will check. Short report (15-20 lines): new commands with parameters and result fields (`egui-ui`
+will use them), non-obvious choices, files touched, CI result.

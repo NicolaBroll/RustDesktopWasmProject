@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=BinariGit
+Comment=Graphical git client
+Exec=binarigit %F
+Icon=binarigit
+Terminal=false
+Categories=Development;RevisionControl;

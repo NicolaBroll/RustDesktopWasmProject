@@ -1,3 +1,3 @@
-# I lint attivi sono in [workspace.lints] (Cargo.toml); `cargo xtask ci` usa -D warnings.
-# Qui vanno solo le soglie dei singoli lint, per esempio:
+# Active lints are in [workspace.lints] (Cargo.toml); `cargo xtask ci` uses -D warnings.
+# Only per-lint thresholds go here, for example:
 # too-many-arguments-threshold = 8

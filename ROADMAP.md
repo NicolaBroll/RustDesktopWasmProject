@@ -1,17 +1,21 @@
 # Roadmap
 
-## Prima iterazione
+## First iteration
 
-- [x] Workspace con `core`, `domain`, `engine`, `ui`, `mcp` e le tre app.
-- [x] `cargo xtask ci` verde: formattazione, lint, test, layering, wasm.
-- [x] La stessa finestra si apre su desktop e con `trunk serve`.
-- [x] `Platform` con `pick_file` e `save_file`, implementazioni nativa (`rfd`) e web (input file / download `Blob`).
-- [x] Comandi del registro eseguiti da UI, CLI e MCP.
+- [x] Workspace with `core`, `domain`, `engine`, `ui`, `mcp` and the three apps.
+- [x] `cargo xtask ci` green: formatting, lint, tests, layering, wasm.
+- [x] The same window opens on desktop and with `trunk serve`.
+- [x] `Platform` with `pick_file` and `save_file`, native (`rfd`) and web (file input / `Blob` download) implementations.
+- [x] Registry commands run from UI, CLI and MCP.
+- [x] The web version was removed in S31d (`impl-docs/ROADMAP-git.md`): desktop only.
 
-## Prossimi passi
+## Next steps
 
-- [ ] Packaging (`packaging/`): AppImage/deb e zip del sito web con `SHA256SUMS.txt`, poi MSI/DMG con firma.
-- [ ] `cargo deny check` nella CI (configurazione già in `deny.toml`).
-- [ ] Web: gestire l'annullamento del dialogo file (evento `cancel`) e prototipare accessibilità, IME e incolla.
-- [ ] Desktop: dialoghi file non bloccanti (`rfd::AsyncFileDialog`).
-- [ ] Controllo della UI per agenti (spento di default, solo loopback, token).
+- [x] Packaging (`packaging/`): Linux AppImage and Windows zip with `SHA256SUMS.txt` (S37); deb, signed MSI/DMG later.
+- [x] `cargo deny check` in CI: licenses, bans and sources in `cargo xtask ci`, advisories weekly (S38).
+- [x] Desktop: non-blocking file dialogs (`rfd::AsyncFileDialog`): S39.
+- [x] Refresh when the repo changes outside the app (git directory watched with `notify`, focus): S40.
+- [ ] Windows MSI (S41), macOS DMG (S42), signing (S43).
+- [ ] UI control for agents (off by default, loopback only, token): S44, only if still needed.
+
+Steps and order in [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md), phase 6.

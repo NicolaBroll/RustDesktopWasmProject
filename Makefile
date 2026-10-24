@@ -1,74 +1,90 @@
-WASM_TARGET := wasm32-unknown-unknown
-# Porta del server web: è quella inoltrata dal devcontainer (forwardPorts in
-# .devcontainer/devcontainer.json). Se la cambi, aggiornala anche lì.
-PORT        ?= 8080
+SHOT        ?= target/desktop.png
+REPO        ?= .
+WAIT        ?= 6
+# Virtual display of `desktop-start`: xdotool and import use it with DISPLAY=$(XDISPLAY).
+XDISPLAY    ?= :99
+DEMO        ?= target/demo-repo
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run cli build release web-serve web-build web-release web-preview \
+.PHONY: help setup run desktop-shot desktop-start desktop-stop demo-repo cli build release appimage windows \
         check fmt fmt-check clippy test layers ci clean
 
-help: ## Mostra questo elenco
+help: ## Show this list
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Installa target wasm e trunk
-	rustup target add $(WASM_TARGET)
+setup: ## Install clippy, rustfmt and cargo-deny
 	rustup component add clippy rustfmt
-	command -v trunk >/dev/null || cargo install --locked trunk
+	cargo deny --version >/dev/null 2>&1 || cargo install --locked cargo-deny
 
-# --- Desktop e CLI ---------------------------------------------------------
+# --- Desktop and CLI ---------------------------------------------------------
 
-run: ## Avvia l'app desktop (debug)
+run: ## Run the desktop app (debug)
 	cargo run -p project
 
-cli: ## Esegue la CLI (es. make cli ARGS="commands")
+desktop-shot: ## Headless screenshot of the desktop app -> $(SHOT) (REPO=. to open, WAIT=6 seconds)
+	cargo build -q -p project
+	env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x800x24" sh -c \
+		'target/debug/project "$(REPO)" & pid=$$!; sleep $(WAIT); import -window root "$(SHOT)"; kill $$pid'
+	@echo "screenshot: $(SHOT)"
+
+desktop-start: ## Desktop app on Xvfb $(XDISPLAY), left running to explore it (REPO=)
+	cargo build -q -p project
+	@$(MAKE) -s desktop-stop
+	@mkdir -p target
+	setsid Xvfb $(XDISPLAY) -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 & echo $$! > target/xvfb.pid
+	@sleep 1
+	env -u WAYLAND_DISPLAY DISPLAY=$(XDISPLAY) LIBGL_ALWAYS_SOFTWARE=1 setsid target/debug/project "$(REPO)" \
+		>target/desktop.log 2>&1 & echo $$! > target/desktop.pid
+	@# Without a window manager the keyboard reaches the window only if it is given focus.
+	DISPLAY=$(XDISPLAY) timeout 60 xdotool search --sync --name BinariGit windowfocus --sync
+	@echo "app on $(XDISPLAY): DISPLAY=$(XDISPLAY) xdotool mousemove X Y click 1 | type 'text' | key Return"
+	@echo "screenshot: DISPLAY=$(XDISPLAY) import -window root target/shot.png; stop: make desktop-stop"
+
+desktop-stop: ## Stop the app and the Xvfb of desktop-start
+	-@for f in target/desktop.pid target/xvfb.pid; do [ -f $$f ] && kill $$(cat $$f) 2>/dev/null; rm -f $$f; done; true
+
+demo-repo: ## Demo repo to explore the app -> $(DEMO) (recreated every time)
+	rm -rf "$(DEMO)" "$(DEMO)-origin.git"
+	scripts/demo-repo.sh "$(DEMO)"
+
+cli: ## Run the CLI (e.g. make cli ARGS="commands")
 	cargo run -q -p project-cli -- $(or $(ARGS),--help)
 
-build: ## Build di tutto il workspace (debug)
+build: ## Build the whole workspace (debug)
 	cargo build --workspace
 
-release: ## Build ottimizzata desktop, CLI e sito web
+release: ## Optimized build of desktop and CLI
 	cargo xtask release
 
-# --- Web (wasm) ------------------------------------------------------------
+appimage: ## Linux AppImage -> target/appimage/BinariGit-<version>-x86_64.AppImage + SHA256SUMS.txt
+	packaging/appimage.sh
 
-web-serve: ## Server di sviluppo con auto-reload su http://localhost:PORT (default 8080)
-	trunk serve --port $(PORT)
+windows: ## Windows zip (cross-compiled, mingw-w64) -> target/windows/BinariGit-<version>-x86_64-windows.zip
+	packaging/windows.sh
 
-web-build: ## Build web (debug) -> dist/
-	trunk build
+# --- Quality ---------------------------------------------------------------
 
-web-release: ## Build web ottimizzata -> dist/
-	trunk build --release
-
-web-preview: web-release ## Serve la build di release su http://localhost:PORT (default 8080)
-	python3 -m http.server -d dist $(PORT)
-
-# --- Qualità ---------------------------------------------------------------
-
-check: ## cargo check per desktop e wasm
+check: ## cargo check of the workspace
 	cargo check --workspace
-	cargo check -p project-ui -p project-web --target $(WASM_TARGET)
 
-fmt: ## Formatta il codice
+fmt: ## Format the code
 	cargo fmt --all
 
-fmt-check: ## Verifica la formattazione senza modificare
+fmt-check: ## Check formatting without modifying
 	cargo fmt --all -- --check
 
-clippy: ## Lint per desktop e wasm (warning = errore)
+clippy: ## Lint (warning = error)
 	cargo clippy --workspace --all-targets -- -D warnings
-	cargo clippy -p project-ui -p project-web --target $(WASM_TARGET) -- -D warnings
 
-test: ## Esegue i test
+test: ## Run the tests
 	cargo test --workspace
 
-layers: ## Verifica il layering tra i crate
+layers: ## Check the layering between crates
 	cargo xtask layers
 
-ci: ## Tutti i controlli, come in CI (cargo xtask ci)
+ci: ## All checks, as in CI (cargo xtask ci)
 	cargo xtask ci
 
-clean: ## Rimuove target/ e dist/
+clean: ## Remove target/
 	cargo clean
-	rm -rf dist

@@ -1,0 +1,396 @@
+//! Merge (`merge.start`, `merge.abort`, `merge.continue`, S29) and the "in progress" state
+//! (`repo.operation`): types and checks shared by the backends (`impl-docs/git/merge.md`).
+//!
+//! The command resolves the rev, decides between fast-forward and merge commit (with
+//! [`GitBackend::unmerged_count`](super::GitBackend::unmerged_count)), checks the state
+//! ([`check_merge_state`]) and writes the default message ([`merge_source`],
+//! [`MergeSource::message`]); the backend executes ([`GitBackend::merge`](super::GitBackend::merge)).
+//! **A merge stopped on conflict stays in progress** (like pull in merge mode; pull in rebase mode
+//! is instead aborted): it is
+//! concluded with `merge.continue` (which uses [`GitBackend::commit`](super::GitBackend::commit),
+//! with `MERGE_HEAD` git creates the merge commit) or aborted with `merge.abort`
+//! ([`GitBackend::merge_abort`](super::GitBackend::merge_abort), with a backup of index and
+//! worktree first).
+
+use super::{HEADS_PREFIX, REMOTES_PREFIX, check_no_operation};
+use crate::{EngineError, Message};
+use project_domain::{EntryKind, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
+use serde::{Deserialize, Serialize};
+
+const TAGS_PREFIX: &str = "refs/tags/";
+
+/// How to integrate the commit into HEAD ([`GitBackend::merge`](super::GitBackend::merge)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeMode {
+    /// The branch advances to the commit (`git merge --ff-only`): HEAD is an ancestor of it.
+    FastForward,
+    /// A merge commit (parents: HEAD and the commit), even when a
+    /// fast-forward would be possible if `no_ff` (`--no-ff`).
+    Merge { no_ff: bool },
+}
+
+impl MergeMode {
+    /// The name in the result (`strategy`): `fast_forward` or `merge`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            MergeMode::FastForward => "fast_forward",
+            MergeMode::Merge { .. } => "merge",
+        }
+    }
+}
+
+/// What `merge.start` asks of the backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeRequest {
+    /// The branch of HEAD (short name): the merge does not start with detached HEAD.
+    pub branch: String,
+    /// The value of the branch read earlier: the backend refuses if it changed.
+    pub expected: Oid,
+    /// The commit to merge (the already resolved rev: git receives only the id).
+    pub target: Oid,
+    /// For messages: the name of the rev (`feature`, `origin/x`, `v1.0`) or the id.
+    pub target_name: String,
+    pub mode: MergeMode,
+    /// The message of the merge commit (only with [`MergeMode::Merge`]).
+    pub message: String,
+}
+
+/// Outcome of [`GitBackend::merge`](super::GitBackend::merge).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeOutcome {
+    /// The value of the branch afterwards: the merge commit, the fast-forward commit or, if the merge
+    /// is stopped, the previous one.
+    pub after: Oid,
+    /// The backup ref of the branch before the merge (`refs/project/backup/merge-...`).
+    pub backup: String,
+    /// True if the merge stopped (conflicts, or a `pre-merge-commit` hook that rejected):
+    /// the repo is in a merge (`MERGE_HEAD`), to be concluded with `merge.continue` or aborted with
+    /// `merge.abort`.
+    pub in_progress: bool,
+    /// The conflicted files (empty if the merge is concluded): those still unmerged and those
+    /// git reported as conflicted (even if `rerere` already resolved them).
+    pub conflicts: Vec<RepoPath>,
+    /// The git text (stdout and stderr) of a stopped merge; empty otherwise.
+    pub message: String,
+    /// Warnings found after a successful merge (e.g. a hook that moved HEAD).
+    pub warnings: Vec<Message>,
+}
+
+/// Outcome of [`GitBackend::merge_abort`](super::GitBackend::merge_abort).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeAborted {
+    /// The backup ref of index and worktree before the abort
+    /// (`refs/project/backup/merge-abort-...`): a commit with the worktree files (conflicts
+    /// and resolutions included) whose parents are HEAD and a commit with the index, like a
+    /// stash (recovered with `git stash apply <ref>` or file by file with `git show
+    /// <ref>:<path>`).
+    pub backup: String,
+    /// The files saved in the backup because they differ from HEAD (in the index or the worktree).
+    pub files: Vec<RepoPath>,
+    /// Warnings after a successful abort.
+    pub warnings: Vec<Message>,
+}
+
+/// The operation in progress and its data, for the UI banner (`repo.operation`). Read from
+/// the files git leaves in its folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationState {
+    /// Like [`Status::operation`].
+    pub operation: Option<Operation>,
+    /// The incoming commits: `MERGE_HEAD` (one or more), `CHERRY_PICK_HEAD`, `REVERT_HEAD`.
+    /// Empty for rebase, bisect, `git am` and without an operation.
+    pub incoming: Vec<Oid>,
+    /// The message prepared by git (`MERGE_MSG`: merge, cherry-pick, revert), as it is in the
+    /// file (with the `# Conflicts:` comment lines); `None` if absent.
+    pub message: Option<String>,
+    /// Rebase: the commit being replayed onto (`rebase-merge/onto` or `rebase-apply/onto`).
+    pub onto: Option<Oid>,
+    /// Rebase: the branch being rewritten (`head-name`, full name), `None` if the
+    /// rebase started from detached HEAD.
+    pub rebase_branch: Option<String>,
+    /// True if there is a cherry-pick or revert sequence of several commits started from the terminal
+    /// (`.git/sequencer`): the S31 commands leave it to the terminal (`check_picking`).
+    #[serde(default)]
+    pub sequencer: bool,
+    /// Rebase: what the app knows of a rebase it started ([`RebaseRecord`](super::RebaseRecord));
+    /// `None` for one started from the terminal.
+    #[serde(default)]
+    pub rebase: Option<super::RebaseRecord>,
+}
+
+/// Where the commit to merge comes from, for the default message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeSourceKind {
+    Branch,
+    RemoteBranch,
+    Tag,
+    Commit,
+}
+
+/// The commit to merge with its name ([`merge_source`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeSource {
+    pub kind: MergeSourceKind,
+    /// Short name (`feature`, `origin/x`, `v1.0`) or, for a commit, the full id.
+    pub name: String,
+    /// The full name of the ref, if it is a ref.
+    pub full: Option<String>,
+}
+
+impl MergeSource {
+    /// The default message of the merge commit into `branch`, as `git merge` writes it:
+    /// `Merge branch 'x'`, `Merge remote-tracking branch 'origin/x'`, `Merge tag 'v1'`, `Merge
+    /// commit '<id>'`, with ` into <branch>` if the branch is not `main` or `master` (like git with
+    /// the default `merge.suppressDest`).
+    pub fn message(&self, branch: &str) -> String {
+        let what = match self.kind {
+            MergeSourceKind::Branch => "branch",
+            MergeSourceKind::RemoteBranch => "remote-tracking branch",
+            MergeSourceKind::Tag => "tag",
+            MergeSourceKind::Commit => "commit",
+        };
+        let mut message = format!("Merge {what} '{}'", self.name);
+        if branch != "main" && branch != "master" {
+            message.push_str(&format!(" into {branch}"));
+        }
+        message
+    }
+}
+
+/// The name of the rev `rev` that resolved to `target`: the first ref, in the order git
+/// resolves a name (full `<rev>`, `refs/<rev>`, `refs/tags/<rev>`, `refs/heads/<rev>`,
+/// `refs/remotes/<rev>`), that exists and points to `target`; otherwise the commit itself (an id,
+/// `HEAD~2`, a ref pointing elsewhere).
+pub fn merge_source(rev: &str, refs: &[RefInfo], target: &Oid) -> MergeSource {
+    let candidates = [
+        rev.to_owned(),
+        format!("refs/{rev}"),
+        format!("{TAGS_PREFIX}{rev}"),
+        format!("{HEADS_PREFIX}{rev}"),
+        format!("{REMOTES_PREFIX}{rev}"),
+    ];
+    for name in &candidates {
+        let Some(r) = refs.iter().find(|r| r.name == *name) else {
+            continue;
+        };
+        if r.target != *target {
+            break;
+        }
+        let (kind, short) = match r.kind {
+            RefKind::LocalBranch => (
+                MergeSourceKind::Branch,
+                name.strip_prefix(HEADS_PREFIX).unwrap_or(name),
+            ),
+            RefKind::RemoteBranch => (
+                MergeSourceKind::RemoteBranch,
+                name.strip_prefix(REMOTES_PREFIX).unwrap_or(name),
+            ),
+            RefKind::Tag => (
+                MergeSourceKind::Tag,
+                name.strip_prefix(TAGS_PREFIX).unwrap_or(name),
+            ),
+            RefKind::Stash => break,
+        };
+        return MergeSource {
+            kind,
+            name: short.to_owned(),
+            full: Some(name.clone()),
+        };
+    }
+    MergeSource {
+        kind: MergeSourceKind::Commit,
+        name: target.to_string(),
+        full: None,
+    }
+}
+
+/// The conflicted files of the status (`u` entries).
+pub fn conflicted_paths(status: &Status) -> Vec<RepoPath> {
+    status
+        .entries
+        .iter()
+        .filter(|e| matches!(e.kind, EntryKind::Unmerged(_)))
+        .map(|e| e.path.clone())
+        .collect()
+}
+
+fn quoted(paths: &[RepoPath]) -> String {
+    paths
+        .iter()
+        .map(|p| format!("`{p}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The checks before `merge.start`, the same for the backends, on the state read now:
+///
+/// - an operation in progress (even another merge) → [`EngineError::NotAllowed`];
+/// - conflicted files → [`EngineError::NotAllowed`];
+/// - for a merge commit, **any** change to tracked files (staged or not) →
+///   [`EngineError::NotAllowed`] (a choice, like pull): a merge that stops on conflict
+///   would mix local changes with those of the merge, and `git merge --abort` cannot
+///   always rebuild them. Never `--autostash`. Untracked files are fine (git does not
+///   overwrite them). Fast-forward accepts changes that do not touch the changed files: git
+///   itself refuses, before writing, to overwrite the others.
+pub fn check_merge_state(status: &Status, mode: &MergeMode) -> Result<(), EngineError> {
+    check_no_operation("merge.start", msg!("engine-busy-merge"), status.operation)?;
+    let unmerged = conflicted_paths(status);
+    if !unmerged.is_empty() {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-merge-conflicts",
+            files = quoted(&unmerged)
+        )));
+    }
+    if matches!(mode, MergeMode::FastForward) {
+        return Ok(());
+    }
+    let changed: Vec<RepoPath> = status
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                EntryKind::Ordinary(_) | EntryKind::Renamed { .. } | EntryKind::Copied { .. }
+            ) && (e.index.is_change() || e.worktree.is_change())
+        })
+        .map(|e| e.path.clone())
+        .collect();
+    if changed.is_empty() {
+        return Ok(());
+    }
+    Err(EngineError::NotAllowed(msg!(
+        "engine-merge-local-changes",
+        files = quoted(&changed)
+    )))
+}
+
+/// The check common to `merge.abort` and `merge.continue`: a merge must be in progress.
+pub fn check_merging(command: &str, status: &Status) -> Result<(), EngineError> {
+    check_in_progress(command, Operation::Merge, status)
+}
+
+/// The name of an operation for messages (`a merge`, `a cherry-pick`, ...).
+pub(crate) fn operation_name(op: Operation) -> Message {
+    match op {
+        Operation::Rebase => msg!("engine-op-rebase"),
+        Operation::CherryPick => msg!("engine-op-cherry-pick"),
+        Operation::Revert => msg!("engine-op-revert"),
+        Operation::Bisect => msg!("engine-op-bisect"),
+        Operation::Am => msg!("engine-op-am"),
+        Operation::Merge => msg!("engine-op-merge"),
+    }
+}
+
+/// The operation `expected` must be in progress (for the commands that conclude or
+/// abort it), otherwise [`EngineError::NotAllowed`].
+pub(crate) fn check_in_progress(
+    command: &str,
+    expected: Operation,
+    status: &Status,
+) -> Result<(), EngineError> {
+    match status.operation {
+        Some(op) if op == expected => Ok(()),
+        None => Err(EngineError::NotAllowed(msg!(
+            "engine-merge-not-in-progress",
+            operation = operation_name(expected),
+            command = command
+        ))),
+        Some(other) => Err(EngineError::NotAllowed(msg!(
+            "engine-merge-other-in-progress",
+            other = operation_name(other),
+            operation = operation_name(expected),
+            command = command
+        ))),
+    }
+}
+
+/// The `MERGE_MSG` message without the conflicts block git appends at the end
+/// (`# Conflicts:` and the `#\t<file>` lines after it, with the comment character of
+/// `core.commentChar`): `git commit -F` does not strip comments with the `whitespace` cleanup, and
+/// they would end up in the message. The other lines stay as they were.
+pub fn clean_merge_message(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.iter().position(|l| {
+        let mut chars = l.chars();
+        matches!(chars.next(), Some(c) if !c.is_alphanumeric() && !c.is_whitespace())
+            && chars.as_str() == " Conflicts:"
+    });
+    let kept = match start {
+        Some(i) => {
+            let marker = lines[i].chars().next().expect("non-empty line");
+            let rest_ok = lines[i + 1..]
+                .iter()
+                .all(|l| l.starts_with(marker) || l.trim().is_empty());
+            if rest_ok { &lines[..i] } else { &lines[..] }
+        }
+        None => &lines[..],
+    };
+    kept.join("\n").trim_end().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(name: &str, kind: RefKind, target: Oid) -> RefInfo {
+        RefInfo {
+            name: name.to_owned(),
+            kind,
+            target,
+            tag_object: None,
+            upstream: None,
+        }
+    }
+
+    #[test]
+    fn sources_and_messages() {
+        let a = Oid::from_bytes([1; Oid::LEN]);
+        let b = Oid::from_bytes([2; Oid::LEN]);
+        let refs = [
+            r("refs/heads/feature", RefKind::LocalBranch, a),
+            r("refs/remotes/origin/x", RefKind::RemoteBranch, a),
+            r("refs/tags/v1", RefKind::Tag, a),
+            r("refs/heads/v1", RefKind::LocalBranch, b),
+        ];
+        let s = merge_source("feature", &refs, &a);
+        assert_eq!(s.kind, MergeSourceKind::Branch);
+        assert_eq!(s.message("main"), "Merge branch 'feature'");
+        assert_eq!(s.message("dev"), "Merge branch 'feature' into dev");
+        let s = merge_source("refs/heads/feature", &refs, &a);
+        assert_eq!(
+            (s.kind, s.name.as_str()),
+            (MergeSourceKind::Branch, "feature")
+        );
+        let s = merge_source("origin/x", &refs, &a);
+        assert_eq!(
+            s.message("master"),
+            "Merge remote-tracking branch 'origin/x'"
+        );
+        // The tag comes before the branch with the same name, as in git.
+        let s = merge_source("v1", &refs, &a);
+        assert_eq!(s.message("main"), "Merge tag 'v1'");
+        let s = merge_source(&b.to_string()[..8], &refs, &b);
+        assert_eq!(s.kind, MergeSourceKind::Commit);
+        assert_eq!(s.message("main"), format!("Merge commit '{b}'"));
+    }
+
+    #[test]
+    fn merge_msg_cleanup() {
+        assert_eq!(
+            clean_merge_message("Merge branch 'x'\n\n# Conflicts:\n#\ta.txt\n#\tb c.txt\n"),
+            "Merge branch 'x'"
+        );
+        assert_eq!(
+            clean_merge_message("Title\n\n#123 stays\n\n; Conflicts:\n;\tf\n"),
+            "Title\n\n#123 stays"
+        );
+        // Text after the block: it is not git's block, everything stays.
+        assert_eq!(
+            clean_merge_message("T\n# Conflicts:\naltro\n"),
+            "T\n# Conflicts:\naltro"
+        );
+        assert_eq!(clean_merge_message("Only title\n"), "Only title");
+    }
+}

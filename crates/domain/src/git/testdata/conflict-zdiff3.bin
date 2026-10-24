@@ -1,0 +1,22 @@
+one
+<<<<<<< ours
+TWO main
+||||||| base
+two
+=======
+TWO other
+>>>>>>> theirs
+three
+four
+five
+six
+seven
+<<<<<<< ours
+EIGHT main
+EIGHT extra
+||||||| base
+eight
+=======
+EIGHT other
+>>>>>>> theirs
+nine

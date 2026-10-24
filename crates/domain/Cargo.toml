@@ -1,6 +1,6 @@
 [package]
 name = "project-domain"
-description = "L2: modello dei dati, formato di file, logica di dominio"
+description = "L2: data model, file format, domain logic"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,8 +8,12 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+proptest.workspace = true
+insta.workspace = true
 
 [lints]
 workspace = true

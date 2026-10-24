@@ -6,7 +6,7 @@ XDISPLAY    ?= :99
 DEMO        ?= target/demo-repo
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run desktop-shot desktop-start desktop-stop demo-repo cli build release \
+.PHONY: help setup run desktop-shot desktop-start desktop-stop demo-repo cli build release appimage windows \
         check fmt fmt-check clippy test layers ci clean
 
 help: ## Show this list
@@ -55,6 +55,12 @@ build: ## Build the whole workspace (debug)
 
 release: ## Optimized build of desktop and CLI
 	cargo xtask release
+
+appimage: ## Linux AppImage -> target/appimage/BinariGit-<version>-x86_64.AppImage + SHA256SUMS.txt
+	packaging/appimage.sh
+
+windows: ## Windows zip (cross-compiled, mingw-w64) -> target/windows/BinariGit-<version>-x86_64-windows.zip
+	packaging/windows.sh
 
 # --- Quality ---------------------------------------------------------------
 

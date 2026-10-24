@@ -394,8 +394,14 @@ Rules that apply to every step:
   the bar, then reloads; "Not now" hides it for the tab. Tests in `crates/ui/src/optimize_tests.rs`;
   checked on the kernel (first page 21 s in the debug app, notice, ~25 s optimize, reload).
 
-### S37 — Linux packaging
-- [ ] **Agent:** `git-engine`
-- **Goal:** AppImage and deb package (see also [ROADMAP.md](../ROADMAP.md)) with
-  `SHA256SUMS.txt`.
-- **Done when:** the package installs and starts on a clean Ubuntu; CI green.
+### S37 — Packaging: Linux AppImage and Windows zip
+- [x] **Agent:** `git-engine`
+- **Goal:** `make appimage` builds `target/appimage/BinariGit-<version>-x86_64.AppImage` with a
+  pinned, checksum-verified appimagetool; `make windows` cross-compiles (`x86_64-pc-windows-gnu`,
+  mingw-w64) `target/windows/BinariGit-<version>-x86_64-windows.zip` (`BinariGit.exe` with the
+  icon, `README.txt`). Each with `SHA256SUMS.txt`; git is not bundled. No deb; MSI and signing
+  later (see also [ROADMAP.md](../ROADMAP.md)). Details in `packaging/README.md`. GitHub Actions
+  (`.github/workflows/package.yml`, both on Ubuntu) uploads them as artifacts and attaches them to
+  a Release on `v*` tags.
+- **Done when:** the AppImage starts on a clean Ubuntu 22.04 (and 24.04) container; the Windows
+  zip builds (tested by hand on a Windows PC); CI green.

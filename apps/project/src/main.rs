@@ -2,7 +2,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // no console on Windows in release
 
-use project_engine::{Capabilities, Platform};
+mod watch;
+
+use project_engine::{Capabilities, OnChange, Platform, Watch};
 use project_git::CliOpener;
 use std::sync::Arc;
 
@@ -36,7 +38,7 @@ fn main() -> eframe::Result {
     )
 }
 
-/// Folder dialog via `rfd`, and threads for slow jobs.
+/// Folder dialog via `rfd`, threads for slow jobs, `notify` for the repos changed from outside.
 struct NativePlatform {
     /// The dialog to open, parented to the main window (modal to it on Windows and macOS; on
     /// Linux the XDG portal, or zenity, receive the window id).
@@ -81,6 +83,10 @@ impl Platform for NativePlatform {
         {
             log::error!("cannot start a thread: {e}");
         }
+    }
+
+    fn watch(&self, repo: &str, on_change: OnChange) -> Option<Watch> {
+        watch::start(repo, on_change)
     }
 }
 

@@ -31,6 +31,7 @@ mod merge;
 mod merge_view;
 mod optimize;
 mod rebase;
+mod refresh;
 mod remotes;
 mod stage;
 mod stash;
@@ -346,6 +347,10 @@ enum Request {
     Open,
     Refs(u64),
     Status(u64),
+    /// `repo.status` of the automatic refresh: afterwards the refs ([`Request::AutoRefs`]).
+    AutoStatus(u64),
+    /// `repo.refs` of the automatic refresh: the log is read again only if they changed.
+    AutoRefs(u64),
     Log(u64, PageRequest),
     /// `commit.show` of the given commit.
     Show(u64, Oid),
@@ -451,6 +456,8 @@ struct RepoView {
     /// The commit to select when the first page of the log arrives (after a commit, if the
     /// changes row has disappeared).
     select_after_load: Option<Oid>,
+    /// HEAD when the automatic refresh in progress started (see `refresh::log_stale`).
+    refresh_head: Option<Option<Oid>>,
 }
 
 impl RepoView {
@@ -488,6 +495,7 @@ impl RepoView {
             status_seq: 0,
             history: History::default(),
             select_after_load,
+            refresh_head: None,
         };
         view.update_labels();
         view
@@ -633,6 +641,8 @@ struct Tab {
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
     notice: String,
+    /// The watch of the repo and the refresh it asks for (S40).
+    auto: refresh::AutoRefresh,
 }
 
 impl Tab {
@@ -649,6 +659,7 @@ impl Tab {
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
+            auto: refresh::AutoRefresh::default(),
         }
     }
 
@@ -689,6 +700,7 @@ impl Tab {
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
+                    self.auto.clear();
                     self.load();
                 }
             }
@@ -1334,12 +1346,18 @@ impl Tab {
                     repo.update_labels();
                 }
             }
-            Request::Status(generation) => {
+            Request::Status(generation) | Request::AutoStatus(generation) => {
                 if let Some(repo) = self.current(generation) {
                     let status: Status = serde_json::from_value(value)?;
                     repo.set_status(status);
                     self.follow_diff();
+                    if matches!(request, Request::AutoStatus(_)) {
+                        self.after_auto_status(generation);
+                    }
                 }
+            }
+            Request::AutoRefs(generation) => {
+                self.receive_auto_refs(generation, serde_json::from_value(value)?);
             }
             Request::Log(generation, page) => {
                 if let Some(repo) = self.current(generation) {

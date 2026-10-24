@@ -118,6 +118,17 @@ impl CommitList {
         request
     }
 
+    /// Like [`CommitList::reset`], but the first page asks for as many commits as are loaded
+    /// (whole pages, at most [`SEEK_LIMIT`]): after an automatic refresh the selected commit and
+    /// the rows scrolled to are still there.
+    pub fn reload(&mut self) -> PageRequest {
+        let mut request = self.reset();
+        let pages = self.commits.len().div_ceil(PAGE).max(1);
+        request.limit = (pages * PAGE).min(SEEK_LIMIT);
+        self.loading = Some(request);
+        request
+    }
+
     /// The next page to request if row `visible_end` (excluded) is near the end of the
     /// loaded commits; `None` if not needed or if a page is already on its way.
     pub fn next_page(&mut self, visible_end: usize) -> Option<PageRequest> {
@@ -413,6 +424,25 @@ mod tests {
         assert!(list.receive(request, commits, false));
         assert_eq!(list.selected(), Some(7));
         assert_eq!(list.selected_commit().unwrap().id, id);
+    }
+
+    #[test]
+    fn reload_asks_for_every_loaded_page_and_keeps_the_selection() {
+        let mut list = CommitList::default();
+        assert_eq!(list.reload().limit, PAGE);
+        let mut list = CommitList::default();
+        let first = list.reset();
+        load(&mut list, first, 5_000);
+        let second = list.next_page(PAGE).unwrap();
+        load(&mut list, second, 5_000);
+        list.select(PAGE + 10);
+        let id = list.selected_commit().unwrap().id;
+        let request = list.reload();
+        assert_eq!((request.skip, request.limit), (0, 2 * PAGE));
+        load(&mut list, request, 5_000);
+        assert_eq!(list.commits().len(), 2 * PAGE);
+        assert_eq!(list.selected_commit().unwrap().id, id);
+        assert!(list.has_more());
     }
 
     #[test]

@@ -337,6 +337,10 @@ fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 - Desktop: a thread (or a small pool).
 - Tests: a platform may run the job immediately, inside `spawn`.
 
+`Platform::watch(repo, on_change) -> Option<Watch>` (S40) watches the git directory of a repo and
+calls `on_change` from its own thread; dropping the `Watch` stops it. The default is `None` (test
+platforms); the use is in §8, "Automatic refresh".
+
 The session sits behind an `Arc<Mutex<...>>` shared with the job; the result returns to the UI with
 a channel and the UI requests a new frame (`ctx.request_repaint()`). During a job the UI shows
 progress and disables the commands that modify the repo. Fetch and push progress is
@@ -494,6 +498,22 @@ GitKraken-like layout:
 Every interaction produces an `Action` that goes through `Registry::run`, as today.
 
 The Stash section and its panel: [git/stash.md](git/stash.md).
+
+**Automatic refresh** (S40, `crates/ui/src/refresh.rs`): each tab asks `Platform::watch` to watch
+its repo; on desktop (`apps/project/src/watch.rs`, crate `notify`) that is the git directory only
+(`HEAD`, `index`, `packed-refs`, `MERGE_HEAD`, `rebase-merge/`… as entries of it, `refs/`
+recursive; for a linked worktree also the common directory), never the worktree: a recursive watch
+of a huge repo exhausts the inotify watches. Opening files, `*.lock`, `objects/` and `logs/` do not
+count, so the app's own reads (`--no-optional-locks`) cause no loop; events are debounced (300 ms,
+at most 2 s). The callback raises a per-tab flag and repaints. Changes seen while the tab is writing
+or within 600 ms after its result are the write's own (it re-reads what it changed). Only the tab
+shown re-reads, and not while a dialog or confirmation is open or a command is running: a hidden or
+blocked tab stays dirty until it can. When the window gains focus the tab shown re-reads too:
+worktree edits from an editor show up then. The automatic refresh is light: status (and the
+operation), undo history, remotes and stashes, then the refs; the log is read again only if the
+refs or HEAD changed, with as many commits as were loaded, keeping the selection, the scroll and
+the open diff, blame or file view. The manual Refresh still starts the log from page 1. Limit: a
+change from outside within 600 ms after a write of the app is seen only at the next change or focus.
 
 **Commit-graph notice** (S36, [git/reading.md](git/reading.md)): when `repo.open` gives
 `commit_graph: false` and the first `repo.log` page of the tab took more than `SLOW_FIRST_PAGE` (1 s,

@@ -70,7 +70,7 @@ pub use git::{
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};
-pub use platform::{Capabilities, Platform};
+pub use platform::{Capabilities, OnChange, Platform, Watch};
 pub use project_core::Invocation;
 pub use project_i18n::Lang;
 pub use session::Session;

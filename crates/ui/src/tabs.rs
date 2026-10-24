@@ -57,6 +57,8 @@ pub struct App {
     picking: Arc<AtomicBool>,
     /// The state last written to the storage: written again only when it changes.
     saved: Saved,
+    /// Whether the window had focus in the last frame (`None`: not known yet).
+    focused: Option<bool>,
 }
 
 impl App {
@@ -98,6 +100,7 @@ impl App {
             picked: Arc::default(),
             picking: Arc::default(),
             saved: saved.clone(),
+            focused: None,
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -189,6 +192,8 @@ impl App {
                 continue;
             };
             remember(&mut self.recent, &path);
+            let wake = Arc::clone(&self.wake);
+            self.tabs[index].auto.start(&*self.platform, &path, wake);
             let paths: Vec<_> = self.tabs.iter().map(|t| t.repo_path()).collect();
             match twin(&paths, index) {
                 Some(other) => {
@@ -294,6 +299,19 @@ impl App {
             .collect()
     }
 
+    /// The window gained focus: the tab shown re-reads (the worktree is not watched, an editor may
+    /// have changed it). Then every tab gets its tick: only the one shown re-reads now.
+    fn auto_refresh(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused);
+        if crate::refresh::focus_gained(&mut self.focused, focused) {
+            self.tabs[self.active].auto.mark();
+        }
+        let now = std::time::Instant::now();
+        for (index, tab) in self.tabs.iter_mut().enumerate() {
+            tab.tick(now, index == self.active);
+        }
+    }
+
     fn labels(&self) -> Vec<view::TabLabel> {
         self.tabs
             .iter()
@@ -313,6 +331,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive();
+        self.auto_refresh(&ctx);
         let can_pick = self.platform.capabilities().open_folder;
         // The strip's actions after the tab's: they can change the tab shown.
         let mut strip = Vec::new();

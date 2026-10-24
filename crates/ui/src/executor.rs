@@ -225,6 +225,7 @@ impl Executor {
         let ticket = Ticket(self.next);
         self.next += 1;
         let writes = self.registry.get(command).is_some_and(|spec| spec.writes);
+        log::debug!("submit {command}");
         self.running.push(Job {
             ticket,
             command: command.to_owned(),

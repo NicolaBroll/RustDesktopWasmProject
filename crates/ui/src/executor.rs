@@ -374,7 +374,7 @@ impl Drop for Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_engine::{Capabilities, CommandSpec, EngineError, MemoryOpener, Picked, Platform};
+    use project_engine::{Capabilities, CommandSpec, EngineError, MemoryOpener, Platform};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -393,10 +393,6 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>) {
-            on_done(None);
-        }
-        fn save_file(&self, _: &str, _: Vec<u8>) {}
         fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
             on_done(None);
         }

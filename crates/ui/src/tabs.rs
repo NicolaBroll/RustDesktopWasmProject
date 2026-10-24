@@ -11,6 +11,7 @@ use project_i18n::tr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Key of the state in the eframe storage.
@@ -49,8 +50,11 @@ pub struct App {
     platform: Arc<dyn Platform>,
     opener: Arc<dyn RepoOpener>,
     wake: Wake,
-    /// Folder chosen in the dialog; on desktop it arrives at once, in general from a callback.
+    /// Folder chosen in the dialog: it arrives from a callback, on desktop from another thread
+    /// when the dialog closes.
     picked: Arc<Mutex<Option<String>>>,
+    /// A folder dialog is open: a second "Open…" does nothing until it closes.
+    picking: Arc<AtomicBool>,
     /// The state last written to the storage: written again only when it changes.
     saved: Saved,
 }
@@ -92,6 +96,7 @@ impl App {
             opener,
             wake,
             picked: Arc::default(),
+            picking: Arc::default(),
             saved: saved.clone(),
         };
         for path in &saved.tabs {
@@ -201,13 +206,20 @@ impl App {
     fn apply(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::PickFolder => {
+                if self.picking.swap(true, Ordering::AcqRel) {
+                    return;
+                }
                 let picked = Arc::clone(&self.picked);
+                // Cleared when the callback is called or dropped (a platform that cannot show
+                // the dialog): "Open…" never stays dead.
+                let picking = Picking(Arc::clone(&self.picking));
                 let ctx = ctx.clone();
                 self.platform.pick_folder(Box::new(move |folder| {
                     if let Some(folder) = folder {
                         *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some(folder);
-                        ctx.request_repaint();
                     }
+                    drop(picking);
+                    ctx.request_repaint();
                 }));
             }
             Action::Open(path) => self.open(path),
@@ -357,6 +369,15 @@ fn after_close(active: usize, closed: usize, len: usize) -> usize {
     }
 }
 
+/// Marks the folder dialog closed when dropped.
+struct Picking(Arc<AtomicBool>);
+
+impl Drop for Picking {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Another tab with the same repo as tab `index`.
 fn twin(paths: &[Option<&str>], index: usize) -> Option<usize> {
     let path = paths.get(index).copied().flatten()?;
@@ -366,7 +387,7 @@ fn twin(paths: &[Option<&str>], index: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_engine::{Capabilities, MemoryBackend, MemoryOpener, Picked};
+    use project_engine::{Capabilities, MemoryBackend, MemoryOpener};
 
     /// The job runs inside `spawn`, on the same thread.
     struct Inline;
@@ -375,16 +396,58 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>) {
-            on_done(None);
-        }
-        fn save_file(&self, _: &str, _: Vec<u8>) {}
         fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
             on_done(None);
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();
         }
+    }
+
+    type OnPicked = Box<dyn FnOnce(Option<String>) + Send>;
+
+    /// Keeps the dialog "open": the callbacks wait in `pending` until the test calls them.
+    #[derive(Default)]
+    struct Deferred {
+        pending: Mutex<Vec<OnPicked>>,
+    }
+
+    impl Platform for Deferred {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities { open_folder: true }
+        }
+        fn pick_folder(&self, on_done: OnPicked) {
+            self.pending.lock().unwrap().push(on_done);
+        }
+        fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+            job();
+        }
+    }
+
+    #[test]
+    fn only_one_folder_dialog_at_a_time() {
+        let platform = Arc::new(Deferred::default());
+        let mut opener = MemoryOpener::new();
+        opener.insert("a", MemoryBackend::sample());
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            None,
+        );
+        let ctx = egui::Context::default();
+        app.apply(&ctx, Action::PickFolder);
+        app.apply(&ctx, Action::PickFolder);
+        let first = platform.pending.lock().unwrap().pop().unwrap();
+        assert!(platform.pending.lock().unwrap().is_empty());
+        // Cancelled: the next click opens a dialog again.
+        first(None);
+        app.apply(&ctx, Action::PickFolder);
+        let second = platform.pending.lock().unwrap().pop().unwrap();
+        second(Some("a".to_owned()));
+        app.receive();
+        assert_eq!(paths(&app), [Some("a")]);
     }
 
     /// An app with repos `a` and `b`, restored from `saved`, after the answers arrived.

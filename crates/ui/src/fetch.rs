@@ -469,8 +469,7 @@ mod tests {
     use super::*;
     use crate::{Executor, Wake};
     use project_engine::{
-        Capabilities, FetchFailure, MemoryBackend, MemoryOpener, Picked, Platform, Registry,
-        Session,
+        Capabilities, FetchFailure, MemoryBackend, MemoryOpener, Platform, Registry, Session,
     };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -482,10 +481,6 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>) {
-            on_done(None);
-        }
-        fn save_file(&self, _: &str, _: Vec<u8>) {}
         fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
             on_done(None);
         }

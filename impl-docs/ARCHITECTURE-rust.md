@@ -214,20 +214,20 @@ Rule: every button, menu item and shortcut in the UI invokes `Registry::run`. No
 
 ```rust
 // crates/engine/src/platform.rs
-pub struct Picked { pub name: String, pub bytes: Vec<u8> }
-
 #[derive(Clone, Copy, Default)]
-pub struct Capabilities { pub print: bool, pub reveal_in_file_manager: bool, pub window_control: bool }
+pub struct Capabilities { pub open_folder: bool }
 
 pub trait Platform: Send + Sync {
     fn capabilities(&self) -> Capabilities;
-    /// Asynchronous on the web: the result arrives via callback.
-    fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>);
-    fn save_file(&self, suggested_name: &str, bytes: Vec<u8>);
+    /// Does not block: the result arrives via callback, possibly from another thread.
+    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>);
+    /// Runs a slow job off the UI thread.
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 }
 ```
 
-Native implementation in the desktop app (system dialog, for example with the `rfd` crate), web implementation in the wasm app (hidden file input and download via `Blob`). The UI reads `capabilities()` and hides unavailable commands.
+Native implementation in the desktop app: `rfd::AsyncFileDialog` parented to the window, awaited on a
+job thread, so the window keeps repainting while the dialog is open. The UI reads `capabilities()` and hides unavailable commands.
 
 ## 5. Interface and two targets
 

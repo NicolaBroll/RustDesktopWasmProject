@@ -2227,6 +2227,7 @@ dependencies = [
  "egui",
  "env_logger",
  "log",
+ "pollster",
  "project-engine",
  "project-git",
  "project-ui",

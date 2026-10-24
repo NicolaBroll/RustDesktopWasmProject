@@ -752,6 +752,7 @@ impl GitBackend for MemoryBackend {
             present: self.commit_graph,
             enabled,
             shallow: false,
+            replaced: false,
         })
     }
 

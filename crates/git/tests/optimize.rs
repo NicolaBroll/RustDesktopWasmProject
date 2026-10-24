@@ -3,7 +3,7 @@
 //! and journal are unchanged (also with a detached HEAD and a merge in progress); graph found
 //! through alternates and in a linked worktree; `core.commitGraph=false` refused; empty repo; a
 //! stale `commit-graph.lock` (left by a killed git) reported with git's text and left in place;
-//! cancellation; shallow repo refused.
+//! cancellation; shallow repo and replace refs refused.
 
 mod common;
 
@@ -189,6 +189,25 @@ fn shallow_repo_is_refused() {
     let err = r.run("repo.optimize", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(!graph_file(&objects(&clone)).exists());
+}
+
+#[test]
+fn replace_refs_are_refused() {
+    let h = repo_with_history();
+    let head = h.repo.git(&["rev-parse", "HEAD"]);
+    let parent = h.repo.git(&["rev-parse", "HEAD~1"]);
+    h.repo.git(&["replace", &head, &parent]);
+    let (r, mut s, opened) = session(h.repo.path_str());
+    assert_eq!(opened["commit_graph"], false);
+    let err = r.run("repo.optimize", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(!graph_file(&objects(&h.repo)).exists());
+
+    // Replace refs turned off: allowed again, and the graph counts.
+    h.repo.git(&["config", "core.useReplaceRefs", "false"]);
+    let (r, mut s, _) = session(h.repo.path_str());
+    let out = r.run("repo.optimize", &mut s, json!({})).unwrap();
+    assert_eq!(out["commit_graph"], true);
 }
 
 #[test]

@@ -41,7 +41,7 @@ pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
-    recent: &[String],
+    recent: &[RecentRepo],
     writing: bool,
     network: Option<Network>,
     actions: &mut Vec<Action>,
@@ -55,7 +55,7 @@ fn repo_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
-    recent: &[String],
+    recent: &[RecentRepo],
     writing: bool,
     network: Option<Network>,
     actions: &mut Vec<Action>,
@@ -126,14 +126,35 @@ fn repo_bar(
     }
 }
 
+/// A repo of the recent list, as the menus show it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RecentRepo {
+    pub(crate) path: String,
+    /// Its folder no longer exists: shown greyed out, "Remove missing" drops it.
+    pub(crate) missing: bool,
+}
+
 /// The menu of the recent repos: one opens in a tab (or shows the tab where it is open).
-fn recent_menu(ui: &mut Ui, recent: &[String], actions: &mut Vec<Action>) {
+fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<Action>) {
     ui.add_enabled_ui(!recent.is_empty(), |ui| {
         ui.menu_button(tr!("top-bar-recent"), |ui| {
-            for path in recent {
-                if ui.button(recent_item(path)).clicked() {
-                    actions.push(Action::Open(path.clone()));
+            for repo in recent {
+                let button = ui
+                    .add_enabled(!repo.missing, egui::Button::new(recent_text(repo)))
+                    .on_disabled_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
+                if button.clicked() {
+                    actions.push(Action::Open(repo.path.clone()));
                     ui.close();
+                }
+            }
+            if recent.iter().any(|r| r.missing) {
+                ui.separator();
+                if ui
+                    .button(tr!("top-bar-recent-forget"))
+                    .on_hover_text(tr!("top-bar-recent-forget-hint"))
+                    .clicked()
+                {
+                    actions.push(Action::ForgetMissing);
                 }
             }
         })
@@ -146,6 +167,16 @@ fn recent_menu(ui: &mut Ui, recent: &[String], actions: &mut Vec<Action>) {
 /// Name and path of a recent repo: two folders with the same name stay distinguishable.
 fn recent_item(path: &str) -> String {
     tr!("top-bar-recent-item", name = repo_name(path), path = path)
+}
+
+/// [`recent_item`], greyed out if the folder is missing.
+fn recent_text(repo: &RecentRepo) -> RichText {
+    let text = RichText::new(recent_item(&repo.path));
+    if repo.missing {
+        text.weak().strikethrough()
+    } else {
+        text
+    }
 }
 
 /// A tab of the strip, as [`tab_strip`] shows it.
@@ -356,7 +387,7 @@ pub(crate) fn welcome(
     ui: &mut Ui,
     can_pick: bool,
     busy: bool,
-    recent: &[String],
+    recent: &[RecentRepo],
     actions: &mut Vec<Action>,
 ) {
     ui.vertical_centered(|ui| {
@@ -376,10 +407,21 @@ pub(crate) fn welcome(
         if !busy && !recent.is_empty() {
             ui.add_space(16.0);
             ui.label(RichText::new(tr!("top-bar-recent-heading")).strong());
-            for path in recent {
-                if ui.link(recent_item(path)).clicked() {
-                    actions.push(Action::Open(path.clone()));
+            for repo in recent {
+                if repo.missing {
+                    ui.label(recent_text(repo))
+                        .on_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
+                } else if ui.link(recent_item(&repo.path)).clicked() {
+                    actions.push(Action::Open(repo.path.clone()));
                 }
+            }
+            if recent.iter().any(|r| r.missing)
+                && ui
+                    .small_button(tr!("top-bar-recent-forget"))
+                    .on_hover_text(tr!("top-bar-recent-forget-hint"))
+                    .clicked()
+            {
+                actions.push(Action::ForgetMissing);
             }
         }
     });

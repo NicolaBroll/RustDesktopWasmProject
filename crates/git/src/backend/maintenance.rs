@@ -8,7 +8,8 @@
 //!   entries are skipped). Git reads the first graph it finds in those directories. Then
 //!   `git config --type=bool --get core.commitGraph` (unset = enabled) and
 //!   `git rev-parse --is-shallow-repository` (git ignores the graph in a shallow repo).
-//!   Replace refs (`refs/replace/`) also make git ignore the graph: not detected, rare.
+//!   Replace refs (`refs/replace/`, unless `core.useReplaceRefs=false`) and a grafts file
+//!   (`info/grafts` in the common git directory) also make git ignore the graph.
 //!   `GIT_ALTERNATE_OBJECT_DIRECTORIES` is not followed. With `core.commitGraph=false` git
 //!   neither reads nor writes the graph (`repo.optimize` refuses first);
 //! - write: `git commit-graph write --reachable --progress`, streamed (progress to the job,
@@ -46,11 +47,37 @@ impl CliBackend {
         };
         let out = self.run(&["rev-parse", "--is-shallow-repository"])?;
         let shallow = out.trim_ascii_end() == b"true";
+        let replaced = self.replace_refs_used()? || self.grafts_file()?;
         Ok(CommitGraphState {
             present,
             enabled,
             shallow,
+            replaced,
         })
+    }
+
+    /// There are replace refs and git uses them (`core.useReplaceRefs`, default on; git
+    /// inherits `GIT_NO_REPLACE_OBJECTS`, which turns them off).
+    fn replace_refs_used(&self) -> Result<bool, EngineError> {
+        if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
+            return Ok(false);
+        }
+        let args = ["config", "--type=bool", "--get", "core.useReplaceRefs"];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        if out.status.success() && out.stdout.trim_ascii_end() == b"false" {
+            return Ok(false);
+        }
+        if !out.status.success() && !(out.status.code() == Some(1) && out.stderr.is_empty()) {
+            return Err(failure(&args, &out));
+        }
+        let refs = self.run(&["for-each-ref", "--count=1", "--format=x", "refs/replace/"])?;
+        Ok(!refs.is_empty())
+    }
+
+    /// A grafts file (`git rev-parse --git-path info/grafts`).
+    fn grafts_file(&self) -> Result<bool, EngineError> {
+        let out = self.run(&["rev-parse", "--git-path", "info/grafts"])?;
+        Ok(self.workdir.join(path_from_output(&out)).is_file())
     }
 
     /// [`GitBackend::write_commit_graph`](project_engine::GitBackend::write_commit_graph).

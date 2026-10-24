@@ -58,7 +58,9 @@ pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
 use sync_view::*;
 pub(crate) use sync_view::{failure_window, sync_window};
 use top_bar::*;
-pub(crate) use top_bar::{TabLabel, repo_name, status_bar, tab_strip, top_bar, welcome};
+pub(crate) use top_bar::{
+    RecentRepo, TabLabel, repo_name, status_bar, tab_strip, top_bar, welcome,
+};
 
 /// The network operation in progress (fetch, pull or push), for the bar.
 pub(crate) struct Network {

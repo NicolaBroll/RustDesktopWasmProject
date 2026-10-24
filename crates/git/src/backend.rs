@@ -1086,6 +1086,10 @@ impl GitBackend for CliBackend {
         self.log_file(query, job)
     }
 
+    fn root(&self) -> Option<String> {
+        self.workdir.to_str().map(str::to_owned)
+    }
+
     fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
         self.read_commit_graph_state()
     }

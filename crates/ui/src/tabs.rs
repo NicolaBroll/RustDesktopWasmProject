@@ -9,6 +9,8 @@ use crate::{Action, Tab, view};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 /// Key of the state in the eframe storage.
@@ -16,6 +18,9 @@ const KEY: &str = "tabs";
 
 /// How many recent repos are remembered.
 const MAX_RECENT: usize = 10;
+
+/// Seconds between two checks of which recent folders still exist.
+const CHECK_EVERY: f64 = 1.0;
 
 /// What survives between one launch and the next.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -35,6 +40,12 @@ pub struct App {
     active: usize,
     /// Repos opened successfully, most recent first.
     recent: Vec<String>,
+    /// The recent repos whose folder no longer exists, as of `checked_at`.
+    missing: HashSet<String>,
+    /// When `missing` was computed (egui time, seconds); `None`: to compute again.
+    checked_at: Option<f64>,
+    /// The id of the next tab created (see `Tab::id`).
+    next_id: u64,
     platform: Arc<dyn Platform>,
     opener: Arc<dyn RepoOpener>,
     wake: Wake,
@@ -74,6 +85,9 @@ impl App {
             tabs: Vec::new(),
             active: 0,
             recent: saved.recent.clone(),
+            missing: HashSet::new(),
+            checked_at: None,
+            next_id: 0,
             platform,
             opener,
             wake,
@@ -86,7 +100,8 @@ impl App {
             app.tabs.push(tab);
         }
         if app.tabs.is_empty() {
-            app.tabs.push(app.new_tab());
+            let tab = app.new_tab();
+            app.tabs.push(tab);
         }
         app.active = saved.active.min(app.tabs.len() - 1);
         if let Some(path) = repo {
@@ -95,13 +110,18 @@ impl App {
         app
     }
 
-    fn new_tab(&self) -> Tab {
-        Tab::new(Executor::new(
-            Session::new(Arc::clone(&self.opener)),
-            Registry::builtin(),
-            Arc::clone(&self.platform),
-            Arc::clone(&self.wake),
-        ))
+    fn new_tab(&mut self) -> Tab {
+        let id = self.next_id;
+        self.next_id += 1;
+        Tab::new(
+            id,
+            Executor::new(
+                Session::new(Arc::clone(&self.opener)),
+                Registry::builtin(),
+                Arc::clone(&self.platform),
+                Arc::clone(&self.wake),
+            ),
+        )
     }
 
     /// Shows the tab where `path` is open (or opening); otherwise opens it in the empty tab shown
@@ -152,6 +172,10 @@ impl App {
         for tab in &mut self.tabs {
             tab.receive();
             tab.request_operation();
+            // No repository there any more: it leaves the recent list.
+            if let Some(path) = tab.not_found.take() {
+                self.recent.retain(|p| *p != path);
+            }
         }
         let mut index = 0;
         while index < self.tabs.len() {
@@ -193,6 +217,10 @@ impl App {
                 }
             }
             Action::CloseTab(index) => self.close(index),
+            Action::ForgetMissing => {
+                prune(&mut self.recent, &self.missing);
+                self.missing.clear();
+            }
             action => self.tabs[self.active].apply(action),
         }
     }
@@ -230,6 +258,30 @@ impl App {
         self.saved = state;
     }
 
+    /// Recomputes which recent folders are missing, at most every [`CHECK_EVERY`] seconds: not
+    /// on every frame, each check touches the disk.
+    fn check_missing(&mut self, now: f64) {
+        if self
+            .checked_at
+            .is_some_and(|t| now - t < CHECK_EVERY && now >= t)
+        {
+            return;
+        }
+        self.checked_at = Some(now);
+        self.missing = missing(&self.recent, |p| Path::new(p).is_dir());
+    }
+
+    /// The recent list for the menus, with the missing folders marked.
+    fn recent_view(&self) -> Vec<view::RecentRepo> {
+        self.recent
+            .iter()
+            .map(|path| view::RecentRepo {
+                path: path.clone(),
+                missing: self.missing.contains(path),
+            })
+            .collect()
+    }
+
     fn labels(&self) -> Vec<view::TabLabel> {
         self.tabs
             .iter()
@@ -258,7 +310,13 @@ impl eframe::App for App {
                 view::tab_strip(ui, &labels, self.active, can_pick, &mut strip);
             });
         }
-        let actions = self.tabs[self.active].ui(ui, can_pick, &self.recent);
+        self.check_missing(ctx.input(|i| i.time));
+        let recent = self.recent_view();
+        // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
+        let tab = &mut self.tabs[self.active];
+        let actions = ui
+            .push_id(("tab", tab.id), |ui| tab.ui(ui, can_pick, &recent))
+            .inner;
         for action in actions.into_iter().chain(strip) {
             self.apply(&ctx, action);
         }
@@ -277,6 +335,16 @@ fn remember(recent: &mut Vec<String>, path: &str) {
     recent.retain(|p| p != path);
     recent.insert(0, path.to_owned());
     recent.truncate(MAX_RECENT);
+}
+
+/// The recent repos for which `is_dir` says the folder no longer exists.
+fn missing(recent: &[String], is_dir: impl Fn(&str) -> bool) -> HashSet<String> {
+    recent.iter().filter(|p| !is_dir(p)).cloned().collect()
+}
+
+/// Drops the `missing` repos from `recent`, keeping the order of the others.
+fn prune(recent: &mut Vec<String>, missing: &HashSet<String>) {
+    recent.retain(|p| !missing.contains(p));
 }
 
 /// The tab shown after closing `closed`, with `len` tabs left (at least one): the same one if it
@@ -351,6 +419,69 @@ mod tests {
         assert_eq!(recent[0], "r5");
         assert_eq!(recent.iter().filter(|p| *p == "r5").count(), 1);
         assert_eq!(recent.len(), MAX_RECENT);
+    }
+
+    #[test]
+    fn missing_folders_are_found_and_pruned_in_order() {
+        let mut recent: Vec<String> = ["/a", "/gone", "/b", "/gone2"].map(String::from).into();
+        let gone = missing(&recent, |p| !p.starts_with("/gone"));
+        assert_eq!(gone, HashSet::from(["/gone".into(), "/gone2".into()]));
+        prune(&mut recent, &gone);
+        assert_eq!(recent, ["/a", "/b"]);
+        prune(&mut recent, &HashSet::new());
+        assert_eq!(recent, ["/a", "/b"]);
+    }
+
+    #[test]
+    fn forget_missing_drops_them_and_checks_at_most_every_second() {
+        let saved = Saved {
+            recent: vec!["/surely/not/a/folder".into(), ".".into()],
+            ..Saved::default()
+        };
+        let mut app = app(saved, None);
+        app.check_missing(10.0);
+        assert!(app.recent_view()[0].missing);
+        assert!(!app.recent_view()[1].missing);
+        // Within the second: not checked again.
+        app.recent.push("/another/missing".into());
+        app.check_missing(10.5);
+        assert!(!app.missing.contains("/another/missing"));
+        app.check_missing(11.0);
+        assert!(app.missing.contains("/another/missing"));
+        app.apply(&egui::Context::default(), Action::ForgetMissing);
+        assert_eq!(app.recent, ["."]);
+        assert_eq!(app.state().recent, ["."]);
+    }
+
+    #[test]
+    fn opening_a_vanished_recent_repo_drops_it() {
+        let saved = Saved {
+            recent: vec!["a".into(), "gone".into()],
+            ..Saved::default()
+        };
+        let mut app = app(saved, None);
+        app.open("gone".into());
+        app.receive();
+        assert_eq!(app.recent, ["a"]);
+    }
+
+    #[test]
+    fn tab_ids_are_stable_and_never_reused() {
+        let mut app = app(Saved::default(), Some("a"));
+        app.open("b".into());
+        app.receive();
+        let ids: Vec<_> = app.tabs.iter().map(|t| t.id).collect();
+        assert_eq!(ids, [0, 1]);
+        // Closing the first: the second keeps its id (not its index).
+        app.close(0);
+        assert_eq!(app.tabs[0].id, 1);
+        app.open("a".into());
+        app.receive();
+        assert_eq!(app.tabs.iter().map(|t| t.id).collect::<Vec<_>>(), [1, 2]);
+        // Closing the last one: the new empty tab gets a new id too.
+        app.close(1);
+        app.close(0);
+        assert_eq!(app.tabs[0].id, 3);
     }
 
     #[test]

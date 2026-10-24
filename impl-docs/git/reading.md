@@ -10,7 +10,9 @@ undo and backup of this function. "§n" always refers to the main document.
 
 Parameters: `{"path"}`.
 
-Uses the injected `RepoOpener`. Result `{"path", "head", "commit_graph": bool}`: `commit_graph` is
+Uses the injected `RepoOpener`. Result `{"path", "head", "commit_graph": bool}`: `path` is the absolute worktree root
+(`GitBackend::root`, `git rev-parse --show-toplevel`), so the same repo opened from a subfolder or
+a relative path gives the same `path` (the given one on the `MemoryBackend`); `commit_graph` is
 `true` when git reads a commit-graph for the repo (`GitBackend::commit_graph` →
 `CommitGraphState::in_use`, see `repo.optimize` below); a failed check gives `false`, the repo
 opens anyway.
@@ -115,7 +117,9 @@ always writes into the repo's own object directory, which git reads first. Then 
 --type=bool --get core.commitGraph` (unset = enabled) and `git rev-parse --is-shallow-repository`:
 in a shallow repo git ignores the graph and `commit-graph write` exits 0 writing nothing, so
 `repo.optimize` refuses (`NotAllowed`, `engine-commit-graph-shallow`). Replace refs
-(`refs/replace/`) also make git ignore the graph; not detected (rare). A write over a split chain
+(`refs/replace/`, unless `core.useReplaceRefs=false` or `GIT_NO_REPLACE_OBJECTS`) and a grafts file
+(`info/grafts`) also make git ignore the graph and write nothing: `replaced` in the state,
+`repo.optimize` refuses (`NotAllowed`, `engine-commit-graph-replaced`). A write over a split chain
 left by `git maintenance` replaces it with a single `commit-graph` file (still only a cache). `MemoryBackend`: a flag set by the write,
 `core.commitGraph` from `set_config`.
 

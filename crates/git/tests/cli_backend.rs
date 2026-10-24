@@ -574,3 +574,24 @@ fn commit_show_command_on_a_real_repo() {
         .unwrap_err();
     assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
 }
+
+/// `repo.open` returns the absolute worktree root, also when opened from a subfolder.
+#[test]
+fn open_returns_the_worktree_root() {
+    let h = repo_with_history();
+    let sub = h.repo.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let root = h.repo.path().canonicalize().unwrap();
+    let r = Registry::builtin();
+    let mut s = Session::new(Arc::new(Repo::opener()));
+    let out = r
+        .run(
+            "repo.open",
+            &mut s,
+            json!({ "path": sub.to_str().unwrap() }),
+        )
+        .unwrap();
+    let path = std::path::Path::new(out["path"].as_str().unwrap());
+    assert!(path.is_absolute(), "{path:?}");
+    assert_eq!(path.canonicalize().unwrap(), root);
+}

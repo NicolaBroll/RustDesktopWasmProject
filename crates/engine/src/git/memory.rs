@@ -1,4 +1,4 @@
-//! In-memory fake repository: for command tests and for the web version.
+//! In-memory fake repository: for command and UI tests.
 
 mod branch;
 mod commit;
@@ -939,7 +939,6 @@ impl MemoryOpener {
     }
 
     /// Only the repo from [`MemoryBackend::sample`], at path [`MemoryOpener::SAMPLE_PATH`].
-    /// It is the opener of the web version.
     pub fn sample() -> Self {
         let mut opener = Self::new();
         opener.insert(Self::SAMPLE_PATH, MemoryBackend::sample());

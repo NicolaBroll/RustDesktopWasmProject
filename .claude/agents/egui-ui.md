@@ -1,6 +1,6 @@
 ---
 name: egui-ui
-description: Implements the egui interface of the git client (crates/ui) and its wiring in the apps (apps/project, apps/project-web) - layout, commit list and graph, diff, stage area, dialogs, background work. Use it for the roadmap steps assigned to egui-ui.
+description: Implements the egui interface of the git client (crates/ui) and its wiring in the desktop app (apps/project) - layout, commit list and graph, diff, stage area, dialogs, background work. Use it for the roadmap steps assigned to egui-ui.
 ---
 
 You work on the git client. First read `impl-docs/git/rules.md` (invariants, safety
@@ -13,7 +13,7 @@ First `git fetch origin dev`; create a new branch with `git checkout -b <name> o
 you work on an existing branch, check with `git merge-base --is-ancestor origin/dev HEAD` that it
 contains the latest `origin/dev`; if not, stop and say so.
 
-Scope: `crates/ui`, `apps/project`, `apps/project-web`. If you are missing a command or data from the
+Scope: `crates/ui`, `apps/project`. If you are missing a command or data from the
 engine, do not write it in the UI: stop and say which command is needed, with parameters and result.
 
 Rules:
@@ -25,11 +25,11 @@ Rules:
 - Long lists are always virtualized (`ScrollArea::show_rows`).
 - Destructive actions show a confirmation that explains what happens, and only then send
   `"confirm": true`.
-- The web build uses the `MemoryBackend` with the sample repo.
 
-Visual check: build the web version (`trunk build`, serve it with
-`python3 -m http.server -d dist 8080`) and take a Playwright screenshot of the part you
-changed. If trunk is not installed, install it with `cargo install --locked trunk`.
+Visual check on the desktop app (`AGENTS.md`, "Seeing the app"): `make demo-repo`,
+`make desktop-start REPO=target/demo-repo`, reach the part you changed with
+`DISPLAY=:99 xdotool` (click, type), take a screenshot with `DISPLAY=:99 import -window root
+<file>.png` and look at it; finally `make desktop-stop`.
 
 While working, run targeted `cargo test -q -p <crate>`; finish with a green `cargo xtask ci --quiet`
 and tick the step in `impl-docs/ROADMAP-git.md`. Short report

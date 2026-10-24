@@ -470,7 +470,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// As on the web: the job runs inside `spawn`, on the same thread.
+    /// The job runs inside `spawn`, on the same thread.
     struct Inline;
 
     impl Platform for Inline {
@@ -698,7 +698,7 @@ mod tests {
         ex.submit("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH }));
         assert!(ex.poll()[0].result.is_ok());
         let before = wakes.load(Ordering::SeqCst);
-        // On the web the fetch ends inside `submit`: progress arrives before the result,
+        // With `Inline` the fetch ends inside `submit`: progress arrives before the result,
         // and each one requests a frame.
         let ticket = ex.submit(COMMAND, json!({}));
         assert!(

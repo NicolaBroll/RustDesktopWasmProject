@@ -1,4 +1,4 @@
-//! L6 — egui interface shared by desktop and web.
+//! L6 — egui interface of the desktop app.
 //!
 //! Rule: graphical callbacks do not modify the repository directly, they produce
 //! an [`Action`]; commands go through the [`Executor`], which runs them with
@@ -551,7 +551,7 @@ pub struct App {
 }
 
 impl App {
-    /// `opener` opens repositories: `CliOpener` on desktop, `MemoryOpener` on the web. If present,
+    /// `opener` opens repositories: `CliOpener` in the app, `MemoryOpener` in tests. If present,
     /// `repo` opens at once, in the background.
     pub fn new(
         cc: &eframe::CreationContext<'_>,

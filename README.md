@@ -5,17 +5,17 @@
 
 Graphical git client under construction (see [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md)),
 written in Rust with a layered architecture: an engine independent of the UI,
-a single egui frontend compiled for desktop and WebAssembly, and a CLI and an MCP server that use the same
+an egui desktop app, and a CLI and an MCP server that use the same
 command catalog. Details in [impl-docs/ARCHITECTURE-rust.md](impl-docs/ARCHITECTURE-rust.md)
 and [AGENTS.md](AGENTS.md).
 
 ## Getting started
 
 ```sh
-make setup        # wasm32 target and trunk
+make setup        # clippy and rustfmt
 make run          # desktop app
 make desktop-shot # headless screenshot of the desktop app -> target/desktop.png
-make web-serve    # web app at http://localhost:8080
+make demo-repo    # demo repo to try the app -> target/demo-repo
 make cli ARGS="commands --search repo"
 ```
 
@@ -296,8 +296,7 @@ opened only with `open_repo`, not with `repo.open`.
 
 ## Quality
 
-`cargo xtask ci` runs formatting, Clippy with warnings as errors, tests, the layering check
-and Clippy for `wasm32-unknown-unknown`. GitHub CI uses the same command.
+`cargo xtask ci` runs formatting, Clippy with warnings as errors, tests, and the layering check. GitHub CI uses the same command.
 
 ## Name and graphics
 

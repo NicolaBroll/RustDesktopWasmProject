@@ -1,5 +1,5 @@
 //! Generates the list of `.ftl` files (`locales/<language>/<area>.ftl`), included with
-//! `include_str!` so the translations live in the binary (wasm too). A new area is just a new
+//! `include_str!` so the translations live in the binary. A new area is just a new
 //! file: no list to edit by hand, no conflicts between people working on different areas.
 
 use std::fmt::Write as _;

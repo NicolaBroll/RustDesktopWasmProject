@@ -16,12 +16,11 @@ Rules that apply to every step:
   merge. For now GitHub CI only runs on pull requests to `master`, not on those to
   `dev`. The next step restarts from the updated `dev`; `dev` will go into `master` with a pull
   request.
-- **The web is a demo, not a product** (decision of 2026-10-23): the wasm app only runs on the
-  `MemoryBackend` with a fake repo and serves as a demo from a link and as a test bench for the UI
-  (clicks and screenshots with Playwright). No features designed only for the web, no git backend
-  for the browser. The constraint that engine, domain and UI compile for wasm stays as long as it costs
-  little; if it becomes an obstacle, first add interaction tests on the desktop UI
-  (`egui_kittest`), then it can be dropped.
+- **Desktop only** (decision of 2026-10-24, S31d): the wasm app (`project-web`) has been removed;
+  it only served as a demo on the `MemoryBackend` and as a test bench with Playwright. The UI is
+  explored on the desktop app on Xvfb (`make demo-repo`, `make desktop-start`, `xdotool`; see
+  `AGENTS.md`, "Seeing the app"). Steps marked done before S31d may mention the web version: it no
+  longer exists.
 
 ## Phase 0 — Preparation
 
@@ -320,6 +319,15 @@ Rules that apply to every step:
   language. Git's text (`stderr`) stays as it is.
 - **Done when:** no error message composed with `format!` in the engine and backends;
   tests that every key exists in the two languages; CI green.
+
+### S31d — Desktop only: wasm removed
+- [x] **Agent:** none (small, done in session)
+- **Goal:** remove `apps/project-web`, the wasm clippy in `cargo xtask ci`, trunk and the web
+  targets of the `Makefile`; explore the UI on the desktop app instead: `scripts/demo-repo.sh`
+  (`make demo-repo`: real repo with merge, tag, remote ahead, stash, the branch `experiment`
+  in conflict and local changes), `make desktop-start`/`desktop-stop` (app on Xvfb `:99`
+  with focus, driven with `xdotool` and photographed with `import`).
+- **Done when:** CI green; the app explored with clicks and typing on the demo repo.
 
 ### S32 — Interactive rebase
 - [ ] **Agent:** `git-domain` (plan), `git-engine` (execution)

@@ -32,7 +32,7 @@ dependency**.
    read with pure parsers in the domain, testable without processes. `gix` comes in later only where
    speed is needed (reading the log on huge repos, step S36).
 3. **The engine does not know where the data comes from.** The git backend is a trait (§4). The desktop uses
-   the real backend, tests and the web version use an in-memory backend with a sample repo.
+   the real backend, tests use an in-memory backend with a sample repo.
 4. **Never block the UI.** Slow commands (fetch, push, large logs) run off the UI
    thread (§6).
 5. **Same catalog for people and agents.** UI, CLI and MCP use the same command ids.
@@ -48,7 +48,7 @@ dependency**.
 | L6 | `project-ui` | egui interface (no `cfg(target_arch)`) |
 | L6 | `project-mcp` | MCP server on stdio |
 | L6 | `project-git` | **new**: `CliBackend`, runs `git` and uses the domain parsers |
-| L7 | `project`, `project-cli`, `project-web` | startup and wiring |
+| L7 | `project`, `project-cli` | startup and wiring |
 
 `project-git` sits at L6 because it implements an engine trait (L5). No other L6 crate imports it:
 the L7 apps wire it up, as already happens for `Platform`. It must be declared in
@@ -59,9 +59,6 @@ Who uses what:
 - **`project`** (desktop): `CliBackend` + `NativePlatform`.
 - **`project-cli`**: `CliBackend`; `--repo <path>` opens the repo, `mcp --root <dir>` confines
   paths.
-- **`project-web`**: `MemoryBackend` with a demo repo. The browser cannot access local
-  repos, but the web build stays useful for developing and trying the UI (also with Playwright
-  in cloud sessions) and keeps the CI wasm check meaningful.
 
 The `project-*` names remain provisional: renaming them is a separate decision, to be made in a single
 dedicated step if needed.
@@ -218,8 +215,7 @@ pub trait RepoOpener: Send + Sync {
 }
 ```
 
-- `MemoryBackend` (in the engine): a fake repo built in code. It serves the command tests and the
-  web version. Writes modify the in-memory state. It also has in-memory remotes
+- `MemoryBackend` (in the engine): a fake repo built in code. It serves the command and UI tests. Writes modify the in-memory state. It also has in-memory remotes
   (`add_remote`, `set_branch_on_remote`, `insert_remote_commit`, `fail_fetch` to simulate
   `Auth`/`RemoteUnreachable`): the fetch copies reachable commits and updates
   `refs/remotes/<remote>/<branch>` (without prune). In the sample repo `origin` has one more
@@ -331,7 +327,7 @@ fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 ```
 
 - Desktop: a thread (or a small pool).
-- Web: runs immediately (the `MemoryBackend` is instantaneous).
+- Tests: a platform may run the job immediately, inside `spawn`.
 
 The session sits behind an `Arc<Mutex<...>>` shared with the job; the result returns to the UI with
 a channel and the UI requests a new frame (`ctx.request_repaint()`). During a job the UI shows
@@ -363,7 +359,7 @@ cancelled). This way the extension does not change the signature of commands or 
 - **The UI** (`Executor`): for `remote.fetch` it calls `run_with` in the `Platform::spawn` job with
   a sink that stores the ticket's last `Progress` and calls `wake`, and keeps the ticket's `CancelToken`
   for a "Cancel" button. The session stays locked by the job for the whole fetch
-  (§6): reads sent in the meantime wait for the end. On the web the `MemoryBackend` finishes
+  (§6): reads sent in the meantime wait for the end. The `MemoryBackend` finishes
   immediately (fake events with the same shape).
 - **Cancellation**: the `CliBackend` checks the token every 50 ms while git runs; if it is
   cancelled it sends SIGTERM to the fetch's process group (git, ssh, `git-remote-http`,
@@ -502,9 +498,8 @@ remote), of a tag or of a commit: "Merge into «branch»" and "… with merge co
 (`no_ff`), disabled with the reason if HEAD is detached or an operation is already in progress. The outcome goes
 in the status bar (fast-forward, merge commit, already up to date); a merge stopped on conflict
 opens the stage area and the panel; a refusal (local changes, unknown rev) opens a
-window. The web demo adds to the sample repo the branch `experiment`, conflicting with `main`
-on `src/lib.rs` (`apps/project-web/src/demo.rs`): «Stash…», then «Merge into «main»» on
-`experiment`.
+window. The demo repo (`make demo-repo`, `scripts/demo-repo.sh`) has the branch `experiment`,
+conflicting with `main` on `src/lib.rs`: «Stash…», then «Merge into «main»» on `experiment`.
 
 ## 9. Tests
 
@@ -518,8 +513,9 @@ on `src/lib.rs` (`apps/project-web/src/demo.rs`): «Stash…», then «Merge int
   Scenarios to cover over time: empty repo, detached HEAD, conflicted merge, interrupted rebase,
   submodule, worktree, binary files, CRLF line endings, non-UTF-8 names.
 - **CLI**: end-to-end tests such as `apps/project-cli/tests/cli.rs`.
-- **UI**: web build with the `MemoryBackend` and Playwright screenshot to check the
-  layout.
+- **UI**: unit tests of the views and of the `Executor` on the `MemoryBackend`; the layout is
+  checked on the desktop app on Xvfb with the demo repo (`make desktop-start`, `xdotool`,
+  `import`).
 
 ## 10. Agents
 
@@ -532,6 +528,6 @@ lighter model (the agent's `model` parameter).
 | --- | --- | --- |
 | `git-domain` | `crates/core`, `crates/domain` | types, parsers, graph, patches: pure code |
 | `git-engine` | `crates/engine`, `crates/git`, `crates/mcp`, `apps/project-cli` | backend, commands, session, CLI and MCP |
-| `egui-ui` | `crates/ui`, `apps/project`, `apps/project-web` | interface and wiring in the apps |
+| `egui-ui` | `crates/ui`, `apps/project` | interface and wiring in the apps |
 | `git-scenarios` | tests in `crates/git/tests` | scenarios on real repos and edge cases |
 | `safety-reviewer` | read-only | review of every step that writes to the user's repo |

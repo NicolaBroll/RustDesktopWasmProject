@@ -1,7 +1,4 @@
 /target
-/dist
-/.playwright-mcp
-/apps/project-web/dist
 
 # worktree degli agenti
 .claude/worktrees/

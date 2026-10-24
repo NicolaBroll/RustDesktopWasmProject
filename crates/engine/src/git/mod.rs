@@ -2,7 +2,7 @@
 //!
 //! The engine does not run `git` and does not touch the file system: it reads the repo through
 //! [`GitBackend`], opened by a [`RepoOpener`] injected by the app. The implementations are
-//! [`MemoryBackend`] (here, for tests and the web version) and `CliBackend` (in `project-git`).
+//! [`MemoryBackend`] (here, for tests) and `CliBackend` (in `project-git`).
 
 mod backup;
 mod branch;
@@ -565,7 +565,7 @@ impl DiffSpec {
 }
 
 /// Opens a repository given the path. The app injects it into the session: desktop and CLI use
-/// `CliOpener` of `project-git`, the web version [`MemoryOpener`].
+/// `CliOpener` of `project-git`, the tests [`MemoryOpener`].
 pub trait RepoOpener: Send + Sync {
     /// [`EngineError::RepoNotFound`] if there is no repository at the path.
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;

@@ -1,5 +1,8 @@
 # Layered architecture in Rust: desktop and WebAssembly
 
+> In this project the WebAssembly target has been removed (S31d, 2026-10-24): BinariGit is desktop
+> only. The web parts of this guide (`myapp-web`, trunk, the wasm check in CI) do not apply.
+
 Starting guide for a new project structured like PdfCraft and GridCraft: an engine independent of the UI, numbered layers with dependencies only downward, a single egui frontend compiled native and wasm.
 
 Conventions: `myapp` is the placeholder name. Dependency versions and some signatures (in particular `eframe` and `cargo_metadata`) change often: **verify every snippet against the version you install**. The snippets are starting outlines, not tested code.

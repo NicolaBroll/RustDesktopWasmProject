@@ -13,7 +13,7 @@ Reference architecture: [impl-docs/ARCHITECTURE-rust.md](impl-docs/ARCHITECTURE-
 | L6 | `project-ui` | `crates/ui` — egui `App`, no `cfg(target_arch)` |
 | L6 | `project-mcp` | `crates/mcp` — MCP server on stdio |
 | L6 | `project-git` | `crates/git` — `CliBackend`/`CliOpener`: runs `git`; only the L7 apps import it |
-| L7 | `project`, `project-cli`, `project-web` | `apps/*` — startup and wiring only |
+| L7 | `project`, `project-cli` | `apps/*` — startup and wiring only |
 
 A crate imports only from **strictly lower** layers; `cargo xtask layers` checks this.
 A new crate must be declared in `xtask/src/layers.rs`.
@@ -62,7 +62,7 @@ write to the user's repo also go through `safety-reviewer`.
 ## Before delivering
 
 ```sh
-cargo xtask ci           # fmt, clippy -D warnings, test, layering, clippy wasm
+cargo xtask ci           # fmt, clippy -D warnings, test, layering
 cargo xtask ci --quiet   # the same, with output only from the step that fails
 ```
 
@@ -80,10 +80,15 @@ Examples for every command: [impl-docs/git/cli.md](impl-docs/git/cli.md).
 
 ```sh
 make desktop-shot                      # desktop app on Xvfb -> target/desktop.png (REPO=, WAIT=, SHOT=)
-make web-serve                         # web app on :8080, then screenshot with Playwright
+make demo-repo                         # demo repo -> target/demo-repo (merge, tag, stash, conflict, changes)
+make desktop-start REPO=target/demo-repo   # app left running on Xvfb :99, with keyboard focus
+DISPLAY=:99 xdotool mousemove 300 44 click 1   # click (screen 1280x800, window at 0,0)
+DISPLAY=:99 xdotool type 'text'; DISPLAY=:99 xdotool key ctrl+Return
+DISPLAY=:99 import -window root target/shot.png   # screenshot, then look at it
+make desktop-stop
 ```
 
 Tools (installed by `.devcontainer/post-create.sh`): `xvfb` + `xauth` (`xvfb-run`),
-`x11-utils` (`xwininfo`, `xprop`), `imagemagick` (`import`); Chrome for Playwright and for
+`x11-utils` (`xwininfo`, `xprop`), `imagemagick` (`import`), `xdotool`; Chrome for
 `assets/render.sh`. VS Code's `WAYLAND_DISPLAY` must be unset, otherwise winit uses Wayland and the
 screen stays black (the target does this on its own).

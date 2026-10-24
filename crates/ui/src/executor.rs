@@ -216,8 +216,8 @@ impl Executor {
         }
     }
 
-    /// Sends the command `command` with `params` and returns at once (on the web, where there
-    /// are no threads, after running it). The result arrives from [`Executor::poll`].
+    /// Sends the command `command` with `params` and returns at once (after running it, if the
+    /// platform runs jobs inside `spawn`). The result arrives from [`Executor::poll`].
     pub fn submit(&mut self, command: &str, params: Value) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
@@ -228,7 +228,7 @@ impl Executor {
             writes,
         });
 
-        // Before starting the job: on the web the command runs (and sends progress) inside
+        // Before starting the job: a platform may run the command (and send progress) inside
         // `spawn`.
         lock(&self.progress).insert(ticket, None);
         let token = CancelToken::new();
@@ -378,8 +378,8 @@ mod tests {
 
     const SLOW: Duration = Duration::from_millis(300);
 
-    /// Test platform: real threads as on desktop, or immediate execution as on the
-    /// web, or discarded jobs (a thread that does not start).
+    /// Test platform: real threads as on desktop, or immediate execution inside `spawn`,
+    /// or discarded jobs (a thread that does not start).
     enum TestPlatform {
         Threads,
         Inline,

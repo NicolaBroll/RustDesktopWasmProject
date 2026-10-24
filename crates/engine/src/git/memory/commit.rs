@@ -4,8 +4,7 @@
 //! [`check_amend_published`]), message cleaned like `git commit -F -` without configuration
 //! (`--cleanup=whitespace`), `amend` with the same author and the same parents and a backup
 //! ref of the rewritten commit. No hooks or signing. Dates come from a fake clock
-//! (a minute after the most recent commit), so tests are deterministic and the web version
-//! does not depend on the system clock.
+//! (a minute after the most recent commit), so tests are deterministic.
 
 use super::write::{TreeEntry, ZERO, entry_order, file_type, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES, TAGS, content_oid};

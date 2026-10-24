@@ -80,5 +80,5 @@
   <circle cx="332" cy="124" r="34" fill="#141C33" stroke="#FFB547" stroke-width="14"/>
   </svg>
   <text x="470" y="315" textLength="660" lengthAdjust="spacingAndGlyphs" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="140" font-weight="700"><tspan fill="#FFFFFF">Binari</tspan><tspan fill="#FFB547">Git</tspan></text>
-  <text x="474" y="385" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="40" fill="#B9C3DB">Client git grafico · desktop e web</text>
+  <text x="474" y="385" font-family="Inter, 'Segoe UI', 'Helvetica Neue', 'DejaVu Sans', Arial, sans-serif" font-size="40" fill="#B9C3DB">Client git grafico per desktop</text>
 </svg>

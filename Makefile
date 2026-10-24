@@ -1,23 +1,20 @@
-WASM_TARGET := wasm32-unknown-unknown
-# Web server port: it is the one forwarded by the devcontainer (forwardPorts in
-# .devcontainer/devcontainer.json). If you change it, update it there too.
-PORT        ?= 8080
 SHOT        ?= target/desktop.png
 REPO        ?= .
 WAIT        ?= 6
+# Virtual display of `desktop-start`: xdotool and import use it with DISPLAY=$(XDISPLAY).
+XDISPLAY    ?= :99
+DEMO        ?= target/demo-repo
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run desktop-shot cli build release web-serve web-build web-release web-preview \
+.PHONY: help setup run desktop-shot desktop-start desktop-stop demo-repo cli build release \
         check fmt fmt-check clippy test layers ci clean
 
 help: ## Show this list
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Install the wasm target and trunk
-	rustup target add $(WASM_TARGET)
+setup: ## Install clippy and rustfmt
 	rustup component add clippy rustfmt
-	command -v trunk >/dev/null || cargo install --locked trunk
 
 # --- Desktop and CLI ---------------------------------------------------------
 
@@ -30,34 +27,39 @@ desktop-shot: ## Headless screenshot of the desktop app -> $(SHOT) (REPO=. to op
 		'target/debug/project "$(REPO)" & pid=$$!; sleep $(WAIT); import -window root "$(SHOT)"; kill $$pid'
 	@echo "screenshot: $(SHOT)"
 
+desktop-start: ## Desktop app on Xvfb $(XDISPLAY), left running to explore it (REPO=)
+	cargo build -q -p project
+	@$(MAKE) -s desktop-stop
+	@mkdir -p target
+	setsid Xvfb $(XDISPLAY) -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 & echo $$! > target/xvfb.pid
+	@sleep 1
+	env -u WAYLAND_DISPLAY DISPLAY=$(XDISPLAY) LIBGL_ALWAYS_SOFTWARE=1 setsid target/debug/project "$(REPO)" \
+		>target/desktop.log 2>&1 & echo $$! > target/desktop.pid
+	@# Without a window manager the keyboard reaches the window only if it is given focus.
+	DISPLAY=$(XDISPLAY) timeout 60 xdotool search --sync --name BinariGit windowfocus --sync
+	@echo "app on $(XDISPLAY): DISPLAY=$(XDISPLAY) xdotool mousemove X Y click 1 | type 'text' | key Return"
+	@echo "screenshot: DISPLAY=$(XDISPLAY) import -window root target/shot.png; stop: make desktop-stop"
+
+desktop-stop: ## Stop the app and the Xvfb of desktop-start
+	-@for f in target/desktop.pid target/xvfb.pid; do [ -f $$f ] && kill $$(cat $$f) 2>/dev/null; rm -f $$f; done; true
+
+demo-repo: ## Demo repo to explore the app -> $(DEMO) (recreated every time)
+	rm -rf "$(DEMO)" "$(DEMO)-origin.git"
+	scripts/demo-repo.sh "$(DEMO)"
+
 cli: ## Run the CLI (e.g. make cli ARGS="commands")
 	cargo run -q -p project-cli -- $(or $(ARGS),--help)
 
 build: ## Build the whole workspace (debug)
 	cargo build --workspace
 
-release: ## Optimized build of desktop, CLI and web site
+release: ## Optimized build of desktop and CLI
 	cargo xtask release
-
-# --- Web (wasm) ------------------------------------------------------------
-
-web-serve: ## Development server with auto-reload at http://localhost:PORT (default 8080)
-	trunk serve --port $(PORT)
-
-web-build: ## Web build (debug) -> dist/
-	trunk build
-
-web-release: ## Optimized web build -> dist/
-	trunk build --release
-
-web-preview: web-release ## Serve the release build at http://localhost:PORT (default 8080)
-	python3 -m http.server -d dist $(PORT)
 
 # --- Quality ---------------------------------------------------------------
 
-check: ## cargo check for desktop and wasm
+check: ## cargo check of the workspace
 	cargo check --workspace
-	cargo check -p project-ui -p project-web --target $(WASM_TARGET)
 
 fmt: ## Format the code
 	cargo fmt --all
@@ -65,9 +67,8 @@ fmt: ## Format the code
 fmt-check: ## Check formatting without modifying
 	cargo fmt --all -- --check
 
-clippy: ## Lint for desktop and wasm (warning = error)
+clippy: ## Lint (warning = error)
 	cargo clippy --workspace --all-targets -- -D warnings
-	cargo clippy -p project-ui -p project-web --target $(WASM_TARGET) -- -D warnings
 
 test: ## Run the tests
 	cargo test --workspace
@@ -78,6 +79,5 @@ layers: ## Check the layering between crates
 ci: ## All checks, as in CI (cargo xtask ci)
 	cargo xtask ci
 
-clean: ## Remove target/ and dist/
+clean: ## Remove target/
 	cargo clean
-	rm -rf dist

@@ -33,17 +33,8 @@
 		}
 	],
 
-	// Fix volume ownership (new volumes are created as root) and install Playwright + Chrome.
+	// Fix volume ownership (new volumes are created as root), install Chrome and the tools for the headless desktop app.
 	"postCreateCommand": "bash .devcontainer/post-create.sh",
-
-	// Porta del server web (trunk serve / web-preview). Tenere allineata con PORT nel Makefile.
-	"forwardPorts": [8080],
-	"portsAttributes": {
-		"8080": {
-			"label": "egui web",
-			"onAutoForward": "notify"
-		}
-	},
 
 	"customizations": {
 		"vscode": {
@@ -54,8 +45,6 @@
 				"tamasfe.even-better-toml",
 				"fill-labs.dependi",
 				"usernamehw.errorlens",
-				// Web testing
-				"ms-playwright.playwright",
 				// Claude Code
 				"anthropic.claude-code"
 			]

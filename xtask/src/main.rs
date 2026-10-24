@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const WASM_TARGET: &str = "wasm32-unknown-unknown";
-
 /// `--quiet`: command output is shown only if they fail (less text to read for whoever
 /// runs CI many times, such as agents).
 static QUIET: AtomicBool = AtomicBool::new(false);
@@ -16,10 +14,10 @@ static QUIET: AtomicBool = AtomicBool::new(false);
 const USAGE: &str = "\
 usage: cargo xtask <task>
 
-  ci        fmt, clippy, test, layering, clippy wasm
+  ci        fmt, clippy, test, layering
             (`ci --quiet`: one line per step, output only of the failing step)
   layers    checks that every crate depends only on lower layers
-  release   optimized desktop/CLI build and website in dist/";
+  release   optimized desktop/CLI build";
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -62,26 +60,12 @@ fn ci() -> anyhow::Result<()> {
     }
     step("layering");
     layers::check_layers()?;
-    // The UI and the web app must also compile for the browser.
-    cargo(&[
-        "clippy",
-        "-p",
-        "project-ui",
-        "-p",
-        "project-web",
-        "--target",
-        WASM_TARGET,
-        "--",
-        "-D",
-        "warnings",
-    ])?;
     eprintln!("\nci: all green");
     Ok(())
 }
 
 fn release() -> anyhow::Result<()> {
-    cargo(&["build", "--release", "-p", "project", "-p", "project-cli"])?;
-    run(Command::new("trunk").args(["build", "--release"]))
+    cargo(&["build", "--release", "-p", "project", "-p", "project-cli"])
 }
 
 fn cargo(args: &[&str]) -> anyhow::Result<()> {

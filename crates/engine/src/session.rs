@@ -26,7 +26,7 @@ struct OpenRepo {
 
 impl Session {
     /// Session with no open repo. Desktop and CLI pass `CliOpener` from `project-git`, the
-    /// web version and the tests a [`MemoryOpener`](crate::MemoryOpener).
+    /// tests a [`MemoryOpener`](crate::MemoryOpener).
     pub fn new(opener: Arc<dyn RepoOpener>) -> Self {
         Self {
             opener,

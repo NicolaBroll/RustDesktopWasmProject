@@ -1,6 +1,5 @@
 # Top bar, status bar and welcome screen (view/top_bar.rs).
 
-top-bar-open = Apri…
 top-bar-refresh = Aggiorna
 top-bar-refresh-hint = Rilegge ref, stato e log
 top-bar-after-operation = Dopo l'operazione in corso
@@ -33,8 +32,7 @@ top-bar-running-queued = { $what } in corso… (+{ $n } in coda)
 top-bar-opening = Apertura del repository…
 top-bar-no-repo = Nessun repository aperto
 top-bar-open-repo = Apri un repository…
-top-bar-open-hint = Apri un repository in una nuova scheda
-top-bar-recent = Recenti
+top-bar-recent = Apri recenti
 top-bar-recent-hint = Repository aperti di recente: uno si apre in una scheda, o mostra la sua scheda se è già aperto
 top-bar-recent-none = Ancora nessun repository aperto
 top-bar-recent-item = { $name } — { $path }

@@ -34,52 +34,18 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
     ui.label(text).on_hover_text(long);
 }
 
-/// `writing`: a write is in progress, Undo, Redo, Refresh, Fetch, Pull and Push
-/// wait. `network`: the fetch, pull or push in progress with its latest progress.
-/// `recent`: the recent repos, for the "Recent" menu.
+/// The toolbar of the repo shown. `writing`: a write is in progress, Undo, Redo, Refresh, Fetch,
+/// Pull and Push wait. `network`: the fetch, pull or push in progress with its latest progress.
+/// Open and the recent repos are in the "File" menu of the [`title_bar`](super::title_bar).
 pub(crate) fn top_bar(
     ui: &mut Ui,
-    repo: Option<&RepoView>,
-    can_pick: bool,
-    recent: &[RecentRepo],
+    repo: &RepoView,
     writing: bool,
     network: Option<Network>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
-        repo_bar(ui, repo, can_pick, recent, writing, network, actions);
-    });
-}
-
-fn repo_bar(
-    ui: &mut Ui,
-    repo: Option<&RepoView>,
-    can_pick: bool,
-    recent: &[RecentRepo],
-    writing: bool,
-    network: Option<Network>,
-    actions: &mut Vec<Action>,
-) {
-    {
-        if can_pick
-            && ui
-                .button(tr!("top-bar-open"))
-                .on_hover_text(tr!("top-bar-open-hint"))
-                .clicked()
-        {
-            actions.push(Action::PickFolder);
-        }
-        recent_menu(ui, recent, actions);
-        let Some(repo) = repo else {
-            return;
-        };
-        let button = ui
-            .add_enabled(!writing, egui::Button::new(tr!("top-bar-refresh")))
-            .on_hover_text(tr!("top-bar-refresh-hint"))
-            .on_disabled_hover_text(tr!("top-bar-after-operation"));
-        if button.clicked() {
-            actions.push(Action::Refresh);
-        }
+        refresh_button(ui, writing, actions);
         ui.separator();
         match network {
             Some(network) => network_progress(ui, network, actions),
@@ -91,24 +57,7 @@ fn repo_bar(
             }
         }
         ui.separator();
-        // With an operation in progress (merge, rebase...) the engine refuses undo and redo.
-        let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
-        for op in [UndoOp::Undo, UndoOp::Redo] {
-            let available = op.available(&repo.history);
-            let enabled = available && !in_operation && !writing && !repo.modal_open();
-            let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
-            let hint = op.hint(&repo.history);
-            let button = if available && in_operation {
-                button.on_disabled_hover_text(tr!("top-bar-undo-in-operation", hint = &hint))
-            } else if available && !enabled {
-                button.on_disabled_hover_text(tr!("top-bar-undo-after-operation", hint = &hint))
-            } else {
-                button.on_hover_text(&hint).on_disabled_hover_text(&hint)
-            };
-            if button.clicked() {
-                actions.push(Action::Undo(op));
-            }
-        }
+        undo_buttons(ui, repo, writing, actions);
         ui.separator();
         ui.strong(repo_name(&repo.path)).on_hover_text(&repo.path);
         ui.separator();
@@ -123,6 +72,39 @@ fn repo_bar(
                 ui.label(tr!("top-bar-changed-files", n = changes));
             }
         }
+    });
+}
+
+/// "Refresh": refs, status and log again.
+pub(super) fn refresh_button(ui: &mut Ui, writing: bool, actions: &mut Vec<Action>) {
+    let button = ui
+        .add_enabled(!writing, egui::Button::new(tr!("top-bar-refresh")))
+        .on_hover_text(tr!("top-bar-refresh-hint"))
+        .on_disabled_hover_text(tr!("top-bar-after-operation"));
+    if button.clicked() {
+        actions.push(Action::Refresh);
+    }
+}
+
+/// "Undo" and "Redo", with the journal entry they would affect on hover.
+pub(super) fn undo_buttons(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
+    // With an operation in progress (merge, rebase...) the engine refuses undo and redo.
+    let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
+    for op in [UndoOp::Undo, UndoOp::Redo] {
+        let available = op.available(&repo.history);
+        let enabled = available && !in_operation && !writing && !repo.modal_open();
+        let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
+        let hint = op.hint(&repo.history);
+        let button = if available && in_operation {
+            button.on_disabled_hover_text(tr!("top-bar-undo-in-operation", hint = &hint))
+        } else if available && !enabled {
+            button.on_disabled_hover_text(tr!("top-bar-undo-after-operation", hint = &hint))
+        } else {
+            button.on_hover_text(&hint).on_disabled_hover_text(&hint)
+        };
+        if button.clicked() {
+            actions.push(Action::Undo(op));
+        }
     }
 }
 
@@ -135,7 +117,7 @@ pub(crate) struct RecentRepo {
 }
 
 /// The menu of the recent repos: one opens in a tab (or shows the tab where it is open).
-fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<Action>) {
+pub(super) fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<Action>) {
     ui.add_enabled_ui(!recent.is_empty(), |ui| {
         ui.menu_button(tr!("top-bar-recent"), |ui| {
             for repo in recent {

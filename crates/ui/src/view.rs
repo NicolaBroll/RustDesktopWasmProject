@@ -36,6 +36,7 @@ mod remotes_view;
 mod stage_view;
 mod stash_view;
 mod sync_view;
+mod title_bar;
 mod top_bar;
 
 pub(crate) use branches::branch_dialog;
@@ -57,6 +58,8 @@ use stash_view::*;
 pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
 use sync_view::*;
 pub(crate) use sync_view::{failure_window, sync_window};
+pub use title_bar::WindowFrame;
+pub(crate) use title_bar::{TitleBar, title_bar_panel, window_edges};
 use top_bar::*;
 pub(crate) use top_bar::{
     RecentRepo, TabLabel, repo_name, status_bar, tab_strip, top_bar, welcome,

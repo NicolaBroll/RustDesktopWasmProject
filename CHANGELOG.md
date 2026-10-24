@@ -6,6 +6,13 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Title bar** in VS Code style: the File, Edit and Repository menus and the title are in the
+  window's title bar, with the app's own minimize, maximize/restore and close buttons (Windows and
+  Linux; on macOS the native buttons stay). "Open…" and "Recent" moved from the toolbar to the File
+  menu.
+
 ## [0.1.0] - 2026-10-24
 
 First release: a graphical git client for the desktop, written in Rust with egui. It runs the

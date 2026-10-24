@@ -59,6 +59,9 @@ pub struct App {
     saved: Saved,
     /// Whether the window had focus in the last frame (`None`: not known yet).
     focused: Option<bool>,
+    /// Who draws the window frame: with [`view::WindowFrame::Custom`] the menu bar is also the
+    /// title bar.
+    frame: view::WindowFrame,
 }
 
 impl App {
@@ -78,6 +81,13 @@ impl App {
             .and_then(|s| eframe::get_value::<Saved>(s, KEY))
             .unwrap_or_default();
         Self::restore(platform, opener, wake, saved, repo)
+    }
+
+    /// Who draws the window frame (default: the platform).
+    #[must_use]
+    pub fn with_window_frame(mut self, frame: view::WindowFrame) -> Self {
+        self.frame = frame;
+        self
     }
 
     fn restore(
@@ -101,6 +111,7 @@ impl App {
             picking: Arc::default(),
             saved: saved.clone(),
             focused: None,
+            frame: view::WindowFrame::Native,
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -333,16 +344,27 @@ impl eframe::App for App {
         self.receive();
         self.auto_refresh(&ctx);
         let can_pick = self.platform.capabilities().open_folder;
-        // The strip's actions after the tab's: they can change the tab shown.
+        self.check_missing(ctx.input(|i| i.time));
+        let recent = self.recent_view();
+        // The actions of the menus and of the strip after the tab's: they can change the tab shown.
         let mut strip = Vec::new();
+        let shown = &self.tabs[self.active];
+        let bar = view::TitleBar {
+            frame: self.frame,
+            repo: shown.repo.as_ref(),
+            can_pick,
+            recent: &recent,
+            writing: shown.executor.writing().is_some(),
+            network: shown.network().is_some(),
+            active: self.active,
+        };
+        view::title_bar_panel(ui, &bar, &mut strip);
         if self.tabs.len() > 1 || self.tabs[0].path().is_some() {
             let labels = self.labels();
             egui::Panel::top("tabs").show(ui, |ui| {
                 view::tab_strip(ui, &labels, self.active, can_pick, &mut strip);
             });
         }
-        self.check_missing(ctx.input(|i| i.time));
-        let recent = self.recent_view();
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];
         let actions = ui
@@ -352,6 +374,7 @@ impl eframe::App for App {
             self.apply(&ctx, action);
         }
         self.tabs[self.active].after_actions();
+        view::window_edges(&ctx, self.frame);
         self.persist(frame.storage_mut());
     }
 

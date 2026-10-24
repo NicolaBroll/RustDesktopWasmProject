@@ -482,11 +482,19 @@ Undo does not cover remote operations: a push cannot be undone from here (the pu
 
 GitKraken-like layout:
 
-- **Tabs** (S35): one per open repo, above the top bar, each with its own `Session` (undo journal
-  per repo); "+"/"Open…" open in a new tab, a repo already open only shows its tab. Open tabs and
-  recent repos (at most 10) are saved in the eframe storage and reopened at the next launch.
-- **Top bar**: open repo, recent repos, fetch/pull/push buttons, undo/redo, state of the job in
-  progress.
+- **Title bar** (`view/title_bar.rs`), VS Code style: the menus File (open, recent repos, close
+  tab, exit), Edit (undo/redo) and Repository (refresh, fetch/pull/push, stash), the title
+  "repo — BinariGit" at the center. Who draws the window frame is a `WindowFrame` chosen by the
+  app (the UI has no `cfg`): `Custom` (Windows, Linux) is a window without decorations, where the
+  bar is dragged, maximizes with a double click, has its own minimize, maximize/restore and close
+  buttons and the window edges resize it; `MacOs` keeps the native buttons over a transparent title
+  bar; `Native` (default, e.g. the browser) shows only the menus.
+- **Tabs** (S35): one per open repo, under the title bar, each with its own `Session` (undo journal
+  per repo); "+"/"Open repository…" open in a new tab, a repo already open only shows its tab.
+  Open tabs and recent repos (at most 10) are saved in the eframe storage and reopened at the next
+  launch.
+- **Top bar** (toolbar, only with a repo open): refresh, fetch/pull/push buttons, stash,
+  undo/redo, state of the job in progress.
 - **Left column**: local branches, remotes, tags, stashes ([git/stash.md](git/stash.md)).
 - **Center**: commit graph and list, with an "uncommitted changes" row at the top. Virtualized
   list (`ScrollArea::show_rows`): only visible rows are drawn, the log loads

@@ -13,8 +13,9 @@ help: ## Show this list
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Install clippy and rustfmt
+setup: ## Install clippy, rustfmt and cargo-deny
 	rustup component add clippy rustfmt
+	cargo deny --version >/dev/null 2>&1 || cargo install --locked cargo-deny
 
 # --- Desktop and CLI ---------------------------------------------------------
 

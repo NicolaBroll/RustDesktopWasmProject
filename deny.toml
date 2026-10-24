@@ -1,4 +1,6 @@
-# Configurazione per `cargo deny check` (https://embarkstudios.github.io/cargo-deny/).
+# Configuration for `cargo deny check` (https://embarkstudios.github.io/cargo-deny/).
+# `cargo xtask ci` checks licenses, bans and sources; advisories run in
+# `.github/workflows/audit.yml` (weekly and on pull requests to master).
 
 [graph]
 all-features = true

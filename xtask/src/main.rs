@@ -14,7 +14,7 @@ static QUIET: AtomicBool = AtomicBool::new(false);
 const USAGE: &str = "\
 usage: cargo xtask <task>
 
-  ci        fmt, clippy, test, layering
+  ci        fmt, clippy, test, layering, cargo deny (licenses, bans, sources)
             (`ci --quiet`: one line per step, output only of the failing step)
   layers    checks that every crate depends only on lower layers
   release   optimized desktop/CLI build";
@@ -60,8 +60,37 @@ fn ci() -> anyhow::Result<()> {
     }
     step("layering");
     layers::check_layers()?;
+    deny()?;
     eprintln!("\nci: all green");
     Ok(())
+}
+
+/// `cargo deny check licenses bans sources` (`deny.toml`): no network, always the same result.
+/// Advisories change every day and run in `.github/workflows/audit.yml` instead. Without
+/// `cargo-deny` installed the step is skipped with a warning, except in CI (`CI` set), where it
+/// fails.
+fn deny() -> anyhow::Result<()> {
+    let program = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let installed = Command::new(program)
+        .args(["deny", "--version"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !installed {
+        if std::env::var_os("CI").is_some() {
+            bail!("cargo-deny is not installed (`make setup`)");
+        }
+        step("cargo deny: skipped, not installed (`make setup` installs it)");
+        return Ok(());
+    }
+    cargo(&[
+        "deny",
+        "--log-level",
+        "error",
+        "check",
+        "licenses",
+        "bans",
+        "sources",
+    ])
 }
 
 fn release() -> anyhow::Result<()> {

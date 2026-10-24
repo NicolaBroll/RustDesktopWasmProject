@@ -23,12 +23,16 @@ pub struct CommitGraphState {
     /// commit-graph there (`git commit-graph write` succeeds and writes nothing).
     #[serde(default)]
     pub shallow: bool,
+    /// Replace refs (`refs/replace/`, with `core.useReplaceRefs` on) or a grafts file: git
+    /// neither reads nor writes a commit-graph, like in a shallow repo.
+    #[serde(default)]
+    pub replaced: bool,
 }
 
 impl CommitGraphState {
-    /// Git uses a commit-graph for this repo: present, enabled and not shallow.
+    /// Git uses a commit-graph for this repo: present, enabled, not shallow and not replaced.
     pub fn in_use(&self) -> bool {
-        self.present && self.enabled && !self.shallow
+        self.present && self.enabled && !self.shallow && !self.replaced
     }
 }
 
@@ -44,6 +48,12 @@ pub fn commit_graph_shallow() -> EngineError {
     EngineError::NotAllowed(msg!("engine-commit-graph-shallow"))
 }
 
+/// [`EngineError::NotAllowed`] of `repo.optimize` with replace refs or grafts: git would not write
+/// the graph (nor read it), nothing is written.
+pub fn commit_graph_replaced() -> EngineError {
+    EngineError::NotAllowed(msg!("engine-commit-graph-replaced"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,10 +64,16 @@ mod tests {
             present,
             enabled,
             shallow,
+            replaced: false,
         };
         assert!(state(true, true, false).in_use());
         assert!(!state(true, false, false).in_use());
         assert!(!state(false, true, false).in_use());
         assert!(!state(true, true, true).in_use());
+        let replaced = CommitGraphState {
+            replaced: true,
+            ..state(true, true, false)
+        };
+        assert!(!replaced.in_use());
     }
 }

@@ -39,3 +39,6 @@ top-bar-recent-hint = Repositories opened recently: one opens in a tab, or shows
 top-bar-recent-none = No repository opened yet
 top-bar-recent-item = { $name } — { $path }
 top-bar-recent-heading = Recent repositories
+top-bar-recent-missing-hint = The folder { $path } no longer exists
+top-bar-recent-forget = Remove missing
+top-bar-recent-forget-hint = Drops from the recent list the repositories whose folder no longer exists (no folder is touched)

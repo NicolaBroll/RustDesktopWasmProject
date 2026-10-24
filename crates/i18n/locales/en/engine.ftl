@@ -128,3 +128,4 @@ engine-blame-no-commits = the branch has no commits yet: there is nothing to bla
 engine-blame-binary = `{ $path }` is a binary file: the blame works on text files only
 engine-commit-graph-disabled = `core.commitGraph` is `false`: git would not read the commit-graph, nothing written
 engine-commit-graph-shallow = Shallow repository: git neither writes nor reads a commit-graph here, nothing written
+engine-commit-graph-replaced = Replace refs (refs/replace) or grafts: git neither writes nor reads a commit-graph here, nothing written

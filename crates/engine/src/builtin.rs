@@ -16,7 +16,7 @@ use crate::commands::parse_params;
 use crate::{
     CommandSpec, CommitRequest, DiffSpec, EngineError, HeadState, Journal, JournalEntry,
     LineSelection, LogQuery, Registry, RestoreOutcome, Session, commit_graph_disabled,
-    commit_graph_shallow, discard_plan, file_digest,
+    commit_graph_replaced, commit_graph_shallow, discard_plan, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -375,7 +375,10 @@ fn to_json(value: impl serde::Serialize) -> Value {
     serde_json::to_value(value).expect("the domain types are serializable")
 }
 
-/// `{"path", "head", "commit_graph"}` of the repo just opened. `commit_graph`: git reads a
+/// `{"path", "head", "commit_graph"}` of the repo just opened. `path`: the worktree root,
+/// absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same repo opened from a
+/// subfolder or a relative path gives the same path; the given path if the backend has none.
+/// `commit_graph`: git reads a
 /// commit-graph for the repo ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log` is slow on
 /// huge histories and the UI can offer `repo.optimize`. A failed check gives `false` (the
 /// repo opens anyway).
@@ -383,6 +386,7 @@ fn repo_open(s: &mut Session, p: Value) -> Out {
     let PathParam { path } = parse_params("repo.open", p)?;
     s.open(&path)?;
     let repo = s.repo()?;
+    let path = repo.root().unwrap_or(path);
     let head = repo.head()?;
     let commit_graph = repo.commit_graph().is_ok_and(|g| g.in_use());
     Ok(json!({ "path": path, "head": to_json(head), "commit_graph": commit_graph }))
@@ -395,8 +399,9 @@ fn repo_open(s: &mut Session, p: Value) -> Out {
 /// is a cache that git derives from the objects and that `git gc` itself rewrites. So no
 /// `confirm`, no backup, and no [`JournalEntry`]: no ref, index or worktree file changes.
 /// Slow (~19 s on the Linux kernel): progress and cancellation from [`Session::job`]. Refused
-/// with `core.commitGraph=false` ([`commit_graph_disabled`]) and in a shallow repo
-/// ([`commit_graph_shallow`]): git would not read it.
+/// with `core.commitGraph=false` ([`commit_graph_disabled`]), in a shallow repo
+/// ([`commit_graph_shallow`]) and with replace refs or grafts ([`commit_graph_replaced`]): git
+/// would not read it.
 ///
 /// Result: `{"commit_graph": bool}`, the state afterwards (as in `repo.open`).
 fn repo_optimize(s: &mut Session, p: Value) -> Out {
@@ -410,6 +415,9 @@ fn repo_optimize(s: &mut Session, p: Value) -> Out {
     }
     if before.shallow {
         return Err(commit_graph_shallow());
+    }
+    if before.replaced {
+        return Err(commit_graph_replaced());
     }
     if job.is_cancelled() {
         return Err(EngineError::Cancelled { command: ID });

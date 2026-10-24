@@ -55,7 +55,9 @@ pub use file::{
     blame_missing_worktree, blame_no_commits, is_binary_content,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
-pub use maintenance::{CommitGraphState, commit_graph_disabled, commit_graph_shallow};
+pub use maintenance::{
+    CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
+};
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
 pub(crate) use merge::check_in_progress;
 pub use merge::{
@@ -158,6 +160,12 @@ pub trait GitBackend: Send {
         query: &FileLogQuery,
         job: &JobContext,
     ) -> Result<Vec<FileLogEntry>, EngineError>;
+
+    /// Absolute worktree root, `None` if the backend has no folder (`MemoryBackend`) or its
+    /// path is not UTF-8. `repo.open` returns it in place of the given path.
+    fn root(&self) -> Option<String> {
+        None
+    }
 
     /// Whether the repo has a commit-graph git reads (`repo.open`, `repo.optimize`): a graph in
     /// the object directory or in an alternate, and `core.commitGraph`. Cheap (no walk).

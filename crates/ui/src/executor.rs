@@ -100,6 +100,8 @@ pub enum ErrorKind {
     /// [`EngineError::PushRejected`]: the push was rejected and nothing changed; git's text
     /// (including a hook's output) is in [`Done::error_detail`].
     PushRejected(PushRejection),
+    /// [`EngineError::RepoNotFound`]: there is no repository at the path given to `repo.open`.
+    RepoNotFound,
     /// All other errors.
     Other,
 }
@@ -109,6 +111,7 @@ impl ErrorKind {
         match error {
             EngineError::StaleDiff { .. } => ErrorKind::StaleDiff,
             EngineError::NotAllowed(_) => ErrorKind::NotAllowed,
+            EngineError::RepoNotFound { .. } => ErrorKind::RepoNotFound,
             EngineError::InvalidParams { .. } => ErrorKind::InvalidParams,
             EngineError::IndexLocked { .. } => ErrorKind::IndexLocked,
             EngineError::UnknownRev(_) => ErrorKind::UnknownRev,

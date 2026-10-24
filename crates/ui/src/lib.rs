@@ -78,6 +78,8 @@ enum Action {
     SwitchTab(usize),
     /// Closes the tab at that index (not while it is writing).
     CloseTab(usize),
+    /// Drops from the recent list the repos whose folder no longer exists.
+    ForgetMissing,
     /// Re-reads refs, status and log of the open repo.
     Refresh,
     /// Selects the commit at the given row of the list.
@@ -612,6 +614,9 @@ struct LogPage {
 /// requests it is waiting for and its view. Results always land in the tab that sent the request,
 /// shown or not.
 struct Tab {
+    /// Stable for the life of the tab (not its index): salts the ids of its panels and scroll
+    /// areas, so widths and scroll positions stay per tab.
+    id: u64,
     executor: Executor,
     pending: HashMap<Ticket, Request>,
     /// Grows with every repo opened.
@@ -621,6 +626,9 @@ struct Tab {
     requested: Option<String>,
     /// The path `repo.open` just opened, collected by [`App`] for the tabs and the recent list.
     opened: Option<String>,
+    /// The path `repo.open` refused because there is no repository there: [`App`] drops it from
+    /// the recent list.
+    not_found: Option<String>,
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
@@ -628,14 +636,16 @@ struct Tab {
 }
 
 impl Tab {
-    fn new(executor: Executor) -> Self {
+    fn new(id: u64, executor: Executor) -> Self {
         Self {
+            id,
             executor,
             pending: HashMap::new(),
             generation: 0,
             repo: None,
             requested: None,
             opened: None,
+            not_found: None,
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
@@ -671,7 +681,11 @@ impl Tab {
     fn apply(&mut self, action: Action) {
         match action {
             // The tabs and the folder dialog belong to `App`.
-            Action::PickFolder | Action::Open(_) | Action::SwitchTab(_) | Action::CloseTab(_) => {}
+            Action::PickFolder
+            | Action::Open(_)
+            | Action::SwitchTab(_)
+            | Action::CloseTab(_)
+            | Action::ForgetMissing => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -1064,7 +1078,10 @@ impl Tab {
                 continue;
             };
             if matches!(request, Request::Open) {
-                self.requested = None;
+                let path = self.requested.take();
+                if done.error_kind == Some(ErrorKind::RepoNotFound) {
+                    self.not_found = path;
+                }
             }
             // Details have their own state, errors included: the panel shows them.
             if let Request::Show(generation, id) = request {
@@ -1384,7 +1401,12 @@ impl Tab {
 impl Tab {
     /// Draws the tab shown; what the user asks for ends up in `actions`, applied afterwards by
     /// [`App`]. `recent`: the recent repos, for the menus.
-    fn ui(&mut self, ui: &mut egui::Ui, can_pick: bool, recent: &[String]) -> Vec<Action> {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        can_pick: bool,
+        recent: &[view::RecentRepo],
+    ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);

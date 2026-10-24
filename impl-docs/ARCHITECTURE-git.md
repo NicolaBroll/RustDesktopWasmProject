@@ -482,9 +482,8 @@ Undo does not cover remote operations: a push cannot be undone from here (the pu
 
 GitKraken-like layout:
 
-- **Title bar** (`view/title_bar.rs`), VS Code style: the menus File (open, recent repos, close
-  tab, exit), Edit (undo/redo) and Repository (refresh, fetch/pull/push, stash), the title
-  "repo — BinariGit" at the center. Who draws the window frame is a `WindowFrame` chosen by the
+- **Title bar** (`view/title_bar.rs`), VS Code style: the File menu (open a repo, recent repos:
+  what is not about the repo shown), the title "repo — BinariGit" at the center. Who draws the window frame is a `WindowFrame` chosen by the
   app (the UI has no `cfg`): `Custom` (Windows, Linux) is a window without decorations, where the
   bar is dragged, maximizes with a double click, has its own minimize, maximize/restore and close
   buttons and the window edges resize it; `MacOs` keeps the native buttons over a transparent title
@@ -493,8 +492,10 @@ GitKraken-like layout:
   per repo); "+"/"Open repository…" open in a new tab, a repo already open only shows its tab.
   Open tabs and recent repos (at most 10) are saved in the eframe storage and reopened at the next
   launch.
-- **Top bar** (toolbar, only with a repo open): refresh, fetch/pull/push buttons, stash,
-  undo/redo, state of the job in progress.
+- **Top bar** (toolbar, only with a repo open), GitKraken style: repo and branch on the left, icon
+  buttons with the name underneath at the center (undo/redo, fetch/pull/push, stash, refresh;
+  icons from a subset of Phosphor, `crates/ui/assets/icons.ttf`, rebuilt by
+  `scripts/icon-font.sh`), changed files and the network job in progress.
 - **Left column**: local branches, remotes, tags, stashes ([git/stash.md](git/stash.md)).
 - **Center**: commit graph and list, with an "uncommitted changes" row at the top. Virtualized
   list (`ScrollArea::show_rows`): only visible rows are drawn, the log loads

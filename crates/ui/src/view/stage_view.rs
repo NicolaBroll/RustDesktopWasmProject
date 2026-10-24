@@ -23,7 +23,7 @@ pub(crate) fn stage_panel(
                 ui,
                 repo,
                 !writing && !repo.modal_open(),
-                &tr!("stage-stash-button"),
+                egui::Button::new(tr!("stage-stash-button")),
                 actions,
             );
         });

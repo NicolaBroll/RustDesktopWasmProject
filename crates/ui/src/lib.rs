@@ -25,6 +25,7 @@ mod fetch;
 mod file;
 mod format;
 mod graph;
+mod icons;
 mod lines;
 mod list;
 mod merge;
@@ -1419,7 +1420,7 @@ impl Tab {
 
 impl Tab {
     /// The fetch, pull or push in progress with its latest progress, for the bar.
-    pub(crate) fn network(&self) -> Option<view::Network> {
+    fn network(&self) -> Option<view::Network> {
         let r = self.repo.as_ref()?;
         if let Some(running) = r.optimize.running() {
             return Some(view::Network {

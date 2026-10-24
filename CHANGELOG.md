@@ -8,10 +8,11 @@ All notable changes to BinariGit. The format follows
 
 ### Changed
 
-- **Title bar** in VS Code style: the File, Edit and Repository menus and the title are in the
-  window's title bar, with the app's own minimize, maximize/restore and close buttons (Windows and
-  Linux; on macOS the native buttons stay). "Open…" and "Recent" moved from the toolbar to the File
-  menu.
+- **Title bar** in VS Code style: the title and a File menu (open a repository, recent
+  repositories) are in the window's title bar, with the app's own minimize, maximize/restore and
+  close buttons (Windows and Linux; on macOS the native buttons stay).
+- **Toolbar** in GitKraken style: icon buttons with their name underneath (undo, redo, fetch,
+  pull, push, stash, refresh) at the center, repository and branch on the left.
 
 ## [0.1.0] - 2026-10-24
 

@@ -56,7 +56,13 @@ pub(super) fn stash_section(
                     .wrap(),
                 );
             }
-            stash_push_button(ui, repo, can_write, &tr!("stash-new-button"), actions);
+            stash_push_button(
+                ui,
+                repo,
+                can_write,
+                egui::Button::new(tr!("stash-new-button")),
+                actions,
+            );
         });
 }
 
@@ -65,12 +71,12 @@ pub(super) fn stash_push_button(
     ui: &mut Ui,
     repo: &RepoView,
     can_write: bool,
-    label: &str,
+    button: impl egui::Widget,
     actions: &mut Vec<Action>,
 ) {
     let changes = repo.has_changes();
     let button = ui
-        .add_enabled(can_write && changes, egui::Button::new(label))
+        .add_enabled(can_write && changes, button)
         .on_hover_text(tr!("stash-push-help"))
         .on_disabled_hover_text(if changes {
             wait()

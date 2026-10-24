@@ -1,5 +1,7 @@
 # Top bar, status bar and welcome screen (view/top_bar.rs).
 
+top-bar-repository = repository
+top-bar-branch = branch
 top-bar-refresh = Aggiorna
 top-bar-refresh-hint = Rilegge ref, stato e log
 top-bar-after-operation = Dopo l'operazione in corso
@@ -14,7 +16,6 @@ top-bar-head-unborn = { $name } (senza commit)
 top-bar-head-detached = HEAD staccata su { $id }
 top-bar-fetch = Fetch
 top-bar-fetch-hint = Scarica commit, branch remoti e tag dal remoto dell'upstream del branch attivo (altrimenti origin, o l'unico remoto). Non tocca branch locali, indice né file
-top-bar-fetch-from-menu = Da…
 top-bar-fetch-from = Fetch da «{ $remote }»
 top-bar-fetch-from-hint = Sceglie il remoto da cui fare il fetch
 top-bar-pull = Pull

@@ -1,5 +1,5 @@
-//! The bar at the top of the window, VS Code style: the menus and, when the app draws the window
-//! frame itself, the title, the drag area, the minimize, maximize and close buttons and the edges
+//! The bar at the top of the window, VS Code style: the "File" menu (open a repo, the recent ones)
+//! and, when the app draws the window frame itself, the title, the drag area, the minimize, maximize and close buttons and the edges
 //! to resize the window.
 
 use super::*;
@@ -36,12 +36,6 @@ pub(crate) struct TitleBar<'a> {
     pub(crate) repo: Option<&'a RepoView>,
     pub(crate) can_pick: bool,
     pub(crate) recent: &'a [RecentRepo],
-    /// A write is in progress in the tab shown.
-    pub(crate) writing: bool,
-    /// A fetch, pull or push is in progress in the tab shown.
-    pub(crate) network: bool,
-    /// The tab shown, for "Close tab".
-    pub(crate) active: usize,
 }
 
 /// The bar in its own panel, above everything else.
@@ -126,57 +120,19 @@ fn title(ui: &Ui, bar: &TitleBar<'_>, bar_rect: Rect, free: Rect) {
     ui.painter().galley(pos, galley, color);
 }
 
+/// Only what is not about the repo shown: its commands are in the toolbar.
 fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
-    ui.menu_button(tr!("title-bar-file"), |ui| file_menu(ui, bar, actions));
-    let repo = bar.repo;
-    ui.add_enabled_ui(repo.is_some(), |ui| {
-        ui.menu_button(tr!("title-bar-edit"), |ui| {
-            if let Some(repo) = repo {
-                undo_buttons(ui, repo, bar.writing, actions);
-            }
-        });
-        ui.menu_button(tr!("title-bar-repository"), |ui| {
-            if let Some(repo) = repo {
-                repository_menu(ui, bar, repo, actions);
-            }
-        });
-    });
-}
-
-fn file_menu(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
-    if bar.can_pick
-        && ui
-            .button(tr!("title-bar-open"))
-            .on_hover_text(tr!("title-bar-open-hint"))
-            .clicked()
-    {
-        actions.push(Action::PickFolder);
-    }
-    recent_menu(ui, bar.recent, actions);
-    ui.separator();
-    let close = ui
-        .add_enabled(!bar.writing, egui::Button::new(tr!("title-bar-close-tab")))
-        .on_disabled_hover_text(tr!("tabs-close-writing"));
-    if close.clicked() {
-        actions.push(Action::CloseTab(bar.active));
-    }
-    if bar.frame != WindowFrame::Native {
-        ui.separator();
-        if ui.button(tr!("title-bar-exit")).clicked() {
-            ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+    ui.menu_button(tr!("title-bar-file"), |ui| {
+        if bar.can_pick
+            && ui
+                .button(tr!("title-bar-open"))
+                .on_hover_text(tr!("title-bar-open-hint"))
+                .clicked()
+        {
+            actions.push(Action::PickFolder);
         }
-    }
-}
-
-/// The same commands as the toolbar.
-fn repository_menu(ui: &mut Ui, bar: &TitleBar<'_>, repo: &RepoView, actions: &mut Vec<Action>) {
-    refresh_button(ui, bar.writing, actions);
-    ui.separator();
-    let enabled = !bar.writing && !bar.network && !repo.modal_open();
-    fetch_buttons(ui, repo, enabled, actions);
-    sync_buttons(ui, repo, enabled, actions);
-    ui.separator();
-    stash_push_button(ui, repo, enabled, &tr!("top-bar-stash"), actions);
+        recent_menu(ui, bar.recent, actions);
+    });
 }
 
 #[derive(Debug, Clone, Copy)]

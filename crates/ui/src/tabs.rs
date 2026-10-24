@@ -74,6 +74,7 @@ impl App {
         opener: Arc<dyn RepoOpener>,
         repo: Option<String>,
     ) -> Self {
+        crate::icons::install(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let wake: Wake = Arc::new(move || ctx.request_repaint());
         let saved = cc
@@ -348,15 +349,11 @@ impl eframe::App for App {
         let recent = self.recent_view();
         // The actions of the menus and of the strip after the tab's: they can change the tab shown.
         let mut strip = Vec::new();
-        let shown = &self.tabs[self.active];
         let bar = view::TitleBar {
             frame: self.frame,
-            repo: shown.repo.as_ref(),
+            repo: self.tabs[self.active].repo.as_ref(),
             can_pick,
             recent: &recent,
-            writing: shown.executor.writing().is_some(),
-            network: shown.network().is_some(),
-            active: self.active,
         };
         view::title_bar_panel(ui, &bar, &mut strip);
         if self.tabs.len() > 1 || self.tabs[0].path().is_some() {

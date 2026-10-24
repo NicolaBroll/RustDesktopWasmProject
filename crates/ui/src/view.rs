@@ -9,6 +9,7 @@ use crate::discard::{self, Discard, UndoOp};
 use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
+use crate::icons;
 use crate::list::{Anchor, CommitList};
 use crate::merge;
 use crate::remotes::{self, AddDialog, AddFields, Remote, RemoveDialog};

@@ -12,6 +12,7 @@ mod discard;
 mod file;
 mod line_diff;
 mod lines;
+mod maintenance;
 mod memory;
 mod merge;
 mod pick;
@@ -54,6 +55,7 @@ pub use file::{
     blame_missing_worktree, blame_no_commits, is_binary_content,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
+pub use maintenance::{CommitGraphState, commit_graph_disabled, commit_graph_shallow};
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
 pub(crate) use merge::check_in_progress;
 pub use merge::{
@@ -156,6 +158,17 @@ pub trait GitBackend: Send {
         query: &FileLogQuery,
         job: &JobContext,
     ) -> Result<Vec<FileLogEntry>, EngineError>;
+
+    /// Whether the repo has a commit-graph git reads (`repo.open`, `repo.optimize`): a graph in
+    /// the object directory or in an alternate, and `core.commitGraph`. Cheap (no walk).
+    fn commit_graph(&self) -> Result<CommitGraphState, EngineError>;
+
+    /// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`,
+    /// `repo.optimize`) into the repo's own object directory, replacing the one there. A cache
+    /// derived from the objects: no ref, index or worktree changes. Slow on huge repos (~19 s
+    /// on the Linux kernel): progress goes to `job`, a cancelled `job` stops git
+    /// ([`EngineError::Cancelled`]).
+    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError>;
 
     // --- Writes: they change the repo. They take `&mut self` because the `MemoryBackend` holds the
     // state itself; a read done afterwards always sees the new state.

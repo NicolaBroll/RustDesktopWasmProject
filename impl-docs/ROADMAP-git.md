@@ -366,12 +366,33 @@ Rules that apply to every step:
   the empty screen (`crates/ui/src/tabs.rs`); open tabs, the one shown and the recent repos saved
   in the eframe storage as soon as they change, reopened at startup.
 
-### S36 — Huge repos with `gix`
-- [ ] **Agent:** `git-engine`
-- **Goal:** measure `repo.log` on the Linux kernel; if slow, read the log with `gix` in the
-  `CliBackend` keeping the same result.
-- **Done when:** timing comparison noted in the commit; the integration tests give the
-  same result with the two readings; CI green.
+### S36 — Huge repos: commit-graph (no `gix`)
+- [x] **Agent:** `git-engine` (done), then `egui-ui` (offer in the UI)
+- **Goal:** measured `repo.log` on the Linux kernel (1.5M commits): the slowness is all `git log
+  --date-order` without a commit-graph (plain `git log` 22 ms), so `gix` is dropped (the order needs
+  the whole walk anyway, whoever reads it). Instead `repo.optimize` writes the commit-graph (`git
+  commit-graph write --reachable`) and `repo.open` reports `commit_graph`; the UI offers the command
+  when the graph is missing and the first log page is slow. Contract and details in
+  [git/reading.md](git/reading.md).
+
+  | `repo.log` on the kernel | without commit-graph | with commit-graph |
+  | --- | --- | --- |
+  | `{"limit":500}` | ≈ 15.8 s (14.3 s) | 42 ms (43-46 ms) |
+  | `{"all":true,"stashes":true,"limit":500}` | ≈ 15.8 s (14.2 s) | 1.36 s (1.33-1.38 s) |
+  | `{"skip":1000000,"limit":500}` | ≈ 15.8 s (14.7 s) | 0.96 s (0.86-0.91 s) |
+  | writing the graph, once | | ≈ 18.8 s (`repo.optimize`: 19.5 s) |
+
+  In brackets: re-measured with the release `project-cli` and `repo.optimize`.
+- **Done when:** `repo.optimize` and `commit_graph` with tests on the `MemoryBackend` and on temp
+  repos (same `repo.log` before and after); the UI offers `repo.optimize` (in the background,
+  cancellable, with progress) when `commit_graph` is `false` and the first page took long; CI green.
+- Done (engine): `repo.optimize`, `commit_graph` in `repo.open`, `CliBackend` in
+  `crates/git/src/backend/maintenance.rs`, tests in `crates/git/tests/optimize.rs`.
+- Done (UI): commit-graph notice under the bar (`crates/ui/src/optimize.rs`,
+  `view/optimize_view.rs`, keys in `optimize.ftl`): shown when `commit_graph` is `false` and the first
+  log page took > 1 s (`SLOW_FIRST_PAGE`); "Optimize" runs `repo.optimize` with progress and "Stop" in
+  the bar, then reloads; "Not now" hides it for the tab. Tests in `crates/ui/src/optimize_tests.rs`;
+  checked on the kernel (first page 21 s in the debug app, notice, ~25 s optimize, reload).
 
 ### S37 — Linux packaging
 - [ ] **Agent:** `git-engine`

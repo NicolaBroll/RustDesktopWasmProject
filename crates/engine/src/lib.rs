@@ -31,6 +31,7 @@ pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
     blame_missing_worktree, blame_no_commits, is_binary_content,
 };
+pub use git::{CommitGraphState, commit_graph_disabled, commit_graph_shallow};
 pub use git::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,

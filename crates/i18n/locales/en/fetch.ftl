@@ -40,3 +40,5 @@ fetch-phase-unpacking = Unpacking objects
 fetch-phase-resolving = Resolving deltas
 fetch-phase-writing = Writing objects
 fetch-phase-total = Total
+fetch-phase-expanding-graph = Collecting commits
+fetch-phase-writing-graph = Writing the commit-graph

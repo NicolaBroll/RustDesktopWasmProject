@@ -123,3 +123,5 @@ engine-blame-missing-rev = `{ $path }` non è un file nel commit `{ $rev }`
 engine-blame-missing-worktree = `{ $path }` non è un file tracciato della cartella di lavoro (manca, è una cartella o non è mai stato aggiunto): il blame vuole un file in HEAD o nell'indice
 engine-blame-no-commits = il branch non ha ancora commit: non c'è niente di cui fare il blame
 engine-blame-binary = `{ $path }` è un file binario: il blame funziona solo sui file di testo
+engine-commit-graph-disabled = `core.commitGraph` è `false`: git non leggerebbe il commit-graph, niente scritto
+engine-commit-graph-shallow = Repository shallow: qui git non scrive né legge il commit-graph, niente scritto

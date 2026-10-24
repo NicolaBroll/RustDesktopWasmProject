@@ -10,7 +10,10 @@ undo and backup of this function. "§n" always refers to the main document.
 
 Parameters: `{"path"}`.
 
-Uses the injected `RepoOpener`.
+Uses the injected `RepoOpener`. Result `{"path", "head", "commit_graph": bool}`: `commit_graph` is
+`true` when git reads a commit-graph for the repo (`GitBackend::commit_graph` →
+`CommitGraphState::in_use`, see `repo.optimize` below); a failed check gives `false`, the repo
+opens anyway.
 
 ### `repo.status`
 
@@ -55,6 +58,71 @@ no commits), commit relative to the first parent (empty tree for a root commit, 
 `RepoPath`) limits to the file with that exact path, old or new: a rename stays a rename (the
 backend first looks for the other path with `--diff-filter=R`) and paths go to git after `--` with
 `--literal-pathspecs`. No size limit
+
+## Huge repos: the commit-graph (S36)
+
+### Measurements
+
+Linux kernel (1.5M commits), git 2.56, release `project-cli`; `target/bench/linux` = worktree
+clone without checkout whose objects are in `target/bench/linux.git` (`--filter=tree:0` bare clone,
+via `objects/info/alternates`), `GIT_NO_LAZY_FETCH=1`:
+
+| `repo.log` | without commit-graph | with commit-graph |
+| --- | --- | --- |
+| `{"limit":500}` (first page) | ≈ 15.8 s (14.3 s) | 42 ms (43-46 ms) |
+| `{"all":true,"stashes":true,"limit":500}` | ≈ 15.8 s (14.2 s) | 1.36 s (1.33-1.38 s) |
+| `{"skip":1000000,"limit":500}` | ≈ 15.8 s (14.7 s) | 0.96 s (0.86-0.91 s) |
+| writing the graph, once | | ≈ 18.8 s (`repo.optimize`: 19.5 s) |
+
+First figures: `git` before S36; in brackets: re-measured with `repo.optimize` (graph removed from
+`linux.git`, written by the command into `linux/.git/objects/info`; same `repo.log` output before and
+after).
+
+The cost is all `git log --date-order` (plain `git log` = 22 ms): without generation numbers git
+must parse every reachable commit before printing the first one (children before parents). The same
+would hold for any other reader (`gix` was considered and dropped: the order needs the whole walk
+anyway); the fix is the commit-graph, which git itself writes in `git gc`/`git maintenance`.
+
+### `repo.optimize`
+
+Parameters: `{}`. A write (in `WRITES`): `git commit-graph write --reachable --progress` (no
+`--changed-paths`, no `--split`) through `GitBackend::write_commit_graph`. Result `{"commit_graph":
+bool}`, the state afterwards (as in `repo.open`; `false` for a repo without commits, where git writes
+nothing).
+
+**Why no `confirm`, backup or journal**: it adds or replaces only `objects/info/commit-graph` in the
+repo's own object directory, a cache that git derives from the objects (and that `git gc` rewrites
+on its own); no ref, index or worktree file changes, so it cannot lose data and there is nothing for
+`edit.undo` to restore (no `JournalEntry`).
+
+Refused with `core.commitGraph=false` (`NotAllowed`, `engine-commit-graph-disabled`): git would
+neither read nor (it turns out) write the graph. Slow (~19 s on the kernel): progress through
+`Session::job()` (phases `Expanding reachable commits in commit graph: <n>` and `Writing out commit
+graph in <k> passes: <p>% (<n>/<total>)`), cancellable (`Cancelled { command: "repo.optimize" }`).
+Git writes `commit-graph.lock` and renames it at the end; on SIGTERM (our cancel) it removes the
+lock and the previous graph stays. Only a SIGKILL (after `TERM_GRACE`, or from outside) leaves a
+stale `commit-graph.lock`: the next `repo.optimize` fails with git's text (`Unable to create
+'.../commit-graph.lock': File exists`) and the repo keeps working with the previous graph or none.
+The lock is never removed by us (it may belong to a running git).
+
+`CliBackend` state (`crates/git/src/backend/maintenance.rs`): `git rev-parse --git-path objects`
+(handles linked worktrees; `GIT_OBJECT_DIRECTORY` is cleared from git's environment), then `info/commit-graph` or
+`info/commit-graphs/commit-graph-chain` there or in the alternates (`info/alternates`, relative
+entries from the listing directory, up to 5 levels like git; quoted entries and
+`GIT_ALTERNATE_OBJECT_DIRECTORIES` are not followed); git uses the first graph it finds, so a graph
+in an alternate counts (the bench clone above reads the one in `linux.git`), while `repo.optimize`
+always writes into the repo's own object directory, which git reads first. Then `git config
+--type=bool --get core.commitGraph` (unset = enabled) and `git rev-parse --is-shallow-repository`:
+in a shallow repo git ignores the graph and `commit-graph write` exits 0 writing nothing, so
+`repo.optimize` refuses (`NotAllowed`, `engine-commit-graph-shallow`). Replace refs
+(`refs/replace/`) also make git ignore the graph; not detected (rare). A write over a split chain
+left by `git maintenance` replaces it with a single `commit-graph` file (still only a cache). `MemoryBackend`: a flag set by the write,
+`core.commitGraph` from `set_config`.
+
+"Big repo": nothing is exposed (an object or commit count is either expensive or a poor proxy:
+the slowness depends on the reachable commits without a graph). The UI offers `repo.optimize` when
+`commit_graph` is `false` and the first `repo.log` page took noticeably long (e.g. > 1 s).
+The notice is described in [ARCHITECTURE-git.md](../ARCHITECTURE-git.md) §8 ("Commit-graph notice").
 
 ## Blame and file history (S34)
 

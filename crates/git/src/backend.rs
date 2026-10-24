@@ -5,6 +5,7 @@ mod commit;
 mod conflict;
 mod discard;
 mod file;
+mod maintenance;
 mod merge;
 mod pick;
 mod rebase;
@@ -25,8 +26,8 @@ use project_domain::{
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, BlameQuery, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry,
-    ConflictResolution, ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome,
+    BACKUP_PREFIX, BlameQuery, BranchDeleted, CommitGraphState, CommitOutcome, CommitRequest,
+    ConfigEntry, ConflictResolution, ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome,
     DiscardedFile, EngineError, FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend,
     HeadState, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
     MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
@@ -1083,6 +1084,14 @@ impl GitBackend for CliBackend {
         job: &JobContext,
     ) -> Result<Vec<FileLogEntry>, EngineError> {
         self.log_file(query, job)
+    }
+
+    fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
+        self.read_commit_graph_state()
+    }
+
+    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError> {
+        self.write_reachable_commit_graph(job)
     }
 
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {

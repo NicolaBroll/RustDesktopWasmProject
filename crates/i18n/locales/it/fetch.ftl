@@ -40,3 +40,5 @@ fetch-phase-unpacking = Estrazione oggetti
 fetch-phase-resolving = Risoluzione delta
 fetch-phase-writing = Scrittura oggetti
 fetch-phase-total = Totale
+fetch-phase-expanding-graph = Raccolta dei commit
+fetch-phase-writing-graph = Scrittura del commit-graph

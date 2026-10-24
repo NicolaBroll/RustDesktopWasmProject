@@ -29,6 +29,7 @@ mod lines;
 mod list;
 mod merge;
 mod merge_view;
+mod optimize;
 mod rebase;
 mod remotes;
 mod stage;
@@ -50,6 +51,7 @@ use fetch::FetchBox;
 use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
+use optimize::OptimizeBox;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 
@@ -161,6 +163,12 @@ enum Action {
     CancelFetch,
     /// Closes the fetch error window.
     DismissFetchError,
+    /// "Optimize" in the commit-graph notice: `repo.optimize` in the background.
+    Optimize,
+    /// "Stop" the `repo.optimize` in progress.
+    CancelOptimize,
+    /// "Not now" in the commit-graph notice: hidden for this repo view.
+    DismissOptimize,
     /// Pull the given branch (`None`: HEAD's), with the given strategy (`None`:
     /// the configured one).
     Pull(Option<String>, Option<sync::Strategy>),
@@ -356,6 +364,8 @@ enum Request {
     Branch(u64, branch::Op),
     /// `remote.fetch` (the state is in [`FetchBox`]).
     Fetch(u64),
+    /// `repo.optimize` (the state is in [`OptimizeBox`]).
+    Optimize(u64),
     /// `remote.pull`/`remote.push` (the state is in [`SyncBox`]).
     Sync(u64),
     /// `remote.list`.
@@ -416,6 +426,8 @@ struct RepoView {
     branch: BranchBox,
     /// The fetch in progress and the last error to explain.
     fetch: FetchBox,
+    /// The commit-graph notice and `repo.optimize` in progress.
+    optimize: OptimizeBox,
     /// The pull or push in progress and the open window (conflict, rejection, force confirmation).
     sync: SyncBox,
     /// The configured remotes (`remote.list`) and the dialogs to add and remove them.
@@ -463,6 +475,7 @@ impl RepoView {
             discard: DiscardBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
+            optimize: OptimizeBox::default(),
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
@@ -585,6 +598,8 @@ struct ListViewport {
 struct Opened {
     path: String,
     head: Head,
+    /// False: git reads no commit-graph, the log of a big repo is slow (S36).
+    commit_graph: bool,
 }
 
 #[derive(Deserialize)]
@@ -760,6 +775,9 @@ impl Tab {
             Action::Fetch(..) | Action::CancelFetch | Action::DismissFetchError => {
                 self.apply_fetch(action)
             }
+            Action::Optimize | Action::CancelOptimize | Action::DismissOptimize => {
+                self.apply_optimize(action)
+            }
             Action::Pull(..)
             | Action::Push(..)
             | Action::ForcePush
@@ -827,11 +845,16 @@ impl Tab {
     }
 
     fn request_page(&mut self, page: PageRequest) {
-        self.submit(
-            "repo.log",
-            page.params(),
-            Request::Log(self.generation, page),
-        );
+        let generation = self.generation;
+        let ticket = self.executor.submit("repo.log", page.params());
+        self.pending.insert(ticket, Request::Log(generation, page));
+        // The first page from the start is timed for the commit-graph notice.
+        if page.skip == 0
+            && let Some(repo) = self.current(generation)
+        {
+            repo.optimize
+                .log_submitted(ticket, std::time::Instant::now());
+        }
     }
 
     /// Selects a ref's commit; if it is not loaded yet asks for the next pages
@@ -1135,6 +1158,17 @@ impl Tab {
                 self.receive_sync(generation, done);
                 continue;
             }
+            if let Request::Optimize(generation) = request {
+                self.receive_optimize(generation, done);
+                continue;
+            }
+            if let Request::Log(generation, _) = request
+                && let Some(repo) = self.current(generation)
+            {
+                let now = std::time::Instant::now();
+                repo.optimize
+                    .log_received(done.ticket, now, done.result.is_ok());
+            }
             // The remotes list has its own error, shown in its section.
             if let Request::Remotes(generation) = request {
                 if let Some(repo) = self.current(generation) {
@@ -1264,11 +1298,17 @@ impl Tab {
     fn store(&mut self, request: Request, value: Value) -> Result<(), serde_json::Error> {
         match request {
             Request::Open => {
-                let Opened { path, head } = serde_json::from_value(value)?;
+                let Opened {
+                    path,
+                    head,
+                    commit_graph,
+                } = serde_json::from_value(value)?;
                 self.generation += 1;
                 self.notice.clear();
                 self.opened = Some(path.clone());
-                self.repo = Some(RepoView::new(path, head));
+                let mut repo = RepoView::new(path, head);
+                repo.optimize = OptimizeBox::new(commit_graph);
+                self.repo = Some(repo);
                 self.load();
             }
             Request::Refs(generation) => {
@@ -1323,6 +1363,7 @@ impl Tab {
             | Request::Undo(..)
             | Request::Branch(..)
             | Request::Fetch(..)
+            | Request::Optimize(..)
             | Request::Sync(..)
             | Request::Remotes(..)
             | Request::Remote(..)
@@ -1358,6 +1399,15 @@ impl Tab {
 
         // The fetch, pull or push in progress with its latest progress, for the bar.
         let network = self.repo.as_ref().and_then(|r| {
+            if let Some(running) = r.optimize.running() {
+                return Some(view::Network {
+                    what: tr!("optimize-label"),
+                    cancelling: running.cancelling,
+                    progress: self.executor.progress(running.ticket),
+                    stop_hint: tr!("optimize-stop-hint"),
+                    cancel: Action::CancelOptimize,
+                });
+            }
             if let Some(running) = r.fetch.running() {
                 return Some(view::Network {
                     what: fetch::label(running.remote.as_deref()),
@@ -1416,6 +1466,15 @@ impl Tab {
             let can_write = !writing && !repo.modal_open() && !repo.merge.busy();
             egui::Panel::top("operation").show(ui, |ui| {
                 merge_view::banner(ui, repo, operation, can_write, &mut actions);
+            });
+        }
+        // The commit-graph notice (S36), under the bar too.
+        if let Some(repo) = &self.repo
+            && repo.optimize.shown()
+        {
+            let can_write = !writing && !repo.modal_open();
+            egui::Panel::top("optimize").show(ui, |ui| {
+                view::optimize_notice(ui, &repo.optimize, can_write, &mut actions);
             });
         }
         // Side panels do not exceed a third of the window: the content wraps.

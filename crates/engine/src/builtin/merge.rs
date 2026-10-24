@@ -451,10 +451,12 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
         })
         .collect();
     let operation = status.operation;
-    // The commands that conclude or abort the operation from here: merge, and cherry-pick and
-    // revert of a single commit (a sequence started from a terminal stays with the terminal).
+    // The commands that conclude or abort the operation from here: merge, rebase (also one
+    // started from a terminal), and cherry-pick and revert of a single commit (a sequence
+    // started from a terminal stays with the terminal).
     let (continue_id, abort_id) = match operation {
         Some(Operation::Merge) => (Some("merge.continue"), Some("merge.abort")),
+        Some(Operation::Rebase) => (Some("rebase.continue"), Some("rebase.abort")),
         Some(op) => match crate::PickKind::from_operation(op) {
             Some(kind) if !state.sequencer => {
                 (Some(kind.continue_command()), Some(kind.abort_command()))

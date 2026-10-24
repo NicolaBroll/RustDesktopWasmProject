@@ -1,6 +1,6 @@
 //! Integration tests of `remote.pull` (S26) with the `CliBackend` and a local remote (`git
 //! init --bare`) to which a second clone publishes: fast-forward, merge, rebase according to
-//! the configuration, conflicts (the merge stays in progress, the rebase is aborted), local
+//! the configuration, conflicts (the merge and the rebase stay in progress), local
 //! changes, branches without upstream, undo and redo, non-checked-out branch, names starting
 //! with `-`.
 
@@ -8,7 +8,7 @@ mod common;
 
 use common::Repo;
 use project_domain::Oid;
-use project_engine::{EngineError, PullOperation, Registry, Session};
+use project_engine::{EngineError, Registry, Session};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -450,45 +450,112 @@ fn a_merge_conflict_then_abort_is_back_to_before() {
     assert_eq!(out["in_progress"], true);
 }
 
+/// `work` and `other` change `a.txt` differently; `work` pulls with `pull.rebase=true`: the
+/// rebase stops on the conflict and stays in progress (S32).
+fn rebase_conflict() -> (Setup, Oid, Registry, Session, Value) {
+    let setup = setup();
+    publish(&setup.other, "a.txt", "theirs\n", "theirs");
+    let mine = setup.work.commit_file("a.txt", "ours\n", "ours");
+    setup.work.git(&["config", "pull.rebase", "true"]);
+    let (r, mut s) = open(&setup.work);
+    let out = pull(&r, &mut s, json!({}));
+    (setup, mine, r, s, out)
+}
+
 #[test]
-fn a_rebase_conflict_is_still_aborted_and_reported() {
-    let Setup {
-        other,
-        work,
-        _remote: _keep,
-        ..
-    } = setup();
-    publish(&other, "a.txt", "theirs\n", "theirs");
-    let mine = work.commit_file("a.txt", "ours\n", "ours");
-    work.git(&["config", "pull.rebase", "true"]);
-    let (r, mut s) = open(&work);
-    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-    let EngineError::PullConflict {
-        branch,
-        upstream,
-        operation,
-        files,
-        message,
-    } = &err
-    else {
-        panic!("{err}");
-    };
-    assert_eq!(branch, "main");
-    assert_eq!(upstream, "origin/main");
-    assert_eq!(*operation, PullOperation::Rebase);
-    assert_eq!(files, &["a.txt"]);
-    assert!(message.contains("CONFLICT"), "{message}");
-    // Aborted: everything as it was, no operation in progress, no backup left.
-    assert_eq!(work.rev("HEAD"), mine);
-    assert!(clean(&work), "{}", work.git(&["status", "--porcelain"]));
-    assert_eq!(read(&work, "a.txt").as_deref(), Some("ours\n"));
-    assert!(!work.path().join(".git/MERGE_HEAD").exists());
+fn a_rebase_conflict_stays_in_progress_then_continue() {
+    let (setup, mine, r, mut s, out) = rebase_conflict();
+    let work = &setup.work;
+    assert_eq!(out["strategy"], "rebase");
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["a.txt"]));
+    assert!(
+        out["message"].as_str().unwrap().contains("CONFLICT"),
+        "{out}"
+    );
+    assert_eq!(out["after"], mine.to_string());
+    assert_eq!(out["warnings"], json!([]));
+    assert_eq!(out["can_undo"], false);
+    let backup = out["backup"].as_str().unwrap().to_owned();
+    assert_eq!(work.rev(&backup), mine);
+    assert_eq!(work.rev("main"), mine);
+    assert!(
+        work.path()
+            .join(".git/rebase-merge/project-rebase.json")
+            .exists()
+    );
+    let op = r.run("repo.operation", &mut s, json!({})).unwrap();
+    assert_eq!(op["operation"], "Rebase");
+    assert_eq!(op["continue"], "rebase.continue");
+    assert_eq!(op["abort"], "rebase.abort");
+    assert_eq!(op["onto"], work.rev("origin/main").to_string());
+    assert!(r.run("edit.undo", &mut s, json!({})).is_err());
+    let err = r.run("rebase.continue", &mut s, json!({})).unwrap_err();
+    assert!(err.to_string().contains("a.txt"), "{err}");
+
+    work.write("a.txt", "both\n");
+    r.run("index.stage", &mut s, json!({ "paths": ["a.txt"] }))
+        .unwrap();
+    let done = r.run("rebase.continue", &mut s, json!({})).unwrap();
+    assert_eq!(done["in_progress"], false, "{done}");
+    assert_eq!(done["command"], "remote.pull");
+    assert_eq!(done["before"], mine.to_string());
+    assert_eq!(done["backup"], backup);
+    assert_eq!(done["warnings"], json!([]));
+    let after = work.rev("main");
+    assert_eq!(done["after"], after.to_string());
+    assert_eq!(work.rev("main~1"), work.rev("origin/main"));
+    assert_eq!(work.git(&["log", "-1", "--format=%s"]), "ours");
+    assert_eq!(read(work, "a.txt").as_deref(), Some("both\n"));
+    assert!(clean(work));
     assert!(!work.path().join(".git/rebase-merge").exists());
-    assert_eq!(backups(&work), Vec::<String>::new());
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
-    assert_eq!(history["can_undo"], false);
-    // The fetch stays done.
-    assert_ne!(work.rev("origin/main"), work.rev("HEAD~1"));
+    let last = history["done"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(last["command"], "remote.pull");
+    assert!(
+        last["description"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("rebase onto origin/main"),
+        "{last}"
+    );
+    r.run("edit.undo", &mut s, json!({})).unwrap();
+    assert_eq!(work.rev("main"), mine);
+    assert_eq!(read(work, "a.txt").as_deref(), Some("ours\n"));
+    r.run("edit.redo", &mut s, json!({})).unwrap();
+    assert_eq!(work.rev("main"), after);
+}
+
+#[test]
+fn a_rebase_conflict_then_abort() {
+    let (setup, mine, r, mut s, out) = rebase_conflict();
+    let work = &setup.work;
+    let backup = out["backup"].as_str().unwrap().to_owned();
+    let err = r.run("rebase.abort", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+    assert_eq!(work.rev("HEAD"), work.rev("origin/main"), "nothing changed");
+    let aborted = r
+        .run("rebase.abort", &mut s, json!({ "confirm": true }))
+        .unwrap();
+    assert!(
+        aborted["backup"]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/rebase-abort-"),
+        "{aborted}"
+    );
+    assert_eq!(aborted["warnings"], json!([]));
+    // Everything as it was before the pull.
+    assert_eq!(work.rev("HEAD"), mine);
+    assert_eq!(work.git(&["symbolic-ref", "HEAD"]), "refs/heads/main");
+    assert!(clean(work), "{}", work.git(&["status", "--porcelain"]));
+    assert_eq!(read(work, "a.txt").as_deref(), Some("ours\n"));
+    assert!(!work.path().join(".git/rebase-merge").exists());
+    assert_eq!(aborted["can_undo"], false);
+    assert!(backups(work).contains(&backup), "{:?}", backups(work));
+    // The pull can be repeated.
+    let out = pull(&r, &mut s, json!({}));
+    assert_eq!(out["in_progress"], true);
 }
 
 /// Installs the hook `name` of `repo` with the script `body` (after `#!/bin/sh`).
@@ -505,9 +572,9 @@ fn install_hook(repo: &Repo, name: &str, body: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn a_failed_rebase_abort_keeps_the_backup() {
+fn a_rebase_stopped_by_a_lock_stays_in_progress() {
     // The `post-checkout` hook (the rebase runs it after checking out the upstream) leaves
-    // `index.lock`: the pick stops and `rebase --abort` fails too, the rebase stays in progress.
+    // `index.lock`: the pick stops without conflicts and the rebase stays in progress.
     let Setup {
         other,
         work,
@@ -522,28 +589,30 @@ fn a_failed_rebase_abort_keeps_the_backup() {
         ": > \"$(git rev-parse --git-dir)/index.lock\"\n",
     );
     let (r, mut s) = open(&work);
-    let err = r
-        .run("remote.pull", &mut s, json!({ "strategy": "rebase" }))
-        .unwrap_err();
-    assert!(matches!(err, EngineError::GitWithReason { .. }), "{err}");
-    let text = err.to_string();
-    assert!(text.contains("--abort` failed"), "{text}");
+    let out = pull(&r, &mut s, json!({ "strategy": "rebase" }));
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!([]));
+    assert!(
+        out["message"].as_str().unwrap().contains("index.lock"),
+        "{out}"
+    );
     let kept = backups(&work);
     assert_eq!(kept.len(), 1, "{kept:?}");
-    assert!(kept[0].starts_with("refs/project/backup/pull-"), "{kept:?}");
-    assert!(
-        text.contains(&kept[0]),
-        "the error names the backup: {text}"
-    );
+    assert_eq!(out["backup"], kept[0]);
     assert_eq!(work.rev(&kept[0]), mine);
     assert!(work.path().join(".git/rebase-merge").exists());
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
     assert_eq!(history["can_undo"], false);
-    // Cleanup from the terminal: with the lock removed, the rebase aborts and the branch is as it was.
+    // With the lock still there `rebase.continue` refuses; without it the pull concludes.
+    let err = r.run("rebase.continue", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::IndexLocked { .. }), "{err}");
     std::fs::remove_file(work.path().join(".git/index.lock")).unwrap();
     std::fs::remove_file(work.path().join(".git/hooks/post-checkout")).unwrap();
-    work.git(&["rebase", "--abort"]);
-    assert_eq!(work.rev("HEAD"), mine);
+    let done = r.run("rebase.continue", &mut s, json!({})).unwrap();
+    assert_eq!(done["in_progress"], false, "{done}");
+    assert_eq!(work.rev("main~1"), work.rev("origin/main"));
+    assert_eq!(read(&work, "c.txt").as_deref(), Some("c\n"));
+    assert_eq!(done["can_undo"], true);
 }
 
 #[cfg(unix)]

@@ -322,7 +322,11 @@ impl MemoryBackend {
     /// The abort of the operation in progress (already checked) of `merge.abort`,
     /// `cherry_pick.abort` and `revert.abort`: `what` is the name in the backup
     /// (`refs/project/backup/<what>-abort-<n>`), `command` the command id.
-    fn abort_operation(&mut self, what: &str, command: &str) -> Result<MergeAborted, EngineError> {
+    pub(super) fn abort_operation(
+        &mut self,
+        what: &str,
+        command: &str,
+    ) -> Result<MergeAborted, EngineError> {
         // Like `git merge --abort` (`reset --merge`): rejected if a staged file also has
         // unstaged changes.
         let mixed: Vec<String> = self
@@ -447,13 +451,19 @@ impl MemoryBackend {
                 Some(Operation::Merge | Operation::CherryPick | Operation::Revert)
             )
         });
+        let rebase = self
+            .rebase_state
+            .as_ref()
+            .filter(|_| self.operation == Some(Operation::Rebase))
+            .map(|r| r.record.clone());
         OperationState {
             operation: self.operation,
             incoming: merge.map(|m| m.heads.clone()).unwrap_or_default(),
             message: merge.map(|m| m.message.clone()),
-            onto: None,
-            rebase_branch: None,
+            onto: rebase.as_ref().map(|r| r.onto),
+            rebase_branch: rebase.as_ref().map(|r| format!("{HEADS}{}", r.branch)),
             sequencer: false,
+            rebase,
         }
     }
 }

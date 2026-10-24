@@ -2,6 +2,7 @@
 //! `builtin/sync_tests.rs`).
 
 use super::*;
+use crate::git::memory::merge::merge_partial;
 use crate::git::{HeadState, RefMove};
 use project_domain::RepoPath;
 
@@ -20,15 +21,20 @@ fn three_way_merge_of_trees() {
     let ours: Tree = [(path("a"), entry(oid(3))), (path("b"), entry(oid(2)))].into();
     let theirs: Tree = [(path("a"), entry(oid(1))), (path("c"), entry(oid(4)))].into();
     // `a` changed by us, `b` removed by them, `c` added by them.
-    let merged = merge_trees(&base, &ours, &theirs).unwrap();
+    let (merged, conflicts) = merge_partial(&base, &ours, &theirs);
+    assert!(conflicts.is_empty());
     assert_eq!(
         merged,
         [(path("a"), entry(oid(3))), (path("c"), entry(oid(4)))].into()
     );
     let theirs: Tree = [(path("a"), entry(oid(5)))].into();
-    assert_eq!(merge_trees(&base, &ours, &theirs).unwrap_err(), ["a"]);
+    let (_, conflicts) = merge_partial(&base, &ours, &theirs);
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].path, path("a"));
     // The same change on both sides is not a conflict.
-    assert_eq!(merge_trees(&base, &ours, &ours).unwrap(), ours);
+    let (merged, conflicts) = merge_partial(&base, &ours, &ours);
+    assert!(conflicts.is_empty());
+    assert_eq!(merged, ours);
 }
 
 #[test]

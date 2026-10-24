@@ -6,6 +6,7 @@ mod conflict;
 mod discard;
 mod merge;
 mod pick;
+mod rebase;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -15,6 +16,7 @@ mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
 use merge::MemoryMerge;
+use rebase::MemoryRebase;
 pub use remote::FetchFailure;
 use remote::MemoryRemote;
 use stash::MemoryStash;
@@ -25,9 +27,9 @@ use super::{
     ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest,
     GitBackend, HeadState, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
     OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
-    PushRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion,
-    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig,
-    WorktreeRestore,
+    PushRequest, RebaseRequest, RefRestore, RemoteSnapshot, RepoOpener, RestoreOutcome,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    UpstreamConfig, WorktreeRestore,
 };
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
@@ -111,6 +113,8 @@ pub struct MemoryBackend {
     stash_drop_failure: Option<String>,
     /// The merge in progress (`MERGE_HEAD`, `MERGE_MSG`), with `operation` = `Merge`.
     merge_state: Option<MemoryMerge>,
+    /// The rebase in progress, with `operation` = `Rebase`.
+    rebase_state: Option<MemoryRebase>,
 }
 
 impl Default for MemoryBackend {
@@ -148,6 +152,7 @@ impl MemoryBackend {
             dropped_stashes: BTreeMap::new(),
             stash_drop_failure: None,
             merge_state: None,
+            rebase_state: None,
         }
     }
 
@@ -262,6 +267,7 @@ impl MemoryBackend {
     pub fn set_operation(&mut self, operation: Option<Operation>) {
         self.operation = operation;
         self.merge_state = None;
+        self.rebase_state = None;
     }
 
     fn set_ref(&mut self, name: String, target: Oid, tag_object: Option<Oid>) {
@@ -919,6 +925,18 @@ impl GitBackend for MemoryBackend {
 
     fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
         self.abort_pick(kind)
+    }
+
+    fn rebase(&mut self, request: &RebaseRequest) -> Result<MergeOutcome, EngineError> {
+        self.rebase_start(request)
+    }
+
+    fn rebase_continue(&mut self) -> Result<MergeOutcome, EngineError> {
+        self.rebase_go_on()
+    }
+
+    fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
+        self.rebase_stop()
     }
 }
 

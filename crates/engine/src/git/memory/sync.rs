@@ -4,8 +4,8 @@
 //! The in-memory merge works file by file (a file changed differently on the two sides is a
 //! conflict, even if git could merge the lines); the rebase replays the local commits without
 //! merge, oldest first, skipping those that no longer change anything. A merge conflict is
-//! left in progress like `merge.start` ([`MemoryBackend::merge_three_way`]); a rebase
-//! conflict changes nothing (like the `CliBackend`, which aborts the rebase). The undo of a pull of the active
+//! left in progress like `merge.start` ([`MemoryBackend::merge_three_way`]), a rebase
+//! conflict like `rebase.start` (`memory/rebase.rs`). The undo of a pull of the active
 //! branch ([`MemoryBackend::reset_keep`]) updates index and worktree like the checkout, with the
 //! same refusals. The push copies the commits into the in-memory remote and updates the local
 //! remote branch; [`MemoryBackend::fail_pre_push`] simulates a `pre-push` hook that rejects.
@@ -13,46 +13,13 @@
 use super::commit::{Tree, tree_changes};
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES, RefEntry};
 use crate::git::{
-    BACKUP_PREFIX, LogQuery, PullMode, PullOperation, PullOutcome, PullRequest, PullSettings,
-    PushKind, PushOutcome, PushRejection, PushRequest, RefRestore, RestoreOutcome, UpstreamConfig,
-    check_pull_state, short,
+    BACKUP_PREFIX, LogQuery, PullMode, PullOutcome, PullRequest, PullSettings, PushKind,
+    PushOutcome, PushRejection, PushRequest, RebaseRecord, RefRestore, RestoreOutcome,
+    UpstreamConfig, check_pull_state, short,
 };
 use crate::{EngineError, FetchFailure, GitBackend, JobContext, Progress};
 use project_domain::{Commit, Oid, Signature};
 use std::collections::BTreeSet;
-
-/// The three-way merge of `ours` and `theirs` from `base`, file by file; the conflicted files if
-/// changed differently on the two sides.
-fn merge_trees(base: &Tree, ours: &Tree, theirs: &Tree) -> Result<Tree, Vec<String>> {
-    let mut paths: Vec<_> = base
-        .keys()
-        .chain(ours.keys())
-        .chain(theirs.keys())
-        .collect();
-    paths.sort();
-    paths.dedup();
-    let mut out = Tree::new();
-    let mut conflicts = Vec::new();
-    for path in paths {
-        let (b, o, t) = (base.get(path), ours.get(path), theirs.get(path));
-        let result = if o == t || t == b {
-            o
-        } else if o == b {
-            t
-        } else {
-            conflicts.push(path.to_string());
-            continue;
-        };
-        if let Some(entry) = result {
-            out.insert(path.clone(), *entry);
-        }
-    }
-    if conflicts.is_empty() {
-        Ok(out)
-    } else {
-        Err(conflicts)
-    }
-}
 
 impl MemoryBackend {
     /// The pull configuration (`pull.rebase`, `pull.ff`) for all branches.
@@ -203,29 +170,6 @@ impl MemoryBackend {
         Ok(id)
     }
 
-    fn pull_conflict(
-        request: &PullRequest,
-        operation: PullOperation,
-        files: Vec<String>,
-    ) -> EngineError {
-        let message = files
-            .iter()
-            .map(|f| format!("CONFLICT (content): Merge conflict in {f}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        EngineError::PullConflict {
-            branch: request.branch.clone(),
-            upstream: request
-                .upstream_name
-                .strip_prefix(REMOTES)
-                .unwrap_or(&request.upstream_name)
-                .to_owned(),
-            operation,
-            files,
-            message,
-        }
-    }
-
     pub(super) fn pull_upstream(
         &mut self,
         request: &PullRequest,
@@ -283,15 +227,10 @@ impl MemoryBackend {
                 // The rebase goes through the trees of the commits to replay: a file that one of
                 // them adds (even if a later commit removes it) must not be in place of
                 // an untracked or ignored one, which would be written and then deleted.
-                let mut hit: Vec<String> = Vec::new();
-                for commit in &todo {
-                    let (_, files) = work.switch_plan(&work.tree_at(commit.id));
-                    for file in files {
-                        if !hit.contains(&file) {
-                            hit.push(file);
-                        }
-                    }
-                }
+                // The upstream's tree too: the rebase starts from there.
+                let hit = work.rebase_blocked(
+                    std::iter::once(request.upstream).chain(todo.iter().map(|c| c.id)),
+                );
                 if !hit.is_empty() {
                     return Err(EngineError::NotAllowed(msg!(
                         "engine-pull-rebase-untracked",
@@ -302,32 +241,38 @@ impl MemoryBackend {
                             .join(", ")
                     )));
                 }
-                let mut tip = request.upstream;
-                let mut tree = work.tree_at(tip);
-                for commit in todo {
-                    let base = commit
-                        .parents
-                        .first()
-                        .map(|p| work.tree_at(*p))
-                        .unwrap_or_default();
-                    let mine = work.tree_at(commit.id);
-                    let merged = merge_trees(&base, &tree, &mine).map_err(|files| {
-                        Self::pull_conflict(request, PullOperation::Rebase, files)
-                    })?;
-                    // Already in the upstream: git skips it.
-                    if merged == tree {
-                        continue;
-                    }
-                    tip = work.make_commit(
-                        vec![tip],
-                        &merged,
-                        Some(commit.author.clone()),
-                        commit.summary.clone(),
-                        commit.body.clone(),
-                    )?;
-                    tree = merged;
-                }
-                tip
+                // Like `rebase.start`: a conflict leaves the rebase in progress, concluded by
+                // `rebase.continue` with the pull's journal entry.
+                let backup = Self::pull_backup(&mut work, request.expected);
+                let record = RebaseRecord {
+                    command: "remote.pull".to_owned(),
+                    branch: request.branch.clone(),
+                    before: request.expected,
+                    onto: request.upstream,
+                    backup: backup.clone(),
+                    messages: Vec::new(),
+                    message_commits: Vec::new(),
+                    applied: 0,
+                    commits: todo.len(),
+                    produces: None,
+                    upstream: Some(
+                        request
+                            .upstream_name
+                            .strip_prefix(REMOTES)
+                            .unwrap_or(&request.upstream_name)
+                            .to_owned(),
+                    ),
+                };
+                let rebased = work.pull_rebase(&todo, record)?;
+                *self = work;
+                return Ok(PullOutcome {
+                    after: rebased.after,
+                    backup,
+                    in_progress: rebased.in_progress,
+                    conflicts: rebased.conflicts,
+                    message: rebased.message,
+                    warnings: Vec::new(),
+                });
             }
         };
         if request.current {

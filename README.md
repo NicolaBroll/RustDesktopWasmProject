@@ -139,12 +139,12 @@ overwrite it). Before writing it saves the branch in
 `refs/project/backup/pull-...`. If the **merge** stops (conflicts, a hook, signing) it remains
 in progress as with `merge.start`: it is not an error, the result has `"in_progress": true` and the files
 in `conflicts`, the branch has not moved and the backup remains; it is concluded with `merge.continue` (after
-resolving and staging the files) or cancelled with `merge.abort`. If the **rebase** stops
-it is aborted: the branch stays as it was and the error lists the conflicted files (to resolve them,
-for now, git from the terminal or the merge strategy). It goes into the journal when it moves the branch:
+resolving and staging the files) or cancelled with `merge.abort`. A stopped **rebase** also stays
+in progress: it is concluded with `rebase.continue` (the pull's journal entry) or cancelled with
+`rebase.abort`. It goes into the journal when it moves the branch:
 `edit.undo` returns the branch to the previous commit with index and worktree (like `git reset --keep`:
 refused if a file to restore has local changes or if a file to recreate already exists); the
-stopped merge does not (it goes in with `merge.continue`). Result: `{"branch", "remote", "upstream",
+stopped merge or rebase does not (it goes in with `merge.continue`/`rebase.continue`). Result: `{"branch", "remote", "upstream",
 "strategy": "fast_forward"|"merge"|"rebase"|"up_to_date", "strategy_source", "before", "after",
 "ahead", "behind", "in_progress", "conflicts", "message", "backup", "fetch": {"updated",
 "messages"}, "warnings", "status", "refs"}` plus the journal state.
@@ -245,7 +245,7 @@ the error says which resolutions and changes would be lost; it first saves index
 worktree; a stopped merge and the abort do not. `repo.operation {}` (read-only) is the banner
 of the operation in progress: `{"operation", "head", "conflicts", "incoming": [{"id", "label",
 "summary", "refs"}], "message", "onto", "rebase_branch", "ready", "continue", "abort"}`
-(`continue`/`abort` are the commands to use: merge, cherry-pick and revert).
+(`continue`/`abort` are the commands to use: merge, rebase, cherry-pick and revert).
 
 `commit.cherry_pick {"rev", "mainline"?}` applies a commit on the active branch with a new commit
 (original author and message); `commit.revert {"rev", "mainline"?}` undoes its changes with
@@ -260,6 +260,20 @@ Result: `{"rev", "commit", "summary", "mainline", "branch", "before", "after", "
 "conflicts", "message", "backup", "warnings", "status", "refs"}`. Once concluded it goes into the journal
 (the undo returns the branch as it was); a sequence of several commits started from the terminal stays
 with the terminal. Details in [impl-docs/git/cherry-pick.md](impl-docs/git/cherry-pick.md).
+
+`rebase.plan {"base"}` (read-only) gives the default plan of the commits `base..HEAD` of the active
+branch (`steps`: `pick` of each, oldest first, with `summary`; `published`: those already on a remote
+branch). `rebase.start {"base", "steps": [{"action", "commit", "message"?}], "confirm"?}` rewrites them:
+`pick`, `reword` (with `message`), `squash`/`fixup` into the commit before (`message` allowed on the
+last of the group), `drop`, in any order; every commit of the range exactly once. Refused with a
+detached HEAD, an operation in progress, conflicts, any change to tracked files, merges in the range,
+a plan that changes nothing; rewriting published commits needs `"confirm": true`. It first saves
+the branch in `refs/project/backup/rebase-...`. **A stop (conflict, hook, signing) leaves the rebase
+in progress**: `rebase.continue {}` after resolving and staging, `rebase.abort {"confirm": true}`
+(`rebase-abort-...` backup) to go back. Result: `{"base", "branch", "before", "after",
+"in_progress", "conflicts", "message", "backup", "warnings", "status", "refs"}`. Once concluded it
+goes into the journal (the undo returns the branch as it was). Details in
+[impl-docs/git/rebase.md](impl-docs/git/rebase.md).
 
 `conflict.show {"path"}` (read-only) gives the versions of a conflicted file: `{"path", "kind",
 "base", "ours", "theirs", "worktree", "marker_size", "digest"}`, each version `{"text", "binary",

@@ -21,6 +21,10 @@ engine-journal-pick = { $kind ->
     [revert] Revert
    *[other] Cherry-pick
 } di { $source } su `{ $branch }` (da { $before } a { $after })
+engine-journal-rebase = Rebase di `{ $branch }` ({ $n ->
+    [one] 1 commit
+   *[other] { $n } commit
+}, da { $before } a { $after })
 engine-journal-remote-add = Aggiungi remoto `{ $name }`
 engine-journal-remote-add-fetched = Aggiungi remoto `{ $name }` (con fetch: { $n } branch remoti)
 engine-journal-remote-remove = Rimuovi remoto `{ $name }` ({ $n } branch remoti{ $upstreams ->

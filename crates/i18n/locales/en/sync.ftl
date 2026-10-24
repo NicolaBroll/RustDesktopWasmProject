@@ -34,6 +34,11 @@ sync-pull-stopped-conflicts = { $what }: merge of { $upstream } stopped: { $n ->
     [one] 1 conflicted file
    *[other] { $n } conflicted files
 }. Resolve them and mark them as resolved in the staging area, then “Continue merge…” in the top panel (or “Abort merge…”, which puts the branch back as it was)
+sync-pull-stopped-rebase = { $what }: rebase onto { $upstream } stopped before a commit (a hook or signing?): finish it with “Continue rebase…” in the top panel, or abort it
+sync-pull-stopped-conflicts-rebase = { $what }: rebase onto { $upstream } stopped: { $n ->
+    [one] 1 conflicted file
+   *[other] { $n } conflicted files
+}. Resolve them and mark them as resolved in the staging area, then “Continue rebase…” in the top panel (or “Abort rebase…”, which puts the branch back as it was)
 sync-pull-up-to-date = { $what }: already up to date with { $upstream }
 sync-pull-up-to-date-ahead = { $what }: already up to date with { $upstream } ({ $n ->
     [one] 1 local commit
@@ -73,7 +78,7 @@ sync-push-refs-not-reread = Push done, but the refs could not be reread: { $erro
 sync-close = Close
 sync-conflict-title = Pull aborted: conflicts
 sync-conflict-explanation = The { $operation } with the upstream stopped on a conflict and was aborted: the repo is as it was before the pull (branch, index and files didn't change). The fetch, however, is done: the remote-tracking branch shows the incoming commits.
-sync-conflict-hint = A stopped rebase can't be continued from the app yet. You can pull with { $other }: if it conflicts the merge stays in progress and the files are resolved here (then “Continue merge…” or “Abort merge…”); or keep working on the branch and integrate later, or resolve from a terminal.
+sync-conflict-hint = You can pull again with { $other } (or the same strategy): a pull that stops on a conflict now stays in progress and the files are resolved here, then “Continue…” or “Abort…” in the top panel; or keep working on the branch and integrate later, or resolve from a terminal.
 sync-conflict-no-files = Git didn't list the files.
 sync-conflict-files = { $n ->
     [one] Conflicted file:

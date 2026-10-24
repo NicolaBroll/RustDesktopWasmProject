@@ -113,6 +113,10 @@ pub struct OperationState {
     /// (`.git/sequencer`): the S31 commands leave it to the terminal (`check_picking`).
     #[serde(default)]
     pub sequencer: bool,
+    /// Rebase: what the app knows of a rebase it started ([`RebaseRecord`](super::RebaseRecord));
+    /// `None` for one started from the terminal.
+    #[serde(default)]
+    pub rebase: Option<super::RebaseRecord>,
 }
 
 /// Where the commit to merge comes from, for the default message.

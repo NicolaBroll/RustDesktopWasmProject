@@ -75,6 +75,7 @@ engine-busy-revert = inizierebbe un revert
 engine-busy-worktree = riscriverebbe file
 engine-busy-branch-move = sposterebbe il branch
 engine-busy-merge = inizierebbe un altro merge
+engine-busy-rebase = avvierebbe un rebase
 # Refs changed from outside (`UndoConflict`, one line per ref).
 engine-head-branch = sul branch `{ $name }`
 engine-head-detached = staccata su { $id }

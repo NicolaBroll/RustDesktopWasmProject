@@ -5,7 +5,7 @@
 //! - **Panel**: when the repo status (`repo.status`) says there is an operation in progress
 //!   (merge, rebase, cherry-pick, revert, bisect, `git am`) `repo.operation` is read: what is
 //!   coming in, the conflicted files, the message prepared by git and the commands that finish or
-//!   abort the operation from here (merge, cherry-pick and revert; `pick.rs`). It is reread at every new status
+//!   abort the operation from here (merge, cherry-pick, revert, rebase; `pick.rs`). It is reread at every new status
 //!   (after every command and with "Refresh"), so resolved conflicts disappear from the list.
 //! - **Start**: `merge.start` with the chosen branch name (or commit id). A finished merge
 //!   (fast-forward or merge commit) enters the journal: "Undo" undoes it. A merge
@@ -16,6 +16,8 @@
 //! - **Abort the merge**: in two steps, like dropping a stash: first without
 //!   `confirm` (the engine always answers with `ConfirmRequired` and what would be lost), then, only
 //!   after the click in the red dialog, `"confirm": true`.
+//! - **Rebase** (S32): `rebase.continue` (no message: the commit it stopped on keeps its own; it
+//!   may stop again on the next conflict, and the panel stays) and `rebase.abort` like the others.
 
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
@@ -42,10 +44,12 @@ pub enum Kind {
     Merge,
     CherryPick,
     Revert,
+    /// A rebase (interactive or of a pull): "Continue" has no message, git goes on with the plan.
+    Rebase,
 }
 
 impl Kind {
-    const ALL: [Kind; 3] = [Kind::Merge, Kind::CherryPick, Kind::Revert];
+    const ALL: [Kind; 4] = [Kind::Merge, Kind::CherryPick, Kind::Revert, Kind::Rebase];
 
     /// The id of the command that finishes the operation.
     pub fn continue_command(self) -> &'static str {
@@ -53,6 +57,7 @@ impl Kind {
             Kind::Merge => "merge.continue",
             Kind::CherryPick => "cherry_pick.continue",
             Kind::Revert => "revert.continue",
+            Kind::Rebase => "rebase.continue",
         }
     }
 
@@ -62,6 +67,7 @@ impl Kind {
             Kind::Merge => "merge.abort",
             Kind::CherryPick => "cherry_pick.abort",
             Kind::Revert => "revert.abort",
+            Kind::Rebase => "rebase.abort",
         }
     }
 
@@ -81,6 +87,7 @@ impl Kind {
             Kind::Merge => "merge",
             Kind::CherryPick => "cherry-pick",
             Kind::Revert => "revert",
+            Kind::Rebase => "rebase",
         }
     }
 
@@ -90,6 +97,7 @@ impl Kind {
             Kind::Merge => "Merge",
             Kind::CherryPick => "Cherry-pick",
             Kind::Revert => "Revert",
+            Kind::Rebase => "Rebase",
         }
     }
 
@@ -97,8 +105,14 @@ impl Kind {
     pub fn commit_noun(self) -> String {
         match self {
             Kind::Merge => tr!("merge-noun-merge-commit"),
-            Kind::CherryPick | Kind::Revert => tr!("merge-noun-commit"),
+            Kind::CherryPick | Kind::Revert | Kind::Rebase => tr!("merge-noun-commit"),
         }
+    }
+
+    /// True if "Continue" creates a commit with a message to write (not the rebase: the commit
+    /// it stopped on keeps its message, `rebase.continue` takes no parameters).
+    pub fn has_message(self) -> bool {
+        self != Kind::Rebase
     }
 
     /// The prefix of the abort backup: `refs/project/backup/merge-abort-…`.
@@ -310,9 +324,9 @@ pub struct ContinueDialog {
 }
 
 impl ContinueDialog {
-    /// True if the message is empty or only whitespace: the button stays disabled.
+    /// True if the message is needed and empty or only whitespace: the button stays disabled.
     pub fn is_blank(&self) -> bool {
-        self.message.trim().is_empty()
+        self.kind.has_message() && self.message.trim().is_empty()
     }
 }
 
@@ -509,7 +523,11 @@ impl MergeBox {
         else {
             return false;
         };
-        let message = info.message.clone().unwrap_or_default();
+        let message = if kind.has_message() {
+            info.message.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
         self.dialog = Some(Dialog::Continue(ContinueDialog {
             kind,
             message: message.trim_end().to_owned(),
@@ -541,9 +559,14 @@ impl MergeBox {
         dialog.sending = true;
         dialog.error = None;
         dialog.git = None;
+        let params = if dialog.kind.has_message() {
+            json!({ "message": dialog.message.trim_end() })
+        } else {
+            json!({})
+        };
         Some((
             Op::Continue(dialog.kind),
-            json!({ "message": dialog.message.trim_end() }),
+            params,
             tr!("merge-continue-label", name = dialog.kind.name()),
         ))
     }
@@ -713,6 +736,16 @@ impl MergeBox {
                 dialog.error = Some(e);
                 Received::Inline
             }
+            Ok(value) if op == Kind::Rebase => {
+                self.dialog = None;
+                match parse::<RebaseContinueResult>(Op::Continue(op), value) {
+                    Ok(result) => Received::Done(Box::new(result.outcome())),
+                    Err(message) => Received::Failed {
+                        message,
+                        reload: true,
+                    },
+                }
+            }
             Ok(value) => {
                 self.dialog = None;
                 match parse::<ContinueResult>(Op::Continue(op), value) {
@@ -824,7 +857,8 @@ impl MergeBox {
                         refs: result.refs,
                         history: result.history,
                         warning,
-                        moved: false,
+                        // The rebase abort puts HEAD back on the branch: the log changes.
+                        moved: op == Kind::Rebase,
                         show_changes: false,
                     }))
                 }
@@ -952,6 +986,81 @@ struct ContinueResult {
     refs_error: Option<String>,
     #[serde(flatten)]
     history: History,
+}
+
+/// Result of `rebase.continue`.
+#[derive(Debug, Clone, Deserialize)]
+struct RebaseContinueResult {
+    /// The short name of the rewritten branch.
+    branch: Option<String>,
+    after: Oid,
+    in_progress: bool,
+    #[serde(default)]
+    conflicts: Vec<RepoPath>,
+    /// Git's text when it stops.
+    #[serde(default)]
+    message: Option<String>,
+    backup: Option<String>,
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
+    warnings: Vec<String>,
+    status: Option<Status>,
+    status_error: Option<String>,
+    refs: Option<Vec<RefInfo>>,
+    refs_error: Option<String>,
+    #[serde(flatten)]
+    history: History,
+}
+
+impl RebaseContinueResult {
+    /// Concluded, or stopped again on the next commit (conflicts, a hook): the stage area opens
+    /// with the files and the panel stays.
+    fn outcome(self) -> Outcome {
+        let mut warnings = self.warnings;
+        let notice = if self.in_progress {
+            match self.conflicts.len() {
+                0 => {
+                    let message = self.message.as_deref().map(str::trim).unwrap_or_default();
+                    if !message.is_empty() {
+                        warnings.push(message.to_owned());
+                    }
+                    tr!("merge-rebase-stopped-before-commit")
+                }
+                n => tr!(
+                    "merge-rebase-stopped",
+                    files = tr!("merge-conflict-files", n = n)
+                ),
+            }
+        } else {
+            let mut notice = match &self.branch {
+                Some(branch) => tr!(
+                    "merge-rebase-finished-branch",
+                    branch = branch,
+                    id = self.after.short()
+                ),
+                None => tr!("merge-rebase-finished", id = self.after.short()),
+            };
+            if let Some(backup) = &self.backup {
+                notice.push_str(&tr!("merge-rebase-backup", backup = backup));
+            }
+            notice
+        };
+        let what = if self.in_progress {
+            tr!("merge-rebase-stopped-short")
+        } else {
+            tr!("merge-concluded", title = Kind::Rebase.title())
+        };
+        let warning = reread_warning(&what, &warnings, self.status_error, self.refs_error);
+        Outcome {
+            notice,
+            show_changes: self.in_progress && !self.conflicts.is_empty(),
+            status: self.status,
+            refs: self.refs,
+            history: self.history,
+            warning,
+            // HEAD moved in any case (the commits applied, or the branch at the end).
+            moved: true,
+        }
+    }
 }
 
 /// Result of `merge.abort`.
@@ -1582,3 +1691,7 @@ mod tests {
         assert_eq!(commit_name(oid(6), &refs), oid(6).short());
     }
 }
+
+#[cfg(test)]
+#[path = "merge_rebase_tests.rs"]
+mod rebase_tests;

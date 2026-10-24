@@ -3,7 +3,7 @@
 
 use crate::{
     CancelToken, EngineError, FetchFailure, GitBackend, JobContext, MemoryBackend, MemoryOpener,
-    PullOperation, PullSettings, PushRejection, Registry, Session,
+    PullSettings, PushRejection, Registry, Session,
 };
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
 use serde_json::json;
@@ -280,32 +280,93 @@ fn pull_merge_conflict_then_abort() {
     );
 }
 
-#[test]
-fn pull_rebase_conflict_changes_nothing() {
+/// `diverged` with the conflict on `src/bin/app.rs` and `pull.rebase=true`.
+fn rebase_conflict() -> (Registry, Session) {
     let mut repo = diverged(Some("src/bin/app.rs"));
     repo.set_pull_settings(PullSettings {
         rebase: Some("true".into()),
         ff: None,
     });
-    let (r, mut s) = opened_with(repo);
-    let err = r.run("remote.pull", &mut s, json!({})).unwrap_err();
-    let EngineError::PullConflict {
-        operation, files, ..
-    } = &err
-    else {
-        panic!("{err}");
-    };
-    assert_eq!(*operation, PullOperation::Rebase);
-    assert_eq!(files, &["src/bin/app.rs"]);
-    assert!(err.to_string().contains("aborted"), "{err}");
+    opened_with(repo)
+}
+
+#[test]
+fn pull_rebase_conflict_stays_in_progress_then_continue() {
+    let (r, mut s) = rebase_conflict();
+    let out = r.run("remote.pull", &mut s, json!({})).unwrap();
+    assert_eq!(out["strategy"], "rebase");
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["src/bin/app.rs"]));
+    assert_eq!(out["after"], oid(12).to_string());
+    assert_eq!(out["backup"], "refs/project/backup/pull-1");
+    assert_eq!(out["can_undo"], false);
+    assert_eq!(out["status"]["operation"], "Rebase");
     assert_eq!(
         target(&r, &mut s, "refs/heads/main").unwrap(),
         oid(12).to_string()
     );
+    let op = r.run("repo.operation", &mut s, json!({})).unwrap();
+    assert_eq!(op["continue"], "rebase.continue");
+    assert_eq!(op["abort"], "rebase.abort");
+    assert_eq!(op["onto"], oid(20).to_string());
+    assert_eq!(op["rebase_branch"], "refs/heads/main");
+    // Undo is refused while the rebase is in progress; continue too with the conflict.
+    assert!(r.run("edit.undo", &mut s, json!({})).is_err());
+    let err = r.run("rebase.continue", &mut s, json!({})).unwrap_err();
+    assert!(err.to_string().contains("src/bin/app.rs"), "{err}");
+
+    r.run(
+        "index.stage",
+        &mut s,
+        json!({ "paths": ["src/bin/app.rs"] }),
+    )
+    .unwrap();
+    let done = r.run("rebase.continue", &mut s, json!({})).unwrap();
+    assert_eq!(done["in_progress"], false);
+    assert_eq!(done["command"], "remote.pull");
+    assert_eq!(done["before"], oid(12).to_string());
+    assert_eq!(done["status"]["operation"], json!(null));
+    assert_eq!(done["warnings"], json!([]));
+    let after = target(&r, &mut s, "refs/heads/main").unwrap();
+    assert_eq!(done["after"], after);
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
-    assert_eq!(history["can_undo"], false);
-    let status = r.run("repo.status", &mut s, json!({})).unwrap();
-    assert_eq!(status["operation"], json!(null));
+    let last = &history["done"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(last["command"], "remote.pull");
+    assert!(
+        last["description"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("rebase onto origin/main"),
+        "{last}"
+    );
+    r.run("edit.undo", &mut s, json!({})).unwrap();
+    assert_eq!(
+        target(&r, &mut s, "refs/heads/main").unwrap(),
+        oid(12).to_string()
+    );
+    r.run("edit.redo", &mut s, json!({})).unwrap();
+    assert_eq!(target(&r, &mut s, "refs/heads/main").unwrap(), after);
+}
+
+#[test]
+fn pull_rebase_conflict_then_abort() {
+    let (r, mut s) = rebase_conflict();
+    let out = r.run("remote.pull", &mut s, json!({})).unwrap();
+    assert_eq!(out["in_progress"], true);
+    let err = r.run("rebase.abort", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+    let aborted = r
+        .run("rebase.abort", &mut s, json!({ "confirm": true }))
+        .unwrap();
+    assert_eq!(aborted["backup"], "refs/project/backup/rebase-abort-1");
+    assert_eq!(aborted["status"]["operation"], json!(null));
+    assert_eq!(aborted["status"]["head"]["Branch"]["name"], "main");
+    assert_eq!(aborted["status"]["entries"], json!([]));
+    assert_eq!(aborted["can_undo"], false);
+    assert_eq!(
+        target(&r, &mut s, "refs/heads/main").unwrap(),
+        oid(12).to_string()
+    );
 }
 
 #[test]

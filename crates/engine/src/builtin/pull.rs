@@ -59,12 +59,12 @@ fn no_upstream(branch: &str) -> EngineError {
 ///    (conflicts, hooks, signing) **stays in progress** as with `merge.start`: it is not an error, the
 ///    result has `in_progress: true` and the files in `conflicts`, the branch has not moved, the
 ///    backup remains; it is concluded with `merge.continue` or aborted with `merge.abort`. A stopped
-///    **rebase** is aborted and gives [`EngineError::PullConflict`] (until there are
-///    `rebase.continue`/`rebase.abort`, S32).
+///    **rebase** stays in progress the same way: `rebase.continue` concludes it with the pull's
+///    journal entry, `rebase.abort` brings the branch back.
 ///
 /// The branch move goes into the journal: `edit.undo` brings it back to where it was (with index and
 /// worktree, like `git reset --keep`, if it is the active branch). The fetch does not (§7), neither does a stopped
-/// merge (the entry arrives with `merge.continue`).
+/// merge or rebase (the entry arrives with `merge.continue`/`rebase.continue`).
 ///
 /// Result: `{"branch", "remote", "upstream", "strategy": "fast_forward" | "merge" | "rebase"
 /// | "up_to_date", "strategy_source": "param" | "config" | "default", "before", "after",

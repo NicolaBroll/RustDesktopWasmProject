@@ -66,6 +66,8 @@ const WORKTREE_COMMANDS: &[&str] = &[
     "commit.revert",
     "cherry_pick.continue",
     "revert.continue",
+    "rebase.start",
+    "rebase.continue",
 ];
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
@@ -435,6 +437,41 @@ impl JournalEntry {
                 },
                 source = source,
                 branch = branch_short(branch),
+                before = short(&before),
+                after = short(&after)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: branch.to_owned(),
+                before: Some(before),
+                after: Some(after),
+            }],
+            backup,
+        )
+    }
+
+    /// The entry of a concluded interactive rebase (`rebase.start`, or `rebase.continue`,
+    /// `command`): the branch `branch` (full name) from `before` to `after`, HEAD same before and
+    /// after; `commits` the commits of the range rewritten, `backup` the ref of the branch before.
+    /// Undo and redo like the merge: [`GitBackend::reset_branch`] (like `git reset --keep`).
+    pub fn rebase(
+        command: &str,
+        branch: &str,
+        before: Oid,
+        after: Oid,
+        commits: usize,
+        backup: Option<String>,
+    ) -> Self {
+        let head = HeadState::Branch(branch.to_owned());
+        Self::branch_entry(
+            command,
+            msg!(
+                "engine-journal-rebase",
+                branch = branch_short(branch),
+                n = commits,
                 before = short(&before),
                 after = short(&after)
             ),

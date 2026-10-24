@@ -330,13 +330,16 @@ Rules that apply to every step:
 - **Done when:** CI green; the app explored with clicks and typing on the demo repo.
 
 ### S32 — Interactive rebase
-- [ ] **Agent:** `git-domain` (plan), `git-engine` (execution)
+- [x] **Agent:** `git-domain` (plan), `git-engine` (execution)
 - **Goal:** rebase plan (pick, reword, squash, fixup, drop, reordering) as pure data;
   execution with `GIT_SEQUENCE_EDITOR` writing the plan; `rebase.abort` and `rebase.continue`.
   With these, `remote.pull` in a rebase stopped on conflict will also stay in progress instead of
   aborting (like the merge already does, [git/sync.md](git/sync.md)).
 - **Done when:** integration tests for every plan action; `safety-reviewer` review;
   CI green.
+- [x] `egui-ui` addition: "Continue rebase…"/"Abort rebase…" in the operation panel (`Kind::Rebase`
+  in `crates/ui/src/merge.rs`) and the pull notices for a stopped rebase, so a pull rebase left in
+  progress can be concluded from the app.
 
 ### S33 — Rebase by dragging
 - [ ] **Agent:** `egui-ui`

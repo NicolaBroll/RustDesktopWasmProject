@@ -16,6 +16,7 @@ mod merge;
 mod pick;
 mod pull;
 mod push;
+mod rebase;
 mod remote;
 mod remote_admin;
 mod restore;
@@ -49,6 +50,7 @@ pub use discard::{
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub(crate) use merge::check_in_progress;
 pub use merge::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
     OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
@@ -63,6 +65,11 @@ pub use pull::{
     StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode,
 };
 pub use push::{PushKind, PushOutcome, PushRejection, PushRequest, tracking_ref};
+pub use rebase::{
+    MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
+    check_rebase_state, check_rebasing, explicit_squash_messages, plan_error, rebase_range,
+    rewritten_commits,
+};
 pub use remote::{FetchOutcome, FetchRequest, check_remote_name, default_remote, unknown_remote};
 pub use remote_admin::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
@@ -378,8 +385,8 @@ pub trait GitBackend: Send {
     /// `update-ref` with the old value. Merge and rebase: never `--autostash`. A **merge**
     /// that stops (conflicts, hooks, signing) **stays in progress** as with [`GitBackend::merge`]:
     /// [`PullOutcome::in_progress`] with the conflicted files, the branch as it was and the backup
-    /// kept. A **rebase** that stops is aborted (`--abort`) and the result is
-    /// [`EngineError::PullConflict`] with the files (nothing changes, the backup is removed). It is not
+    /// kept. A **rebase** that stops stays in progress too, with its [`RebaseRecord`] (command
+    /// `remote.pull`): `rebase.continue` concludes it with the pull's journal entry. It is not
     /// cancelled midway: the fetch, which can be cancelled, is already done.
     fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError>;
 
@@ -516,6 +523,34 @@ pub trait GitBackend: Send {
     /// is aborted. It rejects ([`check_picking`]) another operation or a sequence of several
     /// commits started from the terminal. The command asks for confirmation.
     fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError>;
+
+    // --- Interactive rebase (S32, `impl-docs/git/rebase.md`). The command reads the range,
+    // validates the plan and checks the state ([`check_rebase_state`]); the backend rechecks
+    // ([`check_rebase_request`]).
+
+    /// Rewrites the commits `request.plan.base..HEAD` of the branch of HEAD according to the plan
+    /// (`rebase.start`). Before writing: [`check_rebase_request`] on the state read now, HEAD on
+    /// branch `request.branch` with value `request.expected`, no file the rebase writes in place
+    /// of an untracked or ignored one, and a backup ref `refs/project/backup/rebase-...` on the
+    /// previous value (in the result; removed only if nothing changed). **A stop (conflict, failed
+    /// hook or signing, a message that could not be applied) leaves the rebase in progress**: it is
+    /// not an error, [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`],
+    /// with the [`RebaseRecord`] kept for `rebase.continue`.
+    fn rebase(&mut self, request: &RebaseRequest) -> Result<MergeOutcome, EngineError>;
+
+    /// Goes on with the rebase in progress (`rebase.continue`): the commit stopped on keeps its
+    /// message, then the rest of the plan with its messages ([`RebaseRecord`]). Refused
+    /// ([`EngineError::NotAllowed`]) without a rebase in progress or with conflicted files. Stopped
+    /// again → [`MergeOutcome::in_progress`]; concluded → [`MergeOutcome::after`] is the branch
+    /// afterwards. [`MergeOutcome::backup`] is the record's backup (empty without a record).
+    fn rebase_continue(&mut self) -> Result<MergeOutcome, EngineError>;
+
+    /// Aborts the rebase in progress (`rebase.abort`, `git rebase --abort`): the branch, index and
+    /// worktree go back to before the rebase. First it saves index and worktree (and the files the
+    /// abort would overwrite) in a new ref `refs/project/backup/rebase-abort-...`, whose parent is
+    /// the commit the rebase had reached; if the backup fails nothing is aborted. Without a rebase
+    /// in progress → [`EngineError::NotAllowed`]. The command asks for confirmation.
+    fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError>;
 
     // --- Conflict editor (S30, `impl-docs/git/conflicts.md`).
 

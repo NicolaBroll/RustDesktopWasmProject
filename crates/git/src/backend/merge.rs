@@ -46,11 +46,11 @@ const PLAIN_INDEX: [&str; 6] = [
 
 /// The operation aborted by [`CliBackend::abort_operation`]: the type, the git subcommand
 /// (also in the backup name), the command id, the file with the incoming commits.
-struct AbortTarget {
-    operation: Operation,
-    git: &'static str,
-    command: &'static str,
-    head_file: &'static str,
+pub(super) struct AbortTarget {
+    pub(super) operation: Operation,
+    pub(super) git: &'static str,
+    pub(super) command: &'static str,
+    pub(super) head_file: &'static str,
 }
 
 impl AbortTarget {
@@ -244,7 +244,7 @@ impl CliBackend {
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_merging("merge.abort", &status)?;
-        self.abort_operation(&status, AbortTarget::MERGE)
+        self.abort_operation(&status, AbortTarget::MERGE, &[])
     }
 
     /// [`GitBackend::pick_abort`](project_engine::GitBackend::pick_abort).
@@ -264,15 +264,18 @@ impl CliBackend {
                 command: kind.abort_command(),
                 head_file: kind.head_file(),
             },
+            &[],
         )
     }
 
     /// The abort of the operation in progress `target` (already checked against the status
-    /// `status`): the index and worktree backup like a stash, then `git <git> --abort`.
-    fn abort_operation(
+    /// `status`): the index and worktree backup like a stash (with the files `extra` too, e.g.
+    /// untracked files the abort would overwrite), then `git <git> --abort`.
+    pub(super) fn abort_operation(
         &mut self,
         status: &Status,
         target: AbortTarget,
+        extra: &[RepoPath],
     ) -> Result<MergeAborted, EngineError> {
         let AbortTarget {
             operation,
@@ -284,17 +287,24 @@ impl CliBackend {
         let head = self
             .resolve("HEAD")?
             .ok_or_else(|| EngineError::NotAllowed(msg!("engine-merge-abort-unborn")))?;
-        let files: Vec<RepoPath> = status
+        let mut files: Vec<RepoPath> = status
             .entries
             .iter()
             .filter(|e| e.is_conflict() || e.is_staged() || e.is_unstaged())
             .map(|e| e.path.clone())
             .collect();
+        for path in extra {
+            if !files.contains(path) {
+                files.push(path.clone());
+            }
+        }
         // `git <git> --abort` (`reset --merge`) refuses a staged file that also has unstaged
         // changes: check first, like the `MemoryBackend`, so nothing is written.
+        // `rebase --abort` is a `reset --hard`: no such limit.
         let mixed: Vec<String> = status
             .entries
             .iter()
+            .filter(|_| operation != Operation::Rebase)
             .filter(|e| e.is_staged() && e.is_unstaged())
             .map(|e| format!("`{}`", e.path))
             .collect();
@@ -339,7 +349,8 @@ impl CliBackend {
             });
         }
         let mut warnings = Vec::new();
-        if self.resolve("HEAD")? != Some(head) {
+        // The rebase goes back to its branch: HEAD moves by design.
+        if operation != Operation::Rebase && self.resolve("HEAD")? != Some(head) {
             warnings.push(msg!("engine-merge-abort-head-moved", head = head));
         }
         Ok(MergeAborted {
@@ -521,6 +532,11 @@ impl CliBackend {
             onto,
             rebase_branch,
             sequencer: self.git_dir.join("sequencer").is_dir(),
+            rebase: if operation == Some(Operation::Rebase) {
+                self.read_rebase_record()
+            } else {
+                None
+            },
         }
     }
 }

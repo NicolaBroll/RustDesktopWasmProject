@@ -4,7 +4,8 @@
 //! (the log, [`parse_log`], the status, [`parse_status`], the refs, [`parse_refs`], the files changed
 //! by a commit, [`parse_diff_tree`], and the diff, [`parse_diff`]); [`build_patch`] builds the
 //! patches for staging single lines; [`parse_conflicts`] reads the conflict markers of a
-//! file and [`resolve_block`]/[`resolve_all`] resolve them.
+//! file and [`resolve_block`]/[`resolve_all`] resolve them; [`RebasePlan`] is the plan of an
+//! interactive rebase.
 
 mod conflict;
 mod diff;
@@ -15,6 +16,7 @@ mod oid;
 mod patch;
 mod path;
 mod quote;
+mod rebase;
 mod refs;
 mod status;
 mod text;
@@ -32,6 +34,8 @@ mod log_tests;
 #[cfg(test)]
 mod patch_tests;
 #[cfg(test)]
+mod rebase_tests;
+#[cfg(test)]
 mod refs_tests;
 #[cfg(test)]
 mod status_tests;
@@ -48,6 +52,9 @@ pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
 pub use patch::{APPLY_ARGS, LineRef, PatchDirection, build_patch};
 pub use path::RepoPath;
+pub use rebase::{
+    PlanError, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep, RebaseTodo, RebasedCommit,
+};
 pub use refs::{REFS_ARGS, REFS_FIELDS, REFS_FORMAT, parse_refs};
 pub use status::{STATUS_ARGS, parse_status};
 pub use text::ByteText;

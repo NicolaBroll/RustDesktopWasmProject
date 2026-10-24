@@ -338,6 +338,11 @@ fn phase_name(phase: &str) -> String {
         "Resolving deltas" => tr!("fetch-phase-resolving"),
         "Writing objects" => tr!("fetch-phase-writing"),
         "Total" => tr!("fetch-phase-total"),
+        // `git commit-graph write` (repo.optimize): "... in <k> passes".
+        "Expanding reachable commits in commit graph" => tr!("fetch-phase-expanding-graph"),
+        other if other.starts_with("Writing out commit graph") => {
+            tr!("fetch-phase-writing-graph")
+        }
         other => other.to_owned(),
     }
 }

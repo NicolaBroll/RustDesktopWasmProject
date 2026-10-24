@@ -29,8 +29,9 @@ dependency**.
 2. **System git to write, pure parsers to read.** Operations go through the installed `git`
    command: this way SSH keys, `ssh-agent`, credential helpers, hooks, commit
    signing and the user's configuration work right away. git's output (porcelain formats, `-z`) is
-   read with pure parsers in the domain, testable without processes. `gix` comes in later only where
-   speed is needed (reading the log on huge repos, step S36).
+   read with pure parsers in the domain, testable without processes. `gix` was planned for the log of
+   huge repos (S36) and dropped: the slowness was `--date-order` without a commit-graph, solved by
+   writing one (`repo.optimize`, [git/reading.md](git/reading.md)).
 3. **The engine does not know where the data comes from.** The git backend is a trait (§4). The desktop uses
    the real backend, tests use an in-memory backend with a sample repo.
 4. **Never block the UI.** Slow commands (fetch, push, large logs) run off the UI
@@ -493,6 +494,14 @@ GitKraken-like layout:
 Every interaction produces an `Action` that goes through `Registry::run`, as today.
 
 The Stash section and its panel: [git/stash.md](git/stash.md).
+
+**Commit-graph notice** (S36, [git/reading.md](git/reading.md)): when `repo.open` gives
+`commit_graph: false` and the first `repo.log` page of the tab took more than `SLOW_FIRST_PAGE` (1 s,
+from submit to answer, `crates/ui/src/optimize.rs`), a full-width notice under the bar (below the
+operation panel, if any) explains why the history is slow, with "Optimize" (`repo.optimize` in the
+background: progress and "Stop" in the bar like the fetch; disabled during another write) and "Not
+now" (hidden until the repo is opened again). On success everything is reread and the notice goes
+away; on failure the engine text stays in the notice, to retry.
 
 **Operation in progress** (S29, [git/merge.md](git/merge.md)): when `repo.status` has `operation`
 (merge, rebase, cherry-pick, revert, bisect, `git am`) a full-width panel appears under the bar,

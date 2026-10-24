@@ -1,5 +1,5 @@
-//! Reading the stderr of `git fetch --progress` (§6): progress lines and remote
-//! errors. Pure functions, tested with the text git writes with `LC_ALL=C`.
+//! Reading the stderr of `git fetch --progress` (§6) and `git commit-graph write --progress`:
+//! progress lines and remote errors. Pure functions, tested with the text git writes with `LC_ALL=C`.
 
 use project_engine::{EngineError, Progress};
 
@@ -14,9 +14,9 @@ pub(crate) fn parse_progress(line: &str) -> Option<Progress> {
         None => (false, text.as_str()),
     };
     let (phase, rest) = body.split_once(": ")?;
-    if phase.is_empty()
-        || phase.starts_with(' ')
-        || !phase.chars().all(|c| c.is_ascii_alphabetic() || c == ' ')
+    // Digits inside the phase too: `Writing out commit graph in 5 passes` (commit-graph write).
+    if !phase.starts_with(|c: char| c.is_ascii_alphabetic())
+        || !phase.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ')
     {
         return None;
     }
@@ -189,6 +189,20 @@ mod tests {
 
         let p = progress("Counting objects: 1234");
         assert_eq!((p.percent, p.current), (None, Some(1234)));
+    }
+
+    #[test]
+    fn progress_lines_of_git_commit_graph_write() {
+        let p = progress("Expanding reachable commits in commit graph: 1497459, done.");
+        assert_eq!(p.phase, "Expanding reachable commits in commit graph");
+        assert_eq!((p.current, p.done), (Some(1_497_459), true));
+        let p = progress("Writing out commit graph in 5 passes:  40% (2994918/7487295)");
+        assert_eq!(p.phase, "Writing out commit graph in 5 passes");
+        assert_eq!(
+            (p.percent, p.current, p.total),
+            (Some(40), Some(2_994_918), Some(7_487_295))
+        );
+        assert!(parse_progress("5 passes: 3").is_none());
     }
 
     #[test]

@@ -32,7 +32,7 @@ use super::{
     RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped,
     StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
 };
-use crate::{EngineError, JobContext, Message};
+use crate::{CommitGraphState, EngineError, JobContext, Message};
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, FileLogEntry, Head, Oid,
     Operation, RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
@@ -116,6 +116,9 @@ pub struct MemoryBackend {
     merge_state: Option<MemoryMerge>,
     /// The rebase in progress, with `operation` = `Rebase`.
     rebase_state: Option<MemoryRebase>,
+    /// There is a commit-graph ([`GitBackend::commit_graph`]): written by
+    /// [`GitBackend::write_commit_graph`].
+    commit_graph: bool,
 }
 
 impl Default for MemoryBackend {
@@ -154,6 +157,7 @@ impl MemoryBackend {
             stash_drop_failure: None,
             merge_state: None,
             rebase_state: None,
+            commit_graph: false,
         }
     }
 
@@ -733,6 +737,32 @@ impl GitBackend for MemoryBackend {
         job: &JobContext,
     ) -> Result<Vec<FileLogEntry>, EngineError> {
         self.memory_file_log(query, job)
+    }
+
+    fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
+        // Like git: the last value of `core.commitGraph` wins; `false`, `no`, `off`, `0` and
+        // the empty value disable it.
+        let enabled = self.config_of("core.commitGraph").last().is_none_or(|v| {
+            !matches!(
+                v.to_ascii_lowercase().as_str(),
+                "false" | "no" | "off" | "0" | ""
+            )
+        });
+        Ok(CommitGraphState {
+            present: self.commit_graph,
+            enabled,
+            shallow: false,
+        })
+    }
+
+    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError> {
+        if job.is_cancelled() {
+            return Err(EngineError::Cancelled {
+                command: "repo.optimize",
+            });
+        }
+        self.commit_graph = true;
+        Ok(())
     }
 
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {

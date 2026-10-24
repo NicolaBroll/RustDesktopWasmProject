@@ -15,7 +15,8 @@ mod stash;
 use crate::commands::parse_params;
 use crate::{
     CommandSpec, CommitRequest, DiffSpec, EngineError, HeadState, Journal, JournalEntry,
-    LineSelection, LogQuery, Registry, RestoreOutcome, Session, discard_plan, file_digest,
+    LineSelection, LogQuery, Registry, RestoreOutcome, Session, commit_graph_disabled,
+    commit_graph_shallow, discard_plan, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -58,6 +59,12 @@ impl Registry {
             "Commit history",
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (with all: also the stash bases)}"#,
             repo_log,
+        );
+        add(
+            "repo.optimize",
+            "Write the commit-graph (fast history on huge repos)",
+            "{}",
+            repo_optimize,
         );
         add(
             "commit.show",
@@ -342,6 +349,7 @@ const WRITES: &[&str] = &[
     "remote.pull",
     "remote.push",
     "remote.remove",
+    "repo.optimize",
     "revert.abort",
     "revert.continue",
     "stash.apply",
@@ -367,12 +375,48 @@ fn to_json(value: impl serde::Serialize) -> Value {
     serde_json::to_value(value).expect("the domain types are serializable")
 }
 
-/// `{"path", "head"}` of the repo just opened.
+/// `{"path", "head", "commit_graph"}` of the repo just opened. `commit_graph`: git reads a
+/// commit-graph for the repo ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log` is slow on
+/// huge histories and the UI can offer `repo.optimize`. A failed check gives `false` (the
+/// repo opens anyway).
 fn repo_open(s: &mut Session, p: Value) -> Out {
     let PathParam { path } = parse_params("repo.open", p)?;
     s.open(&path)?;
-    let head = s.repo()?.head()?;
-    Ok(json!({ "path": path, "head": to_json(head) }))
+    let repo = s.repo()?;
+    let head = repo.head()?;
+    let commit_graph = repo.commit_graph().is_ok_and(|g| g.in_use());
+    Ok(json!({ "path": path, "head": to_json(head), "commit_graph": commit_graph }))
+}
+
+/// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`), so
+/// that `repo.log` (`--date-order`) no longer parses the whole history before the first page.
+///
+/// A write (it adds or replaces `objects/info/commit-graph`), but it cannot lose data: the file
+/// is a cache that git derives from the objects and that `git gc` itself rewrites. So no
+/// `confirm`, no backup, and no [`JournalEntry`]: no ref, index or worktree file changes.
+/// Slow (~19 s on the Linux kernel): progress and cancellation from [`Session::job`]. Refused
+/// with `core.commitGraph=false` ([`commit_graph_disabled`]) and in a shallow repo
+/// ([`commit_graph_shallow`]): git would not read it.
+///
+/// Result: `{"commit_graph": bool}`, the state afterwards (as in `repo.open`).
+fn repo_optimize(s: &mut Session, p: Value) -> Out {
+    const ID: &str = "repo.optimize";
+    let NoParams {} = parse_params(ID, p)?;
+    let job = s.job().clone();
+    let repo = s.repo_mut()?;
+    let before = repo.commit_graph()?;
+    if !before.enabled {
+        return Err(commit_graph_disabled());
+    }
+    if before.shallow {
+        return Err(commit_graph_shallow());
+    }
+    if job.is_cancelled() {
+        return Err(EngineError::Cancelled { command: ID });
+    }
+    repo.write_commit_graph(&job)?;
+    let after = repo.commit_graph()?;
+    Ok(json!({ "commit_graph": after.in_use() }))
 }
 
 /// The [`Status`](project_domain::Status) of the open repo.
@@ -838,6 +882,7 @@ mod tests {
                 "repo.log",
                 "repo.open",
                 "repo.operation",
+                "repo.optimize",
                 "repo.refs",
                 "repo.status",
                 "revert.abort",
@@ -883,6 +928,7 @@ mod tests {
                 "remote.pull",
                 "remote.push",
                 "remote.remove",
+                "repo.optimize",
                 "revert.abort",
                 "revert.continue",
                 "stash.apply",
@@ -909,6 +955,100 @@ mod tests {
         let head = MemoryBackend::sample().head().unwrap();
         assert_eq!(out["head"], to_json(head));
         assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
+        assert_eq!(out["commit_graph"], false);
+    }
+
+    /// Session on the sample repo with `core.commitGraph` set to `value` (unset if `None`).
+    fn opened_with_commit_graph_config(value: Option<&str>) -> (Registry, Session) {
+        let mut repo = MemoryBackend::sample();
+        repo.set_config("core.commitGraph", value.as_slice());
+        let mut opener = MemoryOpener::new();
+        opener.insert("r", repo);
+        let r = Registry::builtin();
+        let mut s = Session::new(Arc::new(opener));
+        r.run("repo.open", &mut s, json!({ "path": "r" })).unwrap();
+        (r, s)
+    }
+
+    #[test]
+    fn optimize_writes_the_commit_graph_and_changes_nothing_else() {
+        let (r, mut s) = opened();
+        let log_before = r.run("repo.log", &mut s, json!({ "all": true })).unwrap();
+        let refs_before = r.run("repo.refs", &mut s, json!({})).unwrap();
+        assert!(r.list().any(|c| c.id == "repo.optimize" && c.writes));
+
+        let out = r.run("repo.optimize", &mut s, json!({})).unwrap();
+        assert_eq!(out, json!({ "commit_graph": true }));
+        assert!(s.repo().unwrap().commit_graph().unwrap().in_use());
+        // A cache: same log, same refs, nothing in the journal (nothing to undo).
+        assert_eq!(
+            r.run("repo.log", &mut s, json!({ "all": true })).unwrap(),
+            log_before
+        );
+        assert_eq!(r.run("repo.refs", &mut s, json!({})).unwrap(), refs_before);
+        assert!(s.journal().unwrap().done().is_empty());
+        // Running it again just rewrites it.
+        let again = r.run("repo.optimize", &mut s, json!({})).unwrap();
+        assert_eq!(again["commit_graph"], true);
+    }
+
+    #[test]
+    fn optimize_is_refused_when_core_commit_graph_is_false() {
+        for value in ["false", "no", "off", "0"] {
+            let (r, mut s) = opened_with_commit_graph_config(Some(value));
+            let err = r.run("repo.optimize", &mut s, json!({})).unwrap_err();
+            assert!(matches!(err, EngineError::NotAllowed(_)), "{value}: {err}");
+            assert!(err.to_string().contains("core.commitGraph"), "{err}");
+            assert!(!s.repo().unwrap().commit_graph().unwrap().present);
+        }
+        for value in [Some("true"), None] {
+            let (r, mut s) = opened_with_commit_graph_config(value);
+            let out = r.run("repo.optimize", &mut s, json!({})).unwrap();
+            assert_eq!(out["commit_graph"], true, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn optimize_cancelled_writes_nothing() {
+        let (r, mut s) = opened();
+        let token = crate::CancelToken::new();
+        token.cancel();
+        let job = crate::JobContext::new().with_cancel(token);
+        let err = r
+            .run_with("repo.optimize", &mut s, json!({}), job)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                EngineError::Cancelled {
+                    command: "repo.optimize"
+                }
+            ),
+            "{err}"
+        );
+        assert!(!s.repo().unwrap().commit_graph().unwrap().present);
+    }
+
+    #[test]
+    fn optimize_checks_params_and_needs_a_repo() {
+        let (r, mut s) = opened();
+        let err = r
+            .run("repo.optimize", &mut s, json!({ "split": true }))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                EngineError::InvalidParams {
+                    id: "repo.optimize",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let err = r
+            .run("repo.optimize", &mut session(), json!({}))
+            .unwrap_err();
+        assert!(matches!(err, EngineError::NoRepo), "{err}");
     }
 
     #[test]

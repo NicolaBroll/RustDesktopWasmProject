@@ -30,7 +30,10 @@ project-cli mcp [--root <dir>]                           # MCP server on stdin/s
 
 `--repo` opens the repository before the commands (equivalent to `repo.open` as the first command).
 
-Commands: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
+Commands: `repo.open {"path"}` (`{"path", "head", "commit_graph"}`: `commit_graph` false = no
+commit-graph, so `repo.log` is slow on huge histories), `repo.optimize` (writes the commit-graph,
+`git commit-graph write --reachable`: a cache, no `confirm`, nothing to undo; `{"commit_graph"}`),
+`repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
 (pages of 200 commits if `limit` is missing, with `has_more`; from HEAD, from `rev`, or with
 `"all": true` from all local and remote branches, tags and HEAD, without stashes or backups, and with
 `"stashes": true` in addition also from the commits the stashes were created on; `rev` and

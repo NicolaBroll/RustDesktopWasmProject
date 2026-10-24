@@ -23,6 +23,8 @@ pub(crate) struct LinesUi<'a> {
     pub selection: Option<&'a LineSelection>,
     /// False during a write or with a confirmation open.
     pub can_write: bool,
+    /// Shows "Back" (closes the diff): not in the file history, where the list stays beside it.
+    pub back: bool,
 }
 
 /// The partial selection for the loaded diff: whether it is possible, and the buttons.
@@ -56,7 +58,7 @@ pub(crate) fn diff_panel(
         }
         _ => None,
     };
-    toolbar(ui, target, pane, actions);
+    toolbar(ui, target, pane, lines_ui.back, actions);
     if let Some(state) = &state {
         lines_bar(ui, state, actions);
     }
@@ -96,16 +98,24 @@ pub(crate) fn diff_panel(
 }
 
 /// Close, path and commit, rows added and removed.
-fn toolbar(ui: &mut Ui, target: &DiffTarget, pane: Pane<'_>, actions: &mut Vec<Action>) {
+fn toolbar(
+    ui: &mut Ui,
+    target: &DiffTarget,
+    pane: Pane<'_>,
+    back: bool,
+    actions: &mut Vec<Action>,
+) {
     ui.horizontal(|ui| {
-        if ui
-            .button(tr!("diff-back"))
-            .on_hover_text(tr!("diff-back-hint"))
-            .clicked()
-        {
-            actions.push(Action::CloseDiff);
+        if back {
+            if ui
+                .button(tr!("diff-back"))
+                .on_hover_text(tr!("diff-back-hint"))
+                .clicked()
+            {
+                actions.push(Action::CloseDiff);
+            }
+            ui.separator();
         }
-        ui.separator();
         ui.strong(target.path.to_string_lossy());
         match target.source {
             DiffSource::Commit(id) => {

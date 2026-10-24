@@ -62,3 +62,5 @@ stage-tooltip-double-stage = Doppio clic: metti in stage
 stage-tooltip-double-unstage = Doppio clic: togli dallo stage
 stage-tooltip-right-discard = Clic destro: altre azioni, anche scartare le modifiche
 stage-tooltip-right = Clic destro: altre azioni
+stage-blame-untracked = Il file non è ancora tracciato: il blame vuole un file in HEAD o nell'indice
+stage-blame-deleted = Il file è eliminato: non c'è niente su cui fare il blame

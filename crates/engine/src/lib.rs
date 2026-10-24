@@ -28,6 +28,10 @@ pub use git::{
     split_message, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
+    BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
+    blame_missing_worktree, blame_no_commits, is_binary_content,
+};
+pub use git::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,
 };

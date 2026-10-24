@@ -2,6 +2,7 @@
 
 mod branch;
 mod conflict;
+mod file;
 mod merge;
 mod pick;
 mod pull;
@@ -63,6 +64,18 @@ impl Registry {
             "Commit details",
             r#"{"id": string}"#,
             commit_show,
+        );
+        add(
+            "file.blame",
+            "Who last changed each line of a file",
+            r#"{"path": path, "rev"?: string (without: the worktree, uncommitted lines have commit null)}"#,
+            file::file_blame,
+        );
+        add(
+            "file.log",
+            "Commits that change a file",
+            r#"{"path": path, "rev"?: string, "skip"?: number, "limit"?: number (200), "follow"?: bool (true: across renames)}"#,
+            file::file_log,
         );
         add(
             "diff.worktree",
@@ -803,6 +816,8 @@ mod tests {
                 "edit.history",
                 "edit.redo",
                 "edit.undo",
+                "file.blame",
+                "file.log",
                 "index.stage",
                 "index.stage_lines",
                 "index.unstage",

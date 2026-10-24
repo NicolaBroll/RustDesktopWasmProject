@@ -122,3 +122,7 @@ engine-memory-backup-missing = worktree backup { $stash } not found
 engine-nothing = nothing
 engine-head-moved-after = after `{ $command }` HEAD is no longer on `{ $full }`: a hook or another process changed it; check HEAD before continuing
 engine-ref-moved-after = after `{ $command }` `{ $name }` points to { $now } instead of { $target }: another process moved it during the operation
+engine-blame-missing-rev = `{ $path }` is not a file in commit `{ $rev }`
+engine-blame-missing-worktree = `{ $path }` is not a tracked file of the working tree (missing, a folder or never added): the blame needs a file in HEAD or in the index
+engine-blame-no-commits = the branch has no commits yet: there is nothing to blame
+engine-blame-binary = `{ $path }` is a binary file: the blame works on text files only

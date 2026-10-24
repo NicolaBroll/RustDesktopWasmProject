@@ -168,6 +168,19 @@ pub(super) fn hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
         .collect()
 }
 
+/// For each line of `new`, the index of the equal line of `old` it comes from (longest common
+/// subsequence), `None` for a line added or changed: the matching blame needs.
+pub(super) fn matching_lines(old: &[u8], new: &[u8]) -> Vec<Option<usize>> {
+    let (a, b) = (split(old), split(new));
+    let mut out = vec![None; b.len()];
+    for op in ops(&a, &b) {
+        if let Op::Equal(i, j) = op {
+            out[j] = Some(i);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

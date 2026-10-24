@@ -253,6 +253,17 @@ pub(crate) struct Streamed {
     pub(crate) stdout: Vec<u8>,
 }
 
+/// What to do with stdout in [`Git::stream`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stdout {
+    Discard,
+    /// Read, waiting at most [`PIPE_GRACE`] after git exits (a process left in the background
+    /// may keep it open).
+    Grace,
+    /// Read to the end: a read whose output is the result.
+    Full,
+}
+
 /// After git exits, how long to wait for stderr to close: a child process left in the
 /// background (e.g. an SSH master with `ControlPersist`) can keep it open for minutes.
 const PIPE_GRACE: Duration = Duration::from_secs(1);
@@ -282,6 +293,51 @@ impl Git {
         dir: &Path,
         args: &[&str],
         capture_stdout: bool,
+        on_segment: impl FnMut(Segment),
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Streamed, EngineError> {
+        let stdout = if capture_stdout {
+            Stdout::Grace
+        } else {
+            Stdout::Discard
+        };
+        self.stream(dir, args, &[], stdout, on_segment, cancelled)
+    }
+
+    /// A slow read (`git blame`, `git log` of one file) that can be cancelled: like
+    /// [`Git::run_streaming`] with `paths` after `args` (which must end with `--`), and all of
+    /// stdout, however long git takes to close it after exiting. The stderr lines go to
+    /// [`Streamed::stderr`].
+    pub(crate) fn run_cancellable(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        paths: &[&OsStr],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(Streamed, String), EngineError> {
+        debug_assert!(paths.is_empty() || args.last() == Some(&"--"));
+        let mut lines = Vec::new();
+        let streamed = self.stream(
+            dir,
+            args,
+            paths,
+            Stdout::Full,
+            |Segment { text, newline }| {
+                if newline && !text.trim().is_empty() {
+                    lines.push(text.trim_end().to_owned());
+                }
+            },
+            cancelled,
+        )?;
+        Ok((streamed, lines.join("\n")))
+    }
+
+    fn stream(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        paths: &[&OsStr],
+        stdout_mode: Stdout,
         mut on_segment: impl FnMut(Segment),
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Streamed, EngineError> {
@@ -292,8 +348,8 @@ impl Git {
                 error = e
             ))
         };
-        let mut cmd = self.command(Some(dir), args, &[]);
-        if !capture_stdout {
+        let mut cmd = self.command(Some(dir), args, paths);
+        if stdout_mode == Stdout::Discard {
             cmd.stdout(Stdio::null());
         }
         detach_from_terminal(&mut cmd);
@@ -353,7 +409,11 @@ impl Git {
             None => child.wait().map_err(not_found)?,
         };
         let stdout = stdout_receiver
-            .and_then(|r| r.recv_timeout(PIPE_GRACE).ok())
+            .and_then(|r| match stdout_mode {
+                // After a cancellation the process group is gone: the pipe closes.
+                Stdout::Full if terminated.is_none() => r.recv().ok(),
+                _ => r.recv_timeout(PIPE_GRACE).ok(),
+            })
             .unwrap_or_default();
         Ok(Streamed {
             status,

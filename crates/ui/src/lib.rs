@@ -22,6 +22,7 @@ mod discard;
 mod engine_text;
 mod executor;
 mod fetch;
+mod file;
 mod format;
 mod graph;
 mod lines;
@@ -291,6 +292,24 @@ enum Action {
     ConfirmConflict,
     /// Gives up the resolution awaiting confirmation.
     CancelConflict,
+    /// Opens blame or history of `path` at commit `rev` (`None`: working tree / HEAD).
+    OpenFile {
+        path: RepoPath,
+        rev: Option<Oid>,
+        mode: file::Mode,
+    },
+    /// Closes the blame and history view.
+    CloseFile,
+    /// Switches between blame and history.
+    FileMode(file::Mode),
+    /// "Follow renames" of the history.
+    FileFollow(bool),
+    /// "Load more" of the history.
+    FileMore,
+    /// Asks again for the tab that failed.
+    FileRetry,
+    /// Shows the diff of entry `n` of the history.
+    FileSelect(usize),
 }
 
 /// A step of dragging over the diff rows.
@@ -362,6 +381,8 @@ enum Request {
     ConflictShow(u64, u64),
     /// `conflict.resolve` (the state is in [`ConflictBox`]).
     ConflictResolve(u64),
+    /// `file.blame`/`file.log` with the request number of [`file::FileBox`].
+    File(u64, u64),
 }
 
 /// The repo shown and the data read so far.
@@ -409,6 +430,8 @@ struct RepoView {
     rebase: RebaseBox,
     /// The conflict editor, in place of the graph when it is open.
     conflict: ConflictBox,
+    /// Blame and history of a file, in place of the graph when open.
+    file: file::FileBox,
     /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
     /// What Undo and Redo would do.
@@ -448,6 +471,7 @@ impl RepoView {
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
             conflict: ConflictBox::default(),
+            file: file::FileBox::default(),
             status_seq: 0,
             history: History::default(),
             select_after_load,
@@ -686,6 +710,7 @@ impl App {
             Action::OpenDiff(target) => {
                 if let Some(repo) = &mut self.repo {
                     repo.conflict.close();
+                    repo.file.close();
                 }
                 if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
                     self.request_diff(&target, seq);
@@ -795,6 +820,13 @@ impl App {
             | Action::DeleteConflicted
             | Action::ConfirmConflict
             | Action::CancelConflict => self.apply_conflict(action),
+            Action::OpenFile { .. }
+            | Action::CloseFile
+            | Action::FileMode(..)
+            | Action::FileFollow(..)
+            | Action::FileMore
+            | Action::FileRetry
+            | Action::FileSelect(..) => self.apply_file(action),
         }
     }
 
@@ -875,6 +907,10 @@ impl App {
     /// is selected.
     fn close_stale_diff(&mut self) {
         if let Some(repo) = &mut self.repo {
+            // The history's diff belongs to the file view, not to the selection.
+            if repo.file.view().is_some() {
+                return;
+            }
             let selected = match repo.stash.selected() {
                 Some(stash) => Some(stash.id),
                 None => repo.list.selected_commit().map(|c| c.id),
@@ -923,6 +959,17 @@ impl App {
         }
         // With the conflict editor open the list is not in view.
         if repo.conflict.editor().is_some() {
+            return;
+        }
+        // Blame and history: Esc closes the history's diff, then the view.
+        if repo.file.view().is_some() {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                actions.push(if repo.diff.target().is_some() {
+                    Action::CloseDiff
+                } else {
+                    Action::CloseFile
+                });
+            }
             return;
         }
         if repo.diff.target().is_some() {
@@ -1164,6 +1211,11 @@ impl App {
                 self.receive_conflict(generation, done);
                 continue;
             }
+            // Blame and history show their errors in their view.
+            if let Request::File(generation, seq) = request {
+                self.receive_file(generation, seq, done);
+                continue;
+            }
             // The diff too: errors in its view, old answers discarded.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1285,7 +1337,8 @@ impl App {
             | Request::RebasePlan(..)
             | Request::Rebase(..)
             | Request::ConflictShow(..)
-            | Request::ConflictResolve(..) => {}
+            | Request::ConflictResolve(..)
+            | Request::File(..) => {}
         }
         Ok(())
     }
@@ -1487,11 +1540,18 @@ impl eframe::App for App {
                             );
                         }
                     }
+                    _ if repo.file.view().is_some() => {
+                        if let Some(file) = repo.file.view() {
+                            let can_write = !writing && !repo.modal_open();
+                            view::file_view(ui, file, repo.diff.pane(), can_write, &mut actions);
+                        }
+                    }
                     Pane::Closed => view::commit_list(ui, repo, viewport, writing, &mut actions),
                     pane => {
                         let lines = diff_view::LinesUi {
                             selection: repo.diff.selection(),
                             can_write: !writing && !repo.modal_open(),
+                            back: true,
                         };
                         diff_view::diff_panel(ui, pane, lines, &mut actions);
                     }
@@ -1516,6 +1576,7 @@ impl eframe::App for App {
         // After the actions: the selection just changed is requested in this same frame.
         self.close_stale_diff();
         self.request_details();
+        self.request_file();
     }
 }
 

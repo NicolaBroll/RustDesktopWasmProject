@@ -10,6 +10,10 @@ cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"lim
 cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}'
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
+# blame of the worktree file (uncommitted lines: "commit": null) or at a commit; history of one
+# file across renames ("follow":false: only under this name), paginated like repo.log
+cargo run -p project-cli -- --repo . run --cmd 'file.blame={"path":"README.md"}' --cmd 'file.blame={"path":"README.md","rev":"HEAD~3"}'
+cargo run -p project-cli -- --repo . run --cmd 'file.log={"path":"README.md","limit":5}' --cmd 'file.log={"path":"README.md","skip":5,"limit":5,"follow":false}'
 # they write to the repo's index (marked `[writes]` in `commands`, `writes` in MCP)
 cargo run -p project-cli -- --repo . run --cmd 'index.stage={"paths":["README.md"]}' --cmd 'index.unstage={"paths":["README.md"]}'
 # lines: numbers and `digest` come from the file's diff, then

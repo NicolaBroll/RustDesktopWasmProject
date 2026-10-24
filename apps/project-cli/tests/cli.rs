@@ -453,6 +453,8 @@ fn commands_lists_the_catalog() {
             "edit.history",
             "edit.redo",
             "edit.undo",
+            "file.blame",
+            "file.log",
             "index.stage",
             "index.stage_lines",
             "index.unstage",

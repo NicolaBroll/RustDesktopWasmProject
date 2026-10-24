@@ -216,8 +216,19 @@ pub(super) fn changed_files(
 
                 let response = response.on_hover_text(file_tooltip(file));
                 if response.clicked() {
-                    actions.push(Action::OpenDiff(target));
+                    actions.push(Action::OpenDiff(target.clone()));
                 }
+                response.context_menu(|ui| {
+                    if ui.button(tr!("details-show-diff")).clicked() {
+                        actions.push(Action::OpenDiff(target));
+                        ui.close();
+                    }
+                    ui.separator();
+                    let blame_off = (file.change == Change::Deleted)
+                        .then(|| tr!("details-blame-deleted"))
+                        .or_else(|| file.is_submodule().then(|| tr!("details-blame-submodule")));
+                    file_menu_entries(ui, &file.path, Some(commit), blame_off, actions);
+                });
             }
         });
 }

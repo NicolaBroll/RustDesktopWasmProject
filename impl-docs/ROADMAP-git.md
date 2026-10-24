@@ -405,3 +405,59 @@ Rules that apply to every step:
   a Release on `v*` tags.
 - **Done when:** the AppImage starts on a clean Ubuntu 22.04 (and 24.04) container; the Windows
   zip builds (tested by hand on a Windows PC); CI green.
+
+## Phase 6 — Polish and distribution
+
+Order decided on 2026-10-24 after analysing the open items of [ROADMAP.md](../ROADMAP.md) (deb left
+out on purpose).
+
+### S38 — `cargo deny` in CI
+- [x] **Agent:** `git-engine`
+- **Goal:** licenses, bans and sources (deterministic, no network) in `cargo xtask ci`;
+  advisories (a database that changes every day) in a weekly GitHub job and on pull requests to
+  `master`, so a new advisory never blocks a step at random. `deny.toml` comments in English.
+- **Done when:** `cargo xtask ci` runs `cargo deny check licenses bans sources`; the advisories
+  workflow exists; CI green.
+- Done: `deny()` in `xtask/src/main.rs` (skipped with a warning if `cargo-deny` is missing locally,
+  error with `CI` set); `make setup` installs it; `ci.yml` installs it with
+  `taiki-e/install-action`; `.github/workflows/audit.yml` (Mondays, PRs to master, by hand).
+
+### S39 — Non-blocking file dialogs
+- [ ] **Agent:** `egui-ui`
+- **Goal:** the folder dialog (`rfd::AsyncFileDialog`) no longer blocks the UI thread: the window
+  keeps repainting (progress of a fetch or `repo.optimize`) while it is open; parented to the main
+  window. Remove `pick_file`/`save_file` from `Platform` (template leftovers, unused).
+- **Done when:** on Xvfb the window repaints with the dialog open; CI green.
+
+### S40 — Refresh when the repo changes
+- [ ] **Agent:** `egui-ui` (watcher in the desktop app), `git-engine` if the engine needs a hook
+- **Goal:** the open tabs reload refs, status and log when `.git/` or the worktree change outside
+  the app (terminal, an agent through MCP), debounced, ignoring the app's own writes and
+  `target/`-like ignored folders. Through `Platform`, implemented in `apps/project` (crate `notify`).
+- **Done when:** a `git commit` in a terminal shows up in the app without Refresh; CI green.
+
+### S41 — Windows MSI
+- [ ] **Agent:** `git-engine`
+- **Goal:** after the hand test of the S37 zip on Windows, an unsigned MSI built on Linux with
+  `wixl` (`msitools`): per-user install, Start menu shortcut, icon, uninstall; in `package.yml`.
+- **Done when:** the MSI installs and uninstalls on a Windows PC (by hand); CI green.
+
+### S42 — macOS build (unsigned DMG)
+- [ ] **Agent:** `git-engine`
+- **Goal:** only if a Mac is available for testing: `.app` bundle and DMG built on a
+  `macos-latest` runner (free for the public repo), universal or aarch64.
+- **Done when:** the DMG opens and the app starts on a Mac (by hand); CI green.
+
+### S43 — Code signing (Windows and macOS)
+- [ ] **Agent:** `git-engine`
+- **Goal:** when the costs are decided: Windows signing from Linux (`jsign`/`osslsigncode` with a
+  cloud certificate, e.g. Certum Open Source or Azure Trusted Signing); macOS signing and
+  notarization (`rcodesign`, Apple Developer Program). Secrets only in GitHub, never in the repo.
+- **Done when:** signed packages from `package.yml`; SmartScreen/Gatekeeper checked by hand.
+
+### S44 — UI control for agents (only if still needed after S40)
+- [ ] **Agent:** to be decided
+- **Goal:** as in `ARCHITECTURE-rust.md` §6: off by default, loopback only, token in a file
+  readable only by the user; drive the open app (tabs, selection, screenshots). Writes keep the
+  same confirmations as the UI.
+- **Done when:** to be defined with the design.

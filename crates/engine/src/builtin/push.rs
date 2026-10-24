@@ -1,12 +1,12 @@
-//! `remote.push` (S26): pubblica un branch locale sul remoto (`impl-docs/git/sync.md`).
+//! `remote.push` (S26): publishes a local branch to the remote (`impl-docs/git/sync.md`).
 
 use super::remote::{changes, unexpected};
 use super::{Out, to_json};
 use crate::commands::parse_params;
 use crate::git::short;
 use crate::{
-    EngineError, PushRequest, Session, branch_ref, check_branch_name, check_remote_name,
-    default_remote, tracking_ref, unknown_remote,
+    EngineError, Message, MessageArg, PushRequest, Session, branch_ref, check_branch_name,
+    check_remote_name, default_remote, tracking_ref, unknown_remote,
 };
 use project_domain::{Head, Oid};
 use serde::Deserialize;
@@ -14,10 +14,10 @@ use serde_json::{Value, json};
 
 const ID: &str = "remote.push";
 
-/// Commit elencati al più nella conferma di un force.
+/// Commits listed at most in the confirmation of a force.
 const LOST_LIMIT: usize = 10;
 
-/// Parametri di `remote.push`.
+/// Parameters of `remote.push`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PushParams {
@@ -33,7 +33,7 @@ struct PushParams {
     expected: Option<String>,
 }
 
-/// Un valore booleano vero di git config.
+/// A true boolean value of git config.
 fn config_true(value: &str) -> bool {
     matches!(
         value.to_ascii_lowercase().as_str(),
@@ -41,41 +41,41 @@ fn config_true(value: &str) -> bool {
     )
 }
 
-/// Pubblica il branch `branch` (o quello di HEAD) sul remoto, con un refspec esplicito
-/// `refs/heads/<branch>:refs/heads/<branch>`: mai tag né altri branch, qualunque sia
-/// `push.default`, `remote.<nome>.push` o `push.followTags`.
+/// Publishes the branch `branch` (or the one of HEAD) to the remote, with an explicit refspec
+/// `refs/heads/<branch>:refs/heads/<branch>`: never tags or other branches, whatever
+/// `push.default`, `remote.<name>.push` or `push.followTags` say.
 ///
-/// Remoto, come `git push`: `remote`, poi `branch.<nome>.pushRemote`, `remote.pushDefault`, il
-/// remoto dell'upstream, `origin` o l'unico remoto (più remoti senza `origin`:
-/// [`EngineError::NotAllowed`] che chiede `remote`); `remote_source` nel risultato dice quale.
-/// Un remoto della configurazione che non è configurato, o un remoto mirror
-/// (`remote.<nome>.mirror`) → [`EngineError::NotAllowed`]. Destinazione: sul remoto
-/// dell'upstream il branch dell'upstream (con un nome diverso dal branch è rifiutato, come
-/// `push.default=simple`), altrove lo stesso nome, con il branch remoto locale ricavato dai
-/// refspec di fetch ([`tracking_ref`]). **Primo push** (nessun upstream): l'upstream si imposta
-/// (`--set-upstream`) se il push riesce; un upstream esistente non cambia mai.
+/// Remote, as `git push` does: `remote`, then `branch.<name>.pushRemote`, `remote.pushDefault`, the
+/// upstream's remote, `origin` or the only remote (several remotes without `origin`:
+/// [`EngineError::NotAllowed`] asking for `remote`); `remote_source` in the result says which.
+/// A remote named in the configuration that is not configured, or a mirror remote
+/// (`remote.<name>.mirror`) → [`EngineError::NotAllowed`]. Destination: on the upstream's
+/// remote the upstream's branch (with a name different from the branch it is refused, like
+/// `push.default=simple`), elsewhere the same name, with the local remote-tracking branch derived from the
+/// fetch refspecs ([`tracking_ref`]). **First push** (no upstream): the upstream is set
+/// (`--set-upstream`) if the push succeeds; an existing upstream never changes.
 ///
-/// Force: solo con `"force": true`, e sempre come `--force-with-lease=refs/heads/<b>:<oid>`
-/// (mai `--force` né `+refspec`): se il remoto si è spostato nel frattempo il push è
-/// rifiutato. Se il force toglierebbe dal remoto commit che il branch locale non ha serve anche
-/// `"confirm": true` con `"expected"`, l'id completo del branch remoto locale mostrato dalla
-/// conferma ([`EngineError::ConfirmRequired`] con i commit e la frase `"expected": "<id>"`);
-/// se `expected` non è il valore letto ora, di nuovo `ConfirmRequired` e niente pubblicato. Il
-/// lease usa `expected` (o il valore letto ora). Prima del push il branch remoto locale si salva
-/// in `refs/project/backup/push-...`. `confirm` senza `expected`, `confirm`/`expected` senza
+/// Force: only with `"force": true`, and always as `--force-with-lease=refs/heads/<b>:<oid>`
+/// (never `--force` or `+refspec`): if the remote moved in the meantime the push is
+/// rejected. If the force would remove from the remote commits that the local branch lacks, also
+/// `"confirm": true` with `"expected"` is needed, the full id of the local remote-tracking branch shown by the
+/// confirmation ([`EngineError::ConfirmRequired`] with the commits and the phrase `"expected": "<id>"`);
+/// if `expected` is not the value read now, `ConfirmRequired` again and nothing published. The
+/// lease uses `expected` (or the value read now). Before the push the local remote-tracking branch is saved
+/// in `refs/project/backup/push-...`. `confirm` without `expected`, `confirm`/`expected` without
 /// `force` → [`EngineError::InvalidParams`].
 ///
-/// Non va nel diario: un push non si annulla da qui (il remoto è di altri); il risultato dice
-/// cosa è cambiato. Comando lento come il fetch.
+/// It does not go into the journal: a push cannot be undone from here (the remote belongs to others); the result says
+/// what changed. Slow command like fetch.
 ///
-/// Risultato: `{"remote", "remote_source": "param" | "push_remote" | "push_default" |
+/// Result: `{"remote", "remote_source": "param" | "push_remote" | "push_default" |
 /// "upstream" | "origin" | "only", "branch", "remote_branch", "kind": "new" | "fast_forward" | "forced"
 /// | "up_to_date", "summary", "before": oid | null, "after": oid, "set_upstream": bool,
 /// "forced": bool, "lost": [Commit], "backup": string | null, "updated": [{"name", "before",
 /// "after"}] | null, "messages": [string], "warnings": [string], "status": Status | null,
-/// "refs": [RefInfo] | null}`: `before` è il branch remoto locale prima del push, `after` il
-/// commit pubblicato, `lost` i commit tolti dal remoto da un force, `updated` i ref locali
-/// cambiati (il branch remoto locale).
+/// "refs": [RefInfo] | null}`: `before` is the local remote-tracking branch before the push, `after` the
+/// published commit, `lost` the commits removed from the remote by a force, `updated` the local refs
+/// changed (the local remote-tracking branch).
 pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
     let PushParams {
         remote,
@@ -93,15 +93,13 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
     if (confirm || expected.is_some()) && !force {
         return Err(EngineError::InvalidParams {
             id: ID,
-            reason: "`confirm` ed `expected` servono solo con `\"force\": true`".to_owned(),
+            reason: msg!("engine-push-confirm-without-force"),
         });
     }
     if confirm && expected.is_none() {
         return Err(EngineError::InvalidParams {
             id: ID,
-            reason: "con `\"confirm\": true` serve `expected`: l'id completo del branch remoto \
-                     locale mostrato nella conferma (la conferma vale solo per quel commit)"
-                .to_owned(),
+            reason: msg!("engine-push-confirm-without-expected"),
         });
     }
     let expected = expected
@@ -111,11 +109,10 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
                 .flatten()
                 .ok_or_else(|| EngineError::InvalidParams {
                     id: ID,
-                    reason: format!(
-                        "`expected` deve essere l'id completo ({} cifre esadecimali) del branch \
-                         remoto locale mostrato nella conferma: `{}`",
-                        Oid::HEX_LEN,
-                        hex.escape_debug()
+                    reason: msg!(
+                        "engine-push-expected-hex",
+                        len = Oid::HEX_LEN,
+                        value = hex.escape_debug()
                     ),
                 })
         })
@@ -128,11 +125,7 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
         None => match &status.head {
             Head::Branch { name, .. } => name.clone(),
             Head::Detached(_) => {
-                return Err(EngineError::NotAllowed(
-                    "HEAD è staccata: niente pubblicato. Passare a un branch \
-                     (`branch.checkout`) o indicare `branch`"
-                        .to_owned(),
-                ));
+                return Err(EngineError::NotAllowed(msg!("engine-push-detached")));
             }
         },
     };
@@ -143,16 +136,16 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
         .find(|r| r.name == full)
         .map(|r| r.target)
         .ok_or_else(|| {
-            EngineError::NotAllowed(format!(
-                "non esiste un branch locale `{}` con commit: niente pubblicato",
-                branch.escape_debug()
+            EngineError::NotAllowed(msg!(
+                "engine-push-no-branch",
+                branch = branch.escape_debug()
             ))
         })?;
     let remotes = repo.remotes()?;
     let upstream = repo.upstream(&branch)?;
 
-    // Il remoto, come lo sceglie `git push`: `remote`, poi `branch.<nome>.pushRemote`, poi
-    // `remote.pushDefault`, poi il remoto dell'upstream, poi `origin` o l'unico remoto.
+    // The remote, as `git push` chooses it: `remote`, then `branch.<name>.pushRemote`, then
+    // `remote.pushDefault`, then the upstream's remote, then `origin` or the only remote.
     let last = |values: Vec<String>| values.into_iter().last();
     let (remote, remote_source) = match remote {
         Some(r) => (r, "param"),
@@ -164,11 +157,10 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
             } else {
                 match &upstream {
                     Some(up) if up.remote == "." => {
-                        return Err(EngineError::NotAllowed(format!(
-                            "l'upstream di `{}` è un branch locale (`{}`): indicare `remote`, \
-                             niente pubblicato",
-                            branch.escape_debug(),
-                            up.merge
+                        return Err(EngineError::NotAllowed(msg!(
+                            "engine-push-local-upstream",
+                            branch = branch.escape_debug(),
+                            merge = up.merge
                         )));
                     }
                     Some(up) => (up.remote.clone(), "upstream"),
@@ -192,11 +184,11 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
             "remote.pushDefault".to_owned()
         };
         if check_remote_name(ID, &remote).is_err() || !remotes.contains(&remote) {
-            return Err(EngineError::NotAllowed(format!(
-                "`{key}` indica `{}`, che non è un remoto configurato ({}): niente pubblicato; \
-                 correggere la configurazione o indicare `remote`",
-                remote.escape_debug(),
-                remotes
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-push-bad-remote-config",
+                key = key,
+                remote = remote.escape_debug(),
+                remotes = remotes
                     .iter()
                     .map(|r| format!("`{r}`"))
                     .collect::<Vec<_>>()
@@ -209,21 +201,19 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
     }
     let mirror = last(repo.config_values(&format!("remote.{remote}.mirror"))?);
     if mirror.as_deref().is_some_and(config_true) {
-        return Err(EngineError::NotAllowed(format!(
-            "il remoto `{}` è un mirror (`remote.{0}.mirror=true`): git ne pubblicherebbe tutti \
-             i ref insieme, e qui si pubblica solo un branch. Niente pubblicato; usare git da \
-             terminale per il mirror",
-            remote.escape_debug()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-push-mirror",
+            remote = remote.escape_debug()
         )));
     }
-    // Branch sul remoto, se impostare l'upstream e il branch remoto locale che lo rispecchia.
+    // Branch on the remote, whether to set the upstream and the local remote-tracking branch that mirrors it.
     let (remote_branch, set_upstream, tracking) = match &upstream {
         Some(up) if up.remote == remote => {
             let target = up.merge_branch().ok_or_else(|| {
-                EngineError::NotAllowed(format!(
-                    "l'upstream di `{}` non è un branch (`{}`): niente pubblicato",
-                    branch.escape_debug(),
-                    up.merge
+                EngineError::NotAllowed(msg!(
+                    "engine-push-upstream-not-branch",
+                    branch = branch.escape_debug(),
+                    merge = up.merge
                 ))
             })?;
             (target.to_owned(), false, up.tracking.clone())
@@ -238,13 +228,11 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
         }
     };
     if remote_branch != branch {
-        return Err(EngineError::NotAllowed(format!(
-            "l'upstream di `{}` è `{}/{}`, con un nome diverso: per sicurezza (come \
-             `push.default=simple`) non si pubblica su un altro branch, niente pubblicato. \
-             Cambiare l'upstream o rinominare il branch",
-            branch.escape_debug(),
-            remote.escape_debug(),
-            remote_branch.escape_debug()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-push-upstream-other-name",
+            branch = branch.escape_debug(),
+            remote = remote.escape_debug(),
+            remote_branch = remote_branch.escape_debug()
         )));
     }
     let remote_value = tracking
@@ -252,7 +240,7 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
         .and_then(|t| refs_before.iter().find(|r| r.name == *t))
         .map(|r| r.target);
 
-    // I commit del remoto (come li conosce il branch remoto locale) che un force toglierebbe.
+    // The remote's commits (as the local remote-tracking branch knows them) that a force would remove.
     let (lost, lost_count) = match (force, remote_value) {
         (true, Some(theirs)) => {
             let count = repo.unmerged_count(&theirs, &[local])?;
@@ -265,50 +253,73 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
         }
         _ => (Vec::new(), 0),
     };
-    let shown = tracking
-        .as_deref()
-        .unwrap_or("(nessun branch remoto locale)");
-    let describe_lost = || {
-        let mut names: Vec<String> = lost
-            .iter()
-            .map(|c| format!("{} «{}»", short(&c.id), c.summary))
-            .collect();
-        if lost_count > lost.len() {
-            names.push(format!("e altri {}", lost_count - lost.len()));
-        }
-        names.join(", ")
+    let shown = match tracking.as_deref() {
+        Some(name) => msg!("engine-other", text = name),
+        None => msg!("engine-push-no-tracking"),
     };
-    // La conferma vale solo per il commit visto: `expected` dev'essere il branch remoto locale
-    // letto ora.
+    let describe_lost = || {
+        let names: Vec<Message> = lost
+            .iter()
+            .map(|c| {
+                msg!(
+                    "engine-push-lost-commit",
+                    id = short(&c.id),
+                    summary = c.summary
+                )
+            })
+            .collect();
+        let more = lost_count.saturating_sub(lost.len());
+        let empty = names.is_empty();
+        let commits = MessageArg::Joined(names, ", ".into());
+        match (empty, more) {
+            (_, 0) => msg!("engine-other", text = commits),
+            (true, more) => msg!("engine-push-lost-others", n = more),
+            (false, more) => msg!("engine-push-lost-and-others", commits = commits, n = more),
+        }
+    };
+    // The confirmation holds only for the commit seen: `expected` must be the local remote-tracking branch
+    // read now.
     if let Some(expected) = expected
         && Some(expected) != remote_value
     {
-        let now = remote_value.map_or_else(|| "assente".to_owned(), |o| o.to_string());
-        let confirm_with = remote_value.map_or_else(String::new, |o| {
-            format!("; per confermare: \"confirm\": true, \"expected\": \"{o}\"")
-        });
+        let reason = match remote_value {
+            Some(now) => msg!(
+                "engine-push-moved",
+                shown = shown,
+                expected = expected,
+                now = now,
+                n = lost_count,
+                branch = branch,
+                commits = describe_lost()
+            ),
+            None => msg!(
+                "engine-push-moved-gone",
+                shown = shown,
+                expected = expected,
+                n = lost_count,
+                branch = branch,
+                commits = describe_lost()
+            ),
+        };
         return Err(EngineError::ConfirmRequired {
             command: ID,
-            reason: format!(
-                "`{shown}` si è spostato da quando è stato visto (atteso {expected}, ora {now}): \
-                 il force non è più quello confermato. Il remoto perderebbe {lost_count} \
-                 commit che `{branch}` non ha ({}){confirm_with}",
-                describe_lost()
-            ),
+            reason,
             expected: remote_value.map(|o| o.to_string()),
         });
     }
     if force && lost_count > 0 && !confirm {
-        let theirs = remote_value.expect("lost_count > 0 solo con un branch remoto locale");
+        let theirs = remote_value.expect("lost_count > 0 only with a local remote-tracking branch");
         return Err(EngineError::ConfirmRequired {
             command: ID,
-            reason: format!(
-                "il force sovrascriverebbe `{remote}/{remote_branch}` ({shown} = {theirs}): il \
-                 remoto perderebbe {lost_count} commit che `{branch}` non ha ({}). Prima si \
-                 salverebbe `{shown}` in `refs/project/backup/push-...`; con \
-                 `--force-with-lease`, se nel frattempo il remoto si è spostato il push è \
-                 rifiutato; per confermare: \"confirm\": true, \"expected\": \"{theirs}\"",
-                describe_lost()
+            reason: msg!(
+                "engine-push-force-confirm",
+                remote = remote,
+                remote_branch = remote_branch,
+                shown = shown,
+                theirs = theirs,
+                n = lost_count,
+                branch = branch,
+                commits = describe_lost()
             ),
             expected: Some(theirs.to_string()),
         });
@@ -343,7 +354,7 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
     match repo.refs() {
         Ok(after) => {
             let updated = changes(&refs_before, &after);
-            let warnings: Vec<String> = updated.iter().filter_map(unexpected).collect();
+            let warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
             out["updated"] = to_json(updated);
             out["warnings"] = to_json(warnings);
             out["refs"] = to_json(after);

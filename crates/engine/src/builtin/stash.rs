@@ -1,6 +1,6 @@
-//! Comandi degli stash (S28): `stash.list`, `stash.push`, `stash.apply`, `stash.pop`,
-//! `stash.drop`. Tipi, controlli comuni ai backend e scelte in `git/stash.rs`; qui i comandi.
-//! `stash.push` e `stash.drop` entrano nel diario, `stash.apply` e `stash.pop` no (§7).
+//! Commands of the stashes (S28): `stash.list`, `stash.push`, `stash.apply`, `stash.pop`,
+//! `stash.drop`. Types, checks common to the backends and choices in `git/stash.rs`; here the commands.
+//! `stash.push` and `stash.drop` enter the journal, `stash.apply` and `stash.pop` do not (§7).
 
 use super::{Out, check_path_list, journal_state, to_json};
 use crate::commands::parse_params;
@@ -16,21 +16,21 @@ use serde_json::{Value, json};
 #[serde(deny_unknown_fields)]
 struct ListParams {}
 
-/// Parametri di `stash.apply` e `stash.pop`.
+/// Parameters of `stash.apply` and `stash.pop`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplyParams {
-    /// La posizione: `n` di `stash@{n}` (0 se manca).
+    /// The position: `n` of `stash@{n}` (0 if missing).
     #[serde(default)]
     index: usize,
-    /// L'id completo dello stash visto da chi chiama.
+    /// The full id of the stash as seen by the caller.
     #[serde(default)]
     expected: Option<String>,
     #[serde(default)]
     restore_index: bool,
 }
 
-/// Parametri di `stash.drop`.
+/// Parameters of `stash.drop`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DropParams {
@@ -42,7 +42,7 @@ struct DropParams {
     confirm: bool,
 }
 
-/// L'elenco come JSON, o `null` con `stashes_error` se non si rilegge (l'operazione è fatta).
+/// The list as JSON, or `null` with `stashes_error` if it cannot be re-read (the operation is done).
 fn with_stashes(out: &mut Value, repo: &dyn GitBackend) {
     match repo.stashes() {
         Ok(list) => out["stashes"] = to_json(list),
@@ -53,7 +53,7 @@ fn with_stashes(out: &mut Value, repo: &dyn GitBackend) {
     }
 }
 
-/// Lo stato come JSON, o `null` con `status_error` se non si rilegge.
+/// The state as JSON, or `null` with `status_error` if it cannot be re-read.
 fn with_status(out: &mut Value, repo: &dyn GitBackend) {
     match repo.status() {
         Ok(status) => out["status"] = to_json(status),
@@ -64,7 +64,7 @@ fn with_status(out: &mut Value, repo: &dyn GitBackend) {
     }
 }
 
-/// `expected` come id completo (40 cifre), o [`EngineError::InvalidParams`].
+/// `expected` as a full id (40 digits), or [`EngineError::InvalidParams`].
 fn full_id(id: &'static str, hex: Option<String>) -> Result<Option<Oid>, EngineError> {
     hex.map(|hex| {
         let full = hex.len() == Oid::HEX_LEN && hex.bytes().all(|b| b.is_ascii_hexdigit());
@@ -72,19 +72,18 @@ fn full_id(id: &'static str, hex: Option<String>) -> Result<Option<Oid>, EngineE
             .flatten()
             .ok_or_else(|| EngineError::InvalidParams {
                 id,
-                reason: format!(
-                    "`expected` deve essere l'id completo ({} cifre esadecimali) dello stash: \
-                     `{}`",
-                    Oid::HEX_LEN,
-                    hex.escape_debug()
+                reason: msg!(
+                    "engine-stash-expected-hex",
+                    len = Oid::HEX_LEN,
+                    value = hex.escape_debug()
                 ),
             })
     })
     .transpose()
 }
 
-/// Lo stash in posizione `index`, che deve essere `expected` se dato: altrimenti
-/// [`EngineError::NotAllowed`] (non c'è, o l'elenco è cambiato da quando è stato visto).
+/// The stash at position `index`, which must be `expected` if given: otherwise
+/// [`EngineError::NotAllowed`] (it does not exist, or the list changed since it was seen).
 fn pick(
     repo: &dyn GitBackend,
     index: usize,
@@ -93,45 +92,42 @@ fn pick(
     let list = repo.stashes()?;
     let Some(entry) = list.get(index) else {
         return Err(EngineError::NotAllowed(match list.len() {
-            0 => "non ci sono stash, niente modificato".to_owned(),
-            n => format!(
-                "non c'è `stash@{{{index}}}`: gli stash sono {n} (da `stash@{{0}}` a \
-                 `stash@{{{}}}`), niente modificato",
-                n - 1
-            ),
+            0 => msg!("engine-stash-none"),
+            n => msg!("engine-stash-no-index", index = index, n = n, last = n - 1),
         }));
     };
     if let Some(seen) = expected
         && seen != entry.id
     {
         let now = match list.iter().find(|s| s.id == seen) {
-            Some(s) => format!("ora è `{}`", s.name),
-            None => "non è più nell'elenco".to_owned(),
+            Some(s) => msg!("engine-stash-now-at", name = s.name),
+            None => msg!("engine-stash-now-gone"),
         };
-        return Err(EngineError::NotAllowed(format!(
-            "l'elenco degli stash è cambiato da quando è stato visto: `stash@{{{index}}}` è {}, \
-             lo stash {seen} {now}. Niente modificato; rileggere gli stash (`stash.list`) e \
-             riprovare",
-            entry.id
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-stash-list-changed",
+            index = index,
+            id = entry.id,
+            seen = seen,
+            now = now
         )));
     }
     Ok(entry.clone())
 }
 
-/// L'elenco degli stash, dal più recente: `{"stashes": [StashEntry]}` (vedi
+/// The list of stashes, most recent first: `{"stashes": [StashEntry]}` (see
 /// [`StashEntry`]: `index`, `name`, `id`, `base`, `message`, `branch`, `time`, `untracked`).
 pub(super) fn stash_list(s: &mut Session, p: Value) -> Out {
     let ListParams {} = parse_params("stash.list", p)?;
     Ok(json!({ "stashes": to_json(s.repo()?.stashes()?) }))
 }
 
-/// Mette da parte le modifiche in un nuovo stash (vedi
-/// [`GitBackend::stash_push`](crate::GitBackend::stash_push) e
-/// [`check_stash_push`](crate::check_stash_push)): niente si perde, le modifiche sono nello
-/// stash. Va nel diario: `edit.undo` lo riapplica (con l'indice) e lo toglie dall'elenco, solo
-/// se HEAD non si è spostata.
+/// Sets changes aside in a new stash (see
+/// [`GitBackend::stash_push`](crate::GitBackend::stash_push) and
+/// [`check_stash_push`](crate::check_stash_push)): nothing is lost, the changes are in the
+/// stash. It goes into the journal: `edit.undo` reapplies it (with the index) and removes it from the list, only
+/// if HEAD has not moved.
 ///
-/// Risultato: `{"stash": StashEntry, "stashes": [StashEntry], "status": Status, "can_undo",
+/// Result: `{"stash": StashEntry, "stashes": [StashEntry], "status": Status, "can_undo",
 /// "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
     const ID: &str = "stash.push";
@@ -151,9 +147,9 @@ pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// `stash.apply` e `stash.pop`: applica lo stash `index` (controllato con `expected`) e, per
-/// `pop`, se non restano conflitti lo toglie dall'elenco dopo averne salvato il commit in
-/// `refs/project/backup/stash-...`. Non entrano nel diario.
+/// `stash.apply` and `stash.pop`: applies the stash `index` (checked with `expected`) and, for
+/// `pop`, if no conflicts remain removes it from the list after saving its commit in
+/// `refs/project/backup/stash-...`. They do not enter the journal.
 fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
     let ApplyParams {
         index,
@@ -178,18 +174,14 @@ fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
     let was_dropped = dropped.is_some();
     let mut warnings = applied.warnings;
     if let Some(e) = drop_error {
-        // L'apply è fatto: non va ripetuto, lo stash è solo rimasto nell'elenco.
-        warnings.push(format!(
-            "lo stash `{}` è stato applicato ma non tolto dall'elenco ({e}): le modifiche sono \
-             nei file; eliminarlo con `stash.drop` (non ripetere il pop)",
-            entry.name
+        // The apply is done: it must not be repeated, the stash has only stayed in the list.
+        warnings.push(msg!(
+            "engine-stash-not-dropped",
+            name = entry.name,
+            error = e
         ));
     } else if pop && !was_dropped {
-        warnings.push(format!(
-            "lo stash `{}` resta nell'elenco perché ci sono conflitti: risolverli (`index.stage` \
-             dei file) e poi eliminarlo con `stash.drop`",
-            entry.name
-        ));
+        warnings.push(msg!("engine-stash-kept-conflicts", name = entry.name));
     }
     let backup = dropped.as_ref().and_then(|d| d.backup.clone());
     warnings.extend(dropped.into_iter().flat_map(|d| d.warnings));
@@ -205,31 +197,31 @@ fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// Applica uno stash a indice e worktree senza toglierlo dall'elenco (vedi
-/// [`GitBackend::stash_apply`](crate::GitBackend::stash_apply)): mai sopra modifiche locali ai
-/// file che cambia. I conflitti restano nei file (`conflicts`), lo stash resta.
+/// Applies a stash to index and worktree without removing it from the list (see
+/// [`GitBackend::stash_apply`](crate::GitBackend::stash_apply)): never over local changes to the
+/// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
-/// Risultato: `{"stash": StashEntry, "conflicts": [string], "dropped": false, "backup": null,
+/// Result: `{"stash": StashEntry, "conflicts": [string], "dropped": false, "backup": null,
 /// "warnings": [string], "stashes": [StashEntry], "status": Status}`.
 pub(super) fn stash_apply(s: &mut Session, p: Value) -> Out {
     apply("stash.apply", false, s, p)
 }
 
-/// Come `stash.apply`, poi, se non restano conflitti, toglie lo stash dall'elenco (prima un
-/// backup del suo commit: `backup`). Con conflitti lo stash resta (`dropped: false`).
-/// Risultato come `stash.apply`.
+/// Like `stash.apply`, then, if no conflicts remain, removes the stash from the list (first a
+/// backup of its commit: `backup`). With conflicts the stash stays (`dropped: false`).
+/// Result like `stash.apply`.
 pub(super) fn stash_pop(s: &mut Session, p: Value) -> Out {
     apply("stash.pop", true, s, p)
 }
 
-/// Elimina lo stash `index`: serve `"confirm": true` **con `"expected"`**, l'id completo dello
-/// stash confermato (senza `confirm`, [`EngineError::ConfirmRequired`] che dice cosa si
-/// perderebbe e ha l'id in `expected`; `confirm` senza `expected`,
-/// [`EngineError::InvalidParams`]): la conferma vale solo per lo stash visto. Prima un backup del commit
-/// in `refs/project/backup/stash-...`; va nel diario, e `edit.undo` lo rimette in cima
-/// all'elenco.
+/// Drops the stash `index`: needs `"confirm": true` **with `"expected"`**, the full id of the
+/// confirmed stash (without `confirm`, [`EngineError::ConfirmRequired`] which says what would
+/// be lost and has the id in `expected`; `confirm` without `expected`,
+/// [`EngineError::InvalidParams`]): the confirmation holds only for the stash seen. First a backup of the commit
+/// in `refs/project/backup/stash-...`; it goes into the journal, and `edit.undo` puts it back at the top
+/// of the list.
 ///
-/// Risultato: `{"stash": StashEntry, "backup": string, "warnings": [string], "stashes":
+/// Result: `{"stash": StashEntry, "backup": string, "warnings": [string], "stashes":
 /// [StashEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`.
 pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
     const ID: &str = "stash.drop";
@@ -242,10 +234,7 @@ pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
     if confirm && expected.is_none() {
         return Err(EngineError::InvalidParams {
             id: ID,
-            reason: "`confirm` va insieme a `expected`, l'id completo dello stash da eliminare \
-                     (quello dato dalla conferma o da `stash.list`): la conferma vale solo per \
-                     lo stash visto"
-                .to_owned(),
+            reason: msg!("engine-stash-confirm-without-expected"),
         });
     }
     let (repo, journal) = s.repo_and_journal()?;
@@ -257,22 +246,13 @@ pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
             .ok();
         return Err(EngineError::ConfirmRequired {
             command: ID,
-            reason: format!(
-                "lo stash `{}` ({} «{}»{}{}) verrebbe eliminato. Prima si salverebbe il suo \
-                 commit in `refs/project/backup/stash-...`, e `edit.undo` lo rimetterebbe in \
-                 cima all'elenco. Per eliminarlo ripetere con `\"expected\": \"{}\"`",
-                entry.name,
-                entry.id,
-                entry.message,
-                files
-                    .map(|n| format!(", {n} file tracciati"))
-                    .unwrap_or_default(),
-                if entry.untracked {
-                    ", con file non tracciati"
-                } else {
-                    ""
-                },
-                entry.id
+            reason: msg!(
+                "engine-stash-drop-confirm",
+                name = entry.name,
+                id = entry.id,
+                message = entry.message,
+                files = files.map_or(-1, |n| i64::try_from(n).unwrap_or(i64::MAX)),
+                untracked = if entry.untracked { "yes" } else { "no" }
             ),
             expected: Some(entry.id.to_string()),
         });

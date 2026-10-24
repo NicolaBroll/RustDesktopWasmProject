@@ -1,5 +1,5 @@
-# Editor dei conflitti (conflict.rs, view/conflict_view.rs).
-# $command: id del comando; $path: percorso del file; $backup: ref o percorso del backup.
+# Conflict editor (conflict.rs, view/conflict_view.rs).
+# $command: command id; $path: file path; $backup: backup ref or path.
 
 conflict-worktree-not-text = il file del worktree non è testo o non c'è
 conflict-no-blocks = il risultato non ha blocchi da scegliere

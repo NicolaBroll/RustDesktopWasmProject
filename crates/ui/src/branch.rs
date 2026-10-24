@@ -1,12 +1,12 @@
-//! Branch locali dal menu della colonna dei ref (S24): `branch.create`, `branch.checkout`,
-//! `branch.delete`, `branch.rename`. Solo dati, senza egui: si prova con test unitari.
+//! Local branches from the refs column menu (S24): `branch.create`, `branch.checkout`,
+//! `branch.delete`, `branch.rename`. Data only, no egui: tested with unit tests.
 //!
-//! Il nome di un branch nuovo (o rinominato) si scrive in un piccolo dialogo; l'unico controllo
-//! qui è che non sia vuoto: il motore decide se è valido, e il suo errore resta nel dialogo.
-//! L'eliminazione va in due tempi come lo scarto: prima senza `confirm`, che elimina subito un
-//! branch unito oppure risponde con `ConfirmRequired`; solo dopo il clic nel dialogo di
-//! conferma, `"confirm": true`. Un checkout rifiutato perché sovrascriverebbe modifiche locali
-//! apre un dialogo con i file.
+//! The name of a new (or renamed) branch is typed in a small dialog; the only check done
+//! here is that it is not empty: the engine decides whether it is valid, and its error stays in the dialog.
+//! Deletion happens in two steps like discard: first without `confirm`, which deletes a merged
+//! branch right away or answers `ConfirmRequired`; only after the click in the confirmation
+//! dialog, `"confirm": true`. A checkout refused because it would overwrite local changes
+//! opens a dialog with the files.
 
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
@@ -16,12 +16,12 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Il nome breve di un branch locale: senza `refs/heads/`.
+/// The short name of a local branch: without `refs/heads/`.
 pub fn short(full: &str) -> &str {
     full.strip_prefix("refs/heads/").unwrap_or(full)
 }
 
-/// Un comando sui branch.
+/// A command on branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Create,
@@ -31,7 +31,7 @@ pub enum Op {
 }
 
 impl Op {
-    /// L'id del comando del Registry.
+    /// The id of the Registry command.
     pub fn command(self) -> &'static str {
         match self {
             Op::Create => "branch.create",
@@ -42,20 +42,20 @@ impl Op {
     }
 }
 
-/// Da dove parte un branch nuovo.
+/// Where a new branch starts from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Start {
-    /// Il commit, sempre per id completo: è quello che l'utente ha visto, anche se nel
-    /// frattempo il ref si è spostato.
+    /// The commit, always by full id: it is what the user saw, even if the ref moved in the
+    /// meantime.
     pub target: Oid,
-    /// Come mostrarlo nel dialogo, es. `origin/main` o `commit 1a2b3c4`.
+    /// How to show it in the dialog, e.g. `origin/main` or `commit 1a2b3c4`.
     pub label: String,
 }
 
 impl Start {
-    /// Il punto di partenza del ref `info` e il nome proposto: il nome del branch remoto senza
-    /// il remoto (`origin/feature/x` → `feature/x`); vuoto per branch locali e tag (lo stesso
-    /// nome sarebbe già preso, o ambiguo con il tag).
+    /// The starting point of the `info` ref and the proposed name: the name of the remote branch without
+    /// the remote (`origin/feature/x` -> `feature/x`); empty for local branches and tags (the same
+    /// name would already be taken, or ambiguous with the tag).
     pub fn from_ref(info: &RefInfo) -> (Self, String) {
         let label = info.short_name().to_owned();
         let name = match info.kind {
@@ -74,7 +74,7 @@ impl Start {
         (start, name)
     }
 
-    /// Il punto di partenza di un commit della lista.
+    /// The starting point of a commit in the list.
     pub fn from_commit(id: Oid) -> Self {
         Start {
             target: id,
@@ -83,34 +83,34 @@ impl Start {
     }
 }
 
-/// Il dialogo del nome: branch nuovo o rinomina.
+/// The name dialog: new branch or rename.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameKind {
     Create(Start),
-    /// Il nome breve attuale.
+    /// The current short name.
     Rename(String),
 }
 
-/// Il dialogo per scrivere il nome di un branch.
+/// The dialog to type the name of a branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NameDialog {
     pub kind: NameKind,
-    /// Il testo scritto.
+    /// The typed text.
     pub name: String,
-    /// L'errore del motore all'ultimo invio, mostrato nel dialogo.
+    /// The engine error from the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// Vero mentre il comando è in corso.
+    /// True while the command is running.
     pub sending: bool,
 }
 
 impl NameDialog {
-    /// Il nome da mandare: senza spazi ai lati.
+    /// The name to send: without surrounding spaces.
     fn trimmed(&self) -> &str {
         self.name.trim()
     }
 
-    /// Vero se il pulsante è attivo: un nome scritto (e, per la rinomina, diverso da quello
-    /// attuale), nessun invio in corso. Il resto lo controlla il motore.
+    /// True if the button is enabled: a name is typed (and, for a rename, different from the
+    /// current one), no submit in progress. The rest is checked by the engine.
     pub fn can_submit(&self) -> bool {
         let name = self.trimmed();
         !self.sending
@@ -136,7 +136,7 @@ impl NameDialog {
         }
     }
 
-    /// La descrizione dell'operazione per la barra di stato.
+    /// The description of the operation for the status bar.
     pub fn label(&self) -> String {
         match &self.kind {
             NameKind::Create(_) => tr!("branch-create-label", name = self.trimmed()),
@@ -145,27 +145,27 @@ impl NameDialog {
     }
 }
 
-/// L'eliminazione di un branch, dal controllo alla risposta.
+/// The deletion of a branch, from the check to the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteDialog {
-    /// Il nome breve.
+    /// The short name.
     pub name: String,
-    /// Il commit del branch come lo vedeva l'utente: va al motore come `expected` in entrambi
-    /// gli invii, così la conferma vale solo per quel commit.
+    /// The branch commit as the user saw it: it goes to the engine as `expected` in both
+    /// submits, so the confirmation is valid only for that commit.
     pub target: Oid,
     pub phase: Phase,
 }
 
-/// Il checkout rifiutato: sovrascriverebbe modifiche locali.
+/// The refused checkout: it would overwrite local changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refused {
-    /// Il nome breve del branch.
+    /// The short name of the branch.
     pub name: String,
-    /// I file indicati da git.
+    /// The files listed by git.
     pub files: Vec<String>,
 }
 
-/// Il dialogo dei branch aperto (o l'eliminazione in controllo, ancora senza dialogo).
+/// The open branch dialog (or the deletion being checked, still without a dialog).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
     Name(NameDialog),
@@ -173,46 +173,46 @@ pub enum Dialog {
     Refused(Refused),
 }
 
-/// I comandi sui branch: un dialogo alla volta, un comando alla volta.
+/// Commands on branches: one dialog at a time, one command at a time.
 #[derive(Debug, Default)]
 pub struct BranchBox {
     dialog: Option<Dialog>,
-    /// Il checkout in corso, nome breve (non ha dialogo).
+    /// The checkout in progress, short name (it has no dialog).
     checkout: Option<String>,
 }
 
-/// Cosa è arrivato da un comando `branch.*`.
+/// What came back from a `branch.*` command.
 #[derive(Debug)]
 pub enum Received {
-    /// Fatto: cosa aggiornare nella vista.
+    /// Done: what to update in the view.
     Done(Box<Outcome>),
-    /// Il nome non va: l'errore è nel dialogo, che resta aperto.
+    /// The name is not accepted: the error is in the dialog, which stays open.
     Inline,
-    /// Serve la conferma dell'eliminazione: il dialogo si apre.
+    /// The deletion needs confirmation: the dialog opens.
     Confirm,
-    /// Checkout rifiutato per le modifiche locali: il dialogo con i file si apre.
+    /// Checkout refused because of local changes: the dialog with the files opens.
     Refused,
-    /// Rifiutato o non riuscito: il messaggio da mostrare; con `reload` si rilegge tutto
-    /// (l'operazione potrebbe essere fatta, o a metà).
+    /// Refused or failed: the message to show; with `reload` everything is reloaded
+    /// (the operation may have been done, or half done).
     Failed { message: String, reload: bool },
 }
 
-/// Il risultato di un comando riuscito, per la vista.
+/// The result of a successful command, for the view.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub op: Op,
     pub notice: String,
-    /// I ref nuovi, se il comando li ha riletti.
+    /// The new refs, if the command reloaded them.
     pub refs: Option<Vec<RefInfo>>,
-    /// Il nuovo stato (checkout).
+    /// The new status (checkout).
     pub status: Option<Status>,
-    /// Un problema dopo l'operazione riuscita (ref o stato non riletti).
+    /// A problem after the successful operation (refs or status not reloaded).
     pub warning: Option<String>,
     pub history: History,
 }
 
 impl BranchBox {
-    /// Il dialogo da disegnare: l'eliminazione si vede solo quando chiede la conferma.
+    /// The dialog to draw: the deletion is shown only when it asks for confirmation.
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Delete(delete) => matches!(delete.phase, Phase::Confirm { .. }),
@@ -220,22 +220,22 @@ impl BranchBox {
         })
     }
 
-    /// Vero se un dialogo è aperto: niente altre scritture, i tasti vanno a lui.
+    /// True if a dialog is open: no other writes, keys go to it.
     pub fn modal_open(&self) -> bool {
         self.dialog().is_some()
     }
 
-    /// Vero se c'è un dialogo o un comando dei branch in corso: non se ne apre un altro.
+    /// True if there is a dialog or a branch command in progress: no other one is opened.
     fn busy(&self) -> bool {
         self.dialog.is_some() || self.checkout.is_some()
     }
 
-    /// Apre il dialogo per un branch nuovo da `start`, con il nome proposto `name`.
+    /// Opens the dialog for a new branch from `start`, with the proposed name `name`.
     pub fn open_create(&mut self, start: Start, name: String) -> bool {
         self.open_name(NameKind::Create(start), name)
     }
 
-    /// Apre il dialogo per rinominare il branch `name` (breve).
+    /// Opens the dialog to rename the branch `name` (short).
     pub fn open_rename(&mut self, name: String) -> bool {
         self.open_name(NameKind::Rename(name.clone()), name)
     }
@@ -253,7 +253,7 @@ impl BranchBox {
         true
     }
 
-    /// Il testo del dialogo del nome è cambiato.
+    /// The text of the name dialog changed.
     pub fn set_name(&mut self, name: String) {
         if let Some(Dialog::Name(dialog)) = &mut self.dialog
             && !dialog.sending
@@ -262,7 +262,7 @@ impl BranchBox {
         }
     }
 
-    /// Invio del dialogo del nome: comando, parametri e descrizione. `None` se non si può.
+    /// Submit of the name dialog: command, parameters and description. `None` if it cannot be done.
     pub fn submit_name(&mut self) -> Option<(Op, Value, String)> {
         let Some(Dialog::Name(dialog)) = &mut self.dialog else {
             return None;
@@ -275,7 +275,7 @@ impl BranchBox {
         Some((dialog.op(), dialog.params(), dialog.label()))
     }
 
-    /// Comincia il checkout del branch `name` (breve).
+    /// Starts the checkout of the branch `name` (short).
     pub fn start_checkout(&mut self, name: String) -> Option<Value> {
         if self.busy() {
             return None;
@@ -285,8 +285,8 @@ impl BranchBox {
         Some(params)
     }
 
-    /// Comincia l'eliminazione del branch `name` (breve) che l'utente vede su `target`: i
-    /// parametri del primo invio, senza `confirm`.
+    /// Starts the deletion of the branch `name` (short) that the user sees on `target`: the
+    /// parameters of the first submit, without `confirm`.
     pub fn start_delete(&mut self, name: String, target: Oid) -> Option<Value> {
         if self.busy() {
             return None;
@@ -300,7 +300,7 @@ impl BranchBox {
         Some(params)
     }
 
-    /// L'utente ha confermato l'eliminazione: i parametri con `"confirm": true`.
+    /// The user confirmed the deletion: the parameters with `"confirm": true`.
     pub fn confirm_delete(&mut self) -> Option<Value> {
         let Some(Dialog::Delete(delete)) = &mut self.dialog else {
             return None;
@@ -316,7 +316,7 @@ impl BranchBox {
         }))
     }
 
-    /// Chiude il dialogo aperto senza mandare niente; non durante un invio.
+    /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
             Some(Dialog::Name(dialog)) => !dialog.sending,
@@ -329,7 +329,7 @@ impl BranchBox {
         }
     }
 
-    /// La risposta del comando `op`.
+    /// The answer of the command `op`.
     pub fn receive(
         &mut self,
         op: Op,
@@ -353,8 +353,8 @@ impl BranchBox {
         }
         match result {
             Err(e) => {
-                // Qualunque rifiuto (nome non valido, già preso, rev sparita) resta nel dialogo:
-                // niente è cambiato e il nome si può correggere.
+                // Any refusal (invalid name, already taken, vanished rev) stays in the dialog:
+                // nothing changed and the name can be fixed.
                 dialog.sending = false;
                 dialog.error = Some(e);
                 Received::Inline
@@ -391,8 +391,8 @@ impl BranchBox {
                 Received::Refused
             }
             Err(e) => {
-                // Rifiutato prima di cominciare: niente è cambiato. Un errore di git invece
-                // potrebbe aver lasciato il checkout a metà: si rilegge tutto.
+                // Refused before starting: nothing changed. A git error instead
+                // may have left the checkout half done: everything is reloaded.
                 let refused =
                     matches!(kind, Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams));
                 let message = if refused {
@@ -464,7 +464,7 @@ fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String
     })
 }
 
-/// Un risultato che non si legge: l'operazione è probabilmente fatta, si rilegge tutto.
+/// A result that cannot be read: the operation is probably done, everything is reloaded.
 fn done(outcome: Result<Outcome, String>) -> Received {
     match outcome {
         Ok(outcome) => Received::Done(Box::new(outcome)),
@@ -475,7 +475,7 @@ fn done(outcome: Result<Outcome, String>) -> Received {
     }
 }
 
-/// `; attenzione: …` per ogni avviso.
+/// `; warning: ...` for each warning.
 fn warnings_text(warnings: &[String]) -> String {
     warnings
         .iter()
@@ -483,7 +483,7 @@ fn warnings_text(warnings: &[String]) -> String {
         .collect()
 }
 
-/// Risultato di `branch.create`.
+/// Result of `branch.create`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateResult {
     pub branch: String,
@@ -511,12 +511,12 @@ impl CreateResult {
     }
 }
 
-/// Risultato di `branch.checkout`.
+/// Result of `branch.checkout`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckoutResult {
     pub branch: String,
     pub changed: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     pub warnings: Vec<String>,
     pub status: Option<Status>,
     pub status_error: Option<String>,
@@ -545,18 +545,18 @@ impl CheckoutResult {
     }
 }
 
-/// Risultato di `branch.delete`.
+/// Result of `branch.delete`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeleteResult {
     pub branch: String,
     pub target: Oid,
     pub unmerged: usize,
     pub backup: String,
-    /// La configurazione `branch.<nome>.*` tolta con il branch (upstream, descrizione):
-    /// l'undo la rimette.
+    /// The `branch.<name>.*` configuration removed with the branch (upstream, description):
+    /// undo puts it back.
     #[serde(default)]
     pub removed_config: Vec<ConfigEntry>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     pub warnings: Vec<String>,
     pub refs: Option<Vec<RefInfo>>,
     pub refs_error: Option<String>,
@@ -564,7 +564,7 @@ pub struct DeleteResult {
     pub history: History,
 }
 
-/// Una voce di configurazione tolta da `branch.delete`.
+/// A configuration entry removed by `branch.delete`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ConfigEntry {
     pub key: String,
@@ -572,7 +572,7 @@ pub struct ConfigEntry {
 }
 
 impl DeleteResult {
-    /// L'avviso: con la configurazione tolta dice l'upstream se c'era, altrimenti le chiavi.
+    /// The warning: with the configuration removed it names the upstream if there was one, otherwise the keys.
     fn notice(&self) -> String {
         let branch = short(&self.branch);
         let id = self.target.short();
@@ -622,12 +622,12 @@ impl DeleteResult {
     }
 }
 
-/// Risultato di `branch.rename`.
+/// Result of `branch.rename`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RenameResult {
     pub branch: String,
     pub previous: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     pub warnings: Vec<String>,
     pub refs: Option<Vec<RefInfo>>,
     pub refs_error: Option<String>,
@@ -657,7 +657,7 @@ fn refs_warning(error: String) -> String {
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, dispatched by [`App::apply`].
     pub(crate) fn apply_branch(&mut self, action: Action) {
         match action {
             Action::NewBranch(start, name) => {
@@ -751,13 +751,13 @@ impl App {
                     repo.branch.close();
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
-    /// Risposta di `branch.*`: ref e diario dalla risposta, poi il log riletto (un branch
-    /// eliminato può portarsi via dei commit); dopo un checkout si rilegge tutto (HEAD, grafo,
-    /// area di stage). Un nome rifiutato resta nel suo dialogo.
+    /// Answer of `branch.*`: refs and journal from the answer, then the log reloaded (a deleted
+    /// branch can take some commits with it); after a checkout everything is reloaded (HEAD, graph,
+    /// stage area). A refused name stays in its dialog.
     pub(crate) fn receive_branch(&mut self, generation: u64, op: branch::Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
@@ -782,7 +782,7 @@ impl App {
                     repo.set_status(status);
                 }
                 let checkout = outcome.op == branch::Op::Checkout;
-                // Dopo un checkout il nuovo HEAD si seleziona appena arriva il log.
+                // After a checkout the new HEAD is selected as soon as the log arrives.
                 if checkout && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
@@ -792,7 +792,7 @@ impl App {
                     self.follow_diff();
                     self.load();
                 } else {
-                    // Di solito i ref arrivano con la risposta: basta il log.
+                    // Usually the refs arrive with the answer: the log is enough.
                     if !refs_read {
                         self.submit("repo.refs", json!({}), Request::Refs(generation));
                     }
@@ -809,12 +809,12 @@ impl App {
                 if reload {
                     self.load();
                 } else {
-                    // Un'eliminazione rifiutata (es. il branch non è più sul commit visto): i
-                    // ref si rileggono, così la colonna mostra dov'è adesso.
+                    // A refused deletion (e.g. the branch is no longer on the seen commit): the
+                    // refs are reloaded, so the column shows where it is now.
                     if op == branch::Op::Delete {
                         self.submit("repo.refs", json!({}), Request::Refs(generation));
                     }
-                    // Il diario si rilegge comunque: costa poco e resta allineato.
+                    // The journal is reloaded anyway: it is cheap and stays aligned.
                     self.submit("edit.history", json!({}), Request::History(generation));
                 }
             }
@@ -860,7 +860,7 @@ mod tests {
         let mut b = BranchBox::default();
         let start = Start::from_commit(Oid::from_bytes([3; 20]));
         assert!(b.open_create(start.clone(), String::new()));
-        // Un dialogo alla volta.
+        // One dialog at a time.
         assert!(!b.open_rename("main".to_owned()));
         assert!(b.modal_open());
         assert_eq!(b.submit_name(), None);
@@ -871,34 +871,34 @@ mod tests {
             params,
             json!({ "name": "feature/y", "start": Oid::from_bytes([3; 20]).to_string() })
         );
-        assert_eq!(label, "Creazione del branch «feature/y»");
-        // Durante l'invio niente si cambia, niente si chiude, niente parte due volte.
+        assert_eq!(label, "Creating branch “feature/y”");
+        // During the submit nothing changes, nothing closes, nothing starts twice.
         assert_eq!(b.submit_name(), None);
-        b.set_name("altro".to_owned());
+        b.set_name("other".to_owned());
         b.close();
         let Some(Dialog::Name(dialog)) = b.dialog() else {
             panic!()
         };
         assert_eq!(dialog.name, "  feature/y ");
 
-        // L'errore del motore resta nel dialogo, che si può correggere e rimandare.
-        let r = b.receive(Op::Create, Err("nome non valido".to_owned()), None, None);
+        // The engine error stays in the dialog, which can be fixed and resubmitted.
+        let r = b.receive(Op::Create, Err("invalid name".to_owned()), None, None);
         assert!(matches!(r, Received::Inline));
         let Some(Dialog::Name(dialog)) = b.dialog() else {
             panic!()
         };
-        assert_eq!(dialog.error.as_deref(), Some("nome non valido"));
+        assert_eq!(dialog.error.as_deref(), Some("invalid name"));
         assert!(!dialog.sending);
         b.close();
         assert!(b.dialog().is_none());
 
-        // Rinomina: lo stesso nome non si manda.
+        // Rename: the same name is not sent.
         assert!(b.open_rename("main".to_owned()));
         assert_eq!(b.submit_name(), None);
-        b.set_name("principale".to_owned());
+        b.set_name("primary".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
         assert_eq!(op, Op::Rename);
-        assert_eq!(params, json!({ "name": "main", "new_name": "principale" }));
+        assert_eq!(params, json!({ "name": "main", "new_name": "primary" }));
     }
 
     #[test]
@@ -910,17 +910,17 @@ mod tests {
             check,
             json!({ "name": "feature/x", "expected": tip.to_string() })
         );
-        // Il controllo non si vede e non si conferma prima della risposta.
+        // The check is not shown and not confirmed before the answer.
         assert!(b.dialog().is_none());
         assert_eq!(b.confirm_delete(), None);
-        assert_eq!(b.start_delete("altro".to_owned(), tip), None);
-        assert_eq!(b.start_checkout("altro".to_owned()), None);
+        assert_eq!(b.start_delete("other".to_owned(), tip), None);
+        assert_eq!(b.start_checkout("other".to_owned()), None);
 
         let r = b.receive(
             Op::Delete,
             Err(String::new()),
             Some(ErrorKind::ConfirmRequired),
-            Some("2 commit non uniti".to_owned()),
+            Some("2 unmerged commits".to_owned()),
         );
         assert!(matches!(r, Received::Confirm));
         let Some(Dialog::Delete(d)) = b.dialog() else {
@@ -929,10 +929,10 @@ mod tests {
         assert_eq!(
             d.phase,
             Phase::Confirm {
-                reason: "2 commit non uniti".to_owned()
+                reason: "2 unmerged commits".to_owned()
             }
         );
-        // Chiudere non manda niente.
+        // Closing sends nothing.
         b.close();
         assert!(b.dialog().is_none());
         assert_eq!(b.confirm_delete(), None);
@@ -949,8 +949,11 @@ mod tests {
             send,
             json!({ "name": "feature/x", "confirm": true, "expected": tip.to_string() })
         );
-        assert!(b.dialog().is_none(), "durante l'invio il dialogo è chiuso");
-        // Una nuova richiesta di conferma dopo `confirm: true` non riapre il dialogo.
+        assert!(
+            b.dialog().is_none(),
+            "during the submit the dialog is closed"
+        );
+        // A new confirmation request after `confirm: true` does not reopen the dialog.
         let r = b.receive(
             Op::Delete,
             Err("x".to_owned()),
@@ -960,21 +963,18 @@ mod tests {
         assert!(matches!(r, Received::Failed { .. }), "{r:?}");
         assert!(b.dialog().is_none());
 
-        // Un rifiuto: il messaggio, niente da rileggere.
+        // A refusal: the message, nothing to reload.
         b.start_delete("main".to_owned(), tip).unwrap();
         let r = b.receive(
             Op::Delete,
-            Err("è il branch attivo".to_owned()),
+            Err("it is the current branch".to_owned()),
             Some(ErrorKind::NotAllowed),
             None,
         );
         let Received::Failed { message, reload } = r else {
             panic!("{r:?}")
         };
-        assert_eq!(
-            message,
-            "Eliminazione di «main» non possibile: è il branch attivo"
-        );
+        assert_eq!(message, "Cannot delete “main”: it is the current branch");
         assert!(!reload);
     }
 
@@ -988,7 +988,7 @@ mod tests {
         assert!(!b.modal_open());
         let r = b.receive(
             Op::Checkout,
-            Err("rifiutato".to_owned()),
+            Err("refused".to_owned()),
             Some(ErrorKind::CheckoutConflict),
             Some("README.md\nsrc/lib.rs".to_owned()),
         );
@@ -1006,14 +1006,14 @@ mod tests {
         b.start_checkout("x".to_owned()).unwrap();
         let r = b.receive(
             Op::Checkout,
-            Err("merge in corso".to_owned()),
+            Err("merge in progress".to_owned()),
             Some(ErrorKind::NotAllowed),
             None,
         );
         let Received::Failed { message, reload } = r else {
             panic!("{r:?}")
         };
-        assert_eq!(message, "Checkout di «x» non possibile: merge in corso");
+        assert_eq!(message, "Cannot check out “x”: merge in progress");
         assert!(!reload);
         b.start_checkout("x".to_owned()).unwrap();
         let r = b.receive(
@@ -1036,29 +1036,29 @@ mod tests {
         (registry, session)
     }
 
-    /// Il repo di esempio con `esperimento`, un branch con un commit dopo `main`.
+    /// The sample repo with `experiment`, a branch with a commit after `main`.
     fn with_unmerged_branch() -> MemoryBackend {
         let mut repo = MemoryBackend::sample();
         let head = repo.log(&LogQuery::page(0, 1)).unwrap().remove(0);
         let extra = project_domain::Commit {
             id: Oid::from_bytes([0xee; 20]),
             parents: vec![head.id],
-            summary: "Prova non unita".to_owned(),
+            summary: "Unmerged trial".to_owned(),
             ..head
         };
         repo.set_changes(extra.id, Vec::new());
-        repo.set_branch("esperimento", extra.id);
+        repo.set_branch("experiment", extra.id);
         repo.insert_commit(extra);
         repo
     }
 
-    /// Manda `params` a `op` e passa la risposta al box, come fa la UI.
+    /// Sends `params` to `op` and passes the answer to the box, as the UI does.
     fn send(b: &mut BranchBox, r: &Registry, s: &mut Session, op: Op, params: Value) -> Received {
         match r.run(op.command(), s, params) {
             Ok(value) => b.receive(op, Ok(value), None, None),
             Err(e) => b.receive(
                 op,
-                Err(e.to_string()),
+                Err(e.text()),
                 Some(ErrorKind::of(&e)),
                 ErrorKind::detail(&e),
             ),
@@ -1072,7 +1072,7 @@ mod tests {
         }
     }
 
-    /// Il commit del branch locale `name`, come lo mostra la colonna dei ref.
+    /// The commit of the local branch `name`, as the refs column shows it.
     fn tip(r: &Registry, s: &mut Session, name: &str) -> Oid {
         let refs: Vec<RefInfo> =
             serde_json::from_value(r.run("repo.refs", s, json!({})).unwrap()).unwrap();
@@ -1090,8 +1090,8 @@ mod tests {
             .any(|r| r.name == full)
     }
 
-    /// Il percorso completo con il repo di esempio: branch nuovo da un branch remoto, nome
-    /// sbagliato corretto nel dialogo, rinomina, eliminazione con conferma, poi Annulla.
+    /// The full path with the sample repo: new branch from a remote branch, wrong name
+    /// fixed in the dialog, rename, deletion with confirmation, then Undo.
     #[test]
     fn create_rename_delete_with_the_sample_repo() {
         let (r, mut s) = open(with_unmerged_branch());
@@ -1103,7 +1103,7 @@ mod tests {
             .unwrap();
         let mut b = BranchBox::default();
 
-        // Il nome proposto (`main`) c'è già: l'errore resta nel dialogo.
+        // The proposed name (`main`) already exists: the error stays in the dialog.
         let (start, name) = Start::from_ref(remote);
         assert_eq!(name, "main");
         b.open_create(start, name);
@@ -1116,54 +1116,54 @@ mod tests {
             panic!()
         };
         assert!(
-            dialog.error.as_ref().unwrap().contains("esiste già"),
+            dialog.error.as_ref().unwrap().contains("already exists"),
             "{dialog:?}"
         );
-        // Un nome che git non accetta: lo dice il motore.
-        b.set_name("con spazio".to_owned());
+        // A name that git does not accept: the engine says so.
+        b.set_name("with space".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
         assert!(matches!(
             send(&mut b, &r, &mut s, op, params),
             Received::Inline
         ));
-        b.set_name("da-origin".to_owned());
+        b.set_name("from-origin".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
         let created = done(send(&mut b, &r, &mut s, op, params));
         assert!(b.dialog().is_none());
-        assert!(has_branch(&created, "da-origin"));
+        assert!(has_branch(&created, "from-origin"));
         let new = created
             .refs
             .as_ref()
             .unwrap()
             .iter()
-            .find(|i| i.name == "refs/heads/da-origin")
+            .find(|i| i.name == "refs/heads/from-origin")
             .unwrap();
         assert_eq!(new.target, remote.target);
         assert!(
-            created.notice.contains("«da-origin» creato"),
+            created.notice.contains("“from-origin” created"),
             "{}",
             created.notice
         );
         assert!(created.history.can_undo);
 
-        // Rinomina.
-        b.open_rename("da-origin".to_owned());
-        b.set_name("prova".to_owned());
+        // Rename.
+        b.open_rename("from-origin".to_owned());
+        b.set_name("trial".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
         let renamed = done(send(&mut b, &r, &mut s, op, params));
-        assert!(has_branch(&renamed, "prova") && !has_branch(&renamed, "da-origin"));
+        assert!(has_branch(&renamed, "trial") && !has_branch(&renamed, "from-origin"));
         assert!(
-            renamed.notice.contains("rinominato in «prova»"),
+            renamed.notice.contains("renamed to “trial”"),
             "{}",
             renamed.notice
         );
 
-        // `prova` è su origin/main, che è in HEAD (main): si elimina senza conferma.
+        // `trial` is on origin/main, which is in HEAD (main): deleted without confirmation.
         let check = b
-            .start_delete("prova".to_owned(), tip(&r, &mut s, "prova"))
+            .start_delete("trial".to_owned(), tip(&r, &mut s, "trial"))
             .unwrap();
         let deleted = done(send(&mut b, &r, &mut s, Op::Delete, check));
-        assert!(!has_branch(&deleted, "prova"));
+        assert!(!has_branch(&deleted, "trial"));
         assert!(
             deleted
                 .notice
@@ -1172,49 +1172,49 @@ mod tests {
             deleted.notice
         );
 
-        // `feature/grafo` è unito e ha un upstream: eliminato subito, con la configurazione.
+        // `feature/graph` is merged and has an upstream: deleted at once, with the configuration.
         let check = b
-            .start_delete("feature/grafo".to_owned(), tip(&r, &mut s, "feature/grafo"))
+            .start_delete("feature/graph".to_owned(), tip(&r, &mut s, "feature/graph"))
             .unwrap();
         let deleted = done(send(&mut b, &r, &mut s, Op::Delete, check));
         assert!(
             deleted
                 .notice
-                .contains("tolta anche l'impostazione dell'upstream")
+                .contains("its upstream setting was removed too")
                 && deleted
                     .notice
-                    .contains("lo ricrea con la sua configurazione"),
+                    .contains("recreates it with its configuration"),
             "{}",
             deleted.notice
         );
         r.run("edit.undo", &mut s, json!({})).unwrap();
 
-        // Un branch nuovo da un branch locale: nessun nome proposto.
-        let grafo = refs
+        // A new branch from a local branch: no proposed name.
+        let graph_branch = refs
             .iter()
-            .find(|i| i.name == "refs/heads/feature/grafo")
+            .find(|i| i.name == "refs/heads/feature/graph")
             .unwrap();
-        let (start, name) = Start::from_ref(grafo);
+        let (start, name) = Start::from_ref(graph_branch);
         assert_eq!(name, "");
-        b.open_create(start, "copia".to_owned());
+        b.open_create(start, "copy".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
         assert!(has_branch(
             &done(send(&mut b, &r, &mut s, op, params)),
-            "copia"
+            "copy"
         ));
 
-        // Un branch che non è più sul commit visto non si elimina: lo dice il motore.
+        // A branch that is no longer on the seen commit is not deleted: the engine says so.
         let main = tip(&r, &mut s, "main");
-        let stale = b.start_delete("esperimento".to_owned(), main).unwrap();
+        let stale = b.start_delete("experiment".to_owned(), main).unwrap();
         let refused = send(&mut b, &r, &mut s, Op::Delete, stale);
         assert!(
             matches!(&refused, Received::Failed { reload: false, .. }),
             "{refused:?}"
         );
 
-        // `esperimento` ha un commit che main non ha: per eliminarlo serve la conferma.
+        // `experiment` has a commit that main does not have: deleting it needs confirmation.
         let check = b
-            .start_delete("esperimento".to_owned(), tip(&r, &mut s, "esperimento"))
+            .start_delete("experiment".to_owned(), tip(&r, &mut s, "experiment"))
             .unwrap();
         assert!(matches!(
             send(&mut b, &r, &mut s, Op::Delete, check),
@@ -1227,26 +1227,26 @@ mod tests {
         else {
             panic!()
         };
-        assert!(reason.contains("non è unito"), "{reason}");
+        assert!(reason.contains("is not merged"), "{reason}");
         let send_params = b.confirm_delete().unwrap();
         let deleted = done(send(&mut b, &r, &mut s, Op::Delete, send_params));
-        assert!(!has_branch(&deleted, "esperimento"));
-        assert!(deleted.notice.contains("non unit"), "{}", deleted.notice);
+        assert!(!has_branch(&deleted, "experiment"));
+        assert!(deleted.notice.contains("unmerged"), "{}", deleted.notice);
         assert_eq!(
             deleted.history.next_undo.is_some(),
             deleted.history.can_undo
         );
 
-        // Annulla lo ricrea.
+        // Undo recreates it.
         r.run("edit.undo", &mut s, json!({})).unwrap();
         let refs: Vec<RefInfo> =
             serde_json::from_value(r.run("repo.refs", &mut s, json!({})).unwrap()).unwrap();
-        assert!(refs.iter().any(|i| i.name == "refs/heads/esperimento"));
+        assert!(refs.iter().any(|i| i.name == "refs/heads/experiment"));
 
-        // La conferma vale per il commit mostrato: se nel frattempo il branch è stato rifatto
-        // altrove, `confirm: true` è rifiutato e il branch resta.
-        let seen = tip(&r, &mut s, "esperimento");
-        let check = b.start_delete("esperimento".to_owned(), seen).unwrap();
+        // The confirmation is valid for the shown commit: if in the meantime the branch was recreated
+        // elsewhere, `confirm: true` is refused and the branch stays.
+        let seen = tip(&r, &mut s, "experiment");
+        let check = b.start_delete("experiment".to_owned(), seen).unwrap();
         assert!(matches!(
             send(&mut b, &r, &mut s, Op::Delete, check),
             Received::Confirm
@@ -1254,13 +1254,13 @@ mod tests {
         r.run(
             "branch.delete",
             &mut s,
-            json!({ "name": "esperimento", "confirm": true }),
+            json!({ "name": "experiment", "confirm": true }),
         )
         .unwrap();
         r.run(
             "branch.create",
             &mut s,
-            json!({ "name": "esperimento", "start": grafo.target.to_string() }),
+            json!({ "name": "experiment", "start": graph_branch.target.to_string() }),
         )
         .unwrap();
         let confirmed = b.confirm_delete().unwrap();
@@ -1268,17 +1268,17 @@ mod tests {
         let Received::Failed { message, .. } = refused else {
             panic!("{refused:?}")
         };
-        assert!(message.contains("non possibile"), "{message}");
-        assert_eq!(tip(&r, &mut s, "esperimento"), grafo.target);
+        assert!(message.contains("Cannot delete"), "{message}");
+        assert_eq!(tip(&r, &mut s, "experiment"), graph_branch.target);
     }
 
-    /// Checkout con il repo di esempio: rifiutato per le modifiche locali (con i file), poi
-    /// riuscito con il worktree pulito, e Annulla torna al branch di prima.
+    /// Checkout with the sample repo: refused because of local changes (with the files), then
+    /// successful with a clean worktree, and Undo goes back to the previous branch.
     #[test]
     fn checkout_with_the_sample_repo() {
         let (r, mut s) = open(MemoryBackend::sample());
         let mut b = BranchBox::default();
-        let params = b.start_checkout("feature/grafo".to_owned()).unwrap();
+        let params = b.start_checkout("feature/graph".to_owned()).unwrap();
         assert!(matches!(
             send(&mut b, &r, &mut s, Op::Checkout, params),
             Received::Refused
@@ -1296,33 +1296,33 @@ mod tests {
         let mut clean = MemoryBackend::sample();
         clean.set_entries(Vec::new());
         let (r, mut s) = open(clean);
-        let params = b.start_checkout("feature/grafo".to_owned()).unwrap();
+        let params = b.start_checkout("feature/graph".to_owned()).unwrap();
         let out = done(send(&mut b, &r, &mut s, Op::Checkout, params));
         let status = out.status.unwrap();
         assert!(
-            matches!(&status.head, project_domain::Head::Branch { name, .. } if name == "feature/grafo"),
+            matches!(&status.head, project_domain::Head::Branch { name, .. } if name == "feature/graph"),
             "{:?}",
             status.head
         );
         assert!(
-            out.notice.starts_with("Passato al branch «feature/grafo»"),
+            out.notice.starts_with("Switched to branch “feature/graph”"),
             "{}",
             out.notice
         );
         assert!(out.history.can_undo);
 
-        // Il branch già attivo: niente cambia.
-        let params = b.start_checkout("feature/grafo".to_owned()).unwrap();
+        // The branch is already active: nothing changes.
+        let params = b.start_checkout("feature/graph".to_owned()).unwrap();
         let out = done(send(&mut b, &r, &mut s, Op::Checkout, params));
         assert!(
-            out.notice.contains("già il branch attivo"),
+            out.notice.contains("already the current branch"),
             "{}",
             out.notice
         );
 
-        // Eliminare il branch attivo è rifiutato.
+        // Deleting the active branch is refused.
         let params = b
-            .start_delete("feature/grafo".to_owned(), tip(&r, &mut s, "feature/grafo"))
+            .start_delete("feature/graph".to_owned(), tip(&r, &mut s, "feature/graph"))
             .unwrap();
         let r2 = send(&mut b, &r, &mut s, Op::Delete, params);
         assert!(

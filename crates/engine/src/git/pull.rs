@@ -1,87 +1,87 @@
-//! Pull (`remote.pull`, S26): tipi e controlli comuni ai backend
+//! Pull (`remote.pull`, S26): types and checks shared by the backends
 //! (`impl-docs/git/sync.md`).
 //!
-//! Il pull è guidato dal motore in due tempi: prima il fetch del solo branch dell'upstream
-//! ([`GitBackend::fetch`](super::GitBackend::fetch), lento e annullabile), poi l'integrazione
-//! in locale ([`GitBackend::pull`](super::GitBackend::pull): fast-forward, merge o rebase), che
-//! non si annulla a metà. Così il comando sa cosa è arrivato prima di scrivere, decide la
-//! strategia ([`PullSettings::policy`], [`pull_mode`]), controlla lo stato del repo
-//! ([`check_pull_state`]) e registra nel diario lo spostamento del branch.
+//! The pull is driven by the engine in two steps: first the fetch of only the upstream's branch
+//! ([`GitBackend::fetch`](super::GitBackend::fetch), slow and cancellable), then the local
+//! integration ([`GitBackend::pull`](super::GitBackend::pull): fast-forward, merge or rebase), which
+//! cannot be cancelled midway. So the command knows what arrived before writing, decides the
+//! strategy ([`PullSettings::policy`], [`pull_mode`]), checks the repo state
+//! ([`check_pull_state`]) and records the branch move in the journal.
 
 use super::{HEADS_PREFIX, check_no_operation};
-use crate::EngineError;
+use crate::{EngineError, Message};
 use project_domain::{EntryKind, Oid, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// L'upstream configurato di un branch locale (`branch.<nome>.remote` e `branch.<nome>.merge`).
+/// The configured upstream of a local branch (`branch.<name>.remote` and `branch.<name>.merge`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpstreamConfig {
-    /// Il remoto (`branch.<nome>.remote`); `.` vuol dire il repo stesso (upstream locale).
+    /// The remote (`branch.<name>.remote`); `.` means the repo itself (local upstream).
     pub remote: String,
-    /// Il branch sul remoto, nome completo (`branch.<nome>.merge`, es. `refs/heads/main`).
+    /// The branch on the remote, full name (`branch.<name>.merge`, e.g. `refs/heads/main`).
     pub merge: String,
-    /// Il branch remoto locale che lo rispecchia secondo il refspec di fetch del remoto (es.
-    /// `refs/remotes/origin/main`); `None` se nessun refspec lo mappa.
+    /// The local remote branch that mirrors it according to the remote's fetch refspec (e.g.
+    /// `refs/remotes/origin/main`); `None` if no refspec maps it.
     pub tracking: Option<String>,
 }
 
 impl UpstreamConfig {
-    /// Il nome breve del branch sul remoto (`main` per `refs/heads/main`), se è un branch.
+    /// The short name of the branch on the remote (`main` for `refs/heads/main`), if it is a branch.
     pub fn merge_branch(&self) -> Option<&str> {
         self.merge.strip_prefix(HEADS_PREFIX)
     }
 }
 
-/// La configurazione della strategia di pull, con i valori come li scrive l'utente in git
-/// config (letti dal backend, interpretati da [`PullSettings::policy`]).
+/// The pull strategy configuration, with the values as the user writes them in git
+/// config (read by the backend, interpreted by [`PullSettings::policy`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullSettings {
-    /// `branch.<nome>.rebase`, altrimenti `pull.rebase` (`None`: nessuno dei due). Una chiave
-    /// senza valore è `""` (vale `true`).
+    /// `branch.<name>.rebase`, otherwise `pull.rebase` (`None`: neither). A key
+    /// without a value is `""` (means `true`).
     pub rebase: Option<String>,
     /// `pull.ff` (`true`, `false`, `only`).
     pub ff: Option<String>,
 }
 
-/// La strategia chiesta con il parametro `strategy` di `remote.pull`, che sostituisce la
-/// configurazione.
+/// The strategy requested with the `strategy` parameter of `remote.pull`, which replaces the
+/// configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullStrategy {
-    /// Fast-forward se si può, altrimenti un commit di merge.
+    /// Fast-forward if possible, otherwise a merge commit.
     Merge,
-    /// Fast-forward se si può, altrimenti rebase dei commit locali sull'upstream.
+    /// Fast-forward if possible, otherwise rebase the local commits onto the upstream.
     Rebase,
-    /// Solo fast-forward: se i branch sono divergenti, errore e niente cambia.
+    /// Fast-forward only: if the branches diverged, error and nothing changes.
     FfOnly,
 }
 
-/// Da dove viene la strategia usata.
+/// Where the strategy used comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StrategySource {
-    /// Il parametro `strategy`.
+    /// The `strategy` parameter.
     Param,
-    /// `pull.rebase`, `branch.<nome>.rebase` o `pull.ff`.
+    /// `pull.rebase`, `branch.<name>.rebase` or `pull.ff`.
     Config,
-    /// Nessuna configurazione: merge (vedi [`PullSettings::policy`]).
+    /// No configuration: merge (see [`PullSettings::policy`]).
     Default,
 }
 
-/// La strategia decisa per un pull.
+/// The strategy decided for a pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PullPolicy {
     pub strategy: PullStrategy,
-    /// `pull.ff=false`: anche quando si potrebbe fare fast-forward si crea un commit di merge
-    /// (solo con [`PullStrategy::Merge`]).
+    /// `pull.ff=false`: even when a fast-forward would be possible a merge commit is created
+    /// (only with [`PullStrategy::Merge`]).
     pub no_ff: bool,
-    /// `pull.rebase=merges`: rebase con `--rebase-merges`.
+    /// `pull.rebase=merges`: rebase with `--rebase-merges`.
     pub rebase_merges: bool,
     pub source: StrategySource,
 }
 
-/// Un valore booleano di git config (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`; la chiave
-/// senza valore vale `true`).
+/// A git config boolean value (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`; a key
+/// without a value means `true`).
 fn config_bool(value: &str) -> Option<bool> {
     match value.to_ascii_lowercase().as_str() {
         "" | "true" | "yes" | "on" | "1" => Some(true),
@@ -91,19 +91,19 @@ fn config_bool(value: &str) -> Option<bool> {
 }
 
 impl PullSettings {
-    /// La strategia: `explicit` (il parametro `strategy`) se c'è, altrimenti la configurazione
-    /// come la legge `git pull`:
+    /// The strategy: `explicit` (the `strategy` parameter) if present, otherwise the configuration
+    /// as `git pull` reads it:
     ///
-    /// - `branch.<nome>.rebase` / `pull.rebase`: `true` → rebase, `merges` → rebase con
-    ///   `--rebase-merges`, `false` → merge; `interactive` → [`EngineError::NotAllowed`] (un
-    ///   rebase interattivo vuole un editor);
-    /// - `pull.ff`: `only` → solo fast-forward, `false` → sempre un commit di merge (con la
-    ///   strategia merge), `true` → di default.
+    /// - `branch.<name>.rebase` / `pull.rebase`: `true` → rebase, `merges` → rebase with
+    ///   `--rebase-merges`, `false` → merge; `interactive` → [`EngineError::NotAllowed`] (an
+    ///   interactive rebase needs an editor);
+    /// - `pull.ff`: `only` → fast-forward only, `false` → always a merge commit (with the
+    ///   merge strategy), `true` → the default.
     ///
-    /// Senza configurazione: **merge** (scelta). Git dalla 2.33 in poi in quel caso rifiuta il
-    /// pull di branch divergenti e chiede di configurare `pull.rebase`; qui si fa come git
-    /// prima della 2.33, perché un merge non riscrive niente e si annulla con `edit.undo`, e il
-    /// risultato dice la strategia usata e da dove viene (`strategy_source`).
+    /// Without configuration: **merge** (a choice). Since 2.33 git in that case refuses to
+    /// pull diverged branches and asks to configure `pull.rebase`; here we do as git did
+    /// before 2.33, because a merge rewrites nothing and is undone with `edit.undo`, and the
+    /// result says which strategy was used and where it comes from (`strategy_source`).
     pub fn policy(&self, explicit: Option<PullStrategy>) -> Result<PullPolicy, EngineError> {
         if let Some(strategy) = explicit {
             return Ok(PullPolicy {
@@ -114,10 +114,10 @@ impl PullSettings {
             });
         }
         let invalid = |key: &str, value: &str| {
-            EngineError::NotAllowed(format!(
-                "valore di `{key}` non riconosciuto: `{}`; niente modificato (correggere la \
-                 configurazione o indicare `strategy`)",
-                value.escape_debug()
+            EngineError::NotAllowed(msg!(
+                "engine-pull-config-value",
+                key = key,
+                value = value.escape_debug()
             ))
         };
         let (mut strategy, mut rebase_merges, mut configured) = (PullStrategy::Merge, false, false);
@@ -129,12 +129,7 @@ impl PullSettings {
                     rebase_merges = true;
                 }
                 "interactive" | "i" => {
-                    return Err(EngineError::NotAllowed(
-                        "la configurazione chiede un rebase interattivo (`pull.rebase` o \
-                         `branch.<nome>.rebase` = `interactive`), che vuole un editor: niente \
-                         modificato. Indicare `strategy` (`merge`, `rebase` o `ff_only`)"
-                            .to_owned(),
-                    ));
+                    return Err(EngineError::NotAllowed(msg!("engine-pull-interactive")));
                 }
                 other => match config_bool(other) {
                     Some(true) => strategy = PullStrategy::Rebase,
@@ -168,20 +163,20 @@ impl PullSettings {
     }
 }
 
-/// Come integrare l'upstream nel branch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// How to integrate the upstream into the branch ([`GitBackend::pull`](super::GitBackend::pull)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullMode {
-    /// Il branch avanza sull'upstream (`git merge --ff-only`, o `update-ref` per un branch che
-    /// non è quello di HEAD).
+    /// The branch advances to the upstream (`git merge --ff-only`, or `update-ref` for a branch that
+    /// is not the one of HEAD).
     FastForward,
-    /// Un commit di merge (genitori: il branch e l'upstream).
+    /// A merge commit (parents: the branch and the upstream).
     Merge { no_ff: bool },
-    /// I commit locali riscritti sopra l'upstream.
+    /// The local commits rewritten on top of the upstream.
     Rebase { merges: bool },
 }
 
 impl PullMode {
-    /// Il nome nel risultato (`strategy`): `fast_forward`, `merge`, `rebase`.
+    /// The name in the result (`strategy`): `fast_forward`, `merge`, `rebase`.
     pub fn name(&self) -> &'static str {
         match self {
             PullMode::FastForward => "fast_forward",
@@ -191,10 +186,10 @@ impl PullMode {
     }
 }
 
-/// Cosa fare dati i commit del branch che l'upstream non ha (`ahead`) e quelli dell'upstream
-/// che il branch non ha (`behind`): `None` se il branch contiene già l'upstream (niente da
-/// fare). Un branch che non è quello di HEAD (`current == false`) si può solo portare avanti
-/// (fast-forward), senza toccare il worktree; branch divergenti con `ff_only` →
+/// What to do given the branch's commits the upstream does not have (`ahead`) and the upstream's
+/// commits the branch does not have (`behind`): `None` if the branch already contains the upstream (nothing to
+/// do). A branch that is not the one of HEAD (`current == false`) can only be moved forward
+/// (fast-forward), without touching the worktree; diverged branches with `ff_only` →
 /// [`EngineError::NotAllowed`].
 pub fn pull_mode(
     policy: &PullPolicy,
@@ -213,21 +208,19 @@ pub fn pull_mode(
         return Ok(Some(PullMode::FastForward));
     }
     if !current {
-        return Err(EngineError::NotAllowed(format!(
-            "`{}` e il suo upstream sono divergenti ({ahead} commit locali, {behind} \
-             dell'upstream) e `{0}` non è il branch attivo: si può solo fare fast-forward. Il \
-             fetch è fatto, niente altro modificato; passare al branch (`branch.checkout`) e \
-             ripetere il pull",
-            branch.escape_debug()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pull-diverged-not-current",
+            branch = branch.escape_debug(),
+            ahead = ahead,
+            behind = behind
         )));
     }
     match policy.strategy {
-        PullStrategy::FfOnly => Err(EngineError::NotAllowed(format!(
-            "`{}` e il suo upstream sono divergenti ({ahead} commit locali, {behind} \
-             dell'upstream) e la strategia è solo fast-forward (`pull.ff=only` o `strategy` \
-             `ff_only`): il fetch è fatto, niente altro modificato. Ripetere con `strategy` \
-             `merge` o `rebase`",
-            branch.escape_debug()
+        PullStrategy::FfOnly => Err(EngineError::NotAllowed(msg!(
+            "engine-pull-diverged-ff-only",
+            branch = branch.escape_debug(),
+            ahead = ahead,
+            behind = behind
         ))),
         PullStrategy::Rebase => Ok(Some(PullMode::Rebase {
             merges: policy.rebase_merges,
@@ -238,19 +231,19 @@ pub fn pull_mode(
     }
 }
 
-/// I controlli prima di integrare l'upstream, uguali per i backend, sullo stato letto ora:
+/// The checks before integrating the upstream, the same for the backends, on the state read now:
 ///
-/// - merge, rebase, cherry-pick, revert, bisect o `git am` in corso → [`EngineError::NotAllowed`];
-/// - file in conflitto → [`EngineError::NotAllowed`];
-/// - per merge e rebase, **qualunque** modifica ai file tracciati (in stage o no) →
-///   [`EngineError::NotAllowed`]: un merge o un rebase che si fermano in conflitto con
-///   modifiche locali non si annullano in modo sicuro (`git merge --abort` può non ricostruirle)
-///   e un rebase non parte. Mai `--autostash`: le modifiche vanno committate o messe da parte
-///   prima. I non tracciati vanno bene (git rifiuta di sovrascriverli). Il fast-forward invece
-///   accetta modifiche che non toccano i file cambiati: git rifiuta da sé di sovrascrivere le
-///   altre.
+/// - merge, rebase, cherry-pick, revert, bisect or `git am` in progress → [`EngineError::NotAllowed`];
+/// - conflicted files → [`EngineError::NotAllowed`];
+/// - for merge and rebase, **any** change to tracked files (staged or not) →
+///   [`EngineError::NotAllowed`]: a merge or rebase that stops on conflict with
+///   local changes cannot be aborted safely (`git merge --abort` may not rebuild them)
+///   and a rebase does not start. Never `--autostash`: changes must be committed or set aside
+///   first. Untracked files are fine (git refuses to overwrite them). Fast-forward instead
+///   accepts changes that do not touch the changed files: git itself refuses to overwrite the
+///   others.
 pub fn check_pull_state(status: &Status, mode: &PullMode) -> Result<(), EngineError> {
-    check_no_operation("remote.pull", "integrerebbe l'upstream", status.operation)?;
+    check_no_operation("remote.pull", msg!("engine-busy-pull"), status.operation)?;
     let unmerged: Vec<String> = status
         .entries
         .iter()
@@ -258,10 +251,9 @@ pub fn check_pull_state(status: &Status, mode: &PullMode) -> Result<(), EngineEr
         .map(|e| format!("`{}`", e.path))
         .collect();
     if !unmerged.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file in conflitto ({}): risolverli prima del pull; il branch non è stato \
-             toccato",
-            unmerged.join(", ")
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pull-conflicts",
+            files = unmerged.join(", ")
         )));
     }
     if matches!(mode, PullMode::FastForward) {
@@ -281,17 +273,16 @@ pub fn check_pull_state(status: &Status, mode: &PullMode) -> Result<(), EngineEr
     if changed.is_empty() {
         return Ok(());
     }
-    Err(EngineError::NotAllowed(format!(
-        "il pull farebbe un {} ma ci sono modifiche locali ai file tracciati ({}): committarle \
-         o metterle da parte e riprovare (niente `--autostash`); il branch non è stato toccato",
-        mode.name(),
-        changed.join(", ")
+    Err(EngineError::NotAllowed(msg!(
+        "engine-pull-local-changes",
+        mode = mode.name(),
+        files = changed.join(", ")
     )))
 }
 
-/// Il messaggio del commit di merge di un pull: come `git merge <branch remoto>`
-/// (`Merge remote-tracking branch 'origin/main'`), con ` into <branch>` se il branch non è
-/// `main` o `master` (come fa git con `merge.suppressDest` di default).
+/// The message of the merge commit of a pull: like `git merge <remote branch>`
+/// (`Merge remote-tracking branch 'origin/main'`), with ` into <branch>` if the branch is not
+/// `main` or `master` (as git does with the default `merge.suppressDest`).
 pub fn merge_message(upstream: &str, branch: &str) -> String {
     let short = upstream.strip_prefix("refs/remotes/").unwrap_or(upstream);
     let mut message = format!("Merge remote-tracking branch '{short}'");
@@ -301,51 +292,51 @@ pub fn merge_message(upstream: &str, branch: &str) -> String {
     message
 }
 
-/// Cosa chiede `remote.pull` al backend dopo il fetch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// What `remote.pull` asks of the backend after the fetch ([`GitBackend::pull`](super::GitBackend::pull)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequest {
-    /// Il branch locale (nome breve).
+    /// The local branch (short name).
     pub branch: String,
-    /// Vero se è il branch di HEAD (indice e worktree si aggiornano); altrimenti solo
-    /// fast-forward del ref.
+    /// True if it is the branch of HEAD (index and worktree are updated); otherwise only
+    /// fast-forward of the ref.
     pub current: bool,
-    /// Il valore del branch letto prima: il backend rifiuta se è cambiato.
+    /// The value of the branch read earlier: the backend refuses if it changed.
     pub expected: Oid,
-    /// Il commit dell'upstream da integrare (il branch remoto dopo il fetch).
+    /// The upstream commit to integrate (the remote branch after the fetch).
     pub upstream: Oid,
-    /// Il nome completo del branch remoto (es. `refs/remotes/origin/main`), per i messaggi.
+    /// The full name of the remote branch (e.g. `refs/remotes/origin/main`), for messages.
     pub upstream_name: String,
     pub mode: PullMode,
-    /// Il messaggio del commit di merge ([`merge_message`]).
+    /// The message of the merge commit ([`merge_message`]).
     pub message: String,
 }
 
-/// Esito di [`GitBackend::pull`](super::GitBackend::pull).
+/// Outcome of [`GitBackend::pull`](super::GitBackend::pull).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullOutcome {
-    /// Il valore del branch dopo; se il merge è fermo ([`PullOutcome::in_progress`]) quello di
-    /// prima.
+    /// The value of the branch afterwards; if the merge is stopped ([`PullOutcome::in_progress`]) the one
+    /// from before.
     pub after: Oid,
-    /// Il ref di backup del branch prima del pull (`refs/project/backup/pull-...`); resta
-    /// anche se il merge è fermo.
+    /// The backup ref of the branch before the pull (`refs/project/backup/pull-...`); it stays
+    /// even if the merge is stopped.
     pub backup: String,
-    /// Vero se il **merge** si è fermato (conflitti, o un hook `pre-merge-commit`/`commit-msg`
-    /// o la firma che hanno fallito) e **resta in corso** (`MERGE_HEAD`), come `merge.start`:
-    /// da concludere con `merge.continue` o annullare con `merge.abort`. Il rebase fermo invece
-    /// si annulla ancora ([`EngineError::PullConflict`]).
+    /// True if the **merge** stopped (conflicts, or a `pre-merge-commit`/`commit-msg` hook
+    /// or the signing that failed) and **stays in progress** (`MERGE_HEAD`), like `merge.start`:
+    /// to be concluded with `merge.continue` or aborted with `merge.abort`. A stopped rebase
+    /// is still aborted ([`EngineError::PullConflict`]).
     pub in_progress: bool,
-    /// I file in conflitto del merge fermo: quelli ancora non uniti e quelli che git ha detto
-    /// in conflitto (anche se `rerere` li ha già risolti); vuoto altrimenti.
+    /// The conflicted files of the stopped merge: those still unmerged and those git reported
+    /// as conflicted (even if `rerere` already resolved them); empty otherwise.
     pub conflicts: Vec<RepoPath>,
-    /// Il testo di git (stdout e stderr) del merge fermo; vuoto altrimenti.
+    /// The git text (stdout and stderr) of the stopped merge; empty otherwise.
     pub message: String,
-    /// Avvisi scoperti dopo un'integrazione riuscita (es. un hook che ha spostato HEAD).
-    pub warnings: Vec<String>,
+    /// Warnings found after a successful integration (e.g. a hook that moved HEAD).
+    pub warnings: Vec<Message>,
 }
 
-/// Quale operazione si è fermata in conflitto ([`EngineError::PullConflict`]). Oggi l'errore
-/// arriva solo dal rebase: un merge fermo resta in corso ([`PullOutcome::in_progress`]); il
-/// valore `merge` resta per compatibilità (e per un backend che non sa lasciarlo in corso).
+/// Which operation stopped on conflict ([`EngineError::PullConflict`]). Today the error
+/// comes only from the rebase: a stopped merge stays in progress ([`PullOutcome::in_progress`]); the
+/// value `merge` stays for compatibility (and for a backend that cannot leave it in progress).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullOperation {
@@ -393,7 +384,7 @@ mod tests {
         let p = settings(Some("true"), Some("only")).policy(None).unwrap();
         assert_eq!(p.strategy, PullStrategy::FfOnly);
         let p = settings(Some("true"), Some("false")).policy(None).unwrap();
-        assert!(!p.no_ff, "pull.ff=false conta solo per il merge");
+        assert!(!p.no_ff, "pull.ff=false only matters for the merge");
         for (rebase, ff) in [
             (Some("interactive"), None),
             (Some("x"), None),
@@ -402,7 +393,7 @@ mod tests {
             let err = settings(rebase, ff).policy(None).unwrap_err();
             assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
         }
-        // Il parametro sostituisce la configurazione, anche se non valida.
+        // The parameter replaces the configuration, even if not valid.
         let p = settings(Some("interactive"), Some("only"))
             .policy(Some(PullStrategy::Merge))
             .unwrap();
@@ -434,7 +425,7 @@ mod tests {
             pull_mode(&policy(PullStrategy::Merge, true), "main", true, 0, 2).unwrap(),
             Some(PullMode::Merge { no_ff: true })
         );
-        // Un branch non attivo: solo fast-forward, anche con `no_ff`.
+        // An inactive branch: fast-forward only, even with `no_ff`.
         assert_eq!(
             pull_mode(&policy(PullStrategy::Merge, true), "x", false, 0, 2).unwrap(),
             Some(PullMode::FastForward)
@@ -479,7 +470,7 @@ mod tests {
             },
             upstream: None,
             entries: vec![entry(
-                "nuovo",
+                "new",
                 Change::Untracked,
                 Change::Untracked,
                 EntryKind::Untracked,

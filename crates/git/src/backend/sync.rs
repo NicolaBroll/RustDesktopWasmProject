@@ -1,54 +1,55 @@
-//! Pull sul [`CliBackend`] (`remote.pull`, S26) e il suo undo/redo, secondo §5 e §7.
+//! Pull on the [`CliBackend`] (`remote.pull`, S26) and its undo/redo, following §5 and §7.
 //!
-//! Il fetch lo fa il comando prima, con [`GitBackend::fetch`](project_engine::GitBackend::fetch);
-//! qui solo l'integrazione in locale, che non si annulla a metà:
+//! The fetch is done by the command beforehand, with [`GitBackend::fetch`](project_engine::GitBackend::fetch);
+//! only the local integration is here, which is not cancelled halfway:
 //!
-//! - fast-forward del branch attivo: `git -c core.fsmonitor=false merge --ff-only
-//!   --no-autostash --no-edit --end-of-options <oid>`: git rifiuta da sé (prima di scrivere) di
-//!   sovrascrivere modifiche locali e file non tracciati; di un altro branch: `update-ref -m ...
-//!   refs/heads/<b> <nuovo> <vecchio>` (worktree non toccato), rifiutato se il branch è aperto
-//!   in un altro worktree;
+//! - fast-forward of the active branch: `git -c core.fsmonitor=false merge --ff-only
+//!   --no-autostash --no-edit --end-of-options <oid>`: git itself refuses (before writing) to
+//!   overwrite local changes and untracked files; for another branch: `update-ref -m ...
+//!   refs/heads/<b> <new> <old>` (worktree untouched), refused if the branch is open
+//!   in another worktree;
 //! - merge: `git -c core.fsmonitor=false merge --no-autostash --no-edit --commit --no-squash
-//!   [--ff|--no-ff] -F <file> --end-of-options <oid>`: il messaggio da un file temporaneo nella
-//!   cartella git (git non legge `-F -` da stdin per `merge`), `--ff`/`--no-ff`, `--commit` e
-//!   `--no-squash` espliciti per non dipendere da `merge.ff` e `branch.<nome>.mergeOptions`. Hook (`pre-merge-commit`, `commit-msg`) e firma come dice la configurazione;
+//!   [--ff|--no-ff] -F <file> --end-of-options <oid>`: the message from a temporary file in the
+//!   git folder (git does not read `-F -` from stdin for `merge`), `--ff`/`--no-ff`, `--commit` and
+//!   `--no-squash` explicit so as not to depend on `merge.ff` and `branch.<name>.mergeOptions`.
+//!   Hooks (`pre-merge-commit`, `commit-msg`) and signing as the configuration says;
 //! - rebase: `git -c core.fsmonitor=false -c rebase.updateRefs=false rebase --no-autostash
-//!   [--rebase-merges] --end-of-options <oid>` (`rebase.updateRefs` sposterebbe altri branch
-//!   fuori dal diario), con `GIT_EDITOR=:` e `GIT_SEQUENCE_EDITOR=:`. Rebase sull'upstream
-//!   come `git rebase <upstream>`, senza il fork-point di `git pull --rebase`: se l'upstream è
-//!   stato riscritto (force push) si riapplicano anche i suoi commit vecchi, e di solito il
-//!   rebase si ferma in conflitto (e si annulla);
-//! - merge fermo (conflitti, hook `pre-merge-commit`/`commit-msg`, firma): **resta in corso**
-//!   come con `merge.start` ([`PullOutcome::in_progress`] con i file in conflitto dallo stato e
-//!   dall'output di git), da concludere con `merge.continue` o annullare con `merge.abort`;
-//! - rebase fermo: i file in conflitto, poi `git rebase --abort` (il worktree era pulito: torna
-//!   esattamente com'era) e [`EngineError::PullConflict`]. Se l'annullamento non riesce,
-//!   l'errore lo dice (il repo resta nel rebase in corso, il backup resta).
+//!   [--rebase-merges] --end-of-options <oid>` (`rebase.updateRefs` would move other branches
+//!   outside the journal), with `GIT_EDITOR=:` and `GIT_SEQUENCE_EDITOR=:`. Rebase onto the upstream
+//!   like `git rebase <upstream>`, without the fork-point of `git pull --rebase`: if the upstream
+//!   was rewritten (force push) its old commits are replayed too, and usually the
+//!   rebase stops with a conflict (and is aborted);
+//! - stopped merge (conflicts, `pre-merge-commit`/`commit-msg` hooks, signing): **stays in progress**
+//!   as with `merge.start` ([`PullOutcome::in_progress`] with the conflicted files from the status and
+//!   from git's output), to be finished with `merge.continue` or aborted with `merge.abort`;
+//! - stopped rebase: the conflicted files, then `git rebase --abort` (the worktree was clean: it goes back
+//!   exactly as it was) and [`EngineError::PullConflict`]. If the abort fails,
+//!   the error says so (the repo stays in the rebase in progress, the backup stays).
 //!
-//! Prima di tutto il backup `refs/project/backup/pull-...` sul branch com'era; se poi niente
-//! cambia (errore, rebase annullato) si toglie; con il merge fermo resta. `GIT_REFLOG_ACTION=project: remote.pull` dà il
-//! messaggio del reflog.
+//! First of all the backup `refs/project/backup/pull-...` of the branch as it was; if then nothing
+//! changes (error, aborted rebase) it is removed; with a stopped merge it stays.
+//! `GIT_REFLOG_ACTION=project: remote.pull` gives the reflog message.
 //!
-//! Undo/redo del branch attivo ([`CliBackend::reset_keep`]): gli stessi controlli di
-//! `restore_refs` e i backup dei commit abbandonati, poi `git -c core.fsmonitor=false reset
-//! --keep <oid>` (aggiorna indice e worktree dei file diversi fra i due commit, rifiuta se uno
-//! di loro ha modifiche locali, non sovrascrive i non tracciati); prima si controlla che nessun
-//! file da ricreare esista già nel worktree (`reset --keep` sovrascriverebbe un file ignorato).
-//! Resta l'istante fra il controllo dei ref e `reset`: `reset` aggiorna il branch con il valore
-//! letto da sé, non con quello atteso.
+//! Undo/redo of the active branch ([`CliBackend::reset_keep`]): the same checks as
+//! `restore_refs` and the backups of the abandoned commits, then `git -c core.fsmonitor=false reset
+//! --keep <oid>` (updates index and worktree of the files that differ between the two commits,
+//! refuses if one of them has local changes, does not overwrite untracked ones); first it checks that no
+//! file to be recreated already exists in the worktree (`reset --keep` would overwrite an ignored file).
+//! The instant between the ref check and `reset` remains: `reset` updates the branch with the value
+//! it read itself, not with the expected one.
 
 use super::CliBackend;
 use crate::command::{failure, os_from_bytes};
 use project_domain::{Commit, EntryKind, LOG_ARGS, Oid, Operation, RepoPath, parse_log};
 use project_engine::{
-    EngineError, HeadState, PullMode, PullOperation, PullOutcome, PullRequest, PullSettings,
-    RefRestore, RestoreOutcome, UpstreamConfig, branch_ref, check_pull_state,
+    EngineError, HeadState, Message, PullMode, PullOperation, PullOutcome, PullRequest,
+    PullSettings, RefRestore, RestoreOutcome, UpstreamConfig, branch_ref, check_pull_state,
 };
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Un file temporaneo nella cartella git (il messaggio del merge), cancellato all'uscita dallo
+/// A temporary file in the git folder (the merge message), deleted when it goes out of
 /// scope.
 pub(super) struct TempFile(pub(super) PathBuf);
 
@@ -58,13 +59,13 @@ impl Drop for TempFile {
     }
 }
 
-/// Il messaggio del reflog delle scritture di un pull.
+/// The reflog message of the writes of a pull.
 const REFLOG_ACTION: &str = "project: remote.pull";
 
 impl CliBackend {
-    /// [`GitBackend::upstream`](project_engine::GitBackend::upstream) con `for-each-ref`:
-    /// `%(upstream:remotename)` e `%(upstream:remoteref)` sono `branch.<nome>.remote` e
-    /// `.merge`, `%(upstream)` il branch remoto locale secondo il refspec del remoto.
+    /// [`GitBackend::upstream`](project_engine::GitBackend::upstream) with `for-each-ref`:
+    /// `%(upstream:remotename)` and `%(upstream:remoteref)` are `branch.<name>.remote` and
+    /// `.merge`, `%(upstream)` the local remote branch according to the remote's refspec.
     pub(super) fn upstream_of(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
         let full = branch_ref(branch);
         let args = [
@@ -96,8 +97,8 @@ impl CliBackend {
         Ok(None)
     }
 
-    /// Il valore di `key` nella configurazione (tutte le fonti, come la legge git), `None` se
-    /// non c'è.
+    /// The value of `key` in the configuration (all sources, as git reads it), `None` if
+    /// there is none.
     fn config_value(&self, key: &str) -> Result<Option<String>, EngineError> {
         let args = ["config", "--get", "--end-of-options", key];
         let out = self.git.output(Some(&self.workdir), &args)?;
@@ -112,7 +113,7 @@ impl CliBackend {
     }
 
     /// [`GitBackend::config_values`](project_engine::GitBackend::config_values): `git config
-    /// -z --get-all`, valori non UTF-8 convertiti con `from_utf8_lossy`.
+    /// -z --get-all`, non-UTF-8 values converted with `from_utf8_lossy`.
     pub(super) fn config_all(&self, key: &str) -> Result<Vec<String>, EngineError> {
         let args = ["config", "-z", "--get-all", "--end-of-options", key];
         let out = self.git.output(Some(&self.workdir), &args)?;
@@ -130,26 +131,26 @@ impl CliBackend {
             .collect())
     }
 
-    /// Prima di integrare l'upstream nel branch attivo: i file che il pull porterebbe nel
-    /// worktree e che HEAD non ha (`diff-tree --diff-filter=A HEAD <upstream>`) non devono
-    /// esistere nel worktree, né come file né al posto di una loro cartella: sarebbero non
-    /// tracciati o ignorati, e git sovrascrive (o, con un merge annullato, cancella) gli
-    /// ignorati senza dirlo. Il rebase non ha `--no-overwrite-ignore`; per fast-forward e merge
-    /// è una seconda difesa. Altrimenti [`EngineError::NotAllowed`] con i file.
+    /// Before integrating the upstream into the active branch: the files the pull would bring into the
+    /// worktree and that HEAD does not have (`diff-tree --diff-filter=A HEAD <upstream>`) must not
+    /// exist in the worktree, neither as a file nor in place of one of their folders: they would be
+    /// untracked or ignored, and git overwrites (or, with an aborted merge, deletes) ignored
+    /// files without saying so. The rebase has no `--no-overwrite-ignore`; for fast-forward and merge
+    /// it is a second defence. Otherwise [`EngineError::NotAllowed`] with the files.
     ///
-    /// Con `replay` (rebase) contano anche i file toccati da ognuno dei commit da riapplicare
-    /// (`git log -m --no-renames --name-only <upstream>..HEAD`, merge compresi per
-    /// `--rebase-merges`) che HEAD non ha: il rebase passa per gli alberi intermedi, e un file
-    /// aggiunto da un commit e tolto da uno successivo (o rinominato, o tolto e ricreato), o
-    /// modificato da un commit locale ma tolto dall'upstream (conflitto modify/delete, poi
-    /// `rebase --abort`), verrebbe scritto e poi cancellato, portandosi via quello ignorato al
-    /// suo posto.
+    /// With `replay` (rebase) the files touched by each of the commits to replay also count
+    /// (`git log -m --no-renames --name-only <upstream>..HEAD`, merges included for
+    /// `--rebase-merges`) that HEAD does not have: the rebase goes through the intermediate trees, and a file
+    /// added by one commit and removed by a later one (or renamed, or removed and recreated), or
+    /// modified by a local commit but removed by the upstream (modify/delete conflict, then
+    /// `rebase --abort`), would be written and then deleted, taking with it the ignored file in
+    /// its place.
     pub(super) fn check_incoming_paths(
         &self,
         head: &Oid,
         upstream: &Oid,
         replay: bool,
-        what: &str,
+        what: Message,
     ) -> Result<(), EngineError> {
         let (from, to) = (head.to_string(), upstream.to_string());
         let args = [
@@ -204,13 +205,13 @@ impl CliBackend {
         self.check_paths_free(&paths, what)
     }
 
-    /// [`EngineError::NotAllowed`] se uno dei percorsi `paths`, che l'operazione `what`
-    /// scriverebbe, esiste nel worktree come non tracciato o ignorato (o al posto di una delle
-    /// sue cartelle c'è un file): git lo sovrascriverebbe.
+    /// [`EngineError::NotAllowed`] if one of the paths `paths`, which the operation `what`
+    /// would write, exists in the worktree as untracked or ignored (or a file stands in place of one of
+    /// its folders): git would overwrite it.
     pub(super) fn check_paths_free(
         &self,
         paths: &[Vec<u8>],
-        what: &str,
+        what: Message,
     ) -> Result<(), EngineError> {
         let mut hit = Vec::new();
         for path in paths {
@@ -231,11 +232,10 @@ impl CliBackend {
         if hit.is_empty() {
             return Ok(());
         }
-        Err(EngineError::NotAllowed(format!(
-            "{what} porterebbe file che ora esistono nel worktree come non tracciati o ignorati \
-             ({}): git li sovrascriverebbe. Il branch non è stato toccato; spostarli o \
-             rinominarli e riprovare",
-            hit.join(", ")
+        Err(EngineError::NotAllowed(msg!(
+            "engine-pull-incoming-untracked",
+            what = what,
+            files = hit.join(", ")
         )))
     }
 
@@ -273,7 +273,7 @@ impl CliBackend {
         Ok(parse_log(&self.run(&args)?)?)
     }
 
-    /// Toglie il backup `name` (solo se punta ancora a `oid`): il pull non ha cambiato niente.
+    /// Removes the backup `name` (only if it still points to `oid`): the pull changed nothing.
     fn drop_backup(&self, name: &str, oid: &Oid) {
         let oid = oid.to_string();
         let _ = self
@@ -291,25 +291,20 @@ impl CliBackend {
         let full = branch_ref(&request.branch);
         let on_head = self.head_ref_name()?.as_deref() == Some(full.as_str());
         if on_head != request.current {
-            return Err(EngineError::NotAllowed(
-                "HEAD è cambiata mentre si preparava il pull: niente modificato, riprovare"
-                    .to_owned(),
-            ));
+            return Err(EngineError::NotAllowed(msg!("engine-pull-head-moved")));
         }
         if !request.current {
             if request.mode != PullMode::FastForward {
-                return Err(EngineError::NotAllowed(format!(
-                    "`{}` non è il branch attivo: si può solo fare fast-forward, niente \
-                     modificato",
-                    request.branch.escape_debug()
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-not-current-ff",
+                    branch = request.branch.escape_debug()
                 )));
             }
             if let Some(path) = self.checked_out_elsewhere(&full)? {
-                return Err(EngineError::NotAllowed(format!(
-                    "`{}` è il branch attivo del worktree `{}`: il pull va fatto lì, niente \
-                     modificato",
-                    request.branch.escape_debug(),
-                    path.display()
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-other-worktree",
+                    branch = request.branch.escape_debug(),
+                    worktree = path.display()
                 )));
             }
         }
@@ -317,54 +312,61 @@ impl CliBackend {
         if request.current {
             self.check_assume_unchanged(&Some(request.expected), &request.upstream)?;
             let replay = matches!(request.mode, PullMode::Rebase { .. });
-            self.check_incoming_paths(&request.expected, &request.upstream, replay, "il pull")?;
+            self.check_incoming_paths(
+                &request.expected,
+                &request.upstream,
+                replay,
+                msg!("engine-merge-what-pull"),
+            )?;
         }
         let expected = request.expected.to_string();
         let upstream = request.upstream.to_string();
         let backup = self.create_backup_ref(
             "pull",
             &expected,
-            &format!("project: backup di {full} prima di remote.pull"),
+            &format!("project: backup of {full} before remote.pull"),
         )?;
         let result = self.integrate(request, &full, &expected, &upstream);
         match result {
             Ok(None) => {}
             Ok(Some(Stopped { conflicts, message })) => {
-                // Merge fermo: resta in corso, il branch non si è mosso e il backup resta. Gli
-                // stessi controlli del merge riuscito, come avvisi: il merge in corso deve
-                // essere quello dell'upstream su questo branch.
+                // Stopped merge: stays in progress, the branch has not moved and the backup stays. The
+                // same checks as a successful merge, as warnings: the merge in progress must
+                // be the upstream's on this branch.
                 let mut warnings = Vec::new();
                 if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
-                    warnings.push(format!(
-                        "dopo il pull HEAD non è più su `{full}`: un hook o un altro processo \
-                         l'ha cambiata; controllare HEAD prima di continuare il merge"
-                    ));
+                    warnings.push(msg!("engine-pull-head-moved-merge", full = full));
                 }
                 let now = self.ref_value(&full)?;
                 if now != Some(request.expected) {
-                    warnings.push(format!(
-                        "`{full}` vale {} invece di {}: un hook o un altro processo l'ha \
-                         spostato; il branch com'era è in `{backup}`",
-                        now.map_or_else(|| "niente".to_owned(), |o| o.to_string()),
-                        request.expected
+                    warnings.push(msg!(
+                        "engine-pull-branch-moved",
+                        full = full,
+                        now = now.map_or_else(
+                            || msg!("engine-nothing"),
+                            |o| Message::plain(o.to_string())
+                        ),
+                        expected = request.expected,
+                        backup = backup
                     ));
                 }
                 let incoming = self.read_operation_state().incoming;
                 if incoming != [request.upstream] {
-                    warnings.push(format!(
-                        "il merge in corso unisce {} invece di `{}` ({}): un hook o un altro \
-                         processo l'ha cambiato; controllarlo prima di continuarlo",
-                        if incoming.is_empty() {
-                            "niente".to_owned()
+                    warnings.push(msg!(
+                        "engine-pull-merging-other",
+                        incoming = if incoming.is_empty() {
+                            msg!("engine-nothing")
                         } else {
-                            incoming
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ")
+                            Message::plain(
+                                incoming
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            )
                         },
-                        request.upstream_name,
-                        request.upstream
+                        name = request.upstream_name,
+                        upstream = request.upstream
                     ));
                 }
                 return Ok(PullOutcome {
@@ -377,49 +379,49 @@ impl CliBackend {
                 });
             }
             Err(e) => {
-                // Niente cambiato: il backup non serve (si toglie solo se il branch è com'era e
-                // non è rimasta un'operazione in corso, es. un `rebase --abort` non riuscito).
+                // Nothing changed: the backup is not needed (removed only if the branch is as it was and
+                // no operation is left in progress, e.g. a failed `rebase --abort`).
                 let now = self.ref_value(&full)?;
                 let in_progress = self.operation().is_some();
                 if now == Some(request.expected) && !in_progress {
                     self.drop_backup(&backup, &request.expected);
                     return Err(e);
                 }
-                // Qualcosa è cambiato nonostante l'errore: il backup resta e l'errore lo dice;
-                // niente nel diario (non è il risultato atteso del pull).
+                // Something changed despite the error: the backup stays and the error says so;
+                // nothing in the journal (it is not the expected result of the pull).
                 let note = if in_progress {
-                    format!(
-                        "il repository è rimasto in un'operazione in corso; il branch com'era è \
-                         in `{backup}`"
-                    )
+                    msg!("engine-pull-note-in-progress", backup = backup)
                 } else {
-                    format!(
-                        "`{full}` però si è spostato da {} a {}: git ha scritto qualcosa prima \
-                         di fallire. Il pull non entra nel diario; il branch com'era è in \
-                         `{backup}`",
-                        request.expected,
-                        now.map_or_else(|| "niente".to_owned(), |o| o.to_string())
+                    msg!(
+                        "engine-pull-note-moved",
+                        full = full,
+                        from = request.expected,
+                        to = match now {
+                            Some(o) => msg!("engine-other", text = o.to_string()),
+                            None => msg!("engine-remote-head-none"),
+                        },
+                        backup = backup
                     )
                 };
                 return Err(with_note(e, &note));
             }
         }
-        let after = self.ref_value(&full)?.ok_or_else(|| EngineError::Git {
-            command: "merge".to_owned(),
-            stderr: format!("dopo il pull `{full}` non esiste più"),
-        })?;
+        let after = self
+            .ref_value(&full)?
+            .ok_or_else(|| EngineError::GitWithReason {
+                command: "merge".to_owned(),
+                reason: msg!("engine-pull-branch-gone", full = full),
+            })?;
         let mut warnings = Vec::new();
         if request.current && self.head_ref_name()?.as_deref() != Some(full.as_str()) {
-            warnings.push(format!(
-                "dopo il pull HEAD non è più su `{full}`: un hook o un altro processo l'ha \
-                 cambiata; controllare HEAD prima di continuare"
-            ));
+            warnings.push(msg!("engine-pull-head-moved-after", full = full));
         }
         if !self.is_ancestor(&request.upstream, &after)? {
-            warnings.push(format!(
-                "dopo il pull `{full}` ({after}) non contiene `{}`: un hook o un altro processo \
-                 ha spostato il branch durante l'operazione",
-                request.upstream_name
+            warnings.push(msg!(
+                "engine-pull-upstream-missing",
+                full = full,
+                after = after,
+                name = request.upstream_name
             ));
         }
         Ok(PullOutcome {
@@ -432,8 +434,8 @@ impl CliBackend {
         })
     }
 
-    /// L'integrazione vera e propria (vedi il modulo): `Ok(None)` se il branch è stato
-    /// spostato, `Ok(Some(..))` se il merge è fermo e resta in corso.
+    /// The actual integration (see the module): `Ok(None)` if the branch was
+    /// moved, `Ok(Some(..))` if the merge is stopped and stays in progress.
     fn integrate(
         &self,
         request: &PullRequest,
@@ -449,7 +451,7 @@ impl CliBackend {
         let base = ["-c", "core.fsmonitor=false"];
         match (request.mode, request.current) {
             (PullMode::FastForward, false) => {
-                let reflog = format!("{REFLOG_ACTION}: fast-forward su {upstream}");
+                let reflog = format!("{REFLOG_ACTION}: fast-forward onto {upstream}");
                 let args = ["update-ref", "-m", &reflog, full, upstream, expected];
                 let out = self.git.output(Some(&self.workdir), &args)?;
                 if !out.status.success() {
@@ -476,7 +478,8 @@ impl CliBackend {
                 match out {
                     None => Ok(None),
                     Some(EngineError::Git { stderr, .. }) => Err(overwrite_error(
-                        &stderr, "il pull",
+                        &stderr,
+                        msg!("engine-merge-what-pull"),
                     )
                     .unwrap_or(EngineError::Git {
                         command: "merge".to_owned(),
@@ -494,9 +497,9 @@ impl CliBackend {
                         .join(format!("project-merge-msg-{}-{nanos}", std::process::id())),
                 );
                 std::fs::write(&file.0, request.message.as_bytes()).map_err(|e| {
-                    EngineError::Git {
+                    EngineError::GitWithReason {
                         command: "merge".to_owned(),
-                        stderr: format!("messaggio del merge non scritto: {e}"),
+                        reason: msg!("engine-merge-message-not-written", error = e),
                     }
                 })?;
                 let mut args: Vec<&OsStr> = [
@@ -514,7 +517,7 @@ impl CliBackend {
                 .into_iter()
                 .map(OsStr::new)
                 .collect();
-                // Il percorso come `OsStr`: la cartella git può non essere UTF-8.
+                // The path as `OsStr`: the git folder may not be UTF-8.
                 args.push(file.0.as_os_str());
                 args.extend(["--end-of-options", upstream].map(OsStr::new));
                 self.run_stopping(request, &args, &env, PullOperation::Merge)
@@ -539,9 +542,9 @@ impl CliBackend {
         }
     }
 
-    /// Esegue un merge o un rebase. Un merge fermo (conflitto, hook, firma) resta in corso:
-    /// `Ok(Some(..))` con i file in conflitto. Un rebase fermo si annulla e l'errore è
-    /// [`EngineError::PullConflict`] con i file in conflitto, altrimenti quello di git.
+    /// Runs a merge or a rebase. A stopped merge (conflict, hook, signing) stays in progress:
+    /// `Ok(Some(..))` with the conflicted files. A stopped rebase is aborted and the error is
+    /// [`EngineError::PullConflict`] with the conflicted files, otherwise git's own.
     fn run_stopping(
         &self,
         request: &PullRequest,
@@ -566,9 +569,9 @@ impl CliBackend {
                 | (PullOperation::Rebase, Some(Operation::Rebase))
         );
         if !in_progress {
-            // Niente è partito (es. un file non tracciato che verrebbe sovrascritto): git non ha
-            // scritto niente.
-            if let Some(error) = overwrite_error(&text, "il pull") {
+            // Nothing started (e.g. an untracked file that would be overwritten): git wrote
+            // nothing.
+            if let Some(error) = overwrite_error(&text, msg!("engine-merge-what-pull")) {
                 return Err(error);
             }
             return Err(EngineError::Git {
@@ -578,8 +581,8 @@ impl CliBackend {
         }
         let conflicts = self.stopped_conflicts(&text);
         if operation == PullOperation::Merge {
-            // Come `merge.start`: il merge resta in corso, si conclude con `merge.continue` o si
-            // annulla con `merge.abort` (il worktree era pulito: torna com'era).
+            // Like `merge.start`: the merge stays in progress, it is finished with `merge.continue` or
+            // aborted with `merge.abort` (the worktree was clean: it goes back as it was).
             return Ok(Some(Stopped {
                 conflicts,
                 message: text,
@@ -592,21 +595,25 @@ impl CliBackend {
             .git
             .output_with_input_env(Some(&self.workdir), &abort, b"", env)?;
         if !aborted.status.success() || self.operation().is_some() {
-            return Err(EngineError::Git {
+            return Err(EngineError::GitWithReason {
                 command: operation.to_string(),
-                stderr: format!(
-                    "il {operation} dell'upstream si è fermato ({text}) e `git {operation} \
-                     --abort` non è riuscito ({}): il repository è ancora nel {operation} in \
-                     corso",
-                    String::from_utf8_lossy(&aborted.stderr).trim()
+                reason: msg!(
+                    "engine-pull-abort-failed",
+                    operation = operation,
+                    text = text,
+                    stderr = String::from_utf8_lossy(&aborted.stderr).trim()
                 ),
             });
         }
         if files.is_empty() {
-            // Fermo per un altro motivo (hook, firma, commit vuoto): annullato.
-            return Err(EngineError::Git {
+            // Stopped for another reason (hook, signing, empty commit): aborted.
+            return Err(EngineError::GitWithReason {
                 command: operation.to_string(),
-                stderr: format!("{text}\n(il {operation} è stato annullato, niente modificato)"),
+                reason: msg!(
+                    "engine-pull-aborted",
+                    text = text,
+                    operation = operation.to_string()
+                ),
             });
         }
         Err(EngineError::PullConflict {
@@ -622,10 +629,10 @@ impl CliBackend {
         })
     }
 
-    /// I file in conflitto di un merge o rebase fermo: quelli ancora non uniti nello stato e
-    /// quelli che git ha detto in conflitto nell'output `text` (anche se `rerere.autoUpdate` li
-    /// ha già risolti e messi in stage con una risoluzione registrata: l'operazione è comunque
-    /// ferma e va conclusa a mano). Usato anche da `merge.start`.
+    /// The conflicted files of a stopped merge or rebase: those still unmerged in the status and
+    /// those git reported as conflicted in the output `text` (even if `rerere.autoUpdate` already
+    /// resolved and staged them with a recorded resolution: the operation is still
+    /// stopped and must be finished by hand). Also used by `merge.start`.
     pub(super) fn stopped_conflicts(&self, text: &str) -> Vec<RepoPath> {
         let mut files: Vec<RepoPath> = self
             .status_for_write()
@@ -655,8 +662,8 @@ impl CliBackend {
             _ => return Err(invalid(request)),
         };
         self.check_expected(request)?;
-        // File che `reset --keep` ricreerebbe (in `target`, non in `expected`): niente deve
-        // esserci al loro posto nel worktree (un file ignorato sarebbe sovrascritto).
+        // Files that `reset --keep` would recreate (in `target`, not in `expected`): nothing must
+        // be in their place in the worktree (an ignored file would be overwritten).
         let (from, to) = (expected.to_string(), target.to_string());
         let args = [
             "diff-tree",
@@ -677,11 +684,10 @@ impl CliBackend {
             .map(|p| format!("`{}`", String::from_utf8_lossy(p)))
             .collect();
         if !present.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "`{}` ricreerebbe file che ora esistono nel worktree come non tracciati o \
-                 ignorati ({}): niente modificato; spostarli e riprovare",
-                request.command,
-                present.join(", ")
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pull-undo-untracked",
+                command = request.command,
+                files = present.join(", ")
             )));
         }
         self.check_assume_unchanged(&Some(expected), &target)?;
@@ -702,11 +708,12 @@ impl CliBackend {
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
             if stderr.contains("would be overwritten") || stderr.contains("not uptodate") {
-                return Err(EngineError::NotAllowed(format!(
-                    "`{}` riporterebbe `{name}` a {to} ma sovrascriverebbe modifiche locali: \
-                     niente modificato; committarle o metterle da parte e riprovare ({})",
-                    request.command,
-                    stderr.trim()
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-undo-overwrite-git",
+                    command = request.command,
+                    name = name,
+                    to = to,
+                    stderr = stderr.trim()
                 )));
             }
             return Err(failure(&args, &out));
@@ -714,21 +721,22 @@ impl CliBackend {
         let mut warnings = Vec::new();
         match self.ref_value(&name)? {
             Some(now) if now == target => {}
-            now => warnings.push(format!(
-                "dopo `{}` `{name}` vale {} invece di {target}: un altro processo l'ha spostato \
-                 durante l'operazione",
-                request.command,
-                now.map_or_else(|| "niente".to_owned(), |o| o.to_string())
+            now => warnings.push(msg!(
+                "engine-ref-moved-after",
+                command = request.command,
+                name = name,
+                now = now.map_or_else(|| msg!("engine-nothing"), |o| Message::plain(o.to_string())),
+                target = target
             )),
         }
         Ok(RestoreOutcome { backups, warnings })
     }
 }
 
-/// Aggiunge a `files` (i percorsi dallo stato, byte esatti) i nomi che git ha detto in conflitto
-/// nell'output (testo convertito con `from_utf8_lossy`): solo quelli che nessun percorso dello
-/// stato ha già, confrontando il testo convertito. Così un nome non UTF-8 non compare due volte
-/// (una con i byte veri, una con i caratteri sostituiti).
+/// Adds to `files` (the paths from the status, exact bytes) the names git reported as conflicted
+/// in the output (text converted with `from_utf8_lossy`): only those that no path of the
+/// status already has, comparing the converted text. So a non-UTF-8 name does not appear twice
+/// (once with the real bytes, once with the replaced characters).
 fn add_output_conflicts(files: &mut Vec<RepoPath>, output: Vec<String>) {
     for file in output {
         if !files.iter().any(|p| p.to_string() == file) {
@@ -737,30 +745,36 @@ fn add_output_conflicts(files: &mut Vec<RepoPath>, output: Vec<String>) {
     }
 }
 
-/// `e` con in fondo `note` (che dice cosa è rimasto cambiato e dov'è il backup): nel testo di git
-/// o nel motivo del rifiuto; gli altri errori diventano [`EngineError::Git`] con il loro testo.
-fn with_note(e: EngineError, note: &str) -> EngineError {
+/// `e` with `note` appended (which says what stayed changed and where the backup is): in git's text
+/// or in the refusal reason; other errors become [`EngineError::Git`] with their text.
+fn with_note(e: EngineError, note: &Message) -> EngineError {
     match e {
-        EngineError::Git { command, stderr } => EngineError::Git {
+        EngineError::Git { command, stderr } => EngineError::GitWithReason {
             command,
-            stderr: format!("{stderr}\n({note})"),
+            reason: msg!("engine-note-newline", text = stderr, note = note),
         },
-        EngineError::NotAllowed(reason) => EngineError::NotAllowed(format!("{reason} ({note})")),
-        other => EngineError::Git {
+        EngineError::GitWithReason { command, reason } => EngineError::GitWithReason {
+            command,
+            reason: msg!("engine-note-newline", text = reason, note = note),
+        },
+        EngineError::NotAllowed(reason) => {
+            EngineError::NotAllowed(msg!("engine-note-paren", text = reason, note = note))
+        }
+        other => EngineError::GitWithReason {
             command: "remote.pull".to_owned(),
-            stderr: format!("{other} ({note})"),
+            reason: msg!("engine-note-paren", text = other, note = note),
         },
     }
 }
 
-/// Un merge del pull fermo e rimasto in corso: i file in conflitto e il testo di git.
+/// A pull merge that stopped and stayed in progress: the conflicted files and git's text.
 struct Stopped {
     conflicts: Vec<RepoPath>,
     message: String,
 }
 
-/// I file che l'output di merge/rebase dice in conflitto: `CONFLICT (...): Merge conflict in
-/// <file>` e, con `rerere`, `Resolved '<file>' using previous resolution.` / `Staged '<file>'
+/// The files the merge/rebase output reports as conflicted: `CONFLICT (...): Merge conflict in
+/// <file>` and, with `rerere`, `Resolved '<file>' using previous resolution.` / `Staged '<file>'
 /// using previous resolution.`.
 pub(super) fn conflicted_in_output(text: &str) -> Vec<String> {
     let mut files = Vec::new();
@@ -783,15 +797,15 @@ pub(super) fn conflicted_in_output(text: &str) -> Vec<String> {
 }
 
 fn invalid(request: &RefRestore) -> EngineError {
-    EngineError::NotAllowed(format!(
-        "`{}`: voce del diario non valida per il branch attivo, niente modificato",
-        request.command
+    EngineError::NotAllowed(msg!(
+        "engine-pull-undo-bad-entry",
+        command = request.command
     ))
 }
 
-/// [`EngineError::NotAllowed`] se git ha rifiutato perché sovrascriverebbe modifiche locali o
-/// file non tracciati (prima di scrivere: niente è cambiato), con i file (righe con il tab).
-pub(super) fn overwrite_error(stderr: &str, what: &str) -> Option<EngineError> {
+/// [`EngineError::NotAllowed`] if git refused because it would overwrite local changes or
+/// untracked files (before writing: nothing changed), with the files (lines with the tab).
+pub(super) fn overwrite_error(stderr: &str, what: Message) -> Option<EngineError> {
     if !(stderr.contains("would be overwritten by")
         || stderr.contains("would be removed by")
         || stderr.contains("would lose untracked files"))
@@ -803,10 +817,10 @@ pub(super) fn overwrite_error(stderr: &str, what: &str) -> Option<EngineError> {
         .filter_map(|l| l.strip_prefix('\t'))
         .map(|f| format!("`{f}`"))
         .collect();
-    Some(EngineError::NotAllowed(format!(
-        "{what} sovrascriverebbe modifiche locali o file non tracciati ({}): committarli, \
-         metterli da parte o spostarli e riprovare; il branch non è stato toccato",
-        files.join(", ")
+    Some(EngineError::NotAllowed(msg!(
+        "engine-pull-overwrite-what",
+        what = what,
+        files = files.join(", ")
     )))
 }
 
@@ -831,14 +845,20 @@ mod tests {
         let e = with_note(
             EngineError::Git {
                 command: "rebase".into(),
-                stderr: "fermo".into(),
+                stderr: "stopped".into(),
             },
-            "backup in `refs/project/backup/pull-1`",
+            &msg!(
+                "engine-other",
+                text = "backup in `refs/project/backup/pull-1`"
+            ),
         );
         assert!(e.to_string().contains("refs/project/backup/pull-1"), "{e}");
-        let e = with_note(EngineError::NotAllowed("no".into()), "nota");
+        let e = with_note(
+            EngineError::NotAllowed(msg!("engine-other", text = "no")),
+            &msg!("engine-other", text = "note"),
+        );
         assert!(
-            matches!(&e, EngineError::NotAllowed(m) if m == "no (nota)"),
+            matches!(&e, EngineError::NotAllowed(m) if m.to_string() == "no (note)"),
             "{e}"
         );
     }

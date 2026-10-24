@@ -1,31 +1,31 @@
-//! Parser dell'output di `git diff-tree` nel formato `--raw -z`: i file cambiati da un commit.
+//! Parser for the output of `git diff-tree` in the `--raw -z` format: the files changed by a commit.
 //!
-//! # Formato
+//! # Format
 //!
-//! Con [`DIFF_TREE_ARGS`] ogni file cambiato è un record di due o tre campi, ciascuno
-//! **terminato** da un NUL:
+//! With [`DIFF_TREE_ARGS`] every changed file is a record of two or three fields, each
+//! **terminated** by a NUL:
 //!
 //! ```text
-//! :<modo vecchio> <modo nuovo> <id vecchio> <id nuovo> <stato>[<punteggio>] \0 <percorso> \0
-//! :<modo vecchio> <modo nuovo> <id vecchio> <id nuovo> R<punteggio> \0 <origine> \0 <destinazione> \0
+//! :<old mode> <new mode> <old id> <new id> <status>[<score>] \0 <path> \0
+//! :<old mode> <new mode> <old id> <new id> R<score> \0 <source> \0 <destination> \0
 //! ```
 //!
-//! Comportamento verificato con git 2.43:
+//! Behavior verified with git 2.43:
 //!
-//! - i modi sono in ottale a sei cifre, `000000` per il lato che non esiste (file aggiunto o
-//!   eliminato); gli id sono completi (con `--no-abbrev`), tutti zeri per il lato che non esiste;
-//! - lo stato è una lettera: `A` aggiunto, `D` eliminato, `M` modificato (anche solo nel modo, es.
-//!   reso eseguibile), `T` cambiato il tipo (es. da file a link simbolico), `R` rinominato e `C`
-//!   copiato. `R` e `C` sono seguiti dalla somiglianza in percentuale e hanno due percorsi:
-//!   prima l'origine, poi la destinazione. Le copie compaiono solo con `-C`, che
-//!   [`DIFF_TREE_ARGS`] non usa; il parser le legge comunque;
-//! - con `-z` i percorsi non sono mai tra virgolette né con escape: possono contenere spazi, a
-//!   capo e byte non UTF-8, e restano byte esatti in [`RepoPath`];
-//! - `-r` scende nelle sottocartelle: un record per file, mai per cartella. Un sottomodulo è un
-//!   record con modo `160000`;
-//! - un commit che non cambia niente (es. `--allow-empty`) dà un output vuoto;
-//! - senza `--no-commit-id`, con un solo commit come argomento, git scrive prima l'id del commit
-//!   seguito da un NUL: [`DIFF_TREE_ARGS`] lo esclude.
+//! - modes are six-digit octal, `000000` for the side that does not exist (added or
+//!   deleted file); ids are full (with `--no-abbrev`), all zeros for the side that does not exist;
+//! - the status is a letter: `A` added, `D` deleted, `M` modified (even only in mode, e.g.
+//!   made executable), `T` type changed (e.g. from file to symbolic link), `R` renamed and `C`
+//!   copied. `R` and `C` are followed by the similarity as a percentage and have two paths:
+//!   first the source, then the destination. Copies appear only with `-C`, which
+//!   [`DIFF_TREE_ARGS`] does not use; the parser reads them anyway;
+//! - with `-z` paths are never quoted or escaped: they may contain spaces,
+//!   newlines and non-UTF-8 bytes, and stay exact bytes in [`RepoPath`];
+//! - `-r` descends into subfolders: one record per file, never per folder. A submodule is a
+//!   record with mode `160000`;
+//! - a commit that changes nothing (e.g. `--allow-empty`) gives an empty output;
+//! - without `--no-commit-id`, with a single commit as argument, git first writes the commit id
+//!   followed by a NUL: [`DIFF_TREE_ARGS`] excludes it.
 
 use super::log::parse_digits;
 use super::status::{mode, oid, show};
@@ -33,97 +33,98 @@ use super::{Change, Commit, Oid, RepoPath};
 use crate::DomainError;
 use serde::{Deserialize, Serialize};
 
-/// Argomenti obbligatori di `git diff-tree` per produrre l'input di [`parse_diff_tree`].
+/// Mandatory arguments of `git diff-tree` to produce the input of [`parse_diff_tree`].
 ///
-/// Chi chiama aggiunge le due revisioni da confrontare (`<genitore> <commit>`), oppure
-/// `--root <commit>` per un commit senza genitori (confronto con l'albero vuoto); non vanno
-/// aggiunte opzioni che cambiano il formato, come `--name-status`, `--stat` o `--patch`.
+/// The caller adds the two revisions to compare (`<parent> <commit>`), or
+/// `--root <commit>` for a commit without parents (comparison with the empty tree); options that
+/// change the format must not be added, such as `--name-status`, `--stat` or `--patch`.
 ///
-/// - `-z`: record terminati da NUL e percorsi senza virgolette né escape;
-/// - `-r`: un record per file anche dentro le sottocartelle;
-/// - `--raw`: modi, id e stato per ogni file;
-/// - `--no-abbrev`: id completi;
-/// - `-M`: rinomine riconosciute (`diff-tree` non legge `diff.renames` dalla configurazione);
-/// - `--no-commit-id`: niente id del commit in testa all'output.
+/// - `-z`: NUL-terminated records and paths without quotes or escapes;
+/// - `-r`: one record per file also inside subfolders;
+/// - `--raw`: modes, ids and status for each file;
+/// - `--no-abbrev`: full ids;
+/// - `-M`: renames recognized (`diff-tree` does not read `diff.renames` from the configuration);
+/// - `--no-commit-id`: no commit id at the head of the output.
 pub const DIFF_TREE_ARGS: &[&str] = &["-z", "-r", "--raw", "--no-abbrev", "-M", "--no-commit-id"];
 
-/// Un file cambiato da un commit rispetto al genitore con cui è confrontato.
+/// A file changed by a commit relative to the parent it is compared with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangedFile {
-    /// Percorso nel commit (per un file eliminato, quello che aveva prima; per una rinomina o
-    /// una copia, la destinazione).
+    /// Path in the commit (for a deleted file, the one it had before; for a rename or
+    /// a copy, the destination).
     pub path: RepoPath,
-    /// Il tipo di modifica: solo [`Change::Added`], [`Change::Deleted`], [`Change::Modified`],
-    /// [`Change::TypeChanged`], [`Change::Renamed`] o [`Change::Copied`].
+    /// The kind of change: only [`Change::Added`], [`Change::Deleted`], [`Change::Modified`],
+    /// [`Change::TypeChanged`], [`Change::Renamed`] or [`Change::Copied`].
     pub change: Change,
-    /// Solo per rinomine e copie: il percorso di partenza.
+    /// Only for renames and copies: the source path.
     pub original: Option<RepoPath>,
-    /// Somiglianza in percentuale (0–100) per rinomine e copie; `None` per gli altri stati.
+    /// Similarity as a percentage (0–100) for renames and copies; `None` for the other statuses.
     pub score: Option<u8>,
-    /// Modo prima del commit, in ottale (es. `0o100644`, `0o100755`, `0o120000` per un link,
-    /// `0o160000` per un sottomodulo); `0` se il file non esisteva.
+    /// Mode before the commit, in octal (e.g. `0o100644`, `0o100755`, `0o120000` for a link,
+    /// `0o160000` for a submodule); `0` if the file did not exist.
     pub old_mode: u32,
-    /// Modo dopo il commit; `0` se il file è stato eliminato.
+    /// Mode after the commit; `0` if the file was deleted.
     pub new_mode: u32,
-    /// Id del contenuto prima del commit; tutti zeri se il file non esisteva.
+    /// Id of the content before the commit; all zeros if the file did not exist.
     pub old_oid: Oid,
-    /// Id del contenuto dopo il commit; tutti zeri se il file è stato eliminato.
+    /// Id of the content after the commit; all zeros if the file was deleted.
     pub new_oid: Oid,
 }
 
 impl ChangedFile {
-    /// Percorso prima del commit: l'origine per rinomine e copie, altrimenti [`Self::path`].
+    /// Path before the commit: the source for renames and copies, otherwise [`Self::path`].
     pub fn old_path(&self) -> &RepoPath {
         self.original.as_ref().unwrap_or(&self.path)
     }
 
-    /// Vero se il percorso è un sottomodulo (modo `160000`) prima o dopo il commit.
+    /// True if the path is a submodule (mode `160000`) before or after the commit.
     pub fn is_submodule(&self) -> bool {
         const GITLINK: u32 = 0o160000;
         self.old_mode == GITLINK || self.new_mode == GITLINK
     }
 }
 
-/// Dettagli di un commit: metadati e file cambiati (risultato di `commit.show`).
+/// Details of a commit: metadata and changed files (result of `commit.show`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitDetails {
     pub commit: Commit,
-    /// Il commit con cui sono confrontati i file: il **primo genitore** (anche per un merge,
-    /// così i file sono quelli portati dal merge nel branch su cui è stato fatto); `None` per un
-    /// commit radice, confrontato con l'albero vuoto.
+    /// The commit the files are compared with: the **first parent** (also for a merge,
+    /// so the files are those brought by the merge into the branch it was made on); `None` for a
+    /// root commit, compared with the empty tree.
     pub compared_to: Option<Oid>,
-    /// File cambiati, nell'ordine di git (per percorso, byte per byte).
+    /// Changed files, in git's order (by path, byte by byte).
     pub files: Vec<ChangedFile>,
 }
 
-/// Legge l'output di `git diff-tree` prodotto con [`DIFF_TREE_ARGS`].
+/// Reads the output of `git diff-tree` produced with [`DIFF_TREE_ARGS`].
 ///
-/// Un input vuoto dà un vettore vuoto. Un input che non termina con NUL, con un record
-/// incompleto, uno stato sconosciuto o campi non validi dà [`DomainError::InvalidGitOutput`],
-/// con il numero del record (da 1) coinvolto.
+/// An empty input gives an empty vector. An input that does not end with NUL, with an
+/// incomplete record, an unknown status or invalid fields gives [`DomainError::InvalidGitOutput`],
+/// with the number of the record (from 1) involved.
 pub fn parse_diff_tree(input: &[u8]) -> Result<Vec<ChangedFile>, DomainError> {
     if input.is_empty() {
         return Ok(Vec::new());
     }
     let Some(body) = input.strip_suffix(b"\0") else {
         return Err(invalid(
-            "l'output non termina con NUL: è troncato o non è stato prodotto con `-z`".to_owned(),
+            "the output does not end with NUL: it is truncated or was not produced with `-z`"
+                .to_owned(),
         ));
     };
     let mut tokens = body.split(|&b| b == 0);
     let mut files = Vec::new();
     while let Some(header) = tokens.next() {
         let n = files.len() + 1;
-        let err = |reason: String| invalid(format!("record n. {n}: {reason}"));
+        let err = |reason: String| invalid(format!("record {n}: {reason}"));
         let mut next_path = |what: &str| match tokens.next() {
-            Some([]) => Err(err(format!("{what} vuoto"))),
+            Some([]) => Err(err(format!("empty {what}"))),
             Some(p) => Ok(RepoPath::from(p)),
-            None => Err(err(format!("manca {what}"))),
+            None => Err(err(format!("missing {what}"))),
         };
         let raw = parse_header(header).map_err(err)?;
-        let first = next_path("il percorso")?;
+        let first = next_path("path")?;
         let (path, original) = if matches!(raw.change, Change::Renamed | Change::Copied) {
-            (next_path("il percorso di destinazione")?, Some(first))
+            (next_path("destination path")?, Some(first))
         } else {
             (first, None)
         };
@@ -150,18 +151,18 @@ struct RawHeader {
     score: Option<u8>,
 }
 
-/// `:<mH> <mN> <hH> <hN> <stato>`.
+/// `:<mH> <mN> <hH> <hN> <status>`.
 fn parse_header(header: &[u8]) -> Result<RawHeader, String> {
     let Some(rest) = header.strip_prefix(b":") else {
         return Err(format!(
-            "`{}` non è un record `--raw` (deve iniziare con `:`)",
+            "`{}` is not a `--raw` record (it must start with `:`)",
             show(header)
         ));
     };
     let f: Vec<&[u8]> = rest.split(|&b| b == b' ').collect();
     let [old_mode, new_mode, old_oid, new_oid, status] = f[..] else {
         return Err(format!(
-            "intestazione `{}` con {} campi invece di 5",
+            "header `{}` with {} fields instead of 5",
             show(header),
             f.len()
         ));
@@ -175,20 +176,20 @@ fn parse_header(header: &[u8]) -> Result<RawHeader, String> {
                 b'T' => Change::TypeChanged,
                 b'R' => Change::Renamed,
                 b'C' => Change::Copied,
-                _ => return Err(format!("stato `{}` sconosciuto", show(status))),
+                _ => return Err(format!("unknown status `{}`", show(status))),
             };
             let needs_score = matches!(change, Change::Renamed | Change::Copied);
             let score = match (needs_score, score) {
                 (false, []) => None,
-                // `M` può avere una dissimilarità solo con `-B`, che non usiamo.
-                (false, _) => return Err(format!("stato `{}` inatteso", show(status))),
+                // `M` can have a dissimilarity only with `-B`, which we do not use.
+                (false, _) => return Err(format!("unexpected status `{}`", show(status))),
                 (true, digits) => Some(
                     parse_digits(digits)
                         .and_then(|v| u8::try_from(v).ok())
                         .filter(|v| *v <= 100)
                         .ok_or_else(|| {
                             format!(
-                                "`{}` non è un punteggio valido (atteso `{}<0-100>`)",
+                                "`{}` is not a valid score (expected `{}<0-100>`)",
                                 show(status),
                                 char::from(*letter)
                             )
@@ -197,13 +198,13 @@ fn parse_header(header: &[u8]) -> Result<RawHeader, String> {
             };
             (change, score)
         }
-        [] => return Err("stato vuoto".to_owned()),
+        [] => return Err("empty status".to_owned()),
     };
     Ok(RawHeader {
         old_mode: mode(old_mode)?,
         new_mode: mode(new_mode)?,
-        old_oid: oid(old_oid, "id vecchio")?,
-        new_oid: oid(new_oid, "id nuovo")?,
+        old_oid: oid(old_oid, "old id")?,
+        new_oid: oid(new_oid, "new id")?,
         change,
         score,
     })

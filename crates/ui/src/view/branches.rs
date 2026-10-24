@@ -1,9 +1,9 @@
 use super::*;
 
-/// Il dialogo dei branch aperto: nome (nuovo o rinomina), conferma dell'eliminazione,
-/// checkout rifiutato.
+/// The open branch dialog: name (new or rename), delete confirmation,
+/// refused checkout.
 pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut Vec<Action>) {
-    let modal = egui::Modal::new(egui::Id::unique("dialogo-branch")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("branch-dialog")).show(ctx, |ui| {
         ui.set_max_width(460.0);
         match dialog {
             Dialog::Name(dialog) => name_dialog(ui, dialog, actions),
@@ -41,8 +41,8 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
         }
     }
     ui.add_space(6.0);
-    let id = ui.make_persistent_id("nome-branch");
-    // Invio nel campo manda il nome: si legge prima del campo, che altrimenti lo prenderebbe.
+    let id = ui.make_persistent_id("branch-name");
+    // Enter in the field sends the name: read before the field, which would otherwise take it.
     let enter = ui.memory(|m| m.has_focus(id))
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let mut name = dialog.name.clone();
@@ -52,7 +52,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
         .desired_width(f32::INFINITY)
         .interactive(!dialog.sending);
     let response = ui.add(edit);
-    // Il campo prende la tastiera all'apertura.
+    // The field takes the keyboard on open.
     if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
         response.request_focus();
     }
@@ -116,7 +116,7 @@ pub(super) fn delete_dialog(
     });
 }
 
-/// Altezza massima dell'elenco dei file del checkout rifiutato; oltre si scorre.
+/// Maximum height of the file list of the refused checkout; beyond it scrolls.
 pub(super) const REFUSED_LIST_HEIGHT: f32 = 160.0;
 
 pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &mut Vec<Action>) {
@@ -128,7 +128,7 @@ pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &m
     ui.strong(tr!("branch-refused-files", n = n));
     let row = ui.text_style_height(&egui::TextStyle::Monospace);
     egui::ScrollArea::vertical()
-        .id_salt("checkout-file")
+        .id_salt("checkout-files")
         .max_height(REFUSED_LIST_HEIGHT)
         .auto_shrink([false, true])
         .show_rows(ui, row, n, |ui, range| {

@@ -1,9 +1,11 @@
-//! L5 — motore indipendente dalla UI.
+//! L5 — UI-independent engine.
 //!
-//! Ogni operazione sul repository passa da [`Registry::run`], usato allo stesso modo da UI,
-//! CLI, server MCP e test. I repository git si leggono tramite i trait [`GitBackend`] e
-//! [`RepoOpener`]; la [`Session`] tiene il repo aperto.
+//! Every operation on the repository goes through [`Registry::run`], used the same way by UI,
+//! CLI, MCP server and tests. Git repositories are read through the [`GitBackend`] and
+//! [`RepoOpener`] traits; the [`Session`] holds the open repo.
 
+#[macro_use]
+mod message;
 mod builtin;
 mod commands;
 mod git;
@@ -55,252 +57,352 @@ pub use git::{
 };
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
+pub use message::{Message, MessageArg, ToArg};
 pub use platform::{Capabilities, Picked, Platform};
 pub use project_core::Invocation;
+pub use project_i18n::Lang;
 pub use session::Session;
 
 use project_core::CoreError;
 use project_domain::{DomainError, Oid};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum EngineError {
-    #[error("comando sconosciuto: `{0}`")]
     UnknownCommand(String),
-    #[error("parametri non validi per `{id}`: {reason}")]
-    InvalidParams { id: &'static str, reason: String },
-    /// Al percorso non c'è un repository git (o non si riesce ad aprirlo).
-    #[error("`{path}` non è un repository git: {reason}")]
-    RepoNotFound { path: String, reason: String },
-    /// Il comando ha bisogno di un repo, ma la sessione non ne ha uno aperto.
-    #[error("nessun repository aperto: aprirne uno con `repo.open`")]
+    InvalidParams {
+        id: &'static str,
+        reason: Message,
+    },
+    /// There is no git repository at the path (or it cannot be opened).
+    RepoNotFound {
+        path: String,
+        reason: Message,
+    },
+    /// The command needs a repo, but the session has none open.
     NoRepo,
-    /// La rev non corrisponde a nessun ref né commit (o l'id abbreviato è ambiguo).
-    #[error("revisione sconosciuta: `{0}`")]
+    /// The rev matches no ref or commit (or the abbreviated id is ambiguous).
     UnknownRev(String),
-    /// Il programma `git` non si avvia (non installato o non nel `PATH`).
-    #[error("impossibile eseguire `git`: {0}")]
-    GitNotFound(String),
-    /// Il `git` installato è più vecchio della versione minima supportata.
-    #[error("git {found} non è supportato: serve almeno la versione {required}")]
-    GitTooOld { found: String, required: String },
-    /// Un comando git è terminato con errore; `stderr` è il suo messaggio.
-    #[error("`git {command}` non riuscito: {stderr}")]
+    /// The `git` program does not start (not installed or not in the `PATH`).
+    GitNotFound(Message),
+    /// The installed `git` is older than the minimum supported version.
+    GitTooOld {
+        found: String,
+        required: String,
+    },
+    /// A git command ended with an error; `stderr` is its message.
     Git {
-        /// Il sottocomando git, es. `status`.
+        /// The git subcommand, e.g. `status`.
         command: String,
         stderr: String,
     },
-    /// L'indice è bloccato da un altro processo git: il file `lock` (di solito
-    /// `.git/index.lock`) esiste. Non si riprova e non si cancella il lock: se nessun git è in
-    /// esecuzione è rimasto da un crash e va tolto a mano.
-    #[error(
-        "l'indice è bloccato: `{lock}` esiste. Un altro processo git sta lavorando sul repository; \
-         riprovare quando ha finito. Se nessun git è in esecuzione il file è rimasto da un crash \
-         e va rimosso a mano"
-    )]
-    IndexLocked { lock: String },
-    /// L'operazione è rifiutata nello stato attuale del repo (es. stage di un file ignorato,
-    /// unstage di un file in conflitto); niente è stato modificato.
-    #[error("operazione rifiutata: {0}")]
-    NotAllowed(String),
-    /// Il diff da cui vengono le righe scelte (`index.stage_lines`, `index.unstage_lines`) non
-    /// è più quello attuale: il file è cambiato da quando il diff è stato letto (o non ha più
-    /// modifiche). Niente è stato modificato; va riletto il diff e rifatta la selezione.
-    #[error(
-        "il diff di `{path}` non è più quello letto ({reason}): niente modificato, rileggere il \
-         diff e rifare la selezione"
-    )]
-    StaleDiff { path: String, reason: String },
-    /// `commit.create` senza niente da committare: l'indice è uguale a HEAD (o, su un branch
-    /// senza commit, è vuoto) e non c'è un merge in corso. Niente è stato modificato.
-    #[error(
-        "niente da committare: l'indice è uguale a HEAD. Mettere in stage le modifiche \
-         (`index.stage`), oppure usare `amend` per cambiare solo il messaggio dell'ultimo commit"
-    )]
+    /// Like [`EngineError::Git`], but the text is an engine explanation that contains git's
+    /// text (e.g. "undo applied the stash … but could not remove it from the list
+    /// (…)"): `Display` is the same as `Git`, with `reason` in place of `stderr`.
+    GitWithReason {
+        command: String,
+        reason: Message,
+    },
+    /// The index is locked by another git process: the `lock` file (usually
+    /// `.git/index.lock`) exists. It is not retried and the lock is not deleted: if no git is
+    /// running it was left over from a crash and must be removed by hand.
+    IndexLocked {
+        lock: String,
+    },
+    /// The operation is refused in the current state of the repo (e.g. stage of an ignored file,
+    /// unstage of a conflicted file); nothing was modified.
+    NotAllowed(Message),
+    /// The diff the chosen lines come from (`index.stage_lines`, `index.unstage_lines`) is no
+    /// longer the current one: the file changed since the diff was read (or no longer has
+    /// changes). Nothing was modified; the diff must be re-read and the selection redone.
+    StaleDiff {
+        path: String,
+        reason: Message,
+    },
+    /// `commit.create` with nothing to commit: the index equals HEAD (or, on a branch
+    /// without commits, is empty) and there is no merge in progress. Nothing was modified.
     NothingToCommit,
-    /// L'operazione può far perdere lavoro o riscrive qualcosa di già pubblicato e serve
-    /// `"confirm": true` nei parametri (§1). `reason` dice cosa succederebbe. Niente è stato
-    /// modificato.
-    #[error(
-        "`{command}` chiede una conferma: {reason}. Niente modificato; per procedere ripetere \
-         il comando con `\"confirm\": true`"
-    )]
+    /// The operation can lose work or rewrites something already published and needs
+    /// `"confirm": true` in the parameters (§1). `reason` says what would happen. Nothing was
+    /// modified.
     ConfirmRequired {
         command: &'static str,
-        reason: String,
-        /// L'id completo (40 cifre) da ripetere in `"expected"` per confermare: per il force di
-        /// `remote.push` (il branch remoto locale letto ora) e per `stash.drop` (lo stash da
-        /// eliminare), che è anche nel testo di `reason`; `None` per gli altri comandi.
+        reason: Message,
+        /// The full id (40 digits) to repeat in `"expected"` to confirm: for the force of
+        /// `remote.push` (the local remote-tracking branch read now) and for `stash.drop` (the stash to
+        /// delete), which is also in the text of `reason`; `None` for the other commands.
         expected: Option<String>,
     },
-    /// Il commit è **riuscito**, ma dopo qualcosa non torna: HEAD spostato da un hook
-    /// `post-commit` o da un altro processo, `previous` non verificabile, stato non rileggibile.
-    /// Non va ripetuto: `commit` è il commit creato (se noto), `backup` il ref del commit
-    /// riscritto da `amend` (se c'è), che resta.
-    #[error("{}", post_commit_text(.commit, .backup, .reason))]
+    /// The commit **succeeded**, but afterwards something does not add up: HEAD moved by a
+    /// `post-commit` hook or by another process, `previous` not verifiable, state not re-readable.
+    /// It must not be repeated: `commit` is the created commit (if known), `backup` the ref of the
+    /// commit rewritten by `amend` (if any), which remains.
     PostCommit {
         commit: Option<Oid>,
         backup: Option<String>,
-        reason: String,
+        reason: Message,
     },
-    /// `edit.undo`/`edit.redo`: HEAD o i ref non sono più come li ha lasciati l'operazione da
-    /// annullare (o l'undo da rifare): qualcuno li ha spostati da fuori (un `git commit` o
-    /// `git reset` da terminale, un altro programma). Niente è stato modificato e la voce
-    /// resta nel diario; `refs` dice cosa è cambiato, una riga per ref.
-    #[error(
-        "`{command}` rifiutato: i ref sono cambiati dopo l'operazione ({}). Niente modificato: \
-         per non sovrascrivere lavoro fatto altrove, l'operazione va annullata a mano",
-        .refs.join("; ")
-    )]
+    /// `edit.undo`/`edit.redo`: HEAD or the refs are no longer as the operation to undo
+    /// (or the undo to redo) left them: someone moved them from outside (a `git commit` or
+    /// `git reset` from a terminal, another program). Nothing was modified and the entry
+    /// stays in the journal; `refs` says what changed, one line per ref.
     UndoConflict {
         command: &'static str,
-        refs: Vec<String>,
+        refs: Vec<Message>,
     },
-    /// `branch.checkout` (o l'undo/redo di un checkout) rifiutato da git perché sovrascriverebbe
-    /// modifiche locali: file modificati (in stage o no) diversi nel branch di destinazione, o
-    /// file non tracciati o ignorati che il branch di destinazione contiene. Niente è stato
-    /// modificato (git controlla prima di scrivere); `files` sono i file indicati da git,
-    /// `stderr` il suo messaggio. Le modifiche vanno committate, messe da parte o scartate
-    /// prima del checkout.
-    #[error(
-        "checkout di `{target}` rifiutato: sovrascriverebbe modifiche locali ({}). Niente \
-         modificato: committare, mettere da parte o scartare queste modifiche e riprovare",
-        list(.files)
-    )]
+    /// `branch.checkout` (or the undo/redo of a checkout) refused by git because it would overwrite
+    /// local changes: modified files (staged or not) that differ in the target branch, or
+    /// untracked or ignored files that the target branch contains. Nothing was
+    /// modified (git checks before writing); `files` are the files named by git,
+    /// `stderr` its message. The changes must be committed, stashed or discarded
+    /// before the checkout.
     CheckoutConflict {
-        /// Il branch (nome breve) o il commit di destinazione.
+        /// The branch (short name) or the target commit.
         target: String,
         files: Vec<String>,
         stderr: String,
     },
-    /// Il remoto ha rifiutato le credenziali, o servirebbe chiederle (nome utente, password,
-    /// passphrase, conferma della chiave dell'host) e non c'è modo di farlo senza terminale:
+    /// The remote rejected the credentials, or they would have to be asked for (user name, password,
+    /// passphrase, host key confirmation) and there is no way to do so without a terminal:
     /// "Authentication failed", "could not read Username", "Permission denied (publickey)",
-    /// HTTP 401/403, "Host key verification failed". Niente è stato modificato. `message` è il
-    /// testo di git (stderr).
-    #[error(
-        "autenticazione con il remoto `{remote}` non riuscita: {message}. Niente modificato: \
-         controllare le credenziali (credential helper, chiave SSH caricata nell'agent, host \
-         noto in `known_hosts`)"
-    )]
-    Auth { remote: String, message: String },
-    /// Il remoto non si raggiunge: l'URL punta a una cartella che non c'è o non è un
-    /// repository, host sconosciuto, connessione rifiutata o interrotta, repository inesistente
-    /// sul server. Niente è stato modificato. `message` è il testo di git (stderr).
-    #[error("il remoto `{remote}` non è raggiungibile: {message}. Niente modificato")]
-    RemoteUnreachable { remote: String, message: String },
-    /// Il comando è stato annullato da chi lo ha lanciato
-    /// ([`CancelToken::cancel`](crate::CancelToken::cancel)). Quello che il comando dice di sé
-    /// vale anche qui (es. `remote.fetch` annullato: i ref già aggiornati restano, nessun ref
-    /// locale toccato).
-    #[error("`{command}` annullato")]
-    Cancelled { command: &'static str },
-    /// `remote.pull`: il rebase dell'upstream si è fermato in conflitto. Il backend l'ha
-    /// **annullato** (`git rebase --abort`): branch, indice e worktree sono come prima del pull
-    /// (che partiva da un worktree pulito), il fetch resta fatto. `files` sono i file in
-    /// conflitto, `message` il testo di git. Per integrare le modifiche risolvendo i conflitti,
-    /// per ora, git da terminale o la strategia merge (finché S32 non porta
-    /// `rebase.continue`/`rebase.abort`). Un **merge** fermo invece non è un errore: resta in
-    /// corso ([`PullOutcome::in_progress`](crate::PullOutcome::in_progress)).
-    #[error(
-        "pull di `{branch}` interrotto: il {operation} con `{upstream}` ha conflitti in {}. Il \
-         {operation} è stato annullato e il branch è com'era (il fetch è fatto): per integrare \
-         `{upstream}` risolvendo i conflitti, `git {operation} {upstream}` da terminale, oppure \
-         usare l'altra strategia (`strategy`)",
-        list(.files)
-    )]
+    /// HTTP 401/403, "Host key verification failed". Nothing was modified. `message` is git's
+    /// text (stderr).
+    Auth {
+        remote: String,
+        message: String,
+    },
+    /// The remote cannot be reached: the URL points to a folder that does not exist or is not a
+    /// repository, unknown host, connection refused or interrupted, repository nonexistent
+    /// on the server. Nothing was modified. `message` is git's text (stderr).
+    RemoteUnreachable {
+        remote: String,
+        message: String,
+    },
+    /// The command was cancelled by whoever launched it
+    /// ([`CancelToken::cancel`](crate::CancelToken::cancel)). What the command says about itself
+    /// applies here too (e.g. `remote.fetch` cancelled: the refs already updated stay, no
+    /// local ref touched).
+    Cancelled {
+        command: &'static str,
+    },
+    /// `remote.pull`: the rebase onto the upstream stopped on a conflict. The backend
+    /// **aborted** it (`git rebase --abort`): branch, index and worktree are as before the pull
+    /// (which started from a clean worktree), the fetch stays done. `files` are the files in
+    /// conflict, `message` git's text. To integrate the changes by resolving the conflicts,
+    /// for now, use git from a terminal or the merge strategy (until S32 brings
+    /// `rebase.continue`/`rebase.abort`). A stopped **merge**, instead, is not an error: it stays in
+    /// progress ([`PullOutcome::in_progress`](crate::PullOutcome::in_progress)).
     PullConflict {
         branch: String,
-        /// Il branch remoto (nome breve, es. `origin/main`).
+        /// The remote branch (short name, e.g. `origin/main`).
         upstream: String,
         operation: PullOperation,
         files: Vec<String>,
         message: String,
     },
-    /// `remote.push` rifiutato: niente è cambiato, né sul remoto né in locale (il branch remoto
-    /// locale resta com'era). `branch` è il branch sul remoto, `message` il testo di git.
-    #[error(
-        "push di `{branch}` su `{remote}` rifiutato: {}. Niente modificato ({message})",
-        .reason.advice()
-    )]
+    /// `remote.push` rejected: nothing changed, neither on the remote nor locally (the local
+    /// remote-tracking branch stays as it was). `branch` is the branch on the remote, `message` git's text.
     PushRejected {
         remote: String,
         branch: String,
         reason: PushRejection,
         message: String,
     },
-    #[error(transparent)]
-    Core(#[from] CoreError),
-    #[error(transparent)]
-    Domain(#[from] DomainError),
+    Core(CoreError),
+    Domain(DomainError),
 }
 
 impl EngineError {
-    /// [`EngineError::NotAllowed`] per lo stage di file ignorati chiesti per nome: niente è
-    /// stato messo in stage.
+    /// [`EngineError::NotAllowed`] for the stage of ignored files requested by name: nothing was
+    /// staged.
     pub fn ignored(paths: &[impl std::fmt::Display]) -> Self {
-        EngineError::NotAllowed(format!(
-            "file ignorati da .gitignore (o da un altro file di esclusione), niente messo in \
-             stage: {}",
-            list(paths)
-        ))
+        EngineError::NotAllowed(msg!("engine-ignored", files = quoted_list(paths)))
     }
 
-    /// [`EngineError::NotAllowed`] per l'unstage di file in conflitto: niente è stato tolto
-    /// dallo stage.
+    /// [`EngineError::NotAllowed`] for the unstage of conflicted files: nothing was removed
+    /// from the stage.
     pub fn unmerged(paths: &[impl std::fmt::Display]) -> Self {
-        EngineError::NotAllowed(format!(
-            "file in conflitto, niente tolto dallo stage (si perderebbero le versioni del \
-             conflitto; per risolverlo va messo in stage): {}",
-            list(paths)
-        ))
+        EngineError::NotAllowed(msg!("engine-unmerged", files = quoted_list(paths)))
     }
-}
 
-impl EngineError {
-    /// [`EngineError::NotAllowed`] per lo stage di una cartella con file in conflitto: un
-    /// conflitto si risolve solo chiedendo il file per nome. Niente è stato messo in stage.
+    /// [`EngineError::NotAllowed`] for the stage of a folder with conflicted files: a
+    /// conflict is resolved only by asking for the file by name. Nothing was staged.
     pub fn unmerged_in_folder(paths: &[impl std::fmt::Display]) -> Self {
-        EngineError::NotAllowed(format!(
-            "la cartella contiene file in conflitto, niente messo in stage (metterli in stage \
-             li segnerebbe come risolti: vanno chiesti per nome): {}",
-            list(paths)
+        EngineError::NotAllowed(msg!(
+            "engine-unmerged-in-folder",
+            files = quoted_list(paths)
         ))
     }
-}
 
-impl EngineError {
-    /// [`EngineError::InvalidParams`] di `commit.create` per un messaggio che la pulizia di git
-    /// (`commit.cleanup`, es. `strip` che toglie i commenti) ha reso vuoto: niente committato.
+    /// [`EngineError::InvalidParams`] of `commit.create` for a message that git's cleanup
+    /// (`commit.cleanup`, e.g. `strip` which removes comments) made empty: nothing committed.
     pub fn empty_commit_message() -> Self {
         EngineError::InvalidParams {
             id: "commit.create",
-            reason: "il messaggio è vuoto dopo la pulizia di git (`commit.cleanup` toglie le \
-                     righe di commento e gli spazi), niente committato: scrivere un messaggio \
-                     che non sia solo commenti"
-                .to_owned(),
+            reason: msg!("engine-empty-commit-message"),
+        }
+    }
+
+    /// The error text as key and parameters: git's text (`stderr`), paths and
+    /// names stay parameters as they were.
+    pub fn message(&self) -> Message {
+        use EngineError as E;
+        match self {
+            E::UnknownCommand(id) => msg!("engine-unknown-command", id = id),
+            E::InvalidParams { id, reason } => {
+                msg!("engine-invalid-params", id = *id, reason = reason)
+            }
+            E::RepoNotFound { path, reason } => {
+                msg!("engine-repo-not-found", path = path, reason = reason)
+            }
+            E::NoRepo => msg!("engine-no-repo"),
+            E::UnknownRev(rev) => msg!("engine-unknown-rev", rev = rev),
+            E::GitNotFound(error) => msg!("engine-git-not-found", error = error),
+            E::GitTooOld { found, required } => {
+                msg!("engine-git-too-old", found = found, required = required)
+            }
+            E::Git { command, stderr } => msg!("engine-git", command = command, stderr = stderr),
+            E::GitWithReason { command, reason } => {
+                msg!("engine-git", command = command, stderr = reason)
+            }
+            E::IndexLocked { lock } => msg!("engine-index-locked", lock = lock),
+            E::NotAllowed(reason) => msg!("engine-not-allowed", reason = reason),
+            E::StaleDiff { path, reason } => {
+                msg!("engine-stale-diff", path = path, reason = reason)
+            }
+            E::NothingToCommit => msg!("engine-nothing-to-commit"),
+            E::ConfirmRequired {
+                command, reason, ..
+            } => msg!(
+                "engine-confirm-required",
+                command = *command,
+                reason = reason
+            ),
+            E::PostCommit {
+                commit,
+                backup,
+                reason,
+            } => match (commit, backup) {
+                (Some(id), Some(backup)) => msg!(
+                    "engine-post-commit-id-backup",
+                    id = id,
+                    reason = reason,
+                    backup = backup
+                ),
+                (Some(id), None) => msg!("engine-post-commit-id", id = id, reason = reason),
+                (None, Some(backup)) => {
+                    msg!(
+                        "engine-post-commit-backup",
+                        reason = reason,
+                        backup = backup
+                    )
+                }
+                (None, None) => msg!("engine-post-commit", reason = reason),
+            },
+            E::UndoConflict { command, refs } => msg!(
+                "engine-undo-conflict",
+                command = *command,
+                refs = MessageArg::Joined(refs.clone(), "; ".into())
+            ),
+            E::CheckoutConflict { target, files, .. } => {
+                msg!(
+                    "engine-checkout-conflict",
+                    target = target,
+                    files = quoted_list(files)
+                )
+            }
+            E::Auth { remote, message } => {
+                msg!("engine-auth", remote = remote, message = message)
+            }
+            E::RemoteUnreachable { remote, message } => {
+                msg!(
+                    "engine-remote-unreachable",
+                    remote = remote,
+                    message = message
+                )
+            }
+            E::Cancelled { command } => msg!("engine-cancelled", command = *command),
+            E::PullConflict {
+                branch,
+                upstream,
+                operation,
+                files,
+                ..
+            } => msg!(
+                "engine-pull-conflict",
+                branch = branch,
+                upstream = upstream,
+                operation = operation.to_string(),
+                files = quoted_list(files)
+            ),
+            E::PushRejected {
+                remote,
+                branch,
+                reason,
+                message,
+            } => msg!(
+                "engine-push-rejected",
+                branch = branch,
+                remote = remote,
+                reason = reason.advice(),
+                message = message
+            ),
+            E::Core(e) => msg!("engine-other", text = e.to_string()),
+            E::Domain(e) => msg!("engine-other", text = e.to_string()),
+        }
+    }
+
+    /// The text in `lang` (the UI); `Display` is the English text (CLI, MCP, tests).
+    pub fn text_in(&self, lang: Lang) -> String {
+        self.message().text_in(lang)
+    }
+
+    /// The text in the UI's active language.
+    pub fn text(&self) -> String {
+        self.message().text()
+    }
+}
+
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text_in(Lang::En))
+    }
+}
+
+impl std::error::Error for EngineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            EngineError::Core(e) => Some(e),
+            EngineError::Domain(e) => Some(e),
+            _ => None,
         }
     }
 }
 
-fn post_commit_text(commit: &Option<Oid>, backup: &Option<String>, reason: &str) -> String {
-    let mut text = match commit {
-        Some(id) => format!("il commit {id} è stato creato, ma {reason}"),
-        None => format!("il commit è stato creato, ma {reason}"),
-    };
-    if let Some(backup) = backup {
-        text.push_str(&format!(
-            "; il commit riscritto da `amend` è salvato in `{backup}`"
-        ));
+impl From<CoreError> for EngineError {
+    fn from(e: CoreError) -> Self {
+        EngineError::Core(e)
     }
-    text.push_str(": non ripetere il commit, rileggere stato e log");
-    text
 }
 
-fn list(paths: &[impl std::fmt::Display]) -> String {
+impl From<DomainError> for EngineError {
+    fn from(e: DomainError) -> Self {
+        EngineError::Domain(e)
+    }
+}
+
+/// The paths in backticks, separated by commas: `` `a`, `b` ``.
+pub fn quoted_list(paths: &[impl std::fmt::Display]) -> String {
     paths
         .iter()
         .map(|p| format!("`{p}`"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// An error inside the text of another (e.g. "the state cannot be re-read (…)"): translated into the
+/// same language.
+impl ToArg for EngineError {
+    fn to_arg(&self) -> MessageArg {
+        self.message().to_arg()
+    }
 }

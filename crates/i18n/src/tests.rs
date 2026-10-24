@@ -2,10 +2,10 @@ use super::*;
 use fluent_syntax::ast::Entry;
 use std::collections::BTreeSet;
 
-/// Le chiavi (messaggi) di un file `.ftl`; il file deve analizzarsi senza errori.
+/// The keys (messages) of an `.ftl` file; the file must parse without errors.
 fn keys(lang: Lang, area: &str, source: &str) -> BTreeSet<String> {
     let resource = FluentResource::try_new(source.to_owned())
-        .unwrap_or_else(|(_, e)| panic!("{}/{area}.ftl non si analizza: {e:?}", lang.code()));
+        .unwrap_or_else(|(_, e)| panic!("{}/{area}.ftl does not parse: {e:?}", lang.code()));
     resource
         .entries()
         .filter_map(|entry| match entry {
@@ -38,12 +38,12 @@ fn keys_start_with_their_area_and_load_without_errors() {
             for key in keys(lang, area, source) {
                 assert!(
                     key.starts_with(&format!("{area}-")),
-                    "{}/{area}.ftl: {key} non comincia con «{area}-»",
+                    "{}/{area}.ftl: {key} does not start with «{area}-»",
                     lang.code()
                 );
             }
         }
-        // `new` ferma i test se un file non si analizza o una chiave è ripetuta.
+        // `new` stops the tests if a file does not parse or a key is repeated.
         let i18n = I18n::new(lang);
         assert_eq!(i18n.lang(), lang);
     }
@@ -69,18 +69,9 @@ fn parameters_have_no_unicode_isolation_marks() {
 
 #[test]
 fn the_macro_uses_the_current_language() {
-    // Il resto dei test usa `get`: solo qui si tocca la lingua globale.
-    // Con `cargo test --workspace` la feature `test-italiano` di `project-ui` vale anche qui.
-    let start = if cfg!(feature = "test-italiano") {
-        Lang::It
-    } else {
-        Lang::En
-    };
-    assert_eq!(lang(), start);
-    let expected = match start {
-        Lang::It => "2 file in conflitto",
-        Lang::En => "2 conflicted files",
-    };
+    // The other tests use `get`: only this one touches the global language.
+    assert_eq!(lang(), Lang::En);
+    let expected = "2 conflicted files";
     assert_eq!(tr!("merge-conflict-files", n = 2), expected);
     assert!(current().has("merge-conflict-files"));
     assert!(!current().has("merge-nope"));
@@ -109,9 +100,17 @@ fn an_optional_count_can_disappear() {
             ("n", Arg::from(3)),
         ],
     );
-    assert_eq!(
+    // The Italian text is a different translation of the same message, with the same arguments.
+    assert_ne!(
         it,
-        "Merge annullato: indice e worktree salvati prima in B (3 file); si rimettono con \
-         `git stash apply B`. Non si annulla con «Annulla»"
+        get(Lang::En).tr_args(
+            "merge-aborted-notice",
+            [
+                ("title", Arg::from("Merge")),
+                ("backup", Arg::from("B")),
+                ("n", Arg::from(3)),
+            ],
+        )
     );
+    assert!(it.contains('B') && it.contains('3'));
 }

@@ -1,11 +1,11 @@
-//! Commit del [`MemoryBackend`]: un commit nuovo dall'indice descritto dalle voci dello stato.
+//! Commit of the [`MemoryBackend`]: a new commit from the index described by the status entries.
 //!
-//! Come il `CliBackend`: stessi controlli prima di scrivere ([`check_commit_state`],
-//! [`check_amend_published`]), messaggio pulito come `git commit -F -` senza configurazione
-//! (`--cleanup=whitespace`), `amend` con lo stesso autore e gli stessi genitori e un ref di
-//! backup del commit riscritto. Niente hook né firma. Le date vengono da un orologio finto
-//! (un minuto dopo il commit più recente), così i test sono deterministici e la versione web
-//! non dipende dall'orologio del sistema.
+//! Like the `CliBackend`: same checks before writing ([`check_commit_state`],
+//! [`check_amend_published`]), message cleaned like `git commit -F -` without configuration
+//! (`--cleanup=whitespace`), `amend` with the same author and the same parents and a backup
+//! ref of the rewritten commit. No hooks or signing. Dates come from a fake clock
+//! (a minute after the most recent commit), so tests are deterministic and the web version
+//! does not depend on the system clock.
 
 use super::write::{TreeEntry, ZERO, entry_order, file_type, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES, TAGS, content_oid};
@@ -19,15 +19,15 @@ use project_domain::{
 };
 use std::collections::BTreeMap;
 
-/// Data del primo commit di un repo vuoto (14 novembre 2023), come nel repo di esempio.
+/// Date of the first commit of an empty repo (14 November 2023), as in the sample repo.
 const START: i64 = 1_700_000_000;
-/// Secondi fra un commit e il successivo.
+/// Seconds between one commit and the next.
 const STEP: i64 = 60;
 
 pub(super) type Tree = BTreeMap<RepoPath, TreeEntry>;
 
 impl MemoryBackend {
-    /// [`GitBackend::commit`] sulle voci dello stato. Un errore non cambia niente.
+    /// [`GitBackend::commit`] on the status entries. An error changes nothing.
     pub(super) fn create_commit(
         &mut self,
         request: &CommitRequest,
@@ -36,20 +36,18 @@ impl MemoryBackend {
         let status = self.status()?;
         let previous = self.head_target();
         check_commit_state(&status, previous.is_some(), request)?;
-        // Con un merge in corso il commit è il commit di merge: genitori HEAD e `MERGE_HEAD`.
+        // With a merge in progress the commit is the merge commit: parents HEAD and `MERGE_HEAD`.
         let merge_heads = match (&self.operation, &self.merge_state) {
             (Some(Operation::Merge), Some(merge)) => Some(merge.heads.clone()),
             (Some(Operation::Merge), None) => {
-                return Err(EngineError::NotAllowed(
-                    "il repo in memoria non ha `MERGE_HEAD` per questo merge (impostato con \
-                     `set_operation`): il commit di merge non è supportato, niente committato"
-                        .to_owned(),
-                ));
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-commit-memory-merge-head"
+                )));
             }
             _ => None,
         };
-        // `cherry_pick.continue`/`revert.continue`: il commit conclude l'operazione; per il
-        // cherry-pick l'autore è quello del commit originale (come git con `CHERRY_PICK_HEAD`).
+        // `cherry_pick.continue`/`revert.continue`: the commit concludes the operation; for the
+        // cherry-pick the author is that of the original commit (like git with `CHERRY_PICK_HEAD`).
         let concluding = request.conclude.is_some() && request.conclude == self.operation;
         let pick_author = match (&self.operation, &self.merge_state) {
             (Some(Operation::CherryPick), Some(pick)) if concluding => pick
@@ -82,7 +80,7 @@ impl MemoryBackend {
         let (name, email) = self.identity.clone().ok_or_else(|| EngineError::Git {
             command: "commit".to_owned(),
             stderr: "Author identity unknown\n\n*** Please tell me who you are.\n\nfatal: \
-                     nessuna identità nel repo in memoria (`MemoryBackend::set_identity`)"
+                     no identity in the in-memory repo (`MemoryBackend::set_identity`)"
                 .to_owned(),
         })?;
         let message = cleanup_message(&request.message);
@@ -118,11 +116,7 @@ impl MemoryBackend {
         let changes = tree_changes(&parent_tree, &tree);
         if changes.is_empty() && merge_heads.is_none() {
             return Err(if request.amend {
-                EngineError::NotAllowed(
-                    "`amend` renderebbe vuoto l'ultimo commit (stesso contenuto del genitore), \
-                     niente committato"
-                        .to_owned(),
-                )
+                EngineError::NotAllowed(msg!("engine-commit-amend-empty"))
             } else {
                 EngineError::NothingToCommit
             });
@@ -178,8 +172,8 @@ impl MemoryBackend {
         })
     }
 
-    /// I branch locali, i branch remoti e i tag da cui il commit `id` è raggiungibile (nomi
-    /// completi), come `git for-each-ref --contains`.
+    /// The local branches, remote branches and tags the commit `id` is reachable from (full
+    /// names), like `git for-each-ref --contains`.
     fn refs_containing(&self, id: Oid) -> Vec<String> {
         self.refs
             .iter()
@@ -191,7 +185,7 @@ impl MemoryBackend {
             .collect()
     }
 
-    /// L'albero dell'indice: quello di HEAD con le modifiche in stage.
+    /// The index tree: that of HEAD with the staged changes.
     pub(super) fn index_tree(&self) -> Tree {
         let mut tree = self.head_tree();
         for entry in &self.entries {
@@ -213,7 +207,7 @@ impl MemoryBackend {
         tree
     }
 
-    /// Un minuto dopo il commit più recente (o [`START`] in un repo vuoto).
+    /// A minute after the most recent commit (or [`START`] in an empty repo).
     pub(super) fn next_time(&self) -> i64 {
         self.commits
             .values()
@@ -222,7 +216,7 @@ impl MemoryBackend {
             .map_or(START, |t| t + STEP)
     }
 
-    /// Un id finto che dipende dal contenuto del commit e non è già usato.
+    /// A fake id that depends on the commit content and is not already used.
     pub(super) fn new_commit_id(
         &self,
         parents: &[Oid],
@@ -250,8 +244,8 @@ impl MemoryBackend {
         }
     }
 
-    /// Dopo il commit l'indice è uguale al nuovo HEAD: le modifiche in stage spariscono dallo
-    /// stato, quelle fuori stage, i non tracciati e i file `intent-to-add` restano.
+    /// After the commit the index equals the new HEAD: the staged changes disappear from the
+    /// status, the unstaged ones, untracked files and `intent-to-add` files stay.
     fn commit_entries(&mut self) {
         let entries = std::mem::take(&mut self.entries);
         let mut next = Vec::with_capacity(entries.len());
@@ -264,8 +258,8 @@ impl MemoryBackend {
                 next.push(entry);
                 continue;
             }
-            // Una cancellazione committata: il file non è più tracciato (se è ancora nel
-            // worktree c'è già una voce non tracciata a parte).
+            // A committed deletion: the file is no longer tracked (if it is still in the
+            // worktree there is already a separate untracked entry).
             if info.mode_index == 0 || entry.worktree == Change::Unmodified {
                 continue;
             }
@@ -283,7 +277,7 @@ impl MemoryBackend {
     }
 }
 
-/// I file cambiati da `old` a `new`, per percorso (senza riconoscere le rinomine).
+/// The files changed from `old` to `new`, by path (without detecting renames).
 pub(super) fn tree_changes(old: &Tree, new: &Tree) -> Vec<ChangedFile> {
     let mut paths: Vec<&RepoPath> = old.keys().chain(new.keys()).collect();
     paths.sort();

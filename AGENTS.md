@@ -1,89 +1,89 @@
-# Istruzioni per agenti
+# Instructions for agents
 
-Architettura di riferimento: [impl-docs/ARCHITETTURA-rust.md](impl-docs/ARCHITETTURA-rust.md).
+Reference architecture: [impl-docs/ARCHITECTURE-rust.md](impl-docs/ARCHITECTURE-rust.md).
 
-## Livelli
+## Layers
 
-| Livello | Crate | Cartella |
+| Layer | Crate | Folder |
 | --- | --- | --- |
-| L0 | `project-core` | `crates/core` — errori, parsing `id=<json>` |
-| L0 | `project-i18n` | `crates/i18n` — testi della UI in italiano e inglese (Fluent), macro `tr!` |
-| L2 | `project-domain` | `crates/domain` — tipi git e parser dell'output di git |
-| L5 | `project-engine` | `crates/engine` — `Session` (repo aperto e diario per undo/redo), `Registry`, `GitBackend`/`RepoOpener`, `MemoryBackend`, trait `Platform` |
-| L6 | `project-ui` | `crates/ui` — `App` egui, nessun `cfg(target_arch)` |
-| L6 | `project-mcp` | `crates/mcp` — server MCP su stdio |
-| L6 | `project-git` | `crates/git` — `CliBackend`/`CliOpener`: esegue `git`; lo importano solo le app L7 |
-| L7 | `project`, `project-cli`, `project-web` | `apps/*` — solo avvio e collegamento |
+| L0 | `project-core` | `crates/core` — errors, parsing of `id=<json>` |
+| L0 | `project-i18n` | `crates/i18n` — UI and engine error texts in Italian and English (Fluent), `tr!` macro |
+| L2 | `project-domain` | `crates/domain` — git types and git output parsers |
+| L5 | `project-engine` | `crates/engine` — `Session` (open repo and journal for undo/redo), `Registry`, `GitBackend`/`RepoOpener`, `MemoryBackend`, `Platform` trait |
+| L6 | `project-ui` | `crates/ui` — egui `App`, no `cfg(target_arch)` |
+| L6 | `project-mcp` | `crates/mcp` — MCP server on stdio |
+| L6 | `project-git` | `crates/git` — `CliBackend`/`CliOpener`: runs `git`; only the L7 apps import it |
+| L7 | `project`, `project-cli`, `project-web` | `apps/*` — startup and wiring only |
 
-Un crate importa solo da livelli **strettamente inferiori**; `cargo xtask layers` lo verifica.
-Un nuovo crate va dichiarato in `xtask/src/layers.rs`.
+A crate imports only from **strictly lower** layers; `cargo xtask layers` checks this.
+A new crate must be declared in `xtask/src/layers.rs`.
 
-## Regole
+## Rules
 
-- Ogni operazione sul repository è un comando del `Registry` (`crates/engine/src/builtin.rs`).
-  UI, CLI, MCP e test lo invocano con `Registry::run`; niente logica di modifica nei callback grafici.
-- Gli id dei comandi sono stabili: non rinominarli.
-- Un comando che modifica il repo va in `WRITES` (`builtin.rs`): `CommandSpec::writes` lo segnala a
-  UI, CLI e MCP. Se può far perdere dati chiede `"confirm": true` e salva un backup; se riscrive
-  l'unica copia di qualcosa senza che git chieda conferma (stage/unstage) salva da solo un backup
-  e non scrive se il backup fallisce (§1 e §7
-  dell'architettura git). Chi riscrive un commit (`commit.create` con `amend`) salva sempre un
-  ref di backup del commit riscritto e chiede `confirm` se quel commit è già pubblicato.
-- Le regole dei singoli comandi (stash, pull/push, merge...) stanno nel file della funzione in
-  [impl-docs/git/](impl-docs/git/); quelle comuni e la checklist di sicurezza in
-  [impl-docs/git/regole.md](impl-docs/git/regole.md).
-- Un comando che sposta ref (commit, e poi branch, checkout, merge, reset...) registra una
-  `JournalEntry` nel diario della `Session` con HEAD e i ref prima e dopo, così `edit.undo` e
-  `edit.redo` lo coprono (§7 dell'architettura git).
-- L'I/O della piattaforma passa dal trait `Platform`; le implementazioni stanno nelle app L7.
-- I testi visibili della UI passano da `tr!("<area>-<cosa>")` con le chiavi in
-  `crates/i18n/locales/{it,en}/`: guida in [impl-docs/i18n.md](impl-docs/i18n.md).
+- Every operation on the repository is a `Registry` command (`crates/engine/src/builtin.rs`).
+  UI, CLI, MCP and tests invoke it with `Registry::run`; no modification logic in graphical callbacks.
+- Command ids are stable: do not rename them.
+- A command that modifies the repo goes in `WRITES` (`builtin.rs`): `CommandSpec::writes` flags it to
+  UI, CLI and MCP. If it can lose data it asks for `"confirm": true` and saves a backup; if it rewrites
+  the only copy of something without git asking for confirmation (stage/unstage) it saves a backup on its own
+  and does not write if the backup fails (§1 and §7
+  of the git architecture). Whoever rewrites a commit (`commit.create` with `amend`) always saves a
+  backup ref of the rewritten commit and asks for `confirm` if that commit is already published.
+- The rules of individual commands (stash, pull/push, merge...) are in the function's file in
+  [impl-docs/git/](impl-docs/git/); the common ones and the safety checklist in
+  [impl-docs/git/rules.md](impl-docs/git/rules.md).
+- A command that moves refs (commit, and then branch, checkout, merge, reset...) records a
+  `JournalEntry` in the `Session` journal with HEAD and the refs before and after, so `edit.undo` and
+  `edit.redo` cover it (§7 of the git architecture).
+- Platform I/O goes through the `Platform` trait; the implementations live in the L7 apps.
+- Visible UI texts go through `tr!("<area>-<what>")` with the keys in
+  `crates/i18n/locales/{it,en}/`: guide in [impl-docs/i18n.md](impl-docs/i18n.md).
 
-## Branch
+## Branches
 
-- Si lavora sempre su `dev`, non su `master`: le pull request vanno verso `dev`.
-- **Ogni implementazione parte dall'ultima versione di `origin/dev`**: prima `git fetch origin
-  dev`, poi il branch nuovo con `git checkout -b <nome> origin/dev` (mai da `master`, da un
-  `dev` locale non aggiornato o da un altro branch di step). Chi continua su un branch già
-  creato controlla che contenga l'ultimo `origin/dev` (`git merge-base --is-ancestor origin/dev
-  HEAD`); se no si ferma e lo dice.
-- Prima di iniziare uno step, controllare lo stato della roadmap su `origin/dev`.
+- Always work on `dev`, not on `master`: pull requests go to `dev`.
+- **Every implementation starts from the latest version of `origin/dev`**: first `git fetch origin
+  dev`, then the new branch with `git checkout -b <name> origin/dev` (never from `master`, from an
+  outdated local `dev` or from another step branch). Whoever continues on an already created
+  branch checks that it contains the latest `origin/dev` (`git merge-base --is-ancestor origin/dev
+  HEAD`); if not, they stop and say so.
+- Before starting a step, check the roadmap status on `origin/dev`.
 
-## Client git (in sviluppo)
+## Git client (in development)
 
-Il progetto sta diventando un client git grafico: architettura in
-[impl-docs/ARCHITETTURA-git.md](impl-docs/ARCHITETTURA-git.md) (regole comuni) e in
-[impl-docs/git/](impl-docs/git/) (un file per funzione: contratto dei comandi, `CliBackend`, undo
-e backup; un comando nuovo va nel file della sua funzione), step in
-[impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md). Ogni step indica l'agente da usare
-(`.claude/agents/`): `git-domain`, `git-engine`, `egui-ui`, `git-scenarios`; gli step che
-scrivono nel repo dell'utente passano anche da `safety-reviewer`.
+The project is becoming a graphical git client: architecture in
+[impl-docs/ARCHITECTURE-git.md](impl-docs/ARCHITECTURE-git.md) (common rules) and in
+[impl-docs/git/](impl-docs/git/) (one file per function: command contract, `CliBackend`, undo
+and backup; a new command goes in the file of its function), steps in
+[impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md). Each step names the agent to use
+(`.claude/agents/`): `git-domain`, `git-engine`, `egui-ui`, `git-scenarios`; steps that
+write to the user's repo also go through `safety-reviewer`.
 
-## Prima di consegnare
+## Before delivering
 
 ```sh
 cargo xtask ci           # fmt, clippy -D warnings, test, layering, clippy wasm
-cargo xtask ci --quiet   # lo stesso, con l'output solo del passo che fallisce
+cargo xtask ci --quiet   # the same, with output only from the step that fails
 ```
 
-## Provare senza UI
+## Trying without the UI
 
 ```sh
-cargo run -p project-cli -- commands                      # catalogo, `[modifica]` = scrive
+cargo run -p project-cli -- commands                      # catalog, `[writes]` = writes
 cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"limit":5}'
 cargo run -p project-cli -- mcp --root .                  # list_commands, execute_command, open_repo
 ```
 
-Esempi per ogni comando: [impl-docs/git/cli.md](impl-docs/git/cli.md).
+Examples for every command: [impl-docs/git/cli.md](impl-docs/git/cli.md).
 
-## Vedere l'app
+## Seeing the app
 
 ```sh
-make desktop-shot                      # app desktop su Xvfb -> target/desktop.png (REPO=, WAIT=, SHOT=)
-make web-serve                         # app web su :8080, poi screenshot con Playwright
+make desktop-shot                      # desktop app on Xvfb -> target/desktop.png (REPO=, WAIT=, SHOT=)
+make web-serve                         # web app on :8080, then screenshot with Playwright
 ```
 
-Strumenti (installati da `.devcontainer/post-create.sh`): `xvfb` + `xauth` (`xvfb-run`),
-`x11-utils` (`xwininfo`, `xprop`), `imagemagick` (`import`); Chrome per Playwright e per
-`assets/render.sh`. `WAYLAND_DISPLAY` di VS Code va tolto, altrimenti winit usa Wayland e lo
-schermo resta nero (il target lo fa da solo).
+Tools (installed by `.devcontainer/post-create.sh`): `xvfb` + `xauth` (`xvfb-run`),
+`x11-utils` (`xwininfo`, `xprop`), `imagemagick` (`import`); Chrome for Playwright and for
+`assets/render.sh`. VS Code's `WAYLAND_DISPLAY` must be unset, otherwise winit uses Wayland and the
+screen stays black (the target does this on its own).

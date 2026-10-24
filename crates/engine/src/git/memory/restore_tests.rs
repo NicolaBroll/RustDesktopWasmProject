@@ -1,10 +1,10 @@
-//! Test di undo e redo (`restore_refs`) sul `MemoryBackend`, attraverso il diario.
+//! Undo and redo tests (`restore_refs`) on the `MemoryBackend`, through the journal.
 
 use super::*;
 use crate::{CommitRequest, GitBackend, Journal, JournalEntry, LogQuery};
 use project_domain::{Head, Operation};
 
-/// Commit (o `amend`) con il messaggio dato, registrato nel diario.
+/// Commit (or `amend`) with the given message, recorded in the journal.
 fn commit(repo: &mut MemoryBackend, journal: &mut Journal, request: CommitRequest) -> Oid {
     let amend = request.amend;
     let out = repo.commit(&request).unwrap();
@@ -29,14 +29,14 @@ fn undo_and_redo_of_a_commit() {
     let (entry, outcome) = journal.undo(&mut repo).unwrap();
     let backups = outcome.backups;
     assert_eq!(
-        entry.description,
-        format!("Commit {} «Aggiorna»", &new.to_string()[..7])
+        entry.description.to_string(),
+        format!("Commit {} “Aggiorna”", &new.to_string()[..7])
     );
     assert_eq!(head(&repo), Some(before));
-    // Indice e worktree come prima del commit: le modifiche tornano in stage.
+    // Index and worktree as before the commit: the changes go back to the stage.
     assert_eq!(repo.status().unwrap(), status_before);
     assert_eq!(repo.worktree, worktree_before);
-    // Il commit annullato non è più raggiungibile: un ref di backup lo tiene.
+    // The undone commit is no longer reachable: a backup ref holds it.
     assert_eq!(backups, ["refs/project/backup/undo-1"]);
     assert_eq!(
         repo.commit_backups().last().unwrap(),
@@ -48,14 +48,14 @@ fn undo_and_redo_of_a_commit() {
     let (entry, outcome) = journal.redo(&mut repo).unwrap();
     let backups = outcome.backups;
     assert_eq!(entry.undo_backups, ["refs/project/backup/undo-1"]);
-    // Il commit di prima è il genitore del nuovo HEAD: nessun backup.
+    // The previous commit is the parent of the new HEAD: no backup.
     assert!(backups.is_empty());
     assert_eq!(head(&repo), Some(new));
     assert_eq!(repo.status().unwrap(), status_after);
     assert_eq!(repo.log(&LogQuery::page(0, 1)).unwrap()[0].id, new);
     assert!(journal.can_undo() && !journal.can_redo());
 
-    // Niente da rifare.
+    // Nothing to redo.
     assert!(matches!(
         journal.redo(&mut repo),
         Err(EngineError::NotAllowed(_))
@@ -67,7 +67,7 @@ fn undo_refused_if_the_branch_moved() {
     let mut repo = MemoryBackend::sample();
     let mut journal = Journal::new();
     let new = commit(&mut repo, &mut journal, CommitRequest::new("Aggiorna"));
-    // Un altro programma sposta `main`.
+    // Another program moves `main`.
     let other = MemoryBackend::fake_oid(4);
     repo.set_branch("main", other);
     let snapshot = repo.clone();
@@ -78,19 +78,19 @@ fn undo_refused_if_the_branch_moved() {
     assert_eq!(*command, "edit.undo");
     assert_eq!(refs.len(), 1);
     assert!(refs[0].contains("refs/heads/main"), "{refs:?}");
-    assert!(err.to_string().contains("Niente modificato"), "{err}");
+    assert!(err.to_string().contains("Nothing changed"), "{err}");
     assert_eq!(repo, snapshot, "niente cambia");
-    assert!(journal.can_undo(), "la voce resta");
+    assert!(journal.can_undo(), "the entry stays");
 
-    // Rimesso com'era, l'undo riesce.
+    // Put back as it was, the undo succeeds.
     repo.set_branch("main", new);
     journal.undo(&mut repo).unwrap();
 
-    // HEAD su un altro branch: anche questo è un cambiamento da fuori.
+    // HEAD on another branch: this too is a change from outside.
     let mut repo = MemoryBackend::sample();
     let mut journal = Journal::new();
     commit(&mut repo, &mut journal, CommitRequest::new("Aggiorna"));
-    repo.set_head_branch("feature/grafo");
+    repo.set_head_branch("feature/graph");
     let err = journal.undo(&mut repo).unwrap_err();
     assert!(err.to_string().contains("HEAD"), "{err}");
 }
@@ -132,7 +132,7 @@ fn undo_of_the_first_commit_deletes_the_branch() {
     repo.stage(&[RepoPath::from("a.txt")]).unwrap();
     let staged = repo.status().unwrap();
     let mut journal = Journal::new();
-    let first = commit(&mut repo, &mut journal, CommitRequest::new("primo"));
+    let first = commit(&mut repo, &mut journal, CommitRequest::new("first"));
 
     let (entry, outcome) = journal.undo(&mut repo).unwrap();
     let backups = outcome.backups;
@@ -148,7 +148,7 @@ fn undo_of_the_first_commit_deletes_the_branch() {
     assert_eq!(
         repo.status().unwrap(),
         staged,
-        "il file torna aggiunto in stage"
+        "the file comes back added in the stage"
     );
     assert_eq!(backups, ["refs/project/backup/undo-1"]);
 
@@ -173,8 +173,8 @@ fn undo_of_an_amend_goes_back_to_the_rewritten_commit() {
     let backups = outcome.backups;
     assert_eq!(entry.backup.as_deref(), Some("refs/project/backup/amend-1"));
     assert_eq!(head(&repo), Some(first));
-    // Il commit di `amend` non è più raggiungibile: backup. Il commit riscritto era già nel
-    // backup di `amend`.
+    // The `amend` commit is no longer reachable: backup. The rewritten commit was already in the
+    // `amend` backup.
     assert_eq!(backups, ["refs/project/backup/undo-1"]);
     assert!(
         repo.status()
@@ -188,7 +188,7 @@ fn undo_of_an_amend_goes_back_to_the_rewritten_commit() {
     let backups = outcome.backups;
     assert!(
         backups.is_empty(),
-        "il commit riscritto ha già il backup di amend"
+        "the rewritten commit already has the amend backup"
     );
     assert_eq!(head(&repo), Some(amended));
 }
@@ -204,8 +204,8 @@ fn undo_with_detached_head_moves_head() {
 
     journal.undo(&mut repo).unwrap();
     assert_eq!(repo.head().unwrap(), Head::Detached(start));
-    assert_eq!(repo.refs().unwrap(), main, "nessun branch si sposta");
-    // HEAD spostata da fuori: rifiutato.
+    assert_eq!(repo.refs().unwrap(), main, "no branch moves");
+    // HEAD moved from outside: rejected.
     repo.detach_head(MemoryBackend::fake_oid(3));
     assert!(matches!(
         journal.redo(&mut repo),
@@ -221,18 +221,18 @@ fn several_undos_in_a_row_and_no_backup_when_still_reachable() {
     let mut repo = MemoryBackend::sample();
     let mut journal = Journal::new();
     let start = head(&repo).unwrap();
-    let a = commit(&mut repo, &mut journal, CommitRequest::new("uno"));
-    repo.set_worktree_file("src/lib.rs", "nuovo\n");
+    let a = commit(&mut repo, &mut journal, CommitRequest::new("one"));
+    repo.set_worktree_file("src/lib.rs", "new\n");
     repo.stage(&[RepoPath::from("src/lib.rs")]).unwrap();
-    let b = commit(&mut repo, &mut journal, CommitRequest::new("due"));
-    // Un tag su `b`: resta raggiungibile, nessun backup.
+    let b = commit(&mut repo, &mut journal, CommitRequest::new("two"));
+    // A tag on `b`: stays reachable, no backup.
     repo.set_tag("tenuto", b, None);
 
     let (_, outcome) = journal.undo(&mut repo).unwrap();
     let backups = outcome.backups;
     assert!(backups.is_empty());
     assert_eq!(head(&repo), Some(a));
-    // Anche `a`, genitore di `b`, resta raggiungibile dal tag.
+    // `a` too, parent of `b`, stays reachable from the tag.
     let (_, outcome) = journal.undo(&mut repo).unwrap();
     let backups = outcome.backups;
     assert!(backups.is_empty());

@@ -1,11 +1,11 @@
-//! Stage e unstage di hunk e singole righe dalla vista del diff (`index.stage_lines`,
-//! `index.unstage_lines`): quali righe sono selezionate, se il file permette la selezione
-//! parziale, i riferimenti da mandare al motore e lo stato dei pulsanti. Solo dati, senza egui:
-//! si prova con test unitari.
+//! Stage and unstage of hunks and single lines from the diff view (`index.stage_lines`,
+//! `index.unstage_lines`): which lines are selected, whether the file allows partial
+//! selection, the references to send to the engine and the state of the buttons. Data only, no egui:
+//! tested with unit tests.
 //!
-//! Le righe si indicano con l'indice della riga della vista ([`DiffDoc::rows`]): valgono per il
-//! documento caricato, e la selezione si azzera a ogni nuovo documento (dopo una scrittura, una
-//! ricarica o un altro file). Solo le righe aggiunte e tolte si selezionano, mai il contesto.
+//! Lines are identified by the index of the view row ([`DiffDoc::rows`]): they are valid for the
+//! loaded document, and the selection is cleared on every new document (after a write, a
+//! reload or another file). Only added and removed lines can be selected, never context.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
 use crate::{Action, App, Drag, Request, lines};
@@ -13,18 +13,18 @@ use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, b
 use project_i18n::tr;
 use std::collections::BTreeSet;
 
-/// Se il diff mostrato permette lo stage (o l'unstage) di hunk e righe.
+/// Whether the shown diff allows staging (or unstaging) hunks and lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Partial {
-    /// Niente pulsanti: diff di un commit, o nessuna riga cambiata.
+    /// No buttons: diff of a commit, or no changed line.
     Hidden,
-    /// Il file non si può dividere in righe: il motivo, da mostrare.
+    /// The file cannot be split into lines: the reason, to show.
     Unavailable(String),
-    /// Hunk e righe si possono spostare in questa direzione.
+    /// Hunks and lines can be moved in this direction.
     Available(PatchDirection),
 }
 
-/// La direzione per il diff di `source`: worktree → stage, indice → unstage.
+/// The direction for the diff of `source`: worktree → stage, index → unstage.
 pub fn direction(source: DiffSource) -> Option<PatchDirection> {
     match source {
         DiffSource::Worktree => Some(PatchDirection::Stage),
@@ -33,9 +33,9 @@ pub fn direction(source: DiffSource) -> Option<PatchDirection> {
     }
 }
 
-/// Decide se il diff `doc` di `source` permette la selezione parziale, con le stesse regole del
-/// costruttore di patch del dominio ([`build_patch`] rifiuta binari, sottomoduli, link, conflitti,
-/// copie e rinomine nello stage).
+/// Decides whether the diff `doc` of `source` allows partial selection, with the same rules as the
+/// domain's patch builder ([`build_patch`] refuses binaries, submodules, links, conflicts,
+/// copies and renames in the stage).
 pub fn partial(doc: &DiffDoc, source: DiffSource) -> Partial {
     let Some(direction) = direction(source) else {
         return Partial::Hidden;
@@ -55,7 +55,7 @@ pub fn partial(doc: &DiffDoc, source: DiffSource) -> Partial {
     }
 }
 
-/// Il file a cui si riferiscono righe e hunk: l'unico del documento.
+/// The file that lines and hunks refer to: the only one of the document.
 fn single_file(doc: &DiffDoc) -> Option<&FileDiff> {
     match &doc.diff.files[..] {
         [file] => Some(file),
@@ -63,7 +63,7 @@ fn single_file(doc: &DiffDoc) -> Option<&FileDiff> {
     }
 }
 
-/// Il riferimento della riga `row` della vista, se è una riga cambiata.
+/// The reference of the view row `row`, if it is a changed row.
 pub fn line_ref(doc: &DiffDoc, row: usize) -> Option<LineRef> {
     match doc.rows.get(row)? {
         Row::Line(f, h, l) => doc
@@ -79,18 +79,18 @@ pub fn line_ref(doc: &DiffDoc, row: usize) -> Option<LineRef> {
     }
 }
 
-/// Vero se la riga `row` si può selezionare: una riga aggiunta o tolta.
+/// True if row `row` can be selected: an added or removed row.
 pub fn selectable(doc: &DiffDoc, row: usize) -> bool {
     line_ref(doc, row).is_some()
 }
 
-/// Le righe selezionate di un diff.
+/// The selected lines of a diff.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LineSelection {
     rows: BTreeSet<usize>,
-    /// L'ultima riga cliccata senza Maiusc: un Maiusc+clic seleziona da qui.
+    /// The last row clicked without Shift: a Shift+click selects from here.
     anchor: Option<usize>,
-    /// Durante un trascinamento: `true` se seleziona, `false` se deseleziona.
+    /// During a drag: `true` if it selects, `false` if it deselects.
     drag: Option<bool>,
 }
 
@@ -111,8 +111,8 @@ impl LineSelection {
         *self = Self::default();
     }
 
-    /// Clic su una riga: la seleziona o la deseleziona. Con Maiusc seleziona tutte le righe
-    /// cambiate dall'ultima cliccata a questa, comprese. Le righe di contesto si ignorano.
+    /// Click on a row: selects or deselects it. With Shift it selects all the rows
+    /// changed from the last clicked to this one, inclusive. Context rows are ignored.
     pub fn click(&mut self, doc: &DiffDoc, row: usize, shift: bool) {
         if !selectable(doc, row) {
             return;
@@ -128,8 +128,8 @@ impl LineSelection {
         }
     }
 
-    /// Inizio di un trascinamento sulla riga `row`: se la riga non era selezionata il
-    /// trascinamento seleziona, altrimenti deseleziona.
+    /// Start of a drag on row `row`: if the row was not selected the
+    /// drag selects, otherwise it deselects.
     pub fn drag_start(&mut self, doc: &DiffDoc, row: usize) {
         if !selectable(doc, row) {
             return;
@@ -140,8 +140,8 @@ impl LineSelection {
         self.set_range(doc, row, row, select);
     }
 
-    /// Il trascinamento è sulla riga `row`: le righe dall'inizio a qui prendono lo stato
-    /// scelto all'inizio.
+    /// The drag is on row `row`: the rows from the start to here take the state
+    /// chosen at the start.
     pub fn drag_over(&mut self, doc: &DiffDoc, row: usize) {
         if let (Some(select), Some(anchor)) = (self.drag, self.anchor) {
             self.set_range(doc, anchor, row, select);
@@ -167,36 +167,36 @@ impl LineSelection {
         }
     }
 
-    /// I riferimenti delle righe selezionate, nell'ordine del diff.
+    /// The references of the selected lines, in diff order.
     pub fn refs(&self, doc: &DiffDoc) -> Vec<LineRef> {
         self.rows.iter().filter_map(|&r| line_ref(doc, r)).collect()
     }
 }
 
-/// Cosa spostare: un hunk intero o le righe selezionate.
+/// What to move: a whole hunk or the selected lines.
 #[derive(Debug, Clone, Copy)]
 pub enum Pick<'a> {
-    /// L'hunk con questo indice nel file.
+    /// The hunk with this index in the file.
     Hunk(usize),
     Selected(&'a LineSelection),
 }
 
-/// Una scrittura di righe da mandare al motore.
+/// A line write to send to the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineWrite {
     pub direction: PatchDirection,
     pub path: RepoPath,
-    /// Mai vuota.
+    /// Never empty.
     pub lines: Vec<LineRef>,
-    /// Il digest del `FileDiff` visto (lo stesso del campo `digest` di `diff.worktree`/
+    /// The digest of the `FileDiff` seen (the same as the `digest` field of `diff.worktree`/
     /// `diff.index`).
     pub digest: String,
-    /// Descrizione per i messaggi, es. "Stage dell'hunk 1 di src/lib.rs".
+    /// Description for messages, e.g. "Stage hunk 1 of src/lib.rs".
     pub label: String,
 }
 
 impl LineWrite {
-    /// L'id del comando del Registry.
+    /// The id of the Registry command.
     pub fn command(&self) -> &'static str {
         match self.direction {
             PatchDirection::Stage => "index.stage_lines",
@@ -213,8 +213,8 @@ impl LineWrite {
     }
 }
 
-/// La scrittura per `pick` nel diff `doc` di `target`; `None` se il diff non permette la
-/// selezione parziale o non c'è niente da spostare (mai una lista di righe vuota).
+/// The write for `pick` in the diff `doc` of `target`; `None` if the diff does not allow
+/// partial selection or there is nothing to move (never an empty list of lines).
 pub fn plan(doc: &DiffDoc, target: &DiffTarget, pick: Pick<'_>) -> Option<LineWrite> {
     let Partial::Available(direction) = partial(doc, target.source) else {
         return None;
@@ -270,22 +270,22 @@ pub fn plan(doc: &DiffDoc, target: &DiffTarget, pick: Pick<'_>) -> Option<LineWr
     })
 }
 
-/// Stato dei pulsanti della selezione parziale.
+/// State of the partial selection buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineButtons {
     pub direction: PatchDirection,
-    /// "Stage hunk"/"Unstage hunk" su ogni intestazione.
+    /// "Stage hunk"/"Unstage hunk" on every header.
     pub hunks: bool,
-    /// "Stage righe selezionate (N)".
+    /// "Stage selected lines (N)".
     pub selected: bool,
-    /// "Deseleziona".
+    /// "Deselect".
     pub clear: bool,
-    /// Righe selezionate.
+    /// Selected lines.
     pub count: usize,
 }
 
-/// I pulsanti da mostrare, `None` se il diff non permette la selezione parziale. `can_write` è
-/// falso durante una scrittura o con una conferma aperta.
+/// The buttons to show, `None` if the diff does not allow partial selection. `can_write` is
+/// false during a write or with a confirmation open.
 pub fn buttons(
     partial: &Partial,
     selection: &LineSelection,
@@ -305,7 +305,7 @@ pub fn buttons(
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, dispatched by [`App::apply`].
     pub(crate) fn apply_lines(&mut self, action: Action) {
         match action {
             Action::SelectLine { row, shift } => {
@@ -347,12 +347,12 @@ impl App {
                     self.send_line_write(write);
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
-    /// Manda lo stage o l'unstage di righe, come [`App::send_write`]: mai due scritture
-    /// insieme, né con una conferma aperta.
+    /// Sends the stage or unstage of lines, like [`App::send_write`]: never two writes
+    /// together, nor with a confirmation open.
     pub(crate) fn send_line_write(&mut self, write: LineWrite) {
         if self.executor.writing().is_some() || write.lines.is_empty() {
             return;
@@ -400,7 +400,7 @@ mod tests {
         }
     }
 
-    /// Due hunk: `ctx -1 +1 +2 ctx` e `-9 +9`.
+    /// Two hunks: `ctx -1 +1 +2 ctx` and `-9 +9`.
     fn two_hunks() -> FileDiff {
         let first = Hunk {
             old_start: 1,
@@ -441,7 +441,7 @@ mod tests {
         }
     }
 
-    // Righe della vista di `two_hunks`: 0 file, 1 hunk, 2 ctx, 3 -2, 4 +2, 5 +3, 6 ctx,
+    // Rows of the `two_hunks` view: 0 file, 1 hunk, 2 ctx, 3 -2, 4 +2, 5 +3, 6 ctx,
     // 7 hunk, 8 -9, 9 +10.
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
         s.click(&d, 4, false);
         assert!(s.is_empty());
 
-        // Maiusc+clic: dall'ultima riga cliccata, saltando contesto e intestazioni.
+        // Shift+click: from the last clicked row, skipping context and headers.
         s.click(&d, 3, false);
         s.click(&d, 9, true);
         assert_eq!(
@@ -479,7 +479,7 @@ mod tests {
                 LineRef::New(10)
             ]
         );
-        // Anche all'indietro, e senza ancora un Maiusc+clic è un clic normale.
+        // Also backwards, and without a previous Shift+click it is a normal click.
         let mut s = LineSelection::default();
         s.click(&d, 5, true);
         assert_eq!(s.refs(&d), [LineRef::New(3)]);
@@ -499,12 +499,12 @@ mod tests {
         s.drag_end();
         assert_eq!(s.len(), 4);
         assert!(!s.contains(9));
-        // Da una riga selezionata il trascinamento deseleziona.
+        // From a selected row the drag deselects.
         s.drag_start(&d, 4);
         s.drag_over(&d, 5);
         s.drag_end();
         assert_eq!(s.refs(&d), [LineRef::Old(2), LineRef::Old(9)]);
-        // Senza trascinamento in corso non succede niente.
+        // Without a drag in progress nothing happens.
         s.drag_over(&d, 9);
         assert!(!s.contains(9));
     }
@@ -516,7 +516,7 @@ mod tests {
         let hunk = plan(&d, &target, Pick::Hunk(1)).unwrap();
         assert_eq!(hunk.lines, [LineRef::Old(9), LineRef::New(10)]);
         assert_eq!(hunk.command(), "index.stage_lines");
-        assert_eq!(hunk.label, "Stage dell'hunk 2 di a.rs");
+        assert_eq!(hunk.label, "Stage hunk 2 of a.rs");
         assert_eq!(hunk.digest, project_engine::file_digest(&d.diff.files[0]));
         assert_eq!(hunk.digest.len(), 32);
         assert_eq!(
@@ -530,7 +530,10 @@ mod tests {
         assert!(plan(&d, &target, Pick::Hunk(5)).is_none());
 
         let mut s = LineSelection::default();
-        assert!(plan(&d, &target, Pick::Selected(&s)).is_none(), "mai vuota");
+        assert!(
+            plan(&d, &target, Pick::Selected(&s)).is_none(),
+            "never empty"
+        );
         s.click(&d, 5, false);
         let index = DiffTarget {
             source: DiffSource::Index,
@@ -539,7 +542,7 @@ mod tests {
         let write = plan(&d, &index, Pick::Selected(&s)).unwrap();
         assert_eq!(write.command(), "index.unstage_lines");
         assert_eq!(write.lines, [LineRef::New(3)]);
-        assert_eq!(write.label, "Unstage di 1 riga di a.rs");
+        assert_eq!(write.label, "Unstage 1 line of a.rs");
 
         let commit = DiffTarget::commit(Oid::from_bytes([3; 20]), "a.rs".into());
         assert!(plan(&d, &commit, Pick::Hunk(0)).is_none());
@@ -564,9 +567,9 @@ mod tests {
         let mut binary = file(Vec::new());
         binary.binary = true;
         let Partial::Unavailable(reason) = partial(&doc(vec![binary]), DiffSource::Worktree) else {
-            panic!("binario");
+            panic!("binary");
         };
-        assert!(reason.contains("binario"), "{reason}");
+        assert!(reason.contains("binary"), "{reason}");
 
         let mut link = two_hunks();
         link.new_mode = Some(0o120000);
@@ -576,7 +579,7 @@ mod tests {
             Partial::Unavailable(r) if r.contains("link")
         ));
 
-        // Una rinomina si può dividere solo nel diff dell'indice.
+        // A rename can be split only in the index diff.
         let mut renamed = two_hunks();
         renamed.change = Change::Renamed;
         renamed.old_path = "b.rs".into();
@@ -590,17 +593,17 @@ mod tests {
             Partial::Available(_)
         ));
 
-        // Cambio di tipo: due file sullo stesso percorso.
+        // Type change: two files on the same path.
         let mut deleted = two_hunks();
         deleted.change = Change::Deleted;
         let typechange = doc(vec![deleted, two_hunks()]);
         assert!(matches!(
             partial(&typechange, DiffSource::Worktree),
-            Partial::Unavailable(r) if r.contains("tipo")
+            Partial::Unavailable(r) if r.contains("type")
         ));
         assert!(plan(&typechange, &worktree(), Pick::Hunk(0)).is_none());
 
-        // Solo cambio di modo: nessuna riga, nessun pulsante.
+        // Mode change only: no lines, no buttons.
         let mut mode = file(Vec::new());
         mode.new_mode = Some(0o100755);
         assert_eq!(
@@ -626,19 +629,19 @@ mod tests {
         let b = buttons(&available, &s, true).unwrap();
         assert!(b.hunks && b.selected && b.clear);
         assert_eq!(b.count, 2);
-        // Durante una scrittura si può solo deselezionare.
+        // During a write one can only deselect.
         let b = buttons(&available, &s, false).unwrap();
         assert!(!b.hunks && !b.selected && b.clear);
         assert_eq!(buttons(&Partial::Hidden, &s, true), None);
         assert_eq!(
-            buttons(&Partial::Unavailable("binario".to_owned()), &s, true),
+            buttons(&Partial::Unavailable("binary".to_owned()), &s, true),
             None
         );
     }
 
-    /// Il percorso completo con il repo di esempio, come lo fa la UI: `diff.worktree` di
-    /// `src/lib.rs` letto come `Diff`, lo stage del primo hunk con il digest calcolato dalla UI,
-    /// poi l'unstage dello stesso hunk dal diff dell'indice.
+    /// The full path with the sample repo, as the UI does it: `diff.worktree` of
+    /// `src/lib.rs` read as `Diff`, the stage of the first hunk with the digest computed by the UI,
+    /// then the unstage of the same hunk from the index diff.
     #[test]
     fn staging_a_hunk_with_the_sample_repo() {
         use crate::stage::{Follow, Side, StageLists, follow};
@@ -673,10 +676,10 @@ mod tests {
         assert_eq!(
             d.diff.files[0].hunks.len(),
             2,
-            "due hunk nel repo di esempio"
+            "two hunks in the sample repo"
         );
         let write = plan(&d, &target, Pick::Hunk(0)).unwrap();
-        // Il digest calcolato dalla UI è quello che il motore ha mandato.
+        // The digest computed by the UI is the one the engine sent.
         assert_eq!(Some(write.digest.clone()), digest);
         let out = registry
             .run(write.command(), &mut session, write.params())
@@ -686,9 +689,9 @@ mod tests {
         assert_eq!(follow(&lists, Side::Unstaged, &path), Follow::Reload);
         assert!(lists.contains(Side::Staged, &path));
         let (_, d, _) = read(&mut session, DiffSource::Worktree);
-        assert_eq!(d.diff.files[0].hunks.len(), 1, "resta il secondo hunk");
+        assert_eq!(d.diff.files[0].hunks.len(), 1, "the second hunk remains");
 
-        // Una selezione fatta su un diff vecchio è rifiutata.
+        // A selection made on an old diff is refused.
         let stale = registry.run(write.command(), &mut session, write.params());
         assert!(matches!(
             stale,

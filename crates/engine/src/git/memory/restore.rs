@@ -1,13 +1,13 @@
-//! `edit.undo` / `edit.redo` sul [`MemoryBackend`]: ref e HEAD spostati con gli stessi
-//! controlli del `CliBackend` ([`RefRestore::check`], [`RefRestore::conflicts`]) e i ref di
-//! backup dei commit che non sarebbero più raggiungibili (in
-//! [`MemoryBackend::commit_backups`], con i nomi `refs/project/backup/undo-<n>`).
+//! `edit.undo` / `edit.redo` on the [`MemoryBackend`]: refs and HEAD moved with the same
+//! checks as the `CliBackend` ([`RefRestore::check`], [`RefRestore::conflicts`]) and the backup
+//! refs of the commits that would no longer be reachable (in
+//! [`MemoryBackend::commit_backups`], with the names `refs/project/backup/undo-<n>`).
 //!
-//! L'indice e il worktree non cambiano, come con `update-ref`: l'indice è quello di prima, e le
-//! voci dello stato si ricalcolano rispetto al nuovo HEAD (le modifiche del commit annullato
-//! ricompaiono in stage). Le rinomine in stage tornano come cancellazione e aggiunta: il repo
-//! in memoria non riconosce le rinomine. Il repo in memoria non ha ref simbolici né replace
-//! object: per la raggiungibilità contano i ref, i nuovi valori e i backup.
+//! The index and worktree do not change, as with `update-ref`: the index is the previous one, and the
+//! status entries are recomputed against the new HEAD (the changes of the undone commit
+//! reappear in the stage). Staged renames come back as deletion and addition: the in-memory repo
+//! does not detect renames. The in-memory repo has no symbolic refs or replace
+//! objects: for reachability the refs, the new values and the backups count.
 
 use super::write::{TreeEntry, ZERO, entry_order, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend, RefEntry};
@@ -17,8 +17,8 @@ use project_domain::{Change, EntryKind, Oid, RepoPath, StatusEntry, TrackedInfo}
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MemoryBackend {
-    /// [`GitBackend::restore_refs`](crate::GitBackend::restore_refs). Un errore non cambia
-    /// niente.
+    /// [`GitBackend::restore_refs`](crate::GitBackend::restore_refs). An error changes
+    /// nothing.
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
         request.check(self.operation)?;
         let head = self.head_state();
@@ -31,7 +31,7 @@ impl MemoryBackend {
             });
         }
 
-        // Cosa resta raggiungibile dopo: i nuovi valori, gli altri ref e i backup.
+        // What stays reachable afterwards: the new values, the other refs and the backups.
         let moved: BTreeSet<&str> = request.refs.iter().map(|r| r.name.as_str()).collect();
         let mut keep = request.targets();
         keep.extend(
@@ -88,7 +88,7 @@ impl MemoryBackend {
         Ok(backups)
     }
 
-    /// HEAD come la registra il diario.
+    /// HEAD as the journal records it.
     pub(super) fn head_state(&self) -> HeadState {
         match &self.head {
             HeadRef::Branch(name) => HeadState::Branch(format!("{HEADS}{name}")),
@@ -96,10 +96,10 @@ impl MemoryBackend {
         }
     }
 
-    /// Dopo uno spostamento di HEAD: le voci dello stato rispetto al nuovo HEAD, con lo stesso
-    /// indice (`index`, l'albero dell'indice prima dello spostamento) e lo stesso worktree. I
-    /// file in conflitto, non tracciati e ignorati restano com'erano; un file `intent-to-add`
-    /// (nessuna versione nell'indice) anche.
+    /// After a HEAD move: the status entries relative to the new HEAD, with the same
+    /// index (`index`, the index tree before the move) and the same worktree. The
+    /// conflicted, untracked and ignored files stay as they were; an `intent-to-add` file
+    /// (no version in the index) too.
     pub(super) fn rebase_entries(&mut self, index: &BTreeMap<RepoPath, TreeEntry>) {
         let head = self.head_tree();
         let mut tracked = BTreeMap::new();

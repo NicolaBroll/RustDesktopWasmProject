@@ -1,4 +1,4 @@
-# Messaggi dell'app: risposte dei comandi, barra di rete (lib.rs, executor.rs).
+# App messages: command replies, network bar (lib.rs, executor.rs).
 
 app-commit-not-loaded = il commit { $id } non è tra quelli caricati
 app-index-backup = Backup dell'indice salvato in { $backup }

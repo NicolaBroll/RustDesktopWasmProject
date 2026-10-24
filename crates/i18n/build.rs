@@ -1,6 +1,6 @@
-//! Genera l'elenco dei file `.ftl` (`locales/<lingua>/<area>.ftl`), inclusi con `include_str!`
-//! così le traduzioni stanno nel binario (anche in wasm). Un'area nuova è solo un file nuovo:
-//! nessun elenco da toccare a mano, nessun conflitto tra chi lavora su aree diverse.
+//! Generates the list of `.ftl` files (`locales/<language>/<area>.ftl`), included with
+//! `include_str!` so the translations live in the binary (wasm too). A new area is just a new
+//! file: no list to edit by hand, no conflicts between people working on different areas.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -15,7 +15,7 @@ fn main() {
         let mut areas: Vec<String> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
             .filter_map(|entry| {
-                let path = entry.expect("voce della cartella").path();
+                let path = entry.expect("directory entry").path();
                 (path.extension()? == "ftl")
                     .then(|| path.file_stem()?.to_str().map(str::to_owned))?
             })

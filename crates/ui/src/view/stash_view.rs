@@ -1,8 +1,8 @@
 use super::*;
 
-/// La sezione "Stash": gli stash (`stash.list`), dal più recente, con il menu per applicarli,
-/// fare pop ed eliminarli; un clic mostra i file a destra e la base nel grafo. Sotto,
-/// "Stash delle modifiche…".
+/// The "Stash" section: the stashes (`stash.list`), newest first, with the menu to apply them,
+/// pop and drop them; a click shows the files on the right and the base in the graph. Below,
+/// "Stash changes…".
 pub(super) fn stash_section(
     ui: &mut Ui,
     repo: &RepoView,
@@ -15,7 +15,7 @@ pub(super) fn stash_section(
         None => tr!("stash-section-title-loading"),
     };
     egui::CollapsingHeader::new(title)
-        .id_salt("sezione-stash")
+        .id_salt("stash-section")
         .default_open(true)
         .show(ui, |ui| {
             match list {
@@ -60,7 +60,7 @@ pub(super) fn stash_section(
         });
 }
 
-/// Il pulsante che apre il dialogo "Stash": attivo se ci sono modifiche e nessuna scrittura.
+/// The button that opens the "Stash" dialog: enabled if there are changes and no write in progress.
 pub(super) fn stash_push_button(
     ui: &mut Ui,
     repo: &RepoView,
@@ -82,13 +82,13 @@ pub(super) fn stash_push_button(
     }
 }
 
-/// Una riga della sezione "Stash".
+/// A row of the "Stash" section.
 pub(super) struct StashRow<'a> {
     stash: &'a Stash,
     selected: bool,
     can_write: bool,
     restore_index: bool,
-    /// Già applicato da un pop che non l'ha tolto: niente Pop.
+    /// Already applied by a pop that did not remove it: no Pop.
     pop_blocked: bool,
 }
 
@@ -116,7 +116,7 @@ pub(super) fn stash_row(ui: &mut Ui, row: &StashRow<'_>, actions: &mut Vec<Actio
     ui.add_space(2.0);
 }
 
-/// Il menu di uno stash: applica, pop, "rimetti anche lo stage", elimina.
+/// The menu of a stash: apply, pop, "also restore the index", drop.
 pub(super) fn stash_menu(ui: &mut Ui, row: &StashRow<'_>, actions: &mut Vec<Action>) {
     let flags = StashFlags {
         can_write: row.can_write,
@@ -127,16 +127,16 @@ pub(super) fn stash_menu(ui: &mut Ui, row: &StashRow<'_>, actions: &mut Vec<Acti
     stash_actions(ui, row.stash, flags, actions);
 }
 
-/// Applica, Pop, la casella "Rimetti anche lo stage" ed Elimina, per il menu (`menu`: chiude
-/// il menu dopo il clic) e per il pannello dello stash.
-/// Come disegnare le azioni di uno stash.
+/// Apply, Pop, the "Also restore the index" checkbox and Drop, for the menu (`menu`: closes
+/// the menu after the click) and for the stash panel.
+/// How to draw the actions of a stash.
 #[derive(Clone, Copy)]
 pub(super) struct StashFlags {
     can_write: bool,
     restore_index: bool,
-    /// Già applicato da un pop che non l'ha tolto dall'elenco: Pop spento.
+    /// Already applied by a pop that did not remove it from the list: Pop disabled.
     pop_blocked: bool,
-    /// Nel menu contestuale: il clic lo chiude.
+    /// In the context menu: the click closes it.
     menu: bool,
 }
 
@@ -213,9 +213,9 @@ pub(super) fn stash_actions(
     }
 }
 
-/// Lo stash selezionato, al posto dei dettagli del commit: nome, messaggio, base, le azioni e
-/// i file tracciati cambiati rispetto alla base (`commit.show` sull'id dello stash; un clic
-/// apre il diff).
+/// The selected stash, in place of the commit details: name, message, base, the actions and
+/// the tracked files changed relative to the base (`commit.show` on the stash id; a click
+/// opens the diff).
 pub(crate) fn stash_panel(
     ui: &mut Ui,
     repo: &RepoView,
@@ -227,7 +227,7 @@ pub(crate) fn stash_panel(
     ui.add_space(4.0);
     ui.add(egui::Label::new(RichText::new(stash.title()).heading()).wrap());
     ui.add_space(6.0);
-    egui::Grid::new("dettagli-stash")
+    egui::Grid::new("stash-details")
         .num_columns(2)
         .spacing(vec2(12.0, 4.0))
         .show(ui, |ui| {
@@ -310,14 +310,14 @@ pub(crate) fn stash_panel(
     }
 }
 
-/// Il dialogo degli stash aperto: "Stash" (push) o la conferma dell'eliminazione.
+/// The open stash dialog: "Stash" (push) or the drop confirmation.
 pub(crate) fn stash_dialog(
     ctx: &egui::Context,
     repo: &RepoView,
     dialog: &stash::Dialog,
     actions: &mut Vec<Action>,
 ) {
-    let modal = egui::Modal::new(egui::Id::unique("dialogo-stash")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("stash-dialog")).show(ctx, |ui| {
         ui.set_max_width(480.0);
         match dialog {
             stash::Dialog::Push(push) => push_stash_dialog(ui, repo, push, actions),
@@ -357,7 +357,7 @@ pub(super) fn push_stash_dialog(
         ui.label(tr!("stash-dialog-message"));
         let message = ui.add(
             egui::TextEdit::singleline(&mut fields.message)
-                .id(ui.make_persistent_id("messaggio-stash"))
+                .id(ui.make_persistent_id("stash-message"))
                 .hint_text(tr!("stash-dialog-message-hint"))
                 .desired_width(320.0)
                 .interactive(!dialog.sending),
@@ -446,8 +446,8 @@ pub(super) fn drop_stash_dialog(
     });
 }
 
-/// Apply o pop fermo in conflitto: lo stash è applicato in parte e resta nell'elenco; i file
-/// in conflitto si risolvono e si mettono in stage dall'area delle modifiche.
+/// Apply or pop stopped on conflicts: the stash is partly applied and stays in the list; the
+/// conflicted files are resolved and staged from the changes area.
 pub(crate) fn stash_conflicts_window(
     ctx: &egui::Context,
     conflicts: &stash::Conflicts,
@@ -462,7 +462,7 @@ pub(crate) fn stash_conflicts_window(
         tr!("stash-conflicts-title-apply", name = name)
     };
     egui::Window::new(title)
-        .id(egui::Id::unique("conflitti-stash"))
+        .id(egui::Id::unique("stash-conflicts"))
         .collapsible(false)
         .resizable(false)
         .default_width(460.0)
@@ -484,7 +484,7 @@ pub(crate) fn stash_conflicts_window(
             ui.strong(tr!("stash-conflicts-files", n = n));
             let row = ui.text_style_height(&egui::TextStyle::Monospace);
             egui::ScrollArea::vertical()
-                .id_salt("conflitti-stash-file")
+                .id_salt("stash-conflicts-files")
                 .max_height(CONFLICT_LIST_HEIGHT)
                 .auto_shrink([false, true])
                 .show_rows(ui, row, n, |ui, range| {

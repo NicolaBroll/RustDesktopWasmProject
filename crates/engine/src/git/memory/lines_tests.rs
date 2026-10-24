@@ -1,4 +1,4 @@
-//! Test di `apply_lines` (stage e unstage di righe) sul `MemoryBackend`.
+//! Tests of `apply_lines` (stage and unstage of lines) on the `MemoryBackend`.
 
 use super::*;
 use crate::{DiffSpec, GitBackend, LineSelection, file_digest};
@@ -34,7 +34,7 @@ fn selection(
     direction: PatchDirection,
     pick: impl FnOnce(&FileDiff) -> Vec<LineRef>,
 ) -> LineSelection {
-    let f = file(repo, path, direction).expect("file nel diff");
+    let f = file(repo, path, direction).expect("file in the diff");
     LineSelection {
         path: p(path),
         lines: pick(&f),
@@ -43,7 +43,7 @@ fn selection(
     }
 }
 
-/// Il contenuto in stage di `path`.
+/// The staged content of `path`.
 fn staged(repo: &MemoryBackend, path: &str) -> Option<Vec<u8>> {
     let status = repo.status().unwrap();
     let entry = status.entries.iter().find(|e| e.path == p(path))?;
@@ -58,7 +58,10 @@ fn stage_of_every_line_equals_staging_the_file() {
         let sel = selection(&by_lines, path, PatchDirection::Stage, FileDiff::line_refs);
         let worktree_before = by_lines.worktree.clone();
         let backup = by_lines.apply_lines(&sel).unwrap();
-        assert_eq!(by_lines.worktree, worktree_before, "il worktree non cambia");
+        assert_eq!(
+            by_lines.worktree, worktree_before,
+            "the worktree does not change"
+        );
 
         let mut whole = MemoryBackend::sample();
         let expected_backup = whole.stage(&[p(path)]).unwrap();
@@ -100,7 +103,7 @@ fn stage_and_unstage_of_one_line() {
         .filter(|(q, _, _)| q == path)
         .collect();
     assert_eq!(after, [(path.to_owned(), 'M', 'M')]);
-    // In stage c'è solo quella riga.
+    // Only that line is staged.
     let in_index = file(&repo, path, PatchDirection::Unstage).unwrap();
     let changed: Vec<_> = in_index
         .hunks
@@ -111,8 +114,8 @@ fn stage_and_unstage_of_one_line() {
         .collect();
     assert_eq!(changed, [(LineKind::Added, first_added.content.clone())]);
 
-    // E tolta di nuovo: si torna allo stato di partenza. La versione in stage era solo
-    // nell'indice (`MM`): backup.
+    // And removed again: back to the starting state. The staged version was only
+    // in the index (`MM`): backup.
     let sel = selection(&repo, path, PatchDirection::Unstage, FileDiff::line_refs);
     let backup = repo.apply_lines(&sel).unwrap().expect("backup");
     assert_eq!(repo.backups().last().unwrap().0, backup);
@@ -139,11 +142,11 @@ fn backup_holds_the_replaced_staged_version() {
 #[test]
 fn unstage_lines_of_a_new_file() {
     let mut repo = MemoryBackend::sample();
-    let path = "docs/guida.md";
+    let path = "docs/guide.md";
     let content = staged(&repo, path).unwrap();
     let f = file(&repo, path, PatchDirection::Unstage).unwrap();
     assert_eq!(f.change, Change::Added);
-    // Il worktree del file (non modificato) non è nella mappa: dopo deve esserci, invariato.
+    // The file's worktree (unmodified) is not in the map: afterwards it must be there, unchanged.
     let refs = f.line_refs();
     assert!(refs.len() > 1);
     let sel = selection(&repo, path, PatchDirection::Unstage, |_| vec![refs[0]]);
@@ -159,7 +162,7 @@ fn unstage_lines_of_a_new_file() {
         .collect();
     assert_eq!(entry, [(path.to_owned(), 'A', 'M')]);
 
-    // Tutte le righe rimaste: torna non tracciato.
+    // All the remaining lines: it becomes untracked again.
     let sel = selection(&repo, path, PatchDirection::Unstage, FileDiff::line_refs);
     assert!(repo.apply_lines(&sel).unwrap().is_some(), "`AM`: backup");
     let entry: Vec<_> = letters(&repo)
@@ -173,9 +176,9 @@ fn unstage_lines_of_a_new_file() {
 #[test]
 fn intent_to_add_file() {
     let mut repo = MemoryBackend::new();
-    repo.set_worktree_file("nuovo.txt", "uno\ndue\n");
+    repo.set_worktree_file("new.txt", "one\ntwo\n");
     repo.set_entries(vec![StatusEntry {
-        path: p("nuovo.txt"),
+        path: p("new.txt"),
         index: Change::Unmodified,
         worktree: Change::Added,
         kind: EntryKind::Ordinary(TrackedInfo {
@@ -187,12 +190,12 @@ fn intent_to_add_file() {
             oid_index: ZERO,
         }),
     }]);
-    let sel = selection(&repo, "nuovo.txt", PatchDirection::Stage, |f| {
+    let sel = selection(&repo, "new.txt", PatchDirection::Stage, |f| {
         vec![f.line_refs()[1]]
     });
     assert_eq!(repo.apply_lines(&sel).unwrap(), None);
-    assert_eq!(staged(&repo, "nuovo.txt").unwrap(), b"due\n");
-    assert_eq!(letters(&repo), [("nuovo.txt".to_owned(), 'A', 'M')]);
+    assert_eq!(staged(&repo, "new.txt").unwrap(), b"two\n");
+    assert_eq!(letters(&repo), [("new.txt".to_owned(), 'A', 'M')]);
 }
 
 #[test]

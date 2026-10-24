@@ -3,305 +3,304 @@
 ![BinariGit](assets/banner.png)
 
 
-Client git grafico in costruzione (vedi [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md)),
-scritto in Rust con architettura a strati: motore indipendente dalla UI,
-un unico frontend egui compilato per desktop e per WebAssembly, CLI e server MCP che usano lo stesso
-catalogo di comandi. Dettagli in [impl-docs/ARCHITETTURA-rust.md](impl-docs/ARCHITETTURA-rust.md)
-e [AGENTS.md](AGENTS.md).
+Graphical git client under construction (see [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md)),
+written in Rust with a layered architecture: an engine independent of the UI,
+a single egui frontend compiled for desktop and WebAssembly, and a CLI and an MCP server that use the same
+command catalog. Details in [impl-docs/ARCHITECTURE-rust.md](impl-docs/ARCHITECTURE-rust.md)
+and [AGENTS.md](AGENTS.md).
 
-## Avvio
+## Getting started
 
 ```sh
-make setup        # target wasm32 e trunk
-make run          # app desktop
-make desktop-shot # screenshot dell'app desktop senza schermo -> target/desktop.png
-make web-serve    # app web su http://localhost:8080
+make setup        # wasm32 target and trunk
+make run          # desktop app
+make desktop-shot # headless screenshot of the desktop app -> target/desktop.png
+make web-serve    # web app at http://localhost:8080
 make cli ARGS="commands --search repo"
 ```
 
 ## CLI
 
 ```sh
-project-cli commands [--search <testo>]
-project-cli [--repo <percorso>] run --cmd <id>[=<json>]...   # es. --repo . run --cmd repo.status
-project-cli [--repo <percorso>] eval                         # comandi da stdin, uno per riga
-project-cli mcp [--root <dir>]                               # server MCP su stdin/stdout
+project-cli commands [--search <text>]
+project-cli [--repo <path>] run --cmd <id>[=<json>]...   # e.g. --repo . run --cmd repo.status
+project-cli [--repo <path>] eval                         # commands from stdin, one per line
+project-cli mcp [--root <dir>]                           # MCP server on stdin/stdout
 ```
 
-`--repo` apre il repository prima dei comandi (equivale a `repo.open` come primo comando).
+`--repo` opens the repository before the commands (equivalent to `repo.open` as the first command).
 
-Comandi: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
-(pagine da 200 commit se manca `limit`, con `has_more`; da HEAD, da `rev`, oppure con
-`"all": true` da tutti i branch locali e remoti, i tag e HEAD, senza stash né backup, e con in
-più `"stashes": true` anche dai commit su cui sono stati creati gli stash; `rev` e
-`all` insieme, o `stashes` senza `all`, sono un errore), `commit.show {"id"}` (metadati e file
-cambiati rispetto al primo genitore), `diff.worktree {"path"?}` (modifiche non in stage),
-`diff.index {"path"?}` (modifiche in stage) e `diff.commit {"id", "path"?}` (commit rispetto al
-primo genitore). I diff restituiscono `{"files": [...]}` con hunk e righe (in `diff.worktree` e
-`diff.index` ogni file ha anche `digest`, da passare a `index.*_lines`); `path` limita il
-risultato a quel file (le rinomine restano tali) ed è una stringa, o un array di byte per i nomi
-non UTF-8. Non c'è un limite di dimensione: per i commit grandi conviene chiedere un file alla
-volta.
+Commands: `repo.open {"path"}`, `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
+(pages of 200 commits if `limit` is missing, with `has_more`; from HEAD, from `rev`, or with
+`"all": true` from all local and remote branches, tags and HEAD, without stashes or backups, and with
+`"stashes": true` in addition also from the commits the stashes were created on; `rev` and
+`all` together, or `stashes` without `all`, are an error), `commit.show {"id"}` (metadata and files
+changed relative to the first parent), `diff.worktree {"path"?}` (unstaged changes),
+`diff.index {"path"?}` (staged changes) and `diff.commit {"id", "path"?}` (commit relative to its
+first parent). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and
+`diff.index` each file also has `digest`, to be passed to `index.*_lines`); `path` limits the
+result to that file (renames stay renames) and is a string, or a byte array for non-UTF-8 names.
+There is no size limit: for large commits it is better to request one file at a time.
 
-Scritture (segnate `[modifica]` da `commands`): `index.stage {"paths"}` mette in stage i file
-(modifiche, file nuovi, cancellazioni; per una rinomina i due percorsi) e `index.unstage {"paths"}`
-li toglie dallo stage senza toccare il worktree. `paths` è una lista non vuota di percorsi esatti
-(stringhe o array di byte), presi alla lettera; una cartella comprende i file che contiene. Un file
-ignorato da `.gitignore` non viene mai forzato: errore, e niente cambia. Mettere in stage un file
-in conflitto (chiesto per nome) lo risolve; toglierlo dallo stage è rifiutato. Entrambi
-restituiscono `{"status", "backup"}`: il nuovo stato, come `repo.status`, e il ref del backup
-dell'indice (o `null`). Il backup si salva da solo prima di scrivere quando una versione in stage
-non è né in HEAD né nel worktree e andrebbe persa (`git show <ref>:<percorso>` la recupera); se
-non riesce, l'indice non si tocca.
+Writes (marked `[writes]` by `commands`): `index.stage {"paths"}` stages files
+(modifications, new files, deletions; for a rename the two paths) and `index.unstage {"paths"}`
+removes them from the index without touching the worktree. `paths` is a non-empty list of exact paths
+(strings or byte arrays), taken literally; a directory includes the files it contains. A file
+ignored by `.gitignore` is never forced: error, and nothing changes. Staging a conflicted file
+(requested by name) resolves it; unstaging it is refused. Both
+return `{"status", "backup"}`: the new status, like `repo.status`, and the index backup ref
+(or `null`). The backup is saved automatically before writing when a staged version
+is neither in HEAD nor in the worktree and would be lost (`git show <ref>:<path>` recovers it); if
+it fails, the index is not touched.
 
-`index.stage_lines {"path", "lines", "digest"}` e `index.unstage_lines {"path", "lines",
-"digest"}` mettono in stage o tolgono dallo stage solo alcune righe di un file (solo l'indice,
-mai il worktree): `lines` è una lista non vuota di `{"old": n}` (riga tolta) o
-`{"new": n}` (riga aggiunta) con i numeri di riga di `diff.worktree` (stage) o `diff.index`
-(unstage) per `path`, e `digest` è quello del file nello stesso diff. Se il file è cambiato da
-quando il diff è stato letto il comando fallisce senza scrivere niente (va riletto il diff).
-Risultato e backup come `index.stage`. File binari, sottomoduli, link simbolici e conflitti si
-mettono in stage solo interi.
+`index.stage_lines {"path", "lines", "digest"}` and `index.unstage_lines {"path", "lines",
+"digest"}` stage or unstage only some lines of a file (index only,
+never the worktree): `lines` is a non-empty list of `{"old": n}` (removed line) or
+`{"new": n}` (added line) with the line numbers from `diff.worktree` (stage) or `diff.index`
+(unstage) for `path`, and `digest` is that of the file in the same diff. If the file changed since
+the diff was read, the command fails without writing anything (the diff must be re-read).
+Result and backup as `index.stage`. Binary files, submodules, symbolic links and conflicts can
+only be staged whole.
 
-`commit.create {"message", "amend"?, "confirm"?}` crea un commit con quello che è in stage
-(`git commit -F -`: messaggio via stdin, hook e firma secondo la configurazione dell'utente, mai
-un editor). Messaggio vuoto, niente in stage, file in conflitto, rebase/cherry-pick/revert in
-corso: errore e niente cambia; durante un merge il commit è il commit di merge. Con `"amend":
-true` riscrive l'ultimo commit (stesso autore e genitori) e salva il commit riscritto in un ref
-`refs/project/backup/amend-...`; se quel commit è già su un branch remoto o ha un tag serve
-anche `"confirm": true`, e gli altri branch e tag che lo contengono sono elencati in `also_on`.
-Un hook che rifiuta o una firma che non riesce danno un errore con tutto il
-loro output; un problema dopo un commit riuscito (es. un hook `post-commit` che sposta HEAD) dà
-un errore che dice di non ripetere il commit e nomina il backup. Risultato: `{"commit",
-"previous", "branch", "backup", "also_on", "status"}` (il commit come in `repo.log`, HEAD prima,
-il branch spostato, il backup o `null`, i ref rimasti sul commit riscritto, il nuovo stato).
+`commit.create {"message", "amend"?, "confirm"?}` creates a commit with what is staged
+(`git commit -F -`: message via stdin, hooks and signing according to the user's configuration, never
+an editor). Empty message, nothing staged, conflicted files, rebase/cherry-pick/revert in
+progress: error and nothing changes; during a merge the commit is the merge commit. With `"amend":
+true` it rewrites the last commit (same author and parents) and saves the rewritten commit in a ref
+`refs/project/backup/amend-...`; if that commit is already on a remote branch or has a tag,
+`"confirm": true` is also required, and the other branches and tags that contain it are listed in `also_on`.
+A hook that rejects or a signature that fails gives an error with all of its
+output; a problem after a successful commit (e.g. a `post-commit` hook that moves HEAD) gives
+an error that says not to repeat the commit and names the backup. Result: `{"commit",
+"previous", "branch", "backup", "also_on", "status"}` (the commit as in `repo.log`, HEAD before,
+the branch that moved, the backup or `null`, the refs left on the rewritten commit, the new status).
 
-`worktree.discard {"paths", "confirm"}` scarta le modifiche non in stage dei file `paths` (file o
-cartelle, presi alla lettera): il worktree torna come l'indice, l'indice non si tocca (un file
-`MM` resta con la sua modifica in stage). Senza `"confirm": true` dà un errore che elenca i file
-che si perderebbero, e niente cambia. Prima di scrivere salva il worktree con `git stash create`
-in un ref `refs/project/backup/discard-...` (`git show <ref>:<percorso>` lo recupera; se il
-backup non riesce niente si scarta) e registra lo scarto nel diario: `edit.undo` rimette i file
-identici, solo se nel frattempo non sono cambiati. I file non tracciati non si toccano mai
-(chiesti per nome: errore; il backup non li coprirebbe); rifiutati anche i sottomoduli chiesti per
-nome e, perché `git stash create` non salverebbe il backup, un branch senza commit e un repo con
-file in conflitto o `intent-to-add` (`git add -N`). Rifiutato anche se al posto di una cartella del
-percorso di un file c'è un file o un link (non tracciato o ignorato, che `git restore`
-cancellerebbe). Se i byte di un file non sono quelli che git ricreerebbe (es. CRLF con
-`core.autocrlf=input`) il backup li salva così come sono, e l'undo li rimette identici. Undo e
-redo di uno scarto sono rifiutati anche se HEAD è cambiata. Risultato: `{"files": [{"path", "change",
+`worktree.discard {"paths", "confirm"}` discards the unstaged changes of the files `paths` (files or
+directories, taken literally): the worktree goes back to the index, the index is not touched (an
+`MM` file keeps its staged change). Without `"confirm": true` it gives an error that lists the files
+that would be lost, and nothing changes. Before writing it saves the worktree with `git stash create`
+in a ref `refs/project/backup/discard-...` (`git show <ref>:<path>` recovers it; if the
+backup fails nothing is discarded) and records the discard in the journal: `edit.undo` restores the files
+identically, only if they have not changed in the meantime. Untracked files are never touched
+(requested by name: error; the backup would not cover them); submodules requested by name are also
+refused and, because `git stash create` would not save the backup, so are a branch with no commits and a repo with
+conflicted or `intent-to-add` files (`git add -N`). Also refused if, in place of a directory in
+the path of a file, there is a file or a link (untracked or ignored, which `git restore`
+would delete). If the bytes of a file are not what git would recreate (e.g. CRLF with
+`core.autocrlf=input`) the backup saves them as they are, and the undo restores them identically. Undo and
+redo of a discard are refused even if HEAD has changed. Result: `{"files": [{"path", "change",
 "mode", "oid"}], "backup", "stash", "status", "can_undo", "can_redo", "next_undo",
 "next_redo"}`.
 
-`branch.create {"name", "start"?}` crea il branch `name` (nome breve) su `start` (una rev; HEAD se
-manca) senza cambiare branch; un branch esistente non si sovrascrive mai, e un nome nuovo che git
-non accetta (anche uno che inizia con `-`) è un errore. Risultato: `{"branch", "target", "refs"}`
-più lo stato del diario. `branch.checkout {"name"}` passa al branch con `git switch`, mai forzato:
-se una modifica locale, un file non tracciato o un ignorato verrebbero sovrascritti dà un errore
-che elenca i file, e niente cambia; le altre modifiche restano. Rifiutato durante merge, rebase,
-ecc. e con file in conflitto. Risultato: `{"branch", "previous", "changed", "warnings",
-"status"}`. `branch.delete {"name", "confirm"?, "expected"?}` elimina un branch (con `expected`, l'id completo del
-commit visto, rifiuta senza toccare niente se il branch nel frattempo punta altrove): il branch attivo o aperto in un
-altro worktree è rifiutato; se ha commit che non sono né in HEAD né nel suo upstream serve
-`"confirm": true`. Prima salva sempre il commit in `refs/project/backup/delete-...`; come `git
-branch -d` toglie anche la configurazione `branch.<nome>.*` (riportata in `removed_config` e
-salvata per l'undo). Risultato: `{"branch", "target", "unmerged", "backup", "removed_config",
-"warnings", "refs"}`. `branch.rename {"name", "new_name"}` rinomina con `git
-branch -m` (mai sopra un branch esistente): reflog, upstream e HEAD seguono. Risultato:
-`{"branch", "previous", "target", "head", "warnings", "refs"}`. Tutti e quattro entrano nel
-diario: l'undo elimina il branch creato, ricrea quello eliminato sullo stesso commit con la sua
-configurazione (se nel frattempo non ne è comparsa una nuova; il reflog del branch eliminato non
-torna), rinomina all'indietro e torna al branch (o commit) di prima con un altro checkout
-sicuro; sempre solo se nel frattempo nessuno ha toccato quei ref o HEAD.
+`branch.create {"name", "start"?}` creates the branch `name` (short name) at `start` (a rev; HEAD if
+missing) without switching branch; an existing branch is never overwritten, and a new name that git
+does not accept (even one starting with `-`) is an error. Result: `{"branch", "target", "refs"}`
+plus the journal state. `branch.checkout {"name"}` switches to the branch with `git switch`, never forced:
+if a local change, an untracked file or an ignored one would be overwritten it gives an error
+that lists the files, and nothing changes; other changes are kept. Refused during merge, rebase,
+etc. and with conflicted files. Result: `{"branch", "previous", "changed", "warnings",
+"status"}`. `branch.delete {"name", "confirm"?, "expected"?}` deletes a branch (with `expected`, the full id of the
+commit seen, it refuses without touching anything if the branch points elsewhere in the meantime): the active branch or one open in
+another worktree is refused; if it has commits that are neither in HEAD nor in its upstream,
+`"confirm": true` is required. It always saves the commit first in `refs/project/backup/delete-...`; like `git
+branch -d` it also removes the `branch.<name>.*` configuration (reported in `removed_config` and
+saved for the undo). Result: `{"branch", "target", "unmerged", "backup", "removed_config",
+"warnings", "refs"}`. `branch.rename {"name", "new_name"}` renames with `git
+branch -m` (never over an existing branch): reflog, upstream and HEAD follow. Result:
+`{"branch", "previous", "target", "head", "warnings", "refs"}`. All four go into the
+journal: the undo deletes the created branch, recreates the deleted one at the same commit with its
+configuration (if a new one has not appeared in the meantime; the reflog of the deleted branch is not
+restored), renames back, and returns to the previous branch (or commit) with another safe
+checkout; always only if nobody has touched those refs or HEAD in the meantime.
 
-`remote.fetch {"remote"?, "branch"?}` scarica dal remoto (`git fetch --progress`): commit nuovi,
-branch remoti e tag come dice la configurazione del remoto (anche `fetch.prune`), mai i branch
-locali, l'indice o il worktree. `remote` è il nome di un remoto configurato (mai un URL o un
-percorso; un nome che non c'è dà un errore con l'elenco dei remoti); se manca, quello
-dell'upstream del branch attivo, poi `origin`, poi l'unico remoto. Con `branch` scarica solo quel
-branch del remoto. Non chiede mai niente da tastiera (niente terminale, stdin chiuso): credenziali
-rifiutate o mancanti danno un errore di autenticazione, un remoto che non si raggiunge (es. URL
-verso una cartella che non c'è) un errore a parte. Risultato: `{"remote", "branch", "updated":
-[{"name", "before", "after"}], "messages", "warnings", "refs"}` (i ref cambiati, le righe di git,
-il nuovo elenco dei ref). Non entra nel diario. Nella CLI, su un terminale, l'avanzamento va su
-stderr; la UI lo mostra mentre il fetch gira e può annullarlo.
+`remote.fetch {"remote"?, "branch"?}` downloads from the remote (`git fetch --progress`): new commits,
+remote branches and tags as the remote's configuration says (also `fetch.prune`), never the local
+branches, the index or the worktree. `remote` is the name of a configured remote (never a URL or a
+path; a name that does not exist gives an error with the list of remotes); if missing, that of the
+upstream of the active branch, then `origin`, then the only remote. With `branch` it downloads only that
+branch of the remote. It never asks anything from the keyboard (no terminal, stdin closed): rejected or missing
+credentials give an authentication error, a remote that cannot be reached (e.g. a URL
+pointing to a directory that does not exist) a separate error. Result: `{"remote", "branch", "updated":
+[{"name", "before", "after"}], "messages", "warnings", "refs"}` (the refs that changed, git's lines,
+the new list of refs). It does not go into the journal. In the CLI, on a terminal, progress goes to
+stderr; the UI shows it while the fetch runs and can cancel it.
 
-`remote.pull {"remote"?, "branch"?, "strategy"?}` scarica il branch dell'upstream (come
-`remote.fetch`, annullabile) e lo integra nel branch `branch` (HEAD se manca): fast-forward, merge
-o rebase secondo `branch.<nome>.rebase`/`pull.rebase` e `pull.ff` (`strategy` = `"merge"`,
-`"rebase"` o `"ff_only"` li sostituisce; senza configurazione merge). Un branch che non è quello
-attivo si può solo portare avanti, senza toccare il worktree. Mai `--autostash`: merge e rebase
-vogliono il worktree pulito (file tracciati), il fast-forward rifiuta solo se sovrascriverebbe
-modifiche locali o file non tracciati. Rifiutato (e niente scaricato) con HEAD staccata, un branch
-senza upstream (l'errore dice come impostarlo, o di pubblicarlo con `remote.push`), un merge o
-rebase in corso, file in conflitto, `pull.rebase=interactive`; rifiutato anche se il pull
-porterebbe un file che esiste già nel worktree come non tracciato o ignorato (git lo
-sovrascriverebbe). Prima di scrivere salva il branch in
-`refs/project/backup/pull-...`. Se il **merge** si ferma (conflitti, un hook, la firma) resta
-in corso come con `merge.start`: non è un errore, il risultato ha `"in_progress": true` e i file
-in `conflicts`, il branch non si è mosso e il backup resta; si conclude con `merge.continue` (dopo
-aver risolto e messo in stage i file) o si annulla con `merge.abort`. Se si ferma il **rebase**
-viene annullato: il branch resta com'era e l'errore elenca i file in conflitto (per risolverli,
-per ora, git da terminale o la strategia merge). Entra nel diario quando sposta il branch:
-`edit.undo` riporta il branch al commit di prima con indice e worktree (come `git reset --keep`:
-rifiutato se un file da ripristinare ha modifiche locali o se un file da ricreare c'è già); il
-merge fermo no (entra con `merge.continue`). Risultato: `{"branch", "remote", "upstream",
+`remote.pull {"remote"?, "branch"?, "strategy"?}` downloads the upstream branch (like
+`remote.fetch`, cancellable) and integrates it into the branch `branch` (HEAD if missing): fast-forward, merge
+or rebase according to `branch.<name>.rebase`/`pull.rebase` and `pull.ff` (`strategy` = `"merge"`,
+`"rebase"` or `"ff_only"` overrides them; with no configuration, merge). A branch that is not the
+active one can only be fast-forwarded, without touching the worktree. Never `--autostash`: merge and rebase
+require a clean worktree (tracked files), the fast-forward refuses only if it would overwrite
+local changes or untracked files. Refused (and nothing downloaded) with a detached HEAD, a branch
+without upstream (the error says how to set it, or to publish it with `remote.push`), a merge or
+rebase in progress, conflicted files, `pull.rebase=interactive`; also refused if the pull
+would bring a file that already exists in the worktree as untracked or ignored (git would
+overwrite it). Before writing it saves the branch in
+`refs/project/backup/pull-...`. If the **merge** stops (conflicts, a hook, signing) it remains
+in progress as with `merge.start`: it is not an error, the result has `"in_progress": true` and the files
+in `conflicts`, the branch has not moved and the backup remains; it is concluded with `merge.continue` (after
+resolving and staging the files) or cancelled with `merge.abort`. If the **rebase** stops
+it is aborted: the branch stays as it was and the error lists the conflicted files (to resolve them,
+for now, git from the terminal or the merge strategy). It goes into the journal when it moves the branch:
+`edit.undo` returns the branch to the previous commit with index and worktree (like `git reset --keep`:
+refused if a file to restore has local changes or if a file to recreate already exists); the
+stopped merge does not (it goes in with `merge.continue`). Result: `{"branch", "remote", "upstream",
 "strategy": "fast_forward"|"merge"|"rebase"|"up_to_date", "strategy_source", "before", "after",
 "ahead", "behind", "in_progress", "conflicts", "message", "backup", "fetch": {"updated",
-"messages"}, "warnings", "status", "refs"}` più lo stato del diario.
+"messages"}, "warnings", "status", "refs"}` plus the journal state.
 
-`remote.push {"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}` pubblica il branch (HEAD se manca)
-con un refspec esplicito `refs/heads/<b>:refs/heads/<b>`: mai tag o altri branch, qualunque sia
-`push.default`, `remote.<nome>.push` o `push.followTags`. Il remoto si sceglie come `git push`:
-`remote`, poi `branch.<nome>.pushRemote`, `remote.pushDefault`, il remoto dell'upstream, `origin`
-o l'unico remoto (`remote_source` nel risultato); un remoto mirror è rifiutato. Sul remoto
-dell'upstream va al branch dell'upstream, altrove allo stesso nome; al primo push (nessun
-upstream) imposta l'upstream. Un
-upstream con un altro nome è rifiutato (come `push.default=simple`). Un push non fast-forward è
-rifiutato (errore che suggerisce il pull) e niente cambia. `"force": true` usa solo
-`--force-with-lease` con l'id del branch remoto locale letto prima (mai `--force`); se il remoto
-perderebbe commit serve anche `"confirm": true` con `"expected"`, l'id del branch remoto locale
-che l'errore di conferma mostra (senza, l'errore li elenca; se nel frattempo è cambiato si chiede
-di nuovo la conferma e niente si pubblica) e prima si salvano
-in `refs/project/backup/push-...`; se il remoto si è spostato nel frattempo il push è rifiutato.
-Un hook `pre-push` che rifiuta dà un errore con il suo output. Non entra nel diario (un push non
-si annulla). Risultato: `{"remote", "remote_source", "branch", "remote_branch", "kind":
+`remote.push {"remote"?, "branch"?, "force"?, "confirm"?, "expected"?}` publishes the branch (HEAD if missing)
+with an explicit refspec `refs/heads/<b>:refs/heads/<b>`: never tags or other branches, whatever
+`push.default`, `remote.<name>.push` or `push.followTags` say. The remote is chosen like `git push`:
+`remote`, then `branch.<name>.pushRemote`, `remote.pushDefault`, the upstream's remote, `origin`
+or the only remote (`remote_source` in the result); a mirror remote is refused. On the upstream's
+remote it goes to the upstream's branch, elsewhere to the same name; on the first push (no
+upstream) it sets the upstream. An
+upstream with a different name is refused (like `push.default=simple`). A non-fast-forward push is
+refused (error that suggests the pull) and nothing changes. `"force": true` uses only
+`--force-with-lease` with the id of the local remote branch read beforehand (never `--force`); if the remote
+would lose commits, `"confirm": true` is also required, with `"expected"`, the id of the local remote branch
+that the confirmation error shows (without it, the error lists them; if it changed in the meantime confirmation is asked
+again and nothing is published), and they are first saved
+in `refs/project/backup/push-...`; if the remote moved in the meantime the push is refused.
+A `pre-push` hook that rejects gives an error with its output. It does not go into the journal (a push cannot
+be undone). Result: `{"remote", "remote_source", "branch", "remote_branch", "kind":
 "new"|"fast_forward"|"forced"|"up_to_date", "summary", "before", "after", "set_upstream",
 "forced", "lost", "backup", "updated", "messages", "warnings", "status", "refs"}`.
 
-`remote.list {}` (sola lettura) elenca i remoti in ordine di nome: `{"remotes": [{"name", "url",
+`remote.list {}` (read-only) lists the remotes in name order: `{"remotes": [{"name", "url",
 "push_urls", "fetch", "mirror", "branches", "default", "push_default", "credentials"}],
-"default", "push_default"}` (`push_urls` vuoto = il push va a `url`; `default` è il remoto che
-`remote.fetch` usa senza parametri). **Le credenziali negli URL non si mostrano mai**:
-`https://utente:token@host/r` diventa `https://utente:***@host/r`, `https://token@github.com/r`
-diventa `https://***@github.com/r` (in `http(s)`/`ftp(s)` l'utente da solo è spesso un token),
-`credentials: true` dice che c'erano; un utente ssh (`git@host:r`) resta. Vale anche per i
-risultati di `remote.add`/`remote.remove` e per il diario (`edit.history`).
+"default", "push_default"}` (`push_urls` empty = the push goes to `url`; `default` is the remote that
+`remote.fetch` uses without parameters). **Credentials in URLs are never shown**:
+`https://user:token@host/r` becomes `https://user:***@host/r`, `https://token@github.com/r`
+becomes `https://***@github.com/r` (in `http(s)`/`ftp(s)` a lone user is often a token),
+`credentials: true` says there were some; an ssh user (`git@host:r`) stays. This also applies to the
+results of `remote.add`/`remote.remove` and to the journal (`edit.history`).
 
-`remote.add {"name", "url", "fetch"?}` aggiunge un remoto (`git remote add --end-of-options`,
-refspec di default; `"fetch": true` poi scarica come `remote.fetch`, con avanzamento e
-annullamento: un fetch fallito non annulla l'aggiunta e finisce in `fetch_error`). Rifiutati
-prima di chiamare git: nomi che iniziano con `-` o non validi, URL vuoti, con caratteri di
-controllo, che iniziano con `-` (`--upload-pack=...`), con i trasporti `ext::`/`fd::` (eseguono
-comandi) o con un host che inizia con `-` (`ssh://-oProxyCommand=...`); un nome già usato o con
-branch remoti rimasti da prima. Un URL con credenziali è accettato con un avviso (git lo salva in
-chiaro). Risultato: `{"remote", "url", "credentials", "fetched", "fetch", "fetch_error",
-"warnings", "remotes", "refs"}`. Entra nel diario: l'undo toglie configurazione e branch remoti
-scaricati solo se sono ancora com'erano (e nessun branch ha preso il remoto come upstream).
+`remote.add {"name", "url", "fetch"?}` adds a remote (`git remote add --end-of-options`,
+default refspec; `"fetch": true` then downloads like `remote.fetch`, with progress and
+cancellation: a failed fetch does not undo the addition and ends up in `fetch_error`). Refused
+before calling git: names that start with `-` or are invalid, empty URLs, URLs with control
+characters, that start with `-` (`--upload-pack=...`), with the `ext::`/`fd::` transports (they run
+commands) or with a host that starts with `-` (`ssh://-oProxyCommand=...`); a name already in use or with
+remote branches left over from before. A URL with credentials is accepted with a warning (git stores it in
+clear text). Result: `{"remote", "url", "credentials", "fetched", "fetch", "fetch_error",
+"warnings", "remotes", "refs"}`. It goes into the journal: the undo removes the configuration and the downloaded remote branches
+only if they are still as they were (and no branch has taken the remote as upstream).
 
-`remote.remove {"name", "confirm": true}` rimuove un remoto configurato nel file del repo
-(rifiutato se è definito anche solo in parte altrove, globale o `include`, o se è il remoto
-promisor di un clone parziale): la
-sezione `remote.<nome>`, i branch remoti `refs/remotes/<nome>/...` (con `HEAD`), l'upstream dei
-branch che lo usano, i loro `pushRemote` e `remote.pushDefault` se lo nominano. Senza `confirm`
-l'errore elenca i branch che perderebbero l'upstream e il numero di branch remoti, e niente
-cambia. Prima di scrivere tutto si salva nel diario e i commit che restavano solo nei branch
-remoti vanno in `refs/project/backup/remote-...`. Risultato: `{"remote", "removed",
+`remote.remove {"name", "confirm": true}` removes a remote configured in the repo's file
+(refused if it is defined, even partly, elsewhere, globally or via `include`, or if it is the promisor
+remote of a partial clone): the
+`remote.<name>` section, the remote branches `refs/remotes/<name>/...` (with `HEAD`), the upstream of the
+branches that use it, their `pushRemote` and `remote.pushDefault` if they name it. Without `confirm`
+the error lists the branches that would lose their upstream and the number of remote branches, and nothing
+changes. Before writing, everything is saved in the journal and the commits that were left only in remote
+branches go into `refs/project/backup/remote-...`. Result: `{"remote", "removed",
 "upstreams_removed", "push_remotes_removed", "push_default_removed", "backups", "warnings",
-"remotes", "refs"}`. L'undo rimette configurazione, branch remoti e upstream, solo se nessuno ha
-ricreato un remoto con quel nome; un upstream reimpostato nel frattempo resta, con un avviso.
-Ahead/behind dei branch rispetto all'upstream sono in `repo.refs` (`upstream.ahead`/`behind`) e
-nei `refs` dei risultati di fetch, pull e push.
+"remotes", "refs"}`. The undo restores configuration, remote branches and upstream, only if nobody has
+recreated a remote with that name; an upstream reset in the meantime stays, with a warning.
+Ahead/behind of the branches relative to the upstream are in `repo.refs` (`upstream.ahead`/`behind`) and
+in the `refs` of the fetch, pull and push results.
 
-`stash.list {}` (sola lettura) elenca gli stash dal più recente: `{"stashes": [{"index",
-"name": "stash@{n}", "id", "base", "message", "branch", "time", "untracked"}]}` (`base` è il
-commit su cui lo stash è stato creato, `untracked` dice se ha anche file non tracciati; il
-contenuto si legge con `commit.show`/`diff.commit` sull'`id`). `stash.push {"message"?,
-"include_untracked"?, "keep_index"?, "paths"?}` mette da parte le modifiche (`git stash push`;
-mai gli ignorati; un messaggio di una riga; rifiutato con un merge o un rebase in corso, file in
-conflitto o `intent-to-add`, file `--assume-unchanged` fra quelli scelti, di cui git perderebbe
-le modifiche, o niente da mettere da parte) e restituisce `{"stash", "stashes",
-"status"}`; entra nel diario: l'undo riapplica lo stash con la divisione fra in stage e no e lo
-toglie dall'elenco (solo se HEAD è ancora sullo stesso commit), il redo lo rifà. `stash.apply
-{"index"?, "expected"?, "restore_index"?}` applica lo stash `stash@{index}` (0 se manca;
-`expected`, l'id completo visto, protegge da un elenco cambiato nel frattempo) senza toglierlo,
-`stash.pop` con gli stessi parametri lo toglie anche, dopo averne salvato il commit in
-`refs/project/backup/stash-...`. Tutti e due sono rifiutati, senza cambiare niente, se lo stash
-toccherebbe file con modifiche locali, non tracciati o ignorati (`git stash apply` in questi casi
-scriverebbe a metà; un file in stage che ha già la versione dello stash, come dopo un push con
-`keep_index`, non conta); se il merge con HEAD va in conflitto i file restano in conflitto come li
-lascia git (`conflicts`) e `pop` tiene lo stash. Risultato: `{"stash", "conflicts", "dropped",
-"backup", "warnings", "stashes", "status"}`; non entrano nel diario. Se dopo l'apply il drop di
-`pop` non riesce, il pop non è un errore: `dropped: false` e un avviso (lo stash va eliminato
-con `stash.drop`, il pop non va ripetuto). `stash.drop {"index"?, "expected", "confirm": true}`
-elimina uno stash (senza `confirm` l'errore dice cosa si perderebbe e dà l'id da ripetere in
-`expected`; `confirm` senza `expected` è un errore), con il backup in `refs/project/backup/stash-...`: entra nel diario e l'undo lo
-rimette in cima all'elenco. Risultato: `{"stash", "backup", "warnings", "stashes"}`.
+`stash.list {}` (read-only) lists the stashes from the most recent: `{"stashes": [{"index",
+"name": "stash@{n}", "id", "base", "message", "branch", "time", "untracked"}]}` (`base` is the
+commit the stash was created on, `untracked` says whether it also has untracked files; the
+content is read with `commit.show`/`diff.commit` on the `id`). `stash.push {"message"?,
+"include_untracked"?, "keep_index"?, "paths"?}` sets changes aside (`git stash push`;
+never ignored files; a one-line message; refused with a merge or rebase in progress, conflicted
+or `intent-to-add` files, `--assume-unchanged` files among those chosen, whose changes git would lose,
+or nothing to set aside) and returns `{"stash", "stashes",
+"status"}`; it goes into the journal: the undo reapplies the stash with the split between staged and not and removes it
+from the list (only if HEAD is still at the same commit), the redo redoes it. `stash.apply
+{"index"?, "expected"?, "restore_index"?}` applies the stash `stash@{index}` (0 if missing;
+`expected`, the full id seen, protects against a list that changed in the meantime) without removing it,
+`stash.pop` with the same parameters also removes it, after saving its commit in
+`refs/project/backup/stash-...`. Both are refused, without changing anything, if the stash
+would touch files with local changes, untracked or ignored ones (`git stash apply` in these cases
+would write halfway; a staged file that already has the stash's version, as after a push with
+`keep_index`, does not count); if the merge with HEAD conflicts the files stay conflicted as git
+leaves them (`conflicts`) and `pop` keeps the stash. Result: `{"stash", "conflicts", "dropped",
+"backup", "warnings", "stashes", "status"}`; they do not go into the journal. If after the apply the drop of
+`pop` fails, the pop is not an error: `dropped: false` and a warning (the stash must be deleted
+with `stash.drop`, the pop must not be repeated). `stash.drop {"index"?, "expected", "confirm": true}`
+deletes a stash (without `confirm` the error says what would be lost and gives the id to repeat in
+`expected`; `confirm` without `expected` is an error), with the backup in `refs/project/backup/stash-...`: it goes into the journal and the undo
+puts it back at the top of the list. Result: `{"stash", "backup", "warnings", "stashes"}`.
 
-`merge.start {"rev", "no_ff"?, "ff_only"?, "message"?}` unisce `rev` (branch locale o remoto,
-tag, id) nel branch attivo: fast-forward se si può (`no_ff`: sempre un commit di merge;
-`ff_only`: solo fast-forward), altrimenti un commit di merge con `message` o il messaggio di git
-(`Merge branch 'x'`). Rifiutato con HEAD staccata, un'operazione in corso, file in conflitto e,
-per un commit di merge, qualunque modifica ai file tracciati (mai `--autostash`); prima salva il
-branch in `refs/project/backup/merge-...`. **Con conflitti il merge resta in corso**: il risultato
-ha `in_progress: true` e i file in `conflicts`. Risultato: `{"rev", "source", "target", "branch",
+`merge.start {"rev", "no_ff"?, "ff_only"?, "message"?}` merges `rev` (local or remote branch,
+tag, id) into the active branch: fast-forward if possible (`no_ff`: always a merge commit;
+`ff_only`: fast-forward only), otherwise a merge commit with `message` or git's message
+(`Merge branch 'x'`). Refused with a detached HEAD, an operation in progress, conflicted files and,
+for a merge commit, any change to tracked files (never `--autostash`); it first saves the
+branch in `refs/project/backup/merge-...`. **With conflicts the merge stays in progress**: the result
+has `in_progress: true` and the files in `conflicts`. Result: `{"rev", "source", "target", "branch",
 "strategy": "fast_forward"|"merge"|"up_to_date", "before", "after", "ahead", "behind",
 "in_progress", "conflicts", "message", "backup", "warnings", "status", "refs"}`. `merge.continue
-{"message"?}` conclude il merge quando non restano file in conflitto (risolti e messi in stage con
-`index.stage`; altrimenti l'errore li elenca), con il messaggio preparato da git senza il blocco
-`# Conflicts:`. `merge.abort {"confirm": true}` lo annulla (`git merge --abort`): senza `confirm`
-l'errore dice quali risoluzioni e modifiche si perderebbero; prima salva indice e worktree in
-`refs/project/backup/merge-abort-...` (si rimettono con `git stash apply <ref>`). Il merge concluso
-(subito o con `merge.continue`) entra nel diario e l'undo riporta il branch com'era, con indice e
-worktree; un merge fermo e l'abort no. `repo.operation {}` (sola lettura) è il banner
-dell'operazione in corso: `{"operation", "head", "conflicts", "incoming": [{"id", "label",
+{"message"?}` concludes the merge when no conflicted files remain (resolved and staged with
+`index.stage`; otherwise the error lists them), with the message prepared by git without the
+`# Conflicts:` block. `merge.abort {"confirm": true}` cancels it (`git merge --abort`): without `confirm`
+the error says which resolutions and changes would be lost; it first saves index and worktree in
+`refs/project/backup/merge-abort-...` (restored with `git stash apply <ref>`). The concluded merge
+(immediately or with `merge.continue`) goes into the journal and the undo returns the branch as it was, with index and
+worktree; a stopped merge and the abort do not. `repo.operation {}` (read-only) is the banner
+of the operation in progress: `{"operation", "head", "conflicts", "incoming": [{"id", "label",
 "summary", "refs"}], "message", "onto", "rebase_branch", "ready", "continue", "abort"}`
-(`continue`/`abort` sono i comandi da usare: merge, cherry-pick e revert).
+(`continue`/`abort` are the commands to use: merge, cherry-pick and revert).
 
-`commit.cherry_pick {"rev", "mainline"?}` applica un commit sul branch attivo con un commit nuovo
-(autore e messaggio originali); `commit.revert {"rev", "mainline"?}` ne annulla le modifiche con
-un commit nuovo (`Revert "<oggetto>"`, `This reverts commit <id>.`). Un commit di merge vuole
-`mainline` (il genitore, da 1). Rifiutati come il merge (HEAD staccata, operazione in corso,
-conflitti, qualunque modifica ai file tracciati); un commit già applicato (risultato vuoto) dà
-`NotAllowed` e niente resta in corso. Prima salvano il branch in
-`refs/project/backup/cherry-pick-...` / `revert-...`. **Con conflitti l'operazione resta in
-corso**: si conclude con `cherry_pick.continue` / `revert.continue {"message"?}` o si annulla con
-`cherry_pick.abort` / `revert.abort {"confirm": true}` (backup `...-abort-...` come per il merge).
-Risultato: `{"rev", "commit", "summary", "mainline", "branch", "before", "after", "in_progress",
-"conflicts", "message", "backup", "warnings", "status", "refs"}`. Concluso entra nel diario
-(l'undo riporta il branch com'era); una sequenza di più commit avviata da terminale resta al
-terminale. Dettagli in [impl-docs/git/cherry-pick.md](impl-docs/git/cherry-pick.md).
+`commit.cherry_pick {"rev", "mainline"?}` applies a commit on the active branch with a new commit
+(original author and message); `commit.revert {"rev", "mainline"?}` undoes its changes with
+a new commit (`Revert "<subject>"`, `This reverts commit <id>.`). A merge commit needs
+`mainline` (the parent, from 1). Refused like the merge (detached HEAD, operation in progress,
+conflicts, any change to tracked files); a commit already applied (empty result) gives
+`NotAllowed` and nothing stays in progress. They first save the branch in
+`refs/project/backup/cherry-pick-...` / `revert-...`. **With conflicts the operation stays in
+progress**: it is concluded with `cherry_pick.continue` / `revert.continue {"message"?}` or cancelled with
+`cherry_pick.abort` / `revert.abort {"confirm": true}` (`...-abort-...` backup as for the merge).
+Result: `{"rev", "commit", "summary", "mainline", "branch", "before", "after", "in_progress",
+"conflicts", "message", "backup", "warnings", "status", "refs"}`. Once concluded it goes into the journal
+(the undo returns the branch as it was); a sequence of several commits started from the terminal stays
+with the terminal. Details in [impl-docs/git/cherry-pick.md](impl-docs/git/cherry-pick.md).
 
-`conflict.show {"path"}` (sola lettura) dà le versioni di un file in conflitto: `{"path", "kind",
-"base", "ours", "theirs", "worktree", "marker_size", "digest"}`, ogni versione `{"text", "binary",
-"size"}` o `null` se manca (`text` `null` e `binary` per byte non UTF-8 o con NUL); un file non in
-conflitto, un sottomodulo, un link o una cartella sono rifiutati. `conflict.resolve {"path",
-"digest", "content"? | "delete"?: true}` scrive `content` nel worktree (o cancella il file) e lo
-mette in stage come `index.stage`; rifiutato con `StaleDiff` se il file non è più quello del
-`digest` letto. Prima salva i byte del worktree in `refs/project/backup/conflict-...` (`git show
-<ref>:<percorso>`). Risultato: `{"status", "backup", "index_backup"}`. Non entra nel diario.
+`conflict.show {"path"}` (read-only) gives the versions of a conflicted file: `{"path", "kind",
+"base", "ours", "theirs", "worktree", "marker_size", "digest"}`, each version `{"text", "binary",
+"size"}` or `null` if missing (`text` `null` and `binary` for non-UTF-8 bytes or with NUL); a file that is not
+conflicted, a submodule, a link or a directory are refused. `conflict.resolve {"path",
+"digest", "content"? | "delete"?: true}` writes `content` to the worktree (or deletes the file) and
+stages it like `index.stage`; refused with `StaleDiff` if the file is no longer the one of the
+`digest` read. It first saves the worktree bytes in `refs/project/backup/conflict-...` (`git show
+<ref>:<path>`). Result: `{"status", "backup", "index_backup"}`. It does not go into the journal.
 
-`edit.undo {}` annulla l'ultima operazione del diario (oggi `commit.create`, anche con `amend`,
+`edit.undo {}` undoes the last operation in the journal (currently `commit.create`, also with `amend`,
 `branch.*`, `worktree.discard`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
-`stash.drop` e il merge concluso, `merge.start` e `merge.continue`) e `edit.redo {}` la rifà; `edit.history {}` (sola lettura) elenca il diario. L'undo
-riporta il branch (o HEAD staccata) al valore di prima solo se nessuno l'ha spostato nel
-frattempo (un `git commit` o `git reset` da terminale): altrimenti errore e niente cambia.
-Per un commit indice e worktree non si toccano, come `git reset --soft`: dopo l'undo di un
-commit le sue modifiche sono di nuovo in stage. L'undo di uno scarto rimette i file del backup
-(`git restore --source=<stash> --worktree`) solo se sono ancora come li ha lasciati lo scarto e
-con la stessa versione in stage; il redo li scarta di nuovo solo se sono ancora come li ha
-lasciati l'undo. Il commit annullato, se non è più raggiungibile, resta in un
-ref `refs/project/backup/undo-...`. Stage e unstage non entrano nel diario. Il diario è in
-memoria e vale per il repo aperto: nella CLI più `--cmd` della stessa invocazione lo
-condividono, invocazioni diverse no (`edit.undo` da solo dice che non c'è niente da annullare).
-Risultato di undo e redo: `{"undone"|"redone": voce, "backups", "warnings", "status",
-"can_undo", "can_redo", "next_undo", "next_redo"}` (`warnings`, di solito vuoto, segnala ad
-esempio HEAD cambiata da un altro processo proprio durante l'undo). Durante un merge, rebase,
-cherry-pick, revert, bisect o `git am` undo e redo sono rifiutati.
+`stash.drop` and the concluded merge, `merge.start` and `merge.continue`) and `edit.redo {}` redoes it; `edit.history {}` (read-only) lists the journal. The undo
+returns the branch (or detached HEAD) to the previous value only if nobody has moved it in the
+meantime (a `git commit` or `git reset` from the terminal): otherwise error and nothing changes.
+For a commit, index and worktree are not touched, like `git reset --soft`: after the undo of a
+commit its changes are staged again. The undo of a discard restores the files from the backup
+(`git restore --source=<stash> --worktree`) only if they are still as the discard left them and
+with the same staged version; the redo discards them again only if they are still as the undo
+left them. The undone commit, if no longer reachable, stays in a
+ref `refs/project/backup/undo-...`. Stage and unstage do not go into the journal. The journal is in
+memory and applies to the open repo: in the CLI several `--cmd` of the same invocation
+share it, different invocations do not (`edit.undo` alone says there is nothing to undo).
+Result of undo and redo: `{"undone"|"redone": entry, "backups", "warnings", "status",
+"can_undo", "can_redo", "next_undo", "next_redo"}` (`warnings`, usually empty, reports for
+example HEAD changed by another process during the undo itself). During a merge, rebase,
+cherry-pick, revert, bisect or `git am` undo and redo are refused.
 
-Il server MCP espone `list_commands`, `execute_command` e `open_repo`; `list_commands` riporta
-`writes: true` per i comandi che modificano il repository. All'avvio apre il
-repository di `--root` (default: cartella corrente), se c'è. Tutti i percorsi sono confinati in
-`--root`, anche la ricerca dei repository (git non risale sopra la radice); un repository si
-apre solo con `open_repo`, non con `repo.open`.
+The MCP server exposes `list_commands`, `execute_command` and `open_repo`; `list_commands` reports
+`writes: true` for the commands that modify the repository. At startup it opens the
+repository of `--root` (default: current directory), if there is one. All paths are confined to
+`--root`, including the repository search (git does not climb above the root); a repository is
+opened only with `open_repo`, not with `repo.open`.
 
-## Qualità
+## Quality
 
-`cargo xtask ci` esegue formattazione, Clippy con warning come errori, test, controllo del
-layering e Clippy per `wasm32-unknown-unknown`. La CI di GitHub usa lo stesso comando.
+`cargo xtask ci` runs formatting, Clippy with warnings as errors, tests, the layering check
+and Clippy for `wasm32-unknown-unknown`. GitHub CI uses the same command.
 
-## Nome e grafica
+## Name and graphics
 
-Il nome visibile è **BinariGit**; crate, binari e ref tecnici restano `project-*`. Icona, logo e
-banner stanno in [assets/](assets/): si modificano gli SVG e si rigenerano i PNG con
-`assets/render.sh` (Chrome headless).
+The visible name is **BinariGit**; crates, binaries and technical refs stay `project-*`. Icon, logo and
+banner are in [assets/](assets/): edit the SVGs and regenerate the PNGs with
+`assets/render.sh` (headless Chrome).

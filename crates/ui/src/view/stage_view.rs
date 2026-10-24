@@ -1,9 +1,9 @@
 use super::*;
 
-/// Area di stage, al posto dei dettagli quando è selezionata la riga delle modifiche: le liste
-/// "In stage" e "Non in stage", ciascuna virtualizzata, e sotto la casella del messaggio di
-/// commit. `writing` è vero mentre una scrittura è in corso: le azioni che modificano il repo
-/// sono disabilitate. `draft` è la bozza del messaggio, che i campi di testo cambiano.
+/// Stage area, in place of the details when the changes row is selected: the lists
+/// "Staged" and "Unstaged", each virtualized, and below the commit message box.
+/// `writing` is true while a write is in progress: the actions that modify the repo
+/// are disabled. `draft` is the message draft, which the text fields change.
 pub(crate) fn stage_panel(
     ui: &mut Ui,
     repo: &RepoView,
@@ -11,7 +11,7 @@ pub(crate) fn stage_panel(
     writing: bool,
     actions: &mut Vec<Action>,
 ) {
-    egui::Panel::bottom("messaggio-commit")
+    egui::Panel::bottom("commit-message")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
         .show(ui, |ui| commit_box(ui, repo, draft, writing, actions));
@@ -55,7 +55,7 @@ pub(crate) fn stage_panel(
     ui.separator();
     let enabled = !writing && !repo.modal_open();
     let open = repo.diff.target();
-    // Le due liste si dividono lo spazio; una lista corta lascia il resto all'altra.
+    // The two lists share the space; a short list leaves the rest to the other.
     let section_header = 28.0;
     let spare = (ui.available_height() - 2.0 * section_header - 12.0).max(80.0);
     let staged_h = list_height(repo.stage.staged.len())
@@ -73,14 +73,14 @@ pub(crate) fn stage_panel(
     }
 }
 
-/// Righe del corpo del messaggio.
+/// Rows of the message body.
 pub(super) const BODY_ROWS: usize = 4;
 
-/// Altezza massima dell'output di git dopo un commit fallito; oltre si scorre.
+/// Maximum height of git's output after a failed commit; beyond that it scrolls.
 pub(super) const OUTPUT_HEIGHT: f32 = 140.0;
 
-/// Casella del messaggio di commit: oggetto con il contatore, corpo, amend, pulsante "Commit"
-/// (anche Ctrl+Invio) e l'errore dell'ultimo commit.
+/// Commit message box: subject with the counter, body, amend, "Commit" button
+/// (also Ctrl+Enter) and the error of the last commit.
 pub(super) fn commit_box(
     ui: &mut Ui,
     repo: &RepoView,
@@ -94,7 +94,7 @@ pub(super) fn commit_box(
         ..repo.commit_gate(writing)
     }
     .check();
-    // Prima dei campi di testo, che altrimenti riceverebbero il tasto.
+    // Before the text fields, which would otherwise receive the key.
     let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Enter);
     if !repo.modal_open() && ui.input_mut(|i| i.consume_shortcut(&shortcut)) && gate.is_ok() {
         actions.push(Action::Commit);
@@ -121,14 +121,14 @@ pub(super) fn commit_box(
     ui.add_enabled(
         !sending,
         egui::TextEdit::singleline(&mut draft.subject)
-            .id_salt("oggetto-commit")
+            .id_salt("commit-subject")
             .hint_text(tr!("stage-subject-hint"))
             .desired_width(f32::INFINITY),
     );
     ui.add_enabled(
         !sending,
         egui::TextEdit::multiline(&mut draft.body)
-            .id_salt("corpo-commit")
+            .id_salt("commit-body")
             .hint_text(tr!("stage-body-hint"))
             .desired_rows(BODY_ROWS)
             .desired_width(f32::INFINITY),
@@ -196,7 +196,7 @@ pub(super) fn commit_box(
             ui.weak(tr!("stage-commit-shortcut"));
         }
     });
-    // Perché il pulsante è spento, senza dover passare il mouse (non durante il lavoro).
+    // Why the button is disabled, without having to hover (not during work).
     if let Err(blocked) = gate
         && !matches!(blocked, commit::Blocked::Busy)
     {
@@ -220,14 +220,14 @@ pub(super) fn commit_box(
         });
         if let Some(output) = &error.output {
             egui::ScrollArea::vertical()
-                .id_salt("output-commit")
+                .id_salt("commit-output")
                 .max_height(OUTPUT_HEIGHT)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    // Un `&str` rende il campo di sola lettura, ma selezionabile e copiabile.
+                    // A `&str` makes the field read-only, but selectable and copyable.
                     ui.add(
                         egui::TextEdit::multiline(&mut output.as_str())
-                            .id_salt("output-commit-testo")
+                            .id_salt("commit-output-text")
                             .font(egui::TextStyle::Monospace)
                             .desired_rows(1)
                             .desired_width(f32::INFINITY),
@@ -244,12 +244,12 @@ pub(super) fn commit_box(
     }
 }
 
-/// Altezza che serve a una lista di `rows` file, almeno una riga.
+/// Height needed by a list of `rows` files, at least one row.
 pub(super) fn list_height(rows: usize) -> f32 {
     rows.max(1) as f32 * (FILE_ROW_HEIGHT + 2.0)
 }
 
-/// Titolo con il conteggio, pulsante per tutta la lista, poi i file.
+/// Title with the count, button for the whole list, then the files.
 pub(super) fn stage_section(
     ui: &mut Ui,
     side: Side,
@@ -324,7 +324,7 @@ pub(super) fn stage_section(
         StageOp::Unstage => tr!("stage-unstage"),
     };
     egui::ScrollArea::vertical()
-        .id_salt(("area-stage", side == Side::Staged))
+        .id_salt(("stage-area", side == Side::Staged))
         .auto_shrink([false, true])
         .max_height(height)
         .show_rows(ui, FILE_ROW_HEIGHT, items.len(), |ui, range| {
@@ -358,7 +358,7 @@ pub(super) fn stage_section(
                     Color32::from_gray(20),
                 );
 
-                // A destra il pulsante della riga.
+                // On the right the row's button.
                 let button_w = 62.0;
                 let button_rect = egui::Rect::from_min_max(
                     egui::pos2(rect.right() - button_w, rect.top()),
@@ -397,8 +397,8 @@ pub(super) fn stage_section(
         });
 }
 
-/// Il menu contestuale di un file dell'area di stage: diff, stage/unstage e, fuori stage,
-/// "Scarta modifiche…".
+/// The context menu of a file of the stage area: diff, stage/unstage and, when unstaged,
+/// "Discard changes…".
 pub(super) fn file_menu(
     ui: &mut Ui,
     op: StageOp,

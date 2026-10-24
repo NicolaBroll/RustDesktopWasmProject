@@ -1,21 +1,21 @@
-//! Stato del pannello dettagli: quale commit chiedere a `commit.show` e quale risposta
-//! mostrare. Solo dati, senza egui: si prova con test unitari.
+//! State of the details panel: which commit to ask `commit.show` for and which answer to
+//! show. Data only, no egui: tested with unit tests.
 //!
-//! Regole:
-//! - si chiede un commit solo quando cambia la selezione, non a ogni frame;
-//! - al massimo una richiesta in corso: se la selezione cambia mentre aspetta (frecce tenute
-//!   premute), alla risposta si chiede solo l'ultimo commit selezionato, non tutti quelli
-//!   attraversati;
-//! - una risposta per un commit che non è più quello selezionato si scarta.
+//! Rules:
+//! - a commit is requested only when the selection changes, not on every frame;
+//! - at most one request in flight: if the selection changes while waiting (arrow keys held
+//!   down), on the answer only the last selected commit is requested, not all those
+//!   traversed;
+//! - an answer for a commit that is no longer the selected one is discarded.
 
 use project_domain::{CommitDetails, Oid};
 
-/// Cosa sa il pannello del commit selezionato.
+/// What the panel knows about the selected commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shown<'a> {
-    /// Nessun commit selezionato.
+    /// No commit selected.
     Nothing,
-    /// Richiesta in corso (o in attesa che finisca quella di un commit precedente).
+    /// Request in flight (or waiting for the one of a previous commit to finish).
     Loading(Oid),
     Loaded(&'a CommitDetails),
     Failed(Oid, &'a str),
@@ -29,17 +29,17 @@ enum Answer {
 
 #[derive(Debug, Default)]
 pub struct DetailsState {
-    /// Il commit selezionato nella lista.
+    /// The commit selected in the list.
     target: Option<Oid>,
-    /// Il commit chiesto e non ancora arrivato.
+    /// The commit requested and not yet arrived.
     in_flight: Option<Oid>,
-    /// L'ultima risposta arrivata per `target`, con il suo id.
+    /// The last answer that arrived for `target`, with its id.
     answer: Option<(Oid, Answer)>,
 }
 
 impl DetailsState {
-    /// Annota il commit selezionato e restituisce l'id da chiedere a `commit.show`, se serve:
-    /// la risposta non c'è già e non c'è un'altra richiesta in corso. Si chiama a ogni frame.
+    /// Notes the selected commit and returns the id to ask `commit.show` for, if needed:
+    /// the answer is not already there and there is no other request in flight. Called on every frame.
     pub fn want(&mut self, selected: Option<Oid>) -> Option<Oid> {
         self.target = selected;
         let id = selected?;
@@ -51,8 +51,8 @@ impl DetailsState {
         Some(id)
     }
 
-    /// La risposta di `commit.show` per `id`. Si tiene solo se `id` è ancora il commit
-    /// selezionato: restituisce `false` se è stata scartata.
+    /// The answer of `commit.show` for `id`. It is kept only if `id` is still the
+    /// selected commit: returns `false` if it was discarded.
     pub fn receive(&mut self, id: Oid, result: Result<CommitDetails, String>) -> bool {
         if self.in_flight == Some(id) {
             self.in_flight = None;
@@ -68,14 +68,14 @@ impl DetailsState {
         true
     }
 
-    /// Dimentica l'errore del commit selezionato: al prossimo [`Self::want`] si richiede.
+    /// Forgets the error of the selected commit: at the next [`Self::want`] it is requested again.
     pub fn retry(&mut self) {
         if matches!(self.answer, Some((_, Answer::Failed(_)))) {
             self.answer = None;
         }
     }
 
-    /// Cosa mostrare per il commit selezionato.
+    /// What to show for the selected commit.
     pub fn shown(&self) -> Shown<'_> {
         let Some(id) = self.target else {
             return Shown::Nothing;
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(s.want(None), None);
         assert_eq!(s.shown(), Shown::Nothing);
         assert_eq!(s.want(Some(oid(1))), Some(oid(1)));
-        // I frame seguenti non richiedono di nuovo.
+        // The following frames do not request again.
         assert_eq!(s.want(Some(oid(1))), None);
         assert_eq!(s.shown(), Shown::Loading(oid(1)));
         assert!(s.receive(oid(1), Ok(details(1))));
@@ -136,12 +136,12 @@ mod tests {
     fn a_late_answer_for_an_old_selection_is_dropped() {
         let mut s = DetailsState::default();
         assert_eq!(s.want(Some(oid(1))), Some(oid(1)));
-        // La selezione passa a 2 e poi a 3 mentre 1 è in corso: nessuna nuova richiesta.
+        // The selection goes to 2 and then to 3 while 1 is in flight: no new request.
         assert_eq!(s.want(Some(oid(2))), None);
         assert_eq!(s.want(Some(oid(3))), None);
         assert!(!s.receive(oid(1), Ok(details(1))));
         assert_eq!(s.shown(), Shown::Loading(oid(3)));
-        // Finita la richiesta di 1 si chiede solo l'ultimo selezionato.
+        // When the request for 1 finishes only the last selected is requested.
         assert_eq!(s.want(Some(oid(3))), Some(oid(3)));
         assert!(s.receive(oid(3), Ok(details(3))));
         assert_eq!(s.shown(), Shown::Loaded(&details(3)));
@@ -153,7 +153,7 @@ mod tests {
         s.want(Some(oid(1)));
         s.receive(oid(1), Ok(details(1)));
         assert_eq!(s.want(Some(oid(2))), Some(oid(2)));
-        // Torna a 1 prima che arrivi 2: 1 è già lì.
+        // Goes back to 1 before 2 arrives: 1 is already there.
         assert_eq!(s.want(Some(oid(1))), None);
         assert_eq!(s.shown(), Shown::Loaded(&details(1)));
         assert!(!s.receive(oid(2), Ok(details(2))));
@@ -164,9 +164,9 @@ mod tests {
     fn errors_are_shown_and_can_be_retried() {
         let mut s = DetailsState::default();
         s.want(Some(oid(1)));
-        assert!(s.receive(oid(1), Err("commit sconosciuto".to_owned())));
-        assert_eq!(s.shown(), Shown::Failed(oid(1), "commit sconosciuto"));
-        // Niente richieste ripetute a ogni frame dopo un errore.
+        assert!(s.receive(oid(1), Err("unknown commit".to_owned())));
+        assert_eq!(s.shown(), Shown::Failed(oid(1), "unknown commit"));
+        // No repeated requests on every frame after an error.
         assert_eq!(s.want(Some(oid(1))), None);
         s.retry();
         assert_eq!(s.shown(), Shown::Loading(oid(1)));

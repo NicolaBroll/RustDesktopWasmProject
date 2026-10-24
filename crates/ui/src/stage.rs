@@ -1,18 +1,18 @@
-//! Area di stage: le voci di `repo.status` divise in "in stage" e "non in stage", i percorsi
-//! da mandare a `index.stage`/`index.unstage` e cosa fare del diff aperto dopo una scrittura.
-//! Solo dati, senza egui: si prova con test unitari.
+//! Stage area: the entries of `repo.status` split into "staged" and "unstaged", the paths
+//! to send to `index.stage`/`index.unstage` and what to do with the open diff after a write.
+//! Data only, no egui: tested with unit tests.
 
 use crate::{Action, App, Request, stage};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
 use project_i18n::tr;
 use serde_json::json;
 
-/// Una delle due liste dell'area di stage.
+/// One of the two lists of the stage area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
-    /// Modifiche in stage (HEAD -> indice).
+    /// Staged changes (HEAD -> index).
     Staged,
-    /// Modifiche non in stage (indice -> worktree), file non tracciati e in conflitto.
+    /// Unstaged changes (index -> worktree), untracked and conflicted files.
     Unstaged,
 }
 
@@ -25,16 +25,16 @@ impl Side {
     }
 }
 
-/// Un file in una delle due liste.
+/// A file in one of the two lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageItem {
     pub path: RepoPath,
-    /// La modifica di questa lista: la lettera `X` per "in stage", `Y` per "non in stage";
-    /// [`Change::Untracked`] e [`Change::Unmerged`] per file non tracciati e in conflitto.
+    /// The change of this list: the letter `X` for "staged", `Y` for "unstaged";
+    /// [`Change::Untracked`] and [`Change::Unmerged`] for untracked and conflicted files.
     pub change: Change,
-    /// Percorso di partenza di una rinomina o copia in stage.
+    /// Source path of a staged rename or copy.
     pub original: Option<RepoPath>,
-    /// Tipo di conflitto, per un file in conflitto.
+    /// Kind of conflict, for a conflicted file.
     pub conflict: Option<Conflict>,
 }
 
@@ -44,18 +44,18 @@ impl StageItem {
     }
 }
 
-/// Le due liste dell'area di stage, rifatte quando arriva un nuovo [`Status`].
+/// The two lists of the stage area, rebuilt when a new [`Status`] arrives.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StageLists {
     pub staged: Vec<StageItem>,
-    /// Prima i conflitti, poi i file tracciati modificati, poi i non tracciati; dentro ogni
-    /// gruppo l'ordine di git.
+    /// Conflicts first, then modified tracked files, then untracked ones; within each
+    /// group git's order.
     pub unstaged: Vec<StageItem>,
 }
 
 impl StageLists {
-    /// Un file con modifiche sia in stage sia fuori compare in tutte e due le liste. I file
-    /// ignorati non compaiono.
+    /// A file with changes both staged and unstaged appears in both lists. Ignored
+    /// files do not appear.
     pub fn new(status: &Status) -> Self {
         let mut lists = Self::default();
         for entry in &status.entries {
@@ -99,7 +99,7 @@ impl StageLists {
         self.staged.is_empty() && self.unstaged.is_empty()
     }
 
-    /// I file in conflitto tra `paths`: metterli in stage li segna risolti.
+    /// The conflicted files among `paths`: staging them marks them resolved.
     pub fn conflicts_among(&self, paths: &[RepoPath]) -> Vec<RepoPath> {
         self.unstaged
             .iter()
@@ -118,7 +118,7 @@ fn item(entry: &StatusEntry, change: Change, conflict: Option<Conflict>) -> Stag
     }
 }
 
-/// Quante voci contano come modifiche non committate (tutte tranne gli ignorati).
+/// How many entries count as uncommitted changes (all except ignored).
 pub fn change_count(status: &Status) -> usize {
     status
         .entries
@@ -127,8 +127,8 @@ pub fn change_count(status: &Status) -> usize {
         .count()
 }
 
-/// I percorsi di tutta una lista, per "Stage di tutto" e "Unstage di tutto": sempre espliciti,
-/// mai una lista vuota (per git "nessun percorso" vorrebbe dire "tutto il repo").
+/// The paths of a whole list, for "Stage all" and "Unstage all": always explicit,
+/// never an empty list (for git "no paths" would mean "the whole repo").
 pub fn all_paths(items: &[StageItem]) -> Option<Vec<RepoPath>> {
     let mut paths: Vec<RepoPath> = Vec::with_capacity(items.len());
     for item in items {
@@ -139,7 +139,7 @@ pub fn all_paths(items: &[StageItem]) -> Option<Vec<RepoPath>> {
     (!paths.is_empty()).then_some(paths)
 }
 
-/// Una scrittura sull'indice.
+/// A write on the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageOp {
     Stage,
@@ -147,7 +147,7 @@ pub enum StageOp {
 }
 
 impl StageOp {
-    /// L'id del comando del Registry.
+    /// The id of the Registry command.
     pub fn command(self) -> &'static str {
         match self {
             StageOp::Stage => "index.stage",
@@ -155,7 +155,7 @@ impl StageOp {
         }
     }
 
-    /// Nome dell'operazione per i messaggi, es. "Stage di 2 file".
+    /// Name of the operation for messages, e.g. "Staging 2 files".
     pub fn describe(self, paths: &[RepoPath]) -> String {
         match (self, paths) {
             (StageOp::Stage, [one]) => {
@@ -176,18 +176,18 @@ impl StageOp {
     }
 }
 
-/// Una scrittura da confermare prima di mandarla: lo stage di file in conflitto li segna
-/// risolti.
+/// A write to confirm before sending it: staging conflicted files marks them
+/// resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingWrite {
     pub op: StageOp,
     pub paths: Vec<RepoPath>,
-    /// I file in conflitto tra `paths`.
+    /// The conflicted files among `paths`.
     pub conflicts: Vec<RepoPath>,
 }
 
-/// Cosa chiedere per una scrittura: mandarla subito, oppure prima la conferma. `None` se non
-/// c'è niente da scrivere.
+/// What to ask for a write: send it at once, or confirm first. `None` if there is
+/// nothing to write.
 pub fn plan_write(lists: &StageLists, op: StageOp, paths: Vec<RepoPath>) -> Option<PendingWrite> {
     if paths.is_empty() {
         return None;
@@ -204,20 +204,20 @@ pub fn plan_write(lists: &StageLists, op: StageOp, paths: Vec<RepoPath>) -> Opti
 }
 
 impl PendingWrite {
-    /// Vero se va confermata prima di mandarla.
+    /// True if it must be confirmed before sending.
     pub fn needs_confirm(&self) -> bool {
         !self.conflicts.is_empty()
     }
 }
 
-/// Cosa fare del diff aperto di un file della lista `side` dopo una scrittura.
+/// What to do with the open diff of a file of the list `side` after a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Follow {
-    /// Il file è ancora nella stessa lista: si richiede il diff.
+    /// The file is still in the same list: the diff is requested again.
     Reload,
-    /// Il file è passato tutto nell'altra lista: si apre il diff di quella.
+    /// The file moved entirely to the other list: the diff of that one opens.
     Switch(Side),
-    /// Il file non ha più modifiche: si chiude il diff.
+    /// The file has no changes anymore: the diff closes.
     Close,
 }
 
@@ -232,7 +232,7 @@ pub fn follow(lists: &StageLists, side: Side, path: &RepoPath) -> Follow {
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, dispatched by [`App::apply`].
     pub(crate) fn apply_stage(&mut self, action: Action) {
         match action {
             Action::Write(op, paths) => {
@@ -265,11 +265,11 @@ impl App {
                     repo.write_error = None;
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
-    /// Manda una scrittura sull'indice, se non ce n'è già una in corso: mai due insieme.
+    /// Sends a write on the index, if there is not one in progress already: never two together.
     pub(crate) fn send_write(&mut self, write: PendingWrite) {
         if self.executor.writing().is_some() || write.paths.is_empty() {
             return;
@@ -367,10 +367,10 @@ mod tests {
     fn sample() -> Status {
         status(vec![
             tracked("README.md", Change::Modified, Change::Modified),
-            tracked("docs/guida.md", Change::Added, Change::Unmodified),
-            renamed("nuovo.rs", "vecchio.rs", Change::Unmodified),
+            tracked("docs/guide.md", Change::Added, Change::Unmodified),
+            renamed("new.rs", "old.rs", Change::Unmodified),
             tracked("src/lib.rs", Change::Unmodified, Change::Modified),
-            tracked("tolto.txt", Change::Unmodified, Change::Deleted),
+            tracked("unused.txt", Change::Unmodified, Change::Deleted),
             conflict("zeta.rs"),
             simple("note.txt", Change::Untracked, EntryKind::Untracked),
             simple("build/out", Change::Ignored, EntryKind::Ignored),
@@ -386,22 +386,22 @@ mod tests {
         let lists = StageLists::new(&sample());
         assert_eq!(
             paths(&lists.staged),
-            ["README.md", "docs/guida.md", "nuovo.rs"]
+            ["README.md", "docs/guide.md", "new.rs"]
         );
-        // Conflitti in cima, non tracciati in fondo, ignorati esclusi.
+        // Conflicts on top, untracked at the bottom, ignored excluded.
         assert_eq!(
             paths(&lists.unstaged),
             [
                 "zeta.rs",
                 "README.md",
                 "src/lib.rs",
-                "tolto.txt",
+                "unused.txt",
                 "note.txt"
             ]
         );
         let changes: Vec<Change> = lists.staged.iter().map(|i| i.change).collect();
         assert_eq!(changes, [Change::Modified, Change::Added, Change::Renamed]);
-        assert_eq!(lists.staged[2].original, Some("vecchio.rs".into()));
+        assert_eq!(lists.staged[2].original, Some("old.rs".into()));
         let changes: Vec<Change> = lists.unstaged.iter().map(|i| i.change).collect();
         assert_eq!(
             changes,
@@ -435,11 +435,11 @@ mod tests {
         let staged = all_paths(&lists.staged).unwrap();
         assert_eq!(
             staged,
-            ["README.md", "docs/guida.md", "nuovo.rs"].map(RepoPath::from)
+            ["README.md", "docs/guide.md", "new.rs"].map(RepoPath::from)
         );
         let unstaged = all_paths(&lists.unstaged).unwrap();
         assert_eq!(unstaged.len(), 5);
-        // Senza doppioni anche se una voce si ripetesse.
+        // Without duplicates even if an entry were repeated.
         let twice = [lists.staged[0].clone(), lists.staged[0].clone()];
         assert_eq!(all_paths(&twice).unwrap().len(), 1);
     }
@@ -465,11 +465,11 @@ mod tests {
         assert_eq!(StageOp::Unstage.command(), "index.unstage");
         assert_eq!(
             StageOp::Stage.describe(&["note.txt".into()]),
-            "Stage di note.txt"
+            "Staging note.txt"
         );
         assert_eq!(
             StageOp::Unstage.describe(&["a".into(), "b".into()]),
-            "Unstage di 2 file"
+            "Unstaging 2 files"
         );
     }
 
@@ -480,18 +480,18 @@ mod tests {
         assert_eq!(follow(Side::Unstaged, "README.md"), Follow::Reload);
         assert_eq!(follow(Side::Staged, "README.md"), Follow::Reload);
         assert_eq!(
-            follow(Side::Unstaged, "docs/guida.md"),
+            follow(Side::Unstaged, "docs/guide.md"),
             Follow::Switch(Side::Staged)
         );
         assert_eq!(
             follow(Side::Staged, "src/lib.rs"),
             Follow::Switch(Side::Unstaged)
         );
-        assert_eq!(follow(Side::Staged, "sparito.txt"), Follow::Close);
+        assert_eq!(follow(Side::Staged, "gone.txt"), Follow::Close);
     }
 
-    /// Il percorso completo con il repo di esempio del `MemoryBackend`, come lo fa la UI:
-    /// `repo.status`, poi `index.stage` con i percorsi di una lista, e lo stato dalla risposta.
+    /// The full path with the sample repo of the `MemoryBackend`, as the UI does it:
+    /// `repo.status`, then `index.stage` with the paths of a list, and the state from the response.
     #[test]
     fn staging_with_the_sample_repo_moves_the_file() {
         use project_engine::{MemoryOpener, Registry, Session};
@@ -528,7 +528,7 @@ mod tests {
         let out = registry
             .run("index.unstage", &mut session, json!({ "paths": all }))
             .unwrap();
-        // README.md era `MM`: la versione in stage è salvata in un backup.
+        // README.md was `MM`: the staged version is saved in a backup.
         assert!(out["backup"].is_string(), "{out}");
         let lists = StageLists::new(&serde_json::from_value(out["status"].clone()).unwrap());
         assert!(lists.staged.is_empty());

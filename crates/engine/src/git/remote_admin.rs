@@ -1,61 +1,61 @@
-//! Gestione dei remoti (`remote.list`, `remote.add`, `remote.remove`, S27): tipi e controlli
-//! comuni ai backend, e l'eliminazione/ripristino di un remoto usati dai comandi e dal diario
-//! (`impl-docs/git/remoti.md`).
+//! Remote management (`remote.list`, `remote.add`, `remote.remove`, S27): types and checks
+//! shared by the backends, and the removal/restoration of a remote used by the commands and the journal
+//! (`impl-docs/git/remotes.md`).
 //!
-//! Un remoto è fatto di tre parti, che [`RemoteSnapshot`] fotografa:
+//! A remote is made of three parts, which [`RemoteSnapshot`] captures:
 //!
-//! - la sua configurazione nel file del repo (`remote.<nome>.*`: URL, refspec, ...);
-//! - i suoi branch remoti (`refs/remotes/<nome>/...`, esclusi quelli di un altro remoto che si
-//!   chiama `<nome>/qualcosa`) e il ref simbolico `refs/remotes/<nome>/HEAD`;
-//! - le voci di altri che lo nominano ("dipendenti"): l'upstream dei branch locali
-//!   (`branch.<b>.remote` e `branch.<b>.merge`), `branch.<b>.pushRemote` e
-//!   `remote.pushDefault`, sempre del file del repo.
+//! - its configuration in the repo file (`remote.<name>.*`: URL, refspec, ...);
+//! - its remote branches (`refs/remotes/<name>/...`, excluding those of another remote named
+//!   `<name>/something`) and the symbolic ref `refs/remotes/<name>/HEAD`;
+//! - the entries of others that name it ("dependents"): the upstream of local branches
+//!   (`branch.<b>.remote` and `branch.<b>.merge`), `branch.<b>.pushRemote` and
+//!   `remote.pushDefault`, always from the repo file.
 //!
-//! Eliminare un remoto ([`remove_remote`]) toglie i branch remoti con una sola transazione
-//! (`GitBackend::restore_refs`, con i valori attesi e i backup dei commit che non resterebbero
-//! raggiungibili), poi la configurazione; ripristinarlo ([`restore_remote`]) fa il contrario,
-//! solo se nel frattempo nessuno ha ricreato un remoto con quel nome.
+//! Removing a remote ([`remove_remote`]) removes the remote branches with a single transaction
+//! (`GitBackend::restore_refs`, with the expected values and the backups of the commits that would no longer be
+//! reachable), then the configuration; restoring it ([`restore_remote`]) does the opposite,
+//! only if in the meantime nobody recreated a remote with that name.
 
 use super::{ConfigEntry, GitBackend, HeadState, RefMove, RefRestore, RestoreOutcome};
 use super::{check_no_operation, check_remote_name};
-use crate::EngineError;
+use crate::{EngineError, Message, MessageArg};
 use project_domain::Oid;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeSet;
 
-/// Prefisso dei branch remoti.
+/// Prefix of remote branches.
 pub const REMOTES_PREFIX: &str = "refs/remotes/";
 
-/// Un branch remoto di un remoto: nome completo e commit.
+/// A remote branch of a remote: full name and commit.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RemoteRef {
     pub name: String,
     pub target: Oid,
 }
 
-/// Quello che `remote.remove` toglie (e il diario rimette): vedi il modulo.
+/// What `remote.remove` removes (and the journal puts back): see the module.
 ///
 /// JSON: `{"name", "config": [{"key", "value"}], "refs": [{"name", "target"}], "head": string |
-/// null, "upstreams": [{"key", "value"}], "push_default": bool}`. Nel JSON i valori della
-/// configurazione sono mascherati come in `remote.list` ([`mask_url`]): il diario in memoria
-/// tiene i valori veri, che servono all'undo, ma `edit.history` non mostra password e token.
-/// Per questo non si deserializza: un `RemoteSnapshot` letto dal JSON avrebbe gli URL
-/// mascherati e non servirebbe a rimettere il remoto.
+/// null, "upstreams": [{"key", "value"}], "push_default": bool}`. In the JSON the configuration
+/// values are masked as in `remote.list` ([`mask_url`]): the in-memory journal
+/// keeps the real values, needed by undo, but `edit.history` does not show passwords and tokens.
+/// For this reason it is not deserialized: a `RemoteSnapshot` read from JSON would have masked
+/// URLs and would not be of use to put the remote back.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct RemoteSnapshot {
-    /// Il nome del remoto.
+    /// The name of the remote.
     pub name: String,
-    /// `remote.<nome>.*` del file del repo, nell'ordine del file.
+    /// `remote.<name>.*` of the repo file, in file order.
     #[serde(serialize_with = "masked_entries")]
     pub config: Vec<ConfigEntry>,
-    /// I branch remoti non simbolici, in ordine di nome.
+    /// The non-symbolic remote branches, in name order.
     pub refs: Vec<RemoteRef>,
-    /// Dove punta `refs/remotes/<nome>/HEAD` (nome completo), se è un ref simbolico.
+    /// Where `refs/remotes/<name>/HEAD` points (full name), if it is a symbolic ref.
     pub head: Option<String>,
-    /// `branch.<b>.remote` e `branch.<b>.merge` dei branch che hanno il remoto come upstream,
-    /// e `branch.<b>.pushRemote` che lo nominano, nell'ordine del file.
+    /// `branch.<b>.remote` and `branch.<b>.merge` of the branches that have the remote as upstream,
+    /// and `branch.<b>.pushRemote` that name it, in file order.
     pub upstreams: Vec<ConfigEntry>,
-    /// `remote.pushDefault` (file del repo) vale questo remoto.
+    /// `remote.pushDefault` (repo file) equals this remote.
     pub push_default: bool,
 }
 
@@ -64,8 +64,8 @@ fn masked_entries<S: Serializer>(entries: &[ConfigEntry], s: S) -> Result<S::Ok,
     masked.serialize(s)
 }
 
-/// La voce con le credenziali mascherate ([`mask_url`]) nel valore: non solo `*.url` e
-/// `*.pushurl`, qualunque valore che sia un URL con credenziali (es. `remote.x.proxy`).
+/// The entry with credentials masked ([`mask_url`]) in the value: not just `*.url` and
+/// `*.pushurl`, any value that is a URL with credentials (e.g. `remote.x.proxy`).
 pub fn masked_entry(entry: &ConfigEntry) -> ConfigEntry {
     ConfigEntry {
         key: entry.key.clone(),
@@ -74,20 +74,20 @@ pub fn masked_entry(entry: &ConfigEntry) -> ConfigEntry {
 }
 
 impl RemoteSnapshot {
-    /// Vero se del remoto non c'è niente: né configurazione né branch remoti.
+    /// True if nothing exists of the remote: neither configuration nor remote branches.
     pub fn is_absent(&self) -> bool {
         self.config.is_empty() && self.refs.is_empty() && self.head.is_none()
     }
 
-    /// Le differenze fra `self` (lo stato atteso) e `now`, una per riga, per
-    /// [`EngineError::UndoConflict`]; vuoto se sono uguali. Configurazione e dipendenti si
-    /// confrontano come insiemi (l'ordine del file può cambiare riscrivendoli).
-    pub fn differences(&self, now: &RemoteSnapshot) -> Vec<String> {
+    /// The differences between `self` (the expected state) and `now`, one per line, for
+    /// [`EngineError::UndoConflict`]; empty if equal. Configuration and dependents are
+    /// compared as sets (the file order may change when they are rewritten).
+    pub fn differences(&self, now: &RemoteSnapshot) -> Vec<Message> {
         let mut out = Vec::new();
         let sorted = |entries: &[ConfigEntry]| {
             let mut v: Vec<(String, String)> = entries
                 .iter()
-                // Una chiave senza valore si riscrive come `true`: è la stessa cosa per git.
+                // A key without a value is rewritten as `true`: it is the same thing for git.
                 .map(|e| {
                     let value = e.value.clone().unwrap_or_else(|| "true".to_owned());
                     (e.key.to_ascii_lowercase(), value)
@@ -97,59 +97,56 @@ impl RemoteSnapshot {
             v
         };
         if sorted(&self.config) != sorted(&now.config) {
-            out.push(format!(
-                "la configurazione `remote.{}.*` è cambiata",
-                self.name
-            ));
+            out.push(msg!("engine-remote-config-changed", name = self.name));
         }
         let (old, new): (BTreeSet<&RemoteRef>, BTreeSet<&RemoteRef>) =
             (self.refs.iter().collect(), now.refs.iter().collect());
         for r in old.difference(&new) {
             let current = now.refs.iter().find(|n| n.name == r.name);
             out.push(match current {
-                Some(c) => format!(
-                    "`{}`: doveva essere {}, ora è {}",
-                    r.name, r.target, c.target
+                Some(c) => msg!(
+                    "engine-ref-changed",
+                    name = r.name,
+                    expected = r.target,
+                    now = c.target
                 ),
-                None => format!("`{}`: doveva essere {}, ora non c'è", r.name, r.target),
+                None => msg!("engine-remote-ref-gone", name = r.name, expected = r.target),
             });
         }
         for r in new.difference(&old) {
             if !self.refs.iter().any(|o| o.name == r.name) {
-                out.push(format!(
-                    "`{}`: non doveva esserci, ora è {}",
-                    r.name, r.target
-                ));
+                out.push(msg!("engine-remote-ref-new", name = r.name, now = r.target));
             }
         }
         if self.head != now.head {
-            out.push(format!(
-                "`{REMOTES_PREFIX}{}/HEAD`: doveva puntare a {}, ora a {}",
-                self.name,
-                self.head.as_deref().unwrap_or("niente"),
-                now.head.as_deref().unwrap_or("niente")
+            let head = |h: &Option<String>| match h {
+                Some(h) => msg!("engine-ref-value", id = h),
+                None => msg!("engine-remote-head-none"),
+            };
+            out.push(msg!(
+                "engine-remote-head-changed",
+                name = self.name,
+                expected = head(&self.head),
+                now = head(&now.head)
             ));
         }
         if sorted(&self.upstreams) != sorted(&now.upstreams) {
-            out.push(format!(
-                "l'upstream o il pushRemote dei branch che usano `{}` è cambiato",
-                self.name
-            ));
+            out.push(msg!("engine-remote-upstreams-changed", name = self.name));
         }
         if self.push_default != now.push_default {
-            out.push("`remote.pushDefault` è cambiato".to_owned());
+            out.push(msg!("engine-remote-push-default-changed"));
         }
         out
     }
 
-    /// I branch locali (nomi brevi) che hanno il remoto come upstream (`branch.<b>.remote`), in
-    /// ordine di nome.
+    /// The local branches (short names) that have the remote as upstream (`branch.<b>.remote`), in
+    /// name order.
     pub fn upstream_branches(&self) -> Vec<String> {
         self.dependent_branches("remote")
     }
 
-    /// I branch locali (nomi brevi) con `branch.<b>.pushRemote` uguale al remoto, in ordine di
-    /// nome.
+    /// The local branches (short names) with `branch.<b>.pushRemote` equal to the remote, in
+    /// name order.
     pub fn push_remote_branches(&self) -> Vec<String> {
         self.dependent_branches("pushremote")
     }
@@ -167,7 +164,7 @@ impl RemoteSnapshot {
         out
     }
 
-    /// L'URL (`remote.<nome>.url`) com'è scritto, se c'è.
+    /// The URL (`remote.<name>.url`) as written, if any.
     pub fn url(&self) -> Option<&str> {
         self.config
             .iter()
@@ -175,8 +172,8 @@ impl RemoteSnapshot {
             .and_then(|e| e.value.as_deref())
     }
 
-    /// Lo stesso remoto senza i dipendenti (per l'undo e il redo di `remote.add`, che non li
-    /// toccano).
+    /// The same remote without the dependents (for the undo and redo of `remote.add`, which does not
+    /// touch them).
     fn without_dependents(&self) -> RemoteSnapshot {
         RemoteSnapshot {
             upstreams: Vec::new(),
@@ -186,16 +183,16 @@ impl RemoteSnapshot {
     }
 }
 
-/// `branch.<b>.<var>` → (`b`, `var` in minuscolo); `None` per un'altra chiave.
+/// `branch.<b>.<var>` → (`b`, `var` in lowercase); `None` for another key.
 pub fn split_branch_key(key: &str) -> Option<(&str, String)> {
     let rest = key.strip_prefix("branch.")?;
     let (branch, var) = rest.rsplit_once('.')?;
     (!branch.is_empty()).then(|| (branch, var.to_ascii_lowercase()))
 }
 
-/// Fra le voci `branch.<b>.(remote|merge|pushRemote)` della configurazione (`entries`), quelle
-/// che dipendono dal remoto `name`: `remote` e `merge` dei branch con `branch.<b>.remote =
-/// <name>`, e i `pushRemote` uguali a `name`. Nell'ordine di `entries`.
+/// Among the `branch.<b>.(remote|merge|pushRemote)` entries of the configuration (`entries`), those
+/// that depend on the remote `name`: `remote` and `merge` of the branches with `branch.<b>.remote =
+/// <name>`, and the `pushRemote` equal to `name`. In the order of `entries`.
 pub fn remote_dependents(name: &str, entries: &[ConfigEntry]) -> Vec<ConfigEntry> {
     let tracking: BTreeSet<&str> = entries
         .iter()
@@ -215,9 +212,9 @@ pub fn remote_dependents(name: &str, entries: &[ConfigEntry]) -> Vec<ConfigEntry
         .collect()
 }
 
-/// Vero se il ref `refname` è un branch remoto del remoto `remote`: sta sotto
-/// `refs/remotes/<remote>/` e non sotto `refs/remotes/<altro>/` di un altro remoto configurato
-/// che si chiama `<remote>/...` (i nomi dei remoti possono contenere `/`).
+/// True if the ref `refname` is a remote branch of the remote `remote`: it is under
+/// `refs/remotes/<remote>/` and not under `refs/remotes/<other>/` of another configured remote
+/// named `<remote>/...` (remote names may contain `/`).
 pub fn owned_by(remote: &str, remotes: &[String], refname: &str) -> bool {
     let prefix = format!("{REMOTES_PREFIX}{remote}/");
     if !refname.starts_with(&prefix) {
@@ -230,66 +227,65 @@ pub fn owned_by(remote: &str, remotes: &[String], refname: &str) -> bool {
     })
 }
 
-/// Il nome di un remoto **nuovo** (`remote.add`): come [`check_remote_name`] e in più non
-/// inizia con `-` (git lo accetterebbe dopo `--end-of-options`, ma poi ogni comando scritto a
-/// mano lo prenderebbe per un'opzione). Altrimenti [`EngineError::InvalidParams`].
+/// The name of a **new** remote (`remote.add`): like [`check_remote_name`] and in addition it does not
+/// start with `-` (git would accept it after `--end-of-options`, but then every hand-written
+/// command would take it for an option). Otherwise [`EngineError::InvalidParams`].
 pub fn check_new_remote_name(id: &'static str, name: &str) -> Result<(), EngineError> {
     check_remote_name(id, name)?;
     if name.starts_with('-') {
         return Err(EngineError::InvalidParams {
             id,
-            reason: format!(
-                "un nome di remoto non può iniziare con `-`: `{}`",
-                name.escape_debug()
-            ),
+            reason: msg!("engine-remote-name-dash", name = name.escape_debug()),
         });
     }
     Ok(())
 }
 
-/// L'URL di un remoto nuovo (`remote.add`). Politica (prima di passarlo a git, dopo
+/// The URL of a new remote (`remote.add`). Policy (before passing it to git, after
 /// `--end-of-options`):
 ///
-/// - non vuoto, senza spazi in testa o in coda e senza caratteri di controllo (a capo, NUL);
-/// - non inizia con `-` (un `--upload-pack=...` o `-oProxyCommand=...` non deve mai poter
-///   diventare un'opzione di git o di ssh);
-/// - niente trasporti che eseguono comandi o usano descrittori: `ext::`/`ext://` e
-///   `fd::`/`fd://`, in qualsiasi maiuscolo (git li permette se `protocol.ext.allow` lo dice;
-///   da qui mai). Gli altri helper (`<trasporto>::<indirizzo>`) restano permessi;
-/// - un host o un utente che inizia con `-` (`ssh://-oProxyCommand=x/r`, `ssh://-oX@h/r`,
-///   `utente@-x:r`, `ssh://[-x]/r`) è rifiutato.
+/// - not empty, without leading or trailing spaces and without control characters (newline, NUL);
+/// - does not start with `-` (an `--upload-pack=...` or `-oProxyCommand=...` must never be able to
+///   become a git or ssh option);
+/// - no transports that run commands or use descriptors: `ext::`/`ext://` and
+///   `fd::`/`fd://`, in any letter case (git allows them if `protocol.ext.allow` says so;
+///   never from here). Other helpers (`<transport>::<address>`) stay allowed;
+/// - a host or user starting with `-` (`ssh://-oProxyCommand=x/r`, `ssh://-oX@h/r`,
+///   `user@-x:r`, `ssh://[-x]/r`) is rejected.
 ///
-/// Altrimenti [`EngineError::InvalidParams`]. Le credenziali nell'URL sono accettate (le
-/// salva git nella configurazione, in chiaro): il comando lo dice in un avviso.
+/// Otherwise [`EngineError::InvalidParams`]. Credentials in the URL are accepted (git
+/// saves them in the configuration, in clear text): the command says so in a warning.
 pub fn check_remote_url(id: &'static str, url: &str) -> Result<(), EngineError> {
     let reason = if url.trim().is_empty() {
-        Some("l'URL del remoto è vuoto".to_owned())
+        Some(msg!("engine-remote-url-empty"))
     } else if url.chars().any(char::is_control) {
-        Some("l'URL contiene caratteri di controllo".to_owned())
+        Some(msg!("engine-remote-url-control"))
     } else if url.trim() != url {
-        Some("l'URL inizia o finisce con spazi".to_owned())
+        Some(msg!("engine-remote-url-spaces"))
     } else if url.starts_with('-') {
-        Some("un URL non può iniziare con `-` (sembrerebbe un'opzione)".to_owned())
+        Some(msg!("engine-remote-url-dash"))
     } else if let Some(transport) = forbidden_transport(url) {
-        Some(format!(
-            "il trasporto `{transport}` esegue comandi o usa descrittori aperti: non permesso"
-        ))
+        Some(msg!("engine-remote-url-transport", transport = transport))
     } else if dash_in_authority(url) {
-        Some("l'utente o l'host dell'URL non può iniziare con `-`".to_owned())
+        Some(msg!("engine-remote-url-authority-dash"))
     } else {
         None
     };
     match reason {
         Some(reason) => Err(EngineError::InvalidParams {
             id,
-            reason: format!("{reason}: `{}`", mask_url(url).0.escape_debug()),
+            reason: msg!(
+                "engine-with-name",
+                reason = reason,
+                name = mask_url(url).0.escape_debug().to_string()
+            ),
         }),
         None => Ok(()),
     }
 }
 
-/// `ext` o `fd` se l'URL usa uno di quei trasporti (`ext::...`, `ext://...`), anche dentro un
-/// altro helper.
+/// `ext` or `fd` if the URL uses one of those transports (`ext::...`, `ext://...`), also inside
+/// another helper.
 fn forbidden_transport(url: &str) -> Option<&'static str> {
     let lower = url.to_ascii_lowercase();
     for transport in ["ext", "fd"] {
@@ -299,23 +295,23 @@ fn forbidden_transport(url: &str) -> Option<&'static str> {
             return Some(transport);
         }
     }
-    // `<helper>::<indirizzo>`: si controlla anche l'indirizzo.
+    // `<helper>::<address>`: the address is checked too.
     let (scheme, rest) = url.split_once("::")?;
     scheme_like(scheme)
         .then(|| forbidden_transport(rest))
         .flatten()
 }
 
-/// Vero se `s` può essere uno schema di URL (`[A-Za-z][A-Za-z0-9+.-]*`).
+/// True if `s` can be a URL scheme (`[A-Za-z][A-Za-z0-9+.-]*`).
 fn scheme_like(s: &str) -> bool {
     let mut chars = s.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
 }
 
-/// Utente e host di un URL `schema://[utente@]host...` o di un indirizzo alla scp
-/// `[utente@]host:...` (senza `/` prima dei `:`), con le `[]` di un host IPv6 tolte; `None` per
-/// un percorso.
+/// User and host of a URL `scheme://[user@]host...` or of an scp-like address
+/// `[user@]host:...` (without `/` before the `:`), with the `[]` of an IPv6 host removed; `None` for
+/// a path.
 fn split_user(authority: &str) -> (Option<&str>, &str) {
     match authority.rsplit_once('@') {
         Some((user, host)) => (Some(user), host),
@@ -342,19 +338,19 @@ fn authority_of(url: &str) -> Option<(Option<&str>, &str)> {
     Some((user, host.trim_start_matches('[')))
 }
 
-/// Vero se l'utente o l'host dell'URL inizia con `-` (diventerebbe un'opzione di ssh).
+/// True if the user or host of the URL starts with `-` (it would become an ssh option).
 fn dash_in_authority(url: &str) -> bool {
     authority_of(url).is_some_and(|(user, host)| {
         host.starts_with('-') || user.is_some_and(|u| u.starts_with('-'))
     })
 }
 
-/// L'URL senza credenziali, da mostrare, e se ne aveva. Politica: in un URL
-/// `schema://utente:password@host/...` la password diventa `***` (`https://nicola:***@host/r`);
-/// in un URL `http(s)://` o `ftp(s)://` con solo l'utente anche l'utente diventa `***`
-/// (`https://***@github.com/r`: lì l'"utente" è spesso un token). Un utente senza password in
-/// `ssh://`, `git://` o alla scp (`git@host:r`) resta: non è un segreto. Vale anche dentro un
-/// helper (`<trasporto>::<url>`). Tutto il resto resta com'è.
+/// The URL without credentials, to display, and whether it had any. Policy: in a URL
+/// `scheme://user:password@host/...` the password becomes `***` (`https://nicola:***@host/r`);
+/// in an `http(s)://` or `ftp(s)://` URL with only the user the user also becomes `***`
+/// (`https://***@github.com/r`: there the "user" is often a token). A user without password in
+/// `ssh://`, `git://` or scp-like (`git@host:r`) stays: it is not a secret. It also applies inside a
+/// helper (`<transport>::<url>`). Everything else stays as is.
 pub fn mask_url(url: &str) -> (String, bool) {
     if let Some((scheme, rest)) = url.split_once("::")
         && scheme_like(scheme)
@@ -385,16 +381,16 @@ pub fn mask_url(url: &str) -> (String, bool) {
     (format!("{scheme}://{shown}@{host}{tail}"), true)
 }
 
-/// Toglie il remoto fotografato in `snapshot` (`remote.remove`, undo di `remote.add`, redo di
-/// `remote.remove`), solo se adesso è esattamente così ([`RemoteSnapshot::differences`]:
-/// altrimenti [`EngineError::UndoConflict`] per `edit.*`, [`EngineError::NotAllowed`] per gli
-/// altri comandi, e niente cambia). Con `dependents` toglie anche upstream, `pushRemote` e
-/// `remote.pushDefault` salvati (per `remote.add` no: non li ha creati lui).
+/// Removes the remote captured in `snapshot` (`remote.remove`, undo of `remote.add`, redo of
+/// `remote.remove`), only if right now it is exactly so ([`RemoteSnapshot::differences`]:
+/// otherwise [`EngineError::UndoConflict`] for `edit.*`, [`EngineError::NotAllowed`] for the
+/// other commands, and nothing changes). With `dependents` it also removes the saved upstream, `pushRemote` and
+/// `remote.pushDefault` (for `remote.add` not: it did not create them).
 ///
-/// I branch remoti si tolgono con [`GitBackend::restore_refs`] (una transazione con i valori
-/// attesi; i commit che non resterebbero raggiungibili da altri ref vanno prima in
-/// `refs/project/backup/<remote|undo|redo>-...`, nel risultato), poi la configurazione: un
-/// problema lì è un avviso, perché i ref sono già tolti.
+/// The remote branches are removed with [`GitBackend::restore_refs`] (a transaction with the expected
+/// values; the commits that would no longer be reachable from other refs go first in
+/// `refs/project/backup/<remote|undo|redo>-...`, in the result), then the configuration: a
+/// problem there is a warning, because the refs are already removed.
 pub fn remove_remote(
     repo: &mut dyn GitBackend,
     snapshot: &RemoteSnapshot,
@@ -403,7 +399,7 @@ pub fn remove_remote(
     reflog: String,
 ) -> Result<RestoreOutcome, EngineError> {
     let status = repo.status()?;
-    check_no_operation(command, "rimuoverebbe un remoto", status.operation)?;
+    check_no_operation(command, msg!("engine-busy-remote-remove"), status.operation)?;
     let now = repo.remote_snapshot(&snapshot.name)?;
     let differences = snapshot.differences(&now);
     if !differences.is_empty() {
@@ -437,13 +433,13 @@ pub fn remove_remote(
     Ok(outcome)
 }
 
-/// Rimette il remoto fotografato in `snapshot` (undo di `remote.remove`, redo di
-/// `remote.add`), solo se adesso del remoto non c'è niente (né fra i remoti configurati né
-/// configurazione né branch remoti: altrimenti [`EngineError::UndoConflict`] e niente cambia).
-/// Prima i branch remoti (una transazione che li crea solo se non esistono), poi la
-/// configurazione. Con `dependents` anche upstream, `pushRemote` e `remote.pushDefault`, ma
-/// solo dove il repo non ne ha uno nuovo e il branch esiste ancora: gli altri restano come sono,
-/// con un avviso.
+/// Puts back the remote captured in `snapshot` (undo of `remote.remove`, redo of
+/// `remote.add`), only if right now nothing exists of the remote (neither among the configured remotes nor
+/// configuration nor remote branches: otherwise [`EngineError::UndoConflict`] and nothing changes).
+/// First the remote branches (a transaction that creates them only if they do not exist), then the
+/// configuration. With `dependents` also upstream, `pushRemote` and `remote.pushDefault`, but
+/// only where the repo does not have a new one and the branch still exists: the others stay as they are,
+/// with a warning.
 pub fn restore_remote(
     repo: &mut dyn GitBackend,
     snapshot: &RemoteSnapshot,
@@ -452,15 +448,20 @@ pub fn restore_remote(
     reflog: String,
 ) -> Result<(RestoreOutcome, RemoteSnapshot), EngineError> {
     let status = repo.status()?;
-    check_no_operation(command, "rimetterebbe un remoto", status.operation)?;
+    check_no_operation(
+        command,
+        msg!("engine-busy-remote-restore"),
+        status.operation,
+    )?;
     let now = repo.remote_snapshot(&snapshot.name)?;
     let configured = repo.remotes()?.contains(&snapshot.name);
     if configured || !now.is_absent() {
-        let mut refs = vec![format!(
-            "il remoto `{}` esiste di nuovo (configurazione o branch remoti)",
-            snapshot.name
-        )];
-        refs.extend(now.refs.iter().map(|r| format!("`{}` c'è già", r.name)));
+        let mut refs = vec![msg!("engine-remote-exists-again", name = snapshot.name)];
+        refs.extend(
+            now.refs
+                .iter()
+                .map(|r| msg!("engine-remote-ref-exists", name = r.name)),
+        );
         return Err(changed(command, &snapshot.name, refs));
     }
     let (outcome, written, _) = put_back(
@@ -475,12 +476,12 @@ pub fn restore_remote(
     Ok((outcome, written))
 }
 
-/// Rimette branch remoti e configurazione di `snapshot` senza controllare prima che il remoto
-/// non ci sia (i ref si creano comunque solo se non esistono). Restituisce l'esito e quello
-/// che è stato davvero riscritto (i dipendenti saltati non ci sono). Con `strict` un errore sui
-/// ref ferma tutto prima di scrivere (undo e redo: niente cambia); senza (il ripristino
-/// d'emergenza di [`ensure_remote_gone`]) diventa un avviso e la configurazione si scrive
-/// comunque.
+/// Puts back remote branches and configuration of `snapshot` without first checking that the remote
+/// is not there (the refs are created anyway only if they do not exist). Returns the outcome and what
+/// was actually rewritten (the skipped dependents are not there). With `strict` an error on the
+/// refs stops everything before writing (undo and redo: nothing changes); without it (the emergency
+/// restore of [`ensure_remote_gone`]) it becomes a warning and the configuration is written
+/// anyway.
 fn put_back(
     repo: &mut dyn GitBackend,
     snapshot: &RemoteSnapshot,
@@ -514,10 +515,10 @@ fn put_back(
             Err(e) if strict => return Err(e),
             Err(e) => {
                 complete = false;
-                outcome.warnings.push(format!(
-                    "i branch remoti di `{}` non sono stati rimessi ({e}): i commit sono nei \
-                 backup e nella voce del diario",
-                    snapshot.name
+                outcome.warnings.push(msg!(
+                    "engine-remote-refs-not-put-back",
+                    name = snapshot.name,
+                    error = e
                 ));
             }
         }
@@ -535,7 +536,7 @@ fn put_back(
                 complete = false;
                 outcome
                     .warnings
-                    .push(format!("upstream e pushRemote non rimessi: {e}"));
+                    .push(msg!("engine-remote-upstreams-not-put-back", error = e));
             }
         }
     }
@@ -543,19 +544,19 @@ fn put_back(
     Ok((outcome, target, complete))
 }
 
-/// Esito di [`ensure_remote_gone`] quando git vede ancora il remoto dopo la rimozione.
+/// Outcome of [`ensure_remote_gone`] when git still sees the remote after the removal.
 #[derive(Debug)]
 pub struct RemoteStillListed {
-    /// L'errore da restituire ([`EngineError::NotAllowed`]).
+    /// The error to return ([`EngineError::NotAllowed`]).
     pub error: EngineError,
-    /// Vero se il remoto è stato rimesso tutto (configurazione, branch remoti, upstream): la
-    /// rimozione non va nel diario. Falso se il ripristino non è riuscito o non si sa se
-    /// git vede il remoto: la rimozione va nel diario, così `edit.undo` e i backup restano.
+    /// True if the remote was fully put back (configuration, remote branches, upstream): the
+    /// removal does not go in the journal. False if the restore failed or it is not known whether
+    /// git sees the remote: the removal goes in the journal, so `edit.undo` and the backups remain.
     pub put_back: bool,
 }
 
-/// Dopo `remote.remove`: se git vede ancora il remoto (definito anche fuori dal file del repo,
-/// scoperto troppo tardi) lo si rimette subito com'era; `None` se è sparito davvero.
+/// After `remote.remove`: if git still sees the remote (defined also outside the repo file,
+/// discovered too late) it is put back immediately as it was; `None` if it really disappeared.
 pub fn ensure_remote_gone(
     repo: &mut dyn GitBackend,
     snapshot: &RemoteSnapshot,
@@ -567,51 +568,43 @@ pub fn ensure_remote_gone(
         Ok(_) => {}
         Err(e) => {
             return Some(RemoteStillListed {
-                error: EngineError::NotAllowed(format!(
-                    "il remoto `{name}` è stato rimosso, ma l'elenco dei remoti non si rilegge \
-                     ({e}): la rimozione è nel diario (`edit.undo` la annulla) e i commit dei \
-                     branch remoti nei backup"
+                error: EngineError::NotAllowed(msg!(
+                    "engine-remote-removed-unreadable",
+                    name = name,
+                    error = e
                 )),
                 put_back: false,
             });
         }
     }
-    let reflog = format!(
-        "project: {command} annullato, ripristino di {}",
-        snapshot.name
-    );
+    let reflog = format!("project: {command} undone, restoring {}", snapshot.name);
     let restored = repo
         .head()
         .and_then(|head| put_back(repo, snapshot, &head, command, true, reflog, false));
-    let note = "la rimozione è nel diario (`edit.undo` la annulla) e i commit dei branch \
-                remoti nei backup";
     let (how, put_back) = match restored {
-        Ok((_, _, true)) => ("rimesso com'era".to_owned(), true),
+        Ok((_, _, true)) => (msg!("engine-remote-put-back"), true),
         Ok((outcome, _, false)) => (
-            format!(
-                "rimesso solo in parte ({}): {note}",
-                outcome.warnings.join("; ")
+            msg!(
+                "engine-remote-put-back-partly",
+                warnings = MessageArg::Joined(outcome.warnings, "; ".into())
             ),
             false,
         ),
-        Err(e) => (format!("NON rimesso ({e}): {note}"), false),
+        Err(e) => (msg!("engine-remote-not-put-back", error = e), false),
     };
     Some(RemoteStillListed {
-        error: EngineError::NotAllowed(format!(
-            "dopo la rimozione git vede ancora il remoto `{name}` (è definito anche fuori dal \
-             file del repo): {how}. Toglierlo da dove è definito"
-        )),
+        error: EngineError::NotAllowed(msg!("engine-remote-still-listed", name = name, how = how)),
         put_back,
     })
 }
 
-/// I dipendenti di `snapshot` che si possono riscrivere: quelli dei branch che esistono ancora
-/// e non hanno nel frattempo un altro upstream / pushRemote, e `remote.pushDefault` se ora non
-/// c'è. Gli altri, un avviso ciascuno.
+/// The dependents of `snapshot` that can be rewritten: those of branches that still exist
+/// and meanwhile have no other upstream / pushRemote, and `remote.pushDefault` if it is now not
+/// there. The others, one warning each.
 fn free_dependents(
     repo: &dyn GitBackend,
     snapshot: &RemoteSnapshot,
-) -> Result<(Vec<ConfigEntry>, bool, Vec<String>), EngineError> {
+) -> Result<(Vec<ConfigEntry>, bool, Vec<Message>), EngineError> {
     let refs = repo.refs()?;
     let mut warnings = Vec::new();
     let mut skipped: BTreeSet<(String, bool)> = BTreeSet::new();
@@ -633,17 +626,20 @@ fn free_dependents(
             repo.upstream(branch)?.is_some()
         };
         if !exists || taken {
-            let what = if push { "il pushRemote" } else { "l'upstream" };
+            let what = if push { "push-remote" } else { "upstream" };
             warnings.push(if exists {
-                format!(
-                    "il branch `{branch}` ha già {what} nuovo: {what} verso `{}` non è stato \
-                     rimesso",
-                    snapshot.name
+                msg!(
+                    "engine-remote-upstream-taken",
+                    branch = branch,
+                    what = what,
+                    name = snapshot.name
                 )
             } else {
-                format!(
-                    "il branch `{branch}` non c'è più: {what} verso `{}` non è stato rimesso",
-                    snapshot.name
+                msg!(
+                    "engine-remote-upstream-branch-gone",
+                    branch = branch,
+                    what = what,
+                    name = snapshot.name
                 )
             });
             skipped.insert((branch.to_owned(), push));
@@ -653,24 +649,24 @@ fn free_dependents(
     }
     let mut push_default = snapshot.push_default;
     if push_default && !repo.config_values("remote.pushDefault")?.is_empty() {
-        warnings.push(format!(
-            "`remote.pushDefault` ha già un altro valore: non è stato rimesso a `{}`",
-            snapshot.name
+        warnings.push(msg!(
+            "engine-remote-push-default-taken",
+            name = snapshot.name
         ));
         push_default = false;
     }
     Ok((upstreams, push_default, warnings))
 }
 
-fn changed(command: &'static str, name: &str, refs: Vec<String>) -> EngineError {
+fn changed(command: &'static str, name: &str, refs: Vec<Message>) -> EngineError {
     if command.starts_with("edit.") {
         EngineError::UndoConflict { command, refs }
     } else {
-        EngineError::NotAllowed(format!(
-            "il remoto `{}` è cambiato mentre `{command}` lo leggeva ({}): niente modificato, \
-             riprovare",
-            name.escape_debug(),
-            refs.join("; ")
+        EngineError::NotAllowed(msg!(
+            "engine-remote-changed",
+            name = name.escape_debug(),
+            command = command,
+            refs = MessageArg::Joined(refs, "; ".into())
         ))
     }
 }
@@ -724,7 +720,7 @@ mod tests {
             "https://example.com/r.git",
             "git@github.com:a/b.git",
             "../r.git",
-            "/srv/con spazio/r.git",
+            "/srv/with space/r.git",
             "file:///srv/r",
             "ssh://git@host:22/r",
             "persistent-https::https://h/r",
@@ -752,7 +748,7 @@ mod tests {
             let err = check_remote_url("remote.add", bad).unwrap_err();
             assert!(matches!(err, EngineError::InvalidParams { .. }), "{bad:?}");
         }
-        // L'errore non mostra la password.
+        // The error does not show the password.
         let err = check_remote_url("remote.add", "ext::https://u:segreto@h").unwrap_err();
         assert!(!err.to_string().contains("segreto"), "{err}");
     }

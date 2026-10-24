@@ -1,29 +1,29 @@
-//! Il repo della demo web: il repo di esempio del `MemoryBackend` con in più il branch
-//! `esperimento`, che cambia `src/lib.rs` come `main` (conflitto) e aggiunge `docs/layout.md`.
-//! Così nella demo si prova un merge fermo in conflitto: «Stash…» delle modifiche locali, poi
-//! sul branch `esperimento` «Unisci in «main»» → compare il riquadro del merge in corso.
+//! The web demo repo: the `MemoryBackend` sample repo plus the branch
+//! `experiment`, which changes `src/lib.rs` like `main` (conflict) and adds `docs/layout.md`.
+//! This way the demo can try a merge stopped on a conflict: "Stash…" the local changes, then
+//! on the `experiment` branch "Merge into main" → the in-progress merge panel appears.
 
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
 use project_engine::{GitBackend, MemoryBackend, MemoryOpener};
 
-/// Il branch che entra in conflitto con `main`.
-pub const BRANCH: &str = "esperimento";
+/// The branch that conflicts with `main`.
+pub const BRANCH: &str = "experiment";
 
-/// Seed degli id finti di commit e contenuti aggiunti, lontani da quelli dell'esempio.
+/// Seed of the fake commit ids and added contents, far from those of the sample.
 const COMMIT_SEED: u64 = 50;
 const BLOB_SEED: u64 = 5_000;
 const FILE_MODE: u32 = 0o100644;
 
-/// L'opener della demo: solo il repo di [`repo`], al percorso del repo di esempio.
+/// The demo opener: only the repo from [`repo`], at the sample repo's path.
 pub fn opener() -> MemoryOpener {
     let mut opener = MemoryOpener::new();
     opener.insert(MemoryOpener::SAMPLE_PATH, repo());
     opener
 }
 
-/// Il repo di esempio con il branch [`BRANCH`]: un commit sul genitore di `main` che cambia
-/// `src/lib.rs` (cambiato anche dall'ultimo commit di `main`) e aggiunge `docs/layout.md`. Se
-/// l'esempio cambiasse e non si potesse costruire, resta il repo di esempio.
+/// The sample repo with the [`BRANCH`] branch: a commit on the parent of `main` that changes
+/// `src/lib.rs` (also changed by the last commit of `main`) and adds `docs/layout.md`. If
+/// the sample changed and this could not be built, the plain sample repo remains.
 pub fn repo() -> MemoryBackend {
     let mut repo = MemoryBackend::sample();
     if let Some((parent, lib_old)) = lib_before_main(&repo) {
@@ -32,7 +32,7 @@ pub fn repo() -> MemoryBackend {
     repo
 }
 
-/// Il genitore di `main` e l'id di `src/lib.rs` lì (cioè prima dell'ultimo commit di `main`).
+/// The parent of `main` and the id of `src/lib.rs` there (i.e. before the last commit of `main`).
 fn lib_before_main(repo: &MemoryBackend) -> Option<(Oid, Oid)> {
     let details = repo.show_commit("main").ok()?;
     let parent = *details.commit.parents.first()?;
@@ -48,9 +48,9 @@ fn add_branch(repo: &mut MemoryBackend, parent: Oid, lib_old: Oid) {
         .blob(lib_old)
         .map(|b| String::from_utf8_lossy(b).into_owned())
         .unwrap_or_default();
-    let lib_new = format!("{old}// esperimento: il pannello dei commit in due colonne\n");
-    let layout = "# Layout\n\nIl pannello dei commit in due colonne: grafo a sinistra, \
-                  dettagli a destra.\n";
+    let lib_new = format!("{old}// experiment: the commit panel in two columns\n");
+    let layout = "# Layout\n\nThe commit panel in two columns: graph on the left, \
+                  details on the right.\n";
     let lib_id = MemoryBackend::fake_oid(BLOB_SEED);
     let layout_id = MemoryBackend::fake_oid(BLOB_SEED + 1);
     repo.set_blob(lib_id, lib_new);
@@ -59,7 +59,7 @@ fn add_branch(repo: &mut MemoryBackend, parent: Oid, lib_old: Oid) {
     let who = Signature {
         name: "Bruno Verdi".to_owned(),
         email: "bruno@example.com".to_owned(),
-        // Dopo l'ultimo commit dell'esempio.
+        // After the sample's last commit.
         time: 1_700_000_000 + 12 * 3_600 + 1_800,
         offset_min: -300,
     };
@@ -68,7 +68,7 @@ fn add_branch(repo: &mut MemoryBackend, parent: Oid, lib_old: Oid) {
         parents: vec![parent],
         author: who.clone(),
         committer: who,
-        summary: "Pannello: prova di un layout in due colonne".to_owned(),
+        summary: "Panel: try a two-column layout".to_owned(),
         body: String::new(),
     });
     let zero = Oid::from_bytes([0; Oid::LEN]);
@@ -107,10 +107,10 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    /// Il percorso della demo: stash delle modifiche locali, merge di `esperimento` in `main`
-    /// → merge in corso con `src/lib.rs` in conflitto, che `repo.operation` mostra.
+    /// The demo path: stash the local changes, merge `experiment` into `main`
+    /// → in-progress merge with `src/lib.rs` in conflict, which `repo.operation` shows.
     #[test]
-    fn la_demo_porta_a_un_merge_in_conflitto() {
+    fn demo_leads_to_a_conflicted_merge() {
         let registry = Registry::builtin();
         let mut session = Session::new(Arc::new(opener()));
         let mut run = |id: &str, params| {
@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(operation["operation"], "Merge");
         assert_eq!(operation["incoming"][0]["label"], BRANCH);
         assert_eq!(operation["continue"], "merge.continue");
-        // L'area di stage lo mostra come file in conflitto.
+        // The stage area shows it as a conflicted file.
         let diff = run("diff.worktree", json!({ "path": "src/lib.rs" }));
         assert_eq!(diff["files"][0]["change"], "Unmerged", "{diff}");
     }

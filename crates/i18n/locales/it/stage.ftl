@@ -1,4 +1,4 @@
-# Area di stage e casella del messaggio di commit (stage.rs, view/stage_view.rs).
+# Staging area and commit message box (stage.rs, view/stage_view.rs).
 
 stage-label-stage-one = Stage di { $path }
 stage-label-stage-many = Stage di { $n } file

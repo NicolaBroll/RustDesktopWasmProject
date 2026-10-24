@@ -1,123 +1,118 @@
-//! Scartare le modifiche non in stage, con backup (`worktree.discard`,
+//! Discarding unstaged changes, with backup (`worktree.discard`,
 //! `impl-docs/git/discard.md`).
 //!
-//! Scartare riporta i file del worktree alla versione in stage (come `git restore --worktree`):
-//! quello che c'era nel worktree non esiste più da nessun'altra parte. Prima di scrivere i
-//! backend salvano il worktree con `git stash create` (un commit che non tocca né l'indice né il
-//! worktree) e un ref `refs/project/backup/discard-...` che lo tiene, così il gc non lo
-//! cancella; la voce del diario ([`WorktreeBackup`]) permette a `edit.undo` di rimettere i file
-//! com'erano.
+//! Discarding restores the worktree files to the staged version (like `git restore --worktree`):
+//! what was in the worktree no longer exists anywhere else. Before writing, the
+//! backends save the worktree with `git stash create` (a commit that touches neither the index nor the
+//! worktree) and a `refs/project/backup/discard-...` ref that holds it, so gc does not
+//! delete it; the journal entry ([`WorktreeBackup`]) lets `edit.undo` put the files back
+//! as they were.
 //!
-//! Scelte, comuni ai backend ([`discard_plan`]):
+//! Choices, shared by the backends ([`discard_plan`]):
 //!
-//! - **Solo il worktree.** L'indice non si tocca: un file `MM` torna `M.` (la versione in stage
-//!   resta). Per togliere anche lo stage c'è `index.unstage`.
-//! - **Solo file tracciati con modifiche fuori stage** (Y ∉ {`.`, `?`, `!`}): modificati,
-//!   eliminati, cambiati di tipo. Un file non tracciato chiesto per nome è rifiutato: scartarlo
-//!   vorrebbe dire cancellarlo, e `git stash create` non salva i file non tracciati, quindi non
-//!   ci sarebbe un backup. Dentro una cartella i non tracciati e gli ignorati restano dove sono.
-//! - **Sottomoduli**: rifiutati se chiesti per nome, saltati dentro una cartella (`git restore`
-//!   non entra nel sottomodulo).
-//! - **Quando `git stash create` non può salvare il backup**, niente si scarta: branch senza
-//!   commit, file in conflitto (anche fuori dai percorsi chiesti: "Cannot save the current
-//!   index state") e file `intent-to-add` (`git add -N`, "not uptodate. Cannot merge").
-//! - I file `--assume-unchanged`/`--skip-worktree` non hanno Y ≠ `.` e non si toccano.
+//! - **Worktree only.** The index is not touched: an `MM` file becomes `M.` (the staged version
+//!   stays). To drop the stage too there is `index.unstage`.
+//! - **Only tracked files with unstaged changes** (Y ∉ {`.`, `?`, `!`}): modified,
+//!   deleted, type-changed. An untracked file requested by name is rejected: discarding it
+//!   would mean deleting it, and `git stash create` does not save untracked files, so there
+//!   would be no backup. Inside a folder untracked and ignored files stay where they are.
+//! - **Submodules**: rejected if requested by name, skipped inside a folder (`git restore`
+//!   does not enter the submodule).
+//! - **When `git stash create` cannot save the backup**, nothing is discarded: branch without
+//!   commits, conflicted files (even outside the requested paths: "Cannot save the current
+//!   index state") and `intent-to-add` files (`git add -N`, "not uptodate. Cannot merge").
+//! - `--assume-unchanged`/`--skip-worktree` files do not have Y ≠ `.` and are not touched.
 
 use super::path_matches;
-use crate::EngineError;
+use crate::{EngineError, Message, MessageArg};
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// Un file scartato: il percorso, che modifica fuori stage aveva (`Modified`, `Deleted`,
-/// `TypeChanged`) e la voce dell'indice (modo e id) a cui il worktree è stato riportato.
+/// A discarded file: the path, which unstaged change it had (`Modified`, `Deleted`,
+/// `TypeChanged`) and the index entry (mode and id) the worktree was restored to.
 ///
 /// JSON: `{"path", "change", "mode", "oid"}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscardedFile {
     pub path: RepoPath,
     pub change: Change,
-    /// Modo della voce nell'indice (es. `0o100644`).
+    /// Mode of the index entry (e.g. `0o100644`).
     pub mode: u32,
-    /// Id del blob nell'indice.
+    /// Blob id in the index.
     pub oid: Oid,
 }
 
-/// Esito di [`GitBackend::discard`](crate::GitBackend::discard).
+/// Outcome of [`GitBackend::discard`](crate::GitBackend::discard).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscardOutcome {
-    /// I file riportati alla versione in stage, in ordine di percorso.
+    /// The files restored to the staged version, in path order.
     pub files: Vec<DiscardedFile>,
-    /// Il ref di backup (`refs/project/backup/discard-...`) che tiene il commit di
+    /// The backup ref (`refs/project/backup/discard-...`) that holds the commit of
     /// `git stash create`.
     pub backup: String,
-    /// Il commit di `git stash create`: il suo albero ha il contenuto del worktree dei file
-    /// tracciati prima dello scarto (`git show <stash>:<percorso>`).
+    /// The commit of `git stash create`: its tree has the worktree content of the tracked
+    /// files before the discard (`git show <stash>:<path>`).
     pub stash: Oid,
-    /// Solo se per qualche file i byte del worktree non sono quelli che `git restore` ricreerebbe
-    /// dal commit `stash` (filtri `clean`, conversioni di fine riga come `core.autocrlf=input`):
-    /// un commit (figlio di `stash`) con i soli file salvati byte per byte, senza filtri. L'undo
-    /// riscrive quei byte esatti. Il ref di backup punta a questo commit quando c'è.
+    /// Only if for some file the worktree bytes are not those `git restore` would recreate
+    /// from the `stash` commit (`clean` filters, line-ending conversions such as `core.autocrlf=input`):
+    /// a commit (child of `stash`) with only the files saved byte for byte, without filters. Undo
+    /// writes back those exact bytes. The backup ref points to this commit when present.
     #[serde(default)]
     pub raw: Option<Oid>,
 }
 
-/// Il backup del worktree in una voce del diario: il commit di `git stash create` e i file
-/// scartati. `edit.undo` rimette quei file com'erano nel commit, `edit.redo` li scarta di
-/// nuovo.
+/// The worktree backup in a journal entry: the commit of `git stash create` and the
+/// discarded files. `edit.undo` puts those files back as they were in the commit, `edit.redo` discards them
+/// again.
 ///
 /// JSON: `{"stash": oid, "files": [DiscardedFile]}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeBackup {
     pub stash: Oid,
     pub files: Vec<DiscardedFile>,
-    /// Vedi [`DiscardOutcome::raw`].
+    /// See [`DiscardOutcome::raw`].
     #[serde(default)]
     pub raw: Option<Oid>,
 }
 
-/// Cosa chiede `edit.undo`/`edit.redo` di uno scarto al backend
+/// What `edit.undo`/`edit.redo` of a discard ask of the backend
 /// ([`GitBackend::restore_worktree`](crate::GitBackend::restore_worktree)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeRestore {
-    /// `edit.undo` o `edit.redo`, per gli errori.
+    /// `edit.undo` or `edit.redo`, for errors.
     pub command: &'static str,
-    /// `false` (undo): i file devono essere ancora come li ha lasciati lo scarto (worktree
-    /// uguale all'indice, voce dell'indice quella registrata) e tornano come in `stash`.
-    /// `true` (redo): i file devono essere come in `stash` (con la stessa voce dell'indice) e
-    /// tornano alla versione in stage; `stash` li tiene già, nessun backup nuovo.
+    /// `false` (undo): the files must still be as the discard left them (worktree
+    /// equal to the index, index entry the recorded one) and go back as in `stash`.
+    /// `true` (redo): the files must be as in `stash` (with the same index entry) and
+    /// go back to the staged version; `stash` already holds them, no new backup.
     pub redo: bool,
     pub stash: Oid,
     pub files: Vec<DiscardedFile>,
-    /// Vedi [`DiscardOutcome::raw`].
+    /// See [`DiscardOutcome::raw`].
     pub raw: Option<Oid>,
 }
 
 impl WorktreeRestore {
-    /// I percorsi dei file, nell'ordine della voce.
+    /// The file paths, in the order of the entry.
     pub fn paths(&self) -> Vec<RepoPath> {
         self.files.iter().map(|f| f.path.clone()).collect()
     }
 
-    /// Le differenze fra l'indice atteso e quello attuale (`index` dà modo e id della voce di
-    /// un percorso, `None` se non c'è), una per riga, per [`EngineError::UndoConflict`].
+    /// The differences between the expected and the current index (`index` gives mode and id of the entry of
+    /// a path, `None` if absent), one per line, for [`EngineError::UndoConflict`].
     pub fn index_conflicts(
         &self,
         mut index: impl FnMut(&RepoPath) -> Option<(u32, Oid)>,
-    ) -> Vec<String> {
+    ) -> Vec<Message> {
         self.files
             .iter()
             .filter(|f| index(&f.path) != Some((f.mode, f.oid)))
-            .map(|f| {
-                format!(
-                    "`{}`: la versione in stage è cambiata dopo lo scarto",
-                    f.path
-                )
-            })
+            .map(|f| msg!("engine-discard-index-changed", path = f.path))
             .collect()
     }
 
-    /// [`EngineError::UndoConflict`] con `conflicts`, se non è vuoto.
-    pub fn conflict_error(&self, conflicts: Vec<String>) -> Result<(), EngineError> {
+    /// [`EngineError::UndoConflict`] with `conflicts`, if not empty.
+    pub fn conflict_error(&self, conflicts: Vec<Message>) -> Result<(), EngineError> {
         if conflicts.is_empty() {
             Ok(())
         } else {
@@ -128,40 +123,34 @@ impl WorktreeRestore {
         }
     }
 
-    /// La riga di conflitto di un file del worktree che non è come atteso.
-    pub fn worktree_conflict(&self, path: &RepoPath) -> String {
+    /// The conflict line of a worktree file that is not as expected.
+    pub fn worktree_conflict(&self, path: &RepoPath) -> Message {
         if self.redo {
-            format!("`{path}`: il file è cambiato dopo l'annullamento dello scarto")
+            msg!("engine-discard-worktree-changed-redo", path = path)
         } else {
-            format!("`{path}`: il file è cambiato dopo lo scarto")
+            msg!("engine-discard-worktree-changed", path = path)
         }
     }
 }
 
-/// I file che `worktree.discard` di `paths` riporterebbe alla versione in stage, in ordine di
-/// percorso, con i controlli comuni ai backend (vedi il modulo). Niente è cambiato quando dà
-/// errore:
+/// The files that `worktree.discard` of `paths` would restore to the staged version, in
+/// path order, with the checks shared by the backends (see the module). Nothing has changed when it
+/// fails:
 ///
-/// - branch senza commit, file in conflitto o `intent-to-add` nel repo →
-///   [`EngineError::NotAllowed`]: `git stash create` non salverebbe il backup;
-/// - un file non tracciato o ignorato, o un sottomodulo con modifiche, chiesto per nome →
+/// - branch without commits, conflicted or `intent-to-add` file in the repo →
+///   [`EngineError::NotAllowed`]: `git stash create` would not save the backup;
+/// - an untracked or ignored file, or a submodule with changes, requested by name →
 ///   [`EngineError::NotAllowed`];
-/// - nessuna modifica fuori stage nei percorsi → [`EngineError::NotAllowed`].
+/// - no unstaged changes in the paths → [`EngineError::NotAllowed`].
 pub fn discard_plan(
     status: &Status,
     paths: &[RepoPath],
 ) -> Result<Vec<DiscardedFile>, EngineError> {
     if paths.is_empty() {
-        return Err(EngineError::NotAllowed(
-            "nessun percorso: niente da scartare".to_owned(),
-        ));
+        return Err(EngineError::NotAllowed(msg!("engine-discard-no-paths")));
     }
     if status.head.target().is_none() {
-        return Err(EngineError::NotAllowed(
-            "il branch non ha ancora commit: il backup del worktree (`git stash create`) non si \
-             può creare, niente scartato"
-                .to_owned(),
-        ));
+        return Err(EngineError::NotAllowed(msg!("engine-discard-unborn")));
     }
     let conflicts: Vec<&RepoPath> = status
         .entries
@@ -170,10 +159,9 @@ pub fn discard_plan(
         .map(|e| &e.path)
         .collect();
     if !conflicts.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file in conflitto ({}): il backup del worktree (`git stash create`) non si \
-             può creare con un indice in conflitto, niente scartato. Risolvere prima i conflitti",
-            list(&conflicts)
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-conflicts",
+            files = list(&conflicts)
         )));
     }
     let intent: Vec<&RepoPath> = status
@@ -183,11 +171,9 @@ pub fn discard_plan(
         .map(|e| &e.path)
         .collect();
     if !intent.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file `intent-to-add` (`git add -N`: {}): il backup del worktree (`git stash \
-             create`) non si può creare, niente scartato. Metterli in stage (`index.stage`) o \
-             toglierli (`index.unstage`) e riprovare",
-            list(&intent)
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-intent-to-add",
+            files = list(&intent)
         )));
     }
 
@@ -227,10 +213,10 @@ pub fn discard_plan(
             oid: info.oid_index,
         });
     }
-    // Un non tracciato o ignorato al posto di una cartella del percorso di un file da scartare
-    // (es. `top/d` creato dopo aver cancellato la cartella con `top/d/x`), o al posto del file
-    // stesso (una cartella non tracciata `x/`): `git restore` lo cancellerebbe per ricreare il
-    // file, e il backup non lo contiene.
+    // An untracked or ignored entry in place of a folder of the path of a file to discard
+    // (e.g. `top/d` created after deleting the folder with `top/d/x`), or in place of the file
+    // itself (an untracked folder `x/`): `git restore` would delete it to recreate the
+    // file, and the backup does not contain it.
     let in_the_way: Vec<&RepoPath> = status
         .entries
         .iter()
@@ -243,39 +229,35 @@ pub fn discard_plan(
         })
         .collect();
     if !in_the_way.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "file non tracciati o ignorati dove andrebbero i file da scartare: {} (ricreare i \
-             file li cancellerebbe, e il backup non li contiene). Niente scartato: spostarli o \
-             scartare altri percorsi",
-            list(&in_the_way)
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-in-the-way",
+            files = list(&in_the_way)
         )));
     }
     if !untracked.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "file non tracciati, niente scartato: scartarli vorrebbe dire cancellarli, e il \
-             backup del worktree (`git stash create`) non li salva: {}",
-            list(&untracked)
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-untracked",
+            files = list(&untracked)
         )));
     }
     if !submodules.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "sottomoduli, niente scartato: le modifiche di un sottomodulo si scartano dentro il \
-             sottomodulo: {}",
-            list(&submodules)
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-submodules",
+            files = list(&submodules)
         )));
     }
     if files.is_empty() {
         let wanted: Vec<&RepoPath> = paths.iter().collect();
-        return Err(EngineError::NotAllowed(format!(
-            "nessuna modifica fuori stage da scartare in {}",
-            list(&wanted)
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-nothing",
+            paths = list(&wanted)
         )));
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
 }
 
-/// [`EngineError::NotAllowed`] se il piano calcolato ora (`now`) non è quello confermato
+/// [`EngineError::NotAllowed`] if the plan computed now (`now`) is not the confirmed one
 /// (`expected`).
 pub fn check_same_plan(
     now: &[DiscardedFile],
@@ -287,32 +269,31 @@ pub fn check_same_plan(
     let names = |files: &[DiscardedFile]| -> Vec<String> {
         files.iter().map(|f| format!("`{}`", f.path)).collect()
     };
-    Err(EngineError::NotAllowed(format!(
-        "i file da scartare sono cambiati dalla conferma (confermati: {}; ora: {}): niente \
-         scartato, rileggere lo stato e confermare di nuovo",
-        names(expected).join(", "),
-        names(now).join(", ")
+    Err(EngineError::NotAllowed(msg!(
+        "engine-discard-changed",
+        confirmed = names(expected).join(", "),
+        now = names(now).join(", ")
     )))
 }
 
-/// La descrizione di uno scarto per il diario e per le conferme: `Scarta le modifiche di
-/// «a.txt»` o `Scarta le modifiche di 3 file («a», «b», «c»)` (al massimo tre nomi).
-pub fn discard_description(files: &[DiscardedFile]) -> String {
+/// The description of a discard for the journal: `Discard changes to “a.txt”` or `Discard
+/// changes to 3 files (“a”, “b”, “c”)` (at most three names).
+pub fn discard_description(files: &[DiscardedFile]) -> Message {
     match files {
-        [one] => format!("Scarta le modifiche di «{}»", one.path),
+        [one] => msg!("engine-journal-discard-one", path = one.path),
         _ => {
-            let mut names: Vec<String> = files
+            let mut names: Vec<Message> = files
                 .iter()
                 .take(3)
-                .map(|f| format!("«{}»", f.path))
+                .map(|f| msg!("engine-journal-quoted", name = f.path))
                 .collect();
             if files.len() > 3 {
-                names.push("...".to_owned());
+                names.push(Message::plain("..."));
             }
-            format!(
-                "Scarta le modifiche di {} file ({})",
-                files.len(),
-                names.join(", ")
+            msg!(
+                "engine-journal-discard-many",
+                n = files.len(),
+                names = MessageArg::Joined(names, ", ".into())
             )
         }
     }
@@ -345,19 +326,19 @@ mod tests {
 
     #[test]
     fn plan_of_the_sample() {
-        // README.md `MM`, docs/guida.md `A.`, src/lib.rs `.M`, note.txt `??`.
+        // README.md `MM`, docs/guide.md `A.`, src/lib.rs `.M`, note.txt `??`.
         let status = MemoryBackend::sample().status().unwrap();
         let files = discard_plan(&status, &[p("README.md"), p("src"), p("docs")]).unwrap();
         let paths: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
         assert_eq!(paths, [p("README.md"), p("src/lib.rs")]);
         assert!(files.iter().all(|f| f.change == Change::Modified));
 
-        // Un non tracciato chiesto per nome: rifiutato; nient'altro da scartare: rifiutato.
+        // An untracked file requested by name: rejected; nothing else to discard: rejected.
         let err = discard_plan(&status, &[p("note.txt"), p("README.md")]).unwrap_err();
-        assert!(err.to_string().contains("non tracciati"), "{err}");
+        assert!(err.to_string().contains("untracked"), "{err}");
         let err = discard_plan(&status, &[p("docs")]).unwrap_err();
-        assert!(err.to_string().contains("nessuna modifica"), "{err}");
-        // Un prefisso che non è una cartella non comprende niente.
+        assert!(err.to_string().contains("no unstaged changes"), "{err}");
+        // A prefix that is not a folder includes nothing.
         assert!(discard_plan(&status, &[p("READ")]).is_err());
     }
 
@@ -389,7 +370,7 @@ mod tests {
             entry("d/n", Change::Untracked, EntryKind::Untracked),
         ];
         let files = discard_plan(&status, &[p("-a"), p("d")]);
-        // `d` ha solo un non tracciato (saltato), `-a` è eliminato nel worktree.
+        // `d` has only an untracked file (skipped), `-a` is deleted in the worktree.
         assert_eq!(files.unwrap()[0].change, Change::Deleted);
 
         let mut unborn = status.clone();
@@ -399,7 +380,7 @@ mod tests {
         };
         assert!(matches!(
             discard_plan(&unborn, &[p("-a")]),
-            Err(EngineError::NotAllowed(m)) if m.contains("non ha ancora commit")
+            Err(EngineError::NotAllowed(m)) if m.contains("has no commits yet")
         ));
 
         let mut conflict = status.clone();
@@ -421,7 +402,7 @@ mod tests {
         });
         assert!(matches!(
             discard_plan(&conflict, &[p("-a")]),
-            Err(EngineError::NotAllowed(m)) if m.contains("conflitto")
+            Err(EngineError::NotAllowed(m)) if m.contains("conflicted")
         ));
 
         let mut intent = status.clone();
@@ -444,7 +425,7 @@ mod tests {
             .push(entry("s", Change::Modified, EntryKind::Ordinary(sub_info)));
         assert!(matches!(
             discard_plan(&sub, &[p("s")]),
-            Err(EngineError::NotAllowed(m)) if m.contains("sottomoduli")
+            Err(EngineError::NotAllowed(m)) if m.contains("submodule")
         ));
     }
 
@@ -461,13 +442,13 @@ mod tests {
                 Err(EngineError::NotAllowed(m)) if m.contains("`top/d`")
             ));
         }
-        // Una cartella non tracciata al posto del file.
+        // An untracked folder in place of the file.
         status.entries = vec![
             entry("x", Change::Deleted, EntryKind::Ordinary(info())),
             entry("x/", Change::Untracked, EntryKind::Untracked),
         ];
         assert!(discard_plan(&status, &[p("x")]).is_err());
-        // Un non tracciato accanto (non sul percorso) non conta.
+        // An untracked file next to it (not on the path) does not count.
         status.entries = vec![
             entry("top/d/x", Change::Deleted, EntryKind::Ordinary(info())),
             entry("top/dd", Change::Untracked, EntryKind::Untracked),
@@ -484,12 +465,12 @@ mod tests {
             oid: MemoryBackend::fake_oid(1),
         };
         assert_eq!(
-            discard_description(&[file("a")]),
-            "Scarta le modifiche di «a»"
+            discard_description(&[file("a")]).to_string(),
+            "Discard changes to “a”"
         );
         assert_eq!(
-            discard_description(&[file("a"), file("b"), file("c"), file("d")]),
-            "Scarta le modifiche di 4 file («a», «b», «c», ...)"
+            discard_description(&[file("a"), file("b"), file("c"), file("d")]).to_string(),
+            "Discard changes to 4 files (“a”, “b”, “c”, ...)"
         );
     }
 
@@ -515,7 +496,7 @@ mod tests {
         assert_eq!(r.index_conflicts(|_| None).len(), 1);
         assert!(r.conflict_error(Vec::new()).is_ok());
         assert!(matches!(
-            r.conflict_error(vec!["x".into()]),
+            r.conflict_error(vec![msg!("engine-ref-missing")]),
             Err(EngineError::UndoConflict {
                 command: "edit.undo",
                 ..

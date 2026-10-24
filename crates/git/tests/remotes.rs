@@ -1,9 +1,9 @@
-//! Test di integrazione della gestione dei remoti (S27: `remote.list`, `remote.add`,
-//! `remote.remove`) con il `CliBackend` su repo temporanei e remoti locali (`git init --bare`):
-//! URL con credenziali mascherati, aggiunta con fetch e undo, nomi e URL rifiutati (`-x`,
-//! `ext::`), rimozione senza conferma (niente cambia), con conferma e undo che rimette
-//! configurazione, branch remoti, `HEAD` simbolico e upstream, `remote.pushDefault`, remoti
-//! annidati (`fork` e `fork/a`) e conflitti dell'undo.
+//! Integration tests of remote management (S27: `remote.list`, `remote.add`,
+//! `remote.remove`) with the `CliBackend` on temporary repos and local remotes (`git init --bare`):
+//! URLs with masked credentials, add with fetch and undo, rejected names and URLs (`-x`,
+//! `ext::`), removal without confirmation (nothing changes), with confirmation and undo that
+//! restores configuration, remote branches, symbolic `HEAD` and upstream, `remote.pushDefault`,
+//! nested remotes (`fork` and `fork/a`) and undo conflicts.
 
 mod common;
 
@@ -24,7 +24,7 @@ fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-/// La configurazione del repo e tutti i ref (anche simbolici), per vedere che niente cambia.
+/// The repo configuration and all the refs (symbolic ones too), to check that nothing changes.
 fn state(repo: &Repo) -> (String, String) {
     let config = std::fs::read_to_string(repo.path().join(".git/config")).unwrap();
     let refs = repo.git(&[
@@ -34,7 +34,7 @@ fn state(repo: &Repo) -> (String, String) {
     (config, refs)
 }
 
-/// Le voci della configurazione locale, ordinate (l'undo può riscriverle in un altro ordine).
+/// The local configuration entries, sorted (undo may rewrite them in a different order).
 fn local_config(repo: &Repo) -> Vec<String> {
     let mut lines: Vec<String> = repo
         .git(&["config", "--local", "--list"])
@@ -53,8 +53,8 @@ fn remote_refs(repo: &Repo, remote: &str) -> String {
     ])
 }
 
-/// Un remoto bare con `main` e `feature`, e il repo sotto test che lo ha come `origin` con
-/// tutto scaricato, `origin/HEAD` simbolico e `main`/`feature` che seguono i branch remoti.
+/// A bare remote with `main` and `feature`, and the repo under test that has it as `origin` with
+/// everything fetched, symbolic `origin/HEAD` and `main`/`feature` following the remote branches.
 struct Setup {
     remote: Repo,
     work: Repo,
@@ -63,7 +63,7 @@ struct Setup {
 fn setup() -> Setup {
     let remote = Repo::bare();
     let work = Repo::new();
-    work.commit_file("a.txt", "uno\n", "primo");
+    work.commit_file("a.txt", "one\n", "first");
     work.add_remote("origin", &remote);
     work.push("origin", "HEAD", "main");
     work.branch("feature");
@@ -85,7 +85,7 @@ fn list_with_several_remotes_masks_the_credentials() {
         "remote",
         "add",
         "tok",
-        "https://nicola:segreto@example.com/r.git",
+        "https://nicola:secret@example.com/r.git",
     ]);
     work.git(&[
         "remote",
@@ -104,13 +104,13 @@ fn list_with_several_remotes_masks_the_credentials() {
     work.git(&[
         "config",
         "remote.origin.pushurl",
-        "https://bob:altro-segreto@example.com/push.git",
+        "https://bob:other-secret@example.com/push.git",
     ]);
     work.git(&["config", "remote.pushDefault", "tok"]);
     let (r, mut s) = open(&work);
     let out = run(&r, &mut s, "remote.list", json!({}));
     let text = out.to_string();
-    for secret in ["segreto", "ghp_abc123", "altro-segreto"] {
+    for secret in ["secret", "ghp_abc123", "other-secret"] {
         assert!(!text.contains(secret), "{secret} in {text}");
     }
     let names: Vec<&str> = out["remotes"]
@@ -131,7 +131,7 @@ fn list_with_several_remotes_masks_the_credentials() {
         json!(["https://bob:***@example.com/push.git"])
     );
     assert_eq!(origin["credentials"], true);
-    assert_eq!(origin["branches"], 2, "origin/HEAD simbolico non conta");
+    assert_eq!(origin["branches"], 2, "symbolic origin/HEAD does not count");
     assert_eq!(origin["default"], true);
     assert_eq!(
         origin["fetch"],
@@ -147,7 +147,7 @@ fn list_with_several_remotes_masks_the_credentials() {
     assert_eq!(out["push_default"], "tok");
 }
 
-/// L'URL di `origin` come lo dà `remote.list` (il percorso del remoto bare).
+/// The URL of `origin` as given by `remote.list` (the path of the bare remote).
 fn work_url(out: &Value) -> Value {
     out["remotes"][1]["url"].clone()
 }
@@ -160,7 +160,7 @@ fn add_with_fetch_then_undo_and_redo() {
         &r,
         &mut s,
         "remote.add",
-        json!({ "name": "copia", "url": remote.path_str(), "fetch": true }),
+        json!({ "name": "copy", "url": remote.path_str(), "fetch": true }),
     );
     assert_eq!(out["fetched"], true, "{out}");
     assert_eq!(out["fetch_error"], Value::Null);
@@ -170,35 +170,35 @@ fn add_with_fetch_then_undo_and_redo() {
         .iter()
         .map(|u| u["name"].as_str().unwrap())
         .collect();
-    assert!(updated.contains(&"refs/remotes/copia/main"), "{updated:?}");
+    assert!(updated.contains(&"refs/remotes/copy/main"), "{updated:?}");
     assert!(
-        updated.contains(&"refs/remotes/copia/feature"),
+        updated.contains(&"refs/remotes/copy/feature"),
         "{updated:?}"
     );
     assert_eq!(
-        work.git(&["config", "remote.copia.fetch"]),
-        "+refs/heads/*:refs/remotes/copia/*"
+        work.git(&["config", "remote.copy.fetch"]),
+        "+refs/heads/*:refs/remotes/copy/*"
     );
-    assert_eq!(work.git(&["config", "remote.copia.url"]), remote.path_str());
+    assert_eq!(work.git(&["config", "remote.copy.url"]), remote.path_str());
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Aggiungi remoto `copia` (con fetch")
+            .starts_with("Add remote `copy` (with fetch")
     );
 
     run(&r, &mut s, "edit.undo", json!({}));
-    assert!(remote_refs(&work, "copia").is_empty());
-    assert!(!work.git(&["remote"]).lines().any(|l| l == "copia"));
-    // `origin` non si tocca.
+    assert!(remote_refs(&work, "copy").is_empty());
+    assert!(!work.git(&["remote"]).lines().any(|l| l == "copy"));
+    // `origin` is untouched.
     assert_eq!(remote_refs(&work, "origin").lines().count(), 3);
 
     run(&r, &mut s, "edit.redo", json!({}));
-    assert_eq!(work.git(&["config", "remote.copia.url"]), remote.path_str());
+    assert_eq!(work.git(&["config", "remote.copy.url"]), remote.path_str());
     assert!(
-        remote_refs(&work, "copia").contains("refs/remotes/copia/main"),
+        remote_refs(&work, "copy").contains("refs/remotes/copy/main"),
         "{}",
-        remote_refs(&work, "copia")
+        remote_refs(&work, "copy")
     );
 }
 
@@ -214,7 +214,7 @@ fn add_without_fetch_and_undo_refused_after_a_fetch() {
     );
     assert_eq!(out["fetched"], false);
     assert!(remote_refs(&work, "fork").is_empty());
-    // Un fetch dopo l'aggiunta cambia il remoto: l'undo non cancella i branch scaricati.
+    // A fetch after the add changes the remote: undo does not delete the fetched branches.
     run(&r, &mut s, "remote.fetch", json!({ "remote": "fork" }));
     let before = state(&work);
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
@@ -231,13 +231,13 @@ fn add_of_an_existing_name_changes_nothing() {
         .run(
             "remote.add",
             &mut s,
-            json!({ "name": "origin", "url": "/altro" }),
+            json!({ "name": "origin", "url": "/other" }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert!(err.to_string().contains("esiste già"), "{err}");
+    assert!(err.to_string().contains("already exists"), "{err}");
     assert_eq!(state(&work), before);
-    // Anche se arriva al backend (controllo di git).
+    // Even if it reaches the backend (git check).
     let mut backend = work.open();
     let err = backend
         .create_remote("origin", remote.path_str())
@@ -251,7 +251,7 @@ fn invalid_names_and_urls_never_reach_git() {
     let Setup { remote, work } = setup();
     let (r, mut s) = open(&work);
     let before = state(&work);
-    let marker = work.path().join("preso");
+    let marker = work.path().join("taken");
     let ext = format!("ext::sh -c touch% {}", marker.display());
     for (name, url) in [
         ("-x", remote.path_str()),
@@ -284,8 +284,8 @@ fn invalid_names_and_urls_never_reach_git() {
     assert!(!marker.exists());
     assert_eq!(state(&work), before);
 
-    // Un remoto che si chiama `-x` (creato da git dopo `--end-of-options`) non è un'opzione:
-    // il backend lo crea come nome, e `remote.remove` lo toglie.
+    // A remote named `-x` (created by git after `--end-of-options`) is not an option:
+    // the backend creates it as a name, and `remote.remove` removes it.
     let mut backend = work.open();
     backend.create_remote("-x", remote.path_str()).unwrap();
     assert_eq!(work.git(&["config", "remote.-x.url"]), remote.path_str());
@@ -310,7 +310,7 @@ fn remove_without_confirm_changes_nothing() {
     let EngineError::ConfirmRequired { reason, .. } = &err else {
         panic!("{err}");
     };
-    assert!(reason.contains("2 branch remoti"), "{reason}");
+    assert!(reason.contains("2 remote-tracking branches"), "{reason}");
     assert!(reason.contains("`feature`, `main`"), "{reason}");
     assert!(reason.contains("pushRemote"), "{reason}");
     assert_eq!(state(&work), before);
@@ -321,13 +321,13 @@ fn remove_without_confirm_changes_nothing() {
 #[test]
 fn remove_with_confirm_then_undo_restores_config_refs_and_upstreams() {
     let Setup { remote, work } = setup();
-    // Un commit che c'è solo su `origin/solo`: dopo la rimozione resta nel backup.
+    // A commit that exists only on `origin/only`: after the removal it stays in the backup.
     let other = Repo::new();
     other.add_remote("origin", &remote);
     other.git(&["fetch", "--quiet", "origin"]);
-    other.git(&["checkout", "--quiet", "-b", "solo", "origin/main"]);
-    let solo = other.commit_file("b.txt", "due\n", "solo sul remoto");
-    other.git(&["push", "--quiet", "origin", "solo"]);
+    other.git(&["checkout", "--quiet", "-b", "only", "origin/main"]);
+    let only = other.commit_file("b.txt", "two\n", "only on the remote");
+    other.git(&["push", "--quiet", "origin", "only"]);
     work.git(&["fetch", "--quiet", "origin"]);
     work.git(&["config", "branch.feature.pushRemote", "origin"]);
     work.git(&["config", "remote.origin.tagOpt", "--no-tags"]);
@@ -353,7 +353,7 @@ fn remove_with_confirm_then_undo_restores_config_refs_and_upstreams() {
         backup.starts_with("refs/project/backup/remote-"),
         "{backup}"
     );
-    assert_eq!(work.rev(backup), solo);
+    assert_eq!(work.rev(backup), only);
     assert!(remote_refs(&work, "origin").is_empty());
     assert!(work.git(&["remote"]).is_empty());
     let left = local_config(&work);
@@ -372,7 +372,7 @@ fn remove_with_confirm_then_undo_restores_config_refs_and_upstreams() {
         "origin/main"
     );
 
-    // Redo: di nuovo via, senza un nuovo backup; poi undo di nuovo.
+    // Redo: removed again, without a new backup; then undo again.
     let redo = run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(redo["backups"], json!([]));
     assert!(remote_refs(&work, "origin").is_empty());
@@ -401,14 +401,14 @@ fn remove_a_remote_used_as_push_default() {
     );
     assert_eq!(out["push_default_removed"], true);
     assert_eq!(out["upstreams_removed"], json!([]));
-    assert_eq!(out["backups"], json!([]), "i commit sono anche su main");
+    assert_eq!(out["backups"], json!([]), "the commits are also on main");
     assert!(
         work.git_output(&["config", "remote.pushDefault"])
             .status
             .code()
             == Some(1)
     );
-    // Upstream di `main` verso `origin`: non si tocca.
+    // Upstream of `main` towards `origin`: untouched.
     assert_eq!(
         work.git(&["rev-parse", "--abbrev-ref", "main@{upstream}"]),
         "origin/main"
@@ -416,7 +416,7 @@ fn remove_a_remote_used_as_push_default() {
     run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(local_config(&work), config);
 
-    // Con un altro `remote.pushDefault` impostato nel frattempo, l'undo lo lascia e avvisa.
+    // With another `remote.pushDefault` set in the meantime, undo leaves it and warns.
     run(&r, &mut s, "edit.redo", json!({}));
     work.git(&["config", "remote.pushDefault", "origin"]);
     let undo = run(&r, &mut s, "edit.undo", json!({}));
@@ -436,33 +436,33 @@ fn undo_keeps_upstreams_set_meanwhile_and_refuses_a_recreated_remote() {
         "remote.remove",
         json!({ "name": "origin", "confirm": true }),
     );
-    // `main` prende un altro upstream da terminale: l'undo non lo sovrascrive.
-    work.add_remote("altro", &remote);
-    work.git(&["fetch", "--quiet", "altro"]);
-    work.set_upstream("main", "altro");
+    // `main` gets another upstream from a terminal: undo does not overwrite it.
+    work.add_remote("other", &remote);
+    work.git(&["fetch", "--quiet", "other"]);
+    work.set_upstream("main", "other");
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     let warnings = undo["warnings"].to_string();
     assert!(warnings.contains("`main`"), "{warnings}");
     assert_eq!(
         work.git(&["rev-parse", "--abbrev-ref", "main@{upstream}"]),
-        "altro/main"
+        "other/main"
     );
     assert_eq!(
         work.git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
         "origin/feature"
     );
 
-    // Il redo confronta e toglie solo quello che l'undo ha rimesso: l'upstream di `main` verso
-    // `altro` resta.
+    // Redo compares and removes only what undo put back: the upstream of `main` towards
+    // `other` stays.
     run(&r, &mut s, "edit.redo", json!({}));
     assert!(remote_refs(&work, "origin").is_empty());
     assert_eq!(
         work.git(&["rev-parse", "--abbrev-ref", "main@{upstream}"]),
-        "altro/main"
+        "other/main"
     );
     run(&r, &mut s, "edit.undo", json!({}));
 
-    // Rimosso di nuovo e ricreato da terminale con lo stesso nome: l'undo è rifiutato.
+    // Removed again and recreated from a terminal with the same name: undo is refused.
     let (r, mut s) = open(&work);
     run(
         &r,
@@ -480,7 +480,7 @@ fn undo_keeps_upstreams_set_meanwhile_and_refuses_a_recreated_remote() {
 #[test]
 fn nested_remote_names_keep_their_own_refs() {
     let Setup { remote, work } = setup();
-    // `git remote add` rifiuta `origin/a` accanto a `origin`, ma la configurazione lo permette.
+    // `git remote add` refuses `origin/a` next to `origin`, but the configuration allows it.
     work.git(&["config", "remote.origin/a.url", remote.path_str()]);
     work.git(&[
         "config",
@@ -518,19 +518,15 @@ fn remove_refuses_unknown_and_global_remotes() {
         .run(
             "remote.remove",
             &mut s,
-            json!({ "name": "manca", "confirm": true }),
+            json!({ "name": "missing", "confirm": true }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(err.to_string().contains("`origin`"), "{err}");
 
-    // Un remoto definito in un file incluso: git lo vede, ma non è nel file del repo.
-    let included = work.path().join("remoti.inc");
-    std::fs::write(
-        &included,
-        "[remote \"vecchio\"]\n\turl = /srv/vecchio.git\n",
-    )
-    .unwrap();
+    // A remote defined in an included file: git sees it, but it is not in the repo's file.
+    let included = work.path().join("remotes.inc");
+    std::fs::write(&included, "[remote \"old\"]\n\turl = /srv/old.git\n").unwrap();
     work.git(&["config", "include.path", included.to_str().unwrap()]);
     let (r, mut s) = open(&work);
     let before = state(&work);
@@ -538,14 +534,14 @@ fn remove_refuses_unknown_and_global_remotes() {
         .run(
             "remote.remove",
             &mut s,
-            json!({ "name": "vecchio", "confirm": true }),
+            json!({ "name": "old", "confirm": true }),
         )
         .unwrap_err();
-    assert!(err.to_string().contains("fuori"), "{err}");
+    assert!(err.to_string().contains("outside"), "{err}");
     assert_eq!(state(&work), before);
 }
 
-/// Sessione con un file di configurazione globale `global` (al posto di `/dev/null`).
+/// Session with a global configuration file `global` (in place of `/dev/null`).
 fn open_with_global(repo: &Repo, global: &std::path::Path) -> (Registry, Session) {
     let opener = Repo::opener().env("GIT_CONFIG_GLOBAL", global);
     let r = Registry::builtin();
@@ -582,7 +578,7 @@ fn remove_refuses_a_remote_defined_partly_elsewhere() {
     );
     assert_eq!(state(&work), before);
 
-    // Solo un `pushurl` in un file incluso dal file del repo.
+    // Only a `pushurl` in a file included by the repo's file.
     let included = work.path().join("push.inc");
     std::fs::write(
         &included,
@@ -612,7 +608,7 @@ fn remove_refuses_the_promisor_remote_of_a_partial_clone() {
     let Setup { remote, work: _w } = setup();
     remote.git(&["config", "uploadpack.allowFilter", "true"]);
     let dir = tempfile::tempdir().unwrap();
-    let clone = dir.path().join("parziale");
+    let clone = dir.path().join("partial");
     let url = format!("file://{}", remote.path_str());
     let out = std::process::Command::new("git")
         .envs(common::GIT_ENV.iter().copied())
@@ -652,18 +648,18 @@ fn remove_refuses_the_promisor_remote_of_a_partial_clone() {
 #[test]
 fn errors_of_remote_add_do_not_show_credentials() {
     let Setup { remote: _r, work } = setup();
-    // Un altro git sta scrivendo la configurazione: `git remote add` fallisce.
+    // Another git is writing the configuration: `git remote add` fails.
     std::fs::write(work.path().join(".git/config.lock"), "").unwrap();
     let (r, mut s) = open(&work);
     let err = r
         .run(
             "remote.add",
             &mut s,
-            json!({ "name": "tok", "url": "https://nicola:segreto@example.com/r.git" }),
+            json!({ "name": "tok", "url": "https://nicola:secret@example.com/r.git" }),
         )
         .unwrap_err();
     let text = err.to_string();
-    assert!(!text.contains("segreto"), "{text}");
+    assert!(!text.contains("secret"), "{text}");
     assert!(matches!(err, EngineError::Git { .. }), "{err}");
     std::fs::remove_file(work.path().join(".git/config.lock")).unwrap();
 }
@@ -695,11 +691,11 @@ fn keys_without_a_value_survive_undo_and_redo() {
 fn remove_refuses_a_remote_with_legacy_files() {
     for dir in ["remotes", "branches"] {
         let Setup { remote: _r, work } = setup();
-        // Accanto alla configurazione, un file del formato vecchio con lo stesso nome.
+        // Next to the configuration, a file of the old format with the same name.
         std::fs::create_dir_all(work.path().join(".git").join(dir)).unwrap();
         std::fs::write(
             work.path().join(".git").join(dir).join("origin"),
-            "URL: /srv/vecchio.git\n",
+            "URL: /srv/old.git\n",
         )
         .unwrap();
         let (r, mut s) = open(&work);
@@ -712,7 +708,7 @@ fn remove_refuses_a_remote_with_legacy_files() {
             )
             .unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{dir}: {err}");
-        assert!(err.to_string().contains("formato vecchio"), "{dir}: {err}");
+        assert!(err.to_string().contains("old format"), "{dir}: {err}");
         assert_eq!(state(&work), before);
     }
 }

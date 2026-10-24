@@ -1,9 +1,9 @@
-//! Testo per la UI: date dei commit, file cambiati.
+//! Text for the UI: commit dates, changed files.
 
 use project_domain::{Change, ChangedFile, Signature};
 use project_i18n::tr;
 
-/// Lettera del tipo di modifica, come la scrive git: `A`, `D`, `M`, `T`, `R`, `C`.
+/// Letter of the change type, as git writes it: `A`, `D`, `M`, `T`, `R`, `C`.
 pub fn change_letter(change: Change) -> &'static str {
     match change {
         Change::Added => "A",
@@ -19,7 +19,7 @@ pub fn change_letter(change: Change) -> &'static str {
     }
 }
 
-/// Nome del tipo di modifica, per il suggerimento.
+/// Name of the change type, for the tooltip.
 pub fn change_name(change: Change) -> String {
     match change {
         Change::Added => tr!("format-change-added"),
@@ -35,7 +35,7 @@ pub fn change_name(change: Change) -> String {
     }
 }
 
-/// Percorso da mostrare: `vecchio -> nuovo` (ASCII: i font di default non hanno le frecce) per rinomine e copie, altrimenti il percorso.
+/// Path to show: `old -> new` (ASCII: the default fonts have no arrows) for renames and copies, otherwise the path.
 pub fn file_path(file: &ChangedFile) -> String {
     match &file.original {
         Some(original) => format!("{original} -> {}", file.path),
@@ -43,12 +43,12 @@ pub fn file_path(file: &ChangedFile) -> String {
     }
 }
 
-/// Somiglianza di rinomine e copie, es. `92%`; vuoto per gli altri file.
+/// Similarity of renames and copies, e.g. `92%`; empty for other files.
 pub fn file_score(file: &ChangedFile) -> String {
     file.score.map(|s| format!("{s}%")).unwrap_or_default()
 }
 
-/// Data e ora di una firma nel fuso orario di chi ha firmato, es. `2023-11-14 22:13`.
+/// Date and time of a signature in the signer's time zone, e.g. `2023-11-14 22:13`.
 pub fn date_time(sig: &Signature) -> String {
     let local = sig.time + i64::from(sig.offset_min) * 60;
     let (days, secs) = (local.div_euclid(86_400), local.rem_euclid(86_400));
@@ -60,15 +60,15 @@ pub fn date_time(sig: &Signature) -> String {
     )
 }
 
-/// Come [`date_time`] con il fuso, es. `2023-11-14 22:13 +0200`.
+/// Like [`date_time`] with the offset, e.g. `2023-11-14 22:13 +0200`.
 pub fn date_time_zone(sig: &Signature) -> String {
     let sign = if sig.offset_min < 0 { '-' } else { '+' };
     let off = sig.offset_min.unsigned_abs();
     format!("{} {sign}{:02}{:02}", date_time(sig), off / 60, off % 60)
 }
 
-/// Giorni dall'epoca Unix → (anno, mese, giorno) nel calendario gregoriano
-/// (algoritmo `civil_from_days` di Howard Hinnant).
+/// Days since the Unix epoch → (year, month, day) in the Gregorian calendar
+/// (Howard Hinnant's `civil_from_days` algorithm).
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(file_path(&modified), "README.md");
         assert_eq!(file_score(&modified), "");
 
-        // Un percorso non UTF-8 si mostra con U+FFFD.
+        // A non-UTF-8 path is shown with U+FFFD.
         let mut odd = file(Change::Added, "", None, None);
         odd.path = project_domain::RepoPath::from_bytes(b"ca\xff".to_vec());
         assert_eq!(file_path(&odd), "ca\u{fffd}");
@@ -153,7 +153,7 @@ mod tests {
             date_time_zone(&sig(1_700_000_000, -330)),
             "2023-11-14 16:43 -0530"
         );
-        // 29 febbraio di un anno bisestile, e prima del 1970.
+        // 29 February of a leap year, and before 1970.
         assert_eq!(date_time(&sig(951_782_400, 0)), "2000-02-29 00:00");
         assert_eq!(date_time(&sig(-1, 0)), "1969-12-31 23:59");
     }

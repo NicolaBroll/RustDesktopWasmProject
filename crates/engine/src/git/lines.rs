@@ -1,63 +1,63 @@
-//! Stage e unstage di singole righe (`index.stage_lines`, `index.unstage_lines`): la parte
-//! comune ai backend.
+//! Stage and unstage of single lines (`index.stage_lines`, `index.unstage_lines`): the part
+//! shared by the backends.
 //!
-//! Il backend rilegge il diff del file ([`LineSelection::diff_spec`]), controlla che sia quello
-//! che ha visto chi ha scelto le righe e costruisce la patch con [`line_patch`]; poi calcola il
-//! nuovo contenuto in stage con [`apply_patch`] e lo scrive nell'indice (il `CliBackend` con
-//! `hash-object -w --no-filters` e `update-index --index-info`, il `MemoryBackend` nei suoi
-//! blob).
+//! The backend rereads the file's diff ([`LineSelection::diff_spec`]), checks that it is the one
+//! seen by whoever chose the lines and builds the patch with [`line_patch`]; then it computes the
+//! new staged content with [`apply_patch`] and writes it to the index (the `CliBackend` with
+//! `hash-object -w --no-filters` and `update-index --index-info`, the `MemoryBackend` in its
+//! blobs).
 //!
-//! # Perché non `git apply`
+//! # Why not `git apply`
 //!
-//! `git apply` cerca il preimage di un hunk anche lontano dalla posizione scritta, e un hunk
-//! senza contesto in coda lo ancora alla fine del file: con un diff a contesto zero
-//! (`diff.context=0` nella configurazione) un inserimento in mezzo al file finiva in fondo e il
-//! comando riusciva. Ora il contesto è fisso (`--unified=3` in `DIFF_ARGS`), [`line_patch`]
-//! rifiuta le patch con hunk non ancorati e [`apply_patch`] applica ogni hunk solo alla sua
-//! posizione, sul blob della voce dell'indice da cui il diff è stato calcolato (controllata
-//! dal backend): il risultato è esattamente quello che la selezione descrive.
+//! `git apply` looks for a hunk's preimage even far from the written position, and a hunk
+//! without trailing context is anchored at the end of the file: with a zero-context diff
+//! (`diff.context=0` in the configuration) an insertion in the middle of the file ended up at the end and the
+//! command succeeded. Now the context is fixed (`--unified=3` in `DIFF_ARGS`), [`line_patch`]
+//! rejects patches with unanchored hunks and [`apply_patch`] applies each hunk only at its
+//! position, on the blob of the index entry the diff was computed from (checked
+//! by the backend): the result is exactly what the selection describes.
 //!
-//! # Il diff visto
+//! # The seen diff
 //!
-//! I numeri di riga di una selezione valgono solo per il diff da cui sono stati presi: se il
-//! file è cambiato nel frattempo (nel worktree o nell'indice) gli stessi numeri possono
-//! indicare righe diverse, e la patch sposterebbe nell'indice righe che l'utente non ha mai
-//! visto. Per questo la selezione porta il [`file_digest`] del `FileDiff` visto: i comandi
-//! `diff.worktree` e `diff.index` lo restituiscono per ogni file (campo `digest`), e il backend,
-//! dopo aver riletto il diff, lo ricalcola. Se non coincide: [`EngineError::StaleDiff`] e
-//! niente scritto.
+//! The line numbers of a selection are valid only for the diff they were taken from: if the
+//! file changed in the meantime (in the worktree or in the index) the same numbers may
+//! point to different lines, and the patch would move into the index lines the user never
+//! saw. For this reason the selection carries the [`file_digest`] of the `FileDiff` seen: the commands
+//! `diff.worktree` and `diff.index` return it for every file (field `digest`), and the backend,
+//! after rereading the diff, recomputes it. If it does not match: [`EngineError::StaleDiff`] and
+//! nothing is written.
 //!
-//! Il digest copre tutto il `FileDiff` (percorsi, modi, id, hunk con numeri e contenuto delle
-//! righe), non solo gli id: nel diff del worktree l'id del lato nuovo lo calcola git dal file,
-//! ma nel `MemoryBackend` è finto, e un digest dell'intero diff vale per tutti i backend allo
-//! stesso modo. Il parametro è obbligatorio: senza, una selezione fatta su un diff vecchio
-//! verrebbe applicata a righe diverse senza che nessuno se ne accorga, e chi sceglie le righe
-//! ha comunque appena letto il diff (i numeri vengono da lì).
+//! The digest covers the whole `FileDiff` (paths, modes, ids, hunks with numbers and line
+//! contents), not just the ids: in the worktree diff the id of the new side is computed by git from the file,
+//! but in the `MemoryBackend` it is fake, and a digest of the whole diff works for all backends in the same
+//! way. The parameter is mandatory: without it, a selection made on an old diff
+//! would be applied to different lines without anyone noticing, and whoever chooses the lines
+//! has anyway just read the diff (the numbers come from there).
 
 use super::DiffSpec;
-use crate::EngineError;
+use crate::{EngineError, Message};
 use project_domain::{
     Change, Diff, DomainError, FileDiff, LineKind, LineRef, PatchDirection, RepoPath, build_patch,
 };
 
-/// Le righe da mettere in stage o da togliere dallo stage: parametri di `index.stage_lines` e
-/// `index.unstage_lines`, già validati.
+/// The lines to stage or unstage: parameters of `index.stage_lines` and
+/// `index.unstage_lines`, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineSelection {
-    /// Il file, con il percorso usato per chiederne il diff (il nuovo; per una rinomina anche il
-    /// vecchio).
+    /// The file, with the path used to ask for its diff (the new one; for a rename also the
+    /// old one).
     pub path: RepoPath,
-    /// Le righe scelte, con i numeri del diff visto (vedi [`LineRef`]). Non vuota.
+    /// The chosen lines, with the numbers of the seen diff (see [`LineRef`]). Not empty.
     pub lines: Vec<LineRef>,
-    /// Il [`file_digest`] del `FileDiff` da cui vengono le righe.
+    /// The [`file_digest`] of the `FileDiff` the lines come from.
     pub digest: String,
-    /// [`PatchDirection::Stage`]: righe di `diff.worktree`; [`PatchDirection::Unstage`]: righe
-    /// di `diff.index`.
+    /// [`PatchDirection::Stage`]: lines of `diff.worktree`; [`PatchDirection::Unstage`]: lines
+    /// of `diff.index`.
     pub direction: PatchDirection,
 }
 
 impl LineSelection {
-    /// L'id del comando: `index.stage_lines` o `index.unstage_lines`.
+    /// The command id: `index.stage_lines` or `index.unstage_lines`.
     pub fn command_id(&self) -> &'static str {
         match self.direction {
             PatchDirection::Stage => "index.stage_lines",
@@ -65,7 +65,7 @@ impl LineSelection {
         }
     }
 
-    /// Il diff da cui vengono le righe, limitato al file.
+    /// The diff the lines come from, limited to the file.
     pub fn diff_spec(&self) -> DiffSpec {
         let path = Some(self.path.clone());
         match self.direction {
@@ -75,39 +75,39 @@ impl LineSelection {
     }
 }
 
-/// Identifica un [`FileDiff`]: 32 cifre esadecimali, uguali solo per diff uguali in ogni campo
-/// (in pratica: è un hash FNV-1a a 128 bit della serializzazione JSON). Lo restituiscono
-/// `diff.worktree` e `diff.index` per ogni file (`digest`); un `FileDiff` riletto dal JSON di
-/// quei comandi dà lo stesso digest. Non è un hash crittografico: serve a riconoscere un diff
-/// cambiato, non a difendersi da chi costruisce apposta due diff con lo stesso digest.
+/// Identifies a [`FileDiff`]: 32 hex digits, equal only for diffs equal in every field
+/// (in practice: a 128-bit FNV-1a hash of the JSON serialization). Returned by
+/// `diff.worktree` and `diff.index` for every file (`digest`); a `FileDiff` reread from the JSON of
+/// those commands gives the same digest. It is not a cryptographic hash: it serves to recognize a changed
+/// diff, not to defend against someone deliberately building two diffs with the same digest.
 pub fn file_digest(file: &FileDiff) -> String {
     const OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
-    let json = serde_json::to_vec(file).expect("i tipi del dominio sono serializzabili");
+    let json = serde_json::to_vec(file).expect("the domain types are serializable");
     let hash = json
         .iter()
         .fold(OFFSET, |h, &b| (h ^ u128::from(b)).wrapping_mul(PRIME));
     format!("{hash:032x}")
 }
 
-/// Il file scelto e la patch da applicare all'indice.
+/// The chosen file and the patch to apply to the index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinePatch {
-    /// Il file del diff riletto, quello visto da chi ha scelto le righe.
+    /// The file of the reread diff, the one seen by whoever chose the lines.
     pub file: FileDiff,
-    /// La patch di [`build_patch`], da applicare all'indice.
+    /// The patch from [`build_patch`], to apply to the index.
     pub patch: FileDiff,
 }
 
 impl LinePatch {
-    /// Il percorso che la patch cambia nell'indice: il lato indice del diff (il vecchio per lo
-    /// stage, il nuovo per l'unstage).
+    /// The path the patch changes in the index: the index side of the diff (the old one for
+    /// stage, the new one for unstage).
     pub fn target(&self) -> &RepoPath {
         &self.patch.new_path
     }
 
-    /// I percorsi toccati, per il backup e il ricontrollo dell'indice: quello richiesto e i due
-    /// del file (diversi per una rinomina).
+    /// The touched paths, for the backup and the recheck of the index: the requested one and the two
+    /// of the file (different for a rename).
     pub fn touched(&self, selection: &LineSelection) -> Vec<RepoPath> {
         let mut paths = vec![selection.path.clone()];
         for p in [
@@ -123,18 +123,18 @@ impl LinePatch {
     }
 }
 
-/// Sceglie in `diff` (il diff di [`LineSelection::diff_spec`] appena riletto) il file della
-/// selezione, controlla che sia quello visto e costruisce la patch.
+/// Picks in `diff` (the diff of [`LineSelection::diff_spec`] just reread) the selection's file,
+/// checks that it is the one seen and builds the patch.
 ///
-/// - Il file è quello con il percorso nuovo uguale a `path`; se non c'è, quello con il percorso
-///   vecchio (una rinomina chiesta con il vecchio nome). Due file sullo stesso percorso (cambio
-///   di tipo, es. un file diventato link: git lo scrive come eliminazione più file nuovo):
-///   [`EngineError::NotAllowed`], si mette in stage il file intero.
-/// - Nessun file (il percorso non ha più modifiche) o digest diverso:
+/// - The file is the one whose new path equals `path`; if none, the one with the old
+///   path (a rename requested with the old name). Two files on the same path (type change,
+///   e.g. a file that became a link: git writes it as a deletion plus a new file):
+///   [`EngineError::NotAllowed`], stage the whole file.
+/// - No file (the path has no more changes) or different digest:
 ///   [`EngineError::StaleDiff`].
-/// - File non adatto a una patch per righe (binario, sottomodulo, link, conflitto, copia,
-///   rinomina nello stage): [`EngineError::NotAllowed`].
-/// - Righe che non sono righe cambiate del diff, o selezione vuota:
+/// - File not suitable for a line patch (binary, submodule, link, conflict, copy,
+///   rename in the stage): [`EngineError::NotAllowed`].
+/// - Lines that are not changed lines of the diff, or empty selection:
 ///   [`EngineError::InvalidParams`].
 pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, EngineError> {
     let id = selection.command_id();
@@ -148,45 +148,47 @@ pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, E
     let file = match candidates[..] {
         [file] => file,
         [] => {
-            let side = match selection.direction {
-                PatchDirection::Stage => "non in stage",
-                PatchDirection::Unstage => "in stage",
+            let reason = match selection.direction {
+                PatchDirection::Stage => msg!("engine-lines-no-unstaged"),
+                PatchDirection::Unstage => msg!("engine-lines-no-staged"),
             };
             return Err(EngineError::StaleDiff {
                 path: path.to_string(),
-                reason: format!("il file non ha più modifiche {side}"),
+                reason,
             });
         }
         _ => {
-            return Err(EngineError::NotAllowed(format!(
-                "`{path}` ha più modifiche sullo stesso percorso (cambio di tipo, ad esempio da \
-                 file a link): le righe non si possono scegliere, si mette in stage o si toglie \
-                 dallo stage il file intero"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-lines-type-change",
+                path = path
             )));
         }
     };
     if file_digest(file) != selection.digest {
         return Err(EngineError::StaleDiff {
             path: path.to_string(),
-            reason: "il diff è cambiato da quando è stato letto".to_owned(),
+            reason: msg!("engine-lines-diff-changed"),
         });
     }
     let patch = build_patch(file, &selection.lines, selection.direction).map_err(|e| match e {
-        DomainError::UnsupportedPatch { .. } => EngineError::NotAllowed(e.to_string()),
+        DomainError::UnsupportedPatch { .. } => {
+            EngineError::NotAllowed(msg!("engine-other", text = e.to_string()))
+        }
         e @ DomainError::InvalidLineSelection { .. } => EngineError::InvalidParams {
             id,
-            reason: e.to_string(),
+            reason: msg!("engine-other", text = e.to_string()),
         },
         e => EngineError::Domain(e),
     })?;
     let patch = patch.ok_or_else(|| EngineError::InvalidParams {
         id,
-        reason: "nessuna riga scelta: `lines` è vuoto".to_owned(),
+        reason: msg!("engine-lines-none-selected"),
     })?;
     check_anchored(&patch).map_err(|reason| {
-        EngineError::NotAllowed(format!(
-            "la patch per `{path}` non si può ancorare con sicurezza: {reason}; si mette in \
-             stage o si toglie dallo stage il file intero"
+        EngineError::NotAllowed(msg!(
+            "engine-lines-not-anchored",
+            path = path,
+            reason = reason
         ))
     })?;
     Ok(LinePatch {
@@ -195,13 +197,13 @@ pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, E
     })
 }
 
-/// Ogni hunk della patch dice da solo dove va: ha una riga di contesto in testa, oppure
-/// parte dall'inizio del file; ha una riga di contesto in coda, oppure è l'ultimo hunk (e
-/// [`apply_patch`] controlla che arrivi alla fine del file). Un hunk senza contesto (es. da un
-/// diff con `diff.context=0`) non fissa la sua posizione, e `git apply` potrebbe applicarlo
-/// altrove (un inserimento senza contesto in coda finisce in fondo al file). Con `DIFF_ARGS`
-/// (`--unified=3`) le patch di [`build_patch`] lo rispettano sempre: è una difesa in più.
-fn check_anchored(patch: &FileDiff) -> Result<(), String> {
+/// Each hunk of the patch says by itself where it goes: it has a context line at the top, or
+/// starts at the beginning of the file; it has a context line at the bottom, or it is the last hunk (and
+/// [`apply_patch`] checks that it reaches the end of the file). A hunk without context (e.g. from a
+/// diff with `diff.context=0`) does not pin its position, and `git apply` might apply it
+/// elsewhere (an insertion without trailing context ends up at the end of the file). With `DIFF_ARGS`
+/// (`--unified=3`) the patches from [`build_patch`] always satisfy it: it is an extra defense.
+fn check_anchored(patch: &FileDiff) -> Result<(), Message> {
     let last = patch.hunks.len().saturating_sub(1);
     for (i, h) in patch.hunks.iter().enumerate() {
         let at_start = if h.old_count == 0 {
@@ -212,38 +214,32 @@ fn check_anchored(patch: &FileDiff) -> Result<(), String> {
         let context =
             |l: Option<&project_domain::Line>| l.is_some_and(|l| l.kind == LineKind::Context);
         if !context(h.lines.first()) && !at_start {
-            return Err(format!(
-                "l'hunk alla riga {} non ha contesto in testa e non parte dall'inizio del file",
-                h.old_start
-            ));
+            return Err(msg!("engine-lines-no-head-context", line = h.old_start));
         }
         if !context(h.lines.last()) && i != last {
-            return Err(format!(
-                "l'hunk alla riga {} non ha contesto in coda e non arriva alla fine del file",
-                h.old_start
-            ));
+            return Err(msg!("engine-lines-no-tail-context", line = h.old_start));
         }
     }
     Ok(())
 }
 
-/// Una riga di un file con il suo a capo (l'ultima può non averlo).
+/// A line of a file with its newline (the last one may lack it).
 fn split_lines(content: &[u8]) -> Vec<&[u8]> {
     content.split_inclusive(|&b| b == b'\n').collect()
 }
 
-/// Applica una patch di [`build_patch`] a `base` (`None` = file assente dall'indice, o
-/// presente solo come segnaposto `intent-to-add`), in modo rigoroso: ogni hunk si applica
-/// **solo** alla sua posizione (`old_start`, mai cercata altrove come fa `git apply`), le righe
-/// di contesto e tolte devono coincidere byte per byte, a capo compreso, e un hunk senza
-/// contesto in testa o in coda deve toccare l'inizio o la fine del file. Risultato `None`: il
-/// file esce dall'indice. Lo usano entrambi i backend: il `CliBackend` scrive nell'indice il
-/// contenuto che ne risulta.
-pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u8>>, String> {
+/// Applies a patch from [`build_patch`] to `base` (`None` = file absent from the index, or
+/// present only as an `intent-to-add` placeholder), strictly: each hunk applies
+/// **only** at its position (`old_start`, never searched elsewhere as `git apply` does), the
+/// context and removed lines must match byte for byte, newline included, and a hunk without
+/// leading or trailing context must touch the start or the end of the file. Result `None`: the
+/// file leaves the index. Both backends use it: the `CliBackend` writes the resulting
+/// content to the index.
+pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u8>>, Message> {
     let base = match (base, patch.change) {
-        (Some(_), Change::Added) => return Err("file nuovo, ma esiste già".into()),
+        (Some(_), Change::Added) => return Err(msg!("engine-lines-patch-added-exists")),
         (None, Change::Added) => &[][..],
-        (None, _) => return Err("il file non esiste nell'indice".into()),
+        (None, _) => return Err(msg!("engine-lines-patch-not-in-index")),
         (Some(b), _) => b,
     };
     let src = split_lines(base);
@@ -254,10 +250,12 @@ pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u
         let first = if h.old_count == 0 {
             start
         } else {
-            start.checked_sub(1).ok_or("hunk alla riga 0")?
+            start
+                .checked_sub(1)
+                .ok_or(msg!("engine-lines-patch-hunk-zero"))?
         };
         if first < pos || first > src.len() {
-            return Err(format!("hunk fuori posto alla riga {start}"));
+            return Err(msg!("engine-lines-patch-misplaced", start = start));
         }
         for l in &src[pos..first] {
             out.extend_from_slice(l);
@@ -265,12 +263,10 @@ pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u
         pos = first;
         let context =
             |l: Option<&project_domain::Line>| l.is_some_and(|l| l.kind == LineKind::Context);
-        // Un hunk senza contesto in testa deve partire dall'inizio del file, uno senza
-        // contesto in coda arrivare alla fine: altrimenti la sua posizione non è verificata.
+        // A hunk without leading context must start at the beginning of the file, one without
+        // trailing context must reach the end: otherwise its position is not verified.
         if !context(h.lines.first()) && first != 0 {
-            return Err(format!(
-                "hunk senza contesto in testa alla riga {start}, non all'inizio del file"
-            ));
+            return Err(msg!("engine-lines-patch-no-head-context", start = start));
         }
         for l in &h.lines {
             let mut bytes = l.content.as_bytes().to_vec();
@@ -279,32 +275,30 @@ pub fn apply_patch(base: Option<&[u8]>, patch: &FileDiff) -> Result<Option<Vec<u
             }
             if l.kind != LineKind::Added {
                 if src.get(pos).copied() != Some(&bytes[..]) {
-                    return Err(format!("contenuto diverso alla riga {}", pos + 1));
+                    return Err(msg!("engine-lines-patch-mismatch", line = pos + 1));
                 }
                 pos += 1;
             }
             if l.kind != LineKind::Removed {
                 if out.last().is_some_and(|&b| b != b'\n') {
-                    return Err("riga senza a capo seguita da un'altra riga".into());
+                    return Err(msg!("engine-lines-patch-no-newline"));
                 }
                 out.extend_from_slice(&bytes);
             }
         }
         if !context(h.lines.last()) && pos != src.len() {
-            return Err(format!(
-                "hunk senza contesto in coda alla riga {start}, non alla fine del file"
-            ));
+            return Err(msg!("engine-lines-patch-no-tail-context", start = start));
         }
     }
     for l in &src[pos..] {
         if out.last().is_some_and(|&b| b != b'\n') {
-            return Err("riga senza a capo seguita da un'altra riga".into());
+            return Err(msg!("engine-lines-patch-no-newline"));
         }
         out.extend_from_slice(l);
     }
     if patch.change == Change::Deleted {
         if !out.is_empty() {
-            return Err("l'eliminazione lascerebbe del contenuto".into());
+            return Err(msg!("engine-lines-patch-delete-leftover"));
         }
         return Ok(None);
     }
@@ -345,14 +339,14 @@ mod tests {
         let d = file_digest(&a.files[0]);
         assert_eq!(d.len(), 32);
         assert!(d.bytes().all(|b| b.is_ascii_hexdigit()));
-        // Riletto dal JSON dà lo stesso digest.
+        // Reread from the JSON it gives the same digest.
         let json = serde_json::to_value(&a.files[0]).unwrap();
         let back: FileDiff = serde_json::from_value(json).unwrap();
         assert_eq!(file_digest(&back), d);
-        // Basta un byte diverso in una riga.
+        // A single different byte in a line is enough.
         let b = diff(&MODIFIED.replace("+B", "+C"));
         assert_ne!(file_digest(&b.files[0]), d);
-        // O un numero di riga.
+        // Or a line number.
         let c = diff(&MODIFIED.replace("@@ -1,3 +1,3 @@", "@@ -2,3 +2,3 @@"));
         assert_ne!(file_digest(&c.files[0]), d);
     }
@@ -373,21 +367,21 @@ mod tests {
     #[test]
     fn errors() {
         let d = diff(MODIFIED);
-        // Digest diverso.
+        // Different digest.
         let mut sel = selection(&d, vec![LineRef::New(2)], PatchDirection::Stage);
         sel.digest = "0".repeat(32);
         let err = line_patch(&d, &sel).unwrap_err();
         assert!(matches!(err, EngineError::StaleDiff { .. }), "{err}");
-        // Nessun file.
+        // No file.
         let err = line_patch(&Diff::default(), &sel).unwrap_err();
         assert!(matches!(err, EngineError::StaleDiff { .. }), "{err}");
-        // Riga di contesto o inesistente.
+        // Context line or nonexistent.
         for lines in [vec![LineRef::New(1)], vec![LineRef::Old(9)], vec![]] {
             let sel = selection(&d, lines, PatchDirection::Stage);
             let err = line_patch(&d, &sel).unwrap_err();
             assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
         }
-        // Binario.
+        // Binary.
         let bin = diff(
             "diff --git a/f b/f\n\
              index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
@@ -396,7 +390,7 @@ mod tests {
         let sel = selection(&bin, vec![LineRef::New(1)], PatchDirection::Stage);
         let err = line_patch(&bin, &sel).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-        // Due file sullo stesso percorso (cambio di tipo).
+        // Two files on the same path (type change).
         let two = diff(
             "diff --git a/f b/f\n\
              deleted file mode 100644\n\
@@ -422,12 +416,12 @@ mod tests {
     #[test]
     fn rename_by_old_path() {
         let d = diff(
-            "diff --git a/vecchio b/f\n\
+            "diff --git a/old b/f\n\
              similarity index 80%\n\
-             rename from vecchio\n\
+             rename from old\n\
              rename to f\n\
              index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
-             --- a/vecchio\n\
+             --- a/old\n\
              +++ b/f\n\
              @@ -1,2 +1,2 @@\n\
              \x20a\n\
@@ -435,12 +429,12 @@ mod tests {
              +B\n",
         );
         let mut sel = selection(&d, vec![LineRef::New(2)], PatchDirection::Unstage);
-        sel.path = RepoPath::from("vecchio");
+        sel.path = RepoPath::from("old");
         let p = line_patch(&d, &sel).unwrap();
         assert_eq!(p.target(), &RepoPath::from("f"));
         assert_eq!(
             p.touched(&sel),
-            [RepoPath::from("vecchio"), RepoPath::from("f")]
+            [RepoPath::from("old"), RepoPath::from("f")]
         );
         assert_eq!(
             apply_patch(Some(b"a\nB\n"), &p.patch).unwrap().unwrap(),
@@ -450,21 +444,21 @@ mod tests {
 
     #[test]
     fn hunks_without_context_must_touch_the_ends_of_the_file() {
-        // Diff a contesto zero (come con `diff.context=0`): un inserimento dopo la riga 2.
+        // Zero-context diff (as with `diff.context=0`): an insertion after line 2.
         let insert = diff(
             "diff --git a/f b/f\n\
              index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
              --- a/f\n\
              +++ b/f\n\
              @@ -2,0 +3 @@\n\
-             +NUOVA\n",
+             +NEW\n",
         );
         let sel = selection(&insert, vec![LineRef::New(3)], PatchDirection::Stage);
         let err = line_patch(&insert, &sel).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-        assert!(err.to_string().contains("contesto in testa"), "{err}");
+        assert!(err.to_string().contains("leading context"), "{err}");
 
-        // Primo hunk all'inizio ma senza contesto in coda, e non è l'ultimo.
+        // First hunk at the start but without trailing context, and it is not the last.
         let two = diff(
             "diff --git a/f b/f\n\
              index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
@@ -479,17 +473,17 @@ mod tests {
         );
         let sel = selection(&two, two.files[0].line_refs(), PatchDirection::Stage);
         let err = line_patch(&two, &sel).unwrap_err();
-        assert!(err.to_string().contains("contesto in coda"), "{err}");
-        // Solo il secondo: niente contesto in testa, non all'inizio.
+        assert!(err.to_string().contains("trailing context"), "{err}");
+        // Only the second: no leading context, not at the start.
         let sel = selection(
             &two,
             vec![LineRef::Old(3), LineRef::New(3)],
             PatchDirection::Stage,
         );
         let err = line_patch(&two, &sel).unwrap_err();
-        assert!(err.to_string().contains("contesto in testa"), "{err}");
-        // Solo il primo, che diventa l'ultimo: `line_patch` lo accetta, ma `apply_patch`
-        // controlla che arrivi davvero alla fine del file.
+        assert!(err.to_string().contains("leading context"), "{err}");
+        // Only the first, which becomes the last: `line_patch` accepts it, but `apply_patch`
+        // checks that it really reaches the end of the file.
         let sel = selection(
             &two,
             vec![LineRef::Old(1), LineRef::New(1)],
@@ -498,7 +492,7 @@ mod tests {
         let p = line_patch(&two, &sel).unwrap().patch;
         assert_eq!(apply_patch(Some(b"a\n"), &p).unwrap().unwrap(), b"A\n");
         let err = apply_patch(Some(b"a\nb\nc\n"), &p).unwrap_err();
-        assert!(err.contains("fine del file"), "{err}");
+        assert!(err.contains("end of the file"), "{err}");
     }
 
     #[test]

@@ -1,22 +1,22 @@
-//! Spostamento controllato dei ref per `edit.undo` e `edit.redo`
-//! (`impl-docs/ARCHITETTURA-git.md` §7).
+//! Controlled moving of refs for `edit.undo` and `edit.redo`
+//! (`impl-docs/ARCHITECTURE-git.md` §7).
 //!
-//! Il diario delle operazioni ([`Journal`](crate::Journal)) ricorda, per ogni comando che ha
-//! spostato ref, HEAD e i ref prima e dopo. Annullare vuol dire riportarli ai valori "prima",
-//! rifare ai valori "dopo", e **solo** se nel frattempo nessuno li ha toccati: una
-//! [`RefRestore`] dice ai backend che valori si aspettano ora (`expected`) e quali scrivere
-//! (`target`). I controlli comuni ai backend sono qui, così `MemoryBackend` e `CliBackend`
-//! rifiutano gli stessi casi con gli stessi errori.
+//! The operation journal ([`Journal`](crate::Journal)) remembers, for every command that
+//! moved refs, HEAD and the refs before and after. Undoing means bringing them back to the "before" values,
+//! redoing to the "after" values, and **only** if in the meantime nobody touched them: a
+//! [`RefRestore`] tells the backends which values they expect now (`expected`) and which to write
+//! (`target`). The checks shared by the backends are here, so `MemoryBackend` and `CliBackend`
+//! reject the same cases with the same errors.
 
-use crate::EngineError;
+use crate::{EngineError, Message, MessageArg, ToArg};
 use project_domain::{Oid, Operation};
 
 use serde::{Deserialize, Serialize};
 
-/// Dove punta HEAD in un momento, per il diario: su un branch (nome completo, es.
-/// `refs/heads/main`, anche se il branch non ha ancora commit) o staccata su un commit.
+/// Where HEAD points at a given moment, for the journal: on a branch (full name, e.g.
+/// `refs/heads/main`, even if the branch has no commits yet) or detached on a commit.
 ///
-/// JSON: `{"branch": "refs/heads/main"}` oppure `{"detached": "<oid>"}`.
+/// JSON: `{"branch": "refs/heads/main"}` or `{"detached": "<oid>"}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadState {
@@ -25,8 +25,8 @@ pub enum HeadState {
 }
 
 impl HeadState {
-    /// HEAD letta da [`GitBackend::head`](crate::GitBackend::head): il branch con il nome
-    /// completo (`refs/heads/<nome>`), o staccata.
+    /// HEAD as read from [`GitBackend::head`](crate::GitBackend::head): the branch with its full
+    /// name (`refs/heads/<name>`), or detached.
     pub fn from_head(head: &project_domain::Head) -> Self {
         match head {
             project_domain::Head::Branch { name, .. } if name.starts_with("refs/") => {
@@ -40,50 +40,66 @@ impl HeadState {
     }
 }
 
-impl std::fmt::Display for HeadState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl HeadState {
+    /// The position of HEAD in the text of an error: "on branch `x`", "detached at abc1234".
+    pub fn message(&self) -> Message {
         match self {
-            HeadState::Branch(name) => write!(f, "sul branch `{name}`"),
-            HeadState::Detached(oid) => write!(f, "staccata su {}", short(oid)),
+            HeadState::Branch(name) => msg!("engine-head-branch", name = name),
+            HeadState::Detached(oid) => msg!("engine-head-detached", id = short(oid)),
         }
     }
 }
 
-/// Un ref da riportare da `expected` (il valore che deve avere ora; `None` = non deve esistere)
-/// a `target` (`None` = da cancellare).
+impl ToArg for HeadState {
+    fn to_arg(&self) -> MessageArg {
+        self.message().to_arg()
+    }
+}
+
+impl std::fmt::Display for HeadState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HeadState::Branch(name) => write!(f, "on branch `{name}`"),
+            HeadState::Detached(oid) => write!(f, "detached at {}", short(oid)),
+        }
+    }
+}
+
+/// A ref to move from `expected` (the value it must have now; `None` = must not exist)
+/// to `target` (`None` = to delete).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefMove {
-    /// Nome completo, sotto `refs/` (es. `refs/heads/main`).
+    /// Full name, under `refs/` (e.g. `refs/heads/main`).
     pub name: String,
     pub expected: Option<Oid>,
     pub target: Option<Oid>,
 }
 
-/// Cosa chiede `edit.undo`/`edit.redo` al backend ([`GitBackend::restore_refs`]): HEAD e i
-/// ref devono valere ora `expected`, e vanno portati a `target` tutti insieme o nessuno.
+/// What `edit.undo`/`edit.redo` ask of the backend ([`GitBackend::restore_refs`]): HEAD and the
+/// refs must now equal `expected`, and must be moved to `target` all together or none.
 ///
 /// [`GitBackend::restore_refs`]: crate::GitBackend::restore_refs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefRestore {
-    /// `edit.undo` o `edit.redo`: negli errori e nel nome dei ref di backup.
+    /// `edit.undo` or `edit.redo`: in errors and in the name of the backup refs.
     pub command: &'static str,
-    /// HEAD come deve essere ora.
+    /// HEAD as it must be now.
     pub head_expected: HeadState,
-    /// HEAD come deve diventare: solo lo stesso branch di `head_expected` (HEAD non si tocca)
-    /// o un altro commit con HEAD staccata. Un cambio di branch non passa da qui: undo e redo
-    /// di `branch.checkout` e `branch.rename` usano
-    /// [`GitBackend::checkout`](crate::GitBackend::checkout) e
-    /// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch), che aggiornano anche
-    /// worktree, reflog e configurazione.
+    /// HEAD as it must become: only the same branch as `head_expected` (HEAD is not touched)
+    /// or another commit with detached HEAD. A branch change does not go through here: undo and redo
+    /// of `branch.checkout` and `branch.rename` use
+    /// [`GitBackend::checkout`](crate::GitBackend::checkout) and
+    /// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch), which also update the
+    /// worktree, reflog and configuration.
     pub head_target: HeadState,
     pub refs: Vec<RefMove>,
-    /// Messaggio del reflog (`update-ref -m`), es. `project: undo Commit a0744b4 «...»`.
+    /// Reflog message (`update-ref -m`), e.g. `project: undo Commit a0744b4 «...»`.
     pub reflog: String,
 }
 
 impl RefRestore {
-    /// Il tipo di backup nel nome dei ref (`refs/project/backup/undo-...`): `undo` o `redo`.
-    /// `remote` per `remote.remove` (i commit che restavano solo nei branch remoti tolti).
+    /// The backup kind in the ref name (`refs/project/backup/undo-...`): `undo` or `redo`.
+    /// `remote` for `remote.remove` (the commits that stayed only in the removed remote branches).
     pub fn backup_kind(&self) -> &'static str {
         match self.command {
             "remote.remove" => "remote",
@@ -91,27 +107,27 @@ impl RefRestore {
         }
     }
 
-    /// I controlli prima di toccare qualcosa, uguali per tutti i backend (`operation` è
-    /// l'operazione in corso nel repo, come in [`Status::operation`]); niente è cambiato quando
-    /// danno errore.
+    /// The checks before touching anything, the same for all backends (`operation` is
+    /// the operation in progress in the repo, as in [`Status::operation`]); nothing has changed when
+    /// they fail.
     ///
     /// [`Status::operation`]: project_domain::Status::operation
     ///
-    /// - Merge, rebase, cherry-pick, revert, bisect o `git am` in corso → [`EngineError::NotAllowed`]:
-    ///   spostare un branch a metà di un'operazione la cambierebbe in modo poco visibile (es.
-    ///   un merge che si concluderebbe su un altro commit).
-    /// - Nomi di ref non validi (non sotto `refs/`, con spazi, caratteri di controllo o
-    ///   sequenze vietate da `git check-ref-format`) → [`EngineError::NotAllowed`]: non
-    ///   arrivano mai a git.
-    /// - HEAD che dovrebbe cambiare branch, o passare fra branch e staccata →
-    ///   [`EngineError::NotAllowed`]: non ancora supportato (nessun comando del diario lo fa).
+    /// - Merge, rebase, cherry-pick, revert, bisect or `git am` in progress → [`EngineError::NotAllowed`]:
+    ///   moving a branch in the middle of an operation would change it in hard-to-see ways (e.g.
+    ///   a merge that would conclude on another commit).
+    /// - Invalid ref names (not under `refs/`, with spaces, control characters or
+    ///   sequences forbidden by `git check-ref-format`) → [`EngineError::NotAllowed`]: they
+    ///   never reach git.
+    /// - HEAD that would change branch, or switch between branch and detached →
+    ///   [`EngineError::NotAllowed`]: not yet supported (no journal command does it).
     pub fn check(&self, operation: Option<Operation>) -> Result<(), EngineError> {
-        super::check_no_operation(self.command, "sposterebbe i ref", operation)?;
+        super::check_no_operation(self.command, msg!("engine-busy-restore"), operation)?;
         for r in &self.refs {
             if !valid_ref_name(&r.name) {
-                return Err(EngineError::NotAllowed(format!(
-                    "nome di ref non valido nel diario: `{}`, niente modificato",
-                    r.name.escape_debug()
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-journal-bad-ref",
+                    name = r.name.escape_debug()
                 )));
             }
         }
@@ -119,49 +135,51 @@ impl RefRestore {
             (HeadState::Branch(a), HeadState::Branch(b)) if a == b => {}
             (HeadState::Detached(_), HeadState::Detached(_)) => {}
             _ => {
-                return Err(EngineError::NotAllowed(format!(
-                    "`{}` dovrebbe spostare HEAD {} a {}: non ancora supportato, niente \
-                     modificato",
-                    self.command, self.head_expected, self.head_target
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-restore-head-move",
+                    command = self.command,
+                    head_expected = self.head_expected,
+                    head_target = self.head_target
                 )));
             }
         }
         Ok(())
     }
 
-    /// Le differenze fra lo stato atteso e quello attuale (`head`, e `current` che dà il
-    /// valore attuale di un ref per nome, `None` se non esiste), una per riga, per
-    /// [`EngineError::UndoConflict`]. Vuoto se tutto è come atteso.
+    /// The differences between the expected and the current state (`head`, and `current` which gives the
+    /// current value of a ref by name, `None` if it does not exist), one per line, for
+    /// [`EngineError::UndoConflict`]. Empty if everything is as expected.
     pub fn conflicts(
         &self,
         head: &HeadState,
         mut current: impl FnMut(&str) -> Result<Option<Oid>, EngineError>,
-    ) -> Result<Vec<String>, EngineError> {
+    ) -> Result<Vec<Message>, EngineError> {
         let mut out = Vec::new();
         if *head != self.head_expected {
-            out.push(format!(
-                "HEAD: doveva essere {}, ora è {head}",
-                self.head_expected
+            out.push(msg!(
+                "engine-head-changed",
+                expected = self.head_expected,
+                now = head
             ));
         }
         for r in &self.refs {
             let now = current(&r.name)?;
             if now != r.expected {
-                out.push(format!(
-                    "`{}`: doveva essere {}, ora è {}",
-                    r.name,
-                    describe(r.expected),
-                    describe(now)
+                out.push(msg!(
+                    "engine-ref-changed",
+                    name = r.name,
+                    expected = describe(r.expected),
+                    now = describe(now)
                 ));
             }
         }
         Ok(out)
     }
 
-    /// I commit che dopo lo spostamento non sarebbero più puntati da HEAD né dai ref della
-    /// richiesta: i valori attesi (dei ref e di HEAD staccata) che non sono fra i nuovi. Il
-    /// backend salva in un ref di backup quelli che non restano raggiungibili da altri ref né
-    /// dai nuovi valori (§7), così il gc non li cancella e `edit.redo` resta possibile.
+    /// The commits that after the move would no longer be pointed to by HEAD or by the refs of the
+    /// request: the expected values (of refs and detached HEAD) that are not among the new ones. The
+    /// backend saves in a backup ref those that remain unreachable from other refs and from
+    /// the new values (§7), so gc does not delete them and `edit.redo` remains possible.
     pub fn abandoned(&self) -> Vec<Oid> {
         let targets = self.targets();
         let mut out: Vec<Oid> = self
@@ -179,7 +197,7 @@ impl RefRestore {
         out
     }
 
-    /// I nuovi valori: dei ref e di HEAD staccata.
+    /// The new values: of the refs and of detached HEAD.
     pub fn targets(&self) -> Vec<Oid> {
         self.refs
             .iter()
@@ -191,30 +209,30 @@ impl RefRestore {
             .collect()
     }
 
-    /// Il messaggio del commit di backup / del reflog del ref di backup per `oid`.
+    /// The message of the backup commit / of the backup ref's reflog for `oid`.
     pub fn backup_reflog(&self, oid: &Oid) -> String {
         format!(
-            "project: backup di {oid} prima di {} ({})",
+            "project: backup of {oid} before {} ({})",
             self.command, self.reflog
         )
     }
 }
 
-/// Esito di [`GitBackend::restore_refs`](crate::GitBackend::restore_refs).
+/// Outcome of [`GitBackend::restore_refs`](crate::GitBackend::restore_refs).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreOutcome {
-    /// I ref di backup creati per i commit che non sarebbero più raggiungibili.
+    /// The backup refs created for the commits that would no longer be reachable.
     pub backups: Vec<String>,
-    /// Avvisi su qualcosa di inatteso scoperto **dopo** lo spostamento riuscito (es. un altro
-    /// processo che ha cambiato HEAD proprio durante l'operazione). Niente è perso, ma chi
-    /// chiama va informato. Vuoto di solito.
-    pub warnings: Vec<String>,
+    /// Warnings about something unexpected found **after** the successful move (e.g. another
+    /// process that changed HEAD right during the operation). Nothing is lost, but whoever
+    /// calls must be informed. Usually empty.
+    pub warnings: Vec<Message>,
 }
 
-/// Vero se `name` è un nome completo di ref che git accetterebbe (`git check-ref-format`) e che
-/// si può passare a `update-ref --stdin -z` senza ambiguità: sotto `refs/`, senza spazi né
-/// caratteri di controllo, senza `~ ^ : ? * [ \`, `..`, `@{`, componenti vuoti o che iniziano
-/// con `.` o finiscono con `.lock`, e che non finisce con `/` o `.`.
+/// True if `name` is a full ref name that git would accept (`git check-ref-format`) and that
+/// can be passed to `update-ref --stdin -z` without ambiguity: under `refs/`, without spaces or
+/// control characters, without `~ ^ : ? * [ \`, `..`, `@{`, empty components or ones starting
+/// with `.` or ending with `.lock`, and not ending with `/` or `.`.
 pub fn valid_ref_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("refs/") else {
         return false;
@@ -234,16 +252,16 @@ pub fn valid_ref_name(name: &str) -> bool {
         .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
 }
 
-/// Le prime 7 cifre di un id, come `git log --oneline`.
+/// The first 7 digits of an id, like `git log --oneline`.
 pub(crate) fn short(oid: &Oid) -> String {
     let hex = oid.to_string();
     hex[..7.min(hex.len())].to_owned()
 }
 
-fn describe(value: Option<Oid>) -> String {
+fn describe(value: Option<Oid>) -> Message {
     match value {
-        Some(oid) => short(&oid),
-        None => "assente".to_owned(),
+        Some(oid) => msg!("engine-ref-value", id = short(&oid)),
+        None => msg!("engine-ref-missing"),
     }
 }
 
@@ -316,7 +334,7 @@ mod tests {
         bad.refs[0].name = "refs/heads/a b".to_owned();
         assert!(matches!(bad.check(None), Err(EngineError::NotAllowed(_))));
         let mut switch = restore();
-        switch.head_target = HeadState::Branch("refs/heads/altro".to_owned());
+        switch.head_target = HeadState::Branch("refs/heads/another".to_owned());
         assert!(matches!(
             switch.check(None),
             Err(EngineError::NotAllowed(_))
@@ -335,7 +353,7 @@ mod tests {
         assert_eq!(moved.len(), 1);
         assert!(moved[0].contains("refs/heads/main"), "{moved:?}");
         let gone = r.conflicts(&head, |_| Ok(None)).unwrap();
-        assert!(gone[0].contains("assente"), "{gone:?}");
+        assert!(gone[0].contains("missing"), "{gone:?}");
         let other = HeadState::Detached(oid(2));
         let both = r.conflicts(&other, |_| Ok(Some(oid(2)))).unwrap();
         assert!(both[0].starts_with("HEAD"), "{both:?}");

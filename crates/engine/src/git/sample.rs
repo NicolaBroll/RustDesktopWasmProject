@@ -1,4 +1,4 @@
-//! Il repo di esempio di [`MemoryBackend::sample`].
+//! The sample repo of [`MemoryBackend::sample`].
 
 use super::MemoryBackend;
 use project_domain::{
@@ -6,15 +6,15 @@ use project_domain::{
 };
 use std::collections::BTreeMap;
 
-/// Data del primo commit (14 novembre 2023); i successivi sono a un'ora l'uno dall'altro.
+/// Date of the first commit (14 November 2023); the following ones are one hour apart.
 const START: i64 = 1_700_000_000;
 const HOUR: i64 = 3_600;
 const FILE_MODE: u32 = 0o100644;
 
-/// Seed degli id finti: commit `n` → `n`, oggetti tag e file da qui in poi.
+/// Seed of the fake ids: commit `n` → `n`, tag objects and files from here on.
 const TAG_SEED: u64 = 1_000;
 const BLOB_SEED: u64 = 2_000;
-/// Primo seed dei contenuti dei file nei commit (uno nuovo per ogni versione di un file).
+/// First seed of the file contents in the commits (a new one for each version of a file).
 const HISTORY_SEED: u64 = 3_000;
 
 struct Person {
@@ -34,49 +34,49 @@ const BRUNO: Person = Person {
     offset_min: -300,
 };
 
-/// Commit dell'esempio: (numero, genitori, autore, oggetto, corpo). Il numero dà il seed
-/// dell'id e la data (`START + (n - 1) ore`).
+/// Commits of the sample: (number, parents, author, subject, body). The number gives the seed
+/// of the id and the date (`START + (n - 1) hours`).
 const COMMITS: &[(u64, &[u64], &Person, &str, &str)] = &[
-    (1, &[], &ADA, "Primo commit", ""),
-    (2, &[1], &ADA, "Aggiungi il README", ""),
+    (1, &[], &ADA, "First commit", ""),
+    (2, &[1], &ADA, "Add the README", ""),
     (
         3,
         &[2],
         &BRUNO,
-        "Struttura del progetto",
-        "Cartelle crates/ e apps/, workspace Cargo.",
+        "Project structure",
+        "crates/ and apps/ folders, Cargo workspace.",
     ),
-    (4, &[3], &ADA, "Parser del log", ""),
-    (5, &[4], &BRUNO, "Corsie del grafo: prima versione", ""),
-    (6, &[4], &ADA, "Correggi un refuso nel README", ""),
+    (4, &[3], &ADA, "Log parser", ""),
+    (5, &[4], &BRUNO, "Graph lanes: first version", ""),
+    (6, &[4], &ADA, "Fix a typo in the README", ""),
     (
         7,
         &[5],
         &BRUNO,
-        "Corsie: riusa le colonne libere",
-        "Una corsia che si chiude torna disponibile per la diramazione successiva.\n\n\
-         Così il grafo resta stretto anche con molti branch.",
+        "Lanes: reuse the free columns",
+        "A lane that closes becomes available for the next fork.\n\n\
+         This keeps the graph narrow even with many branches.",
     ),
-    (8, &[6], &ADA, "Parser dello stato", ""),
-    (9, &[7], &BRUNO, "Test di proprietà per le corsie", ""),
-    (10, &[8, 9], &ADA, "Merge branch 'feature/grafo'", ""),
-    (11, &[10], &ADA, "Parser dei ref", ""),
-    (12, &[11], &BRUNO, "Pannello dei commit", ""),
+    (8, &[6], &ADA, "Status parser", ""),
+    (9, &[7], &BRUNO, "Property tests for the lanes", ""),
+    (10, &[8, 9], &ADA, "Merge branch 'feature/graph'", ""),
+    (11, &[10], &ADA, "Ref parser", ""),
+    (12, &[11], &BRUNO, "Commit panel", ""),
 ];
 
-/// Una modifica a un file in un commit, rispetto al primo genitore.
+/// A change to a file in a commit, relative to the first parent.
 enum Edit {
     Add(&'static str),
     Modify(&'static str),
     Delete(&'static str),
-    /// Da, a, somiglianza: con 100 il contenuto non cambia.
+    /// From, to, similarity: with 100 the content does not change.
     Rename(&'static str, &'static str, u8),
 }
 
 use Edit::{Add, Delete, Modify, Rename};
 
-/// File cambiati da ogni commit di [`COMMITS`], rispetto al primo genitore. Per il merge (10)
-/// sono i file portati da `feature/grafo`, con il contenuto del secondo genitore.
+/// Files changed by each commit of [`COMMITS`], relative to the first parent. For the merge (10)
+/// they are the files brought in by `feature/graph`, with the content of the second parent.
 const CHANGES: &[(u64, &[Edit])] = &[
     (1, &[Add(".gitignore"), Add(".gitkeep")]),
     (2, &[Add("README.md")]),
@@ -116,7 +116,7 @@ const CHANGES: &[(u64, &[Edit])] = &[
 
 type Tree = BTreeMap<&'static str, Oid>;
 
-/// La storia dell'esempio: file cambiati da ogni commit, contenuto di ogni blob e albero di
+/// The history of the sample: files changed by each commit, content of every blob and tree of
 /// HEAD.
 struct History {
     changes: Vec<(Oid, Vec<ChangedFile>)>,
@@ -124,7 +124,7 @@ struct History {
     head: Tree,
 }
 
-/// Il prefisso dei commenti nel tipo di file di `path` (vuoto per il Markdown).
+/// The comment prefix in the file type of `path` (empty for Markdown).
 fn comment(path: &str) -> &'static str {
     if path.ends_with(".rs") {
         "// "
@@ -135,8 +135,8 @@ fn comment(path: &str) -> &'static str {
     }
 }
 
-/// Contenuto di `path` creato da `label` (es. `commit 4`): un titolo, una riga che dice chi lo
-/// ha cambiato per ultimo e un corpo che dipende dal tipo di file. `.gitkeep` è vuoto.
+/// Content of `path` created by `label` (e.g. `commit 4`): a title, a line saying who last
+/// changed it and a body that depends on the file type. `.gitkeep` is empty.
 fn initial_content(path: &str, label: &str) -> String {
     let c = comment(path);
     let stem = path
@@ -151,29 +151,29 @@ fn initial_content(path: &str, label: &str) -> String {
     } else if path.ends_with(".rs") {
         format!("pub fn {stem}() -> &'static str {{\n    \"{path}\"\n}}\n")
     } else if path.ends_with(".md") {
-        format!("# {stem}\n\nDocumentazione del progetto.\n")
+        format!("# {stem}\n\nProject documentation.\n")
     } else if path.ends_with(".toml") {
-        "[package]\nname = \"progetto\"\nedition = \"2024\"\n".to_owned()
+        "[package]\nname = \"project\"\nedition = \"2024\"\n".to_owned()
     } else {
         "/target\n".to_owned()
     };
-    format!("{c}{path}\n{c}ultima modifica: {label}\n\n{body}")
+    format!("{c}{path}\n{c}last change: {label}\n\n{body}")
 }
 
-/// Nuova versione di un contenuto, cambiato da `label`: la seconda riga dice chi lo ha cambiato
-/// per ultimo e in fondo si aggiunge una riga. Nel diff: una riga cambiata e una aggiunta.
+/// New version of a content, changed by `label`: the second line says who last changed it
+/// and a line is added at the end. In the diff: one changed line and one added line.
 fn evolve(old: &str, path: &str, label: &str) -> String {
     let c = comment(path);
     let mut lines: Vec<String> = old.lines().map(str::to_owned).collect();
     if let Some(second) = lines.get_mut(1) {
-        *second = format!("{c}ultima modifica: {label}");
+        *second = format!("{c}last change: {label}");
     }
-    lines.push(format!("{c}riga aggiunta da: {label}"));
+    lines.push(format!("{c}line added by: {label}"));
     lines.iter().map(|l| format!("{l}\n")).collect()
 }
 
-/// I file cambiati da ogni commit, con id dei contenuti coerenti lungo la storia: il contenuto
-/// "vecchio" di un file è quello lasciato dal commit precedente che lo ha toccato.
+/// The files changed by each commit, with content ids consistent along the history: the "old"
+/// content of a file is the one left by the previous commit that touched it.
 fn history() -> History {
     let zero = Oid::from_bytes([0; Oid::LEN]);
     let mut next_seed = HISTORY_SEED;
@@ -192,8 +192,8 @@ fn history() -> History {
             .map(|p| trees[p].clone())
             .unwrap_or_default();
         let theirs = parents.get(1).map(|p| &trees[p]);
-        // Nuovo contenuto di `path`, che prima era `old`. In un merge viene dal secondo
-        // genitore, se lo ha.
+        // New content of `path`, which was `old` before. In a merge it comes from the second
+        // parent, if it has it.
         let mut new_content = |path: &str, old: Option<Oid>| match theirs.and_then(|t| t.get(path))
         {
             Some(id) => *id,
@@ -256,7 +256,7 @@ fn history() -> History {
                 }
             });
         }
-        // Come git: in ordine di percorso.
+        // Like git: in path order.
         files.sort_by(|a, b| a.path.cmp(&b.path));
         trees.insert(n, tree);
         changes.push((oid(n), files));
@@ -285,8 +285,8 @@ fn signature(who: &Person, time: i64) -> Signature {
     }
 }
 
-/// Voce dello stato di un file tracciato: `head` è l'id in HEAD (`None` se il file non c'è),
-/// `index` quello nell'indice.
+/// Status entry of a tracked file: `head` is the id in HEAD (`None` if the file is not there),
+/// `index` the one in the index.
 fn tracked(
     path: &str,
     index_change: Change,
@@ -310,38 +310,38 @@ fn tracked(
 }
 
 impl MemoryBackend {
-    /// Repo di esempio, sempre uguale (id e date fissi):
+    /// Sample repo, always the same (fixed ids and dates):
     ///
     /// ```text
-    /// * 12 Pannello dei commit            (main, HEAD)
-    /// * 11 Parser dei ref                 (origin/main)
-    /// *   10 Merge branch 'feature/grafo' (tag v0.1.0, annotato)
+    /// * 12 Commit panel            (main, HEAD)
+    /// * 11 Ref parser                 (origin/main)
+    /// *   10 Merge branch 'feature/graph' (tag v0.1.0, annotated)
     /// |\
-    /// | * 9 Test di proprietà per le corsie   (feature/grafo, origin/feature/grafo)
-    /// * | 8 Parser dello stato
-    /// | * 7 Corsie: riusa le colonne libere
-    /// * | 6 Correggi un refuso nel README
-    /// | * 5 Corsie del grafo: prima versione
+    /// | * 9 Property tests for the lanes   (feature/graph, origin/feature/graph)
+    /// * | 8 Status parser
+    /// | * 7 Lanes: reuse the free columns
+    /// * | 6 Fix a typo in the README
+    /// | * 5 Graph lanes: first version
     /// |/
-    /// * 4 Parser del log
-    /// * 3 Struttura del progetto
-    /// * 2 Aggiungi il README
-    /// * 1 Primo commit
+    /// * 4 Log parser
+    /// * 3 Project structure
+    /// * 2 Add the README
+    /// * 1 First commit
     /// ```
     ///
-    /// `main` segue `origin/main` ed è avanti di 1; `feature/grafo` segue
-    /// `origin/feature/grafo`, allineato. Il remoto `origin` (in memoria) ha `main` sul commit
-    /// 11 e `feature/grafo` su un commit 13 «Corsie: un colore per branch» (figlio del 9) che il
-    /// repo non ha ancora: `remote.fetch` lo scarica. Il worktree non è pulito: `README.md` modificato in
-    /// stage e fuori, `docs/guida.md` aggiunto in stage, `src/lib.rs` modificato fuori stage,
-    /// `note.txt` non tracciato (con un contenuto nel worktree, così si può mettere in stage).
-    /// Chi committa è Ada Rossi (`ada@example.com`).
+    /// `main` follows `origin/main` and is ahead by 1; `feature/graph` follows
+    /// `origin/feature/graph`, aligned. The remote `origin` (in memory) has `main` on commit
+    /// 11 and `feature/graph` on a commit 13 "Lanes: one color per branch" (child of 9) that the
+    /// repo does not have yet: `remote.fetch` downloads it. The worktree is not clean: `README.md` modified
+    /// staged and unstaged, `docs/guide.md` added in the stage, `src/lib.rs` modified unstaged,
+    /// `note.txt` untracked (with content in the worktree, so it can be staged).
+    /// The committer is Ada Rossi (`ada@example.com`).
     ///
-    /// Ogni commit ha i suoi file cambiati (per `commit.show`): aggiunte, modifiche, una
-    /// cancellazione (`.gitkeep` nel commit 3, file vuoto) e una rinomina con modifiche
-    /// (`src/main.rs` → `src/bin/app.rs` nel commit 12). I file hanno un contenuto (pochi righe
-    /// di testo, con id coerenti fra commit e stato), così i diff dei commit, dell'indice e del
-    /// worktree hanno hunk veri.
+    /// Each commit has its changed files (for `commit.show`): additions, modifications, a
+    /// deletion (`.gitkeep` in commit 3, empty file) and a rename with changes
+    /// (`src/main.rs` → `src/bin/app.rs` in commit 12). The files have content (a few lines
+    /// of text, with ids consistent between commits and status), so the diffs of the commits, the index and the
+    /// worktree have real hunks.
     pub fn sample() -> Self {
         let mut repo = Self::new();
         for &(n, parents, who, summary, body) in COMMITS {
@@ -367,12 +367,12 @@ impl MemoryBackend {
             repo.set_blob(*id, content.as_str());
         }
         repo.set_branch("main", oid(12));
-        repo.set_branch("feature/grafo", oid(9));
+        repo.set_branch("feature/graph", oid(9));
         repo.set_remote_branch("origin/main", oid(11));
-        repo.set_remote_branch("origin/feature/grafo", oid(9));
+        repo.set_remote_branch("origin/feature/graph", oid(9));
         repo.set_upstream("main", "origin/main");
-        repo.set_upstream("feature/grafo", "origin/feature/grafo");
-        repo.add_remote("origin", "https://example.com/progetto.git");
+        repo.set_upstream("feature/graph", "origin/feature/graph");
+        repo.add_remote("origin", "https://example.com/project.git");
         let fetched = START + 12 * HOUR;
         repo.insert_remote_commit(
             "origin",
@@ -381,31 +381,31 @@ impl MemoryBackend {
                 parents: vec![oid(9)],
                 author: signature(&BRUNO, fetched),
                 committer: signature(&BRUNO, fetched),
-                summary: "Corsie: un colore per branch".to_owned(),
+                summary: "Lanes: one color per branch".to_owned(),
                 body: String::new(),
             },
         );
         repo.set_branch_on_remote("origin", "main", oid(11));
-        repo.set_branch_on_remote("origin", "feature/grafo", oid(13));
+        repo.set_branch_on_remote("origin", "feature/graph", oid(13));
         repo.set_tag("v0.1.0", oid(10), Some(oid(TAG_SEED)));
         repo.set_head_branch("main");
         repo.set_identity(ADA.name, ADA.email);
 
-        // Worktree: README.md cambiato in stage e poi ancora fuori, docs/guida.md nuovo in
-        // stage, src/lib.rs cambiato fuori stage, note.txt non tracciato.
-        let staged = "modifica in stage";
-        let unstaged = "modifica non in stage";
+        // Worktree: README.md changed in the stage and then again outside it, docs/guide.md new in
+        // the stage, src/lib.rs changed outside the stage, note.txt untracked.
+        let staged = "staged change";
+        let unstaged = "unstaged change";
         let readme = head["README.md"];
         let readme_index = evolve(&blobs[&readme], "README.md", staged);
         let readme_worktree = evolve(&readme_index, "README.md", unstaged);
-        let guide = initial_content("docs/guida.md", staged);
+        let guide = initial_content("docs/guide.md", staged);
         let lib = head["src/lib.rs"];
         let lib_worktree = evolve(&blobs[&lib], "src/lib.rs", unstaged);
         repo.set_blob(oid(BLOB_SEED), readme_index);
         repo.set_blob(oid(BLOB_SEED + 1), guide);
         repo.set_worktree_file("README.md", readme_worktree);
         repo.set_worktree_file("src/lib.rs", lib_worktree);
-        repo.set_worktree_file("note.txt", "Appunti da non perdere.\n");
+        repo.set_worktree_file("note.txt", "Notes not to lose.\n");
         repo.set_entries(vec![
             tracked(
                 "README.md",
@@ -415,7 +415,7 @@ impl MemoryBackend {
                 oid(BLOB_SEED),
             ),
             tracked(
-                "docs/guida.md",
+                "docs/guide.md",
                 Change::Added,
                 Change::Unmodified,
                 None,

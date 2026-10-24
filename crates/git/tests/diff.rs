@@ -1,4 +1,4 @@
-//! Test di integrazione di `CliBackend::diff` e dei comandi `diff.*` sugli scenari di
+//! Integration tests of `CliBackend::diff` and of the `diff.*` commands on the scenarios of
 //! `common`.
 
 mod common;
@@ -31,7 +31,7 @@ fn commit(rev: impl ToString, path: Option<&str>) -> DiffSpec {
     }
 }
 
-/// `(stato, percorso vecchio, percorso nuovo)` di ogni file.
+/// `(status, old path, new path)` of every file.
 fn summary(diff: &Diff) -> Vec<(Change, String, String)> {
     diff.files
         .iter()
@@ -43,7 +43,7 @@ fn same(change: Change, path: &str) -> (Change, String, String) {
     (change, path.to_owned(), path.to_owned())
 }
 
-/// Il contenuto delle righe di un tipo, in ordine.
+/// The content of the lines of one kind, in order.
 fn lines(file: &FileDiff, kind: LineKind) -> Vec<String> {
     file.hunks
         .iter()
@@ -58,35 +58,35 @@ fn worktree_and_index_split_staged_and_unstaged_changes() {
     let repo = repo_with_changes();
     let backend = repo.open();
 
-    // Fuori stage solo `a.txt`: il file non tracciato non compare.
+    // Only `a.txt` is unstaged: the untracked file does not appear.
     let unstaged = backend.diff(&worktree(None)).unwrap();
     assert_eq!(summary(&unstaged), [same(Change::Modified, "a.txt")]);
     let a = &unstaged.files[0];
-    assert_eq!(lines(a, LineKind::Removed), ["uno"]);
-    assert_eq!(lines(a, LineKind::Added), ["modificato"]);
+    assert_eq!(lines(a, LineKind::Removed), ["one"]);
+    assert_eq!(lines(a, LineKind::Added), ["modified"]);
     assert_eq!(a.old_oid, Some(repo.rev(":a.txt")));
     assert_eq!(a.hunks[0].header(), b"@@ -1 +1 @@");
 
-    // In stage: il file nuovo e la rinomina esatta.
+    // Staged: the new file and the exact rename.
     let staged = backend.diff(&index(None)).unwrap();
     assert_eq!(
         summary(&staged),
         [
-            same(Change::Added, "nuovo.txt"),
+            same(Change::Added, "new.txt"),
             (
                 Change::Renamed,
-                "vecchio.txt".to_owned(),
-                "rinominato.txt".to_owned()
+                "old.txt".to_owned(),
+                "renamed.txt".to_owned()
             ),
         ]
     );
     let added = &staged.files[0];
-    assert_eq!(added.new_oid, Some(repo.rev(":nuovo.txt")));
-    assert_eq!(lines(added, LineKind::Added), ["in stage"]);
+    assert_eq!(added.new_oid, Some(repo.rev(":new.txt")));
+    assert_eq!(lines(added, LineKind::Added), ["staged"]);
     let renamed = &staged.files[1];
     assert_eq!((renamed.similarity, renamed.hunks.len()), (Some(100), 0));
 
-    // Messo in stage, `a.txt` passa da un diff all'altro.
+    // Once staged, `a.txt` moves from one diff to the other.
     repo.stage(&["a.txt"]);
     assert!(backend.diff(&worktree(None)).unwrap().files.is_empty());
     let staged = backend.diff(&index(Some("a.txt"))).unwrap();
@@ -98,17 +98,14 @@ fn diff_reads_do_not_touch_the_index() {
     let repo = repo_with_changes();
     let index_file = repo.path().join(".git/index");
     let before = std::fs::read(&index_file).unwrap();
-    // Un file toccato senza cambiare il contenuto: `git diff` normale riscriverebbe l'indice.
-    repo.write(
-        "rinominato.txt",
-        "contenuto abbastanza lungo da riconoscere\n",
-    );
-    // Data nel passato: senza, il file risulterebbe "racily clean" (più recente dell'indice) e
-    // git non riscriverebbe l'indice comunque; il test passerebbe solo per caso.
+    // A file touched without changing its content: a plain `git diff` would rewrite the index.
+    repo.write("renamed.txt", "content long enough to be recognized\n");
+    // Date in the past: without it the file would be "racily clean" (newer than the index) and
+    // git would not rewrite the index anyway; the test would pass only by chance.
     let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
     std::fs::File::options()
         .write(true)
-        .open(repo.path().join("rinominato.txt"))
+        .open(repo.path().join("renamed.txt"))
         .unwrap()
         .set_modified(past)
         .unwrap();
@@ -129,10 +126,10 @@ fn index_of_a_branch_without_commits_compares_with_the_empty_tree() {
         Err(EngineError::UnknownRev(_))
     ));
 
-    repo.write("primo.txt", "uno\ndue\n");
-    repo.stage(&["primo.txt"]);
+    repo.write("first.txt", "one\ntwo\n");
+    repo.stage(&["first.txt"]);
     let staged = backend.diff(&index(None)).unwrap();
-    assert_eq!(summary(&staged), [same(Change::Added, "primo.txt")]);
+    assert_eq!(summary(&staged), [same(Change::Added, "first.txt")]);
     assert_eq!(staged.files[0].hunks[0].header(), b"@@ -0,0 +1,2 @@");
 }
 
@@ -141,22 +138,22 @@ fn commit_diff_root_modify_and_merge_match_show_commit() {
     let h = repo_with_history();
     let backend = h.repo.open();
 
-    // Commit radice: confronto con l'albero vuoto.
+    // Root commit: compared with the empty tree.
     let root = backend.diff(&commit(h.c1, None)).unwrap();
     assert_eq!(summary(&root), [same(Change::Added, "a.txt")]);
-    assert_eq!(lines(&root.files[0], LineKind::Added), ["uno"]);
+    assert_eq!(lines(&root.files[0], LineKind::Added), ["one"]);
     assert_eq!(root.files[0].old_oid, Some(Oid::from_bytes([0; Oid::LEN])));
 
     let c2 = backend.diff(&commit(h.c2, None)).unwrap();
-    assert_eq!(lines(&c2.files[0], LineKind::Removed), ["uno"]);
-    assert_eq!(lines(&c2.files[0], LineKind::Added), ["due"]);
+    assert_eq!(lines(&c2.files[0], LineKind::Removed), ["one"]);
+    assert_eq!(lines(&c2.files[0], LineKind::Added), ["two"]);
 
-    // Il merge rispetto al primo genitore: solo `b.txt`, portato da `feature`.
+    // The merge against the first parent: only `b.txt`, brought by `feature`.
     let merge = backend.diff(&commit("HEAD", None)).unwrap();
     assert_eq!(summary(&merge), [same(Change::Added, "b.txt")]);
     assert_eq!(lines(&merge.files[0], LineKind::Added), ["bb"]);
 
-    // Stessi file, id e modi di `commit.show`, per ogni commit.
+    // Same files, ids and modes as `commit.show`, for every commit.
     for id in [h.c1, h.c2, h.f1, h.f2, h.m] {
         let details = backend.show_commit(&id.to_string()).unwrap();
         let diff = backend.diff(&commit(id, None)).unwrap();
@@ -169,7 +166,7 @@ fn commit_diff_root_modify_and_merge_match_show_commit() {
         }
     }
 
-    // Nome di branch e id abbreviato.
+    // Branch name and abbreviated id.
     let short = h.f2.to_string()[..7].to_owned();
     for rev in ["feature", short.as_str()] {
         let diff = backend.diff(&commit(rev, None)).unwrap();
@@ -196,9 +193,9 @@ fn commit_diff_every_kind_of_change_and_non_utf8_names() {
             .find(|f| f.new_path.to_str() == Some(name))
             .unwrap()
     };
-    let moved = file("spostato.txt");
+    let moved = file("moved.txt");
     assert_eq!(moved.change, Change::Renamed);
-    assert_eq!(lines(moved, LineKind::Added), ["quinta riga"]);
+    assert_eq!(lines(moved, LineKind::Added), ["fifth line"]);
     let script = file("script.sh");
     assert_eq!(
         (script.old_mode, script.new_mode),
@@ -206,7 +203,7 @@ fn commit_diff_every_kind_of_change_and_non_utf8_names() {
     );
     assert!(script.hunks.is_empty());
 
-    // Il nome non UTF-8 resta in byte, anche come filtro.
+    // The non-UTF-8 name stays as bytes, also as a filter.
     #[cfg(unix)]
     {
         let name = RepoPath::from_bytes(common::NON_UTF8_NAME);
@@ -233,37 +230,34 @@ fn path_keeps_renames_and_matches_only_that_file() {
     let moved = full
         .files
         .iter()
-        .find(|f| f.new_path.to_str() == Some("spostato.txt"))
+        .find(|f| f.new_path.to_str() == Some("moved.txt"))
         .unwrap();
-    // Chiesta per la destinazione o per l'origine, la rinomina resta tale.
-    for path in ["spostato.txt", "sposta.txt"] {
+    // Asked by destination or by source, the rename stays a rename.
+    for path in ["moved.txt", "move.txt"] {
         let only = backend.diff(&commit(fc.changes, Some(path))).unwrap();
         assert_eq!(only.files, std::slice::from_ref(moved), "{path}");
     }
     let only = backend
-        .diff(&commit(fc.changes, Some("cartella/con spazio.txt")))
+        .diff(&commit(fc.changes, Some("dir/with space.txt")))
         .unwrap();
-    assert_eq!(
-        summary(&only),
-        [same(Change::Added, "cartella/con spazio.txt")]
-    );
-    // Una cartella non comprende i suoi file; un file non cambiato dà un diff vuoto.
-    for path in ["cartella", "a.txt", "nessuno.txt"] {
+    assert_eq!(summary(&only), [same(Change::Added, "dir/with space.txt")]);
+    // A directory does not include its files; an unchanged file gives an empty diff.
+    for path in ["dir", "a.txt", "none.txt"] {
         let none = backend.diff(&commit(fc.changes, Some(path))).unwrap();
         assert!(none.files.is_empty(), "{path}");
     }
 
-    // Anche per l'indice.
+    // Also for the index.
     let repo = repo_with_changes();
     let backend = repo.open();
-    for path in ["rinominato.txt", "vecchio.txt"] {
+    for path in ["renamed.txt", "old.txt"] {
         let only = backend.diff(&index(Some(path))).unwrap();
         assert_eq!(
             summary(&only),
             [(
                 Change::Renamed,
-                "vecchio.txt".to_owned(),
-                "rinominato.txt".to_owned()
+                "old.txt".to_owned(),
+                "renamed.txt".to_owned()
             )],
             "{path}"
         );
@@ -280,17 +274,17 @@ fn paths_with_glob_and_magic_characters_are_literal() {
         "file1.txt",
         "a[1].txt",
         "a1.txt",
-        ":(top)magia.txt",
-        "-trattino.txt",
+        ":(top)magic.txt",
+        "-dash.txt",
     ] {
         let only = backend.diff(&worktree(Some(name))).unwrap();
         assert_eq!(summary(&only), [same(Change::Modified, name)], "{name}");
         assert_eq!(
             lines(&only.files[0], LineKind::Added),
-            [format!("dopo: {name}")]
+            [format!("after: {name}")]
         );
     }
-    // Pathspec che come glob o magici comprenderebbero dei file: qui nessuno.
+    // Pathspecs that as globs or magic would match files: here none.
     for spec in ["*.txt", "file?.txt", ":(glob)*.txt", ":/file1.txt"] {
         let none = backend.diff(&worktree(Some(spec))).unwrap();
         assert!(none.files.is_empty(), "{spec}");
@@ -317,7 +311,7 @@ fn bad_revs_are_unknown_and_never_options() {
     let h = repo_with_history();
     let backend = h.repo.open();
     for rev in [
-        "nessuno",
+        "nobody",
         "--all",
         "-p",
         "--output=/tmp/x",
@@ -344,9 +338,9 @@ fn run(registry: &Registry, session: &mut Session, id: &str, params: Value) -> V
 #[test]
 fn diff_commands_on_a_real_repo() {
     let fc = repo_with_file_changes();
-    fc.repo.write("nuovo.txt", "cambiato fuori stage\n");
-    fc.repo.write("cartella/con spazio.txt", "in stage\n");
-    fc.repo.stage(&["cartella/con spazio.txt"]);
+    fc.repo.write("new.txt", "changed unstaged\n");
+    fc.repo.write("dir/with space.txt", "staged\n");
+    fc.repo.stage(&["dir/with space.txt"]);
     let registry = Registry::builtin();
     let mut session = Session::new(Arc::new(Repo::opener()));
     let err = registry
@@ -360,23 +354,23 @@ fn diff_commands_on_a_real_repo() {
         json!({ "path": fc.repo.path_str() }),
     );
 
-    // Anche `script.sh`: eseguibile nell'indice (`update-index --chmod`), non nel worktree.
+    // Also `script.sh`: executable in the index (`update-index --chmod`), not in the worktree.
     let out = run(&registry, &mut session, "diff.worktree", json!({}));
     let files = out["files"].as_array().unwrap();
     let paths: Vec<_> = files.iter().map(|f| f["new_path"].clone()).collect();
-    assert_eq!(paths, [json!("nuovo.txt"), json!("script.sh")]);
+    assert_eq!(paths, [json!("new.txt"), json!("script.sh")]);
     assert_eq!(files[0]["change"], "Modified");
     assert_eq!(files[1]["hunks"], json!([]));
     let line = &files[0]["hunks"][0]["lines"][1];
     assert_eq!(line["kind"], "Added");
-    assert_eq!(line["content"], "cambiato fuori stage");
+    assert_eq!(line["content"], "changed unstaged");
     assert_eq!(line["new_line"], 1);
 
     let out = run(
         &registry,
         &mut session,
         "diff.index",
-        json!({ "path": "cartella/con spazio.txt" }),
+        json!({ "path": "dir/with space.txt" }),
     );
     assert_eq!(out["files"][0]["change"], "Modified");
 
@@ -384,20 +378,20 @@ fn diff_commands_on_a_real_repo() {
         &registry,
         &mut session,
         "diff.commit",
-        json!({ "id": fc.changes.to_string(), "path": "spostato.txt" }),
+        json!({ "id": fc.changes.to_string(), "path": "moved.txt" }),
     );
     assert_eq!(out["files"][0]["change"], "Renamed");
-    assert_eq!(out["files"][0]["old_path"], "sposta.txt");
+    assert_eq!(out["files"][0]["old_path"], "move.txt");
     let diff: Diff = serde_json::from_value(out).unwrap();
     assert_eq!(
         diff,
         fc.repo
             .open()
-            .diff(&commit(fc.changes, Some("sposta.txt")))
+            .diff(&commit(fc.changes, Some("move.txt")))
             .unwrap()
     );
 
-    // In JSON un percorso non UTF-8 è un array di byte, anche come parametro.
+    // In JSON a non-UTF-8 path is a byte array, also as a parameter.
     #[cfg(unix)]
     {
         let name = json!(common::NON_UTF8_NAME);
@@ -415,7 +409,7 @@ fn diff_commands_on_a_real_repo() {
         .unwrap_err();
     assert!(matches!(err, EngineError::UnknownRev(_)), "{err}");
     let err = registry
-        .run("diff.index", &mut session, json!({ "path": "../fuori" }))
+        .run("diff.index", &mut session, json!({ "path": "../outside" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
 }

@@ -1,62 +1,62 @@
-//! Diario delle operazioni per `edit.undo` e `edit.redo` (`impl-docs/ARCHITETTURA-git.md` §7).
+//! Journal of operations for `edit.undo` and `edit.redo` (`impl-docs/ARCHITECTURE-git.md` §7).
 //!
-//! Ogni comando che sposta ref o HEAD (oggi `commit.create`, normale e `amend`, e i comandi
-//! `branch.*`; poi merge, rebase, reset) lascia una [`JournalEntry`] con HEAD e i ref coinvolti prima e dopo.
-//! `edit.undo` riporta i ref ai valori "prima" e `edit.redo` ai valori "dopo", **solo** se
-//! adesso valgono ancora quello che l'operazione (o l'undo) ha lasciato: il backend lo
-//! controlla in modo atomico ([`GitBackend::restore_refs`]) e altrimenti dà
-//! [`EngineError::UndoConflict`] senza toccare niente; la voce resta nel diario.
+//! Every command that moves refs or HEAD (today `commit.create`, normal and `amend`, and the
+//! `branch.*` commands; later merge, rebase, reset) leaves a [`JournalEntry`] with HEAD and the refs involved before and after.
+//! `edit.undo` brings the refs back to the "before" values and `edit.redo` to the "after" values, **only** if
+//! they still hold what the operation (or the undo) left them with: the backend checks it
+//! atomically ([`GitBackend::restore_refs`]) and otherwise gives
+//! [`EngineError::UndoConflict`] without touching anything; the entry stays in the journal.
 //!
-//! Scelte:
+//! Choices:
 //!
-//! - **In memoria, per repo aperto.** Il diario vive nella [`Session`](crate::Session) e si
-//!   azzera quando si apre un repo (anche lo stesso); non si salva su disco. Le CLI eseguono
-//!   una sessione per invocazione: più `--cmd` della stessa invocazione condividono il
-//!   diario, invocazioni diverse no. Persisterlo (es. in `.git/project/journal`) vorrebbe dire
-//!   gestire più istanze dell'app sullo stesso repo e voci scritte da versioni diverse; non
-//!   serve per non perdere dati: i commit annullati restano in ref di backup e ogni
-//!   spostamento è nel reflog di git (`project: undo ...`).
-//! - **`worktree.discard` entra nel diario** anche se non sposta ref: la voce ha il backup del
-//!   worktree ([`JournalEntry::worktree`], il commit di `git stash create`) e `edit.undo` rimette
-//!   i file com'erano ([`GitBackend::restore_worktree`]), solo se nel frattempo non sono
-//!   cambiati; `edit.redo` li scarta di nuovo, solo se sono ancora come li ha lasciati l'undo.
-//! - **Branch.** `branch.create` e `branch.delete` si annullano spostando il ref (eliminato o
-//!   ricreato sul commit di prima, solo se nessuno l'ha toccato). `branch.checkout` e
-//!   `branch.rename` invece si annullano con un altro checkout ([`GitBackend::checkout`]: mai
-//!   forzato, rifiutato se sovrascriverebbe modifiche) e un'altra rinomina
-//!   ([`GitBackend::rename_branch`]), che aggiornano anche worktree, reflog e configurazione.
-//! - **`remote.pull` entra nel diario** quando sposta il branch ([`JournalEntry::pull`]): per il
-//!   branch attivo undo e redo passano da [`GitBackend::reset_branch`] (come `git reset --keep`:
-//!   aggiornano indice e worktree, rifiutano se un file da ripristinare ha modifiche locali), per
-//!   un altro branch spostano solo il ref. Il fetch e il push no.
-//! - **`merge.start` e `merge.continue` entrano nel diario** quando il merge si conclude
-//!   ([`JournalEntry::merge`]): undo e redo come il pull del branch attivo. Un merge fermo in
-//!   conflitto no: il branch non si è mosso, e finché il merge è in corso undo e redo sono
-//!   rifiutati; `merge.abort` nemmeno (il recupero è il suo backup di indice e worktree).
-//! - **`remote.add` e `remote.remove` entrano nel diario** ([`JournalEntry::remote_add`],
-//!   [`JournalEntry::remote_remove`]): la voce tiene il remoto ([`RemoteSnapshot`]:
-//!   configurazione, branch remoti, upstream che lo usano); undo e redo lo tolgono o lo
-//!   rimettono, solo se nel frattempo non è cambiato o non è stato ricreato.
-//! - **`stash.push` e `stash.drop` entrano nel diario** ([`JournalEntry::stash_push`],
-//!   [`JournalEntry::stash_drop`], con lo stash in [`JournalEntry::stash`]): l'undo di un push è
-//!   il `pop` di quello stash (stessa HEAD, stash ancora nell'elenco), il redo un altro push con
-//!   gli stessi parametri; l'undo di un drop rimette lo stash in cima all'elenco
-//!   (`git stash store`), il redo lo elimina di nuovo. `stash.apply` e `stash.pop` no: cambiano
-//!   solo indice e worktree, e lo stash applicato resta nell'elenco o in un backup (vedi
+//! - **In memory, per open repo.** The journal lives in the [`Session`](crate::Session) and is
+//!   reset when a repo is opened (even the same one); it is not saved to disk. The CLIs run
+//!   one session per invocation: several `--cmd` of the same invocation share the
+//!   journal, different invocations do not. Persisting it (e.g. in `.git/project/journal`) would mean
+//!   handling several app instances on the same repo and entries written by different versions; it is not
+//!   needed to avoid losing data: undone commits stay in backup refs and every
+//!   move is in git's reflog (`project: undo ...`).
+//! - **`worktree.discard` enters the journal** even though it moves no refs: the entry has the worktree
+//!   backup ([`JournalEntry::worktree`], the `git stash create` commit) and `edit.undo` puts
+//!   the files back as they were ([`GitBackend::restore_worktree`]), only if in the meantime they have not
+//!   changed; `edit.redo` discards them again, only if they are still as the undo left them.
+//! - **Branches.** `branch.create` and `branch.delete` are undone by moving the ref (deleted or
+//!   recreated on the previous commit, only if nobody touched it). `branch.checkout` and
+//!   `branch.rename`, instead, are undone with another checkout ([`GitBackend::checkout`]: never
+//!   forced, refused if it would overwrite changes) and another rename
+//!   ([`GitBackend::rename_branch`]), which also update worktree, reflog and configuration.
+//! - **`remote.pull` enters the journal** when it moves the branch ([`JournalEntry::pull`]): for the
+//!   active branch undo and redo go through [`GitBackend::reset_branch`] (like `git reset --keep`:
+//!   they update index and worktree, refuse if a file to restore has local changes), for
+//!   another branch they only move the ref. The fetch and the push do not.
+//! - **`merge.start` and `merge.continue` enter the journal** when the merge concludes
+//!   ([`JournalEntry::merge`]): undo and redo like the pull of the active branch. A merge stopped on a
+//!   conflict does not: the branch has not moved, and while the merge is in progress undo and redo are
+//!   refused; neither does `merge.abort` (recovery is its index and worktree backup).
+//! - **`remote.add` and `remote.remove` enter the journal** ([`JournalEntry::remote_add`],
+//!   [`JournalEntry::remote_remove`]): the entry holds the remote ([`RemoteSnapshot`]:
+//!   configuration, remote-tracking branches, upstreams that use it); undo and redo remove or
+//!   put it back, only if in the meantime it has not changed or been recreated.
+//! - **`stash.push` and `stash.drop` enter the journal** ([`JournalEntry::stash_push`],
+//!   [`JournalEntry::stash_drop`], with the stash in [`JournalEntry::stash`]): the undo of a push is
+//!   the `pop` of that stash (same HEAD, stash still in the list), the redo another push with
+//!   the same parameters; the undo of a drop puts the stash back on top of the list
+//!   (`git stash store`), the redo drops it again. `stash.apply` and `stash.pop` do not: they change
+//!   only index and worktree, and the applied stash stays in the list or in a backup (see
 //!   [`StashRecord`]).
-//! - **Stage e unstage non entrano nel diario**: non spostano ref. Il loro recupero è il backup
-//!   dell'indice (§7). Nemmeno una nuova voce del genere svuota il redo.
-//! - **Undo di un commit = `git reset --soft`.** Si sposta solo il ref: indice e worktree non si
-//!   toccano, quindi le modifiche del commit annullato ricompaiono in stage rispetto al nuovo
-//!   HEAD (e `edit.redo` rifà lo stesso commit, che esiste ancora). Il primo commit di un
-//!   branch si annulla cancellando il branch: HEAD resta sul branch, che torna senza commit.
-//! - Un commit che dopo l'undo non sarebbe più raggiungibile da nessun ref si salva prima in
-//!   `refs/project/backup/undo-...` (§7); se il backup non riesce l'undo non si fa.
-//! - Il diario tiene al massimo [`Journal::MAX_ENTRIES`] voci: le più vecchie escono.
+//! - **Stage and unstage do not enter the journal**: they move no refs. Their recovery is the index
+//!   backup (§7). Nor does such a new entry empty the redo.
+//! - **Undo of a commit = `git reset --soft`.** Only the ref moves: index and worktree are not
+//!   touched, so the changes of the undone commit reappear staged against the new
+//!   HEAD (and `edit.redo` redoes the same commit, which still exists). The first commit of a
+//!   branch is undone by deleting the branch: HEAD stays on the branch, which goes back to having no commits.
+//! - A commit that after the undo would no longer be reachable from any ref is first saved in
+//!   `refs/project/backup/undo-...` (§7); if the backup fails the undo is not done.
+//! - The journal keeps at most [`Journal::MAX_ENTRIES`] entries: the oldest drop out.
 
 use crate::git::short;
 
-/// I comandi le cui voci spostano il branch di HEAD con indice e worktree
+/// The commands whose entries move the HEAD branch with index and worktree
 /// ([`JournalEntry::moves_worktree`]).
 const WORKTREE_COMMANDS: &[&str] = &[
     "remote.pull",
@@ -69,15 +69,15 @@ const WORKTREE_COMMANDS: &[&str] = &[
 ];
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
-    RefMove, RefRestore, RemoteSnapshot, RestoreOutcome, StashDrop, StashEntry, StashPush,
+    Message, RefMove, RefRestore, RemoteSnapshot, RestoreOutcome, StashDrop, StashEntry, StashPush,
     StashRecord, WorktreeBackup, WorktreeRestore, branch_short, check_no_operation,
     discard_description, find_stash, pop_stash, remove_remote, restore_remote,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
-/// Un ref spostato da un'operazione: nome completo, valore prima e dopo (`None` = il ref non
-/// esisteva / è stato cancellato).
+/// A ref moved by an operation: full name, value before and after (`None` = the ref did not
+/// exist / was deleted).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RefChange {
     pub name: String,
@@ -85,62 +85,63 @@ pub struct RefChange {
     pub after: Option<Oid>,
 }
 
-/// HEAD prima e dopo un'operazione.
+/// HEAD before and after an operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeadChange {
     pub before: HeadState,
     pub after: HeadState,
 }
 
-/// Una voce del diario: un comando che ha spostato ref.
+/// A journal entry: a command that moved refs.
 ///
-/// JSON: `{"id": n, "command": "commit.create", "description": "Commit a0744b4 «...»",
+/// JSON: `{"id": n, "command": "commit.create", "description": "Commit a0744b4 \"...\"",
 /// "head": {"before": HeadState, "after": HeadState}, "refs": [{"name", "before", "after"}],
 /// "backup": string | null, "undo_backups": [string], "worktree": WorktreeBackup | null}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEntry {
-    /// Progressivo nella sessione (dal primo repo aperto), per riconoscere la voce.
+    /// Sequential in the session (from the first open repo), to recognize the entry.
     pub id: u64,
-    /// L'id del comando che l'ha prodotta (es. `commit.create`).
+    /// The id of the command that produced it (e.g. `commit.create`).
     pub command: String,
-    /// Descrizione per le persone, es. `Commit a0744b4 «Aggiorna README»`.
-    pub description: String,
+    /// Description for people, e.g. `Commit a0744b4 “Update README”`: in JSON a
+    /// [`Message`] (`{"text", "key", "args"}`), which the UI shows in its language.
+    pub description: Message,
     pub head: HeadChange,
-    /// I ref spostati (per un commit su un branch, il branch; con HEAD staccata nessuno).
+    /// The refs moved (for a commit on a branch, the branch; with detached HEAD none).
     pub refs: Vec<RefChange>,
-    /// Il backup salvato dall'operazione stessa (es. il commit riscritto da `amend`).
+    /// The backup saved by the operation itself (e.g. the commit rewritten by `amend`).
     pub backup: Option<String>,
-    /// I ref di backup creati da undo e redo di questa voce per i commit che altrimenti non
-    /// sarebbero più raggiungibili.
+    /// The backup refs created by undo and redo of this entry for commits that would otherwise no
+    /// longer be reachable.
     #[serde(default)]
     pub undo_backups: Vec<String>,
-    /// Solo per `worktree.discard`: il backup del worktree (commit di `git stash create`) e i
-    /// file scartati. Con questo campo undo e redo rimettono i file, non spostano ref.
+    /// Only for `worktree.discard`: the worktree backup (`git stash create` commit) and the
+    /// discarded files. With this field undo and redo put the files back, they do not move refs.
     #[serde(default)]
     pub worktree: Option<WorktreeBackup>,
-    /// Solo per `branch.delete`: la configurazione `branch.<nome>.*` tolta con il branch, che
-    /// l'undo riscrive (se nel frattempo il repo non ne ha una nuova) e il redo toglie di nuovo.
+    /// Only for `branch.delete`: the `branch.<name>.*` configuration removed with the branch, which
+    /// undo rewrites (if in the meantime the repo has no new one) and redo removes again.
     #[serde(default)]
     pub branch_config: Vec<ConfigEntry>,
-    /// Solo per `remote.add` e `remote.remove`: il remoto com'era dopo l'aggiunta / prima
-    /// della rimozione (configurazione, branch remoti, upstream che lo usano). Undo e redo lo
-    /// tolgono o lo rimettono ([`remove_remote`], [`restore_remote`]), solo se nel frattempo non
-    /// è cambiato / non è stato ricreato. Nel JSON gli URL sono mascherati, quindi non si
-    /// rilegge dal JSON (`skip_deserializing`). Dopo un undo che ha saltato degli upstream
-    /// (reimpostati altrove) la voce tiene solo quello che è stato rimesso.
+    /// Only for `remote.add` and `remote.remove`: the remote as it was after the addition / before
+    /// the removal (configuration, remote-tracking branches, upstreams that use it). Undo and redo remove
+    /// or put it back ([`remove_remote`], [`restore_remote`]), only if in the meantime it has not
+    /// changed / been recreated. In the JSON the URLs are masked, so it is not
+    /// read back from the JSON (`skip_deserializing`). After an undo that skipped some upstreams
+    /// (set elsewhere) the entry keeps only what was put back.
     #[serde(default, skip_deserializing)]
     pub remote: Option<RemoteSnapshot>,
-    /// Solo per `stash.push` e `stash.drop`: lo stash (id, messaggio, base e, per il push, i
-    /// parametri). Undo e redo lo rimettono o lo tolgono dall'elenco ([`StashRecord`]); dopo il
-    /// redo di un push la voce ha l'id dello stash nuovo.
+    /// Only for `stash.push` and `stash.drop`: the stash (id, message, base and, for the push, the
+    /// parameters). Undo and redo put it back or remove it from the list ([`StashRecord`]); after the
+    /// redo of a push the entry has the id of the new stash.
     #[serde(default)]
     pub stash: Option<StashRecord>,
 }
 
 impl JournalEntry {
-    /// La voce di un `commit.create` riuscito; `None` se non ha spostato niente (un `amend` che
-    /// ha prodotto lo stesso commit) o se il risultato non è coerente (HEAD staccata senza
-    /// commit prima).
+    /// The entry of a successful `commit.create`; `None` if it moved nothing (an `amend` that
+    /// produced the same commit) or if the result is not coherent (detached HEAD without
+    /// a previous commit).
     pub fn commit(outcome: &CommitOutcome, amend: bool) -> Option<Self> {
         let new = outcome.commit.id;
         if outcome.previous == Some(new) {
@@ -168,8 +169,13 @@ impl JournalEntry {
         };
         let summary = &outcome.commit.summary;
         let description = match (amend, outcome.previous) {
-            (true, Some(old)) => format!("Amend {} «{summary}» (era {})", short(&new), short(&old)),
-            _ => format!("Commit {} «{summary}»", short(&new)),
+            (true, Some(old)) => msg!(
+                "engine-journal-amend",
+                id = short(&new),
+                summary = summary,
+                old = short(&old)
+            ),
+            _ => msg!("engine-journal-commit", id = short(&new), summary = summary),
         };
         Some(Self {
             id: 0,
@@ -186,7 +192,7 @@ impl JournalEntry {
         })
     }
 
-    /// La voce di un `worktree.discard` riuscito, con HEAD com'era (non si sposta) e il backup.
+    /// The entry of a successful `worktree.discard`, with HEAD as it was (it does not move) and the backup.
     pub fn discard(outcome: &DiscardOutcome, head: HeadState) -> Self {
         Self {
             id: 0,
@@ -210,16 +216,16 @@ impl JournalEntry {
         }
     }
 
-    /// La voce di un `branch.create` riuscito: il branch `branch` (nome completo) creato su
-    /// `target`, HEAD com'era. L'undo lo elimina (solo se vale ancora `target`), il redo lo
-    /// ricrea (solo se non esiste).
+    /// The entry of a successful `branch.create`: the branch `branch` (full name) created on
+    /// `target`, HEAD as it was. Undo deletes it (only if `target` still holds), redo
+    /// recreates it (only if it does not exist).
     pub fn branch_create(branch: &str, target: Oid, head: HeadState) -> Self {
         Self::branch_entry(
             "branch.create",
-            format!(
-                "Crea branch `{}` su {}",
-                branch_short(branch),
-                short(&target)
+            msg!(
+                "engine-journal-branch-create",
+                name = branch_short(branch),
+                id = short(&target)
             ),
             HeadChange {
                 before: head.clone(),
@@ -234,10 +240,10 @@ impl JournalEntry {
         )
     }
 
-    /// La voce di un `branch.delete` riuscito: il branch `branch` (nome completo) che valeva
-    /// `target`, con il ref di backup. L'undo lo ricrea su `target` (solo se nel frattempo
-    /// nessuno ha creato un branch con lo stesso nome), il redo lo elimina di nuovo (solo se
-    /// vale ancora `target`).
+    /// The entry of a successful `branch.delete`: the branch `branch` (full name) that held
+    /// `target`, with the backup ref. Undo recreates it on `target` (only if in the meantime
+    /// nobody created a branch with the same name), redo deletes it again (only if it
+    /// still holds `target`).
     pub fn branch_delete(
         branch: &str,
         target: Oid,
@@ -247,10 +253,10 @@ impl JournalEntry {
     ) -> Self {
         let mut entry = Self::branch_entry(
             "branch.delete",
-            format!(
-                "Elimina branch `{}` (era {})",
-                branch_short(branch),
-                short(&target)
+            msg!(
+                "engine-journal-branch-delete",
+                name = branch_short(branch),
+                id = short(&target)
             ),
             HeadChange {
                 before: head.clone(),
@@ -267,16 +273,16 @@ impl JournalEntry {
         entry
     }
 
-    /// La voce di un `branch.rename` riuscito: `from` diventato `to` (nomi completi) su
-    /// `target`; HEAD prima e dopo (cambia se era il branch di HEAD). Undo e redo rinominano
-    /// di nuovo ([`GitBackend::rename_branch`]), così reflog e configurazione seguono il branch.
+    /// The entry of a successful `branch.rename`: `from` became `to` (full names) on
+    /// `target`; HEAD before and after (changes if it was the HEAD branch). Undo and redo rename
+    /// again ([`GitBackend::rename_branch`]), so reflog and configuration follow the branch.
     pub fn branch_rename(from: &str, to: &str, target: Oid, head: HeadChange) -> Self {
         Self::branch_entry(
             "branch.rename",
-            format!(
-                "Rinomina branch `{}` in `{}`",
-                branch_short(from),
-                branch_short(to)
+            msg!(
+                "engine-journal-branch-rename",
+                from = branch_short(from),
+                to = branch_short(to)
             ),
             head,
             vec![
@@ -295,29 +301,33 @@ impl JournalEntry {
         )
     }
 
-    /// La voce di un `branch.checkout` riuscito: HEAD da `before` a `after`, nessun ref
-    /// spostato. Undo e redo rifanno un checkout sicuro ([`GitBackend::checkout`]), che non
-    /// sovrascrive mai modifiche locali.
+    /// The entry of a successful `branch.checkout`: HEAD from `before` to `after`, no ref
+    /// moved. Undo and redo redo a safe checkout ([`GitBackend::checkout`]), which never
+    /// overwrites local changes.
     pub fn checkout(before: HeadState, after: HeadState) -> Self {
         let name = |h: &HeadState| match h {
-            HeadState::Branch(b) => format!("`{}`", branch_short(b)),
-            HeadState::Detached(oid) => format!("{} (HEAD staccata)", short(oid)),
+            HeadState::Branch(b) => msg!("engine-journal-head-branch", name = branch_short(b)),
+            HeadState::Detached(oid) => msg!("engine-journal-head-detached", id = short(oid)),
         };
         Self::branch_entry(
             "branch.checkout",
-            format!("Checkout di {} (da {})", name(&after), name(&before)),
+            msg!(
+                "engine-journal-checkout",
+                after = name(&after),
+                before = name(&before)
+            ),
             HeadChange { before, after },
             Vec::new(),
             None,
         )
     }
 
-    /// La voce di un `remote.pull` riuscito che ha spostato il branch `branch` (nome completo)
-    /// da `before` ad `after`; `head` è HEAD (uguale prima e dopo: il branch stesso se era il
-    /// branch attivo), `strategy` `fast_forward`/`merge`/`rebase`, `upstream` il branch remoto
-    /// (nome breve), `backup` il ref del branch prima del pull. Undo e redo del branch attivo
-    /// passano da [`GitBackend::reset_branch`] (aggiornano anche indice e worktree, come
-    /// `git reset --keep`); di un altro branch da [`GitBackend::restore_refs`].
+    /// The entry of a successful `remote.pull` that moved the branch `branch` (full name)
+    /// from `before` to `after`; `head` is HEAD (same before and after: the branch itself if it was the
+    /// active branch), `strategy` `fast_forward`/`merge`/`rebase`, `upstream` the remote-tracking branch
+    /// (short name), `backup` the ref of the branch before the pull. Undo and redo of the active branch
+    /// go through [`GitBackend::reset_branch`] (they also update index and worktree, like
+    /// `git reset --keep`); of another branch through [`GitBackend::restore_refs`].
     pub fn pull(
         branch: &str,
         before: Oid,
@@ -328,17 +338,18 @@ impl JournalEntry {
         backup: String,
     ) -> Self {
         let how = match strategy {
-            "fast_forward" => "fast-forward".to_owned(),
-            "rebase" => format!("rebase su {upstream}"),
-            _ => format!("merge di {upstream}"),
+            "fast_forward" => msg!("engine-journal-pull-ff"),
+            "rebase" => msg!("engine-journal-pull-rebase", upstream = upstream),
+            _ => msg!("engine-journal-pull-merge", upstream = upstream),
         };
         Self::branch_entry(
             "remote.pull",
-            format!(
-                "Pull di `{}` ({how}: da {} a {})",
-                branch_short(branch),
-                short(&before),
-                short(&after)
+            msg!(
+                "engine-journal-pull",
+                branch = branch_short(branch),
+                how = how,
+                before = short(&before),
+                after = short(&after)
             ),
             HeadChange {
                 before: head.clone(),
@@ -353,12 +364,12 @@ impl JournalEntry {
         )
     }
 
-    /// La voce di un merge concluso (`merge.start` riuscito, o `merge.continue`, `command`):
-    /// il branch di HEAD `branch` (nome completo) da `before` ad `after` (il commit di merge o
-    /// quello del fast-forward), HEAD uguale prima e dopo; `strategy` `fast_forward`/`merge`,
-    /// `source` il nome di quello che si è unito (`feature`, `origin/x`, un id), `backup` il ref
-    /// del branch prima del merge (se salvato). Undo e redo come per un pull del branch attivo:
-    /// [`GitBackend::reset_branch`] (come `git reset --keep`).
+    /// The entry of a concluded merge (successful `merge.start`, or `merge.continue`, `command`):
+    /// the HEAD branch `branch` (full name) from `before` to `after` (the merge commit or
+    /// the fast-forward one), HEAD same before and after; `strategy` `fast_forward`/`merge`,
+    /// `source` the name of what was merged (`feature`, `origin/x`, an id), `backup` the ref
+    /// of the branch before the merge (if saved). Undo and redo as for a pull of the active branch:
+    /// [`GitBackend::reset_branch`] (like `git reset --keep`).
     #[allow(clippy::too_many_arguments)]
     pub fn merge(
         command: &str,
@@ -370,17 +381,20 @@ impl JournalEntry {
         source: &str,
         backup: Option<String>,
     ) -> Self {
-        let how = match strategy {
-            "fast_forward" => "fast-forward",
-            _ => "commit di merge",
+        let strategy = if strategy == "fast_forward" {
+            "fast_forward"
+        } else {
+            "merge"
         };
         Self::branch_entry(
             command,
-            format!(
-                "Merge di {source} in `{}` ({how}: da {} a {})",
-                branch_short(branch),
-                short(&before),
-                short(&after)
+            msg!(
+                "engine-journal-merge",
+                source = source,
+                branch = branch_short(branch),
+                strategy = strategy,
+                before = short(&before),
+                after = short(&after)
             ),
             HeadChange {
                 before: head.clone(),
@@ -395,11 +409,11 @@ impl JournalEntry {
         )
     }
 
-    /// La voce di un cherry-pick o revert concluso (`commit.cherry_pick`, `commit.revert`,
-    /// `cherry_pick.continue`, `revert.continue`): il branch `branch` (nome completo) da
-    /// `before` ad `after` (un commit nuovo sopra `before`), HEAD uguale prima e dopo; `source`
-    /// il commit applicato o annullato, `backup` il ref del branch prima (se salvato). Undo e
-    /// redo come il merge: [`GitBackend::reset_branch`] (come `git reset --keep`).
+    /// The entry of a concluded cherry-pick or revert (`commit.cherry_pick`, `commit.revert`,
+    /// `cherry_pick.continue`, `revert.continue`): the branch `branch` (full name) from
+    /// `before` to `after` (a new commit on top of `before`), HEAD same before and after; `source`
+    /// the commit applied or undone, `backup` the ref of the branch before (if saved). Undo and
+    /// redo like the merge: [`GitBackend::reset_branch`] (like `git reset --keep`).
     #[allow(clippy::too_many_arguments)]
     pub fn pick(
         command: &str,
@@ -413,12 +427,16 @@ impl JournalEntry {
     ) -> Self {
         Self::branch_entry(
             command,
-            format!(
-                "{} di {source} su `{}` (da {} a {})",
-                kind.title(),
-                branch_short(branch),
-                short(&before),
-                short(&after)
+            msg!(
+                "engine-journal-pick",
+                kind = match kind {
+                    crate::PickKind::CherryPick => "cherry_pick",
+                    crate::PickKind::Revert => "revert",
+                },
+                source = source,
+                branch = branch_short(branch),
+                before = short(&before),
+                after = short(&after)
             ),
             HeadChange {
                 before: head.clone(),
@@ -433,8 +451,8 @@ impl JournalEntry {
         )
     }
 
-    /// Vero se la voce sposta il branch di HEAD con indice e worktree (un pull del branch
-    /// attivo, un merge, un cherry-pick o revert): undo e redo usano
+    /// True if the entry moves the HEAD branch with index and worktree (a pull of the active
+    /// branch, a merge, a cherry-pick or revert): undo and redo use
     /// [`GitBackend::reset_branch`].
     fn moves_worktree(&self) -> bool {
         WORKTREE_COMMANDS.contains(&self.command.as_str())
@@ -443,7 +461,7 @@ impl JournalEntry {
 
     fn branch_entry(
         command: &str,
-        description: String,
+        description: Message,
         head: HeadChange,
         refs: Vec<RefChange>,
         backup: Option<String>,
@@ -463,39 +481,36 @@ impl JournalEntry {
         }
     }
 
-    /// La voce di un `remote.add` riuscito: `snapshot` è il remoto subito dopo (con i branch
-    /// remoti del fetch, se fatto), `head` HEAD (non cambia). L'undo toglie configurazione e
-    /// branch remoti solo se sono ancora esattamente così (e nessun branch ha preso il remoto
-    /// come upstream); il redo li rimette solo se il remoto non c'è.
+    /// The entry of a successful `remote.add`: `snapshot` is the remote right after (with the
+    /// remote-tracking branches of the fetch, if done), `head` HEAD (does not change). Undo removes configuration and
+    /// remote-tracking branches only if they are still exactly like this (and no branch took the remote
+    /// as upstream); redo puts them back only if the remote does not exist.
     pub fn remote_add(snapshot: RemoteSnapshot, head: HeadState, fetched: bool) -> Self {
         let description = if fetched {
-            format!(
-                "Aggiungi remoto `{}` (con fetch: {} branch remoti)",
-                snapshot.name,
-                snapshot.refs.len()
+            msg!(
+                "engine-journal-remote-add-fetched",
+                name = snapshot.name,
+                n = snapshot.refs.len()
             )
         } else {
-            format!("Aggiungi remoto `{}`", snapshot.name)
+            msg!("engine-journal-remote-add", name = snapshot.name)
         };
         Self::remote_entry("remote.add", description, head, snapshot, false)
     }
 
-    /// La voce di un `remote.remove` riuscito: `snapshot` è il remoto com'era prima, `backup`
-    /// il primo ref di backup dei commit che restavano solo nei branch remoti (gli altri in
-    /// `undo_backups`). L'undo lo rimette (branch remoti, configurazione, upstream) solo se
-    /// nessuno ha ricreato un remoto con quel nome; il redo lo toglie di nuovo solo se è ancora
-    /// com'era.
+    /// The entry of a successful `remote.remove`: `snapshot` is the remote as it was before, `backup`
+    /// the first backup ref of the commits that remained only in remote-tracking branches (the others in
+    /// `undo_backups`). Undo puts it back (remote-tracking branches, configuration, upstream) only if
+    /// nobody recreated a remote with that name; redo removes it again only if it is still
+    /// as it was.
     pub fn remote_remove(snapshot: RemoteSnapshot, head: HeadState, backups: &[String]) -> Self {
         let upstreams = snapshot.upstream_branches().len();
-        let mut description = format!(
-            "Rimuovi remoto `{}` ({} branch remoti",
-            snapshot.name,
-            snapshot.refs.len()
+        let description = msg!(
+            "engine-journal-remote-remove",
+            name = snapshot.name,
+            n = snapshot.refs.len(),
+            upstreams = upstreams
         );
-        if upstreams > 0 {
-            description.push_str(&format!(", upstream di {upstreams} branch"));
-        }
-        description.push(')');
         let mut entry = Self::remote_entry("remote.remove", description, head, snapshot, true);
         entry.backup = backups.first().cloned();
         entry.undo_backups = backups.iter().skip(1).cloned().collect();
@@ -504,7 +519,7 @@ impl JournalEntry {
 
     fn remote_entry(
         command: &str,
-        description: String,
+        description: Message,
         head: HeadState,
         snapshot: RemoteSnapshot,
         removed: bool,
@@ -532,15 +547,15 @@ impl JournalEntry {
         entry
     }
 
-    /// La voce di un `stash.push` riuscito: lo stash creato (`stash`), HEAD (non cambia) e i
-    /// parametri, per il redo. Undo = `pop` dello stash con l'indice, redo = un altro push.
+    /// The entry of a successful `stash.push`: the stash created (`stash`), HEAD (does not change) and the
+    /// parameters, for the redo. Undo = `pop` of the stash with the index, redo = another push.
     pub fn stash_push(stash: &StashEntry, head: HeadState, request: StashPush) -> Self {
         let mut entry = Self::branch_entry(
             "stash.push",
-            format!(
-                "Metti da parte le modifiche (stash {} «{}»)",
-                short(&stash.id),
-                stash.message
+            msg!(
+                "engine-journal-stash-push",
+                id = short(&stash.id),
+                message = stash.message
             ),
             HeadChange {
                 before: head.clone(),
@@ -558,16 +573,16 @@ impl JournalEntry {
         entry
     }
 
-    /// La voce di uno `stash.drop` riuscito: lo stash eliminato, con il ref di backup che ne
-    /// tiene il commit. Undo = di nuovo nell'elenco, in cima (`git stash store`); redo = drop.
+    /// The entry of a successful `stash.drop`: the stash dropped, with the backup ref that
+    /// keeps its commit. Undo = back in the list, on top (`git stash store`); redo = drop.
     pub fn stash_drop(stash: &StashEntry, head: HeadState, backup: Option<String>) -> Self {
         let mut entry = Self::branch_entry(
             "stash.drop",
-            format!(
-                "Elimina {} ({} «{}»)",
-                stash.name,
-                short(&stash.id),
-                stash.message
+            msg!(
+                "engine-journal-stash-drop",
+                name = stash.name,
+                id = short(&stash.id),
+                message = stash.message
             ),
             HeadChange {
                 before: head.clone(),
@@ -585,9 +600,9 @@ impl JournalEntry {
         entry
     }
 
-    /// Undo e redo di `stash.push` e `stash.drop` (vedi [`StashRecord`]). Prima i controlli,
-    /// che senza scrivere niente danno [`EngineError::UndoConflict`] se lo stash o HEAD non
-    /// sono più come li ha lasciati l'operazione (o l'undo).
+    /// Undo and redo of `stash.push` and `stash.drop` (see [`StashRecord`]). Checks first,
+    /// which without writing anything give [`EngineError::UndoConflict`] if the stash or HEAD are
+    /// no longer as the operation (or the undo) left them.
     fn apply_stash(
         &mut self,
         repo: &mut dyn GitBackend,
@@ -595,12 +610,12 @@ impl JournalEntry {
     ) -> Result<RestoreOutcome, EngineError> {
         let command = if redo { "edit.redo" } else { "edit.undo" };
         let Some(record) = self.stash.clone() else {
-            return Err(EngineError::NotAllowed(format!(
-                "voce del diario non valida: `{}`, niente modificato",
-                self.description
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-undo-bad-entry",
+                description = self.description
             )));
         };
-        let conflict = |what: String| EngineError::UndoConflict {
+        let conflict = |what: Message| EngineError::UndoConflict {
             command,
             refs: vec![what],
         };
@@ -609,12 +624,13 @@ impl JournalEntry {
         if self.command == "stash.drop" {
             if redo {
                 if !present {
-                    return Err(conflict(format!(
-                        "lo stash {short_id} non è più nell'elenco"
+                    return Err(conflict(msg!(
+                        "engine-undo-stash-gone",
+                        short_id = short_id
                     )));
                 }
-                // Il backup del drop di solito c'è già; se non tiene più lo stash (tolto o
-                // spostato a mano), uno nuovo prima di eliminarlo.
+                // The drop's backup is usually already there; if it no longer holds the stash (removed or
+                // moved by hand), a new one before dropping it.
                 let kept = self.backup.as_deref().is_some_and(|b| {
                     repo.log(&LogQuery::page(0, 1).from_rev(b))
                         .ok()
@@ -632,16 +648,23 @@ impl JournalEntry {
                 });
             }
             if present {
-                return Err(conflict(format!("lo stash {short_id} è già nell'elenco")));
+                return Err(conflict(msg!(
+                    "engine-undo-stash-present",
+                    short_id = short_id
+                )));
             }
             repo.stash_store(&record.id, &record.message)?;
             return Ok(RestoreOutcome::default());
         }
 
-        // `stash.push`: la HEAD della voce, sul commit su cui lo stash è stato creato (così
-        // il `pop` dell'undo non può andare in conflitto e il redo mette da parte rispetto
-        // allo stesso commit).
-        check_no_operation(command, "cambierebbe gli stash", repo.status()?.operation)?;
+        // `stash.push`: the entry's HEAD, on the commit the stash was created on (so
+        // the undo's `pop` cannot conflict and the redo sets aside against
+        // the same commit).
+        check_no_operation(
+            command,
+            msg!("engine-busy-stash-undo"),
+            repo.status()?.operation,
+        )?;
         let head = repo.head()?;
         let state = HeadState::from_head(&head);
         let expected = if redo {
@@ -650,13 +673,22 @@ impl JournalEntry {
             &self.head.after
         };
         if state != *expected || head.target() != Some(record.base) {
-            return Err(conflict(format!(
-                "HEAD: doveva essere {expected} sul commit {}, ora è {state}{}",
-                short(&record.base),
-                head.target()
-                    .map(|t| format!(" sul commit {}", short(&t)))
-                    .unwrap_or_default()
-            )));
+            let base = short(&record.base);
+            return Err(conflict(match head.target() {
+                Some(t) => msg!(
+                    "engine-undo-stash-head",
+                    expected = expected,
+                    base = base,
+                    now = state,
+                    commit = short(&t)
+                ),
+                None => msg!(
+                    "engine-undo-stash-head-unborn",
+                    expected = expected,
+                    base = base,
+                    now = state
+                ),
+            }));
         }
         if redo {
             let push = record.push.clone().unwrap_or_default();
@@ -669,41 +701,37 @@ impl JournalEntry {
             return Ok(RestoreOutcome::default());
         }
         if !present {
-            return Err(conflict(format!(
-                "lo stash {short_id} non è più nell'elenco"
+            return Err(conflict(msg!(
+                "engine-undo-stash-gone",
+                short_id = short_id
             )));
         }
-        let popped = pop_stash(repo, command, record.id, true, Some("undo")).map_err(|e| match e {
-            // L'undo usa sempre `restore_index`: non può "riprovare senza".
-            EngineError::NotAllowed(m) if m.starts_with(crate::INDEX_NOT_RESTORED) => {
-                EngineError::NotAllowed(format!(
-                    "l'undo non può rimettere lo stash {short_id} con la divisione fra in stage e \
-                     no: l'indice attuale non è più quello da cui è partito (succede con un push \
-                     con `paths` quando anche altri file erano in stage: git mette nello stash \
-                     tutto l'indice). Niente modificato, la voce resta nel diario; per riavere le \
-                     modifiche, `stash.pop` senza `restore_index` (tutto torna fuori stage)"
-                ))
-            }
-            other => other,
-        })?;
+        let popped =
+            pop_stash(repo, command, record.id, true, Some("undo")).map_err(|e| match e {
+                // Undo always uses `restore_index`: it cannot "retry without".
+                EngineError::NotAllowed(m) if m.key() == crate::INDEX_NOT_RESTORED => {
+                    EngineError::NotAllowed(msg!("engine-undo-stash-index", short_id = short_id))
+                }
+                other => other,
+            })?;
         let applied = popped.applied;
         if let Some(e) = popped.drop_error {
-            return Err(EngineError::Git {
+            return Err(EngineError::GitWithReason {
                 command: "stash".to_owned(),
-                stderr: format!(
-                    "l'undo ha applicato lo stash {short_id} (le modifiche sono di nuovo nei \
-                     file) ma non è riuscito a toglierlo dall'elenco ({e}): non ripetere l'undo; \
-                     eliminare lo stash con `stash.drop`. La voce resta nel diario"
+                reason: msg!(
+                    "engine-undo-stash-not-dropped",
+                    short_id = short_id,
+                    error = e
                 ),
             });
         }
         let Some(dropped) = popped.dropped else {
-            return Err(EngineError::Git {
+            return Err(EngineError::GitWithReason {
                 command: "stash".to_owned(),
-                stderr: format!(
-                    "l'undo ha applicato lo stash {short_id} ma restano file in conflitto ({}): \
-                     lo stash resta nell'elenco; risolvere i conflitti con `index.stage`",
-                    applied.conflicts.join(", ")
+                reason: msg!(
+                    "engine-undo-stash-conflicts",
+                    short_id = short_id,
+                    files = applied.conflicts.join(", ")
                 ),
             });
         };
@@ -715,8 +743,8 @@ impl JournalEntry {
         })
     }
 
-    /// La richiesta al backend per annullare (`redo == false`) o rifare uno scarto; `None` se
-    /// la voce non è di `worktree.discard`.
+    /// The request to the backend to undo (`redo == false`) or redo a discard; `None` if
+    /// the entry is not a `worktree.discard`.
     pub fn worktree_request(&self, redo: bool) -> Option<WorktreeRestore> {
         let backup = self.worktree.as_ref()?;
         Some(WorktreeRestore {
@@ -728,22 +756,22 @@ impl JournalEntry {
         })
     }
 
-    /// Esegue undo o redo della voce sul backend: i file per uno scarto, i ref altrimenti.
+    /// Runs undo or redo of the entry on the backend: the files for a discard, the refs otherwise.
     ///
-    /// Per uno scarto HEAD deve essere quella registrata (`head.after` per l'undo,
-    /// `head.before` per il redo): i file si confrontano con l'indice, ma l'operazione
-    /// appartiene a quello stato del repo; con HEAD spostata (un checkout, un commit da
-    /// terminale) [`EngineError::UndoConflict`] e niente cambia.
+    /// For a discard HEAD must be the recorded one (`head.after` for the undo,
+    /// `head.before` for the redo): the files are compared with the index, but the operation
+    /// belongs to that state of the repo; with HEAD moved (a checkout, a commit from a
+    /// terminal) [`EngineError::UndoConflict`] and nothing changes.
     fn apply(
         &mut self,
         repo: &mut dyn GitBackend,
         redo: bool,
     ) -> Result<RestoreOutcome, EngineError> {
         if let Some(request) = self.worktree_request(redo) {
-            // Come per i ref: mai a metà di un merge, rebase... (riscriverebbe file del merge).
+            // As for the refs: never in the middle of a merge, rebase... (it would rewrite merge files).
             check_no_operation(
                 request.command,
-                "riscriverebbe file",
+                msg!("engine-busy-worktree"),
                 repo.status()?.operation,
             )?;
             let expected = if redo {
@@ -755,7 +783,7 @@ impl JournalEntry {
             if now != *expected {
                 return Err(EngineError::UndoConflict {
                     command: request.command,
-                    refs: vec![format!("HEAD: doveva essere {expected}, ora è {now}")],
+                    refs: vec![msg!("engine-head-changed", expected = expected, now = now)],
                 });
             }
             return repo.restore_worktree(&request);
@@ -770,12 +798,12 @@ impl JournalEntry {
         };
         match self.command.as_str() {
             "branch.checkout" => {
-                Self::check_unchanged(repo, &request, "cambierebbe branch")?;
+                Self::check_unchanged(repo, &request, msg!("engine-busy-checkout"))?;
                 repo.checkout(&request.head_target)
             }
             "branch.rename" => {
-                Self::check_unchanged(repo, &request, "rinominerebbe un branch")?;
-                // Da chi esiste ora (expected) a chi deve esistere dopo (target).
+                Self::check_unchanged(repo, &request, msg!("engine-busy-branch-rename"))?;
+                // From what exists now (expected) to what must exist afterwards (target).
                 let from = request.refs.iter().find(|r| r.target.is_none());
                 let to = request.refs.iter().find(|r| r.expected.is_none());
                 match (from, to) {
@@ -787,15 +815,15 @@ impl JournalEntry {
                         }),
                         Some(RefMove { name: to, .. }),
                     ) => repo.rename_branch(branch_short(from), branch_short(to), oid),
-                    _ => Err(EngineError::NotAllowed(format!(
-                        "voce del diario non valida: `{}`, niente modificato",
-                        self.description
+                    _ => Err(EngineError::NotAllowed(msg!(
+                        "engine-undo-bad-entry",
+                        description = self.description
                     ))),
                 }
             }
             "branch.delete" => {
                 let mut outcome = repo.restore_refs(&request)?;
-                // Il ref è già ricreato / eliminato: la configurazione dà solo avvisi.
+                // The ref is already recreated / deleted: the configuration only gives warnings.
                 if let Some(r) = self.refs.first() {
                     outcome.warnings.extend(repo.restore_branch_config(
                         branch_short(&r.name),
@@ -807,13 +835,13 @@ impl JournalEntry {
             }
             "remote.add" | "remote.remove" => {
                 let Some(snapshot) = self.remote.clone() else {
-                    return Err(EngineError::NotAllowed(format!(
-                        "voce del diario non valida: `{}`, niente modificato",
-                        self.description
+                    return Err(EngineError::NotAllowed(msg!(
+                        "engine-undo-bad-entry",
+                        description = self.description
                     )));
                 };
                 let dependents = self.command == "remote.remove";
-                // Undo di un'aggiunta e redo di una rimozione tolgono il remoto.
+                // Undo of an addition and redo of a removal remove the remote.
                 if redo == dependents {
                     remove_remote(repo, &snapshot, request.command, dependents, request.reflog)
                 } else {
@@ -824,8 +852,8 @@ impl JournalEntry {
                         dependents,
                         request.reflog,
                     )?;
-                    // Undo di una rimozione con upstream saltati: il redo deve confrontare (e
-                    // togliere) solo quello che è stato davvero rimesso.
+                    // Undo of a removal with skipped upstreams: the redo must compare (and
+                    // remove) only what was actually put back.
                     if dependents {
                         self.remote = Some(written);
                     }
@@ -833,21 +861,21 @@ impl JournalEntry {
                 }
             }
             _ if self.moves_worktree() => {
-                Self::check_unchanged(repo, &request, "sposterebbe il branch")?;
+                Self::check_unchanged(repo, &request, msg!("engine-busy-branch-move"))?;
                 repo.reset_branch(&request)
             }
             _ => repo.restore_refs(&request),
         }
     }
 
-    /// Per undo e redo di checkout e rinomina, che non passano da
-    /// [`GitBackend::restore_refs`]: gli stessi controlli ([`check_no_operation`], HEAD e i ref
-    /// come li ha lasciati l'operazione, altrimenti [`EngineError::UndoConflict`]) prima di
-    /// chiamare il backend, che ricontrolla i ref subito prima di scrivere.
+    /// For undo and redo of checkout and rename, which do not go through
+    /// [`GitBackend::restore_refs`]: the same checks ([`check_no_operation`], HEAD and the refs
+    /// as the operation left them, otherwise [`EngineError::UndoConflict`]) before
+    /// calling the backend, which re-checks the refs right before writing.
     fn check_unchanged(
         repo: &dyn GitBackend,
         request: &RefRestore,
-        what: &str,
+        what: Message,
     ) -> Result<(), EngineError> {
         check_no_operation(request.command, what, repo.status()?.operation)?;
         let refs = repo.refs()?;
@@ -865,7 +893,7 @@ impl JournalEntry {
         }
     }
 
-    /// La richiesta al backend per annullare la voce: da "dopo" a "prima".
+    /// The request to the backend to undo the entry: from "after" to "before".
     pub fn undo_request(&self) -> RefRestore {
         RefRestore {
             command: "edit.undo",
@@ -884,7 +912,7 @@ impl JournalEntry {
         }
     }
 
-    /// La richiesta al backend per rifare la voce annullata: da "prima" a "dopo".
+    /// The request to the backend to redo the undone entry: from "before" to "after".
     pub fn redo_request(&self) -> RefRestore {
         RefRestore {
             command: "edit.redo",
@@ -904,8 +932,8 @@ impl JournalEntry {
     }
 }
 
-/// Il diario di un repo aperto: le voci fatte (l'ultima è quella che `edit.undo` annulla) e
-/// quelle annullate (l'ultima è quella che `edit.redo` rifà).
+/// The journal of an open repo: the done entries (the last is the one `edit.undo` undoes) and
+/// the undone ones (the last is the one `edit.redo` redoes).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Journal {
     done: Vec<JournalEntry>,
@@ -914,16 +942,16 @@ pub struct Journal {
 }
 
 impl Journal {
-    /// Voci tenute al massimo (fatte e annullate insieme); le più vecchie escono.
+    /// Maximum entries kept (done and undone together); the oldest drop out.
     pub const MAX_ENTRIES: usize = 100;
 
-    /// Diario vuoto.
+    /// Empty journal.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Diario vuoto che numera le voci da `next_id` (la sessione continua la numerazione
-    /// quando apre un altro repo, così un id non indica mai due voci diverse).
+    /// Empty journal that numbers entries from `next_id` (the session continues the numbering
+    /// when it opens another repo, so an id never refers to two different entries).
     pub(crate) fn starting_at(next_id: u64) -> Self {
         Self {
             next_id,
@@ -935,9 +963,9 @@ impl Journal {
         self.next_id
     }
 
-    /// Registra una nuova operazione e svuota le voci annullate (non si possono più rifare:
-    /// partivano da uno stato che la nuova operazione ha cambiato). Restituisce l'id dato alla
-    /// voce.
+    /// Records a new operation and empties the undone entries (they can no longer be redone:
+    /// they started from a state the new operation changed). Returns the id given to the
+    /// entry.
     pub fn record(&mut self, mut entry: JournalEntry) -> u64 {
         self.next_id += 1;
         entry.id = self.next_id;
@@ -950,12 +978,12 @@ impl Journal {
         self.next_id
     }
 
-    /// Le voci fatte, dalla più vecchia; l'ultima è quella che `edit.undo` annulla.
+    /// The done entries, from the oldest; the last is the one `edit.undo` undoes.
     pub fn done(&self) -> &[JournalEntry] {
         &self.done
     }
 
-    /// Le voci annullate; l'ultima è quella che `edit.redo` rifà.
+    /// The undone entries; the last is the one `edit.redo` redoes.
     pub fn undone(&self) -> &[JournalEntry] {
         &self.undone
     }
@@ -968,40 +996,39 @@ impl Journal {
         !self.undone.is_empty()
     }
 
-    /// Annulla l'ultima voce fatta: chiede al backend di riportare i ref ai valori "prima"
-    /// ([`JournalEntry::undo_request`]) o, per uno scarto, di rimettere i file del backup
-    /// ([`JournalEntry::worktree_request`]). Se riesce la voce passa fra quelle annullate, con i
-    /// ref di backup eventualmente creati in `undo_backups`; se no (anche per
-    /// [`EngineError::UndoConflict`]) resta dov'è e niente è cambiato. Senza voci,
-    /// [`EngineError::NotAllowed`]. Restituisce la voce e l'esito (backup creati ora, avvisi).
+    /// Undoes the last done entry: asks the backend to bring the refs back to the "before" values
+    /// ([`JournalEntry::undo_request`]) or, for a discard, to put the backup files back
+    /// ([`JournalEntry::worktree_request`]). If it succeeds the entry moves among the undone ones, with any
+    /// backup refs created in `undo_backups`; if not (also for
+    /// [`EngineError::UndoConflict`]) it stays where it is and nothing has changed. Without entries,
+    /// [`EngineError::NotAllowed`]. Returns the entry and the outcome (backups created now, warnings).
     pub fn undo(
         &mut self,
         repo: &mut dyn GitBackend,
     ) -> Result<(JournalEntry, RestoreOutcome), EngineError> {
-        let entry = self.done.last_mut().ok_or_else(|| {
-            EngineError::NotAllowed(
-                "niente da annullare: nessuna operazione sui ref nel diario di questa sessione"
-                    .to_owned(),
-            )
-        })?;
+        let entry = self
+            .done
+            .last_mut()
+            .ok_or_else(|| EngineError::NotAllowed(msg!("engine-undo-nothing")))?;
         let outcome = entry.apply(repo, false)?;
-        let mut entry = self.done.pop().expect("c'è almeno una voce");
+        let mut entry = self.done.pop().expect("there is at least one entry");
         entry.undo_backups.extend(outcome.backups.iter().cloned());
         self.undone.push(entry.clone());
         Ok((entry, outcome))
     }
 
-    /// Rifà l'ultima voce annullata, come [`Journal::undo`] al contrario
-    /// ([`JournalEntry::redo_request`]): i ref devono valere ancora "prima".
+    /// Redoes the last undone entry, like [`Journal::undo`] in reverse
+    /// ([`JournalEntry::redo_request`]): the refs must still hold "before".
     pub fn redo(
         &mut self,
         repo: &mut dyn GitBackend,
     ) -> Result<(JournalEntry, RestoreOutcome), EngineError> {
-        let entry = self.undone.last_mut().ok_or_else(|| {
-            EngineError::NotAllowed("niente da rifare: nessuna operazione annullata".to_owned())
-        })?;
+        let entry = self
+            .undone
+            .last_mut()
+            .ok_or_else(|| EngineError::NotAllowed(msg!("engine-undo-nothing-to-redo")))?;
         let outcome = entry.apply(repo, true)?;
-        let mut entry = self.undone.pop().expect("c'è almeno una voce");
+        let mut entry = self.undone.pop().expect("there is at least one entry");
         entry.undo_backups.extend(outcome.backups.iter().cloned());
         self.done.push(entry.clone());
         Ok((entry, outcome))
@@ -1017,7 +1044,7 @@ mod tests {
         JournalEntry {
             id: 0,
             command: "commit.create".to_owned(),
-            description: format!("voce {n}"),
+            description: Message::plain(format!("entry {n}")),
             head: HeadChange {
                 before: HeadState::Branch("refs/heads/main".to_owned()),
                 after: HeadState::Branch("refs/heads/main".to_owned()),
@@ -1041,12 +1068,12 @@ mod tests {
         j.undone.push(entry(9));
         assert!(j.can_redo());
         j.record(entry(3));
-        assert!(!j.can_redo(), "una nuova operazione svuota il redo");
+        assert!(!j.can_redo(), "a new operation empties the redo");
         for n in 0..Journal::MAX_ENTRIES as u64 {
             j.record(entry(10 + n));
         }
         assert_eq!(j.done().len(), Journal::MAX_ENTRIES);
-        assert_eq!(j.done()[0].description, "voce 10");
+        assert_eq!(j.done()[0].description.to_string(), "entry 10");
         assert_eq!(Journal::starting_at(7).record(entry(1)), 8);
     }
 
@@ -1057,8 +1084,8 @@ mod tests {
         let e = JournalEntry::commit(&out, false).unwrap();
         assert_eq!(e.command, "commit.create");
         assert_eq!(
-            e.description,
-            format!("Commit {} «Aggiorna»", short(&out.commit.id))
+            e.description.to_string(),
+            format!("Commit {} “Aggiorna”", short(&out.commit.id))
         );
         assert_eq!(
             e.refs,
@@ -1076,7 +1103,7 @@ mod tests {
         assert_eq!(redo.refs[0].expected, out.previous);
         assert_eq!(redo.command, "edit.redo");
 
-        // `amend`: descrizione con il commit di prima, e il backup.
+        // `amend`: description with the previous commit, and the backup.
         let amend = repo
             .commit(&CommitRequest::new("Aggiorna meglio").amend())
             .unwrap();
@@ -1085,12 +1112,12 @@ mod tests {
         assert!(e.description.contains(&short(&out.commit.id)));
         assert_eq!(e.backup, amend.backup);
 
-        // Un `amend` che non cambia niente non va nel diario.
+        // An `amend` that changes nothing does not go into the journal.
         let mut same = amend.clone();
         same.previous = Some(same.commit.id);
         assert_eq!(JournalEntry::commit(&same, true), None);
 
-        // HEAD staccata: si sposta HEAD, nessun ref.
+        // Detached HEAD: HEAD moves, no ref.
         let mut detached = out.clone();
         detached.branch = None;
         let e = JournalEntry::commit(&detached, false).unwrap();
@@ -1108,7 +1135,7 @@ mod tests {
             serde_json::json!({
                 "id": 0,
                 "command": "commit.create",
-                "description": "voce 1",
+                "description": { "text": "entry 1", "key": "engine-other", "args": { "text": "entry 1" } },
                 "head": {
                     "before": { "branch": "refs/heads/main" },
                     "after": { "branch": "refs/heads/main" }

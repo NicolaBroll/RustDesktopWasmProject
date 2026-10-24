@@ -1,14 +1,14 @@
-//! Pull e push sul [`MemoryBackend`] (`remote.pull`, `remote.push`, S26), con gli stessi
-//! controlli del `CliBackend`.
+//! Pull and push on the [`MemoryBackend`] (`remote.pull`, `remote.push`, S26), with the same
+//! checks as the `CliBackend`.
 //!
-//! Il merge in memoria lavora file per file (un file cambiato in modo diverso dai due lati è un
-//! conflitto, anche se git saprebbe unire le righe); il rebase riapplica i commit locali senza
-//! merge, dal più vecchio, saltando quelli che non cambiano più niente. Un conflitto del merge lo
-//! lascia in corso come `merge.start` ([`MemoryBackend::merge_three_way`]); un conflitto del
-//! rebase non cambia niente (come il `CliBackend`, che annulla il rebase). L'undo di un pull del branch
-//! attivo ([`MemoryBackend::reset_keep`]) aggiorna indice e worktree come il checkout, con gli
-//! stessi rifiuti. Il push copia i commit nel remoto in memoria e aggiorna il branch remoto
-//! locale; [`MemoryBackend::fail_pre_push`] simula un hook `pre-push` che rifiuta.
+//! The in-memory merge works file by file (a file changed differently on the two sides is a
+//! conflict, even if git could merge the lines); the rebase replays the local commits without
+//! merge, oldest first, skipping those that no longer change anything. A merge conflict is
+//! left in progress like `merge.start` ([`MemoryBackend::merge_three_way`]); a rebase
+//! conflict changes nothing (like the `CliBackend`, which aborts the rebase). The undo of a pull of the active
+//! branch ([`MemoryBackend::reset_keep`]) updates index and worktree like the checkout, with the
+//! same refusals. The push copies the commits into the in-memory remote and updates the local
+//! remote branch; [`MemoryBackend::fail_pre_push`] simulates a `pre-push` hook that rejects.
 
 use super::commit::{Tree, tree_changes};
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES, RefEntry};
@@ -21,8 +21,8 @@ use crate::{EngineError, FetchFailure, GitBackend, JobContext, Progress};
 use project_domain::{Commit, Oid, Signature};
 use std::collections::BTreeSet;
 
-/// Il merge a tre vie di `ours` e `theirs` da `base`, file per file; i file in conflitto se
-/// cambiati in modo diverso dai due lati.
+/// The three-way merge of `ours` and `theirs` from `base`, file by file; the conflicted files if
+/// changed differently on the two sides.
 fn merge_trees(base: &Tree, ours: &Tree, theirs: &Tree) -> Result<Tree, Vec<String>> {
     let mut paths: Vec<_> = base
         .keys()
@@ -55,13 +55,13 @@ fn merge_trees(base: &Tree, ours: &Tree, theirs: &Tree) -> Result<Tree, Vec<Stri
 }
 
 impl MemoryBackend {
-    /// La configurazione di pull (`pull.rebase`, `pull.ff`) per tutti i branch.
+    /// The pull configuration (`pull.rebase`, `pull.ff`) for all branches.
     pub fn set_pull_settings(&mut self, settings: PullSettings) {
         self.pull_settings = settings;
     }
 
-    /// I valori della chiave di configurazione `key` (es. `remote.pushDefault`,
-    /// `branch.<nome>.pushRemote`, `remote.<nome>.mirror`); vuoto la toglie.
+    /// The values of the configuration key `key` (e.g. `remote.pushDefault`,
+    /// `branch.<name>.pushRemote`, `remote.<name>.mirror`); empty removes it.
     pub fn set_config(&mut self, key: &str, values: &[&str]) {
         if values.is_empty() {
             self.config.remove(key);
@@ -73,10 +73,10 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::config_values`]: le chiavi impostate con [`MemoryBackend::set_config`];
-    /// `remote.<nome>.url` è l'URL del remoto ([`MemoryBackend::add_remote`]) e
-    /// `remote.<nome>.fetch` di un remoto senza valori ha il refspec di default
-    /// (`+refs/heads/*:refs/remotes/<nome>/*`).
+    /// [`GitBackend::config_values`]: the keys set with [`MemoryBackend::set_config`];
+    /// `remote.<name>.url` is the URL of the remote ([`MemoryBackend::add_remote`]) and
+    /// `remote.<name>.fetch` of a remote without values has the default refspec
+    /// (`+refs/heads/*:refs/remotes/<name>/*`).
     pub(super) fn config_of(&self, key: &str) -> Vec<String> {
         if let Some(values) = self.config.get(key) {
             return values.clone();
@@ -95,7 +95,7 @@ impl MemoryBackend {
             .unwrap_or_default()
     }
 
-    /// Un hook `pre-push` che rifiuta ogni push con `message` (`None`: nessun hook).
+    /// A `pre-push` hook that rejects every push with `message` (`None`: no hook).
     pub fn fail_pre_push(&mut self, message: Option<&str>) {
         self.pre_push_failure = message.map(str::to_owned);
     }
@@ -103,7 +103,7 @@ impl MemoryBackend {
     pub(super) fn upstream_config(&self, branch: &str) -> Option<UpstreamConfig> {
         let tracking = self.upstreams.get(&format!("{HEADS}{branch}"))?;
         let rest = tracking.strip_prefix(REMOTES)?;
-        // Il remoto con il nome più lungo che è un prefisso (`fork/a` prima di `fork`).
+        // The remote with the longest name that is a prefix (`fork/a` before `fork`).
         let remote = self
             .remotes
             .keys()
@@ -141,7 +141,7 @@ impl MemoryBackend {
             .collect())
     }
 
-    /// Il miglior antenato comune di `a` e `b` (il più recente, se sono più d'uno).
+    /// The best common ancestor of `a` and `b` (the most recent, if there are several).
     pub(super) fn merge_base(&self, a: Oid, b: Oid) -> Option<Oid> {
         let common: BTreeSet<Oid> = self
             .reachable(a)
@@ -159,8 +159,8 @@ impl MemoryBackend {
             .max_by_key(|c| (self.commits[c].committer.time, *c))
     }
 
-    /// Un commit nuovo con l'albero `tree` (i file cambiati sono calcolati rispetto al primo
-    /// genitore); autore `author`, o chi committa.
+    /// A new commit with the tree `tree` (the changed files are computed relative to the first
+    /// parent); author `author`, or the committer.
     pub(super) fn make_commit(
         &mut self,
         parents: Vec<Oid>,
@@ -171,7 +171,7 @@ impl MemoryBackend {
     ) -> Result<Oid, EngineError> {
         let (name, email) = self.identity.clone().ok_or_else(|| EngineError::Git {
             command: "merge".to_owned(),
-            stderr: "Committer identity unknown: nessuna identità nel repo in memoria \
+            stderr: "Committer identity unknown: no identity in the in-memory repo \
                      (`MemoryBackend::set_identity`)"
                 .to_owned(),
         })?;
@@ -235,23 +235,20 @@ impl MemoryBackend {
         self.check_value(&full, &request.expected)?;
         let on_head = self.head == HeadRef::Branch(request.branch.clone());
         if on_head != request.current {
-            return Err(EngineError::NotAllowed(
-                "HEAD è cambiata mentre si preparava il pull: niente modificato, riprovare"
-                    .to_owned(),
-            ));
+            return Err(EngineError::NotAllowed(msg!("engine-pull-head-moved")));
         }
         if !request.current && request.mode != PullMode::FastForward {
-            return Err(EngineError::NotAllowed(format!(
-                "`{}` non è il branch attivo: si può solo fare fast-forward, niente modificato",
-                request.branch
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pull-not-current-ff",
+                branch = request.branch
             )));
         }
-        // Il nuovo valore del branch, calcolato su una copia: un conflitto non cambia niente.
+        // The new value of the branch, computed on a copy: a conflict changes nothing.
         let mut work = self.clone();
         let target = match request.mode {
             PullMode::FastForward => request.upstream,
             PullMode::Merge { .. } => {
-                // Come `merge.start`: un conflitto lascia il merge in corso.
+                // Like `merge.start`: a conflict leaves the merge in progress.
                 let short_name = request
                     .upstream_name
                     .strip_prefix(REMOTES)
@@ -262,7 +259,7 @@ impl MemoryBackend {
                     request.upstream,
                     short_name,
                     &request.message,
-                    "il pull",
+                    msg!("engine-merge-what-pull"),
                 )?;
                 let backup = Self::pull_backup(&mut work, request.expected);
                 *self = work;
@@ -283,9 +280,9 @@ impl MemoryBackend {
                     .filter(|c| !theirs.contains(&c.id) && c.parents.len() <= 1)
                     .collect();
                 todo.reverse();
-                // Il rebase passa per gli alberi dei commit da riapplicare: un file che uno di
-                // loro aggiunge (anche se un commit successivo lo toglie) non deve essere al
-                // posto di un non tracciato o ignorato, che verrebbe scritto e poi cancellato.
+                // The rebase goes through the trees of the commits to replay: a file that one of
+                // them adds (even if a later commit removes it) must not be in place of
+                // an untracked or ignored one, which would be written and then deleted.
                 let mut hit: Vec<String> = Vec::new();
                 for commit in &todo {
                     let (_, files) = work.switch_plan(&work.tree_at(commit.id));
@@ -296,11 +293,10 @@ impl MemoryBackend {
                     }
                 }
                 if !hit.is_empty() {
-                    return Err(EngineError::NotAllowed(format!(
-                        "il rebase passerebbe per file che ora esistono nel worktree come non \
-                         tracciati o ignorati ({}): git li sovrascriverebbe. Il branch non è \
-                         stato toccato; spostarli o rinominarli e riprovare",
-                        hit.iter()
+                    return Err(EngineError::NotAllowed(msg!(
+                        "engine-pull-rebase-untracked",
+                        files = hit
+                            .iter()
                             .map(|f| format!("`{f}`"))
                             .collect::<Vec<_>>()
                             .join(", ")
@@ -318,7 +314,7 @@ impl MemoryBackend {
                     let merged = merge_trees(&base, &tree, &mine).map_err(|files| {
                         Self::pull_conflict(request, PullOperation::Rebase, files)
                     })?;
-                    // Già nell'upstream: git lo salta.
+                    // Already in the upstream: git skips it.
                     if merged == tree {
                         continue;
                     }
@@ -338,11 +334,9 @@ impl MemoryBackend {
             let new_tree = work.tree_at(target);
             let (differing, files) = work.switch_plan(&new_tree);
             if !files.is_empty() {
-                return Err(EngineError::NotAllowed(format!(
-                    "il pull sovrascriverebbe modifiche locali o file non tracciati ({}): \
-                     committarli, metterli da parte o spostarli e riprovare; il branch non è \
-                     stato toccato",
-                    files
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-overwrite",
+                    files = files
                         .iter()
                         .map(|f| format!("`{f}`"))
                         .collect::<Vec<_>>()
@@ -367,7 +361,7 @@ impl MemoryBackend {
         })
     }
 
-    /// Il backup `refs/project/backup/pull-<n>` del branch com'era.
+    /// The backup `refs/project/backup/pull-<n>` of the branch as it was.
     fn pull_backup(work: &mut Self, expected: Oid) -> String {
         let prefix = format!("{BACKUP_PREFIX}pull-");
         let n = work
@@ -381,7 +375,7 @@ impl MemoryBackend {
         backup
     }
 
-    /// [`GitBackend::reset_branch`]: undo e redo di un pull del branch attivo.
+    /// [`GitBackend::reset_branch`]: undo and redo of a pull of the active branch.
     pub(super) fn reset_keep(
         &mut self,
         request: &RefRestore,
@@ -392,9 +386,9 @@ impl MemoryBackend {
                 (r.name.clone(), r.target.expect("controllato"))
             }
             _ => {
-                return Err(EngineError::NotAllowed(format!(
-                    "`{}`: richiesta non valida per il branch attivo, niente modificato",
-                    request.command
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-bad-request",
+                    command = request.command
                 )));
             }
         };
@@ -410,13 +404,12 @@ impl MemoryBackend {
         let new_tree = self.tree_at(target);
         let (differing, files) = self.switch_plan(&new_tree);
         if !files.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "`{}` riporterebbe `{moved}` a {} ma sovrascriverebbe modifiche locali o file \
-                 non tracciati ({}): niente modificato; committarli o metterli da parte e \
-                 riprovare",
-                request.command,
-                short(&target),
-                files.join(", ")
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pull-undo-overwrite",
+                command = request.command,
+                moved = moved,
+                target = short(&target),
+                files = files.join(", ")
             )));
         }
         let mut work = self.clone();
@@ -436,7 +429,7 @@ impl MemoryBackend {
         job: &JobContext,
     ) -> Result<PushOutcome, EngineError> {
         let remote = self.remotes.get(&request.remote).ok_or_else(|| {
-            EngineError::NotAllowed(format!("non esiste un remoto `{}`", request.remote))
+            EngineError::NotAllowed(msg!("engine-remote-missing", remote = request.remote))
         })?;
         match &remote.failure {
             Some(FetchFailure::Auth(message)) => {
@@ -472,7 +465,7 @@ impl MemoryBackend {
             .get(&format!("{HEADS}{}", request.branch))
             .map(|r| r.target)
             .ok_or_else(|| {
-                EngineError::NotAllowed(format!("non esiste un branch `{}`", request.branch))
+                EngineError::NotAllowed(msg!("engine-pull-no-branch", branch = request.branch))
             })?;
         let theirs = remote.branches.get(&request.remote_branch).copied();
         let url = remote.url.clone();

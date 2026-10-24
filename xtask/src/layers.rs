@@ -1,5 +1,5 @@
-//! Controllo automatico del layering: un crate importa solo da livelli
-//! strettamente inferiori. Aggiungere qui ogni nuovo crate del workspace.
+//! Automatic layering check: a crate imports only from strictly lower
+//! layers. Add every new workspace crate here.
 
 use cargo_metadata::{DependencyKind, MetadataCommand};
 use std::collections::HashMap;
@@ -31,9 +31,7 @@ pub fn check_layers() -> anyhow::Result<()> {
         let name = pkg.name.as_str();
         let Some(&mine) = levels.get(name) else {
             if name != "xtask" {
-                errors.push(format!(
-                    "{name}: livello non dichiarato in xtask/src/layers.rs"
-                ));
+                errors.push(format!("{name}: layer not declared in xtask/src/layers.rs"));
             }
             continue;
         };
@@ -46,7 +44,7 @@ pub fn check_layers() -> anyhow::Result<()> {
                 && theirs >= mine
             {
                 errors.push(format!(
-                    "{name} (L{mine}) dipende da {} (L{theirs})",
+                    "{name} (L{mine}) depends on {} (L{theirs})",
                     dep.name
                 ));
             }
@@ -54,9 +52,9 @@ pub fn check_layers() -> anyhow::Result<()> {
     }
 
     if errors.is_empty() {
-        eprintln!("layering: ok ({} crate)", levels.len());
+        eprintln!("layering: ok ({} crates)", levels.len());
         Ok(())
     } else {
-        anyhow::bail!("violazioni del layering:\n  {}", errors.join("\n  "))
+        anyhow::bail!("layering violations:\n  {}", errors.join("\n  "))
     }
 }

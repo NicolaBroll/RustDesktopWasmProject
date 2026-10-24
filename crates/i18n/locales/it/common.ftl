@@ -1,4 +1,4 @@
-# Testi comuni a più aree (view.rs).
+# Text shared by several areas (view.rs).
 
 common-wait = Aspettare l'operazione in corso (o chiudere il dialogo aperto)
 common-git-message = Messaggio di git:

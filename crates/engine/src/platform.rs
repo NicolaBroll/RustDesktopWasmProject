@@ -1,7 +1,7 @@
-//! Interfaccia verso la piattaforma ospite (desktop o browser).
+//! Interface to the host platform (desktop or browser).
 //!
-//! Le implementazioni vivono negli eseguibili (L7); la UI riceve un
-//! `Arc<dyn Platform>` e non sa su quale target sta girando.
+//! The implementations live in the executables (L7); the UI receives an
+//! `Arc<dyn Platform>` and does not know which target it is running on.
 
 #[derive(Debug, Clone)]
 pub struct Picked {
@@ -13,24 +13,24 @@ pub struct Picked {
 pub struct Capabilities {
     pub print: bool,
     pub reveal_in_file_manager: bool,
-    /// L'app può chiudere la propria finestra (falso nel browser).
+    /// The app can close its own window (false in the browser).
     pub window_control: bool,
-    /// [`Platform::pick_folder`] apre un dialogo (falso nel browser, che non vede le cartelle
-    /// locali).
+    /// [`Platform::pick_folder`] opens a dialog (false in the browser, which cannot see local
+    /// folders).
     pub open_folder: bool,
 }
 
 pub trait Platform: Send + Sync {
     fn capabilities(&self) -> Capabilities;
-    /// Asincrono sul web: il risultato arriva tramite callback, `None` se
-    /// l'utente annulla.
+    /// Asynchronous on the web: the result arrives through a callback, `None` if
+    /// the user cancels.
     fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>);
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>);
-    /// Chiede all'utente una cartella; `None` se annulla o se la piattaforma non ha cartelle
-    /// (vedi [`Capabilities::open_folder`]). Il percorso è una stringa perché va passato a
-    /// `repo.open`: una cartella con un nome non UTF-8 dà `None`.
+    /// Asks the user for a folder; `None` if they cancel or if the platform has no folders
+    /// (see [`Capabilities::open_folder`]). The path is a string because it is passed to
+    /// `repo.open`: a folder with a non-UTF-8 name gives `None`.
     fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>);
-    /// Esegue `job` fuori dal thread della UI (vedi `impl-docs/ARCHITETTURA-git.md` §6): un
-    /// thread sul desktop. Sul web non ci sono thread e il job gira subito, prima del ritorno.
+    /// Runs `job` off the UI thread (see `impl-docs/ARCHITECTURE-git.md` §6): a
+    /// thread on desktop. On the web there are no threads and the job runs immediately, before returning.
     fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 }

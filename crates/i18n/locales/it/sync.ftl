@@ -1,5 +1,5 @@
-# Pull e push (sync.rs, view/sync_view.rs).
-# $label: la descrizione dell'operazione (sync-label-…); $what: sync-label-pull-branch.
+# Pull and push (sync.rs, view/sync_view.rs).
+# $label: the operation description (sync-label-…); $what: sync-label-pull-branch.
 
 sync-label-pull = Pull
 sync-label-pull-branch = Pull di «{ $branch }»
@@ -52,7 +52,7 @@ sync-pull-backup = ; backup in { $backup }, «Annulla» lo riporta indietro
 sync-warning = ; attenzione: { $warning }
 sync-pull-status-not-reread = Pull fatto, ma lo stato non si rilegge: { $error }
 sync-pull-refs-not-reread = Pull fatto, ma i ref non si rileggono: { $error }
-# $summary: vuoto o « (riassunto)» con lo spazio davanti.
+# $summary: empty or “ (summary)” with the leading space.
 sync-push-new = Push di «{ $branch }»: creato { $target } sul remoto{ $summary }
 sync-push-fast-forward = Push di «{ $branch }» su { $target }{ $summary }
 sync-push-forced = Push forzato di «{ $branch }» su { $target }{ $summary }: { $n ->

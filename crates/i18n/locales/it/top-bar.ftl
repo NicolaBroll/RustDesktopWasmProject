@@ -1,4 +1,4 @@
-# Barra in alto, barra di stato e schermata iniziale (view/top_bar.rs).
+# Top bar, status bar and welcome screen (view/top_bar.rs).
 
 top-bar-open = Apri…
 top-bar-refresh = Aggiorna

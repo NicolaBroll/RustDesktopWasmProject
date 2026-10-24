@@ -1,89 +1,89 @@
-# Scartare le modifiche
+# Discarding changes
 
-Parte di [ARCHITETTURA-git.md](../ARCHITETTURA-git.md): principi (§1), regole per ogni chiamata a
-git (§5), comandi lenti (§6) e diario (§7) sono lì; qui il contratto dei comandi, il `CliBackend` e
-undo e backup di questa funzione. "§n" rimanda sempre al documento principale.
+Part of [ARCHITECTURE-git.md](../ARCHITECTURE-git.md): principles (§1), rules for every call to
+git (§5), slow commands (§6) and the journal (§7) are there; here are the command contract, the `CliBackend` and
+undo and backup of this function. "§n" always refers to the main document.
 
-## Comandi
+## Commands
 
 ### `worktree.discard`
 
-Parametri: `{"paths", "confirm"}`.
+Parameters: `{"paths", "confirm"}`.
 
-Con backup (sotto).
+With backup (below).
 
-## Passi e garanzie
+## Steps and guarantees
 
-`worktree.discard {"paths", "confirm"}` riporta il worktree dei file `paths` (file o cartelle,
-alla lettera) alla versione in stage, come `git restore --worktree`. Scelte:
+`worktree.discard {"paths", "confirm"}` returns the worktree of the files `paths` (files or directories,
+taken literally) to the staged version, like `git restore --worktree`. Choices:
 
-- **Solo il worktree.** L'indice non si tocca: un file `MM` torna `M.`. Per togliere anche lo
-  stage c'è `index.unstage` (che ha il suo backup).
-- **`"confirm": true` obbligatorio.** Senza, `ConfirmRequired` con l'elenco dei file che si
-  perderebbero e niente cambia; i rifiuti qui sotto vengono prima della conferma.
-- **Solo file tracciati con modifiche fuori stage** (Y ∉ {`.`, `?`, `!`}: modificati, eliminati,
-  cambiati di tipo, anche nel modo). I **non tracciati non si toccano mai**: chiesti per nome
-  sono un errore (scartarli vorrebbe dire cancellarli, e `git stash create` non li salva, quindi
-  non ci sarebbe un backup); dentro una cartella restano dove sono. Niente opzione per
-  cancellarli: se servirà sarà un comando a parte (`git stash create` non ha `-u`, servirebbe un
-  altro backup). I sottomoduli chiesti per nome sono rifiutati, dentro una cartella saltati; i
-  file `--assume-unchanged`/`--skip-worktree` hanno Y = `.` e non si toccano.
-- **Quando il backup non si può fare, niente si scarta**: branch senza commit ("You do not have
-  the initial commit yet"), file in conflitto nel repo ("Cannot save the current index state"),
-  file `intent-to-add` nel repo ("not uptodate. Cannot merge", anche con git 2.56). I controlli
-  sono in `discard_plan`, comuni ai backend.
+- **Worktree only.** The index is not touched: an `MM` file becomes `M.`. To remove the stage too
+  there is `index.unstage` (which has its own backup).
+- **`"confirm": true` is mandatory.** Without it, `ConfirmRequired` with the list of files that would
+  be lost and nothing changes; the refusals below come before the confirmation.
+- **Only tracked files with unstaged changes** (Y ∉ {`.`, `?`, `!`}: modified, deleted,
+  type-changed, also mode). **Untracked files are never touched**: requested by name
+  they are an error (discarding them would mean deleting them, and `git stash create` does not save them, so
+  there would be no backup); inside a directory they stay where they are. No option to
+  delete them: if needed it will be a separate command (`git stash create` has no `-u`, another
+  backup would be needed). Submodules requested by name are refused, inside a directory skipped; the
+  `--assume-unchanged`/`--skip-worktree` files have Y = `.` and are not touched.
+- **When the backup cannot be made, nothing is discarded**: branch without commits ("You do not have
+  the initial commit yet"), conflicted files in the repo ("Cannot save the current index state"),
+  `intent-to-add` files in the repo ("not uptodate. Cannot merge", even with git 2.56). The checks
+  are in `discard_plan`, shared by the backends.
 
-- **Niente al posto delle cartelle.** Un non tracciato o ignorato al posto di una cartella del
-  percorso di un file da scartare (`top/d/x` tracciato, la cartella cancellata e un file
-  `top/d` creato) o al posto del file stesso (una cartella `x/`) verrebbe cancellato da `git
-  restore` per ricreare il file, e il backup non lo contiene: `discard_plan` rifiuta se lo stato
-  lo mostra, e il `CliBackend` controlla anche il file system (`symlink_metadata` di ogni
-  cartella del percorso: deve essere una cartella vera, non un file o un link; il file non deve
-  essere una cartella), così sono coperti anche ignorati e link. Il controllo si ripete prima
-  dell'undo e del redo.
-- **Il piano confermato.** `GitBackend::discard` riceve anche il piano calcolato dal comando
-  (quello che la conferma elenca): se il piano letto dal backend prima di scrivere è diverso
-  (un file in più o in meno, un'altra versione in stage), `NotAllowed` e niente cambia. Il
-  piano è calcolato dentro lo stesso comando: fra quello che la UI ha mostrato e il comando
-  la garanzia c'è solo se la UI passa i file esatti, non le cartelle.
+- **Nothing in place of directories.** An untracked or ignored file in place of a directory in the
+  path of a file to discard (`top/d/x` tracked, the directory deleted and a file
+  `top/d` created) or in place of the file itself (a directory `x/`) would be deleted by `git
+  restore` to recreate the file, and the backup does not contain it: `discard_plan` refuses if the status
+  shows it, and the `CliBackend` also checks the file system (`symlink_metadata` of every
+  directory in the path: it must be a real directory, not a file or a link; the file must not
+  be a directory), so ignored files and links are covered too. The check is repeated before
+  the undo and the redo.
+- **The confirmed plan.** `GitBackend::discard` also receives the plan computed by the command
+  (what the confirmation lists): if the plan read by the backend before writing is different
+  (one file more or less, another staged version), `NotAllowed` and nothing changes. The
+  plan is computed inside the same command: between what the UI showed and the command
+  the guarantee holds only if the UI passes the exact files, not the directories.
 
-Il `CliBackend`, in quest'ordine: stato senza fsmonitor, `discard_plan` e confronto con il
-piano confermato; indice (`ls-files -s`) uguale allo stato per quei file; controllo delle
-cartelle; `index.lock` → `IndexLocked` subito; `git -c core.fsmonitor=false stash create
-<messaggio fisso>` con l'identità fissa dei backup (un commit con il worktree dei file tracciati;
-non tocca indice, worktree né `refs/stash`; se fallisce per l'indice bloccato, `IndexLocked`);
-**backup byte per byte**: per ogni file si confrontano i byte del worktree con quelli che `git
-restore` ricreerebbe dal commit (`cat-file --filters --path=<file>`; per un link la
-destinazione); se differiscono (es. CRLF con `core.autocrlf=input`, che il filtro `clean` toglie
-e lo `smudge` non rimette, o un filtro non reversibile) i byte si salvano senza filtri
-(`hash-object -w --no-filters`) in un commit con solo quei file, figlio di quello di `stash
-create` (campo `raw` della voce); `update-ref refs/project/backup/discard-<secondi>-<nanosecondi>
-<raw o stash> ""`; ricontrollo dell'indice e delle cartelle; **ultima verifica** che il backup
-abbia esattamente il worktree attuale (`git diff --name-only -z <stash> -- <file>` vuoto, per il
-modo, senza `diff.autoRefreshIndex=false`, che farebbe comparire i file cambiati solo nei dati
-di `stat`, con `--no-optional-locks`; e i byte come sopra, o quelli di `raw`); infine `git
-restore --worktree --no-overlay` dei soli file del piano (percorsi su stdin). Resta solo
-l'istante fra l'ultima verifica e `restore` in cui un editor che salva un file perderebbe quella
-modifica.
+The `CliBackend`, in this order: status without fsmonitor, `discard_plan` and comparison with the
+confirmed plan; index (`ls-files -s`) equal to the status for those files; directory check;
+`index.lock` → `IndexLocked` immediately; `git -c core.fsmonitor=false stash create
+<fixed message>` with the fixed backup identity (a commit with the worktree of the tracked files;
+it touches neither index, worktree nor `refs/stash`; if it fails because the index is locked, `IndexLocked`);
+**byte-for-byte backup**: for each file the worktree bytes are compared with those `git
+restore` would recreate from the commit (`cat-file --filters --path=<file>`; for a link the
+target); if they differ (e.g. CRLF with `core.autocrlf=input`, which the `clean` filter removes
+and `smudge` does not put back, or a non-reversible filter) the bytes are saved without filters
+(`hash-object -w --no-filters`) in a commit with only those files, child of the `stash
+create` one (the entry's `raw` field); `update-ref refs/project/backup/discard-<seconds>-<nanoseconds>
+<raw or stash> ""`; re-check of the index and directories; **final verification** that the backup
+has exactly the current worktree (`git diff --name-only -z <stash> -- <file>` empty, for the
+mode, without `diff.autoRefreshIndex=false`, which would make files changed only in the `stat` data
+appear, with `--no-optional-locks`; and the bytes as above, or those of `raw`); finally `git
+restore --worktree --no-overlay` of only the files in the plan (paths on stdin). Only the
+instant between the last verification and `restore` remains, in which an editor saving a file would lose that
+change.
 
-La voce del diario ha `"worktree": {"stash", "files": [{"path", "change", "mode", "oid"}],
-"raw"}` (il modo e l'id della voce dell'indice a cui il file è stato riportato; `raw` è `null`
-se non serviva) e `"backup"` con il ref. `Journal::undo`/`redo` chiamano
-`GitBackend::restore_worktree` invece di `restore_refs`, e prima controllano HEAD: deve essere
-quella registrata (`head.after` per l'undo, `head.before` per il redo, uguali per uno scarto),
-altrimenti `UndoConflict` (un checkout o un commit da terminale) e niente cambia.
+The journal entry has `"worktree": {"stash", "files": [{"path", "change", "mode", "oid"}],
+"raw"}` (the mode and the id of the index entry the file was returned to; `raw` is `null`
+if not needed) and `"backup"` with the ref. `Journal::undo`/`redo` call
+`GitBackend::restore_worktree` instead of `restore_refs`, and first check HEAD: it must be
+the recorded one (`head.after` for the undo, `head.before` for the redo, equal for a discard),
+otherwise `UndoConflict` (a checkout or a commit from the terminal) and nothing changes.
 
-- **undo**: ogni file deve avere ancora nell'indice la voce registrata e il worktree uguale
-  all'indice (nessuna modifica fuori stage, nessun flag che la nasconderebbe); altrimenti
-  `UndoConflict` con una riga per file e niente cambia. Poi `git restore --source=<stash>
-  --worktree --no-overlay` (un file che nel commit non c'è, perché era eliminato, si cancella di
-  nuovo) e i file di `raw` riscritti con i loro byte. Il worktree sovrascritto è uguale
-  all'indice: niente si perde.
-- **redo**: stessa voce dell'indice e worktree uguale al backup (stessi byte e modo, come sopra:
-  anche un cambio dei soli fine riga lo blocca), poi di nuovo `restore --worktree`. Nessun
-  backup nuovo: il backup ha già quel contenuto.
-- Dopo la scrittura si rilegge (byte e modo per l'undo, uguale all'indice per il redo): un file
-  non come atteso va in `warnings`.
+- **undo**: each file must still have the recorded entry in the index and the worktree equal to
+  the index (no unstaged changes, no flag that would hide it); otherwise
+  `UndoConflict` with one line per file and nothing changes. Then `git restore --source=<stash>
+  --worktree --no-overlay` (a file that is not in the commit, because it was deleted, is deleted
+  again) and the `raw` files rewritten with their bytes. The overwritten worktree is equal to the
+  index: nothing is lost.
+- **redo**: same index entry and worktree equal to the backup (same bytes and mode, as above:
+  even a change of line endings alone blocks it), then `restore --worktree` again. No new
+  backup: the backup already has that content.
+- After writing, it is re-read (bytes and mode for the undo, equal to the index for the redo): a file
+  not as expected goes in `warnings`.
 
-Il `MemoryBackend` registra i backup in `MemoryBackend::worktree_backups`
-(`refs/project/backup/discard-<n>`, con la voce dello stato e il contenuto di ogni file).
+The `MemoryBackend` records backups in `MemoryBackend::worktree_backups`
+(`refs/project/backup/discard-<n>`, with the status entry and the content of each file).

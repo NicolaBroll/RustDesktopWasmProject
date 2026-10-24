@@ -1,5 +1,5 @@
-# Fetch dalla barra e finestre di errore di rete (fetch.rs).
-# $label: la descrizione del fetch (fetch-label…); $who: fetch-who…
+# Fetch from the top bar and network error windows (fetch.rs).
+# $label: the fetch description (fetch-label…); $who: fetch-who…
 
 fetch-label = Fetch
 fetch-label-remote = Fetch da «{ $remote }»

@@ -1,9 +1,9 @@
-//! Editor dei conflitti (S30): `conflict.show` (lettura) e `conflict.resolve` (scrittura).
-//! Tipi e controlli comuni ai backend in `git/conflict.rs`; contratto in
-//! `impl-docs/git/conflitti.md`.
+//! Conflict editor (S30): `conflict.show` (reading) and `conflict.resolve` (writing).
+//! Types and checks common to the backends in `git/conflict.rs`; contract in
+//! `impl-docs/git/conflicts.md`.
 //!
-//! `conflict.resolve` non sposta ref: niente diario, come lo stage. Il recupero è il backup del
-//! worktree (`git show <backup>:<path>`) o `git checkout -m <path>` finché il merge è in corso.
+//! `conflict.resolve` does not move refs: no journal, like stage. Recovery is the backup of the
+//! worktree (`git show <backup>:<path>`) or `git checkout -m <path>` while the merge is in progress.
 
 use super::{Out, check_path, to_json};
 use crate::commands::parse_params;
@@ -12,14 +12,14 @@ use project_domain::RepoPath;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Parametri di `conflict.show`.
+/// Parameters of `conflict.show`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShowParams {
     path: RepoPath,
 }
 
-/// Parametri di `conflict.resolve`.
+/// Parameters of `conflict.resolve`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ResolveParams {
@@ -31,10 +31,10 @@ struct ResolveParams {
     delete: bool,
 }
 
-/// `{"path", "kind", "base", "ours", "theirs", "worktree", "marker_size", "digest"}`: le
-/// versioni del file in conflitto (vedi
-/// [`GitBackend::conflict_versions`](crate::GitBackend::conflict_versions)), ciascuna
-/// `{"text", "binary", "size"}` o `null`, e il digest del worktree da ripassare a
+/// `{"path", "kind", "base", "ours", "theirs", "worktree", "marker_size", "digest"}`: the
+/// versions of the conflicted file (see
+/// [`GitBackend::conflict_versions`](crate::GitBackend::conflict_versions)), each
+/// `{"text", "binary", "size"}` or `null`, and the worktree digest to pass again to
 /// `conflict.resolve`.
 pub(super) fn conflict_show(s: &mut Session, p: Value) -> Out {
     let ShowParams { path } = parse_params("conflict.show", p)?;
@@ -53,8 +53,8 @@ pub(super) fn conflict_show(s: &mut Session, p: Value) -> Out {
     }))
 }
 
-/// Risolve il conflitto di `path` con `content` o `delete` (vedi
-/// [`GitBackend::resolve_conflict`](crate::GitBackend::resolve_conflict)). Risultato:
+/// Resolves the conflict of `path` with `content` or `delete` (see
+/// [`GitBackend::resolve_conflict`](crate::GitBackend::resolve_conflict)). Result:
 /// `{"status", "backup", "index_backup"}`.
 pub(super) fn conflict_resolve(s: &mut Session, p: Value) -> Out {
     const ID: &str = "conflict.resolve";
@@ -71,9 +71,7 @@ pub(super) fn conflict_resolve(s: &mut Session, p: Value) -> Out {
         _ => {
             return Err(EngineError::InvalidParams {
                 id: ID,
-                reason: "indicare esattamente uno fra `content` (il testo risolto) e \
-                         `\"delete\": true` (il file va cancellato)"
-                    .to_owned(),
+                reason: msg!("engine-conflict-content-or-delete"),
             });
         }
     };

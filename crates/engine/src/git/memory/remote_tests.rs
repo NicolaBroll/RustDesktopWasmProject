@@ -1,4 +1,4 @@
-//! Test dei remoti sul `MemoryBackend`, direttamente sul backend (il comando è provato in
+//! Remote tests on the `MemoryBackend`, directly on the backend (the command is tested in
 //! `builtin/remote.rs`).
 
 use super::*;
@@ -21,7 +21,7 @@ fn sample_has_origin_with_one_commit_to_fetch() {
     assert_eq!(repo.remotes().unwrap(), ["origin"]);
     assert_eq!(
         repo.remote_url("origin"),
-        Some("https://example.com/progetto.git")
+        Some("https://example.com/project.git")
     );
     assert!(!repo.commits.contains_key(&oid(13)));
     let out = repo
@@ -30,13 +30,13 @@ fn sample_has_origin_with_one_commit_to_fetch() {
     assert_eq!(out.messages.len(), 2, "{:?}", out.messages);
     assert!(repo.commits.contains_key(&oid(13)));
     assert_eq!(
-        repo.refs["refs/remotes/origin/feature/grafo"].target,
+        repo.refs["refs/remotes/origin/feature/graph"].target,
         oid(13)
     );
-    // Branch locali intatti.
-    assert_eq!(repo.refs["refs/heads/feature/grafo"].target, oid(9));
-    // Il commit scaricato è solo su `origin/feature/grafo`: il log di HEAD non lo ha, quello
-    // di tutti i ref sì, in cima (è il più recente).
+    // Local branches intact.
+    assert_eq!(repo.refs["refs/heads/feature/graph"].target, oid(9));
+    // The downloaded commit is only on `origin/feature/graph`: the log of HEAD does not have it, that
+    // of all refs does, at the top (it is the most recent).
     let ids = |q: LogQuery| -> Vec<Oid> { repo.log(&q).unwrap().iter().map(|c| c.id).collect() };
     assert!(!ids(LogQuery::all()).contains(&oid(13)));
     let all = ids(LogQuery::all().from_all_refs());

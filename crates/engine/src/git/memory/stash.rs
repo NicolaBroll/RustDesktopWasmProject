@@ -1,13 +1,13 @@
-//! Stash del [`MemoryBackend`] (S28), con gli stessi controlli del `CliBackend`
+//! Stash of the [`MemoryBackend`] (S28), with the same checks as the `CliBackend`
 //! ([`check_stash_push`], [`check_stash_apply`], [`stash_local_changes`]).
 //!
-//! Ogni stash tiene le voci dello stato che ha messo da parte e il contenuto del worktree di
-//! quei file, più un commit (inserito fra i commit del repo, con i file cambiati rispetto alla
-//! base) così `commit.show`/`diff.commit` con l'id dello stash funzionano come con git. L'apply
-//! è più severo e più semplice di git: un file cambiato dallo stash e anche da HEAD rispetto
-//! alla base è sempre un conflitto (git fa il merge riga per riga), con il contenuto dello
-//! stash nel worktree al posto dei marcatori. Gli stash eliminati restano da parte per id, così
-//! `stash_store` (l'undo di un drop) li ritrova interi.
+//! Each stash keeps the status entries it set aside and the worktree content of
+//! those files, plus a commit (inserted among the repo's commits, with the files changed relative to the
+//! base) so `commit.show`/`diff.commit` with the stash id work as with git. The apply
+//! is stricter and simpler than git: a file changed by the stash and also by HEAD relative
+//! to the base is always a conflict (git merges line by line), with the stash content
+//! in the worktree instead of markers. Dropped stashes are set aside by id, so
+//! `stash_store` (the undo of a drop) finds them again whole.
 
 use super::commit::{Tree, tree_changes};
 use super::write::{ZERO, entry_order, file_type, tracked_info};
@@ -23,17 +23,17 @@ use project_domain::{
 };
 use std::collections::BTreeMap;
 
-/// Uno stash in memoria.
+/// A stash in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MemoryStash {
     pub(super) id: Oid,
     pub(super) parents: Vec<Oid>,
     pub(super) message: String,
     pub(super) time: i64,
-    /// Le voci dello stato messe da parte (file tracciati e, con `include_untracked`, non
-    /// tracciati), com'erano.
+    /// The status entries set aside (tracked files and, with `include_untracked`, untracked
+    /// ones), as they were.
     saved: Vec<StatusEntry>,
-    /// Il contenuto del worktree di quei file (`None` = assente o non noto).
+    /// The worktree content of those files (`None` = absent or unknown).
     files: BTreeMap<RepoPath, Option<Vec<u8>>>,
 }
 
@@ -48,8 +48,8 @@ impl MemoryStash {
         )
     }
 
-    /// I percorsi tracciati che lo stash cambia (anche il vecchio nome di una rinomina) e i non
-    /// tracciati che rimette.
+    /// The tracked paths the stash changes (also the old name of a rename) and the untracked
+    /// ones it puts back.
     fn targets(&self) -> (Vec<RepoPath>, Vec<RepoPath>) {
         let mut tracked = Vec::new();
         let mut untracked = Vec::new();
@@ -68,8 +68,8 @@ impl MemoryStash {
 }
 
 impl MemoryBackend {
-    /// Imposta lo stash (`refs/stash`) sul commit `target`, come uno stash nuovo in cima
-    /// all'elenco che non ha file salvati (applicarlo non cambia niente).
+    /// Sets the stash (`refs/stash`) to commit `target`, like a new stash at the top
+    /// of the list that has no saved files (applying it changes nothing).
     pub fn set_stash(&mut self, target: Oid) {
         let (parents, time) = self
             .commits
@@ -89,7 +89,7 @@ impl MemoryBackend {
         self.sync_stash_ref();
     }
 
-    /// `refs/stash` sullo stash in cima all'elenco, o tolto se l'elenco è vuoto.
+    /// `refs/stash` on the stash at the top of the list, or removed if the list is empty.
     fn sync_stash_ref(&mut self) {
         match self.stashes.first() {
             Some(top) => {
@@ -111,25 +111,23 @@ impl MemoryBackend {
             .collect()
     }
 
-    /// La posizione dello stash `id` nell'elenco, o [`EngineError::NotAllowed`].
+    /// The position of stash `id` in the list, or [`EngineError::NotAllowed`].
     fn stash_position(&self, command: &str, id: &Oid) -> Result<usize, EngineError> {
         self.stashes
             .iter()
             .position(|s| s.id == *id)
             .ok_or_else(|| {
-                EngineError::NotAllowed(format!(
-                    "`{command}`: lo stash {id} non è più nell'elenco, niente modificato"
-                ))
+                EngineError::NotAllowed(msg!("engine-stash-gone", command = command, id = id))
             })
     }
 
-    /// [`GitBackend::stash_push`]. Un errore non cambia niente.
+    /// [`GitBackend::stash_push`]. An error changes nothing.
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
         let status = self.status()?;
         check_stash_push(&status, request)?;
         let head = self
             .head_target()
-            .ok_or_else(|| EngineError::NotAllowed("il branch non ha ancora commit".to_owned()))?;
+            .ok_or_else(|| EngineError::NotAllowed(msg!("engine-stash-memory-unborn")))?;
         let head_tree = self.head_tree();
         let selects = |e: &StatusEntry| {
             let wanted = |p: &RepoPath| {
@@ -159,7 +157,7 @@ impl MemoryBackend {
             .map(|e| (e.path.clone(), self.worktree.get(&e.path).cloned()))
             .collect();
 
-        // L'albero del commit dello stash: HEAD con il worktree dei file tracciati salvati.
+        // The tree of the stash commit: HEAD with the worktree of the saved tracked files.
         let mut tree: Tree = head_tree.clone();
         for e in &saved {
             let Some(info) = tracked_info(e) else {
@@ -222,7 +220,7 @@ impl MemoryBackend {
         });
         self.set_changes(id, tree_changes(&head_tree, &tree));
 
-        // Indice e worktree dei file salvati tornano come HEAD (con `keep_index` come l'indice).
+        // Index and worktree of the saved files go back as HEAD (with `keep_index` as the index).
         for e in &saved {
             match &e.kind {
                 EntryKind::Untracked => {
@@ -267,11 +265,11 @@ impl MemoryBackend {
             },
         );
         self.sync_stash_ref();
-        Ok(self.stashes[0].entry(0).expect("lo stash ha la sua base"))
+        Ok(self.stashes[0].entry(0).expect("the stash has its base"))
     }
 
-    /// Il file `path` del worktree con il contenuto del blob `oid` (modo 0: tolto). Un blob
-    /// che non si conosce lascia il file senza contenuto noto.
+    /// The worktree file `path` with the content of blob `oid` (mode 0: removed). A blob
+    /// that is not known leaves the file without known content.
     fn put_worktree(&mut self, path: &RepoPath, mode: u32, oid: Oid) {
         match self.blobs.get(&oid).cloned() {
             Some(content) if mode != 0 => {
@@ -283,7 +281,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::stash_apply`]. Un rifiuto non cambia niente.
+    /// [`GitBackend::stash_apply`]. A refusal changes nothing.
     pub(super) fn apply_stash(
         &mut self,
         request: &StashApply,
@@ -293,8 +291,8 @@ impl MemoryBackend {
         let status = self.status()?;
         check_stash_apply(request.command, &status)?;
         let (tracked, untracked) = stash.targets();
-        // Un file in stage con la stessa voce dell'indice salvata dallo stash, e che nello stash
-        // non aveva modifiche fuori stage, ha già la versione dello stash.
+        // A staged file with the same index entry the stash saved, and that in the stash
+        // had no unstaged changes, already has the stash's version.
         let in_stash = |path: &RepoPath, mode: u32, oid: Oid| {
             stash.saved.iter().any(|e| {
                 e.path == *path
@@ -321,14 +319,14 @@ impl MemoryBackend {
         for saved in &stash.saved {
             let content = stash.files.get(&saved.path).cloned().flatten();
             let Some(info) = tracked_info(saved).cloned() else {
-                // Un non tracciato torna com'era.
+                // An untracked file comes back as it was.
                 self.entries.push(saved.clone());
                 if let Some(c) = content {
                     self.worktree.insert(saved.path.clone(), c);
                 }
                 continue;
             };
-            // Già con la versione dello stash (vedi sopra): resta com'è.
+            // Already with the stash's version (see above): stays as is.
             if self.entries.iter().any(|e| e.path == saved.path) {
                 continue;
             }
@@ -375,8 +373,8 @@ impl MemoryBackend {
                 self.entries.push(saved.clone());
                 continue;
             }
-            // Senza `restore_index` l'indice resta come HEAD, tranne per i file nuovi, che git
-            // lascia in stage con il contenuto del worktree.
+            // Without `restore_index` the index stays as HEAD, except for new files, which git
+            // leaves staged with the worktree content.
             if let Some(original) = &original
                 && let Some((mode, oid)) = head_tree.get(original).copied()
             {
@@ -443,14 +441,14 @@ impl MemoryBackend {
         })
     }
 
-    /// Simula un `git stash drop` che fallisce (con `Some`): per provare un pop che applica lo
-    /// stash e poi non riesce a toglierlo.
+    /// Simulates a `git stash drop` that fails (with `Some`): to test a pop that applies the
+    /// stash and then fails to remove it.
     pub fn fail_stash_drop(&mut self, message: Option<&str>) {
         self.stash_drop_failure = message.map(str::to_owned);
     }
 
-    /// [`GitBackend::stash_drop`]: il backup va in `commit_backups`
-    /// (`refs/project/backup/<tipo>-<n>`).
+    /// [`GitBackend::stash_drop`]: the backup goes in `commit_backups`
+    /// (`refs/project/backup/<kind>-<n>`).
     pub(super) fn drop_stash(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
         let position = self.stash_position(request.command, &request.id)?;
         if let Some(message) = &self.stash_drop_failure {
@@ -479,16 +477,19 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::stash_store`]: uno stash eliminato torna in cima con i suoi file; un
-    /// commit qualunque come stash senza file.
+    /// [`GitBackend::stash_store`]: a dropped stash comes back on top with its files; any
+    /// commit as a stash without files.
     pub(super) fn store_stash(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         let mut stash = match self.dropped_stashes.get(id).cloned() {
             Some(stash) => stash,
             None => {
-                let commit = self.commits.get(id).ok_or_else(|| EngineError::Git {
-                    command: "stash".to_owned(),
-                    stderr: format!("fatal: {id} non è un commit del repo"),
-                })?;
+                let commit = self
+                    .commits
+                    .get(id)
+                    .ok_or_else(|| EngineError::GitWithReason {
+                        command: "stash".to_owned(),
+                        reason: msg!("engine-memory-not-a-commit", id = id),
+                    })?;
                 MemoryStash {
                     id: *id,
                     parents: commit.parents.clone(),

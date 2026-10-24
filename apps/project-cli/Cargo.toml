@@ -1,6 +1,6 @@
 [package]
 name = "project-cli"
-description = "L7: riga di comando e avvio del server MCP"
+description = "L7: command line and MCP server startup"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

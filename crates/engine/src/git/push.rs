@@ -1,107 +1,98 @@
-//! Push (`remote.push`, S26): tipi comuni ai backend (`impl-docs/git/sync.md`).
+//! Push (`remote.push`, S26): types shared by the backends (`impl-docs/git/sync.md`).
 //!
-//! Il comando decide remoto, branch di destinazione e upstream; il backend pubblica **solo**
-//! `refs/heads/<branch>:refs/heads/<remote_branch>` (refspec esplicito: niente tag, niente altri
-//! branch, qualunque sia `push.default`, `remote.<nome>.push` o `push.followTags`). Il force è
-//! sempre e solo `--force-with-lease=refs/heads/<remote_branch>:<oid atteso>`, con l'oid letto
-//! dal branch remoto locale prima del push.
+//! The command decides remote, destination branch and upstream; the backend publishes **only**
+//! `refs/heads/<branch>:refs/heads/<remote_branch>` (explicit refspec: no tags, no other
+//! branches, whatever `push.default`, `remote.<name>.push` or `push.followTags` say). A force is
+//! always and only `--force-with-lease=refs/heads/<remote_branch>:<expected oid>`, with the oid read
+//! from the local remote branch before the push.
 
+use crate::Message;
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
-/// Cosa pubblicare con [`GitBackend::push`](super::GitBackend::push). Nomi già controllati dal
-/// comando.
+/// What to publish with [`GitBackend::push`](super::GitBackend::push). Names already checked by the
+/// command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushRequest {
-    /// Il remoto configurato.
+    /// The configured remote.
     pub remote: String,
-    /// Il branch locale (nome breve).
+    /// The local branch (short name).
     pub branch: String,
-    /// Il branch sul remoto (nome breve).
+    /// The branch on the remote (short name).
     pub remote_branch: String,
-    /// Imposta l'upstream del branch (`--set-upstream`) se il push riesce: solo al primo push,
-    /// quando il branch non ne ha uno.
+    /// Sets the branch's upstream (`--set-upstream`) if the push succeeds: only on the first push,
+    /// when the branch has none.
     pub set_upstream: bool,
-    /// `Some(atteso)`: force con `--force-with-lease=refs/heads/<remote_branch>:<atteso>`, cioè
-    /// il remoto si sovrascrive solo se il suo branch vale ancora `atteso` (`None`: solo se non
-    /// esiste). `None`: push normale, solo fast-forward.
+    /// `Some(expected)`: force with `--force-with-lease=refs/heads/<remote_branch>:<expected>`, that is
+    /// the remote is overwritten only if its branch still equals `expected` (`None`: only if it does not
+    /// exist). `None`: normal push, fast-forward only.
     pub lease: Option<Option<Oid>>,
-    /// Il commit da salvare in un ref di backup prima di un force (`refs/project/backup/push-...`):
-    /// il valore del branch remoto che il force sovrascriverebbe, se ha commit che il branch
-    /// locale non ha.
+    /// The commit to save in a backup ref before a force (`refs/project/backup/push-...`):
+    /// the value of the remote branch that the force would overwrite, if it has commits the local
+    /// branch does not have.
     pub backup: Option<Oid>,
 }
 
-/// Come è stato aggiornato il branch sul remoto.
+/// How the branch on the remote was updated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PushKind {
-    /// Il branch non c'era: creato.
+    /// The branch did not exist: created.
     New,
     FastForward,
-    /// Sovrascritto (force-with-lease).
+    /// Overwritten (force-with-lease).
     Forced,
-    /// Il remoto aveva già quel commit: niente pubblicato.
+    /// The remote already had that commit: nothing published.
     UpToDate,
 }
 
-/// Esito di [`GitBackend::push`](super::GitBackend::push).
+/// Outcome of [`GitBackend::push`](super::GitBackend::push).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushOutcome {
     pub kind: PushKind,
-    /// Il riassunto di git (`a1b2c3d..e4f5a6b`, `[new branch]`, ...).
+    /// The git summary (`a1b2c3d..e4f5a6b`, `[new branch]`, ...).
     pub summary: String,
-    /// Le righe di git che non sono avanzamento (`To <url>`, avvisi, output degli hook).
+    /// The git lines that are not progress (`To <url>`, warnings, hook output).
     pub messages: Vec<String>,
-    /// Il ref di backup creato prima di un force (vedi [`PushRequest::backup`]).
+    /// The backup ref created before a force (see [`PushRequest::backup`]).
     pub backup: Option<String>,
 }
 
-/// Perché il push è stato rifiutato ([`EngineError::PushRejected`](crate::EngineError)).
+/// Why the push was rejected ([`EngineError::PushRejected`](crate::EngineError)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PushRejection {
-    /// Il remoto ha commit che il branch locale non ha (`non-fast-forward`, `fetch first`).
+    /// The remote has commits the local branch does not have (`non-fast-forward`, `fetch first`).
     NonFastForward,
-    /// Force-with-lease: il branch sul remoto non vale più quello atteso (`stale info`).
+    /// Force-with-lease: the branch on the remote no longer equals the expected one (`stale info`).
     StaleLease,
-    /// Il remoto ha rifiutato l'aggiornamento (hook `pre-receive`/`update`, branch protetto).
+    /// The remote rejected the update (`pre-receive`/`update` hook, protected branch).
     RemoteRejected,
-    /// Un hook `pre-push` locale (o un altro controllo locale, come i sottomoduli non
-    /// pubblicati) ha fermato il push prima che partisse.
+    /// A local `pre-push` hook (or another local check, such as unpublished
+    /// submodules) stopped the push before it started.
     Hook,
-    /// Altro rifiuto di git.
+    /// Other git rejection.
     Other,
 }
 
 impl PushRejection {
-    /// Cosa fare, per il messaggio dell'errore.
-    pub fn advice(&self) -> &'static str {
+    /// What to do, for the error message.
+    pub fn advice(&self) -> Message {
         match self {
-            PushRejection::NonFastForward => {
-                "il remoto ha commit che il branch locale non ha: fare `remote.pull` (o fetch e \
-                 merge/rebase) e ripetere il push"
-            }
-            PushRejection::StaleLease => {
-                "il branch sul remoto si è spostato rispetto al branch remoto locale \
-                 (force-with-lease): fare `remote.fetch`, controllare i commit arrivati e \
-                 decidere di nuovo"
-            }
-            PushRejection::RemoteRejected => "il remoto ha rifiutato l'aggiornamento",
-            PushRejection::Hook => {
-                "un hook `pre-push` (o un controllo locale di git) ha fermato il push prima che \
-                 partisse"
-            }
-            PushRejection::Other => "git ha rifiutato il push",
+            PushRejection::NonFastForward => msg!("engine-push-non-fast-forward"),
+            PushRejection::StaleLease => msg!("engine-push-stale-lease"),
+            PushRejection::RemoteRejected => msg!("engine-push-remote-rejected"),
+            PushRejection::Hook => msg!("engine-push-hook"),
+            PushRejection::Other => msg!("engine-push-other"),
         }
     }
 }
 
-/// Il nome del branch remoto locale che rispecchia `remote_ref` (es. `refs/heads/main`)
-/// secondo i refspec di fetch del remoto (`remote.<nome>.fetch`, es.
-/// `+refs/heads/*:refs/remotes/origin/*`), come fa git per aggiornarlo dopo un push: il primo
-/// refspec che corrisponde (con al più un `*`), `None` se nessuno, se il refspec non ha
-/// destinazione o se un refspec negativo (`^...`) lo esclude.
+/// The name of the local remote branch that mirrors `remote_ref` (e.g. `refs/heads/main`)
+/// according to the remote's fetch refspecs (`remote.<name>.fetch`, e.g.
+/// `+refs/heads/*:refs/remotes/origin/*`), as git does to update it after a push: the first
+/// refspec that matches (with at most one `*`), `None` if none, if the refspec has no
+/// destination or if a negative refspec (`^...`) excludes it.
 pub fn tracking_ref(refspecs: &[String], remote_ref: &str) -> Option<String> {
     fn matches<'a>(pattern: &str, name: &'a str) -> Option<&'a str> {
         match pattern.split_once('*') {

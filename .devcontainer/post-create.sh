@@ -8,9 +8,9 @@ sudo chown -R "$(id -u):$(id -g)" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 # Chrome stable is not tied to a specific Playwright version, unlike the bundled Chromium.
 npx -y playwright@latest install --with-deps chrome
 
-# Display virtuale e librerie per avviare l'app desktop eframe/glow senza schermo
-# (`make desktop-shot`): xvfb + xauth per `xvfb-run`, x11-utils (xwininfo, xprop) per
-# controllare la finestra, imagemagick (`import`) per lo screenshot; python3 serve a
+# Virtual display and libraries to run the eframe/glow desktop app headless
+# (`make desktop-shot`): xvfb + xauth for `xvfb-run`, x11-utils (xwininfo, xprop) to
+# inspect the window, imagemagick (`import`) for the screenshot; python3 is needed by
 # `make web-preview`.
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
@@ -19,5 +19,5 @@ sudo apt-get install -y --no-install-recommends \
 # Pre-fetch the Playwright MCP server so the first Claude session doesn't wait for it.
 npm install -g @playwright/mcp@latest
 
-# Toolchain web per egui/wasm: target wasm32, clippy/rustfmt e trunk (vedi `make setup`).
+# Web toolchain for egui/wasm: wasm32 target, clippy/rustfmt and trunk (see `make setup`).
 make setup

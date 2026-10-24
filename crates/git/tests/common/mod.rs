@@ -1,14 +1,14 @@
-//! Helper per i test di integrazione: repo git veri in cartelle temporanee, in ambiente
-//! deterministico (`impl-docs/ARCHITETTURA-git.md` §9).
+//! Helpers for integration tests: real git repos in temporary folders, in a deterministic
+//! environment (`impl-docs/ARCHITECTURE-git.md` §9).
 //!
-//! Ogni processo git (quelli dei test e quelli del backend aperto con [`Repo::open`]) gira senza
-//! configurazione globale o di sistema, con autore, committer e branch iniziale fissi. Le date
-//! partono da [`START_TIME`] e ogni comando git eseguito dal repo le sposta avanti di
-//! [`TICK`] secondi: lo stesso scenario dà sempre gli stessi id di commit.
+//! Every git process (those of the tests and those of the backend opened with [`Repo::open`])
+//! runs without global or system configuration, with a fixed author, committer and initial
+//! branch. Dates start from [`START_TIME`] and every git command run by the repo moves them
+//! forward by [`TICK`] seconds: the same scenario always gives the same commit ids.
 //!
-//! Gli scenari pronti sono le funzioni `repo_*` in fondo al file.
+//! The ready-made scenarios are the `repo_*` functions at the bottom of the file.
 
-// Ogni file di test usa solo una parte dell'helper.
+// Every test file uses only part of the helper.
 #![allow(dead_code)]
 
 use project_domain::Oid;
@@ -18,7 +18,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-/// Ambiente di ogni processo git dei test.
+/// Environment of every git process of the tests.
 pub const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
     ("GIT_CONFIG_NOSYSTEM", "1"),
@@ -29,26 +29,26 @@ pub const GIT_ENV: &[(&str, &str)] = &[
     ("LC_ALL", "C"),
 ];
 
-/// Data del primo comando git di ogni repo, in secondi dall'epoca Unix.
+/// Date of the first git command of every repo, in seconds since the Unix epoch.
 pub const START_TIME: i64 = 1_700_000_000;
-/// Secondi tra un comando git e il successivo.
+/// Seconds between one git command and the next.
 pub const TICK: i64 = 60;
-/// Fuso orario delle date dei test.
+/// Time zone of the test dates.
 pub const OFFSET: &str = "+0200";
 
-/// Un repo temporaneo, cancellato quando esce dallo scope.
+/// A temporary repo, deleted when it goes out of scope.
 pub struct Repo {
     dir: TempDir,
     clock: Cell<i64>,
 }
 
 impl Repo {
-    /// Repo vuoto con worktree, su `main`.
+    /// Empty repo with a worktree, on `main`.
     pub fn new() -> Self {
         Self::init(&[])
     }
 
-    /// Repo bare vuoto (`HEAD` su `main`): da usare come remoto locale, niente rete.
+    /// Empty bare repo (`HEAD` on `main`): to use as a local remote, no network.
     pub fn bare() -> Self {
         Self::init(&["--bare"])
     }
@@ -75,14 +75,14 @@ impl Repo {
         self.path().to_str().unwrap()
     }
 
-    /// Opener con lo stesso ambiente dei test.
+    /// Opener with the same environment as the tests.
     pub fn opener() -> CliOpener {
         GIT_ENV
             .iter()
             .fold(CliOpener::new(), |opener, (k, v)| opener.env(*k, *v))
     }
 
-    /// Il backend sotto test, aperto sulla radice del repo.
+    /// The backend under test, opened on the repo root.
     pub fn open(&self) -> CliBackend {
         Self::opener().open_cli(self.path_str()).unwrap()
     }
@@ -98,123 +98,123 @@ impl Repo {
         cmd
     }
 
-    /// Esegue git nel repo, qualunque sia il risultato.
+    /// Runs git in the repo, whatever the result.
     pub fn git_output(&self, args: &[&str]) -> Output {
         let mut cmd = self.command(&[]);
         cmd.arg("-C").arg(self.path()).args(args);
         cmd.output().unwrap()
     }
 
-    /// Esegue git nel repo e restituisce stdout senza gli a capo finali; il test fallisce se
-    /// git fallisce.
+    /// Runs git in the repo and returns stdout without trailing newlines; the test fails if
+    /// git fails.
     pub fn git(&self, args: &[&str]) -> String {
         let out = self.git_output(args);
         assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
         String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
     }
 
-    /// Esegue git nel repo e verifica che fallisca (es. un merge in conflitto).
+    /// Runs git in the repo and checks that it fails (e.g. a conflicting merge).
     pub fn git_fails(&self, args: &[&str]) {
         let out = self.git_output(args);
-        assert!(!out.status.success(), "git {args:?} doveva fallire");
+        assert!(!out.status.success(), "git {args:?} should have failed");
     }
 
-    /// L'id a cui porta `rev`.
+    /// The id `rev` points to.
     pub fn rev(&self, rev: &str) -> Oid {
         self.git(&["rev-parse", "--verify", "--end-of-options", rev])
             .parse()
             .unwrap()
     }
 
-    /// Scrive `file` (con le cartelle intermedie) senza metterlo in stage.
+    /// Writes `file` (with intermediate folders) without staging it.
     pub fn write(&self, file: &str, content: &str) {
         let path = self.path().join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
     }
 
-    /// Mette in stage `files`.
+    /// Stages `files`.
     pub fn stage(&self, files: &[&str]) {
         self.git(&[&["add", "--"], files].concat());
     }
 
-    /// Commit di quello che è in stage; restituisce l'id.
+    /// Commits what is staged; returns the id.
     pub fn commit(&self, message: &str) -> Oid {
         self.git(&["commit", "--quiet", "-m", message]);
         self.rev("HEAD")
     }
 
-    /// Scrive `file`, lo mette in stage e crea un commit; restituisce l'id.
+    /// Writes `file`, stages it and creates a commit; returns the id.
     pub fn commit_file(&self, file: &str, content: &str, message: &str) -> Oid {
         self.write(file, content);
         self.stage(&[file]);
         self.commit(message)
     }
 
-    /// Crea il branch `name` su HEAD, senza spostarsi.
+    /// Creates branch `name` on HEAD, without switching to it.
     pub fn branch(&self, name: &str) {
         self.git(&["branch", "--end-of-options", name]);
     }
 
-    /// Passa al branch `name`. Il `--` finale fa leggere `name` come branch, non come file.
+    /// Switches to branch `name`. The trailing `--` makes `name` be read as a branch, not a file.
     pub fn checkout(&self, name: &str) {
         self.git(&["checkout", "--quiet", name, "--"]);
     }
 
-    /// Stacca HEAD sul commit `id`.
+    /// Detaches HEAD at commit `id`.
     pub fn detach(&self, id: Oid) {
         self.git(&["checkout", "--quiet", "--detach", &id.to_string()]);
     }
 
-    /// Merge di `branch` nel branch corrente con un commit di merge (`--no-ff`) e il messaggio
-    /// di default di git; restituisce l'id del merge.
+    /// Merges `branch` into the current branch with a merge commit (`--no-ff`) and git's
+    /// default message; returns the merge id.
     pub fn merge(&self, branch: &str) -> Oid {
         self.git(&["merge", "--quiet", "--no-ff", "--no-edit", branch]);
         self.rev("HEAD")
     }
 
-    /// Prepara un conflitto su `file`: dal commit corrente, il branch `other` lo scrive con
-    /// `theirs` e il branch corrente con `ours`. Restituisce l'id del commit di `other`; HEAD
-    /// resta sul branch corrente, che deve esistere.
+    /// Prepares a conflict on `file`: from the current commit, branch `other` writes it with
+    /// `theirs` and the current branch with `ours`. Returns the id of the commit of `other`; HEAD
+    /// stays on the current branch, which must exist.
     pub fn diverge(&self, other: &str, file: &str, ours: &str, theirs: &str) -> Oid {
         let current = self.git(&["symbolic-ref", "--short", "HEAD"]);
         self.branch(other);
         self.checkout(other);
-        let theirs = self.commit_file(file, theirs, &format!("{file} su {other}"));
+        let theirs = self.commit_file(file, theirs, &format!("{file} on {other}"));
         self.checkout(&current);
-        self.commit_file(file, ours, &format!("{file} su {current}"));
+        self.commit_file(file, ours, &format!("{file} on {current}"));
         theirs
     }
 
-    /// Merge di `branch` che finisce in conflitto: il repo resta in merge.
+    /// Merge of `branch` that ends in a conflict: the repo stays mid-merge.
     pub fn conflict(&self, branch: &str) {
         self.git_fails(&["merge", "--no-edit", branch]);
     }
 
-    /// Tag leggero `name` su `rev`.
+    /// Lightweight tag `name` on `rev`.
     pub fn tag(&self, name: &str, rev: &str) {
         self.git(&["tag", "--end-of-options", name, rev]);
     }
 
-    /// Tag annotato `name` su `rev`; restituisce l'id dell'oggetto tag.
+    /// Annotated tag `name` on `rev`; returns the id of the tag object.
     pub fn annotated_tag(&self, name: &str, rev: &str, message: &str) -> Oid {
         self.git(&["tag", "-a", "-m", message, "--end-of-options", name, rev]);
         self.rev(&format!("refs/tags/{name}"))
     }
 
-    /// `git stash` delle modifiche ai file tracciati; restituisce l'id dello stash.
+    /// `git stash` of the changes to tracked files; returns the stash id.
     pub fn stash(&self) -> Oid {
         self.git(&["stash", "--quiet"]);
         self.rev("refs/stash")
     }
 
-    /// Aggiunge il remoto `name` che punta al repo `remote` (di solito [`Repo::bare`]).
+    /// Adds remote `name` pointing to repo `remote` (usually [`Repo::bare`]).
     pub fn add_remote(&self, name: &str, remote: &Repo) {
         self.git(&["remote", "add", "--", name, remote.path_str()]);
     }
 
-    /// Push di `rev` nel branch `branch` del remoto, poi fetch: il branch remoto locale
-    /// (`refs/remotes/<remote>/<branch>`) è aggiornato.
+    /// Pushes `rev` to branch `branch` of the remote, then fetches: the local remote-tracking
+    /// branch (`refs/remotes/<remote>/<branch>`) is up to date.
     pub fn push(&self, remote: &str, rev: &str, branch: &str) {
         self.git(&[
             "push",
@@ -225,7 +225,7 @@ impl Repo {
         self.git(&["fetch", "--quiet", remote]);
     }
 
-    /// Il branch locale `branch` segue `<remote>/<branch>`.
+    /// The local branch `branch` tracks `<remote>/<branch>`.
     pub fn set_upstream(&self, branch: &str, remote: &str) {
         let upstream = format!("{remote}/{branch}");
         self.git(&["branch", "--quiet", "--set-upstream-to", &upstream, branch]);
@@ -236,9 +236,9 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-// --- Scenari ---
+// --- Scenarios ---
 
-/// Gli id di [`repo_with_history`].
+/// The ids of [`repo_with_history`].
 pub struct History {
     pub repo: Repo,
     pub c1: Oid,
@@ -248,22 +248,22 @@ pub struct History {
     pub m: Oid,
 }
 
-/// Due branch e un merge, HEAD su `main`:
+/// Two branches and a merge, HEAD on `main`:
 ///
 /// ```text
 /// m   Merge branch 'feature'        (main)
 /// |\
 /// | f2  feature 2                   (feature)
 /// | f1  feature 1
-/// c2 |  secondo su main, con corpo su due righe
+/// c2 |  second on main, with a two-line body
 /// |/
-/// c1  primo commit                  (radice)
+/// c1  first commit                  (root)
 /// ```
 pub fn repo_with_history() -> History {
     let repo = Repo::new();
-    let c1 = repo.commit_file("a.txt", "uno\n", "primo commit");
+    let c1 = repo.commit_file("a.txt", "one\n", "first commit");
     repo.branch("feature");
-    let c2 = repo.commit_file("a.txt", "due\n", "secondo su main\n\nCorpo\nsu due righe.");
+    let c2 = repo.commit_file("a.txt", "two\n", "second on main\n\nBody\non two lines.");
     repo.checkout("feature");
     let f1 = repo.commit_file("b.txt", "b\n", "feature 1");
     let f2 = repo.commit_file("b.txt", "bb\n", "feature 2");
@@ -279,103 +279,100 @@ pub fn repo_with_history() -> History {
     }
 }
 
-/// [`repo_with_history`] con ref di ogni tipo:
+/// [`repo_with_history`] with refs of every kind:
 ///
-/// - remoto `origin` (repo bare locale, restituito) con `main` su `c2`; `main` lo segue ed è
-///   avanti di 3 (`f1`, `f2`, `m`);
-/// - tag leggero `leggero` su `c1`, tag annotato `v1` su `c2`;
-/// - uno stash con una modifica ad `a.txt`; il worktree resta pulito.
+/// - remote `origin` (local bare repo, returned) with `main` at `c2`; `main` tracks it and is
+///   ahead by 3 (`f1`, `f2`, `m`);
+/// - lightweight tag `light` at `c1`, annotated tag `v1` at `c2`;
+/// - a stash with a change to `a.txt`; the worktree stays clean.
 pub fn repo_with_all_refs() -> (History, Repo) {
     let h = repo_with_history();
     let origin = Repo::bare();
     h.repo.add_remote("origin", &origin);
     h.repo.push("origin", &h.c2.to_string(), "main");
     h.repo.set_upstream("main", "origin");
-    h.repo.tag("leggero", &h.c1.to_string());
-    h.repo.annotated_tag("v1", &h.c2.to_string(), "versione 1");
-    h.repo.write("a.txt", "modificato\n");
+    h.repo.tag("light", &h.c1.to_string());
+    h.repo.annotated_tag("v1", &h.c2.to_string(), "version 1");
+    h.repo.write("a.txt", "modified\n");
     h.repo.stash();
     (h, origin)
 }
 
-/// Worktree con una modifica di ogni tipo, rispetto a due commit:
+/// Worktree with a change of every kind, relative to two commits:
 ///
-/// - `a.txt` modificato e non in stage;
-/// - `nuovo.txt` aggiunto in stage;
-/// - `vecchio.txt` rinominato in `rinominato.txt` (in stage);
-/// - `cartella/non tracciato.txt` non tracciato (con uno spazio nel nome).
+/// - `a.txt` modified and not staged;
+/// - `new.txt` added to the index;
+/// - `old.txt` renamed to `renamed.txt` (staged);
+/// - `dir/untracked file.txt` untracked (with a space in the name).
 pub fn repo_with_changes() -> Repo {
     let repo = Repo::new();
-    repo.commit_file("a.txt", "uno\n", "primo");
+    repo.commit_file("a.txt", "one\n", "first");
     repo.commit_file(
-        "vecchio.txt",
-        "contenuto abbastanza lungo da riconoscere\n",
-        "secondo",
+        "old.txt",
+        "content long enough to be recognized\n",
+        "second",
     );
-    repo.write("a.txt", "modificato\n");
-    repo.write("nuovo.txt", "in stage\n");
-    repo.stage(&["nuovo.txt"]);
-    repo.git(&["mv", "vecchio.txt", "rinominato.txt"]);
-    repo.write("cartella/non tracciato.txt", "?\n");
+    repo.write("a.txt", "modified\n");
+    repo.write("new.txt", "staged\n");
+    repo.stage(&["new.txt"]);
+    repo.git(&["mv", "old.txt", "renamed.txt"]);
+    repo.write("dir/untracked file.txt", "?\n");
     repo
 }
 
-/// `main` e `altro` cambiano in modo diverso `a.txt` da un commit comune; nessuna operazione
-/// in corso. Restituisce il repo e l'id del commit di `altro`.
+/// `main` and `other` change `a.txt` differently from a common commit; no operation
+/// in progress. Returns the repo and the id of the commit of `other`.
 pub fn repo_with_divergent_branches() -> (Repo, Oid) {
     let repo = Repo::new();
     repo.commit_file("a.txt", "base\n", "base");
-    let theirs = repo.diverge("altro", "a.txt", "nostra\n", "loro\n");
+    let theirs = repo.diverge("other", "a.txt", "ours\n", "theirs\n");
     (repo, theirs)
 }
 
-/// [`repo_with_divergent_branches`] con il merge di `altro` in `main` fermo sul conflitto in
-/// `a.txt`.
+/// [`repo_with_divergent_branches`] with the merge of `other` into `main` stopped on the
+/// conflict in `a.txt`.
 pub fn repo_with_merge_conflict() -> Repo {
     let (repo, _) = repo_with_divergent_branches();
-    repo.conflict("altro");
+    repo.conflict("other");
     repo
 }
 
-/// Gli id di [`repo_with_file_changes`].
+/// The ids of [`repo_with_file_changes`].
 pub struct FileChanges {
     pub repo: Repo,
-    /// Commit radice: `vecchio.txt`, `sposta.txt`, `eliminato.txt`, `script.sh`.
+    /// Root commit: `old.txt`, `move.txt`, `deleted.txt`, `script.sh`.
     pub base: Oid,
-    /// Rispetto a `base`: `vecchio.txt` → `nuovo.txt` (rinomina esatta), `sposta.txt` →
-    /// `spostato.txt` (rinomina con modifiche), `eliminato.txt` eliminato, `script.sh` reso
-    /// eseguibile, aggiunti `cartella/con spazio.txt` e un file con nome non UTF-8 (byte `0xff`,
-    /// solo su Unix).
+    /// Relative to `base`: `old.txt` → `new.txt` (exact rename), `move.txt` →
+    /// `moved.txt` (rename with changes), `deleted.txt` deleted, `script.sh` made
+    /// executable, added `dir/with space.txt` and a file with a non-UTF-8 name (byte `0xff`,
+    /// Unix only).
     pub changes: Oid,
-    /// Commit vuoto (`--allow-empty`) dopo `changes`.
+    /// Empty commit (`--allow-empty`) after `changes`.
     pub empty: Oid,
 }
 
-/// Il nome non UTF-8 di [`repo_with_file_changes`].
-pub const NON_UTF8_NAME: &[u8] = b"caff\xff.txt";
+/// The non-UTF-8 name of [`repo_with_file_changes`].
+pub const NON_UTF8_NAME: &[u8] = b"cafe\xff.txt";
 
-/// Un commit con una modifica di ogni tipo, e un commit vuoto dopo.
+/// A commit with a change of every kind, and an empty commit after it.
 pub fn repo_with_file_changes() -> FileChanges {
     let repo = Repo::new();
+    repo.write("old.txt", "content long enough to recognize the rename\n");
     repo.write(
-        "vecchio.txt",
-        "contenuto abbastanza lungo da riconoscere la rinomina\n",
+        "move.txt",
+        "first line long enough\nsecond line\nthird line\nfourth line\n",
     );
-    repo.write(
-        "sposta.txt",
-        "prima riga abbastanza lunga\nseconda riga\nterza riga\nquarta riga\n",
-    );
-    repo.write("eliminato.txt", "da eliminare\n");
+    repo.write("deleted.txt", "to delete\n");
     repo.write("script.sh", "#!/bin/sh\n");
     repo.git(&["add", "-A"]);
     let base = repo.commit("base");
 
-    repo.git(&["mv", "vecchio.txt", "nuovo.txt"]);
-    repo.git(&["mv", "sposta.txt", "spostato.txt"]);
-    let moved = std::fs::read_to_string(repo.path().join("spostato.txt")).unwrap();
-    repo.write("spostato.txt", &format!("{moved}quinta riga\n"));
-    repo.git(&["rm", "--quiet", "eliminato.txt"]);
-    repo.write("cartella/con spazio.txt", "spazio\n");
+    repo.git(&["mv", "old.txt", "new.txt"]);
+    repo.git(&["mv", "move.txt", "moved.txt"]);
+    let moved = std::fs::read_to_string(repo.path().join("moved.txt")).unwrap();
+    repo.write("moved.txt", &format!("{moved}fifth line\n"));
+    repo.git(&["rm", "--quiet", "deleted.txt"]);
+    repo.write("dir/with space.txt", "space\n");
     #[cfg(unix)]
     {
         use std::ffi::OsStr;
@@ -387,10 +384,10 @@ pub fn repo_with_file_changes() -> FileChanges {
         .unwrap();
     }
     repo.git(&["add", "-A"]);
-    // Dopo `add -A`, che riprenderebbe il modo dal file system.
+    // After `add -A`, which would take the mode again from the file system.
     repo.git(&["update-index", "--chmod=+x", "script.sh"]);
-    let changes = repo.commit("ogni tipo di modifica");
-    repo.git(&["commit", "--quiet", "--allow-empty", "-m", "vuoto"]);
+    let changes = repo.commit("every kind of change");
+    repo.git(&["commit", "--quiet", "--allow-empty", "-m", "empty"]);
     let empty = repo.rev("HEAD");
     FileChanges {
         repo,
@@ -400,34 +397,34 @@ pub fn repo_with_file_changes() -> FileChanges {
     }
 }
 
-/// HEAD staccata sul commit `f1` di [`repo_with_history`].
+/// HEAD detached at commit `f1` of [`repo_with_history`].
 pub fn repo_detached_head() -> History {
     let h = repo_with_history();
     h.repo.detach(h.f1);
     h
 }
 
-/// Nomi che git leggerebbe come pathspec speciali se non fossero presi alla lettera, nel
-/// commit radice e poi tutti modificati fuori stage: `file*.txt` e `file1.txt` (il primo come
-/// glob comprende il secondo), `a[1].txt` e `a1.txt`, `:(top)magia.txt` (pathspec magico) e
-/// `-trattino.txt` (sembra un'opzione).
+/// Names that git would read as special pathspecs if they were not taken literally, in the
+/// root commit and then all modified outside the index: `file*.txt` and `file1.txt` (the first
+/// as a glob includes the second), `a[1].txt` and `a1.txt`, `:(top)magic.txt` (magic pathspec)
+/// and `-dash.txt` (looks like an option).
 pub fn repo_with_special_names() -> Repo {
     const NAMES: &[&str] = &[
         "file*.txt",
         "file1.txt",
         "a[1].txt",
         "a1.txt",
-        ":(top)magia.txt",
-        "-trattino.txt",
+        ":(top)magic.txt",
+        "-dash.txt",
     ];
     let repo = Repo::new();
     for name in NAMES {
-        repo.write(name, "prima\n");
+        repo.write(name, "before\n");
     }
     repo.git(&["add", "-A"]);
-    repo.commit("nomi speciali");
+    repo.commit("special names");
     for name in NAMES {
-        repo.write(name, &format!("dopo: {name}\n"));
+        repo.write(name, &format!("after: {name}\n"));
     }
     repo
 }

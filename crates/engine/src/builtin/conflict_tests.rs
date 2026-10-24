@@ -1,9 +1,9 @@
-//! Test di `conflict.show` e `conflict.resolve` sul `MemoryBackend` (con git vero:
+//! Tests of `conflict.show` and `conflict.resolve` on the `MemoryBackend` (with real git:
 //! `crates/git/tests/conflict.rs`).
 //!
-//! Il repo: `c1` (radice: `a.txt` = «base», `b.txt`); `main` su `c2` (`a.txt` = «nostra»);
-//! `altro` su `c3` da `c1` (`a.txt` = «loro»: conflitto `BothModified`); `via` su `c4` da `c1`
-//! (cancella `a.txt`: conflitto `DeletedByThem`). HEAD su `main`, worktree pulito.
+//! The repo: `c1` (root: `a.txt` = "base", `b.txt`); `main` at `c2` (`a.txt` = "ours");
+//! `other` at `c3` from `c1` (`a.txt` = "theirs": `BothModified` conflict); `gone` at `c4` from `c1`
+//! (deletes `a.txt`: `DeletedByThem` conflict). HEAD on `main`, clean worktree.
 
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session, worktree_digest};
 use project_domain::{
@@ -37,7 +37,7 @@ fn blob(repo: &mut MemoryBackend, content: &[u8]) -> Oid {
     id
 }
 
-/// Il commit `n` con i file `files` (percorso, contenuto prima, contenuto dopo; `None` = assente).
+/// Commit `n` with the files `files` (path, content before, content after; `None` = absent).
 fn commit(
     repo: &mut MemoryBackend,
     n: u64,
@@ -92,18 +92,18 @@ fn repo() -> MemoryBackend {
         &mut repo,
         2,
         Some(1),
-        &[("a.txt", Some("base\n"), Some("nostra\n"))],
+        &[("a.txt", Some("base\n"), Some("ours\n"))],
     );
     commit(
         &mut repo,
         3,
         Some(1),
-        &[("a.txt", Some("base\n"), Some("loro\n"))],
+        &[("a.txt", Some("base\n"), Some("theirs\n"))],
     );
     commit(&mut repo, 4, Some(1), &[("a.txt", Some("base\n"), None)]);
     repo.set_branch("main", oid(2));
-    repo.set_branch("altro", oid(3));
-    repo.set_branch("via", oid(4));
+    repo.set_branch("other", oid(3));
+    repo.set_branch("gone", oid(4));
     repo.set_head_branch("main");
     repo
 }
@@ -121,7 +121,7 @@ fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-/// Il repo con il merge di `rev` fermo in conflitto.
+/// The repo with the merge of `rev` stopped on a conflict.
 fn merging(rev: &str) -> (Registry, Session) {
     let (r, mut s) = opened_with(repo());
     let out = run(&r, &mut s, "merge.start", json!({ "rev": rev }));
@@ -142,16 +142,16 @@ fn only_resolve_writes() {
 
 #[test]
 fn show_both_modified() {
-    let (r, mut s) = merging("altro");
+    let (r, mut s) = merging("other");
     let out = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
     assert_eq!(out["path"], "a.txt");
     assert_eq!(out["kind"], "BothModified");
     let text = |v: &Value| v["text"].as_str().map(str::to_owned);
     assert_eq!(text(&out["base"]).as_deref(), Some("base\n"));
-    assert_eq!(text(&out["ours"]).as_deref(), Some("nostra\n"));
-    assert_eq!(text(&out["theirs"]).as_deref(), Some("loro\n"));
+    assert_eq!(text(&out["ours"]).as_deref(), Some("ours\n"));
+    assert_eq!(text(&out["theirs"]).as_deref(), Some("theirs\n"));
     let worktree = text(&out["worktree"]).unwrap();
-    assert!(worktree.starts_with("<<<<<<< HEAD\nnostra\n=======\nloro\n>>>>>>> "));
+    assert!(worktree.starts_with("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> "));
     assert_eq!(out["worktree"]["binary"], false);
     assert_eq!(out["worktree"]["size"], worktree.len());
     assert_eq!(out["marker_size"], 7);
@@ -160,7 +160,7 @@ fn show_both_modified() {
 
 #[test]
 fn resolve_then_continue() {
-    let (r, mut s) = merging("altro");
+    let (r, mut s) = merging("other");
     let shown = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
     let out = run(
         &r,
@@ -178,7 +178,7 @@ fn resolve_then_continue() {
     let op = run(&r, &mut s, "repo.operation", json!({}));
     assert_eq!(op["ready"], true);
 
-    // Il backup ha il file con i marcatori, al suo percorso.
+    // The backup has the file with the markers, at its path.
     let diff = run(
         &r,
         &mut s,
@@ -193,7 +193,7 @@ fn resolve_then_continue() {
         .collect();
     assert!(lines.iter().any(|l| l.contains("<<<<<<< HEAD")), "{diff}");
 
-    // Il file risolto non è più in conflitto.
+    // The resolved file is no longer in conflict.
     let err = r
         .run("conflict.show", &mut s, json!({ "path": "a.txt" }))
         .unwrap_err();
@@ -205,18 +205,18 @@ fn resolve_then_continue() {
 
 #[test]
 fn stale_digest_changes_nothing() {
-    let (r, mut s) = merging("altro");
+    let (r, mut s) = merging("other");
     let before = status(&r, &mut s);
     let err = r
         .run(
             "conflict.resolve",
             &mut s,
-            json!({ "path": "a.txt", "digest": worktree_digest(Some(b"altro")), "content": "x\n" }),
+            json!({ "path": "a.txt", "digest": worktree_digest(Some(b"other")), "content": "x\n" }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::StaleDiff { .. }), "{err}");
     assert_eq!(status(&r, &mut s), before);
-    // Nessun backup creato: il prossimo è ancora il primo.
+    // No backup created: the next one is still the first.
     let shown = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
     let out = run(
         &r,
@@ -229,7 +229,7 @@ fn stale_digest_changes_nothing() {
 
 #[test]
 fn not_a_conflict_is_refused() {
-    let (r, mut s) = merging("altro");
+    let (r, mut s) = merging("other");
     let before = status(&r, &mut s);
     for (id, params) in [
         ("conflict.show", json!({ "path": "b.txt" })),
@@ -247,7 +247,7 @@ fn not_a_conflict_is_refused() {
 
 #[test]
 fn invalid_params() {
-    let (r, mut s) = merging("altro");
+    let (r, mut s) = merging("other");
     let d = worktree_digest(None);
     for (id, params) in [
         ("conflict.show", json!({})),
@@ -281,12 +281,12 @@ fn invalid_params() {
 
 #[test]
 fn delete_for_deleted_by_them() {
-    let (r, mut s) = merging("via");
+    let (r, mut s) = merging("gone");
     let shown = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
     assert_eq!(shown["kind"], "DeletedByThem");
     assert_eq!(shown["theirs"], Value::Null);
-    assert_eq!(shown["ours"]["text"], "nostra\n");
-    assert_eq!(shown["worktree"]["text"], "nostra\n");
+    assert_eq!(shown["ours"]["text"], "ours\n");
+    assert_eq!(shown["worktree"]["text"], "ours\n");
     let out = run(
         &r,
         &mut s,
@@ -300,7 +300,7 @@ fn delete_for_deleted_by_them() {
     assert_eq!(run(&r, &mut s, "repo.operation", json!({}))["ready"], true);
 }
 
-/// Un conflitto scritto a mano: stadi con contenuto non UTF-8 e worktree assente.
+/// A hand-written conflict: stages with non-UTF-8 content and absent worktree.
 #[test]
 fn binary_versions_and_missing_worktree() {
     let mut repo = repo();
@@ -331,7 +331,7 @@ fn binary_versions_and_missing_worktree() {
         json!({ "text": null, "binary": true, "size": 3 })
     );
     assert_eq!(shown["digest"], worktree_digest(None));
-    // Senza file nel worktree niente backup; il contenuto nuovo lo crea.
+    // Without a file in the worktree no backup; the new content creates it.
     let out = run(
         &r,
         &mut s,

@@ -1,5 +1,5 @@
-//! Disegno del riquadro dell'operazione in corso e dei dialoghi del merge (S29). Le funzioni
-//! leggono la vista e producono [`Action`]; non cambiano niente direttamente.
+//! Drawing of the in-progress operation panel and the merge dialogs (S29). The functions
+//! read the view and produce [`Action`]; they change nothing directly.
 
 use crate::discard::Phase;
 use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog, OperationInfo};
@@ -9,11 +9,11 @@ use egui::{RichText, Ui};
 use project_domain::{Operation, RepoPath};
 use project_i18n::tr;
 
-/// Il riquadro sotto la barra quando il repo è in merge, rebase, cherry-pick, revert, bisect o
-/// `git am`: cosa sta entrando, i file in conflitto (un clic apre l'editor dei
-/// conflitti) e, se l'operazione si conclude da qui, "Continua" (attivo solo senza conflitti) e
-/// "Annulla" (chiede conferma). `operation`: quella dello stato, sempre aggiornata; i dettagli
-/// arrivano da `repo.operation`. `can_write`: nessuna scrittura né dialogo in corso.
+/// The panel below the bar when the repo is in merge, rebase, cherry-pick, revert, bisect or
+/// `git am`: what is coming in, the conflicted files (a click opens the conflict
+/// editor) and, if the operation can be finished from here, "Continue" (enabled only without conflicts) and
+/// "Abort" (asks for confirmation). `operation`: the one from the status, always up to date; the details
+/// come from `repo.operation`. `can_write`: no write or dialog in progress.
 pub(crate) fn banner(
     ui: &mut Ui,
     repo: &RepoView,
@@ -21,7 +21,7 @@ pub(crate) fn banner(
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
-    // Finché arriva la lettura, o se l'ha già: i dettagli valgono solo per la stessa operazione.
+    // Until the reading arrives, or if it already has: the details apply only to the same operation.
     let info = repo
         .merge
         .info()
@@ -68,7 +68,7 @@ pub(crate) fn banner(
         });
 }
 
-/// Il suggerimento del titolo: i commit in ingresso per esteso, con i ref che ci puntano.
+/// The title tooltip: the incoming commits in full, with the refs pointing at them.
 fn hover(info: &OperationInfo) -> String {
     let mut lines: Vec<String> = info
         .incoming
@@ -87,8 +87,8 @@ fn hover(info: &OperationInfo) -> String {
     lines.join("\n")
 }
 
-/// "Annulla il …" e "Continua il …" (da destra) con i comandi che `repo.operation` indica
-/// (merge, cherry-pick, revert), o come concludere da terminale.
+/// "Abort the …" and "Continue the …" (from the right) with the commands that `repo.operation` indicates
+/// (merge, cherry-pick, revert), or how to finish from the terminal.
 fn buttons(
     ui: &mut Ui,
     info: &OperationInfo,
@@ -152,8 +152,8 @@ fn buttons(
     }
 }
 
-/// La riga dei conflitti: i primi file (un clic apre l'editor dei conflitti), quanti altri
-/// ce ne sono, oppure che si può concludere.
+/// The conflicts row: the first files (a click opens the conflict editor), how many more
+/// there are, or that it can be concluded.
 fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &mut Vec<Action>) {
     let n = info.conflicts.len();
     if n == 0 {
@@ -197,15 +197,15 @@ fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>
     }
 }
 
-/// Il dialogo aperto: "Continua", la conferma dell'annullamento o il genitore di un
-/// cherry-pick o revert di un commit di merge.
+/// The open dialog: "Continue", the abort confirmation or the parent of a
+/// cherry-pick or revert of a merge commit.
 pub(crate) fn merge_dialog(
     ctx: &egui::Context,
     repo: &RepoView,
     dialog: &Dialog,
     actions: &mut Vec<Action>,
 ) {
-    let modal = egui::Modal::new(egui::Id::unique("dialogo-merge")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::unique("merge-dialog")).show(ctx, |ui| {
         ui.set_max_width(520.0);
         match dialog {
             Dialog::Continue(dialog) => continue_dialog(ui, repo, dialog, actions),
@@ -241,7 +241,7 @@ fn continue_dialog(
     let mut message = dialog.message.clone();
     let edit = ui.add(
         egui::TextEdit::multiline(&mut message)
-            .id(ui.make_persistent_id("messaggio-merge"))
+            .id(ui.make_persistent_id("merge-message"))
             .desired_rows(5)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace)
@@ -297,7 +297,7 @@ fn abort_dialog(ui: &mut Ui, kind: Kind, reason: &str, actions: &mut Vec<Action>
     ui.add_space(6.0);
     ui.strong(tr!("merge-what-happens"));
     egui::ScrollArea::vertical()
-        .id_salt("motivo-annulla-merge")
+        .id_salt("merge-abort-reason")
         .max_height(180.0)
         .show(ui, |ui| {
             ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
@@ -320,8 +320,8 @@ fn abort_dialog(ui: &mut Ui, kind: Kind, reason: &str, actions: &mut Vec<Action>
     });
 }
 
-/// Il genitore di riferimento per il cherry-pick o il revert di un commit di merge: le
-/// modifiche sono quelle del merge rispetto al genitore scelto (`mainline`).
+/// The reference parent for the cherry-pick or revert of a merge commit: the
+/// changes are those of the merge relative to the chosen parent (`mainline`).
 fn mainline_dialog(ui: &mut Ui, dialog: &MainlineDialog, actions: &mut Vec<Action>) {
     let kind = dialog.pick.kind();
     ui.heading(tr!("merge-mainline-heading", title = kind.title()));

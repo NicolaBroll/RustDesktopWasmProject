@@ -20,12 +20,12 @@ fn ref_target(repo: &MemoryBackend, name: &str) -> Oid {
         .unwrap()
         .into_iter()
         .find(|r| r.name == name)
-        .unwrap_or_else(|| panic!("manca {name}"))
+        .unwrap_or_else(|| panic!("missing {name}"))
         .target
 }
 
 #[test]
-fn head_su_main_all_ultimo_commit() {
+fn head_on_main_at_the_last_commit() {
     let repo = sample();
     let head = repo.head().unwrap();
     assert_eq!(
@@ -37,20 +37,20 @@ fn head_su_main_all_ultimo_commit() {
     );
     let first = &log(&repo, LogQuery::page(0, 1))[0];
     assert_eq!(head.target(), Some(first.id));
-    assert_eq!(first.summary, "Pannello dei commit");
+    assert_eq!(first.summary, "Commit panel");
 }
 
 #[test]
-fn refs_in_ordine_di_nome_con_tipi_e_upstream() {
+fn refs_in_name_order_with_kinds_and_upstream() {
     let repo = sample();
     let refs = repo.refs().unwrap();
     let names: Vec<_> = refs.iter().map(|r| (r.name.as_str(), r.kind)).collect();
     assert_eq!(
         names,
         [
-            ("refs/heads/feature/grafo", RefKind::LocalBranch),
+            ("refs/heads/feature/graph", RefKind::LocalBranch),
             ("refs/heads/main", RefKind::LocalBranch),
-            ("refs/remotes/origin/feature/grafo", RefKind::RemoteBranch),
+            ("refs/remotes/origin/feature/graph", RefKind::RemoteBranch),
             ("refs/remotes/origin/main", RefKind::RemoteBranch),
             ("refs/tags/v0.1.0", RefKind::Tag),
         ]
@@ -65,9 +65,9 @@ fn refs_in_ordine_di_nome_con_tipi_e_upstream() {
         })
     );
     assert_eq!(
-        by_name("refs/heads/feature/grafo").upstream,
+        by_name("refs/heads/feature/graph").upstream,
         Some(Upstream {
-            name: "refs/remotes/origin/feature/grafo".into(),
+            name: "refs/remotes/origin/feature/graph".into(),
             ahead: Some(0),
             behind: Some(0),
         })
@@ -81,13 +81,13 @@ fn refs_in_ordine_di_nome_con_tipi_e_upstream() {
         }
     }
     assert_eq!(
-        by_name("refs/heads/feature/grafo").target,
-        by_name("refs/remotes/origin/feature/grafo").target
+        by_name("refs/heads/feature/graph").target,
+        by_name("refs/remotes/origin/feature/graph").target
     );
 }
 
 #[test]
-fn il_tag_annotato_punta_al_merge() {
+fn the_annotated_tag_points_to_the_merge() {
     let repo = sample();
     let tag = repo
         .refs()
@@ -104,33 +104,33 @@ fn il_tag_annotato_punta_al_merge() {
 }
 
 #[test]
-fn log_completo_figli_prima_dei_genitori() {
+fn full_log_children_before_parents() {
     let repo = sample();
     let all = log(&repo, LogQuery::all());
     assert_eq!(all.len(), 12);
     assert_eq!(
         summaries(&all),
         [
-            "Pannello dei commit",
-            "Parser dei ref",
-            "Merge branch 'feature/grafo'",
-            "Test di proprietà per le corsie",
-            "Parser dello stato",
-            "Corsie: riusa le colonne libere",
-            "Correggi un refuso nel README",
-            "Corsie del grafo: prima versione",
-            "Parser del log",
-            "Struttura del progetto",
-            "Aggiungi il README",
-            "Primo commit",
+            "Commit panel",
+            "Ref parser",
+            "Merge branch 'feature/graph'",
+            "Property tests for the lanes",
+            "Status parser",
+            "Lanes: reuse the free columns",
+            "Fix a typo in the README",
+            "Graph lanes: first version",
+            "Log parser",
+            "Project structure",
+            "Add the README",
+            "First commit",
         ]
     );
     let ids: BTreeSet<_> = all.iter().map(|c| c.id).collect();
-    assert_eq!(ids.len(), all.len(), "nessun commit ripetuto");
+    assert_eq!(ids.len(), all.len(), "no repeated commit");
     for (i, commit) in all.iter().enumerate() {
         for parent in &commit.parents {
             let pos = all.iter().position(|c| c.id == *parent).unwrap();
-            assert!(pos > i, "{} prima del figlio {}", parent, commit.id);
+            assert!(pos > i, "{} before child {}", parent, commit.id);
         }
     }
     assert!(
@@ -142,7 +142,7 @@ fn log_completo_figli_prima_dei_genitori() {
 }
 
 #[test]
-fn paginazione_con_skip_e_limit() {
+fn pagination_with_skip_and_limit() {
     let repo = sample();
     let all = log(&repo, LogQuery::all());
     assert_eq!(log(&repo, LogQuery::page(3, 4)), all[3..7]);
@@ -155,7 +155,7 @@ fn paginazione_con_skip_e_limit() {
         ..LogQuery::default()
     };
     assert_eq!(log(&repo, skip_only), all[5..]);
-    // Le pagine consecutive ricompongono il log.
+    // Consecutive pages rebuild the log.
     let pages: Vec<Commit> = (0..4)
         .flat_map(|p| log(&repo, LogQuery::page(p * 5, 5)))
         .collect();
@@ -163,27 +163,27 @@ fn paginazione_con_skip_e_limit() {
 }
 
 #[test]
-fn log_da_un_branch_non_include_main() {
+fn log_from_a_branch_does_not_include_main() {
     let repo = sample();
-    let feature = log(&repo, LogQuery::default().from_rev("feature/grafo"));
+    let feature = log(&repo, LogQuery::default().from_rev("feature/graph"));
     assert_eq!(
         summaries(&feature),
         [
-            "Test di proprietà per le corsie",
-            "Corsie: riusa le colonne libere",
-            "Corsie del grafo: prima versione",
-            "Parser del log",
-            "Struttura del progetto",
-            "Aggiungi il README",
-            "Primo commit",
+            "Property tests for the lanes",
+            "Lanes: reuse the free columns",
+            "Graph lanes: first version",
+            "Log parser",
+            "Project structure",
+            "Add the README",
+            "First commit",
         ]
     );
-    let page = log(&repo, LogQuery::page(1, 2).from_rev("feature/grafo"));
+    let page = log(&repo, LogQuery::page(1, 2).from_rev("feature/graph"));
     assert_eq!(page, feature[1..3]);
 }
 
 #[test]
-fn rev_per_nome_completo_breve_head_e_id() {
+fn rev_by_full_short_name_head_and_id() {
     let repo = sample();
     let all = log(&repo, LogQuery::all());
     let first = |rev: &str| log(&repo, LogQuery::page(0, 1).from_rev(rev))[0].id;
@@ -198,23 +198,23 @@ fn rev_per_nome_completo_breve_head_e_id() {
     assert_eq!(first(&target.to_string()), target);
     assert_eq!(first(&target.to_string().to_uppercase()), target);
     assert_eq!(first(&target.short()), target);
-    // Da un commit del lato di main prima del merge: niente commit di feature/grafo.
+    // From a commit on main's side before the merge: no commits of feature/graph.
     assert_eq!(
         summaries(&log(&repo, LogQuery::default().from_rev(target.short()))),
         [
-            "Correggi un refuso nel README",
-            "Parser del log",
-            "Struttura del progetto",
-            "Aggiungi il README",
-            "Primo commit",
+            "Fix a typo in the README",
+            "Log parser",
+            "Project structure",
+            "Add the README",
+            "First commit",
         ]
     );
 }
 
 #[test]
-fn rev_sconosciuta_e_un_errore() {
+fn unknown_rev_is_an_error() {
     let repo = sample();
-    for rev in ["nessuno", "origin/nessuno", "", "abc", "0000000", "HEAD~1"] {
+    for rev in ["missing", "origin/missing", "", "abc", "0000000", "HEAD~1"] {
         let err = repo.log(&LogQuery::default().from_rev(rev)).expect_err(rev);
         assert!(
             matches!(&err, EngineError::UnknownRev(r) if r == rev),
@@ -224,7 +224,7 @@ fn rev_sconosciuta_e_un_errore() {
 }
 
 #[test]
-fn il_merge_ha_due_genitori() {
+fn the_merge_has_two_parents() {
     let repo = sample();
     let all = log(&repo, LogQuery::all());
     let merges: Vec<_> = all.iter().filter(|c| c.is_merge()).collect();
@@ -232,16 +232,16 @@ fn il_merge_ha_due_genitori() {
     let merge = merges[0];
     assert_eq!(merge.parents.len(), 2);
     let summary_of = |id: &Oid| all.iter().find(|c| c.id == *id).unwrap().summary.as_str();
-    // Primo genitore: il lato di main; secondo: la punta del branch unito.
-    assert_eq!(summary_of(&merge.parents[0]), "Parser dello stato");
+    // First parent: main's side; second: the tip of the merged branch.
+    assert_eq!(summary_of(&merge.parents[0]), "Status parser");
     assert_eq!(
         merge.parents[1],
-        ref_target(&repo, "refs/heads/feature/grafo")
+        ref_target(&repo, "refs/heads/feature/graph")
     );
 }
 
 #[test]
-fn stato_non_pulito_con_upstream_breve() {
+fn dirty_status_with_short_upstream() {
     let repo = sample();
     let status = repo.status().unwrap();
     assert_eq!(status.head, repo.head().unwrap());
@@ -270,7 +270,7 @@ fn stato_non_pulito_con_upstream_breve() {
         codes,
         [
             ("README.md".to_owned(), "MM".to_owned()),
-            ("docs/guida.md".to_owned(), "A.".to_owned()),
+            ("docs/guide.md".to_owned(), "A.".to_owned()),
             ("src/lib.rs".to_owned(), ".M".to_owned()),
             ("note.txt".to_owned(), "??".to_owned()),
         ]
@@ -285,7 +285,7 @@ fn stato_non_pulito_con_upstream_breve() {
 }
 
 #[test]
-fn repo_vuoto() {
+fn empty_repo() {
     let repo = MemoryBackend::new();
     assert_eq!(
         repo.head().unwrap(),
@@ -306,21 +306,21 @@ fn repo_vuoto() {
 }
 
 #[test]
-fn head_staccata_e_upstream_sparito() {
+fn detached_head_and_gone_upstream() {
     let mut repo = sample();
     let target = log(&repo, LogQuery::all())[4].id;
-    repo.set_branch("vecchio", target);
-    repo.set_upstream("vecchio", "origin/vecchio");
-    let vecchio = repo
+    repo.set_branch("old", target);
+    repo.set_upstream("old", "origin/old");
+    let old = repo
         .refs()
         .unwrap()
         .into_iter()
-        .find(|r| r.short_name() == "vecchio")
+        .find(|r| r.short_name() == "old")
         .unwrap();
     assert_eq!(
-        vecchio.upstream,
+        old.upstream,
         Some(Upstream {
-            name: "refs/remotes/origin/vecchio".into(),
+            name: "refs/remotes/origin/old".into(),
             ahead: None,
             behind: None,
         })
@@ -333,14 +333,14 @@ fn head_staccata_e_upstream_sparito() {
 }
 
 #[test]
-fn ahead_e_behind_dal_grafo() {
+fn ahead_and_behind_from_the_graph() {
     let mut repo = sample();
-    // origin/main va avanti su un commit che main non ha: 1 avanti, 1 indietro.
+    // origin/main moves ahead by a commit that main does not have: 1 ahead, 1 behind.
     let base = ref_target(&repo, "refs/remotes/origin/main");
     let mut extra = log(&repo, LogQuery::page(0, 1))[0].clone();
     extra.id = MemoryBackend::fake_oid(99);
     extra.parents = vec![base];
-    extra.summary = "Commit solo sul remoto".into();
+    extra.summary = "Commit only on the remote".into();
     repo.insert_commit(extra.clone());
     repo.set_remote_branch("origin/main", extra.id);
     let status = repo.status().unwrap();
@@ -349,36 +349,36 @@ fn ahead_e_behind_dal_grafo() {
 }
 
 #[test]
-fn id_finti_deterministici_e_distinti() {
+fn fake_ids_deterministic_and_distinct() {
     assert_eq!(MemoryBackend::fake_oid(7), MemoryBackend::fake_oid(7));
     let ids: BTreeSet<_> = (0..10_000).map(MemoryBackend::fake_oid).collect();
     assert_eq!(ids.len(), 10_000);
     assert!(!ids.contains(&Oid::from_bytes([0; Oid::LEN])));
-    // L'esempio è lo stesso a ogni costruzione.
+    // The sample is the same on every construction.
     assert_eq!(MemoryBackend::sample(), MemoryBackend::sample());
 }
 
 #[test]
-fn opener_in_memoria() {
+fn in_memory_opener() {
     let opener = MemoryOpener::sample();
     let repo: Box<dyn GitBackend> = opener.open(MemoryOpener::SAMPLE_PATH).unwrap();
     assert_eq!(repo.log(&LogQuery::all()).unwrap().len(), 12);
-    let err = opener.open("/altro").err().unwrap();
+    let err = opener.open("/other").err().unwrap();
     assert!(
-        matches!(&err, EngineError::RepoNotFound { path, .. } if path == "/altro"),
+        matches!(&err, EngineError::RepoNotFound { path, .. } if path == "/other"),
         "{err}"
     );
     assert!(err.to_string().contains(MemoryOpener::SAMPLE_PATH), "{err}");
 
     let mut opener = MemoryOpener::new();
-    assert!(opener.open("vuoto").is_err());
-    opener.insert("vuoto", MemoryBackend::new());
-    assert_eq!(opener.paths().collect::<Vec<_>>(), ["vuoto"]);
-    assert!(opener.open("vuoto").unwrap().refs().unwrap().is_empty());
+    assert!(opener.open("empty").is_err());
+    opener.insert("empty", MemoryBackend::new());
+    assert_eq!(opener.paths().collect::<Vec<_>>(), ["empty"]);
+    assert!(opener.open("empty").unwrap().refs().unwrap().is_empty());
 }
 
 #[test]
-fn trait_object_send_e_sync() {
+fn trait_object_send_and_sync() {
     fn send<T: Send + ?Sized>() {}
     fn send_sync<T: Send + Sync + ?Sized>() {}
     send::<dyn GitBackend>();
@@ -388,7 +388,7 @@ fn trait_object_send_e_sync() {
 }
 
 #[test]
-fn log_query_da_json() {
+fn log_query_from_json() {
     let q: LogQuery = serde_json::from_str("{}").unwrap();
     assert_eq!(q, LogQuery::all());
     let q: LogQuery = serde_json::from_str(r#"{"skip":2,"limit":3,"rev":"main"}"#).unwrap();
@@ -402,7 +402,7 @@ fn log_query_da_json() {
     assert!(serde_json::from_str::<LogQuery>(r#"{"all":1}"#).is_err());
 }
 
-/// Un commit nuovo `n` figlio di `parent`, con data dopo tutti quelli dell'esempio.
+/// A new commit `n` child of `parent`, with a date after all those of the sample.
 fn extra_commit(repo: &mut MemoryBackend, n: u64, parent: Oid, summary: &str) -> Oid {
     let mut commit = log(repo, LogQuery::page(0, 1))[0].clone();
     commit.id = MemoryBackend::fake_oid(n);
@@ -414,21 +414,21 @@ fn extra_commit(repo: &mut MemoryBackend, n: u64, parent: Oid, summary: &str) ->
 }
 
 #[test]
-fn log_di_tutti_i_ref() {
+fn log_of_all_refs() {
     let mut repo = sample();
-    // Nell'esempio tutto è raggiungibile da HEAD: stesso log.
+    // In the sample everything is reachable from HEAD: same log.
     assert_eq!(
         log(&repo, LogQuery::all().from_all_refs()),
         log(&repo, LogQuery::all())
     );
 
-    let base = ref_target(&repo, "refs/heads/feature/grafo");
-    let branch = extra_commit(&mut repo, 90, base, "Solo su un branch");
-    repo.set_branch("non-unito", branch);
-    let remote = extra_commit(&mut repo, 91, base, "Solo sul remoto");
-    repo.set_remote_branch("origin/altro", remote);
-    let tag = extra_commit(&mut repo, 92, base, "Solo sul tag");
-    repo.set_tag("solo-tag", tag, None);
+    let base = ref_target(&repo, "refs/heads/feature/graph");
+    let branch = extra_commit(&mut repo, 90, base, "Only on a branch");
+    repo.set_branch("unmerged", branch);
+    let remote = extra_commit(&mut repo, 91, base, "Only on the remote");
+    repo.set_remote_branch("origin/other", remote);
+    let tag = extra_commit(&mut repo, 92, base, "Only on the tag");
+    repo.set_tag("only-tag", tag, None);
     let stash = extra_commit(&mut repo, 93, base, "Stash");
     repo.set_stash(stash);
 
@@ -438,23 +438,23 @@ fn log_di_tutti_i_ref() {
     for id in [branch, remote, tag] {
         assert!(ids.contains(&id));
     }
-    assert!(!ids.contains(&stash), "lo stash non è nel grafo");
-    // Senza `all` niente cambia.
+    assert!(!ids.contains(&stash), "the stash is not in the graph");
+    // Without `all` nothing changes.
     assert_eq!(log(&repo, LogQuery::all()).len(), 12);
-    // Figli prima dei genitori, il più recente prima.
+    // Children before parents, the most recent first.
     assert_eq!(all[0].id, tag);
     for (i, c) in all.iter().enumerate() {
         for p in &c.parents {
             assert!(all[i + 1..].iter().any(|later| later.id == *p));
         }
     }
-    // Pagine contigue.
+    // Contiguous pages.
     let pages: Vec<Commit> = (0..4)
         .flat_map(|p| log(&repo, LogQuery::page(p * 4, 4).from_all_refs()))
         .collect();
     assert_eq!(pages, all);
 
-    // HEAD staccata su un commit che nessun ref raggiunge.
+    // Detached HEAD on a commit that no ref reaches.
     let detached = extra_commit(&mut repo, 94, base, "HEAD staccata");
     repo.detach_head(detached);
     let all = log(&repo, LogQuery::all().from_all_refs());
@@ -463,10 +463,10 @@ fn log_di_tutti_i_ref() {
 }
 
 #[test]
-fn log_di_tutti_i_ref_senza_commit() {
+fn log_of_all_refs_without_commits() {
     let repo = MemoryBackend::new();
     assert_eq!(log(&repo, LogQuery::all().from_all_refs()), []);
-    // HEAD senza commit ma un altro branch c'è: il log è quello del branch.
+    // HEAD without commits but another branch exists: the log is that of the branch.
     let mut repo = sample();
     repo.set_head_branch("orfano");
     assert_eq!(
@@ -477,13 +477,13 @@ fn log_di_tutti_i_ref_senza_commit() {
 }
 
 #[test]
-fn log_rev_e_all_insieme_sono_un_errore() {
+fn log_rev_and_all_together_are_an_error() {
     let repo = sample();
     let err = repo
         .log(&LogQuery::all().from_rev("main").from_all_refs())
         .unwrap_err();
     assert!(
-        matches!(&err, EngineError::InvalidParams { id: "repo.log", reason } if reason.contains("alternativi")),
+        matches!(&err, EngineError::InvalidParams { id: "repo.log", reason } if reason.contains("alternatives")),
         "{err}"
     );
 }
@@ -507,11 +507,11 @@ fn commit_by_summary(repo: &MemoryBackend, summary: &str) -> Commit {
     log(repo, LogQuery::all())
         .into_iter()
         .find(|c| c.summary == summary)
-        .unwrap_or_else(|| panic!("manca {summary}"))
+        .unwrap_or_else(|| panic!("missing {summary}"))
 }
 
 #[test]
-fn dettagli_del_commit_di_head() {
+fn details_of_the_head_commit() {
     let repo = sample();
     let details = repo.show_commit("HEAD").unwrap();
     let head = &log(&repo, LogQuery::page(0, 1))[0];
@@ -532,16 +532,16 @@ fn dettagli_del_commit_di_head() {
     let renamed = &details.files[0];
     assert_eq!(renamed.score, Some(92));
     assert_ne!(renamed.old_oid, renamed.new_oid);
-    // Stesso commit per id abbreviato, nome di branch o tag.
+    // Same commit by abbreviated id, branch name or tag.
     let short = head.id.to_string()[..6].to_owned();
     assert_eq!(repo.show_commit(&short).unwrap(), details);
     assert_eq!(repo.show_commit("main").unwrap(), details);
 }
 
 #[test]
-fn dettagli_radice_merge_e_cancellazione() {
+fn details_root_merge_and_deletion() {
     let repo = sample();
-    let root = commit_by_summary(&repo, "Primo commit");
+    let root = commit_by_summary(&repo, "First commit");
     let details = repo.show_commit(&root.id.to_string()).unwrap();
     assert_eq!(details.compared_to, None);
     for f in &details.files {
@@ -549,7 +549,7 @@ fn dettagli_radice_merge_e_cancellazione() {
         assert_eq!(f.old_oid, Oid::from_bytes([0; Oid::LEN]));
     }
 
-    let structure = commit_by_summary(&repo, "Struttura del progetto");
+    let structure = commit_by_summary(&repo, "Project structure");
     let deleted: Vec<ChangedFile> = repo
         .show_commit(&structure.id.to_string())
         .unwrap()
@@ -560,7 +560,7 @@ fn dettagli_radice_merge_e_cancellazione() {
     assert_eq!(deleted.len(), 1);
     assert_eq!(deleted[0].path.to_str(), Some(".gitkeep"));
     assert_eq!(deleted[0].new_mode, 0);
-    // Il contenuto eliminato è quello aggiunto dal primo commit.
+    // The deleted content is the one added by the first commit.
     let added = details
         .files
         .iter()
@@ -568,12 +568,12 @@ fn dettagli_radice_merge_e_cancellazione() {
         .unwrap();
     assert_eq!(deleted[0].old_oid, added.new_oid);
 
-    // Il merge è confrontato con il primo genitore: i file portati da `feature/grafo`, con il
-    // contenuto che hanno sul branch.
+    // The merge is compared with the first parent: the files brought in by `feature/graph`, with the
+    // content they have on the branch.
     let merge = repo.show_commit("v0.1.0").unwrap();
     assert!(merge.commit.is_merge());
     assert_eq!(merge.compared_to, Some(merge.commit.parents[0]));
-    let feature = repo.show_commit("feature/grafo").unwrap();
+    let feature = repo.show_commit("feature/graph").unwrap();
     let cargo = |files: &[ChangedFile]| {
         files
             .iter()
@@ -587,9 +587,9 @@ fn dettagli_radice_merge_e_cancellazione() {
 }
 
 #[test]
-fn dettagli_errori_e_commit_senza_file() {
+fn details_errors_and_commit_without_files() {
     let repo = sample();
-    for rev in ["nessuno", "", "abc"] {
+    for rev in ["missing", "", "abc"] {
         let err = repo.show_commit(rev).unwrap_err();
         assert!(
             matches!(err, EngineError::UnknownRev(ref r) if r == rev),
@@ -602,8 +602,8 @@ fn dettagli_errori_e_commit_senza_file() {
         Err(EngineError::UnknownRev(_))
     ));
 
-    // Un commit senza `set_changes` non cambia file; un ref verso un commit assente non si
-    // mostra.
+    // A commit without `set_changes` changes no files; a ref to a missing commit is not
+    // shown.
     let mut repo = MemoryBackend::new();
     let mut commit = sample().show_commit("HEAD").unwrap().commit;
     commit.parents.clear();

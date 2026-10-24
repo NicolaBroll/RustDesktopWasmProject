@@ -1,34 +1,34 @@
-//! Cherry-pick e revert di un commit (`commit.cherry_pick`, `commit.revert`,
-//! `cherry_pick.continue`/`abort`, `revert.continue`/`abort`, S31): tipi e controlli comuni ai
-//! backend (`impl-docs/git/cherry-pick.md`).
+//! Cherry-pick and revert of a commit (`commit.cherry_pick`, `commit.revert`,
+//! `cherry_pick.continue`/`abort`, `revert.continue`/`abort`, S31): types and checks shared by the
+//! backends (`impl-docs/git/cherry-pick.md`).
 //!
-//! Il modello è il merge di S29 ([`super::merge`]): il comando risolve la rev, sceglie il
-//! genitore (`mainline` per un commit di merge) e controlla lo stato ([`check_pick_state`]); il
-//! backend salva il branch in un backup ed esegue
-//! ([`GitBackend::pick`](super::GitBackend::pick)). **Un conflitto lascia l'operazione in
-//! corso** (`CHERRY_PICK_HEAD`/`REVERT_HEAD`): si conclude con `*.continue` (un commit con
-//! [`CommitRequest::concluding`](super::CommitRequest::concluding)) o si annulla con
-//! `*.abort` ([`GitBackend::pick_abort`](super::GitBackend::pick_abort)), con un backup di
-//! indice e worktree prima. Un risultato vuoto (commit già applicato) non lascia niente in
-//! corso.
+//! The model is the S29 merge ([`super::merge`]): the command resolves the rev, picks the
+//! parent (`mainline` for a merge commit) and checks the state ([`check_pick_state`]); the
+//! backend saves the branch in a backup and executes
+//! ([`GitBackend::pick`](super::GitBackend::pick)). **A conflict leaves the operation in
+//! progress** (`CHERRY_PICK_HEAD`/`REVERT_HEAD`): it is concluded with `*.continue` (a commit with
+//! [`CommitRequest::concluding`](super::CommitRequest::concluding)) or aborted with
+//! `*.abort` ([`GitBackend::pick_abort`](super::GitBackend::pick_abort)), with a backup of
+//! index and worktree first. An empty result (commit already applied) leaves nothing in
+//! progress.
 
 use super::{OperationState, check_no_operation, conflicted_paths};
-use crate::EngineError;
+use crate::{EngineError, Message};
 use project_domain::{Commit, EntryKind, Oid, Operation, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// Cherry-pick o revert.
+/// Cherry-pick or revert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PickKind {
-    /// Applica le modifiche del commit sopra HEAD (`git cherry-pick`), con il suo autore.
+    /// Applies the changes of the commit on top of HEAD (`git cherry-pick`), with its author.
     CherryPick,
-    /// Applica le modifiche inverse del commit (`git revert`).
+    /// Applies the inverse changes of the commit (`git revert`).
     Revert,
 }
 
 impl PickKind {
-    /// L'operazione in corso quando si ferma.
+    /// The operation in progress when it stops.
     pub fn operation(self) -> Operation {
         match self {
             PickKind::CherryPick => Operation::CherryPick,
@@ -36,7 +36,7 @@ impl PickKind {
         }
     }
 
-    /// Il tipo dell'operazione in corso, se è un cherry-pick o un revert.
+    /// The kind of the operation in progress, if it is a cherry-pick or a revert.
     pub fn from_operation(op: Operation) -> Option<Self> {
         match op {
             Operation::CherryPick => Some(PickKind::CherryPick),
@@ -45,7 +45,7 @@ impl PickKind {
         }
     }
 
-    /// L'id del comando che avvia l'operazione.
+    /// The id of the command that starts the operation.
     pub fn command(self) -> &'static str {
         match self {
             PickKind::CherryPick => "commit.cherry_pick",
@@ -53,7 +53,7 @@ impl PickKind {
         }
     }
 
-    /// L'id del comando che conclude l'operazione in corso.
+    /// The id of the command that concludes the operation in progress.
     pub fn continue_command(self) -> &'static str {
         match self {
             PickKind::CherryPick => "cherry_pick.continue",
@@ -61,7 +61,7 @@ impl PickKind {
         }
     }
 
-    /// L'id del comando che annulla l'operazione in corso.
+    /// The id of the command that aborts the operation in progress.
     pub fn abort_command(self) -> &'static str {
         match self {
             PickKind::CherryPick => "cherry_pick.abort",
@@ -69,7 +69,7 @@ impl PickKind {
         }
     }
 
-    /// Il sottocomando di git, usato anche nei nomi dei backup (`cherry-pick-...`,
+    /// The git subcommand, also used in the backup names (`cherry-pick-...`,
     /// `revert-abort-...`).
     pub fn git(self) -> &'static str {
         match self {
@@ -78,7 +78,7 @@ impl PickKind {
         }
     }
 
-    /// Il file della cartella git con il commit in ingresso.
+    /// The file in the git folder with the incoming commit.
     pub fn head_file(self) -> &'static str {
         match self {
             PickKind::CherryPick => "CHERRY_PICK_HEAD",
@@ -86,7 +86,7 @@ impl PickKind {
         }
     }
 
-    /// Il nome per le descrizioni (`Cherry-pick`, `Revert`).
+    /// The name for descriptions (`Cherry-pick`, `Revert`).
     pub fn title(self) -> &'static str {
         match self {
             PickKind::CherryPick => "Cherry-pick",
@@ -95,59 +95,60 @@ impl PickKind {
     }
 }
 
-/// Cosa chiede `commit.cherry_pick`/`commit.revert` al backend.
+/// What `commit.cherry_pick`/`commit.revert` ask of the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickRequest {
     pub kind: PickKind,
-    /// Il branch di HEAD (nome breve): l'operazione non parte con HEAD staccata.
+    /// The branch of HEAD (short name): the operation does not start with detached HEAD.
     pub branch: String,
-    /// Il valore del branch letto prima: il backend rifiuta se è cambiato.
+    /// The value of the branch read earlier: the backend refuses if it changed.
     pub expected: Oid,
-    /// Il commit da applicare o annullare (la rev già risolta: a git arriva solo l'id).
+    /// The commit to apply or revert (the already resolved rev: git receives only the id).
     pub commit: Oid,
-    /// Il genitore rispetto a cui si prendono le modifiche: quello scelto con `mainline` per un
-    /// commit di merge, l'unico altrimenti, `None` per un commit radice.
+    /// The parent the changes are taken relative to: the one chosen with `mainline` for a
+    /// merge commit, the only one otherwise, `None` for a root commit.
     pub parent: Option<Oid>,
-    /// `-m <n>` per un commit di merge (1 = primo genitore).
+    /// `-m <n>` for a merge commit (1 = first parent).
     pub mainline: Option<usize>,
-    /// Il messaggio del commit, come lo scrive git ([`pick_message`]): il `CliBackend` lascia
-    /// che lo scriva git (`--no-edit`), il `MemoryBackend` usa questo.
+    /// The commit message, as git writes it ([`pick_message`]): the `CliBackend` lets
+    /// git write it (`--no-edit`), the `MemoryBackend` uses this one.
     pub message: String,
 }
 
-/// Il genitore scelto per `commit` con `mainline`: un commit di merge lo vuole (1 = primo
-/// genitore), un commit con un genitore solo (o radice) no. Errori come
-/// [`EngineError::InvalidParams`] di `id`.
+/// The parent chosen for `commit` with `mainline`: a merge commit requires it (1 = first
+/// parent), a commit with a single parent (or root) does not. Errors as
+/// [`EngineError::InvalidParams`] of `id`.
 pub fn pick_parent(
     id: &'static str,
     commit: &Commit,
     mainline: Option<usize>,
 ) -> Result<Option<Oid>, EngineError> {
-    let invalid = |reason: String| EngineError::InvalidParams { id, reason };
+    let invalid = |reason: Message| EngineError::InvalidParams { id, reason };
     match (commit.parents.len(), mainline) {
         (0 | 1, None) => Ok(commit.parents.first().copied()),
-        (0 | 1, Some(_)) => Err(invalid(format!(
-            "`mainline` vale solo per un commit di merge, e {} non lo è",
-            super::short(&commit.id)
+        (0 | 1, Some(_)) => Err(invalid(msg!(
+            "engine-pick-mainline-not-merge",
+            commit = super::short(&commit.id)
         ))),
-        (n, None) => Err(invalid(format!(
-            "{} è un commit di merge con {n} genitori: indicare con `mainline` (da 1 a {n}) \
-             il genitore rispetto a cui prendere le modifiche (di solito 1, il branch in cui \
-             si è unito)",
-            super::short(&commit.id)
+        (n, None) => Err(invalid(msg!(
+            "engine-pick-mainline-needed",
+            commit = super::short(&commit.id),
+            n = n
         ))),
-        (n, Some(m)) if m == 0 || m > n => Err(invalid(format!(
-            "`mainline` deve essere fra 1 e {n} (i genitori di {}), non {m}",
-            super::short(&commit.id)
+        (n, Some(m)) if m == 0 || m > n => Err(invalid(msg!(
+            "engine-pick-mainline-range",
+            n = n,
+            commit = super::short(&commit.id),
+            m = m
         ))),
         (_, Some(m)) => Ok(Some(commit.parents[m - 1])),
     }
 }
 
-/// Il messaggio del commit come lo scrive git con `--no-edit` (senza `-x`): per il
-/// cherry-pick quello del commit; per il revert `Revert "<oggetto>"` (o `Reapply "..."` per il
-/// revert di un revert, come git dalla 2.43) e `This reverts commit <id>.` (con `, reversing
-/// changes made to <genitore>.` per un commit di merge).
+/// The commit message as git writes it with `--no-edit` (without `-x`): for a
+/// cherry-pick that of the commit; for a revert `Revert "<subject>"` (or `Reapply "..."` for the
+/// revert of a revert, as git since 2.43) and `This reverts commit <id>.` (with `, reversing
+/// changes made to <parent>.` for a merge commit).
 pub fn pick_message(kind: PickKind, commit: &Commit, parent: Option<&Oid>, merge: bool) -> String {
     match kind {
         PickKind::CherryPick => {
@@ -177,26 +178,26 @@ pub fn pick_message(kind: PickKind, commit: &Commit, parent: Option<&Oid>, merge
     }
 }
 
-/// I controlli prima di `commit.cherry_pick`/`commit.revert`, uguali per i backend, sullo
-/// stato letto ora ([`EngineError::NotAllowed`], niente cambia):
+/// The checks before `commit.cherry_pick`/`commit.revert`, the same for the backends, on the
+/// state read now ([`EngineError::NotAllowed`], nothing changes):
 ///
-/// - un'operazione in corso (anche un altro cherry-pick);
-/// - file in conflitto;
-/// - **qualunque** modifica ai file tracciati (in stage o no), come per un commit di merge: un
-///   cherry-pick fermo in conflitto mescolerebbe le modifiche locali con le sue, e l'abort non
-///   sa sempre ricostruirle. Mai autostash. I non tracciati vanno bene.
+/// - an operation in progress (even another cherry-pick);
+/// - conflicted files;
+/// - **any** change to tracked files (staged or not), as for a merge commit: a
+///   cherry-pick stopped on conflict would mix local changes with its own, and the abort cannot
+///   always rebuild them. Never autostash. Untracked files are fine.
 pub fn check_pick_state(status: &Status, kind: PickKind) -> Result<(), EngineError> {
     let what = match kind {
-        PickKind::CherryPick => "inizierebbe un cherry-pick",
-        PickKind::Revert => "inizierebbe un revert",
+        PickKind::CherryPick => msg!("engine-busy-cherry-pick"),
+        PickKind::Revert => msg!("engine-busy-revert"),
     };
     check_no_operation(kind.command(), what, status.operation)?;
     let unmerged = conflicted_paths(status);
     if !unmerged.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file in conflitto ({}): risolverli prima di `{}`; niente modificato",
-            quoted(&unmerged),
-            kind.command()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pick-conflicts",
+            files = quoted(&unmerged),
+            command = kind.command()
         )));
     }
     let changed: Vec<RepoPath> = status
@@ -213,18 +214,17 @@ pub fn check_pick_state(status: &Status, kind: PickKind) -> Result<(), EngineErr
     if changed.is_empty() {
         return Ok(());
     }
-    Err(EngineError::NotAllowed(format!(
-        "ci sono modifiche locali ai file tracciati ({}): committarle o metterle da parte \
-         (`stash.push`) e riprovare `{}` (niente autostash); niente modificato",
-        quoted(&changed),
-        kind.command()
+    Err(EngineError::NotAllowed(msg!(
+        "engine-pick-local-changes",
+        files = quoted(&changed),
+        command = kind.command()
     )))
 }
 
-/// Il controllo comune a `*.continue` e `*.abort`: deve essere in corso un'operazione `kind`
-/// di un commit solo. Un sequencer con più commit avviato da terminale (`.git/sequencer`,
-/// [`OperationState::sequencer`]) è rifiutato: `git commit` lo lascerebbe a metà e `git
-/// cherry-pick --abort` riporterebbe indietro anche i commit già applicati della sequenza.
+/// The check common to `*.continue` and `*.abort`: an operation `kind` of a single commit
+/// must be in progress. A sequencer with several commits started from the terminal (`.git/sequencer`,
+/// [`OperationState::sequencer`]) is rejected: `git commit` would leave it half done and `git
+/// cherry-pick --abort` would also roll back the commits of the sequence already applied.
 pub fn check_picking(
     command: &str,
     kind: PickKind,
@@ -233,29 +233,27 @@ pub fn check_picking(
 ) -> Result<(), EngineError> {
     super::merge::check_in_progress(command, kind.operation(), status)?;
     if state.sequencer {
-        return Err(EngineError::NotAllowed(format!(
-            "è in corso una sequenza di più commit avviata da terminale (`.git/sequencer`): \
-             `{command}` la lascerebbe a metà o ne annullerebbe anche i commit già fatti, \
-             niente modificato. Continuarla o annullarla da terminale (`git {0} --continue`, \
-             `git {0} --skip` o `git {0} --abort`)",
-            kind.git()
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pick-sequencer",
+            command = command,
+            git = kind.git()
         )));
     }
     Ok(())
 }
 
-/// L'errore di un cherry-pick o revert che non cambierebbe niente (commit già applicato, o
-/// già annullato), uguale nei due backend: [`EngineError::NotAllowed`].
+/// The error of a cherry-pick or revert that would change nothing (commit already applied, or
+/// already reverted), the same in both backends: [`EngineError::NotAllowed`].
 pub fn pick_empty_error(kind: PickKind, commit: &Oid) -> EngineError {
     let what = match kind {
-        PickKind::CherryPick => "le sue modifiche sono già nel branch",
-        PickKind::Revert => "le sue modifiche non sono (più) nel branch",
+        PickKind::CherryPick => msg!("engine-pick-already-applied"),
+        PickKind::Revert => msg!("engine-pick-already-reverted"),
     };
-    EngineError::NotAllowed(format!(
-        "`{}` di {} non cambierebbe niente ({what}): nessun commit creato, niente in corso, \
-         niente modificato",
-        kind.command(),
-        super::short(commit)
+    EngineError::NotAllowed(msg!(
+        "engine-pick-empty",
+        command = kind.command(),
+        commit = super::short(commit),
+        what = what
     ))
 }
 
@@ -332,11 +330,11 @@ mod tests {
                 "Revert \"Merge\"\n\nThis reverts commit {id}, reversing\nchanges made to {p}."
             )
         );
-        let mut c = commit(1, "Titolo");
-        c.body = "Corpo".into();
+        let mut c = commit(1, "Title");
+        c.body = "Body".into();
         assert_eq!(
             pick_message(PickKind::CherryPick, &c, None, false),
-            "Titolo\n\nCorpo"
+            "Title\n\nBody"
         );
     }
 }

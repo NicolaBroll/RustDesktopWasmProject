@@ -1,202 +1,202 @@
-# Stage e unstage (file e righe)
+# Stage and unstage (files and lines)
 
-Parte di [ARCHITETTURA-git.md](../ARCHITETTURA-git.md): principi (§1), regole per ogni chiamata a
-git (§5), comandi lenti (§6) e diario (§7) sono lì; qui il contratto dei comandi, il `CliBackend` e
-undo e backup di questa funzione. "§n" rimanda sempre al documento principale.
+Part of [ARCHITECTURE-git.md](../ARCHITECTURE-git.md): principles (§1), rules for every call to
+git (§5), slow commands (§6) and the journal (§7) are there; here are the command contract, the `CliBackend` and
+undo and backup of this function. "§n" always refers to the main document.
 
-## Comandi
+## Commands
 
 ### `index.stage` / `index.unstage`
 
-Parametri: `{"paths"}`.
+Parameters: `{"paths"}`.
 
-`paths`: lista non vuota di `RepoPath` validati come in `diff.*`, presi alla lettera (una cartella
-comprende i suoi file). Risultato: `{"status": Status, "backup": string | null}`, con il nuovo stato
-(come `repo.status`) e il ref del backup dell'indice salvato prima di scrivere, se c'erano versioni
-in stage che esistevano solo nell'indice (vedi "Backup dell'indice"). `stage` = `git add` (modifiche, file nuovi,
-cancellazioni; una rinomina fatta nel worktree si mette in stage con i due percorsi; una
-cancellazione già in stage si salta); prima una prova a vuoto (`--dry-run`), così un file ignorato
-chiesto per nome (`NotAllowed`, mai `-f`) o un percorso inesistente non lasciano niente a metà.
-Stage di un file in conflitto = risoluzione, solo se il file è chiesto per nome: dentro una cartella
-richiesta è rifiutato (`NotAllowed`). `unstage` = `git restore --staged --no-overlay
---source=<HEAD>` (albero vuoto senza commit): solo l'indice, mai il worktree; un file in conflitto è
-rifiutato (`NotAllowed`), perché perderebbe gli stadi del conflitto. Indice bloccato da un altro
-git: `IndexLocked`, senza riprovare né cancellare il lock.
+`paths`: non-empty list of `RepoPath`s validated as in `diff.*`, taken literally (a directory
+includes its files). Result: `{"status": Status, "backup": string | null}`, with the new status
+(like `repo.status`) and the ref of the index backup saved before writing, if there were staged versions
+that existed only in the index (see "Index backup"). `stage` = `git add` (modifications, new files,
+deletions; a rename done in the worktree is staged with the two paths; a
+deletion already staged is skipped); first a dry run (`--dry-run`), so an ignored file
+requested by name (`NotAllowed`, never `-f`) or a nonexistent path leave nothing half done.
+Staging a conflicted file = resolution, only if the file is requested by name: inside a requested
+directory it is refused (`NotAllowed`). `unstage` = `git restore --staged --no-overlay
+--source=<HEAD>` (empty tree without commits): index only, never the worktree; a conflicted file is
+refused (`NotAllowed`), because it would lose the conflict stages. Index locked by another
+git: `IndexLocked`, without retrying or deleting the lock.
 
 ### `index.stage_lines` / `index.unstage_lines`
 
-Parametri: `{"path", "lines", "digest"}`.
+Parameters: `{"path", "lines", "digest"}`.
 
-Usa il costruttore di patch (sotto) e l'applicatore rigoroso: `lines` è una lista **non vuota** di
-`LineRef` (`{"old": n}` / `{"new": n}`) con i numeri di riga di `diff.worktree` (stage) o
-`diff.index` (unstage) per `path`; `digest` (obbligatorio) è il campo `digest` di quel file nello
-stesso diff, che identifica il diff visto (vedi sotto). Il backend rilegge il diff del file, sceglie
-il `FileDiff` con `new_path == path` (altrimenti `old_path == path`: una rinomina chiesta con il
-vecchio nome), controlla il digest, costruisce la patch con `build_patch` (senza `--reverse`: la
-patch è sempre in avanti rispetto all'indice), rifiuta (`NotAllowed`) un hunk senza contesto in
-testa che non parte dall'inizio del file o senza contesto in coda che non è l'ultimo, calcola il
-contenuto nuovo con `apply_patch` sul blob in stage e lo scrive (`CliBackend`: `hash-object -w
---stdin --no-filters` e `update-index -z --index-info`, vedi "Backup dell'indice"; `MemoryBackend`: nei suoi blob). Errori,
-sempre senza scrivere: file senza più modifiche o digest diverso → `StaleDiff` (rileggere il diff);
-due `FileDiff` sullo stesso percorso (cambio di tipo) → `NotAllowed`; `UnsupportedPatch` del dominio
-(binari, sottomoduli, link, conflitti, copie, rinomine nello stage) → `NotAllowed`;
-`InvalidLineSelection` o `lines` vuota → `InvalidParams`; indice bloccato → `IndexLocked`. Backup
-come `index.stage` (vedi "Backup dell'indice"). Risultato: `{"status": Status, "backup": string | null}`.
+Uses the patch builder (below) and the strict applier: `lines` is a **non-empty** list of
+`LineRef`s (`{"old": n}` / `{"new": n}`) with the line numbers from `diff.worktree` (stage) or
+`diff.index` (unstage) for `path`; `digest` (required) is the `digest` field of that file in the
+same diff, which identifies the diff seen (see below). The backend re-reads the file's diff, chooses
+the `FileDiff` with `new_path == path` (otherwise `old_path == path`: a rename requested with the
+old name), checks the digest, builds the patch with `build_patch` (without `--reverse`: the
+patch is always forward relative to the index), refuses (`NotAllowed`) a hunk without leading
+context that does not start at the beginning of the file or without trailing context that is not the last, computes the
+new content with `apply_patch` on the staged blob and writes it (`CliBackend`: `hash-object -w
+--stdin --no-filters` and `update-index -z --index-info`, see "Index backup"; `MemoryBackend`: in its blobs). Errors,
+always without writing: file with no more changes or different digest → `StaleDiff` (re-read the diff);
+two `FileDiff`s on the same path (type change) → `NotAllowed`; domain `UnsupportedPatch`
+(binaries, submodules, links, conflicts, copies, renames in the stage) → `NotAllowed`;
+`InvalidLineSelection` or empty `lines` → `InvalidParams`; locked index → `IndexLocked`. Backup
+like `index.stage` (see "Index backup"). Result: `{"status": Status, "backup": string | null}`.
 
 
-`diff.worktree` e `diff.index` aggiungono a ogni file il campo `digest`: 32 cifre esadecimali,
-un hash FNV-1a a 128 bit della serializzazione JSON del `FileDiff` (`project_engine::file_digest`;
-un `FileDiff` riletto da quel JSON dà lo stesso digest). Copre percorsi, modi, id e ogni riga con
-i suoi numeri: i numeri di riga di una selezione possono coincidere per caso con quelli di un
-diff cambiato (stesso numero, contenuto diverso), e senza il digest la patch sposterebbe
-nell'indice righe che l'utente non ha visto. Gli id da soli non bastano in modo uniforme: nel
-diff del worktree il nuovo id lo calcola git, ma nel `MemoryBackend` è finto. Il parametro è
-obbligatorio perché chi sceglie le righe ha comunque appena letto il diff da cui vengono i
-numeri. Non è un hash crittografico: protegge da un file cambiato, non da chi costruisce apposta
-due diff con lo stesso digest.
+`diff.worktree` and `diff.index` add to every file the `digest` field: 32 hex digits,
+a 128-bit FNV-1a hash of the JSON serialization of the `FileDiff` (`project_engine::file_digest`;
+a `FileDiff` re-read from that JSON gives the same digest). It covers paths, modes, ids and every line with
+its numbers: the line numbers of a selection may coincide by chance with those of a changed
+diff (same number, different content), and without the digest the patch would move into the
+index lines the user did not see. The ids alone are not uniformly sufficient: in the
+worktree diff the new id is computed by git, but in the `MemoryBackend` it is fake. The parameter is
+required because whoever chooses the lines has in any case just read the diff the
+numbers come from. It is not a cryptographic hash: it protects against a changed file, not against someone building
+two diffs with the same digest on purpose.
 
-## Costruttore di patch (dominio)
+## Patch builder (domain)
 
-Per lo stage e l'unstage di singole righe: `build_patch(file: &FileDiff, lines: &[LineRef],
-direction: PatchDirection) -> Result<Option<FileDiff>, DomainError>` (modulo
-`crates/domain/src/git/patch.rs`), funzione pura. La patch restituita è un `FileDiff`
-(`to_patch()` dà i byte) che si può applicare con `git apply` più gli argomenti di `APPLY_ARGS`
-(`--cached --recount --whitespace=nowarn --no-ignore-whitespace`), patch su stdin; `--check` in
-più per provarla. Le due flag sugli spazi neutralizzano `apply.whitespace=error` (rifiuterebbe
-righe con spazi finali) e `apply.ignoreWhitespace` (accetterebbe un indice diverso negli spazi).
-I comandi `index.stage_lines`/`index.unstage_lines` però **non** usano `git apply`: `git apply`
-cerca il preimage di un hunk anche lontano dalla posizione scritta e ancora a fine file un hunk
-senza contesto in coda, quindi con un diff a contesto zero (`diff.context=0`) un inserimento in
-mezzo al file finiva in fondo e il comando riusciva. Il motore calcola il contenuto nuovo con
-un applicatore rigoroso (`project_engine::apply_patch`: ogni hunk solo alla sua posizione,
-contesto e righe tolte byte per byte, hunk senza contesto ammessi solo all'inizio o alla fine
-del file) sul blob dell'indice da cui il diff è stato calcolato, e lo scrive (vedi "Backup dell'indice"). `APPLY_ARGS`
-resta per i test che verificano le patch con git (`crates/git/tests/patch.rs`).
+For staging and unstaging single lines: `build_patch(file: &FileDiff, lines: &[LineRef],
+direction: PatchDirection) -> Result<Option<FileDiff>, DomainError>` (module
+`crates/domain/src/git/patch.rs`), a pure function. The returned patch is a `FileDiff`
+(`to_patch()` gives the bytes) that can be applied with `git apply` plus the `APPLY_ARGS` arguments
+(`--cached --recount --whitespace=nowarn --no-ignore-whitespace`), patch on stdin; plus `--check`
+to test it. The two whitespace flags neutralize `apply.whitespace=error` (it would reject
+lines with trailing spaces) and `apply.ignoreWhitespace` (it would accept an index differing in whitespace).
+The `index.stage_lines`/`index.unstage_lines` commands however do **not** use `git apply`: `git apply`
+looks for a hunk's preimage even far from the written position and still accepts at end of file a hunk
+without trailing context, so with a zero-context diff (`diff.context=0`) an insertion in the
+middle of the file ended up at the bottom and the command succeeded. The engine computes the new content with
+a strict applier (`project_engine::apply_patch`: every hunk only at its position,
+context and removed lines byte for byte, hunks without context allowed only at the start or end
+of the file) on the index blob from which the diff was computed, and writes it (see "Index backup"). `APPLY_ARGS`
+stays for the tests that verify patches with git (`crates/git/tests/patch.rs`).
 
-- **Direzioni.** `git apply --cached` (con cui i test del costruttore verificano le patch; i
-  comandi usano l'applicatore rigoroso, che si comporta allo stesso modo ma solo alla posizione
-  scritta) confronta il preimage della patch (contesto e righe `-`) con l'indice. La patch è sempre costruita *in avanti* rispetto all'indice, così le due
-  direzioni si applicano allo stesso modo, **senza `--reverse`**.
-  `stage` lavora sul diff di `diff.worktree`, il cui lato vecchio è l'indice: aggiunte
-  selezionate `+`, aggiunte non selezionate tolte, rimosse selezionate `-`, rimosse non
-  selezionate contesto. `unstage` lavora sul diff di `diff.index`, in cui l'indice è il lato
-  **nuovo**: il diff si inverte e si applica la stessa regola, che rispetto alle righe mostrate
-  diventa: aggiunte selezionate `-` (escono dall'indice), aggiunte non selezionate contesto
-  (restano), rimosse selezionate `+` (tornano), rimosse non selezionate tolte.
-- **Ordine nel risultato.** In ogni gruppo di modifiche fra due righe di contesto, tolte e
-  aggiunte si accoppiano per posizione (prima tolta con prima aggiunta, ...): di `-x -y +x' +y'`
-  lo stage di `x → x'` dà `x' y`. L'unstage di una selezione dà lo stesso contenuto dello stage
-  delle righe non selezionate partendo da HEAD.
-- **Selezione** (`LineRef`, in JSON `{"old": n}` / `{"new": n}`): il numero di riga nel lato in
-  cui la riga cambiata esiste, come nel `Line` del diff (`old_line` per le tolte, `new_line` per
-  le aggiunte); `Line::line_ref`, `Hunk::line_refs` e `FileDiff::line_refs` danno i riferimenti
-  di una riga, di un hunk intero e del file. Selezione vuota: `Ok(None)`. Un riferimento che non
-  è una riga cambiata del diff (contesto, numero inesistente, lato sbagliato):
-  `DomainError::InvalidLineSelection`, mai una patch su altre righe.
-- **Fine file senza a capo**: una riga senza a capo che nel risultato non è più l'ultima prende
-  l'a capo (se era nel preimage diventa `-riga` + `\ No newline` e `+riga`).
-- **File nuovo**: patch `new file mode` con le sole righe scelte. Nel diff worktree compare solo
-  con `git add -N` (nei test del costruttore `git apply --cached` accetta di creare un file
-  `intent-to-add`; i comandi scrivono la voce con `update-index --index-info`, che sostituisce
-  il segnaposto con una voce normale); un file non
-  tracciato non è nel diff e va messo in stage intero. Nell'unstage è il caso di un file
-  eliminato in stage: torna nell'indice con le righe scelte.
-- **File eliminato** (dal worktree nello stage, file nuovo in stage nell'unstage): tutte le righe
-  ⇒ `deleted file mode`, il file esce dall'indice; selezione parziale ⇒ modifica, il file resta
-  con le righe non selezionate.
-- **Rinomine**: le patch per righe non rinominano. Nell'unstage (rinomina in stage) la patch
-  modifica il percorso nuovo, quello nell'indice; il vecchio non torna (lo fa `index.unstage`
-  del file). Nello stage (rinomina vista con `git add -N`) è rifiutata.
-- **Cambi di modo**: mai nella patch, che non ha righe `old mode`/`new mode` né `index` e lascia
-  il modo dell'indice; vanno con lo stage del file intero.
-- **Intestazioni**: scritte da `FileDiff::write_header` (nomi tra virgolette dove servono, byte
-  esatti), senza `index`, `similarity`, `rename`; conteggi degli hunk ricalcolati, quindi la
-  patch è valida anche senza `--recount`. Contenuto (CRLF, byte non UTF-8) copiato byte per byte.
-- **Rifiutati** con `DomainError::UnsupportedPatch` (prima di guardare la selezione): binari,
-  sottomoduli, link simbolici, conflitti, copie, rinomine nello stage.
+- **Directions.** `git apply --cached` (with which the builder tests verify the patches; the
+  commands use the strict applier, which behaves the same way but only at the written
+  position) compares the patch preimage (context and `-` lines) with the index. The patch is always built *forward* relative to the index, so the two
+  directions apply the same way, **without `--reverse`**.
+  `stage` works on the `diff.worktree` diff, whose old side is the index: selected additions
+  `+`, unselected additions dropped, selected removals `-`, unselected
+  removals context. `unstage` works on the `diff.index` diff, in which the index is the
+  **new** side: the diff is inverted and the same rule applied, which relative to the displayed lines
+  becomes: selected additions `-` (they leave the index), unselected additions context
+  (they stay), selected removals `+` (they return), unselected removals dropped.
+- **Order in the result.** In every group of changes between two context lines, removed and
+  added lines are paired by position (first removed with first added, ...): of `-x -y +x' +y'`
+  the stage of `x → x'` gives `x' y`. The unstage of a selection gives the same content as the stage
+  of the unselected lines starting from HEAD.
+- **Selection** (`LineRef`, in JSON `{"old": n}` / `{"new": n}`): the line number in the side
+  where the changed line exists, as in the diff's `Line` (`old_line` for removed,
+  `new_line` for added); `Line::line_ref`, `Hunk::line_refs` and `FileDiff::line_refs` give the references
+  of a line, of a whole hunk and of the file. Empty selection: `Ok(None)`. A reference that is not
+  a changed line of the diff (context, nonexistent number, wrong side):
+  `DomainError::InvalidLineSelection`, never a patch on other lines.
+- **End of file without newline**: a line without newline that in the result is no longer the last takes
+  the newline (if it was in the preimage it becomes `-line` + `\ No newline` and `+line`).
+- **New file**: `new file mode` patch with only the chosen lines. In the worktree diff it appears only
+  with `git add -N` (in the builder tests `git apply --cached` accepts creating an
+  `intent-to-add` file; the commands write the entry with `update-index --index-info`, which replaces
+  the placeholder with a normal entry); an untracked
+  file is not in the diff and must be staged whole. In the unstage it is the case of a file
+  deleted in the stage: it returns to the index with the chosen lines.
+- **Deleted file** (from the worktree in the stage, new staged file in the unstage): all lines
+  ⇒ `deleted file mode`, the file leaves the index; partial selection ⇒ modification, the file stays
+  with the unselected lines.
+- **Renames**: line patches do not rename. In the unstage (staged rename) the patch
+  modifies the new path, the one in the index; the old one does not return (`index.unstage`
+  of the file does that). In the stage (rename seen with `git add -N`) it is refused.
+- **Mode changes**: never in the patch, which has no `old mode`/`new mode` or `index` lines and leaves
+  the index mode; they go with staging the whole file.
+- **Headers**: written by `FileDiff::write_header` (names in quotes where needed, exact
+  bytes), without `index`, `similarity`, `rename`; hunk counts recomputed, so the
+  patch is valid even without `--recount`. Content (CRLF, non-UTF-8 bytes) copied byte for byte.
+- **Refused** with `DomainError::UnsupportedPatch` (before looking at the selection): binaries,
+  submodules, symbolic links, conflicts, copies, renames in the stage.
 
-Test: snapshot `insta` delle patch su output reali di git (`testdata/patch.sh`), test di
-proprietà con un applicatore puro (righe scelte applicate e le altre no, selezione totale = diff
-originale, unstage = stage del complemento, stage poi unstage = contenuto iniziale) e test in
-`crates/git/tests/patch.rs` che applicano le patch con `git apply --check` e poi davvero.
+Tests: `insta` snapshots of patches on real git output (`testdata/patch.sh`), property tests with
+a pure applier (chosen lines applied and the others not, total selection = original diff,
+unstage = stage of the complement, stage then unstage = initial content) and tests in
+`crates/git/tests/patch.rs` that apply the patches with `git apply --check` and then for real.
 
-## Backup dell'indice
+## Index backup
 
-`index.stage` e `index.unstage` riscrivono la versione in stage dei file. Se un file toccato
-(anche dentro una cartella richiesta) ha nell'indice una versione diversa da HEAD e dal worktree
-(codice XY di `git status` con X ∉ {`.`, `?`} e Y ≠ `.`: `MM`, `AM`, `AD`, `MD`, `RM`, ...), dopo
-la scrittura quella versione resterebbe solo in un blob irraggiungibile. Prima di scrivere il
-backend la salva:
+`index.stage` and `index.unstage` rewrite the staged version of files. If a touched file
+(even inside a requested directory) has in the index a version different from HEAD and from the worktree
+(XY code of `git status` with X ∉ {`.`, `?`} and Y ≠ `.`: `MM`, `AM`, `AD`, `MD`, `RM`, ...), after
+the write that version would remain only in an unreachable blob. Before writing, the
+backend saves it:
 
-1. un indice temporaneo nella cartella git (`GIT_INDEX_FILE`) con solo quelle versioni
-   (`update-index --index-info`), così funziona anche con conflitti nell'indice vero, e
+1. a temporary index in the git directory (`GIT_INDEX_FILE`) with only those versions
+   (`update-index --index-info`), so it works even with conflicts in the real index, and
    `write-tree`;
-2. `commit-tree` con genitore HEAD (se c'è), messaggio con l'operazione e i percorsi, identità
-   fissa (il backup riesce anche senza `user.name`) e `--no-gpg-sign`;
-3. `update-ref refs/project/backup/index-<secondi>-<nanosecondi> <commit> ""`: il ref si crea solo
-   se non esiste, un backup non ne sovrascrive mai un altro.
+2. `commit-tree` with parent HEAD (if any), message with the operation and the paths, fixed
+   identity (the backup succeeds even without `user.name`) and `--no-gpg-sign`;
+3. `update-ref refs/project/backup/index-<seconds>-<nanoseconds> <commit> ""`: the ref is created only
+   if it does not exist, a backup never overwrites another.
 
-Per i file `--assume-unchanged` o `--skip-worktree` (lettere da `git ls-files -v`) `git status`
-dà Y = `.` anche se il worktree è diverso: per loro basta X ∉ {`.`, `?`}. Lo stato letto prima di
-scrivere non usa `core.fsmonitor` (un fsmonitor non aggiornato nasconderebbe le modifiche).
-L'indice temporaneo si scrive con `core.splitIndex=false`, `core.fsmonitor=false` e
-`index.sparse=false`, così non lascia file in `.git`.
+For `--assume-unchanged` or `--skip-worktree` files (letters from `git ls-files -v`) `git status`
+gives Y = `.` even if the worktree differs: for them X ∉ {`.`, `?`} is enough. The status read before
+writing does not use `core.fsmonitor` (an outdated fsmonitor would hide the changes).
+The temporary index is written with `core.splitIndex=false`, `core.fsmonitor=false` and
+`index.sparse=false`, so it leaves no files in `.git`.
 
-Fra la lettura dello stato e la scrittura c'è una finestra breve in cui un altro processo git
-potrebbe cambiare l'indice. Subito prima di scrivere il backend rilegge l'indice
-(`ls-files -s`) e controlla che le voci toccate concordino con lo stato e con la prima lettura;
-se no, errore senza scrivere. Resta solo l'istante fra quel controllo e la scrittura, e solo con
-scritture git esterne concorrenti. Il `MemoryBackend` non ha i flag `assume-unchanged` e
-`skip-worktree` né processi concorrenti: usa solo il codice XY.
+Between reading the status and writing there is a short window in which another git process
+could change the index. Just before writing, the backend re-reads the index
+(`ls-files -s`) and checks that the touched entries agree with the status and with the first read;
+if not, error without writing. Only the instant between that check and the write remains, and only with
+concurrent external git writes. The `MemoryBackend` has neither `assume-unchanged` nor
+`skip-worktree` flags nor concurrent processes: it uses only the XY code.
 
-`index.stage_lines` e `index.unstage_lines` sostituiscono anch'essi la versione in stage del
-file e usano lo stesso criterio (`versions_at_risk*`, X ∉ {`.`, `?`} e Y ≠ `.`) sui percorsi
-toccati (quello richiesto e i due del `FileDiff`): righe di un file `MM`, `AM`, `MD`, `AD`, `RM`
-→ prima il backup della versione in stage; con `.M`, `M.`, `A.`, `.A` (intent-to-add) no,
-perché la versione sostituita è anche in HEAD o nel worktree. Il `CliBackend`, in quest'ordine: legge
-stato (senza fsmonitor) e indice (`ls-files -s`), poi il diff, e controlla che la voce
-dell'indice sia quella su cui il diff è calcolato (id del lato indice: il vecchio per lo stage,
-il nuovo per l'unstage; un `intent-to-add` deve esserci, con il blob vuoto, un file eliminato in
-stage no); legge quel blob (`cat-file blob <id>`; file assente o `intent-to-add`: niente) e
-calcola il contenuto nuovo con l'applicatore rigoroso, che non scrive niente (una patch che non
-si applica non lascia nemmeno un backup); se esiste `index.lock` dà subito `IndexLocked` senza
-fare il backup; salva il contenuto come blob con `hash-object -w --stdin --no-filters` (è già
-nella forma dell'indice: niente filtri `clean` né conversioni di fine riga; scrive solo nel
-database degli oggetti); salva il backup; ricontrolla l'indice come sopra; scrive la voce con
-`update-index -z --index-info` (modo dell'indice, o quello della patch per un file nuovo o
-`intent-to-add`, che diventa una voce normale; modo `0` toglie la voce se il file esce
-dall'indice); rimette i flag `--skip-worktree`/`--assume-unchanged` che la voce aveva (vedi
-sotto); infine rilegge la voce e controlla che sia quella scritta (se un altro git l'ha cambiata
-subito dopo, errore che rimanda al backup). Fra il ricontrollo e la scrittura resta solo
-`update-index`: con la CLI di git non c'è un vero compare-and-swap sull'indice (git prende il
-lock solo dentro `update-index`), quindi l'istante fra il ricontrollo e quel lock resta scoperto,
-come per stage e unstage. Perché è
-sicuro: la voce dell'indice è proprio il lato del diff da cui vengono i numeri di riga (stesso
-id), il contesto è fisso (`--unified=3`), il digest garantisce che il diff è quello visto e
-l'applicatore non cerca mai il preimage altrove. Il worktree non si legge né si scrive mai; la
-configurazione che potrebbe cambiare il risultato non entra in gioco (`diff.context` è
-neutralizzato in `DIFF_ARGS`; `apply.*` e `core.whitespace` non servono più, perché non si usa
-`git apply`). Un file `intent-to-add` (`.A`) ha in `git status` modo e id zero ma nell'indice una
-voce con il blob vuoto (nel formato del repo): il ricontrollo dell'indice lo accetta solo con
-quell'id (vale anche per `index.stage`). Oggi `Oid` e i parser supportano solo SHA-1 e un repo
-SHA-256 non si apre: l'id SHA-256 del blob vuoto (come quello dell'albero vuoto) c'è solo per
-non dare per scontato il formato, e non viene usato.
+`index.stage_lines` and `index.unstage_lines` also replace the staged version of the
+file and use the same criterion (`versions_at_risk*`, X ∉ {`.`, `?`} and Y ≠ `.`) on the paths
+touched (the requested one and the two of the `FileDiff`): lines of an `MM`, `AM`, `MD`, `AD`, `RM` file
+→ first the backup of the staged version; with `.M`, `M.`, `A.`, `.A` (intent-to-add) no,
+because the replaced version is also in HEAD or in the worktree. The `CliBackend`, in this order: reads
+status (without fsmonitor) and index (`ls-files -s`), then the diff, and checks that the index
+entry is the one the diff is computed on (id of the index side: the old one for the stage,
+the new one for the unstage; an `intent-to-add` must be there, with the empty blob, a file deleted in
+the stage not); reads that blob (`cat-file blob <id>`; absent or `intent-to-add` file: nothing) and
+computes the new content with the strict applier, which writes nothing (a patch that does not
+apply does not even leave a backup); if `index.lock` exists it gives `IndexLocked` immediately without
+making the backup; saves the content as a blob with `hash-object -w --stdin --no-filters` (it is already
+in the index form: no `clean` filters or line-ending conversions; it writes only to the
+object database); saves the backup; re-checks the index as above; writes the entry with
+`update-index -z --index-info` (index mode, or the patch's for a new or
+`intent-to-add` file, which becomes a normal entry; mode `0` removes the entry if the file leaves the
+index); restores the `--skip-worktree`/`--assume-unchanged` flags the entry had (see
+below); finally re-reads the entry and checks it is the one written (if another git changed it
+right after, error pointing to the backup). Between the re-check and the write only
+`update-index` remains: with the git CLI there is no real compare-and-swap on the index (git takes the
+lock only inside `update-index`), so the instant between the re-check and that lock stays uncovered,
+as for stage and unstage. Why it is
+safe: the index entry is exactly the side of the diff the line numbers come from (same
+id), the context is fixed (`--unified=3`), the digest guarantees the diff is the one seen and
+the applier never looks for the preimage elsewhere. The worktree is never read or written; the
+configuration that could change the result does not come into play (`diff.context` is
+neutralized in `DIFF_ARGS`; `apply.*` and `core.whitespace` are no longer needed, because `git apply`
+is not used). An `intent-to-add` file (`.A`) has in `git status` mode and id zero but in the index an
+entry with the empty blob (in the repo's format): the index re-check accepts it only with
+that id (also applies to `index.stage`). Today `Oid` and the parsers support only SHA-1 and a
+SHA-256 repo does not open: the SHA-256 id of the empty blob (like that of the empty tree) is there only so as
+not to take the format for granted, and is not used.
 
-**Flag `--skip-worktree` e `--assume-unchanged`.** `update-index --index-info` e `restore
---staged` ricreano la voce dell'indice e ne perdono i flag (verificato: `S d/f` diventa
-`H d/f`). In uno sparse checkout un file fuori dal cono con una modifica in stage passerebbe da
-`M ` a `MD`, e un `git add -A` o `commit -a` successivo metterebbe in stage una cancellazione mai
-fatta. Dopo la scrittura `index.stage_lines`, `index.unstage_lines` e `index.unstage` rimettono i
-flag (`update-index --skip-worktree` / `--assume-unchanged`, percorsi su stdin) alle voci toccate
-che li avevano nella lettura iniziale (`ls-files -v`: `S`/`s` skip-worktree, minuscola
-assume-unchanged) e che sono ancora nell'indice; se non riesce, errore che lo dice (la voce
-scritta è comunque corretta). `index.stage` (`git add`) non ne ha bisogno: conserva
-`--assume-unchanged` e rifiuta i file `--skip-worktree` (fuori dallo sparse checkout) con un
-errore, senza scrivere niente.
+**`--skip-worktree` and `--assume-unchanged` flags.** `update-index --index-info` and `restore
+--staged` recreate the index entry and lose its flags (verified: `S d/f` becomes
+`H d/f`). In a sparse checkout a file outside the cone with a staged change would go from
+`M ` to `MD`, and a following `git add -A` or `commit -a` would stage a deletion never
+made. After writing, `index.stage_lines`, `index.unstage_lines` and `index.unstage` restore the
+flags (`update-index --skip-worktree` / `--assume-unchanged`, paths on stdin) on the touched entries
+that had them in the initial read (`ls-files -v`: `S`/`s` skip-worktree, lowercase
+assume-unchanged) and that are still in the index; if it fails, an error that says so (the entry
+written is correct anyway). `index.stage` (`git add`) does not need it: it keeps
+`--assume-unchanged` and refuses `--skip-worktree` files (outside the sparse checkout) with an
+error, writing nothing.
 
-Se un passo fallisce l'indice non si tocca e il comando restituisce l'errore. Il risultato del
-comando riporta il ref (`"backup"`), la UI lo mostra nella barra di stato; il contenuto si
-recupera con `git show <ref>:<percorso>`. Lo stage di un file in conflitto non fa backup: git
-tiene le versioni del conflitto nell'estensione REUC dell'indice (`git checkout -m` rifà il
-conflitto), e l'unstage di un conflitto è rifiutato. Il `MemoryBackend` registra i backup in
-memoria (`MemoryBackend::backups`).
+If a step fails the index is not touched and the command returns the error. The command's result
+reports the ref (`"backup"`), the UI shows it in the status bar; the content is
+recovered with `git show <ref>:<path>`. Staging a conflicted file makes no backup: git
+keeps the conflict versions in the REUC extension of the index (`git checkout -m` redoes the
+conflict), and unstaging a conflict is refused. The `MemoryBackend` records backups in
+memory (`MemoryBackend::backups`).

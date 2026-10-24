@@ -1,6 +1,6 @@
 use super::*;
 
-/// `writing`: c'è una scrittura in corso, le voci del menu che scrivono aspettano.
+/// `writing`: a write is in progress, the menu entries that write wait.
 pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
     let current = match &repo.head {
         Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
@@ -15,7 +15,7 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
             (RefKind::Tag, tr!("refs-tags")),
         ];
         for (kind, title) in sections {
-            // I remoti configurati sotto i loro branch, prima dei tag.
+            // The configured remotes under their branches, before the tags.
             if kind == RefKind::Tag {
                 remotes_section(ui, repo, can_write, actions);
             }
@@ -37,8 +37,8 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
     });
 }
 
-/// `can_write`: le voci che scrivono sono attive (nessuna scrittura in corso, nessun dialogo).
-/// `merge`: in quale branch "Unisci" unirebbe, o perché non si può.
+/// `can_write`: the entries that write are enabled (no write in progress, no dialog).
+/// `merge`: in which branch "Merge" would merge, or why it cannot.
 pub(super) fn ref_row(
     ui: &mut Ui,
     info: &RefInfo,
@@ -47,8 +47,8 @@ pub(super) fn ref_row(
     merge: &merge::Gate,
     actions: &mut Vec<Action>,
 ) {
-    // L'id della riga viene dal nome del ref, non dalla posizione: se i ref si rileggono fra
-    // i due clic, un doppio clic non finisce su un altro branch.
+    // The row id comes from the ref name, not from the position: if the refs are reread between
+    // the two clicks, a double click does not land on another branch.
     ui.push_id(&info.name, |ui| {
         ref_row_inner(ui, info, is_head, can_write, merge, actions);
     });
@@ -64,7 +64,7 @@ pub(super) fn ref_row_inner(
 ) {
     let local = info.kind == RefKind::LocalBranch;
     ui.horizontal(|ui| {
-        // Il branch corrente è evidenziato e in grassetto.
+        // The current branch is highlighted and bold.
         let name = RichText::new(info.short_name());
         let name = if is_head { name.strong() } else { name };
         let response = ui.selectable_label(is_head, name);
@@ -84,11 +84,11 @@ pub(super) fn ref_row_inner(
     .on_hover_text(ref_tooltip(info, is_head));
 }
 
-/// L'id dell'intestazione di una sezione: non cambia con la lingua né con il numero di ref.
+/// The id of a section header: it does not change with the language or the number of refs.
 fn kind_salt(kind: RefKind) -> &'static str {
     match kind {
-        RefKind::LocalBranch => "ref-locali",
-        RefKind::RemoteBranch => "ref-remoti",
+        RefKind::LocalBranch => "ref-local",
+        RefKind::RemoteBranch => "ref-remote",
         RefKind::Tag => "ref-tag",
         RefKind::Stash => "ref-stash",
     }
@@ -108,8 +108,8 @@ pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
     }
 }
 
-/// Il menu contestuale di un ref: sui branch locali checkout, nuovo branch, merge nel branch
-/// attivo, rinomina, pull, push ed eliminazione; su branch remoti e tag nuovo branch e merge.
+/// The context menu of a ref: on local branches checkout, new branch, merge into the current
+/// branch, rename, pull, push and delete; on remote branches and tags new branch and merge.
 pub(super) fn ref_menu(
     ui: &mut Ui,
     info: &RefInfo,
@@ -233,8 +233,8 @@ pub(super) fn ref_menu(
     }
 }
 
-/// Le voci "Unisci in «branch»" (fast-forward se basta) e "… con commit di merge" (`no_ff`) per
-/// `rev`, mostrato come `what`; spente con il motivo se il branch attivo non lo permette.
+/// The "Merge into <branch>" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for
+/// `rev`, shown as `what`; disabled with the reason if the current branch does not allow it.
 pub(super) fn merge_items(
     ui: &mut Ui,
     rev: &str,

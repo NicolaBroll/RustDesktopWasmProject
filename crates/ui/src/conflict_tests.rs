@@ -17,8 +17,8 @@ fn sig(n: u64) -> Signature {
     }
 }
 
-/// Il commit `n` con genitore `parent` che porta `a.txt` dal blob `old` al blob `new`, il cui
-/// contenuto è `text`.
+/// Commit `n` with parent `parent` that takes `a.txt` from blob `old` to blob `new`, whose
+/// content is `text`.
 fn commit(repo: &mut MemoryBackend, n: u64, parent: Option<u64>, text: &str) {
     let old = parent.map(|p| oid(100 + p));
     repo.set_blob(oid(100 + n), text.to_owned());
@@ -49,16 +49,16 @@ fn commit(repo: &mut MemoryBackend, n: u64, parent: Option<u64>, text: &str) {
     );
 }
 
-/// `main` su `c2` e `altro` su `c3`, tutti e due da `c1`: `merge.start` di `altro` si ferma in
-/// conflitto su `a.txt`.
+/// `main` on `c2` and `other` on `c3`, both from `c1`: `merge.start` of `other` stops in
+/// conflict on `a.txt`.
 fn merging() -> (Registry, Session) {
     let mut repo = MemoryBackend::new();
     repo.set_identity("Ada", "ada@example.com");
     commit(&mut repo, 1, None, "base\n");
-    commit(&mut repo, 2, Some(1), "nostra\n");
-    commit(&mut repo, 3, Some(1), "loro\n");
+    commit(&mut repo, 2, Some(1), "ours\n");
+    commit(&mut repo, 3, Some(1), "theirs\n");
     repo.set_branch("main", oid(2));
-    repo.set_branch("altro", oid(3));
+    repo.set_branch("other", oid(3));
     repo.set_head_branch("main");
     let mut opener = MemoryOpener::new();
     opener.insert("r", repo);
@@ -68,30 +68,30 @@ fn merging() -> (Registry, Session) {
         .run("repo.open", &mut session, json!({ "path": "r" }))
         .unwrap();
     let started = registry
-        .run("merge.start", &mut session, json!({ "rev": "altro" }))
+        .run("merge.start", &mut session, json!({ "rev": "other" }))
         .unwrap();
     assert_eq!(started["in_progress"], true, "{started}");
     (registry, session)
 }
 
-/// Apre l'editor su `path` e passa la risposta di `conflict.show`.
+/// Opens the editor on `path` and passes the `conflict.show` answer.
 fn open(r: &Registry, s: &mut Session, b: &mut ConflictBox, path: &str) {
     let (params, seq) = b.open(RepoPath::from(path)).unwrap();
-    b.receive_show(seq, r.run(SHOW, s, params).map_err(|e| e.to_string()));
+    b.receive_show(seq, r.run(SHOW, s, params).map_err(|e| e.text()));
 }
 
-/// Esegue `conflict.resolve` come l'executor.
+/// Runs `conflict.resolve` like the executor.
 fn send(r: &Registry, s: &mut Session, b: &mut ConflictBox, params: Value) -> Received {
     let result = r.run(RESOLVE, s, params);
     let kind = result.as_ref().err().map(ErrorKind::of);
-    b.receive_resolve(result.map_err(|e| e.to_string()), kind)
+    b.receive_resolve(result.map_err(|e| e.text()), kind)
 }
 
 fn loaded(b: &ConflictBox) -> &Loaded {
-    b.editor().and_then(Editor::loaded).expect("versioni lette")
+    b.editor().and_then(Editor::loaded).expect("versions read")
 }
 
-/// Un editor già letto con questo testo del worktree, senza motore.
+/// An editor already read with this worktree text, without the engine.
 fn with_text(text: &str) -> ConflictBox {
     let mut b = ConflictBox::default();
     let (_, seq) = b.open(RepoPath::from("f.txt")).unwrap();
@@ -107,56 +107,53 @@ fn with_text(text: &str) -> ConflictBox {
     b
 }
 
-const TWO: &str = "inizio\n<<<<<<< HEAD\no1\n=======\nt1\n>>>>>>> feature\nmezzo\n<<<<<<< HEAD\no2\n\
-                   =======\nt2\n>>>>>>> feature\nfine\n";
+const TWO: &str = "start\n<<<<<<< HEAD\no1\n=======\nt1\n>>>>>>> feature\nmiddle\n<<<<<<< HEAD\no2\n\
+                   =======\nt2\n>>>>>>> feature\nend\n";
 
 #[test]
-fn conflitto_risolto_dalla_ui_e_merge_pronto() {
+fn conflict_resolved_from_the_ui_and_merge_ready() {
     let (r, mut s) = merging();
     let mut b = ConflictBox::default();
     open(&r, &mut s, &mut b, "a.txt");
     let l = loaded(&b);
     assert_eq!(l.base, Column::Text(vec!["base".into()]));
-    assert_eq!(l.ours, Column::Text(vec!["nostra".into()]));
-    assert_eq!(l.theirs, Column::Text(vec!["loro".into()]));
+    assert_eq!(l.ours, Column::Text(vec!["ours".into()]));
+    assert_eq!(l.theirs, Column::Text(vec!["theirs".into()]));
     assert_eq!(l.ours_label.as_deref(), Some("HEAD"));
     let blocks = l.blocks();
     assert_eq!(blocks.len(), 1);
     assert_eq!((blocks[0].line, blocks[0].has_base), (1, false));
-    // Lo stesso file non si rilegge (le modifiche restano).
+    // The same file is not reread (the edits stay).
     assert!(b.open(RepoPath::from("a.txt")).is_none());
 
-    // "Entrambe", poi a mano una riga in più.
+    // "Both", then one more line by hand.
     assert!(b.choose(0, Choice::OursThenTheirs));
-    assert_eq!(loaded(&b).result(), Some("nostra\nloro\n"));
-    b.set_result("nostra\nloro\nfine\n".into());
+    assert_eq!(loaded(&b).result(), Some("ours\ntheirs\n"));
+    b.set_result("ours\ntheirs\nend\n".into());
     assert!(loaded(&b).blocks().is_empty());
 
-    let (params, label) = b.resolve().expect("senza marcatori si manda subito");
-    assert_eq!(params["content"], "nostra\nloro\nfine\n");
-    assert_eq!(label, "Risoluzione del conflitto di a.txt");
+    let (params, label) = b.resolve().expect("without markers it is sent right away");
+    assert_eq!(params["content"], "ours\ntheirs\nend\n");
+    assert_eq!(label, "Resolving the conflict in a.txt");
     assert!(b.busy());
     let Received::Done { status, notice } = send(&r, &mut s, &mut b, params) else {
-        panic!("risolto");
+        panic!("resolved");
     };
     assert!(!status.has_conflicts());
-    assert!(notice.contains("a.txt risolto"), "{notice}");
+    assert!(notice.contains("Conflict in a.txt resolved"), "{notice}");
     assert!(b.editor().is_none());
 
-    // Il riquadro si rilegge con lo stato nuovo: niente conflitti, "Continua" si attiva.
+    // The box rereads with the new state: no conflicts, "Continue" becomes active.
     let mut merge = MergeBox::default();
     assert!(merge.want_info(status.operation, 1));
-    merge.receive_info(
-        r.run(OPERATION, &mut s, json!({}))
-            .map_err(|e| e.to_string()),
-    );
-    let info = merge.info().expect("merge in corso");
+    merge.receive_info(r.run(OPERATION, &mut s, json!({})).map_err(|e| e.text()));
+    let info = merge.info().expect("merge in progress");
     assert!(info.ready);
     assert!(info.conflicts.is_empty());
 }
 
 #[test]
-fn file_cambiato_dopo_la_lettura_si_rilegge() {
+fn file_changed_after_reading_is_reread() {
     let (r, mut s) = merging();
     let mut b = ConflictBox::default();
     open(&r, &mut s, &mut b, "a.txt");
@@ -166,45 +163,45 @@ fn file_cambiato_dopo_la_lettura_si_rilegge() {
     let Received::Failed { reread, .. } = send(&r, &mut s, &mut b, params) else {
         panic!("StaleDiff");
     };
-    let (params, seq) = reread.expect("si rilegge il file");
+    let (params, seq) = reread.expect("the file is reread");
     let editor = b.editor().unwrap();
     assert!(matches!(editor.load, Load::Loading));
-    assert!(editor.error.as_deref().unwrap().contains("cambiato"));
-    b.receive_show(seq, r.run(SHOW, &mut s, params).map_err(|e| e.to_string()));
+    assert!(editor.error.as_deref().unwrap().contains("changed"));
+    b.receive_show(seq, r.run(SHOW, &mut s, params).map_err(|e| e.text()));
     assert_eq!(loaded(&b).blocks().len(), 1);
 }
 
 #[test]
-fn marcatori_rimasti_chiedono_conferma_in_due_tempi() {
+fn remaining_markers_ask_for_two_step_confirmation() {
     let mut b = with_text(TWO);
     assert_eq!(loaded(&b).blocks().len(), 2);
     assert_eq!(loaded(&b).theirs_label.as_deref(), Some("feature"));
     assert!(b.choose(1, Choice::Ours));
     assert_eq!(
         loaded(&b).result(),
-        Some("inizio\n<<<<<<< HEAD\no1\n=======\nt1\n>>>>>>> feature\nmezzo\no2\nfine\n")
+        Some("start\n<<<<<<< HEAD\no1\n=======\nt1\n>>>>>>> feature\nmiddle\no2\nend\n")
     );
     let blocks = loaded(&b).blocks();
     assert_eq!((blocks.len(), blocks[0].line), (1, 2));
 
-    // Primo tempo: niente da mandare, si apre la conferma.
+    // First step: nothing to send, the confirmation opens.
     assert!(b.resolve().is_none());
     assert_eq!(b.editor().unwrap().pending, Some(Pending::Markers(1)));
-    // Rinunciare non manda niente.
+    // Giving up sends nothing.
     b.cancel();
     assert_eq!(b.editor().unwrap().pending, None);
     assert!(b.confirm().is_none());
-    // Secondo tempo: si manda il testo con i marcatori.
+    // Second step: the text with the markers is sent.
     assert!(b.resolve().is_none());
-    let (params, _) = b.confirm().expect("confermato");
+    let (params, _) = b.confirm().expect("confirmed");
     assert!(params["content"].as_str().unwrap().contains("<<<<<<< HEAD"));
     assert_eq!(params["digest"], "d");
     assert!(b.busy());
 }
 
 #[test]
-fn testo_non_analizzabile_niente_pulsanti_per_blocco() {
-    // Marcatori rotti a mano: il testo resta modificabile, ma senza blocchi.
+fn unparsable_text_has_no_per_block_buttons() {
+    // Markers broken by hand: the text stays editable, but without blocks.
     let mut b = with_text(TWO);
     b.set_result("<<<<<<< HEAD\nx\n".into());
     let l = loaded(&b);
@@ -214,22 +211,22 @@ fn testo_non_analizzabile_niente_pulsanti_per_blocco() {
     assert!(!b.choose(0, Choice::Ours));
     assert!(!b.choose_all(Choice::Theirs));
     assert!(b.editor().unwrap().error.is_some());
-    // Senza blocchi analizzati si manda senza conferma (l'avviso è sui marcatori trovati).
+    // Without parsed blocks it is sent without confirmation (the warning is about the markers found).
     assert!(b.resolve().is_some());
 
-    // Il file del worktree già rotto: niente risultato modificabile, solo i lati interi.
-    let mut b = with_text("<<<<<<< HEAD\nsolo nostra\n");
+    // The worktree file already broken: no editable result, only whole sides.
+    let mut b = with_text("<<<<<<< HEAD\nonly ours\n");
     let l = loaded(&b);
     assert!(l.result().is_none());
     assert!(l.blocks().is_empty());
     assert!(b.resolve().is_none());
     let (params, label) = b.use_side(Pick::Theirs).unwrap();
     assert_eq!(params["content"], "t\n");
-    assert!(label.contains("loro"), "{label}");
+    assert!(label.contains("their"), "{label}");
 }
 
 #[test]
-fn tutto_loro_e_base() {
+fn all_theirs_and_base() {
     let mut b = with_text(
         "<<<<<<< ours\na\n||||||| base\nb\n=======\nc\n>>>>>>> theirs\nx\n<<<<<<< ours\nd\n\
          ||||||| base\ne\n=======\nf\n>>>>>>> theirs\n",
@@ -241,7 +238,7 @@ fn tutto_loro_e_base() {
 }
 
 #[test]
-fn eliminazione_chiede_conferma() {
+fn deletion_asks_for_confirmation() {
     let mut b = ConflictBox::default();
     let (_, seq) = b.open(RepoPath::from("f.txt")).unwrap();
     b.receive_show(
@@ -266,14 +263,14 @@ fn eliminazione_chiede_conferma() {
 }
 
 #[test]
-fn risposte_vecchie_scartate_e_chiusura_col_nuovo_stato() {
+fn old_answers_dropped_and_closing_on_new_state() {
     let mut b = ConflictBox::default();
     let (_, old) = b.open(RepoPath::from("a.txt")).unwrap();
     let (_, _) = b.restart().unwrap();
-    b.receive_show(old, Err("vecchia".into()));
+    b.receive_show(old, Err("old".into()));
     assert!(matches!(b.editor().unwrap().load, Load::Loading));
 
-    // Risolto altrove (stage dall'area delle modifiche): l'editor si chiude.
+    // Resolved elsewhere (stage from the changes area): the editor closes.
     let (r, mut s) = merging();
     let mut b = ConflictBox::default();
     open(&r, &mut s, &mut b, "a.txt");

@@ -2269,12 +2269,13 @@ dependencies = [
 name = "project-engine"
 version = "0.1.0"
 dependencies = [
+ "fluent-syntax",
  "project-core",
  "project-domain",
+ "project-i18n",
  "proptest",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
 ]
 
 [[package]]

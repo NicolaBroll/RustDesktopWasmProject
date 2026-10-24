@@ -1,36 +1,36 @@
-//! Gestione dei remoti sul [`MemoryBackend`] (`remote.list`, `remote.add`, `remote.remove`,
+//! Remote management on the [`MemoryBackend`] (`remote.list`, `remote.add`, `remote.remove`,
 //! S27).
 //!
-//! La "configurazione" di un remoto in memoria è il suo URL (`remote.<nome>.url`), il refspec
-//! (`remote.<nome>.fetch`, quello di default se non impostato con
-//! [`MemoryBackend::set_config`]) e le altre chiavi `remote.<nome>.*` di `set_config`; i
-//! dipendenti sono gli upstream ([`MemoryBackend::set_upstream`]), le chiavi
-//! `branch.<b>.pushRemote` e `remote.pushDefault`. Il repo in memoria non ha ref simbolici:
-//! `head` è sempre `None`.
+//! The "configuration" of an in-memory remote is its URL (`remote.<name>.url`), the refspec
+//! (`remote.<name>.fetch`, the default one if not set with
+//! [`MemoryBackend::set_config`]) and the other `remote.<name>.*` keys of `set_config`; the
+//! dependents are the upstreams ([`MemoryBackend::set_upstream`]), the keys
+//! `branch.<b>.pushRemote` and `remote.pushDefault`. The in-memory repo has no symbolic refs:
+//! `head` is always `None`.
 //!
-//! Il remoto in memoria è anche il "server" (i suoi branch e commit): togliendolo, il server
-//! resta da parte per URL, e un remoto aggiunto o rimesso con lo stesso URL lo ritrova (così un
-//! fetch dopo `remote.add` di un URL già visto scarica i suoi branch).
+//! The in-memory remote is also the "server" (its branches and commits): when it is removed, the server
+//! is set aside by URL, and a remote added or put back with the same URL finds it again (so a
+//! fetch after `remote.add` of an already seen URL downloads its branches).
 
 use super::remote::MemoryRemote;
 use super::{HEADS, MemoryBackend, REMOTES};
-use crate::EngineError;
 use crate::git::{ConfigEntry, RemoteRef, RemoteSnapshot, owned_by, split_branch_key};
+use crate::{EngineError, Message};
 
 impl MemoryBackend {
-    /// `remotes()` continua a elencare `name` anche dopo la rimozione, come un remoto definito
-    /// anche fuori dal file del repo che sfugge al controllo prima della conferma.
+    /// `remotes()` keeps listing `name` even after the removal, like a remote defined
+    /// also outside the repo file that escapes the check before the confirmation.
     pub fn keep_remote_listed(&mut self, name: &str) {
         self.listed_anyway.insert(name.to_owned());
     }
 
-    /// Le prossime `n` chiamate a `restore_refs` riescono, poi falliscono tutte.
+    /// The next `n` calls to `restore_refs` succeed, then they all fail.
     pub fn fail_restore_refs_after(&mut self, n: usize) {
         self.restore_budget = Some(n);
     }
 
-    /// Simula voci `remote.<name>.*` definite fuori dal file del repo (configurazione globale,
-    /// `include`): [`GitBackend::remote_config_elsewhere`](crate::GitBackend) le restituisce.
+    /// Simulates `remote.<name>.*` entries defined outside the repo file (global configuration,
+    /// `include`): [`GitBackend::remote_config_elsewhere`](crate::GitBackend) returns them.
     pub fn set_remote_elsewhere(&mut self, name: &str, entries: &[&str]) {
         self.remote_elsewhere.insert(
             name.to_owned(),
@@ -125,8 +125,9 @@ impl MemoryBackend {
         url: &str,
     ) -> Result<(), EngineError> {
         if self.remotes.contains_key(name) {
-            return Err(EngineError::NotAllowed(format!(
-                "esiste già un remoto `{name}`, niente modificato"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-remote-exists",
+                name = name
             )));
         }
         let mut remote = self.detached_remotes.remove(url).unwrap_or_default();
@@ -135,7 +136,7 @@ impl MemoryBackend {
         Ok(())
     }
 
-    pub(super) fn drop_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+    pub(super) fn drop_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         let name = &snapshot.name;
         if !snapshot.config.is_empty() {
             if let Some(remote) = self.remotes.remove(name) {
@@ -163,7 +164,7 @@ impl MemoryBackend {
         Vec::new()
     }
 
-    pub(super) fn put_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<String> {
+    pub(super) fn put_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         let name = &snapshot.name;
         let url_key = format!("remote.{name}.url");
         for entry in &snapshot.config {
@@ -200,10 +201,9 @@ impl MemoryBackend {
                                 format!("{REMOTES}{name}/{short}"),
                             );
                         }
-                        None => warnings.push(format!(
-                            "upstream di `{branch}` senza `merge`: non riscritto nel repo in \
-                             memoria"
-                        )),
+                        None => {
+                            warnings.push(msg!("engine-remote-memory-no-merge", branch = branch))
+                        }
                     }
                 }
                 "pushremote" => self

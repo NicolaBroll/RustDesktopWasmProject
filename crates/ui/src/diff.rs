@@ -1,33 +1,33 @@
-//! Vista del diff di un file: quale diff chiedere (`diff.commit`, `diff.worktree` o
-//! `diff.index`), quale risposta mostrare e
-//! come trasformarla in righe da disegnare. Solo dati, senza egui: si prova con test unitari.
+//! File diff view: which diff to ask for (`diff.commit`, `diff.worktree` or
+//! `diff.index`), which response to show and
+//! how to turn it into lines to draw. Data only, no egui: tested with unit tests.
 //!
-//! Regole delle richieste (come il pannello dettagli):
-//! - si chiede un diff quando l'utente apre un file, non a ogni frame;
-//! - ogni richiesta ha un numero; una risposta con un numero che non è quello del diff aperto
-//!   (l'utente ha aperto un altro file, o ha chiuso la vista) si scarta.
+//! Request rules (like the details panel):
+//! - a diff is requested when the user opens a file, not on every frame;
+//! - every request has a number; a response whose number is not the one of the open diff
+//!   (the user opened another file, or closed the view) is discarded.
 
 use crate::format::change_name;
 use crate::lines::LineSelection;
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
 use project_i18n::tr;
 
-/// Da dove viene il diff di un file.
+/// Where the diff of a file comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffSource {
-    /// Il commit rispetto al primo genitore (`diff.commit`).
+    /// The commit against its first parent (`diff.commit`).
     Commit(Oid),
-    /// Le modifiche non in stage, worktree rispetto all'indice (`diff.worktree`).
+    /// Unstaged changes, working tree against the index (`diff.worktree`).
     Worktree,
-    /// Le modifiche in stage, indice rispetto a HEAD (`diff.index`).
+    /// Staged changes, index against HEAD (`diff.index`).
     Index,
 }
 
-/// Il file di cui mostrare il diff.
+/// The file to show the diff of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffTarget {
     pub source: DiffSource,
-    /// Il percorso nuovo del file (per rinomine e copie quello di arrivo).
+    /// The new path of the file (for renames and copies, the destination).
     pub path: RepoPath,
 }
 
@@ -39,7 +39,7 @@ impl DiffTarget {
         }
     }
 
-    /// Il comando e i parametri che chiedono questo diff.
+    /// The command and parameters that request this diff.
     pub fn request(&self) -> (&'static str, serde_json::Value) {
         let path = serde_json::to_value(&self.path).unwrap_or_default();
         match self.source {
@@ -53,10 +53,10 @@ impl DiffTarget {
     }
 }
 
-/// Cosa sa la vista del diff aperto.
+/// What the view knows about the open diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane<'a> {
-    /// Nessun diff aperto: al centro c'è il grafo.
+    /// No diff open: the graph is in the center.
     Closed,
     Loading(&'a DiffTarget),
     Loaded(&'a DiffTarget, &'a DiffDoc),
@@ -68,7 +68,7 @@ struct Open {
     seq: u64,
     target: DiffTarget,
     answer: Option<Result<DiffDoc, String>>,
-    /// Righe selezionate del documento caricato; si azzera a ogni nuova risposta.
+    /// Selected lines of the loaded document; cleared on every new response.
     selection: LineSelection,
 }
 
@@ -79,8 +79,8 @@ pub struct DiffState {
 }
 
 impl DiffState {
-    /// Apre il diff di `target` e restituisce il numero della richiesta da mandare, se serve:
-    /// non serve se quel diff è già aperto (caricato o in arrivo).
+    /// Opens the diff of `target` and returns the number of the request to send, if needed:
+    /// not needed if that diff is already open (loaded or on its way).
     pub fn open(&mut self, target: DiffTarget) -> Option<u64> {
         if let Some(open) = &self.open
             && open.target == target
@@ -99,7 +99,7 @@ impl DiffState {
         Some(seq)
     }
 
-    /// Dopo un errore richiede lo stesso diff: restituisce il numero della nuova richiesta.
+    /// After an error, requests the same diff again: returns the number of the new request.
     pub fn retry(&mut self) -> Option<u64> {
         let target = self.open.as_ref()?.target.clone();
         matches!(self.open.as_ref()?.answer, Some(Err(_)))
@@ -107,8 +107,8 @@ impl DiffState {
             .flatten()
     }
 
-    /// Richiede il diff aperto anche se è già caricato (il file è cambiato): restituisce il
-    /// numero della nuova richiesta. Fino alla risposta la vista mostra il caricamento.
+    /// Requests the open diff even if it is already loaded (the file changed): returns the
+    /// number of the new request. Until the response arrives the view shows the loading state.
     pub fn reload(&mut self) -> Option<u64> {
         let open = self.open.as_mut()?;
         open.seq = self.next;
@@ -118,7 +118,7 @@ impl DiffState {
         Some(open.seq)
     }
 
-    /// Chiude la vista: le risposte in arrivo si scarteranno.
+    /// Closes the view: incoming responses will be discarded.
     pub fn close(&mut self) {
         self.open = None;
     }
@@ -127,8 +127,8 @@ impl DiffState {
         self.open.as_ref().map(|o| &o.target)
     }
 
-    /// La risposta della richiesta `seq`. Si tiene solo se è quella del diff aperto:
-    /// restituisce `false` se è stata scartata.
+    /// The response to request `seq`. Kept only if it is the one of the open diff:
+    /// returns `false` if it was discarded.
     pub fn receive(&mut self, seq: u64, result: Result<Diff, String>) -> bool {
         let Some(open) = &mut self.open else {
             return false;
@@ -141,12 +141,12 @@ impl DiffState {
         true
     }
 
-    /// Le righe selezionate del diff aperto (vuote se non ce n'è uno).
+    /// The selected lines of the open diff (empty if there is none).
     pub fn selection(&self) -> Option<&LineSelection> {
         self.open.as_ref().map(|o| &o.selection)
     }
 
-    /// Il diff caricato con la sua selezione, da modificare.
+    /// The loaded diff with its selection, to modify.
     pub fn loaded_mut(&mut self) -> Option<(&DiffTarget, &DiffDoc, &mut LineSelection)> {
         let open = self.open.as_mut()?;
         match &open.answer {
@@ -155,7 +155,7 @@ impl DiffState {
         }
     }
 
-    /// Il diff caricato con la sua selezione.
+    /// The loaded diff with its selection.
     pub fn loaded(&self) -> Option<(&DiffTarget, &DiffDoc, &LineSelection)> {
         let open = self.open.as_ref()?;
         match &open.answer {
@@ -176,39 +176,39 @@ impl DiffState {
     }
 }
 
-/// Una riga della vista: indici nel [`Diff`] del documento, così migliaia di righe non
-/// copiano il contenuto.
+/// A view row: indices into the document's [`Diff`], so thousands of rows do not
+/// copy the content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
-    /// Titolo del file `files[f]`.
+    /// Title of the file `files[f]`.
     File(usize),
-    /// Informazione sotto il titolo (modi, binario, file vuoto...).
+    /// Information under the title (modes, binary, empty file...).
     Note(usize, String),
-    /// Intestazione dell'hunk `files[f].hunks[h]`.
+    /// Header of the hunk `files[f].hunks[h]`.
     Hunk(usize, usize),
-    /// Riga `files[f].hunks[h].lines[l]`.
+    /// Row `files[f].hunks[h].lines[l]`.
     Line(usize, usize, usize),
-    /// `\ No newline at end of file` dopo la riga precedente.
+    /// `\ No newline at end of file` after the previous row.
     NoNewline,
-    /// Spazio tra un file e il seguente.
+    /// Space between one file and the next.
     Gap,
 }
 
-/// Un diff pronto da disegnare: le righe in ordine, le larghezze delle colonne.
+/// A diff ready to draw: the rows in order, the column widths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffDoc {
     pub diff: Diff,
     pub rows: Vec<Row>,
-    /// Cifre delle colonne dei numeri di riga.
+    /// Digits of the line number columns.
     pub number_width: usize,
-    /// Colonne di testo della riga più larga (dopo tab ed eventuale taglio).
+    /// Text columns of the widest row (after tabs and any cut).
     pub max_cols: usize,
 }
 
 impl DiffDoc {
-    /// `diff` è la risposta di `diff.commit` per `path`: il motore restituisce anche i file
-    /// che hanno `path` come origine (es. una copia da `path`); si tengono quelli che arrivano a
-    /// `path` (due per un cambio di tipo), oppure tutti se nessuno ci arriva.
+    /// `diff` is the response of `diff.commit` for `path`: the engine also returns the files
+    /// that have `path` as source (e.g. a copy from `path`); the ones that arrive at
+    /// `path` are kept (two for a type change), or all of them if none arrives there.
     pub fn new(mut diff: Diff, path: &RepoPath) -> Self {
         if diff.files.iter().any(|f| f.new_path == *path) {
             diff.files.retain(|f| f.new_path == *path);
@@ -245,7 +245,7 @@ impl DiffDoc {
         }
     }
 
-    /// Righe aggiunte e tolte di tutti i file.
+    /// Lines added and removed in all files.
     pub fn line_counts(&self) -> (usize, usize) {
         self.diff
             .files
@@ -255,8 +255,8 @@ impl DiffDoc {
     }
 }
 
-/// Titolo del file: il percorso, oppure `vecchio -> nuovo` per rinomine e copie (ASCII: i font
-/// di default non hanno le frecce).
+/// File title: the path, or `old -> new` for renames and copies (ASCII: the default fonts
+/// have no arrows).
 pub fn file_title(file: &FileDiff) -> String {
     match file.change {
         Change::Renamed | Change::Copied if file.old_path != file.new_path => format!(
@@ -268,7 +268,7 @@ pub fn file_title(file: &FileDiff) -> String {
     }
 }
 
-/// Tipo di modifica, somiglianza e righe cambiate, es. `rinominato 92%  +1 -1`.
+/// Kind of change, similarity and changed lines, e.g. `renamed 92%  +1 -1`.
 pub fn file_summary(file: &FileDiff) -> String {
     let mut parts = vec![change_name(file.change)];
     if let Some(similarity) = file.similarity {
@@ -284,7 +284,7 @@ pub fn file_summary(file: &FileDiff) -> String {
     parts.join("  ")
 }
 
-/// Le righe di informazione sotto il titolo: modi cambiati e, se il file non ha hunk, perché.
+/// The information rows under the title: changed modes and, if the file has no hunks, why.
 pub fn file_notes(file: &FileDiff) -> Vec<String> {
     let mut notes = Vec::new();
     match (file.old_mode, file.new_mode) {
@@ -325,26 +325,26 @@ pub fn file_notes(file: &FileDiff) -> Vec<String> {
     notes
 }
 
-/// Spazi di un tab.
+/// Spaces in a tab.
 pub const TAB_WIDTH: usize = 4;
-/// Colonne mostrate al massimo per riga: oltre la riga si taglia e lo dice.
+/// Columns shown at most per row: beyond that the row is cut and says so.
 pub const MAX_LINE_COLS: usize = 1000;
 
-/// Il contenuto di una riga com'è da disegnare.
+/// The content of a row as it is to be drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DisplayLine {
-    /// Pezzi di testo; `true` per i segni messi al posto dei caratteri di controllo (`^M` per
-    /// `\r`), da disegnare più tenui.
+    /// Pieces of text; `true` for the marks put in place of control characters (`^M` for
+    /// `\r`), to be drawn dimmer.
     pub spans: Vec<(String, bool)>,
-    /// Colonne occupate (un carattere, una colonna).
+    /// Columns taken (one character, one column).
     pub cols: usize,
-    /// Caratteri tagliati in fondo perché la riga supera [`MAX_LINE_COLS`].
+    /// Characters cut at the end because the row exceeds [`MAX_LINE_COLS`].
     pub cut: usize,
 }
 
-/// Rende leggibile una riga: tab espansi fino al multiplo di [`TAB_WIDTH`] seguente, `\r` e
-/// gli altri caratteri di controllo come `^M`, `^[`...; oltre [`MAX_LINE_COLS`] colonne la
-/// riga si taglia.
+/// Makes a row readable: tabs expanded to the next multiple of [`TAB_WIDTH`], `\r` and
+/// the other control characters as `^M`, `^[`...; beyond [`MAX_LINE_COLS`] columns the
+/// row is cut.
 pub fn display_line(content: &str) -> DisplayLine {
     let mut out = DisplayLine::default();
     let push = |out: &mut DisplayLine, text: &str, special: bool| match out.spans.last_mut() {
@@ -378,12 +378,12 @@ pub fn display_line(content: &str) -> DisplayLine {
     out
 }
 
-/// Cifre che servono per scrivere `max` (almeno 1).
+/// Digits needed to write `max` (at least 1).
 pub fn number_width(max: u32) -> usize {
     max.max(1).ilog10() as usize + 1
 }
 
-/// Numero di riga allineato a destra su `width` cifre, o spazi se la riga non c'è in quel lato.
+/// Line number right-aligned to `width` digits, or spaces if the row does not exist on that side.
 pub fn line_number(number: Option<u32>, width: usize) -> String {
     match number {
         Some(n) => format!("{n:>width$}"),
@@ -391,7 +391,7 @@ pub fn line_number(number: Option<u32>, width: usize) -> String {
     }
 }
 
-/// Il segno della riga come lo scrive git: ` `, `+`, `-`.
+/// The sign of the row as git writes it: ` `, `+`, `-`.
 pub fn line_prefix(kind: LineKind) -> char {
     char::from(kind.prefix())
 }
@@ -438,7 +438,7 @@ mod tests {
     }
 
     fn hunk() -> Hunk {
-        let mut last = line(LineKind::Added, None, Some(10), "fine");
+        let mut last = line(LineKind::Added, None, Some(10), "end");
         last.no_newline = true;
         Hunk {
             old_start: 8,
@@ -463,7 +463,7 @@ mod tests {
     fn opening_asks_once_and_keeps_the_answer() {
         let mut s = DiffState::default();
         assert_eq!(s.pane(), Pane::Closed);
-        let seq = s.open(target(1, "a.rs")).expect("prima richiesta");
+        let seq = s.open(target(1, "a.rs")).expect("first request");
         assert_eq!(s.open(target(1, "a.rs")), None);
         assert_eq!(s.pane(), Pane::Loading(&target(1, "a.rs")));
         assert!(s.receive(
@@ -476,8 +476,8 @@ mod tests {
             )]))
         ));
         assert!(matches!(s.pane(), Pane::Loaded(t, _) if *t == target(1, "a.rs")));
-        // Una seconda risposta con lo stesso numero non sostituisce la prima.
-        assert!(!s.receive(seq, Err("tardi".to_owned())));
+        // A second response with the same number does not replace the first.
+        assert!(!s.receive(seq, Err("late".to_owned())));
         assert_eq!(s.open(target(1, "a.rs")), None);
     }
 
@@ -489,7 +489,7 @@ mod tests {
         assert_ne!(first, second);
         assert!(!s.receive(first, Ok(diff(Vec::new()))));
         assert_eq!(s.pane(), Pane::Loading(&target(1, "b.rs")));
-        // Stesso percorso, commit diverso: è un altro diff.
+        // Same path, different commit: it is another diff.
         let third = s.open(target(2, "b.rs")).unwrap();
         assert!(!s.receive(second, Ok(diff(Vec::new()))));
         s.close();
@@ -502,17 +502,14 @@ mod tests {
     fn errors_are_shown_and_can_be_retried() {
         let mut s = DiffState::default();
         let seq = s.open(target(1, "a.rs")).unwrap();
-        assert_eq!(s.retry(), None, "niente da riprovare mentre carica");
-        assert!(s.receive(seq, Err("commit sconosciuto".to_owned())));
-        assert_eq!(
-            s.pane(),
-            Pane::Failed(&target(1, "a.rs"), "commit sconosciuto")
-        );
-        let again = s.retry().expect("nuova richiesta");
+        assert_eq!(s.retry(), None, "nothing to retry while loading");
+        assert!(s.receive(seq, Err("unknown commit".to_owned())));
+        assert_eq!(s.pane(), Pane::Failed(&target(1, "a.rs"), "unknown commit"));
+        let again = s.retry().expect("new request");
         assert_ne!(again, seq);
         assert_eq!(s.pane(), Pane::Loading(&target(1, "a.rs")));
-        // Anche riaprire lo stesso file dopo un errore lo richiede.
-        assert!(s.receive(again, Err("ancora".to_owned())));
+        // Reopening the same file after an error also requests it.
+        assert!(s.receive(again, Err("again".to_owned())));
         assert!(s.open(target(1, "a.rs")).is_some());
     }
 
@@ -534,8 +531,8 @@ mod tests {
                 Row::NoNewline,
             ]
         );
-        assert_eq!(doc.number_width, 2, "fino alla riga 11");
-        // `b\tc`: il tab porta `c` alla colonna 4.
+        assert_eq!(doc.number_width, 2, "up to line 11");
+        // `b\tc`: the tab brings `c` to column 4.
         assert_eq!(doc.max_cols, 5);
         assert_eq!(doc.line_counts(), (2, 1));
         let header = String::from_utf8(doc.diff.files[0].hunks[0].header()).unwrap();
@@ -544,12 +541,12 @@ mod tests {
 
     #[test]
     fn only_files_that_end_at_the_path_are_kept() {
-        // Il motore restituisce anche la copia che parte da `a.rs`.
+        // The engine also returns the copy that starts from `a.rs`.
         let copy = file(Change::Copied, "a.rs", "b.rs", vec![hunk()]);
         let modified = file(Change::Modified, "a.rs", "a.rs", vec![hunk()]);
         let doc = DiffDoc::new(diff(vec![modified.clone(), copy.clone()]), &"a.rs".into());
         assert_eq!(doc.diff.files, vec![modified]);
-        // Un cambio di tipo: due file sullo stesso percorso, separati.
+        // A type change: two files on the same path, kept separate.
         let deleted = file(Change::Deleted, "l", "l", Vec::new());
         let added = file(Change::Added, "l", "l", Vec::new());
         let doc = DiffDoc::new(diff(vec![deleted, added]), &"l".into());
@@ -568,16 +565,13 @@ mod tests {
         );
         renamed.similarity = Some(92);
         assert_eq!(file_title(&renamed), "src/main.rs -> src/bin/app.rs");
-        assert_eq!(file_summary(&renamed), "rinominato  92%  +2 -1");
+        assert_eq!(file_summary(&renamed), "renamed  92%  +2 -1");
         assert!(file_notes(&renamed).is_empty());
 
         renamed.hunks.clear();
         renamed.old_mode = None;
         renamed.new_mode = None;
-        assert_eq!(
-            file_notes(&renamed),
-            ["rinomina esatta: contenuto invariato"]
-        );
+        assert_eq!(file_notes(&renamed), ["exact rename: content unchanged"]);
 
         let mut mode = file(Change::Modified, "run.sh", "run.sh", Vec::new());
         mode.new_mode = Some(0o100755);
@@ -585,8 +579,8 @@ mod tests {
         assert_eq!(
             file_notes(&mode),
             [
-                "modo 100644 -> 100755",
-                "solo cambio di modo: contenuto invariato"
+                "mode 100644 -> 100755",
+                "mode change only: content unchanged"
             ]
         );
 
@@ -594,7 +588,7 @@ mod tests {
         empty.new_mode = None;
         assert_eq!(
             file_notes(&empty),
-            ["file eliminato, modo 100644", "file vuoto eliminato"]
+            ["deleted file, mode 100644", "empty file deleted"]
         );
 
         let mut binary = file(Change::Added, "logo.png", "logo.png", Vec::new());
@@ -603,21 +597,21 @@ mod tests {
         assert_eq!(
             file_notes(&binary),
             [
-                "nuovo file, modo 100644",
-                "file binario: il contenuto non si mostra"
+                "new file, mode 100644",
+                "binary file: the content is not shown"
             ]
         );
 
         let mut sub = file(Change::Modified, "vendor/lib", "vendor/lib", vec![hunk()]);
         sub.old_mode = Some(0o160000);
         sub.new_mode = Some(0o160000);
-        assert!(file_summary(&sub).contains("[sottomodulo]"));
+        assert!(file_summary(&sub).contains("[submodule]"));
         assert_eq!(file_notes(&sub).len(), 1);
 
         let mut conflict = file(Change::Unmerged, "x", "x", Vec::new());
         conflict.old_mode = None;
         conflict.new_mode = None;
-        assert!(file_notes(&conflict)[0].starts_with("file in conflitto"));
+        assert!(file_notes(&conflict)[0].starts_with("unmerged file"));
     }
 
     #[test]
@@ -626,23 +620,23 @@ mod tests {
         assert_eq!(plain.spans, [("let x = 1;".to_owned(), false)]);
         assert_eq!((plain.cols, plain.cut), (10, 0));
 
-        // Tab fino al multiplo di 4 seguente, dalla colonna in cui si trova.
+        // Tab up to the next multiple of 4, from the column where it is.
         assert_eq!(display_line("\tx").spans, [("    x".to_owned(), false)]);
         assert_eq!(display_line("ab\tx").spans, [("ab  x".to_owned(), false)]);
         assert_eq!(display_line("abcd\tx").cols, 9);
 
-        // Il `\r` di una riga CRLF e gli altri caratteri di controllo si vedono.
-        let crlf = display_line("fine\r");
+        // The `\r` of a CRLF row and the other control characters are visible.
+        let crlf = display_line("end\r");
         assert_eq!(
             crlf.spans,
-            [("fine".to_owned(), false), ("^M".to_owned(), true)]
+            [("end".to_owned(), false), ("^M".to_owned(), true)]
         );
-        assert_eq!(crlf.cols, 6);
+        assert_eq!(crlf.cols, 5);
         assert_eq!(display_line("\u{1b}[0m").spans[0], ("^[".to_owned(), true));
 
-        // Caratteri non ASCII: una colonna ciascuno.
-        assert_eq!(display_line("città").cols, 5);
-        // Contenuto non UTF-8: il carattere sostitutivo.
+        // Non-ASCII characters: one column each.
+        assert_eq!(display_line("naïve").cols, 5);
+        // Non-UTF-8 content: the replacement character.
         let lossy = ByteText::from_bytes(b"a\xffb".to_vec());
         assert_eq!(
             display_line(&lossy.to_string_lossy()).spans[0].0,
@@ -676,13 +670,13 @@ mod tests {
     #[test]
     fn reload_asks_again_for_the_same_file() {
         let mut state = DiffState::default();
-        assert_eq!(state.reload(), None, "niente da ricaricare");
+        assert_eq!(state.reload(), None, "nothing to reload");
         let first = state.open(target(1, "a")).unwrap();
         assert!(state.receive(first, Ok(Diff { files: Vec::new() })));
         let second = state.reload().unwrap();
         assert_ne!(first, second);
         assert!(matches!(state.pane(), Pane::Loading(_)));
-        // La risposta della richiesta vecchia non vale più.
+        // The response of the old request no longer counts.
         assert!(!state.receive(first, Ok(Diff { files: Vec::new() })));
         assert!(state.receive(second, Ok(Diff { files: Vec::new() })));
         assert!(matches!(state.pane(), Pane::Loaded(..)));
@@ -695,7 +689,7 @@ mod tests {
         let seq = state.open(target(1, "a.rs")).unwrap();
         assert!(
             state.loaded_mut().is_none(),
-            "niente da selezionare mentre carica"
+            "nothing to select while loading"
         );
         let one = || diff(vec![file(Change::Modified, "a.rs", "a.rs", vec![hunk()])]);
         assert!(state.receive(seq, Ok(one())));
@@ -706,13 +700,13 @@ mod tests {
         let again = state.reload().unwrap();
         assert!(
             state.selection().unwrap().is_empty(),
-            "ricarica: selezione azzerata"
+            "reload: selection cleared"
         );
         assert!(state.receive(again, Ok(one())));
         let (_, doc, selection) = state.loaded_mut().unwrap();
         let doc = doc.clone();
         selection.click(&doc, 3, false);
-        // Un altro file: selezione nuova.
+        // Another file: new selection.
         state.open(target(1, "b.rs")).unwrap();
         assert!(state.selection().unwrap().is_empty());
     }

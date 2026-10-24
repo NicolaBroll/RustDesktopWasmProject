@@ -1,31 +1,31 @@
-//! Parser dell'output di `git for-each-ref` nel formato a campi terminati da NUL.
+//! Parser for the output of `git for-each-ref` in the NUL-terminated field format.
 //!
-//! # Formato
+//! # Format
 //!
-//! Ogni ref è scritto come [`REFS_FIELDS`] campi, ciascuno **terminato** da un NUL; dopo il
-//! formato git aggiunge sempre un a capo (`for-each-ref` non ha `-z`):
+//! Each ref is written as [`REFS_FIELDS`] fields, each **terminated** by a NUL; after the
+//! format git always adds a newline (`for-each-ref` has no `-z`):
 //!
 //! ```text
 //! %(refname) \0 %(objectname) \0 %(*objectname) \0 %(upstream) \0 %(upstream:track,nobracket) \0 %(symref) \0 \n
 //! ```
 //!
-//! Il parser divide l'input **solo sui NUL**: l'a capo di git resta all'inizio del primo campo
-//! del record successivo (e da solo dopo l'ultimo NUL) e viene tolto. Così il formato non è
-//! ambiguo anche se un campo contiene un a capo. Comportamento verificato con git 2.43:
+//! The parser splits the input **only on NULs**: git's newline stays at the start of the first field
+//! of the next record (and alone after the last NUL) and is removed. This way the format is not
+//! ambiguous even if a field contains a newline. Behavior verified with git 2.43:
 //!
-//! - un nome di ref non può contenere NUL, a capo o altri caratteri di controllo
-//!   (`git check-ref-format` li rifiuta), ma può contenere byte non ASCII e anche non UTF-8;
-//! - `%(upstream)` invece viene da `branch.<b>.merge` nella config e **può** contenere un a capo
-//!   (i valori di config non possono contenere NUL): per questo non si divide sulle righe;
-//! - un repo senza ref dà un output vuoto (zero byte);
-//! - `%(*objectname)` è l'oggetto puntato da un tag annotato, vuoto per gli altri ref; git 2.43
-//!   toglie un solo livello, quindi per un tag di un tag è l'id del tag interno;
-//! - `%(upstream)` è il nome completo (es. `refs/remotes/origin/main`, o `refs/heads/main` per un
-//!   upstream locale con `branch.<b>.remote = .`), vuoto se il branch non ne ha uno;
-//! - `%(upstream:track,nobracket)` è vuoto (in pari, o senza upstream), `ahead <n>`,
-//!   `behind <m>`, `ahead <n>, behind <m>` oppure `gone` se il ref dell'upstream non esiste più;
-//! - `%(symref)` è il ref puntato da un ref simbolico (es. `refs/remotes/origin/HEAD`), vuoto
-//!   per gli altri; un ref simbolico rotto non compare affatto.
+//! - a ref name cannot contain NUL, newline or other control characters
+//!   (`git check-ref-format` rejects them), but it may contain non-ASCII and even non-UTF-8 bytes;
+//! - `%(upstream)` instead comes from `branch.<b>.merge` in the config and **can** contain a newline
+//!   (config values cannot contain NUL): this is why it is not split on lines;
+//! - a repo without refs gives an empty output (zero bytes);
+//! - `%(*objectname)` is the object pointed to by an annotated tag, empty for other refs; git 2.43
+//!   peels only one level, so for a tag of a tag it is the id of the inner tag;
+//! - `%(upstream)` is the full name (e.g. `refs/remotes/origin/main`, or `refs/heads/main` for a
+//!   local upstream with `branch.<b>.remote = .`), empty if the branch has none;
+//! - `%(upstream:track,nobracket)` is empty (level, or without upstream), `ahead <n>`,
+//!   `behind <m>`, `ahead <n>, behind <m>` or `gone` if the upstream's ref no longer exists;
+//! - `%(symref)` is the ref pointed to by a symbolic ref (e.g. `refs/remotes/origin/HEAD`), empty
+//!   for the others; a broken symbolic ref does not appear at all.
 
 use std::collections::HashMap;
 
@@ -33,7 +33,7 @@ use super::log::parse_digits;
 use super::{Oid, RefInfo, RefKind, Upstream};
 use crate::DomainError;
 
-/// Numero di campi per ref nel formato [`REFS_FORMAT`].
+/// Number of fields per ref in the [`REFS_FORMAT`] format.
 pub const REFS_FIELDS: usize = 6;
 
 macro_rules! refs_format {
@@ -42,16 +42,16 @@ macro_rules! refs_format {
     };
 }
 
-/// La stringa di formato letta da [`parse_refs`]. È già contenuta in [`REFS_ARGS`].
+/// The format string read by [`parse_refs`]. It is already contained in [`REFS_ARGS`].
 pub const REFS_FORMAT: &str = refs_format!();
 
-/// Argomenti di `git for-each-ref` per produrre l'input di [`parse_refs`]: il formato
-/// ([`REFS_FORMAT`]) e i pattern dei ref letti (branch locali, remoti, tag e `refs/stash`).
-/// Chi chiama può aggiungere filtri come `--merged` o `--points-at`, ma non `--format`,
-/// `--shell`/`--perl`/`--python`/`--tcl` (cambiano il formato) né altri pattern: i ref fuori da
-/// questi tipi verrebbero comunque ignorati.
+/// Arguments of `git for-each-ref` to produce the input of [`parse_refs`]: the format
+/// ([`REFS_FORMAT`]) and the patterns of the refs read (local branches, remotes, tags and `refs/stash`).
+/// The caller may add filters such as `--merged` or `--points-at`, but not `--format`,
+/// `--shell`/`--perl`/`--python`/`--tcl` (they change the format) nor other patterns: refs outside
+/// these kinds would be ignored anyway.
 ///
-/// L'ordine è quello di default di git, per nome del ref (byte per byte).
+/// The order is git's default, by ref name (byte by byte).
 pub const REFS_ARGS: &[&str] = &[
     concat!("--format=", refs_format!()),
     "refs/heads/",
@@ -60,47 +60,47 @@ pub const REFS_ARGS: &[&str] = &[
     "refs/stash",
 ];
 
-/// Nomi dei campi, per i messaggi di errore.
+/// Names of the fields, for error messages.
 const FIELD_NAMES: [&str; REFS_FIELDS] = [
-    "nome (%(refname))",
+    "name (%(refname))",
     "id (%(objectname))",
-    "id puntato dal tag (%(*objectname))",
+    "id pointed to by the tag (%(*objectname))",
     "upstream (%(upstream))",
     "ahead/behind (%(upstream:track,nobracket))",
-    "ref simbolico (%(symref))",
+    "symbolic ref (%(symref))",
 ];
 
-/// Legge l'output di `git for-each-ref` prodotto con [`REFS_ARGS`].
+/// Reads the output of `git for-each-ref` produced with [`REFS_ARGS`].
 ///
-/// I ref restano nell'ordine di git. Regole:
+/// The refs stay in git's order. Rules:
 ///
-/// - il tipo viene dal prefisso: `refs/heads/` → [`RefKind::LocalBranch`], `refs/remotes/` →
-///   [`RefKind::RemoteBranch`], `refs/tags/` → [`RefKind::Tag`], esattamente `refs/stash` →
-///   [`RefKind::Stash`]. Gli altri ref (es. `refs/notes/*`, `refs/stash/x`) sono **ignorati**:
-///   i pattern di [`REFS_ARGS`] non li fanno uscire, ma se ci sono non sono un errore;
-/// - i ref simbolici (`%(symref)` non vuoto, es. `refs/remotes/origin/HEAD`) sono **ignorati**:
-///   duplicano il ref a cui puntano, che è già nella lista;
-/// - i ref con un nome non UTF-8 sono **ignorati**: [`RefInfo::name`] è una `String` e un nome
-///   convertito con perdita indicherebbe a git un ref diverso;
-/// - per un tag annotato [`RefInfo::target`] è l'oggetto puntato dal tag e
-///   [`RefInfo::tag_object`] l'id del tag. Se il tag punta a un altro tag annotato presente
-///   nella lista si risale fino in fondo; un tag su un albero o un blob ha come `target` quel
-///   oggetto, che non è un commit;
-/// - l'upstream ha il nome completo; ahead/behind sono `0`/`0` se in pari e `None` se git
-///   risponde `gone`. Un nome di upstream non UTF-8 è convertito con `from_utf8_lossy` (solo da
-///   mostrare: per i comandi usare `<branch>@{upstream}`).
+/// - the kind comes from the prefix: `refs/heads/` → [`RefKind::LocalBranch`], `refs/remotes/` →
+///   [`RefKind::RemoteBranch`], `refs/tags/` → [`RefKind::Tag`], exactly `refs/stash` →
+///   [`RefKind::Stash`]. Other refs (e.g. `refs/notes/*`, `refs/stash/x`) are **ignored**:
+///   the patterns of [`REFS_ARGS`] do not let them out, but if present they are not an error;
+/// - symbolic refs (`%(symref)` non-empty, e.g. `refs/remotes/origin/HEAD`) are **ignored**:
+///   they duplicate the ref they point to, which is already in the list;
+/// - refs with a non-UTF-8 name are **ignored**: [`RefInfo::name`] is a `String` and a name
+///   converted lossily would indicate a different ref to git;
+/// - for an annotated tag [`RefInfo::target`] is the object pointed to by the tag and
+///   [`RefInfo::tag_object`] the id of the tag. If the tag points to another annotated tag present
+///   in the list it is followed all the way down; a tag on a tree or a blob has that
+///   object as `target`, which is not a commit;
+/// - the upstream has the full name; ahead/behind are `0`/`0` if level and `None` if git
+///   answers `gone`. A non-UTF-8 upstream name is converted with `from_utf8_lossy` (for display
+///   only: for commands use `<branch>@{upstream}`).
 ///
-/// Un input che non termina con NUL e a capo, con un numero di campi che non è multiplo di
-/// [`REFS_FIELDS`] o con campi non validi dà [`DomainError::InvalidGitOutput`], con il numero
-/// del record (da 1) coinvolto.
+/// An input that does not end with NUL and newline, with a number of fields that is not a multiple of
+/// [`REFS_FIELDS`] or with invalid fields gives [`DomainError::InvalidGitOutput`], with the number
+/// of the record (from 1) involved.
 pub fn parse_refs(input: &[u8]) -> Result<Vec<RefInfo>, DomainError> {
     if input.is_empty() {
         return Ok(Vec::new());
     }
     let body = input.strip_suffix(b"\0\n").ok_or_else(|| {
         invalid(
-            "l'output non termina con NUL e a capo: è troncato o non è stato prodotto con \
-             il formato di REFS_ARGS"
+            "the output does not end with NUL and newline: it is truncated or was not produced with \
+             the format of REFS_ARGS"
                 .to_owned(),
         )
     })?;
@@ -110,7 +110,7 @@ pub fn parse_refs(input: &[u8]) -> Result<Vec<RefInfo>, DomainError> {
         let n = records.len() + 1;
         let have = rest.len();
         return Err(invalid(format!(
-            "record n. {n}: {have} campi invece di {REFS_FIELDS} (manca {})",
+            "record {n}: {have} fields instead of {REFS_FIELDS} (missing {})",
             FIELD_NAMES[have]
         )));
     }
@@ -118,7 +118,7 @@ pub fn parse_refs(input: &[u8]) -> Result<Vec<RefInfo>, DomainError> {
     for (i, record) in records.iter().enumerate() {
         let n = i + 1;
         if let Some(info) = parse_record(record, i == 0)
-            .map_err(|reason| invalid(format!("record n. {n}: {reason}")))?
+            .map_err(|reason| invalid(format!("record {n}: {reason}")))?
         {
             refs.push(info);
         }
@@ -127,16 +127,16 @@ pub fn parse_refs(input: &[u8]) -> Result<Vec<RefInfo>, DomainError> {
     Ok(refs)
 }
 
-/// Legge un record; `None` se il ref va ignorato.
+/// Reads a record; `None` if the ref is to be ignored.
 fn parse_record(f: &[&[u8]; REFS_FIELDS], first: bool) -> Result<Option<RefInfo>, String> {
     let name = if first {
         f[0]
     } else {
         f[0].strip_prefix(b"\n")
-            .ok_or_else(|| format!("manca l'a capo prima di {}", FIELD_NAMES[0]))?
+            .ok_or_else(|| format!("missing newline before {}", FIELD_NAMES[0]))?
     };
     if name.is_empty() {
-        return Err(format!("{} vuoto", FIELD_NAMES[0]));
+        return Err(format!("empty {}", FIELD_NAMES[0]));
     }
     let object = parse_oid(f[1], 1)?;
     let peeled = if f[2].is_empty() {
@@ -191,7 +191,7 @@ fn parse_upstream(name: &[u8], track: &[u8]) -> Result<Option<Upstream>, String>
             Ok(None)
         } else {
             Err(format!(
-                "{} è `{}` ma {} è vuoto",
+                "{} is `{}` but {} is empty",
                 FIELD_NAMES[4],
                 show(track),
                 FIELD_NAMES[3]
@@ -199,7 +199,7 @@ fn parse_upstream(name: &[u8], track: &[u8]) -> Result<Option<Upstream>, String>
         };
     }
     let (ahead, behind) = parse_track(track)
-        .ok_or_else(|| format!("{} non valido: `{}`", FIELD_NAMES[4], show(track)))?;
+        .ok_or_else(|| format!("invalid {}: `{}`", FIELD_NAMES[4], show(track)))?;
     Ok(Some(Upstream {
         name: show(name),
         ahead,
@@ -207,7 +207,7 @@ fn parse_upstream(name: &[u8], track: &[u8]) -> Result<Option<Upstream>, String>
     }))
 }
 
-/// `""` → `0`/`0`, `gone` → `None`/`None`, altrimenti `ahead <n>`, `behind <m>` o
+/// `""` → `0`/`0`, `gone` → `None`/`None`, otherwise `ahead <n>`, `behind <m>` or
 /// `ahead <n>, behind <m>`.
 pub(super) fn parse_track(track: &[u8]) -> Option<(Option<u32>, Option<u32>)> {
     match track {
@@ -227,16 +227,16 @@ pub(super) fn parse_track(track: &[u8]) -> Option<(Option<u32>, Option<u32>)> {
     Some((Some(ahead), Some(behind)))
 }
 
-/// Per i tag di tag: se `target` è l'oggetto di un altro tag annotato della lista, lo sostituisce
-/// con il suo `target`, fino in fondo.
+/// For tags of tags: if `target` is the object of another annotated tag in the list, it replaces it
+/// with its `target`, all the way down.
 fn peel_nested_tags(refs: &mut [RefInfo]) {
     let peeled: HashMap<Oid, Oid> = refs
         .iter()
         .filter_map(|r| r.tag_object.map(|tag| (tag, r.target)))
         .collect();
     for r in refs.iter_mut().filter(|r| r.tag_object.is_some()) {
-        // Gli id sono hash del contenuto, quindi non ci sono cicli; il limite protegge comunque
-        // da un input costruito apposta.
+        // Ids are content hashes, so there are no cycles; the limit protects anyway
+        // from a deliberately crafted input.
         for _ in 0..peeled.len() {
             match peeled.get(&r.target) {
                 Some(&next) if next != r.target => r.target = next,

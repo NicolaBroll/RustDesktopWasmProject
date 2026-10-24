@@ -1,19 +1,19 @@
-//! Cherry-pick e revert sul [`CliBackend`] (`commit.cherry_pick`, `commit.revert`, S31),
-//! secondo §5 e `impl-docs/git/cherry-pick.md`.
+//! Cherry-pick and revert on the [`CliBackend`] (`commit.cherry_pick`, `commit.revert`, S31),
+//! per §5 and `impl-docs/git/cherry-pick.md`.
 //!
 //! `git -c core.fsmonitor=false -c revert.reference=false <cherry-pick|revert> --no-edit
-//! --no-rerere-autoupdate [-m <n>] --end-of-options <oid>`, con `GIT_REFLOG_ACTION=project:
-//! <id>` e `GIT_EDITOR=:`. Hook e firma secondo la configurazione (mai `--no-verify`).
+//! --no-rerere-autoupdate [-m <n>] --end-of-options <oid>`, with `GIT_REFLOG_ACTION=project:
+//! <id>` e `GIT_EDITOR=:`. Hooks and signing follow the configuration (never `--no-verify`).
 //!
-//! - riuscito: il branch su un commit nuovo;
-//! - **fermo** (conflitti, un hook che rifiuta il commit): l'operazione **resta in corso**
-//!   (`CHERRY_PICK_HEAD`/`REVERT_HEAD`), i file in conflitto dallo stato e dall'output;
-//! - vuoto (commit già applicato): `git <cmd> --skip` se git l'ha lasciato in corso, poi
-//!   [`EngineError::NotAllowed`] e il backup tolto;
-//! - non partito (un file che verrebbe sovrascritto): niente scritto, il backup si toglie.
+//! - succeeded: the branch on a new commit;
+//! - **stopped** (conflicts, a hook that rejects the commit): the operation **stays in progress**
+//!   (`CHERRY_PICK_HEAD`/`REVERT_HEAD`), conflicted files from the status and the output;
+//! - empty (commit already applied): `git <cmd> --skip` if git left it in progress, then
+//!   [`EngineError::NotAllowed`] and the backup removed;
+//! - not started (a file that would be overwritten): nothing written, the backup is removed.
 //!
-//! Prima di tutto il backup `refs/project/backup/<cherry-pick|revert>-...` sul branch com'era;
-//! si toglie solo se niente è cambiato.
+//! First of all the backup `refs/project/backup/<cherry-pick|revert>-...` of the branch as it was;
+//! it is removed only if nothing changed.
 
 use super::CliBackend;
 use super::sync::overwrite_error;
@@ -23,7 +23,7 @@ use project_engine::{
 };
 use std::ffi::OsStr;
 
-/// Vero se il testo di git dice che il risultato è vuoto (niente da committare).
+/// True if git's text says the result is empty (nothing to commit).
 fn says_empty(text: &str) -> bool {
     text.contains("is now empty")
         || text.contains("nothing to commit")
@@ -42,12 +42,13 @@ impl CliBackend {
         check_pick_state(&status, kind)?;
         let full = branch_ref(&request.branch);
         if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
-            return Err(EngineError::NotAllowed(format!(
-                "HEAD è cambiata mentre si preparava `{id}`: niente modificato, riprovare"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-pick-head-moved-id",
+                id = id
             )));
         }
         self.check_branch_value(&full, &request.expected)?;
-        // La patch che si applica: dal genitore al commit (cherry-pick) o al contrario.
+        // The patch to apply: from the parent to the commit (cherry-pick) or the reverse.
         let parent = request
             .parent
             .map_or_else(|| self.empty_tree.to_owned(), |p| p.to_string());
@@ -63,7 +64,7 @@ impl CliBackend {
         let backup = self.create_backup_ref(
             kind.git(),
             &expected,
-            &format!("project: backup di {full} prima di {id}"),
+            &format!("project: backup of {full} before {id}"),
         )?;
         let reflog = format!("project: {id}");
         let env: [(&str, &OsStr); 2] = [
@@ -74,7 +75,7 @@ impl CliBackend {
         let mut args: Vec<&str> = vec![
             "-c",
             "core.fsmonitor=false",
-            // `revert.reference=true` cambierebbe il messaggio del revert.
+            // `revert.reference=true` would change the revert message.
             "-c",
             "revert.reference=false",
             kind.git(),
@@ -96,27 +97,27 @@ impl CliBackend {
         .to_owned();
         let operation = self.operation();
         if out.status.success() && operation.is_none() {
-            let after = self.ref_value(&full)?.ok_or_else(|| EngineError::Git {
-                command: kind.git().to_owned(),
-                stderr: format!("dopo `{id}` `{full}` non esiste più"),
-            })?;
-            if after == request.expected {
-                return Err(EngineError::Git {
+            let after = self
+                .ref_value(&full)?
+                .ok_or_else(|| EngineError::GitWithReason {
                     command: kind.git().to_owned(),
-                    stderr: format!(
-                        "`git {}` è terminato senza errori ma `{full}` non si è spostato \
-                         ({text}): controllare indice e worktree; il branch com'era è in \
-                         `{backup}`",
-                        kind.git()
+                    reason: msg!("engine-pick-branch-gone", id = id, full = full),
+                })?;
+            if after == request.expected {
+                return Err(EngineError::GitWithReason {
+                    command: kind.git().to_owned(),
+                    reason: msg!(
+                        "engine-pick-branch-not-moved",
+                        git = kind.git(),
+                        full = full,
+                        text = text,
+                        backup = backup
                     ),
                 });
             }
             let mut warnings = Vec::new();
             if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
-                warnings.push(format!(
-                    "dopo `{id}` HEAD non è più su `{full}`: un hook o un altro processo l'ha \
-                     cambiata; controllare HEAD prima di continuare"
-                ));
+                warnings.push(msg!("engine-head-moved-after", command = id, full = full));
             }
             return Ok(MergeOutcome {
                 after,
@@ -130,9 +131,9 @@ impl CliBackend {
         if operation == Some(kind.operation()) {
             let conflicts = self.stopped_conflicts(&text);
             if conflicts.is_empty() && says_empty(&text) && self.index_matches_head()? {
-                // Vuoto: git lascia l'operazione in corso senza niente da committare. Si salta
-                // il commit (`--skip`: con un commit solo riporta a HEAD indice e worktree, che
-                // erano puliti) e niente resta in corso.
+                // Empty: git leaves the operation in progress with nothing to commit. The commit
+                // is skipped (`--skip`: with a single commit it resets index and worktree to HEAD,
+                // which were clean) and nothing stays in progress.
                 return self.skip_empty(request, &full, &backup, had_msg);
             }
             return Ok(MergeOutcome {
@@ -144,8 +145,8 @@ impl CliBackend {
                 warnings: Vec::new(),
             });
         }
-        // Niente in corso: niente è partito, o il risultato era vuoto (il revert di un commit
-        // già annullato esce così).
+        // Nothing in progress: nothing started, or the result was empty (reverting an
+        // already reverted commit ends this way).
         let unchanged = operation.is_none();
         if unchanged {
             self.drop_merge_backup(&backup, &full, &request.expected);
@@ -156,21 +157,28 @@ impl CliBackend {
         if unchanged && says_empty(&text) {
             return Err(pick_empty_error(kind, &request.commit));
         }
-        if let Some(error) = overwrite_error(&text, &format!("`{id}`")) {
+        if let Some(error) = overwrite_error(&text, msg!("engine-command-quoted", id = id)) {
             return Err(error);
         }
-        Err(EngineError::Git {
-            command: kind.git().to_owned(),
-            stderr: if unchanged {
-                text
-            } else {
-                format!("{text}\n(il branch com'era è in `{backup}`)")
-            },
+        Err(if unchanged {
+            EngineError::Git {
+                command: kind.git().to_owned(),
+                stderr: text,
+            }
+        } else {
+            EngineError::GitWithReason {
+                command: kind.git().to_owned(),
+                reason: msg!(
+                    "engine-note-newline",
+                    text = text,
+                    note = msg!("engine-pick-backup-kept", backup = backup)
+                ),
+            }
         })
     }
 
-    /// Vero se l'indice è uguale a HEAD: il testo `says_empty` può venire anche da un hook, e
-    /// `--skip` butterebbe via un risultato in stage.
+    /// True if the index equals HEAD: the `says_empty` text can also come from a hook, and
+    /// `--skip` would throw away a staged result.
     fn index_matches_head(&self) -> Result<bool, EngineError> {
         let out = self.git.output(
             Some(&self.workdir),
@@ -179,9 +187,9 @@ impl CliBackend {
         Ok(out.status.success())
     }
 
-    /// Il risultato vuoto rimasto in corso: `git <cmd> --skip`, poi
-    /// [`pick_empty_error`] con il backup tolto; se git non lo chiude, errore che nomina il
-    /// backup (che resta).
+    /// The empty result left in progress: `git <cmd> --skip`, then
+    /// [`pick_empty_error`] with the backup removed; if git does not close it, an error naming the
+    /// backup (which stays).
     fn skip_empty(
         &mut self,
         request: &PickRequest,
@@ -197,15 +205,15 @@ impl CliBackend {
             .git
             .output_with_input_env(Some(&self.workdir), &args, b"", &env)?;
         if !out.status.success() || self.operation().is_some() {
-            return Err(EngineError::Git {
+            return Err(EngineError::GitWithReason {
                 command: kind.git().to_owned(),
-                stderr: format!(
-                    "`{}` di {} non cambierebbe niente, ma `git {} --skip` non ha chiuso \
-                     l'operazione ({}): rileggere lo stato; il branch com'era è in `{backup}`",
-                    kind.command(),
-                    request.commit,
-                    kind.git(),
-                    String::from_utf8_lossy(&out.stderr).trim()
+                reason: msg!(
+                    "engine-pick-skip-failed",
+                    command = kind.command(),
+                    commit = request.commit,
+                    git = kind.git(),
+                    stderr = String::from_utf8_lossy(&out.stderr).trim(),
+                    backup = backup
                 ),
             });
         }
@@ -216,17 +224,17 @@ impl CliBackend {
         Err(pick_empty_error(kind, &request.commit))
     }
 
-    /// Toglie `MERGE_MSG` lasciato da un cherry-pick o revert che non è partito o era vuoto
-    /// (git lo lascia anche senza operazione in corso, e un `git commit` successivo lo
-    /// proporrebbe come messaggio). Solo senza operazione in corso.
+    /// Removes the `MERGE_MSG` left by a cherry-pick or revert that did not start or was empty
+    /// (git leaves it even with no operation in progress, and a later `git commit` would
+    /// propose it as the message). Only with no operation in progress.
     fn remove_stale_merge_msg(&self) {
         if self.operation().is_none() {
             let _ = std::fs::remove_file(self.git_dir.join("MERGE_MSG"));
         }
     }
 
-    /// I file che la patch `from` → `to` scrive e che HEAD (`head`) non ha non devono esistere
-    /// nel worktree (non tracciati o ignorati): git li sovrascriverebbe.
+    /// Files that the patch `from` → `to` writes and that HEAD (`head`) does not have must not exist
+    /// in the worktree (untracked or ignored): git would overwrite them.
     fn check_pick_paths(
         &self,
         head: &str,
@@ -262,6 +270,6 @@ impl CliBackend {
             .into_iter()
             .filter(|p| not_in_head.contains(p))
             .collect();
-        self.check_paths_free(&paths, &format!("`{what}`"))
+        self.check_paths_free(&paths, msg!("engine-command-quoted", id = what))
     }
 }

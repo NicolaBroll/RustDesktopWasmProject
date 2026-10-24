@@ -1,12 +1,12 @@
-//! L7 — avvio dell'app desktop e implementazione nativa di `Platform`.
+//! L7 — desktop app startup and native implementation of `Platform`.
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // niente console su Windows in release
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // no console on Windows in release
 
 use project_engine::{Capabilities, Picked, Platform};
 use project_git::CliOpener;
 use std::sync::Arc;
 
-/// Icona della finestra (sorgente in `assets/icon.svg`).
+/// Window icon (source in `assets/icon.svg`).
 const ICON: &[u8] = include_bytes!("../../../assets/icon-256.png");
 
 fn main() -> eframe::Result {
@@ -14,14 +14,14 @@ fn main() -> eframe::Result {
 
     let platform = Arc::new(NativePlatform);
     let opener = Arc::new(CliOpener::new());
-    // `project <percorso>` apre subito un repository.
+    // `project <path>` opens a repository right away.
     let repo = std::env::args().nth(1);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 760.0])
             .with_min_inner_size([640.0, 400.0])
             .with_icon(Arc::new(
-                eframe::icon_data::from_png_bytes(ICON).expect("icona PNG valida"),
+                eframe::icon_data::from_png_bytes(ICON).expect("valid PNG icon"),
             )),
         ..Default::default()
     };
@@ -32,8 +32,8 @@ fn main() -> eframe::Result {
     )
 }
 
-/// Dialoghi di sistema tramite `rfd`. Sono bloccanti: la callback viene
-/// chiamata prima del ritorno.
+/// System dialogs via `rfd`. They are blocking: the callback is
+/// called before returning.
 struct NativePlatform;
 
 impl Platform for NativePlatform {
@@ -68,20 +68,20 @@ impl Platform for NativePlatform {
         let folder = rfd::FileDialog::new().pick_folder().and_then(|path| {
             let path = path.into_os_string().into_string();
             if let Err(path) = &path {
-                log::error!("{}: il percorso non è UTF-8", path.to_string_lossy());
+                log::error!("{}: the path is not UTF-8", path.to_string_lossy());
             }
             path.ok()
         });
         on_done(folder);
     }
 
-    /// Un thread per job: i comandi lenti sono pochi e brevi (fetch, push, log grandi).
+    /// One thread per job: slow commands are few and short (fetch, push, large logs).
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         if let Err(e) = std::thread::Builder::new()
             .name("project-job".to_owned())
             .spawn(job)
         {
-            log::error!("impossibile avviare un thread: {e}");
+            log::error!("cannot start a thread: {e}");
         }
     }
 

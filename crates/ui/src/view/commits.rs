@@ -1,9 +1,9 @@
 use super::*;
 
-/// Altezza di una riga della lista dei commit.
+/// Height of a row of the commit list.
 pub(super) const ROW_HEIGHT: f32 = 22.0;
 
-/// `writing`: c'è una scrittura in corso, le voci del menu che scrivono aspettano.
+/// `writing`: a write is in progress, the menu entries that write wait.
 pub(crate) fn commit_list(
     ui: &mut Ui,
     repo: &RepoView,
@@ -14,7 +14,7 @@ pub(crate) fn commit_list(
     let can_write = !writing && !repo.modal_open();
     let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
     let list = &repo.list;
-    // La riga "Modifiche non committate" è la riga 0: i commit partono da `offset`.
+    // The "Uncommitted changes" row is row 0: commits start at `offset`.
     let header = repo.has_changes();
     let offset = usize::from(header);
     if list.commits().is_empty() && !header {
@@ -36,10 +36,10 @@ pub(crate) fn commit_list(
         head_fill: ui.visuals().strong_text_color(),
         head_text: ui.visuals().panel_fill,
     };
-    // Una riga in più in fondo mentre ci sono altri commit da caricare.
+    // One more row at the bottom while there are more commits to load.
     let rows = offset + list.commits().len() + usize::from(list.has_more());
     let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
-    // Il grafo prende al massimo due quinti della lista: oltre si taglia a destra.
+    // The graph takes at most two fifths of the list: beyond that it is cut on the right.
     let graph_w = graph::graph_width(list.graph().width).min(ui.available_width() * 0.4);
 
     let mut area = egui::ScrollArea::vertical().auto_shrink(false);
@@ -50,7 +50,7 @@ pub(crate) fn commit_list(
     };
     if let Some(target) = scroll_target(wanted, viewport) {
         let top = target as f32 * step;
-        // Verso l'alto la riga va in cima, verso il basso in fondo alla vista.
+        // Upward the row goes to the top, downward to the bottom of the view.
         let offset = if target <= viewport.rows.start {
             top
         } else {
@@ -59,11 +59,11 @@ pub(crate) fn commit_list(
         area = area.vertical_scroll_offset(offset.max(0.0));
     }
 
-    // La riga delle modifiche sta nella colonna di HEAD, che non è sempre il primo commit
-    // (un branch remoto appena scaricato può essere più recente).
+    // The changes row sits in HEAD's column, which is not always the first commit
+    // (a freshly fetched remote branch can be more recent).
     let anchor = repo.head.target().and_then(|head| list.anchor(head));
     let output = area.show_rows(ui, ROW_HEIGHT, rows, |ui, range| {
-        // Righe di commit disegnate: il grafo va sopra gli sfondi di tutte, quindi dopo.
+        // Commit rows drawn: the graph goes over the backgrounds of all of them, so it comes after.
         let mut drawn = Vec::with_capacity(range.len());
         let mut header_rect = None;
         for row in range.clone() {
@@ -141,8 +141,8 @@ pub(crate) fn commit_list(
     actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
 }
 
-/// Il tratto dall'anello delle modifiche giù fino al pallino di HEAD, se la colonna di HEAD è
-/// libera nelle righe in mezzo (altrimenti coprirebbe gli archi di altri commit).
+/// The stroke from the changes ring down to HEAD's dot, if HEAD's column is
+/// free in the rows in between (otherwise it would cover the edges of other commits).
 pub(super) fn paint_changes_link(
     ui: &Ui,
     header: egui::Rect,
@@ -172,8 +172,8 @@ pub(super) fn paint_changes_link(
     ));
 }
 
-/// La riga "Modifiche non committate": un anello vuoto nel grafo (nella colonna `column` di
-/// HEAD), il titolo e i conteggi.
+/// The "Uncommitted changes" row: an empty ring in the graph (in HEAD's column `column`),
+/// the title and the counts.
 pub(super) fn changes_row(
     ui: &Ui,
     rect: egui::Rect,
@@ -224,9 +224,9 @@ pub(super) fn changes_row(
         .on_hover_text(tr!("commit-list-changes-hint"));
 }
 
-/// Archi e pallini del grafo per le righe `rows` (indice e rettangolo), nella colonna larga
-/// `width` a sinistra delle righe. Ogni riga disegna i tratti verso la successiva; la prima
-/// visibile disegna anche quelli che le arrivano dalla riga sopra, fuori vista.
+/// Edges and dots of the graph for rows `rows` (index and rectangle), in the column of width
+/// `width` to the left of the rows. Each row draws the strokes towards the next one; the first
+/// visible one also draws those coming to it from the row above, out of view.
 pub(super) fn paint_graph(
     ui: &Ui,
     list: &CommitList,
@@ -270,7 +270,7 @@ pub(super) fn paint_graph(
         }
     }
 
-    // I pallini sopra gli archi. Un merge è un anello: si vede subito dove si uniscono i rami.
+    // The dots above the edges. A merge is a ring: you can see right away where branches join.
     for &(index, rect) in rows {
         let (Some(row), Some(commit)) = (layout.rows.get(index), list.commits().get(index)) else {
             continue;
@@ -290,14 +290,14 @@ pub(super) fn paint_graph(
     }
 }
 
-/// La riga (della vista) da portare in vista, se non è già tutta visibile.
+/// The row (of the view) to bring into view, if it is not already fully visible.
 pub(super) fn scroll_target(target: Option<usize>, viewport: &ListViewport) -> Option<usize> {
     let target = target?;
     let fully_visible = viewport.rows.start < target && target + 1 < viewport.rows.end;
     (!fully_visible).then_some(target)
 }
 
-/// Font e colori delle righe della lista, letti una volta per frame.
+/// Font and colors of the list rows, read once per frame.
 pub(super) struct RowStyle {
     font: FontId,
     mono: FontId,
@@ -309,7 +309,7 @@ pub(super) struct RowStyle {
     head_text: Color32,
 }
 
-/// Colonne: id | etichette dei ref e oggetto (elastico) | autore | data.
+/// Columns: id | ref labels and subject (elastic) | author | date.
 pub(super) fn commit_row(
     ui: &Ui,
     rect: egui::Rect,
@@ -347,14 +347,14 @@ pub(super) fn commit_row(
     }
 }
 
-/// Spazio tra un'etichetta e l'altra, e margine interno orizzontale.
+/// Space between one label and the next, and horizontal inner margin.
 pub(super) const LABEL_GAP: f32 = 4.0;
 
 pub(super) const LABEL_PAD: f32 = 4.0;
 
-/// Disegna le etichette dei ref all'inizio di `cell`, nel colore della corsia del commit, e
-/// restituisce la larghezza occupata. Prendono al massimo metà della cella; quelle che non ci
-/// stanno diventano `+N`.
+/// Draws the ref labels at the start of `cell`, in the color of the commit's lane, and
+/// returns the width used. They take at most half the cell; those that do not fit
+/// become `+N`.
 pub(super) fn ref_labels(
     painter: &egui::Painter,
     cell: egui::Rect,
@@ -377,7 +377,7 @@ pub(super) fn ref_labels(
                 egui::Stroke::new(1.0, style.weak),
                 style.text,
             ),
-            // Gli stash: solo il bordo, grigio, nel testo attenuato: non sono branch.
+            // Stashes: only the border, gray, in the dimmed text: they are not branches.
             LabelKind::Stash => (
                 Color32::TRANSPARENT,
                 egui::Stroke::new(1.0, style.weak),
@@ -427,9 +427,9 @@ pub(super) fn ref_labels(
     x - cell.left()
 }
 
-/// "Cherry-pick su «branch»" e "Revert" del menu del commit: spenti come il merge (HEAD
-/// staccata, operazione in corso, scrittura o dialogo aperto). Per un commit di merge si apre
-/// prima il dialogo del genitore.
+/// "Cherry-pick onto «branch»" and "Revert" of the commit menu: off like merge (detached
+/// HEAD, operation in progress, write or open dialog). For a merge commit the parent's
+/// dialog is opened first.
 fn pick_items(
     ui: &mut Ui,
     commit: &Commit,

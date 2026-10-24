@@ -1,39 +1,39 @@
-//! Parser dell'output di `git status --porcelain=v2 -z --branch --untracked-files=all`.
+//! Parser for the output of `git status --porcelain=v2 -z --branch --untracked-files=all`.
 //!
-//! # Formato
+//! # Format
 //!
-//! Con `-z` ogni record è **terminato** da un NUL, ultimo compreso; i percorsi non sono mai
-//! tra virgolette né con escape, quindi possono contenere spazi, a capo e byte non UTF-8. Prima
-//! vengono le intestazioni (con `--branch`), poi una voce per file:
+//! With `-z` every record is **terminated** by a NUL, the last included; paths are never
+//! quoted or escaped, so they may contain spaces, newlines and non-UTF-8 bytes. First
+//! come the headers (with `--branch`), then one entry per file:
 //!
 //! ```text
 //! # branch.oid <commit> | (initial)
 //! # branch.head <branch> | (detached)
-//! # branch.upstream <upstream>            solo se c'è un upstream
-//! # branch.ab +<ahead> -<behind>          solo se l'upstream esiste ancora
+//! # branch.upstream <upstream>            only if there is an upstream
+//! # branch.ab +<ahead> -<behind>          only if the upstream still exists
 //! 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
 //! 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path> \0 <origPath>
 //! u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
 //! ? <path>
-//! ! <path>                                solo con `--ignored`
+//! ! <path>                                only with `--ignored`
 //! ```
 //!
-//! Comportamento verificato con git 2.43:
+//! Behavior verified with git 2.43:
 //!
-//! - in un repo senza commit `branch.oid` è `(initial)`; con HEAD staccata `branch.head` è
-//!   `(detached)` e `branch.oid` è il commit;
-//! - `branch.upstream` è il nome **breve** (es. `origin/main`); se l'upstream è configurato ma il
-//!   ref non esiste più `branch.ab` manca;
-//! - nel record `2` il percorso originale è un campo a sé dopo un NUL; `<X><score>` è `R` o `C`
-//!   seguito dalla somiglianza in percentuale (le copie compaiono solo con
+//! - in a repo without commits `branch.oid` is `(initial)`; with a detached HEAD `branch.head` is
+//!   `(detached)` and `branch.oid` is the commit;
+//! - `branch.upstream` is the **short** name (e.g. `origin/main`); if the upstream is configured but the
+//!   ref no longer exists `branch.ab` is missing;
+//! - in the `2` record the original path is a field of its own after a NUL; `<X><score>` is `R` or `C`
+//!   followed by the similarity as a percentage (copies appear only with
 //!   `status.renames=copies`);
-//! - `<sub>` è `N...` per i file normali e `S<c><m><u>` per i sottomoduli;
-//! - i modi sono in ottale a sei cifre, gli id sono completi (zeri se l'oggetto non esiste);
-//! - le intestazioni sconosciute (es. `# stash <n>` con `--show-stash`) vanno ignorate, come
-//!   chiede la documentazione di git.
+//! - `<sub>` is `N...` for normal files and `S<c><m><u>` for submodules;
+//! - modes are six-digit octal, ids are full (zeros if the object does not exist);
+//! - unknown headers (e.g. `# stash <n>` with `--show-stash`) must be ignored, as
+//!   git's documentation requires.
 //!
-//! L'operazione in corso (merge, rebase, ...) non compare nell'output: [`parse_status`] lascia
-//! [`Status::operation`] a `None` e la riempie il backend leggendo `.git`.
+//! The operation in progress (merge, rebase, ...) does not appear in the output: [`parse_status`] leaves
+//! [`Status::operation`] as `None` and the backend fills it by reading `.git`.
 
 use super::log::parse_digits;
 use super::{
@@ -42,30 +42,30 @@ use super::{
 };
 use crate::DomainError;
 
-/// Argomenti obbligatori di `git status` per produrre l'input di [`parse_status`]. Chi chiama
-/// può aggiungere `--ignored` (voci [`EntryKind::Ignored`]) o dei percorsi dopo `--`; non vanno
-/// aggiunte opzioni che cambiano il formato, come `--short` o `--porcelain=v1`.
+/// Mandatory arguments of `git status` to produce the input of [`parse_status`]. The caller
+/// may add `--ignored` ([`EntryKind::Ignored`] entries) or paths after `--`; options that change
+/// the format must not be added, such as `--short` or `--porcelain=v1`.
 ///
-/// - `--porcelain=v2`: formato stabile, con modi, id e percorso originale delle rinomine;
-/// - `-z`: record terminati da NUL e percorsi senza virgolette né escape;
-/// - `--branch`: intestazioni con HEAD, upstream e ahead/behind;
-/// - `--untracked-files=all`: un record per ogni file non tracciato, anche dentro cartelle
-///   nuove (senza, git mostra solo la cartella).
+/// - `--porcelain=v2`: stable format, with modes, ids and the original path of renames;
+/// - `-z`: NUL-terminated records and paths without quotes or escapes;
+/// - `--branch`: headers with HEAD, upstream and ahead/behind;
+/// - `--untracked-files=all`: one record for every untracked file, also inside new
+///   folders (without it, git shows only the folder).
 pub const STATUS_ARGS: &[&str] = &["--porcelain=v2", "-z", "--branch", "--untracked-files=all"];
 
-/// Legge l'output di `git status` prodotto con [`STATUS_ARGS`].
+/// Reads the output of `git status` produced with [`STATUS_ARGS`].
 ///
-/// Le voci restano nell'ordine di git. [`Status::operation`] è sempre `None`: l'output non la
-/// contiene. Un input che non termina con NUL, senza le intestazioni `branch.oid` e
-/// `branch.head`, con un tipo di record sconosciuto o con campi non validi dà
-/// [`DomainError::InvalidGitOutput`], con il numero del record (da 1) coinvolto.
+/// The entries stay in git's order. [`Status::operation`] is always `None`: the output does not
+/// contain it. An input that does not end with NUL, without the `branch.oid` and
+/// `branch.head` headers, with an unknown record kind or with invalid fields gives
+/// [`DomainError::InvalidGitOutput`], with the number of the record (from 1) involved.
 pub fn parse_status(input: &[u8]) -> Result<Status, DomainError> {
     let body = if input.is_empty() {
         input
     } else {
         input.strip_suffix(b"\0").ok_or_else(|| {
             invalid(
-                "l'output non termina con NUL: è troncato o non è stato prodotto con `-z`"
+                "the output does not end with NUL: it is truncated or was not produced with `-z`"
                     .to_owned(),
             )
         })?
@@ -74,16 +74,16 @@ pub fn parse_status(input: &[u8]) -> Result<Status, DomainError> {
     let mut entries = Vec::new();
     let mut tokens = body.split(|&b| b == 0);
     let mut n = 0;
-    // Con `body` vuoto `split` dà un solo token vuoto: nessun record.
+    // With an empty `body` `split` gives a single empty token: no records.
     while let Some(record) = tokens.next().filter(|_| !body.is_empty()) {
         n += 1;
-        let err = |reason: String| invalid(format!("record n. {n}: {reason}"));
+        let err = |reason: String| invalid(format!("record {n}: {reason}"));
         let (kind, rest) = match record {
             [kind, b' ', rest @ ..] => (*kind, rest),
-            [] => return Err(err("record vuoto".to_owned())),
+            [] => return Err(err("empty record".to_owned())),
             _ => {
                 return Err(err(format!(
-                    "`{}` non è un record valido (atteso `<tipo> <campi>`)",
+                    "`{}` is not a valid record (expected `<type> <fields>`)",
                     show(record)
                 )));
             }
@@ -93,7 +93,7 @@ pub fn parse_status(input: &[u8]) -> Result<Status, DomainError> {
             b'1' => entries.push(parse_ordinary(rest).map_err(err)?),
             b'2' => {
                 let original = tokens.next().ok_or_else(|| {
-                    err("manca il percorso originale della rinomina dopo il NUL".to_owned())
+                    err("missing original path of the rename after the NUL".to_owned())
                 })?;
                 entries.push(parse_renamed(rest, original).map_err(err)?);
             }
@@ -104,7 +104,7 @@ pub fn parse_status(input: &[u8]) -> Result<Status, DomainError> {
             b'!' => entries.push(simple(rest, Change::Ignored, EntryKind::Ignored).map_err(err)?),
             other => {
                 return Err(err(format!(
-                    "tipo di record `{}` sconosciuto (attesi `#`, `1`, `2`, `u`, `?`, `!`)",
+                    "unknown record type `{}` (expected `#`, `1`, `2`, `u`, `?`, `!`)",
                     char::from(other).escape_default()
                 )));
             }
@@ -119,7 +119,7 @@ pub fn parse_status(input: &[u8]) -> Result<Status, DomainError> {
     })
 }
 
-/// Intestazioni lette finora.
+/// Headers read so far.
 #[derive(Default)]
 struct Headers {
     /// `Some(None)` per `(initial)`.
@@ -138,7 +138,7 @@ impl Headers {
         };
         let once = |present: bool| {
             if present {
-                Err(format!("intestazione `{}` ripetuta", show(key)))
+                Err(format!("repeated header `{}`", show(key)))
             } else {
                 Ok(())
             }
@@ -155,14 +155,14 @@ impl Headers {
             b"branch.head" => {
                 once(self.head.is_some())?;
                 if value.is_empty() {
-                    return Err("`branch.head` senza nome del branch".to_owned());
+                    return Err("`branch.head` without branch name".to_owned());
                 }
                 self.head = Some((value != b"(detached)").then(|| show(value)));
             }
             b"branch.upstream" => {
                 once(self.upstream.is_some())?;
                 if value.is_empty() {
-                    return Err("`branch.upstream` senza nome".to_owned());
+                    return Err("`branch.upstream` without name".to_owned());
                 }
                 self.upstream = Some(show(value));
             }
@@ -170,7 +170,7 @@ impl Headers {
                 once(self.ab.is_some())?;
                 self.ab = Some(parse_ab(value)?);
             }
-            // Intestazioni future o opzionali (es. `stash`): da ignorare.
+            // Future or optional headers (e.g. `stash`): to be ignored.
             _ => {}
         }
         Ok(())
@@ -179,14 +179,14 @@ impl Headers {
     fn finish(self) -> Result<(Head, Option<Upstream>), DomainError> {
         let missing = |key: &str| {
             invalid(format!(
-                "manca l'intestazione `# {key}`: l'output non è stato prodotto con `--branch`"
+                "missing header `# {key}`: the output was not produced with `--branch`"
             ))
         };
         let oid = self.oid.ok_or_else(|| missing("branch.oid"))?;
         let head = match self.head.ok_or_else(|| missing("branch.head"))? {
             Some(name) => Head::Branch { name, target: oid },
             None => Head::Detached(oid.ok_or_else(|| {
-                invalid("HEAD staccata (`(detached)`) ma `branch.oid` è `(initial)`".to_owned())
+                invalid("detached HEAD (`(detached)`) but `branch.oid` is `(initial)`".to_owned())
             })?),
         };
         let upstream = match (self.upstream, self.ab) {
@@ -197,7 +197,7 @@ impl Headers {
             }),
             (None, Some(_)) => {
                 return Err(invalid(
-                    "`branch.ab` presente senza `branch.upstream`".to_owned(),
+                    "`branch.ab` present without `branch.upstream`".to_owned(),
                 ));
             }
             (None, None) => None,
@@ -210,7 +210,7 @@ impl Headers {
 fn parse_ab(value: &[u8]) -> Result<(u32, u32), String> {
     let bad = || {
         format!(
-            "`branch.ab {}` non valido (atteso `+<ahead> -<behind>`)",
+            "invalid `branch.ab {}` (expected `+<ahead> -<behind>`)",
             show(value)
         )
     };
@@ -227,18 +227,21 @@ fn parse_ab(value: &[u8]) -> Result<(u32, u32), String> {
     Ok((num(a, b'+')?, num(b, b'-')?))
 }
 
-/// Divide `rest` in `n` campi separati da uno spazio; l'ultimo (il percorso) prende tutto il
-/// resto, spazi compresi.
+/// Splits `rest` into `n` fields separated by a space; the last (the path) takes all the
+/// rest, spaces included.
 fn split_fields<'a>(rest: &'a [u8], n: usize, what: &str) -> Result<Vec<&'a [u8]>, String> {
     let fields: Vec<&[u8]> = rest.splitn(n, |&b| b == b' ').collect();
     if fields.len() != n {
-        return Err(format!("{what} con {} campi invece di {n}", fields.len()));
+        return Err(format!(
+            "{what} with {} fields instead of {n}",
+            fields.len()
+        ));
     }
     Ok(fields)
 }
 
 fn parse_ordinary(rest: &[u8]) -> Result<StatusEntry, String> {
-    let f = split_fields(rest, 8, "voce `1`")?;
+    let f = split_fields(rest, 8, "entry `1`")?;
     let (index, worktree) = parse_xy(f[0])?;
     Ok(StatusEntry {
         path: path(f[7])?,
@@ -249,7 +252,7 @@ fn parse_ordinary(rest: &[u8]) -> Result<StatusEntry, String> {
 }
 
 fn parse_renamed(rest: &[u8], original: &[u8]) -> Result<StatusEntry, String> {
-    let f = split_fields(rest, 9, "voce `2`")?;
+    let f = split_fields(rest, 9, "entry `2`")?;
     let (index, worktree) = parse_xy(f[0])?;
     let info = tracked_info(&f[1..7])?;
     let (copy, score) = match f[7] {
@@ -257,7 +260,7 @@ fn parse_renamed(rest: &[u8], original: &[u8]) -> Result<StatusEntry, String> {
         [b'C', score @ ..] => (true, score),
         other => {
             return Err(format!(
-                "`{}` non è un punteggio di rinomina valido (atteso `R<n>` o `C<n>`)",
+                "`{}` is not a valid rename score (expected `R<n>` or `C<n>`)",
                 show(other)
             ));
         }
@@ -267,12 +270,12 @@ fn parse_renamed(rest: &[u8], original: &[u8]) -> Result<StatusEntry, String> {
         .filter(|&v| v <= 100)
         .ok_or_else(|| {
             format!(
-                "`{}`: la somiglianza deve essere un numero da 0 a 100",
+                "`{}`: the similarity must be a number from 0 to 100",
                 show(f[7])
             )
         })?;
     let path = path(f[8])?;
-    let original = self::path(original).map_err(|e| format!("percorso originale: {e}"))?;
+    let original = self::path(original).map_err(|e| format!("original path: {e}"))?;
     let kind = if copy {
         EntryKind::Copied {
             info,
@@ -295,7 +298,7 @@ fn parse_renamed(rest: &[u8], original: &[u8]) -> Result<StatusEntry, String> {
 }
 
 fn parse_unmerged(rest: &[u8]) -> Result<StatusEntry, String> {
-    let f = split_fields(rest, 10, "voce `u`")?;
+    let f = split_fields(rest, 10, "entry `u`")?;
     let (index, worktree) = parse_xy(f[0])?;
     let conflict = match f[0] {
         b"DD" => Conflict::BothDeleted,
@@ -307,7 +310,7 @@ fn parse_unmerged(rest: &[u8]) -> Result<StatusEntry, String> {
         b"UU" => Conflict::BothModified,
         other => {
             return Err(format!(
-                "`{}` non è uno stato di conflitto (attesi DD, AU, UD, UA, DU, AA, UU)",
+                "`{}` is not a conflict status (expected DD, AU, UD, UA, DU, AA, UU)",
                 show(other)
             ));
         }
@@ -323,9 +326,9 @@ fn parse_unmerged(rest: &[u8]) -> Result<StatusEntry, String> {
             mode_ours: mode(f[3])?,
             mode_theirs: mode(f[4])?,
             mode_worktree: mode(f[5])?,
-            oid_base: oid(f[6], "id della base")?,
-            oid_ours: oid(f[7], "id di «nostro»")?,
-            oid_theirs: oid(f[8], "id di «loro»")?,
+            oid_base: oid(f[6], "base id")?,
+            oid_ours: oid(f[7], "“ours” id")?,
+            oid_theirs: oid(f[8], "“theirs” id")?,
         }),
     })
 }
@@ -347,14 +350,14 @@ fn tracked_info(f: &[&[u8]]) -> Result<TrackedInfo, String> {
         mode_index: mode(f[2])?,
         mode_worktree: mode(f[3])?,
         oid_head: oid(f[4], "id in HEAD")?,
-        oid_index: oid(f[5], "id nell'indice")?,
+        oid_index: oid(f[5], "id in the index")?,
     })
 }
 
 fn parse_xy(xy: &[u8]) -> Result<(Change, Change), String> {
     let bad = || {
         format!(
-            "`{}` non è un codice XY valido (due lettere tra `.MTADRCU`)",
+            "`{}` is not a valid XY code (two letters among `.MTADRCU`)",
             show(xy)
         )
     };
@@ -377,7 +380,7 @@ fn parse_xy(xy: &[u8]) -> Result<(Change, Change), String> {
     }
 }
 
-/// `N...` oppure `S<c><m><u>`.
+/// `N...` or `S<c><m><u>`.
 fn parse_sub(sub: &[u8]) -> Result<Option<SubmoduleStatus>, String> {
     let flag = |c: u8, yes: u8| match c {
         b'.' => Some(false),
@@ -397,7 +400,7 @@ fn parse_sub(sub: &[u8]) -> Result<Option<SubmoduleStatus>, String> {
     };
     parsed.map(Some).ok_or_else(|| {
         format!(
-            "`{}` non è uno stato di sottomodulo valido (atteso `N...` o `S<C|.><M|.><U|.>`)",
+            "`{}` is not a valid submodule status (expected `N...` or `S<C|.><M|.><U|.>`)",
             show(sub)
         )
     })
@@ -405,7 +408,7 @@ fn parse_sub(sub: &[u8]) -> Result<Option<SubmoduleStatus>, String> {
 
 /// Modo in ottale, es. `100644`.
 pub(super) fn mode(m: &[u8]) -> Result<u32, String> {
-    let bad = || format!("`{}` non è un modo ottale valido", show(m));
+    let bad = || format!("`{}` is not a valid octal mode", show(m));
     if m.is_empty() || m.len() > 7 {
         return Err(bad());
     }
@@ -418,7 +421,7 @@ pub(super) fn mode(m: &[u8]) -> Result<u32, String> {
 pub(super) fn oid(hex: &[u8], what: &str) -> Result<Oid, String> {
     Oid::from_hex(hex).map_err(|e| match e {
         DomainError::InvalidOid { input, reason } => {
-            format!("{what}: `{input}` non è un id valido ({reason})")
+            format!("{what}: `{input}` is not a valid id ({reason})")
         }
         other => format!("{what}: {other}"),
     })
@@ -426,7 +429,7 @@ pub(super) fn oid(hex: &[u8], what: &str) -> Result<Oid, String> {
 
 fn path(p: &[u8]) -> Result<RepoPath, String> {
     if p.is_empty() {
-        return Err("percorso vuoto".to_owned());
+        return Err("empty path".to_owned());
     }
     Ok(RepoPath::from(p))
 }

@@ -1,11 +1,15 @@
-//! L6 — backend git che esegue il comando `git` di sistema.
+//! L6 — git backend that runs the system `git` command.
 //!
-//! [`CliOpener`] apre un repository e restituisce un [`CliBackend`], che implementa
-//! [`project_engine::GitBackend`] leggendo l'output di git con i parser del dominio. Le regole
-//! per ogni chiamata a git sono in `impl-docs/ARCHITETTURA-git.md` §5: mai una shell,
-//! `-C <repo>`, `--end-of-options` prima delle rev, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`.
+//! [`CliOpener`] opens a repository and returns a [`CliBackend`], which implements
+//! [`project_engine::GitBackend`] reading git's output with the domain parsers. The rules
+//! for every call to git are in `impl-docs/ARCHITECTURE-git.md` §5: never a shell,
+//! `-C <repo>`, `--end-of-options` before revs, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`.
 //!
-//! Nessun altro crate L6 importa questo: lo collegano le app L7.
+//! No other L6 crate imports this: the L7 apps wire it in.
+
+// `msg!` (error texts, key + parameters) in all modules.
+#[macro_use]
+extern crate project_engine;
 
 mod backend;
 mod command;

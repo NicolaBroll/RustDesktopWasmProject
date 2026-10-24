@@ -1,106 +1,106 @@
-//! Costruttore di patch per lo stage e l'unstage di singole righe.
+//! Patch builder for staging and unstaging single lines.
 //!
-//! Dato un [`FileDiff`] letto con [`super::parse_diff`] e le righe scelte dall'utente,
-//! [`build_patch`] restituisce la patch da passare a `git apply` con gli argomenti di
-//! [`APPLY_ARGS`] (patch su stdin). La patch è un [`FileDiff`]: [`FileDiff::to_patch`] dà i byte.
+//! Given a [`FileDiff`] read with [`super::parse_diff`] and the lines chosen by the user,
+//! [`build_patch`] returns the patch to pass to `git apply` with the arguments of
+//! [`APPLY_ARGS`] (patch on stdin). The patch is a [`FileDiff`]: [`FileDiff::to_patch`] gives the bytes.
 //!
-//! # Le due direzioni
+//! # The two directions
 //!
-//! `git apply --cached` confronta il **preimage** della patch (righe di contesto e righe `-`)
-//! con il contenuto del file nell'indice, e se coincide lo sostituisce con il **postimage**
-//! (contesto e righe `+`). In entrambe le direzioni la patch è costruita *in avanti* rispetto
-//! all'indice, cioè il suo preimage è il contenuto attuale dell'indice, e si applica con gli
-//! stessi argomenti (niente `--reverse`):
+//! `git apply --cached` compares the **preimage** of the patch (context lines and `-` lines)
+//! with the content of the file in the index, and if it matches it replaces it with the **postimage**
+//! (context and `+` lines). In both directions the patch is built *forwards* relative
+//! to the index, that is its preimage is the current content of the index, and it is applied with the
+//! same arguments (no `--reverse`):
 //!
-//! - [`PatchDirection::Stage`], sul diff worktree → indice (`diff.worktree`, `git diff`): il
-//!   lato vecchio del diff è l'indice, quindi è il preimage. Righe aggiunte selezionate: `+`;
-//!   aggiunte non selezionate: tolte; rimosse selezionate: `-`; rimosse non selezionate:
-//!   contesto (sono nell'indice e ci restano).
-//! - [`PatchDirection::Unstage`], sul diff HEAD → indice (`diff.index`, `git diff --cached`): qui
-//!   l'indice è il lato **nuovo** del diff. Il costruttore inverte il diff (indice → HEAD) e poi
-//!   applica la stessa regola, così la regola si rovescia rispetto alle righe mostrate: righe
-//!   aggiunte selezionate (in stage, da togliere): `-`; aggiunte non selezionate: contesto (sono
-//!   nell'indice e ci restano); rimosse selezionate (da rimettere): `+`; rimosse non selezionate:
-//!   tolte (non sono nell'indice e non ci tornano).
+//! - [`PatchDirection::Stage`], on the worktree → index diff (`diff.worktree`, `git diff`): the
+//!   old side of the diff is the index, so it is the preimage. Selected added lines: `+`;
+//!   unselected added lines: dropped; selected removed lines: `-`; unselected removed lines:
+//!   context (they are in the index and stay there).
+//! - [`PatchDirection::Unstage`], on the HEAD → index diff (`diff.index`, `git diff --cached`): here
+//!   the index is the **new** side of the diff. The builder inverts the diff (index → HEAD) and then
+//!   applies the same rule, so the rule is reversed relative to the lines shown: selected
+//!   added lines (staged, to be removed): `-`; unselected added lines: context (they are
+//!   in the index and stay there); selected removed lines (to be put back): `+`; unselected removed lines:
+//!   dropped (they are not in the index and do not come back).
 //!
-//! In tutte e due le direzioni l'ordine nel risultato è quello del diff mostrato, con un
-//! accorgimento: in ogni gruppo di modifiche fra due righe di contesto la prima riga tolta si
-//! accoppia alla prima aggiunta, la seconda alla seconda, e così via (git scrive tutte le tolte
-//! e poi tutte le aggiunte). Così di `-x -y +x' +y'` lo stage della sola `x → x'` dà `x' y`, non
-//! `y x'`. Ne segue che fare l'unstage di una selezione dà lo stesso contenuto che fare lo stage
-//! delle righe non selezionate a partire da HEAD.
+//! In both directions the order in the result is that of the displayed diff, with one
+//! refinement: in every group of changes between two context lines the first removed line is
+//! paired with the first added one, the second with the second, and so on (git writes all the removed
+//! lines and then all the added ones). So of `-x -y +x' +y'` staging only `x → x'` gives `x' y`, not
+//! `y x'`. It follows that unstaging a selection gives the same content as staging
+//! the unselected lines starting from HEAD.
 //!
-//! # Selezione
+//! # Selection
 //!
-//! Una riga cambiata si indica con il suo numero di riga nel lato in cui esiste, come lo mostra
-//! il diff letto ([`Line::old_line`] / [`Line::new_line`]): [`LineRef::Old`] per una riga tolta,
-//! [`LineRef::New`] per una aggiunta. In JSON `{"old": 3}` e `{"new": 5}`. Nel diff worktree
-//! `old` è il numero nell'indice e `new` nel worktree; nel diff dell'indice `old` è in HEAD e
-//! `new` nell'indice. Un hunk intero è l'insieme delle sue righe cambiate
-//! ([`Hunk::line_refs`]); le righe di contesto non si selezionano.
+//! A changed line is indicated by its line number on the side where it exists, as the read
+//! diff shows it ([`Line::old_line`] / [`Line::new_line`]): [`LineRef::Old`] for a removed line,
+//! [`LineRef::New`] for an added one. In JSON `{"old": 3}` and `{"new": 5}`. In the worktree diff
+//! `old` is the number in the index and `new` in the worktree; in the index diff `old` is in HEAD and
+//! `new` in the index. A whole hunk is the set of its changed lines
+//! ([`Hunk::line_refs`]); context lines cannot be selected.
 //!
-//! - Selezione vuota: `Ok(None)`, nessuna patch.
-//! - Un riferimento che non corrisponde a una riga cambiata del diff (numero inesistente, riga
-//!   di contesto, lato sbagliato): [`DomainError::InvalidLineSelection`] e nessuna patch. Se il
-//!   file è cambiato da quando la selezione è stata fatta i numeri possono non tornare più:
-//!   meglio un errore che una patch su righe diverse. Riferimenti ripetuti valgono una volta.
+//! - Empty selection: `Ok(None)`, no patch.
+//! - A reference that does not match a changed line of the diff (nonexistent number, context
+//!   line, wrong side): [`DomainError::InvalidLineSelection`] and no patch. If the
+//!   file changed since the selection was made the numbers may no longer match:
+//!   better an error than a patch on different lines. Repeated references count once.
 //!
-//! # Casi particolari
+//! # Special cases
 //!
-//! - **Fine file senza a capo**: una riga senza a capo può essere solo l'ultima. Se nel
-//!   risultato una riga senza a capo non è più l'ultima (es. si tiene la vecchia ultima riga e
-//!   si aggiunge una riga dopo), prende l'a capo: se era nel preimage diventa la coppia
-//!   `-riga` + `\ No newline at end of file` e `+riga`.
-//! - **File nuovo** (nel diff worktree solo per un file aggiunto con `git add -N`, che git
-//!   mostra come nuovo; nel diff dell'indice per l'unstage di un file eliminato in stage): la
-//!   patch crea il file con le sole righe selezionate (`new file mode`). `git apply --cached`
-//!   accetta di creare un file che nell'indice è solo un segnaposto `intent-to-add`; un file
-//!   non tracciato non compare in `git diff` e va messo in stage intero.
-//! - **File eliminato** (nel diff worktree: eliminato dal worktree; nel diff dell'indice: un
-//!   file nuovo in stage di cui si fa l'unstage): con tutte le righe selezionate la patch elimina
-//!   il file dall'indice (`deleted file mode`); con una selezione parziale il file resta con le
-//!   righe non selezionate e la patch è una modifica.
-//! - **Rinomina**: le patch per righe non rinominano mai. Nel diff dell'indice (rinomina in
-//!   stage) la patch modifica il file con il percorso nuovo, quello che sta nell'indice: il
-//!   vecchio percorso resta fuori dall'indice; per annullare la rinomina si usa l'unstage del
-//!   file intero. Nel diff worktree una rinomina (con `git add -N`) è rifiutata: si mette in
-//!   stage il file intero.
-//! - **Cambio di modo**: non fa parte delle righe e non entra mai nella patch, che lascia il
-//!   modo dell'indice com'è; si mette in stage con il file intero. Un cambio di solo modo non ha
-//!   righe da selezionare.
-//! - **Intestazioni**: la patch non ha la riga `index` (gli id non sarebbero più quelli del
-//!   contenuto) né `similarity`/`rename`; i nomi sono scritti da [`FileDiff::write_header`],
-//!   tra virgolette dove servono, con i byte esatti. I conteggi degli hunk sono ricalcolati, così
-//!   la patch è valida anche senza `--recount`. Il contenuto (CRLF, byte non UTF-8) è copiato
-//!   byte per byte.
-//! - **Rifiutati** con [`DomainError::UnsupportedPatch`]: file binari, sottomoduli, link
-//!   simbolici, file in conflitto, copie, rinomine nel diff worktree. Il controllo viene prima
-//!   di quello della selezione.
+//! - **End of file without a newline**: a line without a newline can only be the last. If in the
+//!   result a line without a newline is no longer the last (e.g. the old last line is kept and
+//!   a line is added after it), it gets the newline: if it was in the preimage it becomes the pair
+//!   `-line` + `\ No newline at end of file` and `+line`.
+//! - **New file** (in the worktree diff only for a file added with `git add -N`, which git
+//!   shows as new; in the index diff for the unstage of a file deleted in the index): the
+//!   patch creates the file with only the selected lines (`new file mode`). `git apply --cached`
+//!   agrees to create a file that in the index is only an `intent-to-add` placeholder; an
+//!   untracked file does not appear in `git diff` and must be staged whole.
+//! - **Deleted file** (in the worktree diff: deleted from the worktree; in the index diff: a
+//!   new staged file being unstaged): with all lines selected the patch deletes
+//!   the file from the index (`deleted file mode`); with a partial selection the file stays with the
+//!   unselected lines and the patch is a modification.
+//! - **Rename**: line patches never rename. In the index diff (staged rename)
+//!   the patch modifies the file at the new path, the one in the index: the
+//!   old path stays out of the index; to undo the rename the whole-file unstage is used.
+//!   In the worktree diff a rename (with `git add -N`) is rejected: the whole file is
+//!   staged.
+//! - **Mode change**: it is not part of the lines and never enters the patch, which leaves the
+//!   index mode as it is; it is staged with the whole file. A mode-only change has no
+//!   lines to select.
+//! - **Headers**: the patch has no `index` line (the ids would no longer be those of the
+//!   content) nor `similarity`/`rename`; names are written by [`FileDiff::write_header`],
+//!   quoted where needed, with exact bytes. The hunk counts are recomputed, so
+//!   the patch is valid even without `--recount`. The content (CRLF, non-UTF-8 bytes) is copied
+//!   byte by byte.
+//! - **Rejected** with [`DomainError::UnsupportedPatch`]: binary files, submodules, symbolic
+//!   links, conflicted files, copies, renames in the worktree diff. This check comes before
+//!   the selection check.
 
 use super::{Change, FileDiff, Hunk, Line, LineKind, RepoPath};
 use crate::DomainError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// Argomenti di `git apply` per applicare una patch di [`build_patch`] all'indice, letta da
-/// stdin; valgono per entrambe le direzioni.
+/// Arguments of `git apply` to apply a [`build_patch`] patch to the index, read from
+/// stdin; they hold for both directions.
 ///
-/// - `--cached`: solo l'indice, mai il worktree;
-/// - `--recount`: conteggi delle righe ricalcolati dal contenuto (quelli scritti sono già
-///   corretti, è una sicurezza in più);
-/// - `--whitespace=nowarn`: con `apply.whitespace=error` nella configurazione una riga con spazi
-///   finali farebbe fallire la patch; qui si copia il contenuto dell'utente così com'è;
-/// - `--no-ignore-whitespace`: con `apply.ignoreWhitespace=change` il preimage potrebbe
-///   coincidere con un indice diverso negli spazi.
+/// - `--cached`: only the index, never the worktree;
+/// - `--recount`: line counts recomputed from the content (the written ones are already
+///   correct, it is an extra safety);
+/// - `--whitespace=nowarn`: with `apply.whitespace=error` in the configuration a line with trailing
+///   spaces would make the patch fail; here the user's content is copied as it is;
+/// - `--no-ignore-whitespace`: with `apply.ignoreWhitespace=change` the preimage could
+///   match an index that differs in whitespace.
 ///
-/// Prima di scrivere si può provare la patch con `--check` in più.
+/// Before writing, the patch can be tried with `--check` added.
 ///
-/// Attenzione: `git apply` cerca il preimage di un hunk anche lontano dalla posizione scritta,
-/// e un hunk senza contesto in coda lo ancora alla fine del file. È sicuro solo con patch da un
-/// diff letto con `DIFF_ARGS` (contesto fisso `--unified=3`, anche con `diff.context=0` nella
-/// configurazione) e applicate allo stesso indice da cui il diff è stato calcolato. I comandi
-/// `index.stage_lines`/`index.unstage_lines` per questo non usano `git apply`: calcolano il
-/// risultato con un applicatore rigoroso nel motore e lo scrivono nell'indice.
+/// Warning: `git apply` looks for a hunk's preimage even far from the written position,
+/// and a hunk without trailing context is anchored at the end of the file. It is safe only with patches from a
+/// diff read with `DIFF_ARGS` (fixed context `--unified=3`, even with `diff.context=0` in the
+/// configuration) and applied to the same index the diff was computed from. The commands
+/// `index.stage_lines`/`index.unstage_lines` therefore do not use `git apply`: they compute the
+/// result with a strict applier in the engine and write it to the index.
 pub const APPLY_ARGS: &[&str] = &[
     "--cached",
     "--recount",
@@ -110,30 +110,30 @@ pub const APPLY_ARGS: &[&str] = &[
 
 const SYMLINK: u32 = 0o120000;
 
-/// In che direzione si spostano le righe selezionate.
+/// The direction the selected lines move in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PatchDirection {
-    /// Dal worktree all'indice: il diff è quello del worktree (`diff.worktree`).
+    /// From the worktree to the index: the diff is the worktree one (`diff.worktree`).
     Stage,
-    /// Dall'indice indietro verso HEAD: il diff è quello dell'indice (`diff.index`).
+    /// From the index back to HEAD: the diff is the index one (`diff.index`).
     Unstage,
 }
 
-/// Una riga cambiata di un diff, indicata con il numero di riga nel lato in cui esiste.
+/// A changed line of a diff, indicated by the line number on the side where it exists.
 ///
-/// In JSON: `{"old": <n>}` o `{"new": <n>}`.
+/// In JSON: `{"old": <n>}` or `{"new": <n>}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LineRef {
-    /// Una riga tolta, con il suo numero nel file vecchio ([`Line::old_line`]).
+    /// A removed line, with its number in the old file ([`Line::old_line`]).
     Old(u32),
-    /// Una riga aggiunta, con il suo numero nel file nuovo ([`Line::new_line`]).
+    /// An added line, with its number in the new file ([`Line::new_line`]).
     New(u32),
 }
 
 impl Line {
-    /// Il riferimento con cui selezionare questa riga; `None` per una riga di contesto.
+    /// The reference to select this line with; `None` for a context line.
     pub fn line_ref(&self) -> Option<LineRef> {
         match self.kind {
             LineKind::Context => None,
@@ -144,27 +144,27 @@ impl Line {
 }
 
 impl Hunk {
-    /// I riferimenti di tutte le righe cambiate dell'hunk, in ordine: la selezione dell'hunk
-    /// intero.
+    /// The references of all the changed lines of the hunk, in order: the selection of the whole
+    /// hunk.
     pub fn line_refs(&self) -> Vec<LineRef> {
         self.lines.iter().filter_map(Line::line_ref).collect()
     }
 }
 
 impl FileDiff {
-    /// I riferimenti di tutte le righe cambiate del file, in ordine.
+    /// The references of all the changed lines of the file, in order.
     pub fn line_refs(&self) -> Vec<LineRef> {
         self.hunks.iter().flat_map(Hunk::line_refs).collect()
     }
 }
 
-/// Costruisce la patch che sposta nell'indice (o toglie dall'indice) solo le righe `lines` di
-/// `file`, da applicare con `git apply` e gli argomenti di [`APPLY_ARGS`].
+/// Builds the patch that moves into the index (or removes from the index) only the lines `lines` of
+/// `file`, to be applied with `git apply` and the arguments of [`APPLY_ARGS`].
 ///
-/// `file` è un file di `diff.worktree` per [`PatchDirection::Stage`], di `diff.index` per
-/// [`PatchDirection::Unstage`]; `lines` usa i numeri di riga di `file` (vedi [`LineRef`]).
-/// Restituisce `Ok(None)` se `lines` è vuota. Vedi la documentazione del modulo per la
-/// semantica, i casi particolari e quelli rifiutati.
+/// `file` is a file of `diff.worktree` for [`PatchDirection::Stage`], of `diff.index` for
+/// [`PatchDirection::Unstage`]; `lines` uses the line numbers of `file` (see [`LineRef`]).
+/// Returns `Ok(None)` if `lines` is empty. See the module documentation for the
+/// semantics, the special cases and the rejected ones.
 pub fn build_patch(
     file: &FileDiff,
     lines: &[LineRef],
@@ -183,12 +183,12 @@ pub fn build_patch(
     Ok(select(&base, &selected))
 }
 
-/// Il diff con le righe di ogni gruppo di modifiche (fra due righe di contesto) alternate: la
-/// prima tolta, la prima aggiunta, la seconda tolta, la seconda aggiunta... con la selezione
-/// riordinata allo stesso modo. Ogni lato resta nel suo ordine, quindi il diff vuol dire la
-/// stessa cosa; serve a decidere dove finiscono, nel risultato, le righe che restano rispetto
-/// a quelle che entrano: una modifica `-x -y +x' +y'` di cui si sceglie solo `x → x'` dà
-/// `x' y`, non `y x'`.
+/// The diff with the lines of each group of changes (between two context lines) alternated: the
+/// first removed, the first added, the second removed, the second added... with the selection
+/// reordered the same way. Each side keeps its order, so the diff means the
+/// same thing; it serves to decide where the lines that stay end up, in the result, relative
+/// to those that come in: a change `-x -y +x' +y'` of which only `x → x'` is chosen gives
+/// `x' y`, not `y x'`.
 fn interleave(file: &FileDiff, selected: &[Vec<bool>]) -> (FileDiff, Vec<Vec<bool>>) {
     let mut out = file.clone();
     let mut flags = Vec::with_capacity(file.hunks.len());
@@ -217,7 +217,7 @@ fn interleave(file: &FileDiff, selected: &[Vec<bool>]) -> (FileDiff, Vec<Vec<boo
     (out, flags)
 }
 
-/// Svuota un gruppo di modifiche in `out`, alternando tolte e aggiunte.
+/// Empties a group of changes into `out`, alternating removed and added.
 fn flush(
     removed: &mut Vec<(Line, bool)>,
     added: &mut Vec<(Line, bool)>,
@@ -240,24 +240,22 @@ fn flush(
 
 fn check_supported(file: &FileDiff, direction: PatchDirection) -> Result<(), DomainError> {
     let reason = if file.change == Change::Unmerged {
-        Some("il file è in conflitto: va risolto e messo in stage intero")
+        Some("the file is conflicted: it must be resolved and staged as a whole")
     } else if file.binary {
-        Some("il file è binario: non ha righe da selezionare, si mette in stage intero")
+        Some("the file is binary: it has no lines to select, it is staged as a whole")
     } else if file.is_submodule() {
-        Some("è un sottomodulo: non ha righe da selezionare, si mette in stage intero")
+        Some("it is a submodule: it has no lines to select, it is staged as a whole")
     } else if file.old_mode == Some(SYMLINK) || file.new_mode == Some(SYMLINK) {
-        Some("è un link simbolico: il suo contenuto si mette in stage solo intero")
+        Some("it is a symbolic link: its content is staged only as a whole")
     } else if file.change == Change::Copied {
-        Some("è una copia: si mette in stage solo il file intero")
+        Some("it is a copy: only the whole file is staged")
     } else if file.change == Change::Renamed && direction == PatchDirection::Stage {
-        Some(
-            "è una rinomina non ancora in stage: si mette in stage il file intero, con i due percorsi",
-        )
+        Some("it is a rename not yet staged: the whole file is staged, with both paths")
     } else if !matches!(
         file.change,
         Change::Added | Change::Deleted | Change::Modified | Change::Renamed
     ) {
-        Some("tipo di modifica non previsto in un diff")
+        Some("change type not expected in a diff")
     } else {
         None
     };
@@ -270,7 +268,7 @@ fn check_supported(file: &FileDiff, direction: PatchDirection) -> Result<(), Dom
     }
 }
 
-/// Per ogni hunk e riga di `file`, vero se la riga è selezionata.
+/// For each hunk and line of `file`, true if the line is selected.
 fn selection(file: &FileDiff, lines: &[LineRef]) -> Result<Vec<Vec<bool>>, DomainError> {
     let wanted: HashSet<LineRef> = lines.iter().copied().collect();
     let mut found = HashSet::new();
@@ -296,14 +294,14 @@ fn selection(file: &FileDiff, lines: &[LineRef]) -> Result<Vec<Vec<bool>>, Domai
         let list: Vec<String> = missing
             .iter()
             .map(|r| match r {
-                LineRef::Old(n) => format!("tolta n. {n}"),
-                LineRef::New(n) => format!("aggiunta n. {n}"),
+                LineRef::Old(n) => format!("removed {n}"),
+                LineRef::New(n) => format!("added {n}"),
             })
             .collect();
         return Err(DomainError::InvalidLineSelection {
             path: file.path().to_string_lossy().into_owned(),
             reason: format!(
-                "nel diff non c'è una riga {} (il file è forse cambiato nel frattempo?)",
+                "there is no line {} in the diff (did the file change in the meantime?)",
                 list.join(", ")
             ),
         });
@@ -311,7 +309,7 @@ fn selection(file: &FileDiff, lines: &[LineRef]) -> Result<Vec<Vec<bool>>, Domai
     Ok(selected)
 }
 
-/// Il diff nell'altro verso: righe tolte e aggiunte scambiate, come i lati e i percorsi.
+/// The diff in the other direction: removed and added lines swapped, like the sides and paths.
 fn invert(file: &FileDiff) -> FileDiff {
     let change = match file.change {
         Change::Added => Change::Deleted,
@@ -358,11 +356,11 @@ fn invert(file: &FileDiff) -> FileDiff {
     }
 }
 
-/// La regola dello stage su `base` (il cui lato vecchio è l'indice): `None` se nessuna riga
-/// selezionata cambia qualcosa.
+/// The stage rule on `base` (whose old side is the index): `None` if no selected line
+/// changes anything.
 fn select(base: &FileDiff, selected: &[Vec<bool>]) -> Option<FileDiff> {
-    // Righe del risultato, nell'ordine del diff: contesto, tolte non selezionate, aggiunte
-    // selezionate. `later[h][i]`: dopo la riga `i` dell'hunk `h` c'è un'altra riga del risultato.
+    // Lines of the result, in diff order: context, unselected removed, selected
+    // added. `later[h][i]`: after line `i` of hunk `h` there is another line of the result.
     let in_result = |l: &Line, sel: bool| match l.kind {
         LineKind::Context => true,
         LineKind::Removed => !sel,
@@ -400,8 +398,8 @@ fn select(base: &FileDiff, selected: &[Vec<bool>]) -> Option<FileDiff> {
             match (l.kind, sel) {
                 (LineKind::Context, _) | (LineKind::Removed, false) => {
                     if l.no_newline && later {
-                        // Ultima riga del preimage senza a capo, seguita da altre righe nel
-                        // risultato: nel risultato prende l'a capo.
+                        // Last line of the preimage without a newline, followed by other lines in the
+                        // result: in the result it gets the newline.
                         push(LineKind::Removed, l, true);
                         push(LineKind::Added, l, false);
                         changed = true;
@@ -468,15 +466,15 @@ fn select(base: &FileDiff, selected: &[Vec<bool>]) -> Option<FileDiff> {
     })
 }
 
-/// Righe del lato vecchio (`skip` = [`LineKind::Added`]) o nuovo (`skip` =
+/// Lines of the old side (`skip` = [`LineKind::Added`]) or new side (`skip` =
 /// [`LineKind::Removed`]).
 fn count(lines: &[Line], skip: LineKind) -> u32 {
     let n = lines.iter().filter(|l| l.kind != skip).count();
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// In ogni gruppo di righe cambiate fra due righe di contesto, prima le tolte e poi le
-/// aggiunte, come scrive git. L'ordine di ciascun lato non cambia, quindi nemmeno il significato.
+/// In each group of changed lines between two context lines, first the removed and then the
+/// added, as git writes. The order of each side does not change, so neither does the meaning.
 fn canonical_order(lines: Vec<Line>) -> Vec<Line> {
     let mut out = Vec::with_capacity(lines.len());
     let mut added = Vec::new();
@@ -494,7 +492,7 @@ fn canonical_order(lines: Vec<Line>) -> Vec<Line> {
     out
 }
 
-/// Assegna i numeri di riga dei due lati a partire dall'intestazione dell'hunk.
+/// Assigns the line numbers of the two sides starting from the hunk header.
 fn number(hunk: &mut Hunk) {
     let (mut old, mut new) = (hunk.old_start, hunk.new_start);
     for l in &mut hunk.lines {

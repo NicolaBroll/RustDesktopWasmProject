@@ -1,9 +1,9 @@
-//! L7 — avvio dell'app nel browser e implementazione web di `Platform`.
+//! L7 — browser app startup and web implementation of `Platform`.
 //!
-//! Compilato per un target diverso da wasm32 produce un eseguibile vuoto,
-//! così `cargo build --workspace` funziona anche sul desktop.
+//! Compiled for a target other than wasm32 it produces an empty executable,
+//! so `cargo build --workspace` also works on the desktop.
 
-// Fuori da wasm32 serve solo ai test.
+// Outside wasm32 it is only needed by tests.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod demo;
 #[cfg(target_arch = "wasm32")]
@@ -16,5 +16,5 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    eprintln!("project-web va compilato per wasm32: usa `trunk serve` (vedi README).");
+    eprintln!("project-web must be built for wasm32: use `trunk serve` (see README).");
 }

@@ -1,4 +1,4 @@
-//! Test di integrazione di `CliBackend` sugli scenari di `common`.
+//! Integration tests of `CliBackend` on the scenarios of `common`.
 
 mod common;
 
@@ -23,10 +23,10 @@ fn scenarios_are_deterministic() {
     let second = repo_with_history();
     let all = |h: &History| [h.c1, h.c2, h.f1, h.f2, h.m];
     assert_eq!(all(&first), all(&second));
-    // Lo stesso id anche tra un'esecuzione e l'altra: dipende solo da contenuto, autore e date.
+    // The same id across runs too: it depends only on content, author and dates.
     assert_eq!(
         first.c1.to_string(),
-        "d73fe48854a640cf507c31d41c382df71580568e"
+        "3c21eb807c30d38a30b2dd63545cd2a7f21891bf"
     );
 }
 
@@ -39,7 +39,7 @@ fn git_version_is_supported() {
 #[test]
 fn missing_git_is_a_clear_error() {
     let repo = Repo::new();
-    let err = CliOpener::with_program("/nessun/git/qui")
+    let err = CliOpener::with_program("/no/git/here")
         .open(repo.path_str())
         .err()
         .unwrap();
@@ -68,7 +68,7 @@ fn old_git_is_rejected() {
 #[test]
 fn opening_a_plain_folder_fails() {
     let dir = tempfile::tempdir().unwrap();
-    // Senza questo git risalirebbe fino a un eventuale repo che contiene la cartella temporanea.
+    // Without this git would climb up to any repo that contains the temporary directory.
     let opener = Repo::opener().env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap());
     let err = opener.open(dir.path().to_str().unwrap()).err().unwrap();
     let EngineError::RepoNotFound { reason, .. } = err else {
@@ -76,7 +76,7 @@ fn opening_a_plain_folder_fails() {
     };
     assert!(reason.contains("not a git repository"), "{reason}");
 
-    let missing = dir.path().join("non-esiste");
+    let missing = dir.path().join("does-not-exist");
     let err = opener.open(missing.to_str().unwrap()).err().unwrap();
     assert!(matches!(err, EngineError::RepoNotFound { .. }), "{err}");
 
@@ -97,7 +97,7 @@ fn opening_a_bare_repo_fails() {
 #[test]
 fn opening_a_subfolder_uses_the_worktree_root() {
     let repo = Repo::new();
-    repo.commit_file("src/main.rs", "fn main() {}\n", "primo");
+    repo.commit_file("src/main.rs", "fn main() {}\n", "first");
     let backend = Repo::opener()
         .open_cli(repo.path().join("src").to_str().unwrap())
         .unwrap();
@@ -129,7 +129,7 @@ fn empty_repo() {
 fn log_reads_the_whole_history() {
     let h = repo_with_history();
     let log = h.repo.open().log(&LogQuery::all()).unwrap();
-    // Figli prima dei genitori, poi il più recente per data del committer.
+    // Children before parents, then the most recent by committer date.
     assert_eq!(ids(&log), [h.m, h.f2, h.f1, h.c2, h.c1]);
 
     let merge = &log[0];
@@ -138,8 +138,8 @@ fn log_reads_the_whole_history() {
     assert_eq!(merge.summary, "Merge branch 'feature'");
 
     let c2 = &log[3];
-    assert_eq!(c2.summary, "secondo su main");
-    assert_eq!(c2.body, "Corpo\nsu due righe.");
+    assert_eq!(c2.summary, "second on main");
+    assert_eq!(c2.body, "Body\non two lines.");
     assert_eq!(c2.author.name, "Ada");
     assert_eq!(c2.author.email, "ada@example.com");
     assert_eq!(c2.committer.name, "Bob");
@@ -183,7 +183,7 @@ fn log_rejects_unknown_revs_without_running_options() {
     let h = repo_with_history();
     let backend = h.repo.open();
     for rev in [
-        "nessuno",
+        "nobody",
         "--all",
         "-n1",
         "--output=/tmp/x",
@@ -235,7 +235,7 @@ fn refs_with_tags_stash_and_upstream() {
             "refs/heads/main",
             "refs/remotes/origin/main",
             "refs/stash",
-            "refs/tags/leggero",
+            "refs/tags/light",
             "refs/tags/v1",
         ]
     );
@@ -257,7 +257,7 @@ fn refs_with_tags_stash_and_upstream() {
         (RefKind::Stash, repo.rev("refs/stash"))
     );
 
-    let light = by_name("refs/tags/leggero");
+    let light = by_name("refs/tags/light");
     assert_eq!(
         (light.kind, light.target, light.tag_object),
         (RefKind::Tag, h.c1, None)
@@ -272,7 +272,7 @@ fn refs_with_tags_stash_and_upstream() {
     assert_eq!(upstream.name, "origin/main");
     assert_eq!((upstream.ahead, upstream.behind), (Some(3), Some(0)));
 
-    // Il tag annotato si usa anche come rev del log.
+    // The annotated tag is also usable as a log rev.
     let from_tag = backend.log(&LogQuery::all().from_rev("v1")).unwrap();
     assert_eq!(ids(&from_tag), [h.c2, h.c1]);
 }
@@ -287,7 +287,7 @@ fn status_lists_changes() {
             .entries
             .iter()
             .find(|e| e.path.to_str() == Some(path))
-            .unwrap_or_else(|| panic!("{path} non in {:?}", status.entries))
+            .unwrap_or_else(|| panic!("{path} not in {:?}", status.entries))
     };
     let a = entry("a.txt");
     assert_eq!(
@@ -295,15 +295,15 @@ fn status_lists_changes() {
         (Change::Unmodified, Change::Modified)
     );
     assert!(a.is_unstaged() && !a.is_staged());
-    assert_eq!(entry("nuovo.txt").index, Change::Added);
-    let renamed = entry("rinominato.txt");
+    assert_eq!(entry("new.txt").index, Change::Added);
+    let renamed = entry("renamed.txt");
     assert_eq!(renamed.index, Change::Renamed);
     assert_eq!(
         renamed.original_path().and_then(|p| p.to_str()),
-        Some("vecchio.txt")
+        Some("old.txt")
     );
-    // Con `--untracked-files=all` il file, non la sola cartella.
-    let untracked = entry("cartella/non tracciato.txt");
+    // With `--untracked-files=all` the file, not just the directory.
+    let untracked = entry("dir/untracked file.txt");
     assert!(untracked.is_untracked());
     assert!(matches!(untracked.kind, EntryKind::Untracked));
     assert_eq!(status.entries.len(), 4);
@@ -345,13 +345,13 @@ fn status_reports_cherry_pick_and_bisect() {
 #[test]
 fn confine_to_stops_the_search_at_the_root() {
     let outer = Repo::new();
-    outer.commit_file("a.txt", "a\n", "fuori dalla radice");
-    let root = outer.path().join("radice");
-    std::fs::create_dir_all(root.join("cartella")).unwrap();
+    outer.commit_file("a.txt", "a\n", "outside the root");
+    let root = outer.path().join("root");
+    std::fs::create_dir_all(root.join("dir")).unwrap();
     let root = root.canonicalize().unwrap();
-    let plain = root.join("cartella");
+    let plain = root.join("dir");
 
-    // Senza confine git risale fino al repo che contiene la radice.
+    // Without a boundary git climbs up to the repo that contains the root.
     let free = Repo::opener().open_cli(plain.to_str().unwrap()).unwrap();
     assert_eq!(
         free.workdir().canonicalize().unwrap(),
@@ -364,8 +364,8 @@ fn confine_to_stops_the_search_at_the_root() {
         assert!(matches!(err, EngineError::RepoNotFound { .. }), "{err}");
     }
 
-    // Un repo dentro la radice si apre.
-    let inner = root.join("interno");
+    // A repo inside the root can be opened.
+    let inner = root.join("inner");
     let status = std::process::Command::new("git")
         .args(["-c", "init.defaultBranch=main", "init", "--quiet"])
         .arg(&inner)
@@ -377,7 +377,7 @@ fn confine_to_stops_the_search_at_the_root() {
     assert_eq!(backend.workdir().canonicalize().unwrap(), inner);
 }
 
-/// `(stato, origine, percorso)` dei file cambiati, per confronti compatti.
+/// `(status, origin, path)` of the changed files, for compact comparisons.
 fn changes(details: &CommitDetails) -> Vec<(Change, Option<String>, String)> {
     details
         .files
@@ -407,12 +407,12 @@ fn show_commit_root_modify_and_merge() {
     assert_eq!(a.new_oid, h.repo.rev(&format!("{}:a.txt", h.c1)));
 
     let c2 = backend.show_commit(&h.c2.to_string()).unwrap();
-    assert_eq!(c2.commit.body, "Corpo\nsu due righe.");
+    assert_eq!(c2.commit.body, "Body\non two lines.");
     assert_eq!(c2.compared_to, Some(h.c1));
     assert_eq!(changes(&c2), [(Change::Modified, None, "a.txt".to_owned())]);
     assert_eq!(c2.files[0].old_oid, a.new_oid);
 
-    // Il merge si confronta con il primo genitore (`c2`): porta `b.txt` da `feature`.
+    // The merge is compared with the first parent (`c2`): it brings `b.txt` from `feature`.
     let merge = backend.show_commit("HEAD").unwrap();
     assert_eq!(merge.commit.id, h.m);
     assert_eq!(merge.commit.parents, [h.c2, h.f2]);
@@ -423,7 +423,7 @@ fn show_commit_root_modify_and_merge() {
         h.repo.rev(&format!("{}:b.txt", h.f2))
     );
 
-    // Id abbreviato, nome di branch e nome completo portano allo stesso commit.
+    // Abbreviated id, branch name and full name lead to the same commit.
     let short = h.f2.to_string()[..7].to_owned();
     for rev in [short.as_str(), "feature", "refs/heads/feature"] {
         assert_eq!(backend.show_commit(rev).unwrap().commit.id, h.f2, "{rev}");
@@ -438,14 +438,14 @@ fn show_commit_every_kind_of_change() {
     assert_eq!(details.compared_to, Some(fc.base));
     let s = |v: &str| v.to_owned();
     let mut expected = vec![
-        (Change::Added, None, s("cartella/con spazio.txt")),
-        (Change::Deleted, None, s("eliminato.txt")),
-        (Change::Renamed, Some(s("vecchio.txt")), s("nuovo.txt")),
+        (Change::Deleted, None, s("deleted.txt")),
+        (Change::Added, None, s("dir/with space.txt")),
+        (Change::Renamed, Some(s("move.txt")), s("moved.txt")),
+        (Change::Renamed, Some(s("old.txt")), s("new.txt")),
         (Change::Modified, None, s("script.sh")),
-        (Change::Renamed, Some(s("sposta.txt")), s("spostato.txt")),
     ];
     if cfg!(unix) {
-        expected.insert(0, (Change::Added, None, s("caff\u{fffd}.txt")));
+        expected.insert(0, (Change::Added, None, s("cafe\u{fffd}.txt")));
     }
     assert_eq!(changes(&details), expected);
 
@@ -456,22 +456,22 @@ fn show_commit_every_kind_of_change() {
             .find(|f| f.path.to_str() == Some(name))
             .unwrap()
     };
-    let exact = file("nuovo.txt");
+    let exact = file("new.txt");
     assert_eq!(
         (exact.score, exact.old_oid == exact.new_oid),
         (Some(100), true)
     );
-    let moved = file("spostato.txt");
+    let moved = file("moved.txt");
     assert!(moved.score.unwrap() < 100, "{:?}", moved.score);
     assert_ne!(moved.old_oid, moved.new_oid);
     let script = file("script.sh");
     assert_eq!((script.old_mode, script.new_mode), (0o100644, 0o100755));
-    let deleted = file("eliminato.txt");
+    let deleted = file("deleted.txt");
     assert_eq!(
         (deleted.new_mode, deleted.new_oid),
         (0, Oid::from_bytes([0; Oid::LEN]))
     );
-    // Il nome non UTF-8 resta con i byte esatti.
+    // The non-UTF-8 name keeps its exact bytes.
     #[cfg(unix)]
     assert!(
         details
@@ -481,7 +481,7 @@ fn show_commit_every_kind_of_change() {
     );
 
     let empty = backend.show_commit(&fc.empty.to_string()).unwrap();
-    assert_eq!(empty.commit.summary, "vuoto");
+    assert_eq!(empty.commit.summary, "empty");
     assert_eq!(empty.compared_to, Some(fc.changes));
     assert!(empty.files.is_empty());
 }
@@ -490,13 +490,13 @@ fn show_commit_every_kind_of_change() {
 fn show_commit_follows_tags_and_rejects_bad_revs() {
     let (h, _origin) = repo_with_all_refs();
     let backend = h.repo.open();
-    // Un tag annotato porta al commit, non all'oggetto tag.
+    // An annotated tag leads to the commit, not to the tag object.
     assert_eq!(backend.show_commit("v1").unwrap().commit.id, h.c2);
-    assert_eq!(backend.show_commit("leggero").unwrap().commit.id, h.c1);
+    assert_eq!(backend.show_commit("light").unwrap().commit.id, h.c1);
 
     let tree = h.repo.rev("HEAD^{tree}").to_string();
     for rev in [
-        "nessuno",
+        "nobody",
         "--all",
         "-n1",
         "--output=/tmp/x",
@@ -510,7 +510,7 @@ fn show_commit_follows_tags_and_rejects_bad_revs() {
         );
     }
 
-    // Un oggetto che non è un commit: errore di git con il motivo.
+    // An object that is not a commit: git error with the reason.
     let err = backend.show_commit(&tree).unwrap_err();
     assert!(
         matches!(&err, EngineError::Git { stderr, .. } if stderr.contains("tree")),
@@ -549,14 +549,14 @@ fn commit_show_command_on_a_real_repo() {
         )
         .unwrap();
     assert_eq!(out["commit"]["id"], fc.changes.to_string());
-    assert_eq!(out["commit"]["summary"], "ogni tipo di modifica");
+    assert_eq!(out["commit"]["summary"], "every kind of change");
     assert_eq!(out["compared_to"], fc.base.to_string());
     let files = out["files"].as_array().unwrap();
-    let renamed = files.iter().find(|f| f["path"] == "nuovo.txt").unwrap();
+    let renamed = files.iter().find(|f| f["path"] == "new.txt").unwrap();
     assert_eq!(renamed["change"], "Renamed");
-    assert_eq!(renamed["original"], "vecchio.txt");
+    assert_eq!(renamed["original"], "old.txt");
     assert_eq!(renamed["score"], 100);
-    // In JSON un percorso non UTF-8 è un array di byte.
+    // In JSON a non-UTF-8 path is a byte array.
     #[cfg(unix)]
     assert!(
         files

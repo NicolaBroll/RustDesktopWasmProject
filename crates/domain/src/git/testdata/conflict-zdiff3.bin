@@ -1,22 +1,22 @@
-uno
+one
 <<<<<<< ours
-DUE main
+TWO main
 ||||||| base
-due
+two
 =======
-DUE altro
+TWO other
 >>>>>>> theirs
-tre
-quattro
-cinque
-sei
-sette
+three
+four
+five
+six
+seven
 <<<<<<< ours
-OTTO main
-OTTO bis
+EIGHT main
+EIGHT extra
 ||||||| base
-otto
+eight
 =======
-OTTO altro
+EIGHT other
 >>>>>>> theirs
-nove
+nine

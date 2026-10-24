@@ -9,17 +9,17 @@ pub fn start() {
     wasm_bindgen_futures::spawn_local(async {
         let canvas = document()
             .get_element_by_id("app_canvas")
-            .expect("manca #app_canvas")
+            .expect("missing #app_canvas")
             .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("#app_canvas non è un canvas");
+            .expect("#app_canvas is not a canvas");
 
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
-                    // Il browser non vede i repo locali: repo di esempio in memoria, con un
-                    // branch che va in conflitto con `main` per provare il merge.
+                    // The browser cannot see local repos: in-memory sample repo, with a
+                    // branch that conflicts with `main` to try the merge.
                     let opener = Arc::new(crate::demo::opener());
                     let repo = Some(MemoryOpener::SAMPLE_PATH.to_owned());
                     Ok(Box::new(project_ui::App::new(
@@ -32,7 +32,7 @@ pub fn start() {
             )
             .await;
         if let Err(e) = result {
-            log::error!("avvio non riuscito: {e:?}");
+            log::error!("startup failed: {e:?}");
         }
     });
 }
@@ -40,10 +40,10 @@ pub fn start() {
 fn document() -> web_sys::Document {
     web_sys::window()
         .and_then(|w| w.document())
-        .expect("nessun document")
+        .expect("no document")
 }
 
-/// File tramite `<input type="file">` nascosto; salvataggio come download.
+/// File via a hidden `<input type="file">`; saving as a download.
 struct WebPlatform;
 
 impl Platform for WebPlatform {
@@ -51,27 +51,27 @@ impl Platform for WebPlatform {
         Capabilities::default()
     }
 
-    /// Se l'utente annulla il dialogo il browser non avvisa: la callback
-    /// non viene chiamata.
+    /// If the user cancels the dialog the browser does not notify: the callback
+    /// is not called.
     fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>) {
         if let Err(e) = pick_file(on_done) {
-            log::error!("apertura file: {e:?}");
+            log::error!("opening file: {e:?}");
         }
     }
 
-    /// Il browser non vede le cartelle locali: si usa il repo di esempio.
+    /// The browser cannot see local folders: the sample repo is used.
     fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
         on_done(None);
     }
 
-    /// Il browser non ha thread: il job gira subito (il `MemoryBackend` è istantaneo).
+    /// The browser has no threads: the job runs immediately (the `MemoryBackend` is instant).
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         job();
     }
 
     fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {
         if let Err(e) = download(suggested_name, &bytes) {
-            log::error!("salvataggio file: {e:?}");
+            log::error!("saving file: {e:?}");
         }
     }
 }
@@ -94,7 +94,7 @@ fn pick_file(on_done: Box<dyn FnOnce(Option<Picked>) + Send>) -> Result<(), JsVa
                     bytes: js_sys::Uint8Array::new(&buffer).to_vec(),
                 }),
                 Err(e) => {
-                    log::error!("lettura di {}: {e:?}", file.name());
+                    log::error!("reading {}: {e:?}", file.name());
                     None
                 }
             };
@@ -102,7 +102,7 @@ fn pick_file(on_done: Box<dyn FnOnce(Option<Picked>) + Send>) -> Result<(), JsVa
         });
     });
     input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
-    // La closure deve vivere finché il browser può chiamarla.
+    // The closure must live as long as the browser can call it.
     on_change.forget();
     input.click();
     Ok(())

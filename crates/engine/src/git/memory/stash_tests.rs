@@ -1,4 +1,4 @@
-//! Test degli stash del `MemoryBackend` (i comandi sono in `builtin/stash_tests.rs`).
+//! Stash tests of the `MemoryBackend` (the commands are in `builtin/stash_tests.rs`).
 
 use super::*;
 use crate::{GitBackend, StashPush};
@@ -25,7 +25,7 @@ fn push_keeps_refs_stash_on_the_top_and_drop_backs_it_up() {
             .map(|r| r.target)
     };
     assert_eq!(stash_ref(&repo), Some(b.id));
-    // Il commit dello stash ha la base come primo genitore e i file del worktree salvato.
+    // The stash commit has the base as first parent and the files of the saved worktree.
     let details = repo.show_commit(&b.id.to_string()).unwrap();
     assert_eq!(details.commit.parents[0], head);
     assert_eq!(details.files.len(), 2, "{:?}", details.files);
@@ -61,12 +61,12 @@ fn push_keeps_refs_stash_on_the_top_and_drop_backs_it_up() {
     })
     .unwrap();
     assert_eq!(stash_ref(&repo), None);
-    // `store` lo rimette con i suoi file.
-    repo.stash_store(&b.id, "On main: di nuovo").unwrap();
+    // `store` puts it back with its files.
+    repo.stash_store(&b.id, "On main: again").unwrap();
     let list = repo.stashes().unwrap();
     assert_eq!(
         (list[0].id, list[0].message.as_str()),
-        (b.id, "On main: di nuovo")
+        (b.id, "On main: again")
     );
     let applied = repo
         .stash_apply(&StashApply {

@@ -1,0 +1,14 @@
+---
+source: crates/domain/src/git/patch_tests.rs
+expression: "render(&patch(&f, lines, dir))"
+---
+diff --git a/new name.txt b/new name.txt
+--- a/new name.txt→
++++ b/new name.txt→
+@@ -4,5 +4,5 @@ line 3
+ line 4
+ line 5
+ line 6
+-line 7 renamed
++line 7
+ line 8

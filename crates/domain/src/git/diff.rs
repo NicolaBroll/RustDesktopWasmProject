@@ -1,47 +1,47 @@
-//! Parser del formato unified diff di `git diff`, e il serializzatore inverso.
+//! Parser of git's unified diff format (`git diff`), and the inverse serializer.
 //!
-//! # Formato
+//! # Format
 //!
-//! Con [`DIFF_ARGS`] l'output è una sequenza di sezioni, una per file:
+//! With [`DIFF_ARGS`] the output is a sequence of sections, one per file:
 //!
 //! ```text
-//! diff --git a/<vecchio> b/<nuovo>
+//! diff --git a/<old> b/<new>
 //! [old mode <m>, new mode <m> | new file mode <m> | deleted file mode <m>]
 //! [similarity index <n>%, rename from <p>, rename to <p> | copy from <p>, copy to <p>]
-//! [index <id>..<id>[ <modo>]]
+//! [index <id>..<id>[ <mode>]]
 //! [Binary files a/<p> and b/<p> differ
 //!  | --- a/<p>|/dev/null, +++ b/<p>|/dev/null, hunk...]
 //! ```
 //!
-//! Comportamento verificato con git 2.43:
+//! Behavior verified with git 2.43:
 //!
-//! - le intestazioni hanno sempre quest'ordine; mancano quelle che non servono: un cambio di
-//!   solo modo o una rinomina esatta non hanno `index` né hunk, un file nuovo vuoto ha solo
-//!   `new file mode` e `index`;
-//! - `index` ha il modo in fondo solo se è uguale nei due lati (mai per file nuovi o eliminati);
-//!   con `--full-index` gli id sono completi;
-//! - un nome che contiene `"`, `\` o caratteri di controllo (a capo, tab, ...) è tra
-//!   virgolette con escape in stile C, prefisso compreso (`"a/con\ttab.txt"`), anche con
-//!   `core.quotePath=false`; con `core.quotePath=true` anche i byte non ASCII diventano escape
-//!   ottali. Il parser decodifica entrambe le forme; [`FileDiff::write_header`] scrive la prima;
-//! - dopo `--- <nome>` e `+++ <nome>` git aggiunge un tab se il nome scritto contiene uno
-//!   spazio;
-//! - un cambio di tipo (es. da file a link simbolico) è una coppia di sezioni sullo stesso
-//!   percorso: file eliminato, poi file nuovo;
-//! - un sottomodulo (modo `160000`) con `--submodule=short` è un file di testo di una riga,
-//!   `Subproject commit <id>` (con `-dirty` se ha modifiche);
-//! - l'hunk inizia con `@@ -<inizio>[,<righe>] +<inizio>[,<righe>] @@[ <contesto>]`: il
-//!   numero di righe manca quando vale 1; con 0 righe l'inizio è la riga precedente;
-//!   `<contesto>` è la riga della funzione che contiene l'hunk, se git la trova;
-//! - ogni riga dell'hunk inizia con ` ` (contesto), `-` (tolta) o `+` (aggiunta); una riga
-//!   `\ No newline at end of file` dopo una riga dice che quella riga non ha l'a capo finale.
-//!   Con `diff.suppressBlankEmpty` una riga di contesto vuota è scritta senza lo spazio: il
-//!   parser la accetta. Il parser conta le righe dall'intestazione dell'hunk, quindi una riga
-//!   tolta `-- x` (scritta `--- x`) non è scambiata per un'intestazione;
-//! - durante un merge con conflitti, nel worktree un file in conflitto è un diff combinato
-//!   (`diff --cc <nome>` con hunk `@@@`), e nell'indice una riga `* Unmerged path <nome>` (con
-//!   il nome senza virgolette né escape). Il parser li riporta come [`Change::Unmerged`] senza
-//!   hunk: il contenuto del diff combinato non è letto.
+//! - the headers always come in this order; the ones not needed are missing: a mode-only
+//!   change or an exact rename has no `index` nor hunks, an empty new file has only
+//!   `new file mode` and `index`;
+//! - `index` has the mode at the end only if it is the same on both sides (never for new or deleted files);
+//!   with `--full-index` the ids are full;
+//! - a name containing `"`, `\` or control characters (newline, tab, ...) is quoted
+//!   with C-style escapes, prefix included (`"a/with\ttab.txt"`), even with
+//!   `core.quotePath=false`; with `core.quotePath=true` non-ASCII bytes also become octal
+//!   escapes. The parser decodes both forms; [`FileDiff::write_header`] writes the first;
+//! - after `--- <name>` and `+++ <name>` git adds a tab if the written name contains a
+//!   space;
+//! - a type change (e.g. from file to symbolic link) is a pair of sections on the same
+//!   path: deleted file, then new file;
+//! - a submodule (mode `160000`) with `--submodule=short` is a one-line text file,
+//!   `Subproject commit <id>` (with `-dirty` if it has changes);
+//! - the hunk starts with `@@ -<start>[,<lines>] +<start>[,<lines>] @@[ <context>]`: the
+//!   line count is missing when it is 1; with 0 lines the start is the preceding line;
+//!   `<context>` is the function line containing the hunk, if git finds it;
+//! - every hunk line starts with ` ` (context), `-` (removed) or `+` (added); a
+//!   `\ No newline at end of file` line after a line says that line has no trailing newline.
+//!   With `diff.suppressBlankEmpty` an empty context line is written without the space: the
+//!   parser accepts it. The parser counts lines from the hunk header, so a removed
+//!   line `-- x` (written `--- x`) is not mistaken for a header;
+//! - during a merge with conflicts, in the worktree a conflicted file is a combined diff
+//!   (`diff --cc <name>` with `@@@` hunks), and in the index a `* Unmerged path <name>` line (with
+//!   the name unquoted and unescaped). The parser reports them as [`Change::Unmerged`] without
+//!   hunks: the content of the combined diff is not read.
 
 use super::quote::{unquote, unquote_prefix, write_quoted};
 use super::status::{mode, oid, show};
@@ -49,28 +49,28 @@ use super::{ByteText, Change, Oid, RepoPath};
 use crate::DomainError;
 use serde::{Deserialize, Serialize};
 
-/// Argomenti obbligatori di `git diff` per produrre l'input di [`parse_diff`], insieme a
-/// `-c core.quotePath=false` prima del sottocomando (il backend lo passa già a ogni comando).
+/// Mandatory arguments of `git diff` to produce the input of [`parse_diff`], together with
+/// `-c core.quotePath=false` before the subcommand (the backend already passes it to every command).
 ///
-/// Chi chiama aggiunge cosa confrontare (`--cached`, revisioni) e i percorsi dopo `--`; può
-/// aggiungere `-C`/`--find-copies-harder`, ma non opzioni che cambiano il formato, come
-/// `--stat`, `--word-diff`, `--binary` o `-B`, né un altro `--unified`.
+/// The caller adds what to compare (`--cached`, revisions) and the paths after `--`; it may
+/// add `-C`/`--find-copies-harder`, but not options that change the format, such as
+/// `--stat`, `--word-diff`, `--binary` or `-B`, nor another `--unified`.
 ///
-/// - `--no-color`: niente sequenze di colore con `color.diff=always`;
-/// - `--no-ext-diff`: niente programma esterno da `diff.external` o dagli attributi;
-/// - `--no-textconv`: il contenuto vero dei file, non quello convertito da un filtro `textconv`;
-/// - `--find-renames`: rinomine riconosciute anche con `diff.renames=false`;
-/// - `--full-index`: id completi nella riga `index`, per leggerli come [`Oid`];
-/// - `--src-prefix=a/` e `--dst-prefix=b/`: prefissi fissi qualunque siano `diff.noprefix` e
-///   `diff.mnemonicPrefix` (che li toglierebbe o li cambierebbe in `i/`, `w/`, `c/`...);
-/// - `--submodule=short`: un sottomodulo come riga `Subproject commit <id>` anche con
-///   `diff.submodule=log`, che scriverebbe l'elenco dei commit al posto del diff;
-/// - `--no-relative`: percorsi dalla radice del repo anche con `diff.relative=true`;
-/// - `--unified=3`: tre righe di contesto anche con `diff.context=0` (o un altro valore) nella
-///   configurazione. Il diff mostrato, il suo digest e le patch per righe costruite da lì
-///   (`build_patch`) hanno così sempre lo stesso contesto, e un hunk senza contesto in testa o
-///   in coda vuol dire che tocca l'inizio o la fine del file: senza contesto un hunk di solo
-///   inserimento (`@@ -2,0 +3 @@`) non dice più dove va, e `git apply` lo ancorerebbe altrove.
+/// - `--no-color`: no color sequences with `color.diff=always`;
+/// - `--no-ext-diff`: no external program from `diff.external` or from attributes;
+/// - `--no-textconv`: the real content of the files, not the one converted by a `textconv` filter;
+/// - `--find-renames`: renames recognized even with `diff.renames=false`;
+/// - `--full-index`: full ids in the `index` line, to read them as [`Oid`];
+/// - `--src-prefix=a/` and `--dst-prefix=b/`: fixed prefixes whatever `diff.noprefix` and
+///   `diff.mnemonicPrefix` are (which would remove them or change them to `i/`, `w/`, `c/`...);
+/// - `--submodule=short`: a submodule as a `Subproject commit <id>` line even with
+///   `diff.submodule=log`, which would write the list of commits instead of the diff;
+/// - `--no-relative`: paths from the repo root even with `diff.relative=true`;
+/// - `--unified=3`: three context lines even with `diff.context=0` (or another value) in the
+///   configuration. The displayed diff, its digest and the line patches built from it
+///   (`build_patch`) thus always have the same context, and a hunk without context at the start or
+///   end means it touches the start or end of the file: without context an insert-only hunk
+///   (`@@ -2,0 +3 @@`) no longer says where it goes, and `git apply` would anchor it elsewhere.
 pub const DIFF_ARGS: &[&str] = &[
     "--no-color",
     "--no-ext-diff",
@@ -84,20 +84,20 @@ pub const DIFF_ARGS: &[&str] = &[
     "--unified=3",
 ];
 
-/// Il testo che git scrive dopo una riga senza a capo finale.
+/// The text git writes after a line without a trailing newline.
 pub const NO_NEWLINE_MARKER: &[u8] = b"\\ No newline at end of file";
 
 const GITLINK: u32 = 0o160000;
 
-/// Un diff: un elemento per file, nell'ordine di git.
+/// A diff: one element per file, in git's order.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Diff {
     pub files: Vec<FileDiff>,
 }
 
 impl Diff {
-    /// Riscrive il diff nel formato di git (vedi [`FileDiff::to_patch`]). Per un diff letto da
-    /// `git diff` con [`DIFF_ARGS`] e senza conflitti il risultato è identico all'originale.
+    /// Rewrites the diff in git's format (see [`FileDiff::to_patch`]). For a diff read from
+    /// `git diff` with [`DIFF_ARGS`] and without conflicts the result is identical to the original.
     pub fn to_patch(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for file in &self.files {
@@ -107,50 +107,50 @@ impl Diff {
     }
 }
 
-/// Le modifiche a un file.
+/// The changes to a file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileDiff {
-    /// Percorso prima della modifica (senza `a/`). Per un file nuovo è uguale a `new_path`,
-    /// come nella riga `diff --git` di git.
+    /// Path before the change (without `a/`). For a new file it equals `new_path`,
+    /// as in git's `diff --git` line.
     pub old_path: RepoPath,
-    /// Percorso dopo la modifica (senza `b/`). Per un file eliminato è uguale a `old_path`.
+    /// Path after the change (without `b/`). For a deleted file it equals `old_path`.
     pub new_path: RepoPath,
-    /// Solo [`Change::Added`], [`Change::Deleted`], [`Change::Modified`] (contenuto, modo o
-    /// entrambi), [`Change::Renamed`], [`Change::Copied`] o [`Change::Unmerged`] (file in
-    /// conflitto: senza hunk, modi né id).
+    /// Only [`Change::Added`], [`Change::Deleted`], [`Change::Modified`] (content, mode or
+    /// both), [`Change::Renamed`], [`Change::Copied`] or [`Change::Unmerged`] (conflicted
+    /// file: without hunks, modes or ids).
     pub change: Change,
-    /// Somiglianza in percentuale (0–100) per rinomine e copie.
+    /// Similarity as a percentage (0–100) for renames and copies.
     pub similarity: Option<u8>,
-    /// Modo prima della modifica, in ottale (es. `0o100644`, `0o100755`, `0o120000` per un
-    /// link, `0o160000` per un sottomodulo). `None` per un file nuovo, o se git non lo scrive
-    /// (rinomina esatta senza cambio di modo).
+    /// Mode before the change, in octal (e.g. `0o100644`, `0o100755`, `0o120000` for a
+    /// link, `0o160000` for a submodule). `None` for a new file, or if git does not write it
+    /// (exact rename without a mode change).
     pub old_mode: Option<u32>,
-    /// Modo dopo la modifica. `None` per un file eliminato, o se git non lo scrive.
+    /// Mode after the change. `None` for a deleted file, or if git does not write it.
     pub new_mode: Option<u32>,
-    /// Id del contenuto prima della modifica (tutti zeri per un file nuovo); `None` se git non
-    /// scrive la riga `index` (contenuto invariato: cambio di solo modo, rinomina esatta).
+    /// Id of the content before the change (all zeros for a new file); `None` if git does not
+    /// write the `index` line (unchanged content: mode-only change, exact rename).
     pub old_oid: Option<Oid>,
-    /// Id del contenuto dopo la modifica (tutti zeri per un file eliminato); `None` come sopra.
+    /// Id of the content after the change (all zeros for a deleted file); `None` as above.
     pub new_oid: Option<Oid>,
-    /// Vero se git considera il file binario (`Binary files ... differ`): niente hunk.
+    /// True if git considers the file binary (`Binary files ... differ`): no hunks.
     pub binary: bool,
-    /// Gli hunk, in ordine. Vuoto per binari, file vuoti, cambi di solo modo, rinomine esatte e
-    /// file in conflitto.
+    /// The hunks, in order. Empty for binaries, empty files, mode-only changes, exact renames and
+    /// conflicted files.
     pub hunks: Vec<Hunk>,
 }
 
 impl FileDiff {
-    /// Il percorso da mostrare: quello nuovo (per un file eliminato coincide con il vecchio).
+    /// The path to display: the new one (for a deleted file it coincides with the old one).
     pub fn path(&self) -> &RepoPath {
         &self.new_path
     }
 
-    /// Vero se il percorso è un sottomodulo (modo `160000`) prima o dopo la modifica.
+    /// True if the path is a submodule (mode `160000`) before or after the change.
     pub fn is_submodule(&self) -> bool {
         self.old_mode == Some(GITLINK) || self.new_mode == Some(GITLINK)
     }
 
-    /// Numero di righe aggiunte e tolte, per un riepilogo come `+3 −1`.
+    /// Number of added and removed lines, for a summary like `+3 −1`.
     pub fn line_counts(&self) -> (usize, usize) {
         let lines = self.hunks.iter().flat_map(|h| &h.lines);
         lines.fold((0, 0), |(add, del), l| match l.kind {
@@ -160,12 +160,12 @@ impl FileDiff {
         })
     }
 
-    /// Le intestazioni del file come le scrive git (da `diff --git` a `+++`, oppure fino a
-    /// `Binary files ... differ`), con i nomi tra virgolette solo dove servono. Seguite dagli
-    /// hunk (vedi [`Hunk::write_to`]) formano una patch per `git apply`.
+    /// The file's headers as git writes them (from `diff --git` to `+++`, or up to
+    /// `Binary files ... differ`), with names quoted only where needed. Followed by the
+    /// hunks (see [`Hunk::write_to`]) they form a patch for `git apply`.
     ///
-    /// Le righe `---`/`+++` ci sono solo se il file ha hunk, come in git. Per un file in
-    /// conflitto scrive solo `* Unmerged path <nome>`, che `git apply` non accetta.
+    /// The `---`/`+++` lines are present only if the file has hunks, as in git. For a
+    /// conflicted file it writes only `* Unmerged path <name>`, which `git apply` does not accept.
     pub fn write_header(&self, out: &mut Vec<u8>) {
         if self.change == Change::Unmerged {
             out.extend_from_slice(b"* Unmerged path ");
@@ -259,7 +259,7 @@ impl FileDiff {
         }
     }
 
-    /// Intestazioni e hunk del file, nel formato di git.
+    /// Headers and hunks of the file, in git's format.
     pub fn to_patch(&self) -> Vec<u8> {
         let mut out = Vec::new();
         self.write_patch(&mut out);
@@ -276,27 +276,27 @@ impl FileDiff {
     }
 }
 
-/// Un blocco di righe cambiate, con il contesto intorno.
+/// A block of changed lines, with the context around it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hunk {
-    /// Prima riga nel file vecchio (da 1); con `old_count == 0` è la riga dopo cui si
-    /// inserisce (0 per l'inizio del file).
+    /// First line in the old file (from 1); with `old_count == 0` it is the line after which
+    /// the insertion happens (0 for the start of the file).
     pub old_start: u32,
-    /// Righe del file vecchio nell'hunk (contesto e tolte).
+    /// Lines of the old file in the hunk (context and removed).
     pub old_count: u32,
-    /// Prima riga nel file nuovo, come `old_start`.
+    /// First line in the new file, like `old_start`.
     pub new_start: u32,
-    /// Righe del file nuovo nell'hunk (contesto e aggiunte).
+    /// Lines of the new file in the hunk (context and added).
     pub new_count: u32,
-    /// Il testo dopo il secondo `@@` (senza lo spazio iniziale), di solito la riga della
-    /// funzione che contiene l'hunk; vuoto se git non ne scrive.
+    /// The text after the second `@@` (without the leading space), usually the line of the
+    /// function containing the hunk; empty if git writes none.
     pub section: ByteText,
     pub lines: Vec<Line>,
 }
 
 impl Hunk {
-    /// L'intestazione `@@ -a,b +c,d @@ contesto`, senza a capo; il numero di righe è omesso
-    /// quando vale 1, come fa git.
+    /// The header `@@ -a,b +c,d @@ context`, without newline; the line count is omitted
+    /// when it is 1, as git does.
     pub fn header(&self) -> Vec<u8> {
         let range = |start: u32, count: u32| match count {
             1 => start.to_string(),
@@ -315,9 +315,9 @@ impl Hunk {
         out
     }
 
-    /// Scrive intestazione e righe nel formato di git, con `\ No newline at end of file` dopo
-    /// le righe senza a capo. I conteggi dell'intestazione sono quelli dei campi, non
-    /// ricalcolati dalle righe (per una patch con righe tolte usare `git apply --recount`).
+    /// Writes header and lines in git's format, with `\ No newline at end of file` after
+    /// the lines without a newline. The header counts are those of the fields, not
+    /// recomputed from the lines (for a patch with removed lines use `git apply --recount`).
     pub fn write_to(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.header());
         out.push(b'\n');
@@ -327,19 +327,19 @@ impl Hunk {
     }
 }
 
-/// Il tipo di una riga di un hunk.
+/// The kind of a hunk line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LineKind {
-    /// ` `: uguale nei due file.
+    /// ` `: the same in both files.
     Context,
-    /// `+`: solo nel file nuovo.
+    /// `+`: only in the new file.
     Added,
-    /// `-`: solo nel file vecchio.
+    /// `-`: only in the old file.
     Removed,
 }
 
 impl LineKind {
-    /// Il carattere con cui git inizia la riga.
+    /// The character git starts the line with.
     pub fn prefix(self) -> u8 {
         match self {
             LineKind::Context => b' ',
@@ -349,24 +349,24 @@ impl LineKind {
     }
 }
 
-/// Una riga di un hunk.
+/// A hunk line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Line {
     pub kind: LineKind,
-    /// Numero della riga nel file vecchio (da 1); `None` per le righe aggiunte.
+    /// Line number in the old file (from 1); `None` for added lines.
     pub old_line: Option<u32>,
-    /// Numero della riga nel file nuovo (da 1); `None` per le righe tolte.
+    /// Line number in the new file (from 1); `None` for removed lines.
     pub new_line: Option<u32>,
-    /// Il contenuto senza il prefisso e senza l'a capo finale (un eventuale `\r` resta).
+    /// The content without the prefix and without the trailing newline (a possible `\r` stays).
     pub content: ByteText,
-    /// Vero se nel file la riga non ha l'a capo finale (seguita da
-    /// `\ No newline at end of file`): può esserlo solo l'ultima riga di un lato.
+    /// True if in the file the line has no trailing newline (followed by
+    /// `\ No newline at end of file`): only the last line of a side can be.
     pub no_newline: bool,
 }
 
 impl Line {
-    /// Scrive la riga nel formato di git: prefisso, contenuto, a capo e, se serve, la riga
-    /// `\ No newline at end of file`.
+    /// Writes the line in git's format: prefix, content, newline and, if needed, the
+    /// `\ No newline at end of file` line.
     pub fn write_to(&self, out: &mut Vec<u8>) {
         out.push(self.kind.prefix());
         out.extend_from_slice(self.content.as_bytes());
@@ -383,19 +383,19 @@ fn line(out: &mut Vec<u8>, text: &str) {
     out.push(b'\n');
 }
 
-/// Legge l'output di `git diff` prodotto con [`DIFF_ARGS`].
+/// Reads the output of `git diff` produced with [`DIFF_ARGS`].
 ///
-/// Un input vuoto dà un diff senza file. Un input che non termina con un a capo, una riga
-/// inattesa, un'intestazione non valida, un hunk con meno righe di quelle dichiarate o un nome
-/// senza i prefissi `a/`/`b/` danno [`DomainError::InvalidGitOutput`], con il numero della riga
-/// (da 1) coinvolta.
+/// An empty input gives a diff without files. An input that does not end with a newline, an
+/// unexpected line, an invalid header, a hunk with fewer lines than declared or a name
+/// without the `a/`/`b/` prefixes gives [`DomainError::InvalidGitOutput`], with the number of the line
+/// (from 1) involved.
 pub fn parse_diff(input: &[u8]) -> Result<Diff, DomainError> {
     if input.is_empty() {
         return Ok(Diff::default());
     }
     let Some(body) = input.strip_suffix(b"\n") else {
         return Err(invalid(
-            "l'output non termina con un a capo: è troncato".to_owned(),
+            "the output does not end with a newline: it is truncated".to_owned(),
         ));
     };
     let lines: Vec<&[u8]> = body.split(|&b| b == b'\n').collect();
@@ -417,7 +417,7 @@ pub fn parse_diff(input: &[u8]) -> Result<Diff, DomainError> {
             Ok(parser.unmerged(rest))
         } else {
             Err(format!(
-                "riga n. {n}: `{}` inattesa, atteso l'inizio di un file (`diff --git`)",
+                "line {n}: unexpected `{}`, expected the start of a file (`diff --git`)",
                 show(first)
             ))
         };
@@ -431,7 +431,7 @@ struct Parser<'a> {
     pos: usize,
 }
 
-/// Intestazioni lette per un file, prima di stabilire i percorsi.
+/// Headers read for a file, before establishing the paths.
 #[derive(Default)]
 struct Headers {
     change: Option<Change>,
@@ -451,19 +451,19 @@ impl<'a> Parser<'a> {
         self.lines.get(self.pos).copied()
     }
 
-    /// Vero se la riga corrente inizia un nuovo file (o non ci sono più righe).
+    /// True if the current line starts a new file (or there are no more lines).
     fn at_file_start(&self) -> bool {
         self.peek()
             .is_none_or(|l| l.starts_with(b"diff ") || l.starts_with(b"* Unmerged path "))
     }
 
-    /// Una sezione `diff --git`; `n` è il numero della sua prima riga.
+    /// A `diff --git` section; `n` is the number of its first line.
     fn git_file(&mut self, rest: &[u8], n: usize) -> Result<FileDiff, String> {
-        let at = |n: usize, reason: String| format!("riga n. {n}: {reason}");
+        let at = |n: usize, reason: String| format!("line {n}: {reason}");
         let git_paths = git_line_paths(rest).map_err(|e| at(n, e))?;
         let mut h = Headers::default();
         let set_change = |h: &mut Headers, c: Change, n: usize| match h.change {
-            Some(old) if old != c => Err(at(n, "intestazioni di tipi di modifica diversi".into())),
+            Some(old) if old != c => Err(at(n, "headers of different change types".into())),
             _ => {
                 h.change = Some(c);
                 Ok(())
@@ -512,25 +512,26 @@ impl<'a> Parser<'a> {
                 let n = self.pos + 1;
                 let plus = match self.peek().and_then(|p| p.strip_prefix(b"+++ ")) {
                     Some(p) => label(p, b"b/").map_err(|e| at(n, e))?,
-                    None => return Err(at(n, "manca la riga `+++` dopo `---`".into())),
+                    None => return Err(at(n, "missing `+++` line after `---`".into())),
                 };
                 self.pos += 1;
                 h.labels = Some((minus, plus));
                 break;
             } else if l.starts_with(b"GIT binary patch") {
                 return Err(err(
-                    "patch binaria (`--binary`) non supportata: usa gli argomenti di DIFF_ARGS"
+                    "binary patch (`--binary`) not supported: use the arguments of DIFF_ARGS"
                         .into(),
                 ));
             } else if l.starts_with(b"dissimilarity index ") {
                 return Err(err(
-                    "riscrittura completa (`-B`) non supportata: usa gli argomenti di DIFF_ARGS"
-                        .into(),
+                    "complete rewrite (`-B`) not supported: use the arguments of DIFF_ARGS".into(),
                 ));
             } else if l.starts_with(b"@@") {
-                return Err(err("hunk senza le righe `---` e `+++` prima".into()));
+                return Err(err(
+                    "hunk without the `---` and `+++` lines before it".into()
+                ));
             } else {
-                return Err(err(format!("intestazione `{}` sconosciuta", show(l))));
+                return Err(err(format!("unknown header `{}`", show(l))));
             }
         }
 
@@ -542,22 +543,19 @@ impl<'a> Parser<'a> {
                 (Some(a), None) => (a.clone(), a.clone()),
                 (None, Some(b)) => (b.clone(), b.clone()),
                 (None, None) => {
-                    return Err(at(n, "`---` e `+++` sono entrambi `/dev/null`".into()));
+                    return Err(at(n, "`---` and `+++` are both `/dev/null`".into()));
                 }
             },
             (None, None, None) => git_paths.ok_or_else(|| {
                 at(
                     n,
-                    format!(
-                        "impossibile ricavare i percorsi da `diff --git {}`",
-                        show(rest)
-                    ),
+                    format!("cannot get the paths from `diff --git {}`", show(rest)),
                 )
             })?,
             _ => {
                 return Err(at(
                     n,
-                    "rinomina o copia senza entrambe le righe `from` e `to`".into(),
+                    "rename or copy without both `from` and `to` lines".into(),
                 ));
             }
         };
@@ -567,12 +565,12 @@ impl<'a> Parser<'a> {
             new_mode = new_mode.or(Some(m));
         }
         if matches!(change, Change::Added) && h.labels.as_ref().is_some_and(|l| l.0.is_some()) {
-            return Err(at(n, "file nuovo con `---` diverso da `/dev/null`".into()));
+            return Err(at(n, "new file with `---` other than `/dev/null`".into()));
         }
         if matches!(change, Change::Deleted) && h.labels.as_ref().is_some_and(|l| l.1.is_some()) {
             return Err(at(
                 n,
-                "file eliminato con `+++` diverso da `/dev/null`".into(),
+                "deleted file with `+++` other than `/dev/null`".into(),
             ));
         }
 
@@ -585,13 +583,13 @@ impl<'a> Parser<'a> {
                 hunks.push(self.hunk(l)?);
             }
             if hunks.is_empty() {
-                return Err(at(self.pos + 1, "nessun hunk dopo la riga `+++`".into()));
+                return Err(at(self.pos + 1, "no hunk after the `+++` line".into()));
             }
             if !self.at_file_start() {
                 let l = self.peek().unwrap_or_default();
                 return Err(at(
                     self.pos + 1,
-                    format!("`{}` inattesa dopo l'ultimo hunk", show(l)),
+                    format!("unexpected `{}` after the last hunk", show(l)),
                 ));
             }
         }
@@ -610,10 +608,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Un hunk che inizia alla riga corrente (`header`).
+    /// A hunk starting at the current line (`header`).
     fn hunk(&mut self, header: &[u8]) -> Result<Hunk, String> {
         let n = self.pos + 1;
-        let at = |n: usize, reason: String| format!("riga n. {n}: {reason}");
+        let at = |n: usize, reason: String| format!("line {n}: {reason}");
         let (old_start, old_count, new_start, new_count, section) =
             hunk_header(header).map_err(|e| at(n, e))?;
         self.pos += 1;
@@ -628,8 +626,8 @@ impl<'a> Parser<'a> {
                     return Err(at(
                         n,
                         format!(
-                            "hunk troncato: mancano {old_left} righe del file vecchio e \
-                             {new_left} del nuovo"
+                            "truncated hunk: {old_left} lines of the old file and \
+                             {new_left} of the new one are missing"
                         ),
                     ));
                 }
@@ -639,7 +637,7 @@ impl<'a> Parser<'a> {
                 let Some(last) = lines.last_mut() else {
                     return Err(at(
                         n,
-                        "`\\` all'inizio di un hunk, senza una riga prima".into(),
+                        "`\\` at the start of a hunk, without a line before it".into(),
                     ));
                 };
                 last.no_newline = true;
@@ -651,7 +649,7 @@ impl<'a> Parser<'a> {
             }
             let (kind, content) = match l.split_first() {
                 Some((b' ', c)) => (LineKind::Context, c),
-                // `diff.suppressBlankEmpty`: riga di contesto vuota senza lo spazio.
+                // `diff.suppressBlankEmpty`: empty context line without the space.
                 None => (LineKind::Context, &[][..]),
                 Some((b'-', c)) => (LineKind::Removed, c),
                 Some((b'+', c)) => (LineKind::Added, c),
@@ -659,9 +657,9 @@ impl<'a> Parser<'a> {
                     return Err(at(
                         n,
                         format!(
-                            "`{}` non è una riga di hunk (deve iniziare con ` `, `-`, `+` o \
-                             `\\`); mancano {old_left} righe del file vecchio e {new_left} del \
-                             nuovo",
+                            "`{}` is not a hunk line (it must start with ` `, `-`, `+` or \
+                             `\\`); {old_left} lines of the old file and {new_left} of the new \
+                             one are missing",
                             show(l)
                         ),
                     ));
@@ -673,7 +671,7 @@ impl<'a> Parser<'a> {
                 return Err(at(
                     n,
                     format!(
-                        "`{}`: l'hunk ha più righe di quelle dichiarate in `{}`",
+                        "`{}`: the hunk has more lines than declared in `{}`",
                         show(l),
                         show(header)
                     ),
@@ -709,12 +707,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `diff --cc <nome>`: file in conflitto; il contenuto del diff combinato si salta fino al
-    /// file seguente (le sue righe iniziano con ` `, `+`, `-` o `\`, mai con `diff `).
+    /// `diff --cc <name>`: conflicted file; the content of the combined diff is skipped up to the
+    /// next file (its lines start with ` `, `+`, `-` or `\`, never with `diff `).
     fn combined(&mut self, rest: &[u8], n: usize) -> Result<FileDiff, String> {
-        let path = unquote(rest).map_err(|e| format!("riga n. {n}: {e}"))?;
+        let path = unquote(rest).map_err(|e| format!("line {n}: {e}"))?;
         if path.is_empty() {
-            return Err(format!("riga n. {n}: percorso vuoto in `diff --cc`"));
+            return Err(format!("line {n}: empty path in `diff --cc`"));
         }
         while !self.at_file_start() {
             self.pos += 1;
@@ -722,8 +720,8 @@ impl<'a> Parser<'a> {
         Ok(unmerged_file(RepoPath::from(path)))
     }
 
-    /// `* Unmerged path <nome>`: il nome è scritto così com'è, quindi un a capo nel nome lo
-    /// continua sulle righe seguenti, fino all'inizio del file successivo.
+    /// `* Unmerged path <name>`: the name is written as is, so a newline in the name
+    /// continues it on the following lines, up to the start of the next file.
     fn unmerged(&mut self, rest: &[u8]) -> FileDiff {
         let mut path = rest.to_vec();
         while !self.at_file_start() {
@@ -750,9 +748,9 @@ pub(super) fn unmerged_file(path: RepoPath) -> FileDiff {
     }
 }
 
-/// I due percorsi della riga `diff --git a/<vecchio> b/<nuovo>`, senza prefissi. `None` se
-/// sono ambigui (due nomi senza virgolette, diversi, con ` b/` ripetuto): allora servono le
-/// righe `rename`/`copy` o `---`/`+++`.
+/// The two paths of the `diff --git a/<old> b/<new>` line, without prefixes. `None` if
+/// they are ambiguous (two unquoted names, different, with ` b/` repeated): then the
+/// `rename`/`copy` or `---`/`+++` lines are needed.
 fn git_line_paths(rest: &[u8]) -> Result<Option<(RepoPath, RepoPath)>, String> {
     let strip = |name: Vec<u8>, prefix: &[u8]| -> Result<RepoPath, String> {
         match name.strip_prefix(prefix) {
@@ -763,13 +761,16 @@ fn git_line_paths(rest: &[u8]) -> Result<Option<(RepoPath, RepoPath)>, String> {
     if rest.starts_with(b"\"") {
         let (a, used) = unquote_prefix(rest)?;
         let Some(b) = rest[used..].strip_prefix(b" ") else {
-            return Err(format!("manca lo spazio fra i nomi in `{}`", show(rest)));
+            return Err(format!(
+                "missing space between the names in `{}`",
+                show(rest)
+            ));
         };
         return Ok(Some((strip(a, b"a/")?, strip(unquote(b)?, b"b/")?)));
     }
     if rest.ends_with(b"\"") {
-        // Primo nome senza virgolette, secondo con: si cerca il ` "` da cui il resto è
-        // esattamente una stringa tra virgolette.
+        // First name unquoted, second quoted: look for the ` "` from which the rest is
+        // exactly a quoted string.
         for (i, w) in rest.windows(2).enumerate() {
             if w == b" \""
                 && let Ok(b) = unquote(&rest[i + 1..])
@@ -777,12 +778,9 @@ fn git_line_paths(rest: &[u8]) -> Result<Option<(RepoPath, RepoPath)>, String> {
                 return Ok(Some((strip(rest[..i].to_vec(), b"a/")?, strip(b, b"b/")?)));
             }
         }
-        return Err(format!(
-            "nomi tra virgolette non validi in `{}`",
-            show(rest)
-        ));
+        return Err(format!("invalid quoted names in `{}`", show(rest)));
     }
-    // Stesso nome nei due lati: `a/<n> b/<n>`.
+    // Same name on both sides: `a/<n> b/<n>`.
     if rest.len() >= 5 && (rest.len() - 5).is_multiple_of(2) {
         let n = (rest.len() - 5) / 2;
         let (a, b) = rest.split_at(2 + n);
@@ -806,14 +804,14 @@ fn git_line_paths(rest: &[u8]) -> Result<Option<(RepoPath, RepoPath)>, String> {
     }
 }
 
-/// Il nome di `---`/`+++`: `None` per `/dev/null`, altrimenti senza `prefix`. Il tab che git
-/// aggiunge dopo un nome con spazi si toglie.
+/// The name of `---`/`+++`: `None` for `/dev/null`, otherwise without `prefix`. The tab that git
+/// adds after a name with spaces is removed.
 fn label(raw: &[u8], prefix: &[u8]) -> Result<Option<RepoPath>, String> {
     let name = if raw.starts_with(b"\"") {
         let (name, used) = unquote_prefix(raw)?;
         match &raw[used..] {
             [] | [b'\t'] => name,
-            _ => return Err(format!("testo dopo il nome in `{}`", show(raw))),
+            _ => return Err(format!("text after the name in `{}`", show(raw))),
         }
     } else {
         let name = raw.strip_suffix(b"\t").unwrap_or(raw);
@@ -830,53 +828,48 @@ fn label(raw: &[u8], prefix: &[u8]) -> Result<Option<RepoPath>, String> {
 
 fn missing_prefix(name: &[u8], prefix: &[u8]) -> String {
     format!(
-        "il nome `{}` non inizia con `{}`: serve `--src-prefix=a/ --dst-prefix=b/` (DIFF_ARGS)",
+        "the name `{}` does not start with `{}`: `--src-prefix=a/ --dst-prefix=b/` is needed (DIFF_ARGS)",
         show(name),
         show(prefix)
     )
 }
 
-/// Un percorso di `rename from`/`rename to`/`copy from`/`copy to`, senza prefisso.
+/// A path of `rename from`/`rename to`/`copy from`/`copy to`, without prefix.
 fn header_path(raw: &[u8]) -> Result<RepoPath, String> {
     let p = unquote(raw)?;
     if p.is_empty() {
-        return Err("percorso vuoto".to_owned());
+        return Err("empty path".to_owned());
     }
     Ok(RepoPath::from(p))
 }
 
-/// `<n>%` con `n` fra 0 e 100.
+/// `<n>%` with `n` between 0 and 100.
 fn percent(s: &[u8]) -> Result<u8, String> {
     s.strip_suffix(b"%")
         .and_then(super::log::parse_digits)
         .and_then(|v| u8::try_from(v).ok())
         .filter(|v| *v <= 100)
-        .ok_or_else(|| format!("`{}` non è una percentuale valida", show(s)))
+        .ok_or_else(|| format!("`{}` is not a valid percentage", show(s)))
 }
 
-/// `<id>..<id>[ <modo>]`.
+/// `<id>..<id>[ <mode>]`.
 fn index_line(s: &[u8]) -> Result<(Oid, Oid, Option<u32>), String> {
     let (ids, m) = match s.iter().position(|&b| b == b' ') {
         Some(i) => (&s[..i], Some(mode(&s[i + 1..])?)),
         None => (s, None),
     };
     let Some(dots) = ids.windows(2).position(|w| w == b"..") else {
-        return Err(format!("riga `index {}` senza `..`", show(s)));
+        return Err(format!("`index {}` line without `..`", show(s)));
     };
-    let hint = |e: String| format!("{e}; con `--full-index` (DIFF_ARGS) gli id sono completi");
-    let old = oid(&ids[..dots], "id vecchio").map_err(hint)?;
-    let new = oid(&ids[dots + 2..], "id nuovo").map_err(hint)?;
+    let hint = |e: String| format!("{e}; with `--full-index` (DIFF_ARGS) the ids are complete");
+    let old = oid(&ids[..dots], "old id").map_err(hint)?;
+    let new = oid(&ids[dots + 2..], "new id").map_err(hint)?;
     Ok((old, new, m))
 }
 
-/// `@@ -a[,b] +c[,d] @@[ contesto]`.
+/// `@@ -a[,b] +c[,d] @@[ context]`.
 fn hunk_header(h: &[u8]) -> Result<(u32, u32, u32, u32, &[u8]), String> {
-    let bad = || {
-        format!(
-            "`{}` non è un'intestazione di hunk `@@ -a,b +c,d @@`",
-            show(h)
-        )
-    };
+    let bad = || format!("`{}` is not a hunk header `@@ -a,b +c,d @@`", show(h));
     let rest = h.strip_prefix(b"@@ -").ok_or_else(bad)?;
     let sp = rest.iter().position(|&b| b == b' ').ok_or_else(bad)?;
     let (old_start, old_count) = range(&rest[..sp]).ok_or_else(bad)?;
@@ -892,7 +885,7 @@ fn hunk_header(h: &[u8]) -> Result<(u32, u32, u32, u32, &[u8]), String> {
     Ok((old_start, old_count, new_start, new_count, section))
 }
 
-/// `<inizio>[,<righe>]`; senza righe vale 1.
+/// `<start>[,<lines>]`; without lines it is 1.
 fn range(s: &[u8]) -> Option<(u32, u32)> {
     let num = |d: &[u8]| super::log::parse_digits(d).and_then(|v| u32::try_from(v).ok());
     match s.iter().position(|&b| b == b',') {

@@ -1,4 +1,4 @@
-# Remoti e upstream (remotes.rs).
+# Remotes and upstream (remotes.rs).
 
 remotes-ahead = { $n } commit da pubblicare
 remotes-behind = { $n } commit da scaricare
@@ -7,7 +7,7 @@ remotes-relative = { $counts } rispetto a { $name }
 remotes-upstream-gone = upstream sparito
 remotes-upstream-gone-hint = L'upstream { $name } non c'è più (tolto sul remoto o il remoto non lo ha più): un Fetch non lo riporta; Push lo ricrea
 
-# Sezione «Remoti», aggiunta e rimozione (remotes.rs, view/remotes_view.rs).
+# “Remotes” section, adding and removing (remotes.rs, view/remotes_view.rs).
 remotes-no-url = (senza URL)
 remotes-no-branches = nessun branch
 remotes-branches = { $n } branch

@@ -1,4 +1,4 @@
-# Colonna dei ref e menu dei ref (view/refs.rs).
+# Refs column and ref menu (view/refs.rs).
 
 refs-local-branches = Branch locali
 refs-remote-branches = Branch remoti

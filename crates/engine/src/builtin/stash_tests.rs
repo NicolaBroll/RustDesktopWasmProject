@@ -1,6 +1,6 @@
-//! Test di `stash.list`, `stash.push`, `stash.apply`, `stash.pop`, `stash.drop` e del loro
-//! undo/redo sul `MemoryBackend` (repo di esempio: `README.md` `MM`, `docs/guida.md` `A.`,
-//! `src/lib.rs` `.M`, `note.txt` non tracciato).
+//! Tests of `stash.list`, `stash.push`, `stash.apply`, `stash.pop`, `stash.drop` and their
+//! undo/redo on the `MemoryBackend` (sample repo: `README.md` `MM`, `docs/guide.md` `A.`,
+//! `src/lib.rs` `.M`, `note.txt` untracked).
 
 use crate::{EngineError, GitBackend, MemoryBackend, MemoryOpener, Registry, Session, StashPush};
 use project_domain::{
@@ -26,7 +26,7 @@ fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
-/// `(percorso, X, Y)` di ogni voce dello stato.
+/// `(path, X, Y)` of each state entry.
 fn codes(status: &Value) -> Vec<(String, String, String)> {
     status["entries"]
         .as_array()
@@ -78,7 +78,7 @@ fn push_list_undo_and_redo() {
             .starts_with("WIP on main: "),
         "{stash}"
     );
-    // Restano solo i non tracciati (senza `include_untracked`).
+    // Only the untracked files remain (without `include_untracked`).
     assert_eq!(
         codes(&out["status"]),
         [code("note.txt", "Untracked", "Untracked")]
@@ -86,12 +86,12 @@ fn push_list_undo_and_redo() {
     assert_eq!(out["stashes"], json!([stash]));
     assert_eq!(out["can_undo"], true);
     assert!(
-        out["next_undo"]
+        out["next_undo"]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Metti da parte le modifiche (stash ")
+            .starts_with("Stash changes (stash ")
     );
-    // `refs/stash` è fra i ref, e il commit dello stash si legge come un commit.
+    // `refs/stash` is among the refs, and the stash commit reads as a commit.
     let refs = run(&r, &mut s, "repo.refs", json!({}));
     let stash_ref = refs
         .as_array()
@@ -108,18 +108,18 @@ fn push_list_undo_and_redo() {
         .iter()
         .map(|f| f["path"].as_str().unwrap())
         .collect();
-    assert_eq!(files, ["README.md", "docs/guida.md", "src/lib.rs"]);
+    assert_eq!(files, ["README.md", "docs/guide.md", "src/lib.rs"]);
     assert_eq!(show["compared_to"], head);
 
-    // Un secondo push non ha niente da mettere da parte.
+    // A second push has nothing to set aside.
     let err = r.run("stash.push", &mut s, json!({})).unwrap_err();
     assert!(
-        matches!(&err, EngineError::NotAllowed(m) if m.contains("niente da mettere da parte")),
+        matches!(&err, EngineError::NotAllowed(m) if m.contains("nothing to stash")),
         "{err}"
     );
 
-    // Undo: lo stash torna nei file (anche la divisione fra in stage e no) e sparisce
-    // dall'elenco, con il commit in un backup.
+    // Undo: the stash goes back into the files (also the split between staged and not) and disappears
+    // from the list, with the commit in a backup.
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["undone"]["command"], "stash.push");
     assert_eq!(undo["status"], before);
@@ -131,61 +131,61 @@ fn push_list_undo_and_redo() {
         json!({ "message": null, "include_untracked": false, "keep_index": false, "paths": null })
     );
 
-    // Redo: di nuovo da parte.
+    // Redo: set aside again.
     let redo = run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(codes(&redo["status"]), codes(&out["status"]));
     let list = run(&r, &mut s, "stash.list", json!({}));
     assert_eq!(list["stashes"].as_array().unwrap().len(), 1);
     assert_eq!(redo["redone"]["stash"]["id"], list["stashes"][0]["id"]);
-    // E l'undo di nuovo.
+    // And undo again.
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["status"], before);
 }
 
 #[test]
 fn push_options() {
-    // Con i non tracciati e un messaggio.
+    // With the untracked files and a message.
     let (r, mut s) = opened();
     let out = run(
         &r,
         &mut s,
         "stash.push",
-        json!({ "message": "-x a metà", "include_untracked": true }),
+        json!({ "message": "-x half done", "include_untracked": true }),
     );
     assert_eq!(out["status"]["entries"], json!([]));
-    assert_eq!(out["stash"]["message"], "On main: -x a metà");
+    assert_eq!(out["stash"]["message"], "On main: -x half done");
     assert_eq!(out["stash"]["untracked"], true);
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(
         codes(&undo["status"]),
         [
             code("README.md", "Modified", "Modified"),
-            code("docs/guida.md", "Added", "Unmodified"),
+            code("docs/guide.md", "Added", "Unmodified"),
             code("src/lib.rs", "Unmodified", "Modified"),
             code("note.txt", "Untracked", "Untracked"),
         ]
     );
 
-    // `keep_index`: quello in stage resta, e il worktree è come l'indice.
+    // `keep_index`: what is staged stays, and the worktree is as the index.
     let (r, mut s) = opened();
     let out = run(&r, &mut s, "stash.push", json!({ "keep_index": true }));
     assert_eq!(
         codes(&out["status"]),
         [
             code("README.md", "Modified", "Unmodified"),
-            code("docs/guida.md", "Added", "Unmodified"),
+            code("docs/guide.md", "Added", "Unmodified"),
             code("note.txt", "Untracked", "Untracked"),
         ]
     );
 
-    // Solo alcuni percorsi.
+    // Only some paths.
     let (r, mut s) = opened();
     let out = run(&r, &mut s, "stash.push", json!({ "paths": ["src"] }));
     assert_eq!(
         codes(&out["status"]),
         [
             code("README.md", "Modified", "Modified"),
-            code("docs/guida.md", "Added", "Unmodified"),
+            code("docs/guide.md", "Added", "Unmodified"),
             code("note.txt", "Untracked", "Untracked"),
         ]
     );
@@ -196,7 +196,7 @@ fn push_options() {
         json!({ "id": out["stash"]["id"] }),
     );
     assert_eq!(show["files"].as_array().unwrap().len(), 1);
-    // Un non tracciato chiesto senza `include_untracked`.
+    // An untracked file requested without `include_untracked`.
     let err = r
         .run("stash.push", &mut s, json!({ "paths": ["note.txt"] }))
         .unwrap_err();
@@ -212,7 +212,7 @@ fn push_refusals() {
         json!({ "paths": ["../fuori"] }),
         json!({ "all": true }),
         json!({ "message": 3 }),
-        json!({ "keep_index": "sì" }),
+        json!({ "keep_index": "yes" }),
     ] {
         let err = r.run("stash.push", &mut s, params.clone()).unwrap_err();
         assert!(
@@ -235,7 +235,7 @@ fn push_refusals() {
 
     let (r, mut s) = opened_with(MemoryBackend::new());
     let err = r.run("stash.push", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("non ha ancora commit"), "{err}");
+    assert!(err.to_string().contains("has no commits yet"), "{err}");
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn apply_keeps_the_stash_and_pop_drops_it() {
     );
     let id = pushed["stash"]["id"].clone();
 
-    // Apply senza indice: tutto fuori stage, tranne il file nuovo (come git).
+    // Apply without index: everything unstaged, except the new file (like git).
     let out = run(&r, &mut s, "stash.apply", json!({ "expected": id }));
     assert_eq!(out["stash"]["id"], id);
     assert_eq!(out["conflicts"], json!([]));
@@ -261,16 +261,16 @@ fn apply_keeps_the_stash_and_pop_drops_it() {
         codes(&out["status"]),
         [
             code("README.md", "Unmodified", "Modified"),
-            code("docs/guida.md", "Added", "Unmodified"),
+            code("docs/guide.md", "Added", "Unmodified"),
             code("src/lib.rs", "Unmodified", "Modified"),
             code("note.txt", "Untracked", "Untracked"),
         ]
     );
-    // Apply e pop non entrano nel diario: il prossimo undo è ancora il push.
+    // Apply and pop do not enter the journal: the next undo is still the push.
     let history = run(&r, &mut s, "edit.history", json!({}));
     assert_eq!(history["done"].as_array().unwrap().len(), 1);
     assert_eq!(history["done"][0]["command"], "stash.push");
-    // Di nuovo sopra le stesse modifiche: rifiutato, niente cambia.
+    // Again over the same changes: refused, nothing changes.
     let status = run(&r, &mut s, "repo.status", json!({}));
     let err = r.run("stash.pop", &mut s, json!({})).unwrap_err();
     let EngineError::NotAllowed(message) = &err else {
@@ -281,7 +281,7 @@ fn apply_keeps_the_stash_and_pop_drops_it() {
     assert_eq!(run(&r, &mut s, "repo.status", json!({})), status);
     assert_eq!(stash_count(&r, &mut s), 1);
 
-    // Pop con l'indice da un repo pulito: tutto com'era, lo stash esce con un backup.
+    // Pop with the index from a clean repo: everything as it was, the stash leaves with a backup.
     let (r, mut s) = opened();
     run(
         &r,
@@ -301,7 +301,7 @@ fn apply_keeps_the_stash_and_pop_drops_it() {
 fn apply_of_a_moved_stash_or_a_missing_one() {
     let (r, mut s) = opened();
     let err = r.run("stash.apply", &mut s, json!({})).unwrap_err();
-    assert!(err.to_string().contains("non ci sono stash"), "{err}");
+    assert!(err.to_string().contains("there are no stashes"), "{err}");
     let first = run(&r, &mut s, "stash.push", json!({ "paths": ["src"] }));
     let second = run(&r, &mut s, "stash.push", json!({ "paths": ["README.md"] }));
     let list = run(&r, &mut s, "stash.list", json!({}));
@@ -311,8 +311,8 @@ fn apply_of_a_moved_stash_or_a_missing_one() {
     let err = r
         .run("stash.apply", &mut s, json!({ "index": 2 }))
         .unwrap_err();
-    assert!(err.to_string().contains("gli stash sono 2"), "{err}");
-    // Lo stash visto in posizione 0 ora è in posizione 1.
+    assert!(err.to_string().contains("there are 2 stashes"), "{err}");
+    // The stash seen at position 0 is now at position 1.
     let err = r
         .run(
             "stash.pop",
@@ -320,7 +320,7 @@ fn apply_of_a_moved_stash_or_a_missing_one() {
             json!({ "index": 0, "expected": first["stash"]["id"] }),
         )
         .unwrap_err();
-    assert!(err.to_string().contains("ora è `stash@{1}`"), "{err}");
+    assert!(err.to_string().contains("is now `stash@{1}`"), "{err}");
     for params in [
         json!({ "expected": "abc" }),
         json!({ "index": -1 }),
@@ -333,7 +333,7 @@ fn apply_of_a_moved_stash_or_a_missing_one() {
             "{params}: {err}"
         );
     }
-    // Il pop del più vecchio lascia il più recente in cima.
+    // The pop of the oldest leaves the most recent on top.
     let out = run(
         &r,
         &mut s,
@@ -344,8 +344,8 @@ fn apply_of_a_moved_stash_or_a_missing_one() {
     assert_eq!(out["stashes"][0]["id"], second["stash"]["id"]);
 }
 
-/// Il repo di esempio con le modifiche messe da parte, poi un commit che cambia `README.md`
-/// su `main`: lo stash va in conflitto su quel file.
+/// The sample repo with the changes set aside, then a commit that changes `README.md`
+/// on `main`: the stash conflicts on that file.
 fn moved_head() -> (MemoryBackend, String) {
     let mut repo = MemoryBackend::sample();
     let old = match &repo.status().unwrap().entries[0].kind {
@@ -398,27 +398,27 @@ fn conflicts_are_left_and_pop_keeps_the_stash() {
     assert_eq!(out["backup"], Value::Null);
     assert_eq!(out["stashes"][0]["id"], id);
     assert!(
-        out["warnings"][0]
+        out["warnings"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("resta nell'elenco"),
+            .contains("stays in the list"),
         "{out}"
     );
     let readme = &out["status"]["entries"][0];
     assert_eq!(readme["path"], "README.md");
     assert_eq!(readme["index"], "Unmerged");
-    // Gli altri file si applicano.
+    // The other files are applied.
     assert!(
         codes(&out["status"]).contains(&code("src/lib.rs", "Unmodified", "Modified")),
         "{}",
         out["status"]
     );
-    // Con un conflitto aperto niente stash: né apply né push.
+    // With a conflict open no stash: neither apply nor push.
     for id in ["stash.apply", "stash.push"] {
         let err = r.run(id, &mut s, json!({})).unwrap_err();
-        assert!(err.to_string().contains("in conflitto"), "{id}: {err}");
+        assert!(err.to_string().contains("conflict"), "{id}: {err}");
     }
-    // Risolto con lo stage del file, lo stash si elimina a mano.
+    // Resolved by staging the file, the stash is dropped by hand.
     run(&r, &mut s, "index.stage", json!({ "paths": ["README.md"] }));
     let out = run(
         &r,
@@ -437,7 +437,7 @@ fn untracked_in_the_way_blocks_the_apply() {
         ..StashPush::default()
     })
     .unwrap();
-    // `note.txt` è di nuovo nel worktree.
+    // `note.txt` is back in the worktree.
     repo.set_worktree_file("note.txt", "altro\n");
     repo.set_entries(vec![StatusEntry {
         path: RepoPath::from("note.txt"),
@@ -473,10 +473,10 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
         panic!("{err}");
     };
     assert_eq!(*command, "stash.drop");
-    // L'id da ripetere in `expected`, anche nel testo.
+    // The id to repeat in `expected`, also in the text.
     assert_eq!(expected.as_deref(), first["id"].as_str());
     assert!(reason.contains(first["id"].as_str().unwrap()), "{reason}");
-    // `confirm` senza `expected` non basta.
+    // `confirm` without `expected` is not enough.
     let err = r
         .run("stash.drop", &mut s, json!({ "index": 1, "confirm": true }))
         .unwrap_err();
@@ -492,7 +492,7 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
     );
     assert_eq!(stash_count(&r, &mut s), 2);
     assert!(reason.contains("`stash@{1}`"), "{reason}");
-    assert!(reason.contains("1 file tracciati"), "{reason}");
+    assert!(reason.contains("1 tracked file"), "{reason}");
     assert_eq!(stash_count(&r, &mut s), 2);
     let err = r
         .run(
@@ -513,9 +513,9 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
     assert_eq!(out["backup"], "refs/project/backup/stash-1");
     assert_eq!(out["stashes"], json!([second]));
     assert_eq!(
-        out["next_undo"],
+        out["next_undo"]["text"],
         format!(
-            "Elimina stash@{{1}} ({} «{}»)",
+            "Drop stash@{{1}} ({} “{}”)",
             &first["id"].as_str().unwrap()[..7],
             first["message"].as_str().unwrap()
         )
@@ -525,14 +525,14 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
     assert_eq!(entry["backup"], "refs/project/backup/stash-1");
     assert_eq!(entry["stash"]["id"], first["id"]);
 
-    // Undo: torna, ma in cima (`git stash store`).
+    // Undo: it comes back, but on top (`git stash store`).
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["undone"]["command"], "stash.drop");
     let list = run(&r, &mut s, "stash.list", json!({}));
     assert_eq!(list["stashes"][0]["id"], first["id"]);
     assert_eq!(list["stashes"][0]["message"], first["message"]);
     assert_eq!(list["stashes"][1]["id"], second["id"]);
-    // E si applica ancora con i suoi file.
+    // And it applies again with its files.
     let redo = run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(redo["redone"]["command"], "stash.drop");
     assert_eq!(stash_count(&r, &mut s), 1);
@@ -547,25 +547,26 @@ fn drop_needs_confirm_and_undo_puts_it_back_on_top() {
 
 #[test]
 fn undo_conflicts() {
-    // Lo stash non c'è più (un pop, che non entra nel diario): l'undo del push è rifiutato.
+    // The stash is gone (a pop, which does not enter the journal): the undo of the push is refused.
     let (r, mut s) = opened();
     run(&r, &mut s, "stash.push", json!({}));
     run(&r, &mut s, "stash.pop", json!({}));
     let status = run(&r, &mut s, "repo.status", json!({}));
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(
-        matches!(&err, EngineError::UndoConflict { refs, .. } if refs[0].contains("non è più nell'elenco")),
+        matches!(&err, EngineError::UndoConflict { refs, .. } if refs[0].contains("is no longer in the list")),
         "{err}"
     );
     assert_eq!(run(&r, &mut s, "repo.status", json!({})), status);
     assert_eq!(run(&r, &mut s, "edit.history", json!({}))["can_undo"], true);
 
-    // HEAD spostata da fuori dopo il push (un commit fatto senza passare dal diario).
+    // HEAD moved from outside after the push (a commit made without going through the journal).
     let (r, mut s) = opened();
     run(&r, &mut s, "stash.push", json!({}));
     let repo = s.repo_mut().unwrap();
     repo.stage(&[RepoPath::from("note.txt")]).unwrap();
-    repo.commit(&crate::CommitRequest::new("da fuori")).unwrap();
+    repo.commit(&crate::CommitRequest::new("from outside"))
+        .unwrap();
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(
         matches!(&err, EngineError::UndoConflict { refs, .. } if refs[0].starts_with("HEAD")),
@@ -573,7 +574,7 @@ fn undo_conflicts() {
     );
     assert_eq!(stash_count(&r, &mut s), 1);
 
-    // Undo di un drop con lo stash di nuovo nell'elenco (rimesso a mano).
+    // Undo of a drop with the stash back in the list (put back by hand).
     let (r, mut s) = opened();
     let id = run(&r, &mut s, "stash.push", json!({}))["stash"]["id"].clone();
     run(
@@ -589,7 +590,7 @@ fn undo_conflicts() {
         .unwrap();
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(
-        matches!(&err, EngineError::UndoConflict { refs, .. } if refs[0].contains("già nell'elenco")),
+        matches!(&err, EngineError::UndoConflict { refs, .. } if refs[0].contains("already in the list")),
         "{err}"
     );
 }
@@ -598,7 +599,7 @@ fn undo_conflicts() {
 fn log_with_the_stash_bases() {
     let mut repo = MemoryBackend::sample();
     let stash = repo.stash_push(&StashPush::default()).unwrap();
-    // `main` torna indietro: la base dello stash non è più su nessun branch.
+    // `main` goes back: the stash's base is no longer on any branch.
     let parent = repo.show_commit("HEAD").unwrap().commit.parents[0];
     repo.set_branch("main", parent);
     let (r, mut s) = opened_with(repo);
@@ -620,7 +621,10 @@ fn log_with_the_stash_bases() {
         json!({ "all": true, "stashes": true }),
     );
     assert!(ids(&with).contains(&base));
-    assert!(!ids(&with).contains(&stash.id.to_string()), "lo stash no");
+    assert!(
+        !ids(&with).contains(&stash.id.to_string()),
+        "the stash is not there"
+    );
     let err = r
         .run("repo.log", &mut s, json!({ "stashes": true }))
         .unwrap_err();
@@ -629,8 +633,8 @@ fn log_with_the_stash_bases() {
 
 #[test]
 fn undo_of_a_keep_index_push_and_pop_after_it() {
-    // `docs/guida.md` (`A.`) resta in stage con `keep_index`: ha già la versione dello stash
-    // e non blocca né l'undo né il pop.
+    // `docs/guide.md` (`A.`) stays staged with `keep_index`: it already has the stash's version
+    // and blocks neither the undo nor the pop.
     let (r, mut s) = opened();
     let before = run(&r, &mut s, "repo.status", json!({}));
     let out = run(
@@ -640,7 +644,7 @@ fn undo_of_a_keep_index_push_and_pop_after_it() {
         json!({ "keep_index": true, "paths": ["docs", "src"] }),
     );
     assert!(
-        codes(&out["status"]).contains(&code("docs/guida.md", "Added", "Unmodified")),
+        codes(&out["status"]).contains(&code("docs/guide.md", "Added", "Unmodified")),
         "{}",
         out["status"]
     );
@@ -650,12 +654,12 @@ fn undo_of_a_keep_index_push_and_pop_after_it() {
     let out = run(&r, &mut s, "stash.pop", json!({ "restore_index": true }));
     assert_eq!(out["dropped"], true);
     assert_eq!(out["status"], before);
-    // Un file `MM` rimasto con `keep_index` (worktree diverso da quello dello stash) blocca.
+    // An `MM` file left with `keep_index` (worktree different from the stash's) blocks.
     let (r, mut s) = opened();
     run(&r, &mut s, "stash.push", json!({ "keep_index": true }));
     let err = r.run("stash.pop", &mut s, json!({})).unwrap_err();
     assert!(
-        matches!(&err, EngineError::NotAllowed(m) if m.contains("`README.md`") && !m.contains("guida")),
+        matches!(&err, EngineError::NotAllowed(m) if m.contains("`README.md`") && !m.contains("guide")),
         "{err}"
     );
 }
@@ -664,30 +668,30 @@ fn undo_of_a_keep_index_push_and_pop_after_it() {
 fn a_failed_drop_after_the_apply_is_not_an_error_of_the_pop() {
     let mut repo = MemoryBackend::sample();
     repo.stash_push(&StashPush::default()).unwrap();
-    repo.fail_stash_drop(Some("drop non riuscito"));
+    repo.fail_stash_drop(Some("drop failed"));
     let (r, mut s) = opened_with(repo);
     let out = run(&r, &mut s, "stash.pop", json!({}));
     assert_eq!(out["dropped"], false);
     assert_eq!(out["conflicts"], json!([]));
     assert!(
-        out["warnings"][0]
+        out["warnings"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("applicato ma non tolto dall'elenco"),
+            .contains("applied but not removed from the list"),
         "{out}"
     );
     assert_eq!(out["stashes"].as_array().unwrap().len(), 1);
     assert_eq!(out["status"]["entries"].as_array().unwrap().len(), 4);
 
-    // L'undo di un push: errore che dice che l'apply è avvenuto, la voce resta.
+    // Undo of a push: error saying the apply happened, the entry stays.
     let mut repo = MemoryBackend::sample();
-    repo.fail_stash_drop(Some("drop non riuscito"));
+    repo.fail_stash_drop(Some("drop failed"));
     let (r, mut s) = opened_with(repo);
     run(&r, &mut s, "stash.push", json!({}));
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(
-        err.to_string().contains("ha applicato lo stash")
-            && err.to_string().contains("non ripetere l'undo"),
+        err.to_string().contains("applied stash")
+            && err.to_string().contains("do not repeat the undo"),
         "{err}"
     );
     assert_eq!(run(&r, &mut s, "edit.history", json!({}))["can_undo"], true);

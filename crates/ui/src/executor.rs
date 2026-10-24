@@ -1,13 +1,13 @@
-//! Esecuzione dei comandi fuori dal thread della UI (`impl-docs/ARCHITETTURA-git.md` §6).
+//! Running commands off the UI thread (`impl-docs/ARCHITECTURE-git.md` §6).
 //!
-//! La UI non chiama [`Registry::run`] direttamente: manda il comando all'[`Executor`], che lo
-//! esegue con [`Platform::spawn`] sulla sessione condivisa e restituisce il risultato su un
-//! canale. La UI legge i risultati con [`Executor::poll`] a ogni frame e non tocca mai il lock
-//! della sessione, così non si blocca mentre un comando lento lo tiene.
+//! The UI does not call [`Registry::run`] directly: it sends the command to the [`Executor`],
+//! which runs it with [`Platform::spawn`] on the shared session and returns the result over a
+//! channel. The UI reads results with [`Executor::poll`] on every frame and never touches the
+//! session lock, so it does not block while a slow command holds it.
 //!
-//! Ogni comando parte con [`Registry::run_with`] e un [`JobContext`] del suo ticket: l'ultimo
-//! [`Progress`] ricevuto si legge con [`Executor::progress`], e [`Executor::cancel`] lo
-//! annulla (S25, `remote.fetch`). I comandi che non sono lenti ignorano entrambi.
+//! Every command starts with [`Registry::run_with`] and a [`JobContext`] for its ticket: the
+//! last [`Progress`] received is read with [`Executor::progress`], and [`Executor::cancel`]
+//! cancels it (S25, `remote.fetch`). Commands that are not slow ignore both.
 
 use project_engine::{
     CancelToken, EngineError, JobContext, Platform, Progress, PullOperation, PushRejection,
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-/// Identifica un comando mandato all'[`Executor`].
+/// Identifies a command sent to the [`Executor`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ticket(u64);
 
@@ -30,77 +30,77 @@ impl Ticket {
     }
 }
 
-/// Un comando in corso.
+/// A command in progress.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job {
     pub ticket: Ticket,
-    /// Id del comando, es. `repo.open`.
+    /// Command id, e.g. `repo.open`.
     pub command: String,
-    /// Vero se il comando modifica il repository ([`CommandSpec::writes`](project_engine::CommandSpec::writes)).
+    /// True if the command modifies the repository ([`CommandSpec::writes`](project_engine::CommandSpec::writes)).
     pub writes: bool,
 }
 
-/// Un comando finito.
+/// A finished command.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Done {
     pub ticket: Ticket,
     pub command: String,
-    /// Il risultato del comando, o il messaggio d'errore.
+    /// The command result, or the error message.
     pub result: Result<Value, String>,
-    /// Il tipo dell'errore, se il comando è fallito: la UI reagisce in modo diverso, ad
-    /// esempio rilegge il diff dopo [`ErrorKind::StaleDiff`].
+    /// The error kind, if the command failed: the UI reacts differently, for
+    /// example it re-reads the diff after [`ErrorKind::StaleDiff`].
     pub error_kind: Option<ErrorKind>,
-    /// Il dettaglio strutturato dell'errore, se il tipo ne ha uno: il motivo di
-    /// [`ErrorKind::ConfirmRequired`], l'output completo di git (stderr) per [`ErrorKind::Git`].
+    /// The structured error detail, if the kind has one: the reason of
+    /// [`ErrorKind::ConfirmRequired`], the full git output (stderr) for [`ErrorKind::Git`].
     pub error_detail: Option<String>,
-    /// L'id completo da rimandare come `"expected"` con `"confirm": true`, se il comando l'ha
-    /// dato con [`ErrorKind::ConfirmRequired`] (il force di `remote.push`).
+    /// The full id to send back as `"expected"` with `"confirm": true`, if the command
+    /// gave it with [`ErrorKind::ConfirmRequired`] (the force of `remote.push`).
     pub confirm_expected: Option<String>,
 }
 
-/// Il tipo di un errore del motore, per le reazioni della UI che non dipendono dal testo.
+/// The kind of an engine error, for UI reactions that do not depend on the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
-    /// [`EngineError::StaleDiff`]: il diff visto non è più quello attuale.
+    /// [`EngineError::StaleDiff`]: the diff seen is no longer the current one.
     StaleDiff,
-    /// [`EngineError::NotAllowed`]: operazione rifiutata nello stato attuale del repo.
+    /// [`EngineError::NotAllowed`]: operation refused in the repo's current state.
     NotAllowed,
     /// [`EngineError::InvalidParams`].
     InvalidParams,
     /// [`EngineError::IndexLocked`].
     IndexLocked,
-    /// [`EngineError::UnknownRev`]: la rev non corrisponde a nessun ref né commit.
+    /// [`EngineError::UnknownRev`]: the rev matches no ref or commit.
     UnknownRev,
-    /// [`EngineError::ConfirmRequired`]: serve `"confirm": true`; il motivo è in
+    /// [`EngineError::ConfirmRequired`]: `"confirm": true` is needed; the reason is in
     /// [`Done::error_detail`].
     ConfirmRequired,
     /// [`EngineError::NothingToCommit`].
     NothingToCommit,
-    /// [`EngineError::Git`]: git è terminato con errore (es. un hook che fallisce); il suo
-    /// stderr è in [`Done::error_detail`].
+    /// [`EngineError::Git`]: git ended with an error (e.g. a failing hook); its
+    /// stderr is in [`Done::error_detail`].
     Git,
-    /// [`EngineError::PostCommit`]: il commit è riuscito, ma dopo qualcosa non torna (es. HEAD
-    /// spostato da un hook `post-commit`); non va ripetuto, vanno riletti stato e log.
+    /// [`EngineError::PostCommit`]: the commit succeeded, but afterwards something is off (e.g. HEAD
+    /// moved by a `post-commit` hook); do not repeat it, re-read status and log.
     PostCommit,
-    /// [`EngineError::CheckoutConflict`]: il checkout sovrascriverebbe modifiche locali e
-    /// niente è cambiato; i file indicati da git sono in [`Done::error_detail`], uno per riga.
+    /// [`EngineError::CheckoutConflict`]: the checkout would overwrite local changes and
+    /// nothing changed; the files git named are in [`Done::error_detail`], one per line.
     CheckoutConflict,
-    /// [`EngineError::Auth`]: il remoto ha rifiutato le credenziali o servirebbe chiederle;
-    /// il testo di git è in [`Done::error_detail`].
+    /// [`EngineError::Auth`]: the remote rejected the credentials or they would have to be asked for;
+    /// git's text is in [`Done::error_detail`].
     Auth,
-    /// [`EngineError::RemoteUnreachable`]: il remoto non si raggiunge; il testo di git è in
+    /// [`EngineError::RemoteUnreachable`]: the remote cannot be reached; git's text is in
     /// [`Done::error_detail`].
     RemoteUnreachable,
-    /// [`EngineError::Cancelled`]: annullato con [`Executor::cancel`].
+    /// [`EngineError::Cancelled`]: cancelled with [`Executor::cancel`].
     Cancelled,
-    /// [`EngineError::PullConflict`]: il merge o il rebase del pull si è fermato in conflitto
-    /// ed è stato annullato (il repo è come prima, il fetch resta fatto); i file in conflitto
-    /// sono in [`Done::error_detail`], uno per riga.
+    /// [`EngineError::PullConflict`]: the merge or rebase of the pull stopped on a conflict
+    /// and was aborted (the repo is as before, the fetch stays done); the conflicted files
+    /// are in [`Done::error_detail`], one per line.
     PullConflict(PullOperation),
-    /// [`EngineError::PushRejected`]: il push è stato rifiutato e niente è cambiato; il testo
-    /// di git (anche l'output di un hook) è in [`Done::error_detail`].
+    /// [`EngineError::PushRejected`]: the push was rejected and nothing changed; git's text
+    /// (including a hook's output) is in [`Done::error_detail`].
     PushRejected(PushRejection),
-    /// Tutti gli altri errori.
+    /// All other errors.
     Other,
 }
 
@@ -114,7 +114,7 @@ impl ErrorKind {
             EngineError::UnknownRev(_) => ErrorKind::UnknownRev,
             EngineError::ConfirmRequired { .. } => ErrorKind::ConfirmRequired,
             EngineError::NothingToCommit => ErrorKind::NothingToCommit,
-            EngineError::Git { .. } => ErrorKind::Git,
+            EngineError::Git { .. } | EngineError::GitWithReason { .. } => ErrorKind::Git,
             EngineError::PostCommit { .. } => ErrorKind::PostCommit,
             EngineError::CheckoutConflict { .. } => ErrorKind::CheckoutConflict,
             EngineError::Auth { .. } => ErrorKind::Auth,
@@ -126,7 +126,7 @@ impl ErrorKind {
         }
     }
 
-    /// L'id da mettere in [`Done::confirm_expected`]: l'`expected` di una conferma.
+    /// The id to put in [`Done::confirm_expected`]: the `expected` of a confirmation.
     pub fn expected(error: &EngineError) -> Option<String> {
         match error {
             EngineError::ConfirmRequired { expected, .. } => expected.clone(),
@@ -134,14 +134,15 @@ impl ErrorKind {
         }
     }
 
-    /// Il dettaglio da mettere in [`Done::error_detail`]: il motivo di una conferma, lo stderr
-    /// di git, i file che un checkout sovrascriverebbe (uno per riga), il testo di git per un
-    /// remoto che rifiuta le credenziali o non si raggiunge, i file in conflitto di un pull (uno
-    /// per riga), il testo di git di un push rifiutato.
+    /// The detail to put in [`Done::error_detail`]: the reason of a confirmation, git's stderr,
+    /// the files a checkout would overwrite (one per line), git's text for a remote that
+    /// rejects the credentials or cannot be reached, the conflicted files of a pull (one per
+    /// line), git's text of a rejected push.
     pub fn detail(error: &EngineError) -> Option<String> {
         match error {
-            EngineError::ConfirmRequired { reason, .. } => Some(reason.clone()),
+            EngineError::ConfirmRequired { reason, .. } => Some(reason.text()),
             EngineError::Git { stderr, .. } => Some(stderr.clone()),
+            EngineError::GitWithReason { reason, .. } => Some(reason.text()),
             EngineError::Auth { message, .. }
             | EngineError::RemoteUnreachable { message, .. }
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
@@ -152,7 +153,7 @@ impl ErrorKind {
     }
 }
 
-/// Un errore del comando, come arriva dal job.
+/// A command error, as it comes from the job.
 struct Failure {
     kind: ErrorKind,
     detail: Option<String>,
@@ -165,20 +166,21 @@ impl Failure {
         Self {
             kind: ErrorKind::of(error),
             detail: ErrorKind::detail(error),
-            message: error.to_string(),
+            // In the UI language; `Display` is the English of CLI and MCP.
+            message: error.text(),
             expected: ErrorKind::expected(error),
         }
     }
 }
 
-/// Chiamata quando arriva un risultato, da qualunque thread: nella UI chiede un nuovo frame.
+/// Called when a result arrives, from any thread: in the UI it requests a new frame.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// L'ultimo avanzamento di ogni comando in corso (`None` finché non ne arriva uno). Il sink
-/// del job aggiorna solo i ticket presenti: uno già raccolto non torna.
+/// The latest progress of every command in progress (`None` until one arrives). The job's
+/// sink only updates the tickets present: one already collected does not come back.
 type ProgressMap = Arc<Mutex<HashMap<Ticket, Option<Progress>>>>;
 
-/// Manda comandi alla sessione condivisa e ne raccoglie i risultati.
+/// Sends commands to the shared session and collects their results.
 pub struct Executor {
     session: Arc<Mutex<Session>>,
     registry: Arc<Registry>,
@@ -214,8 +216,8 @@ impl Executor {
         }
     }
 
-    /// Manda il comando `command` con `params` e ritorna subito (sul web, dove non ci sono
-    /// thread, dopo averlo eseguito). Il risultato arriva da [`Executor::poll`].
+    /// Sends the command `command` with `params` and returns at once (on the web, where there
+    /// are no threads, after running it). The result arrives from [`Executor::poll`].
     pub fn submit(&mut self, command: &str, params: Value) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
@@ -226,7 +228,7 @@ impl Executor {
             writes,
         });
 
-        // Prima di avviare il job: sul web il comando gira (e manda l'avanzamento) dentro
+        // Before starting the job: on the web the command runs (and sends progress) inside
         // `spawn`.
         lock(&self.progress).insert(ticket, None);
         let token = CancelToken::new();
@@ -252,8 +254,8 @@ impl Executor {
             sent: false,
         };
         self.platform.spawn(Box::new(move || {
-            // Un job finito male avvelena il lock, ma la sessione resta valida: ogni comando
-            // la lascia coerente anche quando fallisce.
+            // A job that ended badly poisons the lock, but the session stays valid: every command
+            // leaves it consistent even when it fails.
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run_with(&reply.command, &mut session, params, job)
@@ -264,7 +266,7 @@ impl Executor {
         ticket
     }
 
-    /// I comandi finiti dall'ultima chiamata, nell'ordine in cui sono finiti. Non blocca.
+    /// The commands finished since the last call, in the order they finished. Does not block.
     pub fn poll(&mut self) -> Vec<Done> {
         let done: Vec<Done> = self.receiver.try_iter().collect();
         self.running
@@ -279,14 +281,14 @@ impl Executor {
         done
     }
 
-    /// L'ultimo avanzamento del comando `ticket`, se è ancora in corso e ne ha mandato uno.
+    /// The latest progress of command `ticket`, if it is still running and has sent one.
     pub fn progress(&self, ticket: Ticket) -> Option<Progress> {
         lock(&self.progress).get(&ticket).cloned().flatten()
     }
 
-    /// Chiede di annullare il comando `ticket`: un comando lento si ferma appena può e finisce
-    /// con [`ErrorKind::Cancelled`]; gli altri finiscono normalmente. Falso se il comando non
-    /// è più in corso.
+    /// Asks to cancel command `ticket`: a slow command stops as soon as it can and ends
+    /// with [`ErrorKind::Cancelled`]; the others finish normally. False if the command is no
+    /// longer running.
     pub fn cancel(&self, ticket: Ticket) -> bool {
         match self.cancel.get(&ticket) {
             Some(token) => {
@@ -297,18 +299,18 @@ impl Executor {
         }
     }
 
-    /// I comandi mandati e non ancora raccolti da [`Executor::poll`], dal più vecchio.
+    /// The commands sent and not yet collected by [`Executor::poll`], oldest first.
     pub fn running(&self) -> &[Job] {
         &self.running
     }
 
-    /// Vero se c'è almeno un comando in corso.
+    /// True if at least one command is in progress.
     pub fn is_busy(&self) -> bool {
         !self.running.is_empty()
     }
 
-    /// La scrittura in corso, se c'è: finché non è raccolta da [`Executor::poll`] la UI non ne
-    /// manda un'altra e disabilita le azioni che modificano il repo.
+    /// The write in progress, if any: until it is collected by [`Executor::poll`] the UI does not
+    /// send another and disables actions that modify the repo.
     pub fn writing(&self) -> Option<&Job> {
         self.running.iter().find(|job| job.writes)
     }
@@ -318,9 +320,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Manda il risultato di un job. Se il job termina senza mandarlo (panico nel comando, o la
-/// piattaforma che non riesce ad avviarlo e lo scarta) manda un errore, così il comando non
-/// resta "in corso" per sempre.
+/// Sends a job's result. If the job ends without sending it (panic in the command, or the
+/// platform failing to start it and discarding it) it sends an error, so the command does not
+/// stay "in progress" forever.
 struct Reply {
     ticket: Ticket,
     command: String,
@@ -340,7 +342,7 @@ impl Reply {
             Ok(_) => (None, None, None),
             Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone()),
         };
-        // Se la UI è già chiusa nessuno aspetta il risultato.
+        // If the UI is already closed nobody is waiting for the result.
         let _ = self.sender.send(Done {
             ticket: self.ticket,
             command: self.command.clone(),
@@ -376,8 +378,8 @@ mod tests {
 
     const SLOW: Duration = Duration::from_millis(300);
 
-    /// Piattaforma di prova: thread veri come sul desktop, oppure esecuzione immediata come sul
-    /// web, oppure job scartati (thread che non parte).
+    /// Test platform: real threads as on desktop, or immediate execution as on the
+    /// web, or discarded jobs (a thread that does not start).
     enum TestPlatform {
         Threads,
         Inline,
@@ -414,7 +416,7 @@ mod tests {
         Ok(json!({ "echo": params }))
     }
 
-    /// Manda avanzamento finché non è annullato (al massimo 5 secondi).
+    /// Sends progress until cancelled (at most 5 seconds).
     fn until_cancelled(s: &mut Session, _: Value) -> Result<Value, EngineError> {
         let start = Instant::now();
         let mut n = 0;
@@ -440,16 +442,16 @@ mod tests {
     }
 
     fn panics(_: &mut Session, _: Value) -> Result<Value, EngineError> {
-        panic!("comando finto che va in panico");
+        panic!("fake command that panics");
     }
 
-    /// Il catalogo vero più `test.slow` (dorme [`SLOW`]), `test.panic` e `test.write` (una
-    /// scrittura che dorme [`SLOW`]).
+    /// The real catalog plus `test.slow` (sleeps [`SLOW`]), `test.panic` and `test.write` (a
+    /// write that sleeps [`SLOW`]).
     fn registry() -> Registry {
         let mut registry = Registry::builtin();
         let spec = |id| CommandSpec {
             id,
-            title: "prova",
+            title: "test",
             params_help: "{}",
             writes: false,
         };
@@ -477,15 +479,12 @@ mod tests {
         (executor, wakes)
     }
 
-    /// Chiama `poll` finché arrivano `n` risultati (al massimo 5 secondi).
+    /// Calls `poll` until `n` results arrive (at most 5 seconds).
     fn wait(executor: &mut Executor, n: usize) -> Vec<Done> {
         let start = Instant::now();
         let mut done = Vec::new();
         while done.len() < n {
-            assert!(
-                start.elapsed() < Duration::from_secs(5),
-                "risultati mancanti"
-            );
+            assert!(start.elapsed() < Duration::from_secs(5), "missing results");
             done.extend(executor.poll());
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -497,8 +496,8 @@ mod tests {
         let (mut ex, wakes) = executor(TestPlatform::Threads);
         let start = Instant::now();
         let ticket = ex.submit("test.slow", json!({ "n": 1 }));
-        // La UI continua a disegnare frame mentre il comando lavora.
-        assert!(start.elapsed() < SLOW / 2, "submit ha aspettato il comando");
+        // The UI keeps drawing frames while the command works.
+        assert!(start.elapsed() < SLOW / 2, "submit waited for the command");
         assert!(ex.is_busy());
         assert_eq!(ex.running()[0].command, "test.slow");
         assert!(ex.poll().is_empty());
@@ -516,7 +515,7 @@ mod tests {
         let (mut ex, _) = executor(TestPlatform::Threads);
         ex.submit("test.slow", json!({}));
         let open = ex.submit("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH }));
-        // Il lock della sessione mette in fila i comandi: lo stato vede il repo aperto prima.
+        // The session lock queues the commands: the status sees the repo opened first.
         let done = wait(&mut ex, 2);
         let status = ex.submit("repo.status", json!({}));
         let after = wait(&mut ex, 1);
@@ -548,11 +547,11 @@ mod tests {
         ex.submit("index.stage_lines", stale);
         assert_eq!(ex.poll()[0].error_kind, Some(ErrorKind::StaleDiff));
 
-        ex.submit("commit.create", json!({ "message": "primo" }));
+        ex.submit("commit.create", json!({ "message": "first" }));
         let done = ex.poll().remove(0);
         assert!(done.result.is_ok(), "{:?}", done.result);
         assert_eq!(done.error_detail, None);
-        ex.submit("commit.create", json!({ "message": "ancora" }));
+        ex.submit("commit.create", json!({ "message": "again" }));
         let done = ex.poll().remove(0);
         assert_eq!(done.error_kind, Some(ErrorKind::NothingToCommit));
         assert_eq!(done.error_detail, None);
@@ -562,35 +561,38 @@ mod tests {
     fn confirm_and_git_errors_carry_their_detail() {
         let confirm = EngineError::ConfirmRequired {
             command: "commit.create",
-            reason: "il commit è su refs/remotes/origin/main".to_owned(),
+            reason: project_engine::msg!(
+                "engine-other",
+                text = "the commit is on refs/remotes/origin/main"
+            ),
             expected: None,
         };
         assert_eq!(ErrorKind::of(&confirm), ErrorKind::ConfirmRequired);
         assert_eq!(
             ErrorKind::detail(&confirm).as_deref(),
-            Some("il commit è su refs/remotes/origin/main")
+            Some("the commit is on refs/remotes/origin/main")
         );
         assert_eq!(ErrorKind::expected(&confirm), None);
         let force = EngineError::ConfirmRequired {
             command: "remote.push",
-            reason: "il remoto perderebbe 1 commit".to_owned(),
+            reason: project_engine::msg!("engine-other", text = "the remote would lose 1 commit"),
             expected: Some("a".repeat(40)),
         };
         assert_eq!(ErrorKind::expected(&force), Some("a".repeat(40)));
         let git = EngineError::Git {
             command: "commit".to_owned(),
-            stderr: "pre-commit: riga 1\nriga 2".to_owned(),
+            stderr: "pre-commit: line 1\nline 2".to_owned(),
         };
         assert_eq!(ErrorKind::of(&git), ErrorKind::Git);
         assert_eq!(
             ErrorKind::detail(&git).as_deref(),
-            Some("pre-commit: riga 1\nriga 2")
+            Some("pre-commit: line 1\nline 2")
         );
         assert_eq!(ErrorKind::detail(&EngineError::NoRepo), None);
         let post = EngineError::PostCommit {
             commit: None,
             backup: None,
-            reason: "HEAD è cambiato".to_owned(),
+            reason: project_engine::msg!("engine-other", text = "HEAD changed"),
         };
         assert_eq!(ErrorKind::of(&post), ErrorKind::PostCommit);
         let checkout = EngineError::CheckoutConflict {
@@ -611,15 +613,12 @@ mod tests {
         let ticket = ex.submit("test.cancel", json!({}));
         let start = Instant::now();
         while ex.progress(ticket).is_none() {
-            assert!(
-                start.elapsed() < Duration::from_secs(5),
-                "niente avanzamento"
-            );
+            assert!(start.elapsed() < Duration::from_secs(5), "no progress");
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(
             wakes.load(Ordering::SeqCst) >= 1,
-            "l'avanzamento chiede un frame"
+            "progress requests a frame"
         );
         assert_eq!(ex.progress(ticket).unwrap().phase, "Receiving objects");
         assert!(ex.is_busy());
@@ -627,9 +626,9 @@ mod tests {
         let done = wait(&mut ex, 1).remove(0);
         assert_eq!(done.ticket, ticket);
         assert_eq!(done.error_kind, Some(ErrorKind::Cancelled));
-        assert!(start.elapsed() < Duration::from_secs(4), "non si è fermato");
+        assert!(start.elapsed() < Duration::from_secs(4), "did not stop");
         assert_eq!(ex.progress(ticket), None);
-        assert!(!ex.cancel(ticket), "già finito");
+        assert!(!ex.cancel(ticket), "already finished");
     }
 
     #[test]
@@ -637,8 +636,8 @@ mod tests {
         let (mut ex, _) = executor(TestPlatform::Threads);
         ex.submit("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH }));
         wait(&mut ex, 1);
-        // Il fetch aspetta il lock della sessione dietro un comando lento; annullato prima
-        // di partire non scarica niente.
+        // The fetch waits for the session lock behind a slow command; cancelled before
+        // starting it downloads nothing.
         ex.submit("test.slow", json!({}));
         let fetch = ex.submit("remote.fetch", json!({}));
         assert!(ex.writing().is_some_and(|j| j.ticket == fetch));
@@ -731,7 +730,7 @@ mod tests {
                 .result
                 .as_ref()
                 .unwrap_err()
-                .contains("senza risultato")
+                .contains("without a result")
         );
         assert!(!ex.is_busy());
     }
@@ -740,9 +739,9 @@ mod tests {
     fn write_jobs_are_tracked_until_collected() {
         let (mut ex, _) = executor(TestPlatform::Threads);
         let read = ex.submit("test.slow", json!({}));
-        assert!(ex.writing().is_none(), "una lettura non è una scrittura");
+        assert!(ex.writing().is_none(), "a read is not a write");
         let write = ex.submit("test.write", json!({}));
-        let job = ex.writing().expect("scrittura in corso");
+        let job = ex.writing().expect("write in progress");
         assert_eq!(job.ticket, write);
         assert!(job.writes);
         assert!(
@@ -767,7 +766,7 @@ mod tests {
         assert!(ex.writing().is_none());
         ex.submit("repo.status", json!({}));
         assert!(ex.writing().is_none());
-        ex.submit("comando.inesistente", json!({}));
+        ex.submit("command.nonexistent", json!({}));
         assert!(ex.writing().is_none());
     }
 }

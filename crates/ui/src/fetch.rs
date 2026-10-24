@@ -1,10 +1,10 @@
-//! Fetch dal pulsante della barra (S25): `remote.fetch` in background, con avanzamento e
-//! "Interrompi". Solo dati, senza egui: si prova con test unitari.
+//! Fetch from the bar button (S25): `remote.fetch` in the background, with progress and
+//! "Stop". Data only, no egui: tested with unit tests.
 //!
-//! Un fetch alla volta. Mentre gira, la sessione resta bloccata dal job (§6 dell'architettura
-//! git): `remote.fetch` è una scrittura ([`CommandSpec::writes`](project_engine::CommandSpec)),
-//! così la UI spegne le altre scritture e "Aggiorna" finché non è finito. Gli errori di
-//! autenticazione e di rete si spiegano in una finestra con il testo di git.
+//! One fetch at a time. While it runs, the session stays locked by the job (§6 of the git
+//! architecture): `remote.fetch` is a write ([`CommandSpec::writes`](project_engine::CommandSpec)),
+//! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
+//! network errors are explained in a window with git's text.
 
 use crate::{Action, App, Done, Request, fetch};
 use crate::{ErrorKind, Ticket};
@@ -14,10 +14,10 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// L'id del comando del Registry.
+/// The id of the Registry command.
 pub const COMMAND: &str = "remote.fetch";
 
-/// La descrizione del fetch per la barra di stato.
+/// The description of the fetch for the status bar.
 pub fn label(remote: Option<&str>) -> String {
     match remote {
         Some(remote) => tr!("fetch-label-remote", remote = remote),
@@ -25,75 +25,75 @@ pub fn label(remote: Option<&str>) -> String {
     }
 }
 
-/// Il fetch in corso.
+/// The fetch in progress.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Running {
     pub ticket: Ticket,
-    /// Il remoto chiesto; `None` = quello scelto dal motore (upstream, `origin`, l'unico).
+    /// The requested remote; `None` = the one chosen by the engine (upstream, `origin`, the only one).
     pub remote: Option<String>,
-    /// Vero dopo "Interrompi", finché il comando non risponde.
+    /// True after "Stop", until the command answers.
     pub cancelling: bool,
 }
 
-/// Un fetch non riuscito per un motivo da spiegare: la finestra con il testo di git.
+/// A fetch that failed for a reason to explain: the window with git's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     pub title: String,
-    /// Cosa è successo e cosa fare.
+    /// What happened and what to do.
     pub explanation: String,
-    /// Il testo di git (stderr), se c'è.
+    /// git's text (stderr), if any.
     pub git: Option<String>,
 }
 
-/// Il fetch: quello in corso e l'ultimo errore da spiegare.
+/// The fetch: the one in progress and the last error to explain.
 #[derive(Debug, Default)]
 pub struct FetchBox {
     running: Option<Running>,
     failure: Option<Failure>,
 }
 
-/// Cosa è arrivato da `remote.fetch`.
+/// What came back from `remote.fetch`.
 #[derive(Debug)]
 pub enum Received {
-    /// Fatto: cosa aggiornare nella vista.
+    /// Done: what to update in the view.
     Done(Box<Outcome>),
-    /// Interrotto con "Interrompi": i branch remoti già aggiornati restano, vanno riletti.
+    /// Stopped with "Stop": the remote branches already updated stay, they must be reread.
     Cancelled { notice: String },
-    /// Non riuscito o rifiutato: il messaggio per la barra di stato (i dettagli, se servono,
-    /// sono in [`FetchBox::failure`]); con `reload` si rileggono ref e log.
+    /// Failed or refused: the message for the status bar (the details, if needed,
+    /// are in [`FetchBox::failure`]); with `reload` refs and log are reread.
     Failed { message: String, reload: bool },
 }
 
-/// Il risultato di un fetch riuscito, per la vista.
+/// The result of a successful fetch, for the view.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub notice: String,
-    /// I ref nuovi, se il comando li ha riletti.
+    /// The new refs, if the command reread them.
     pub refs: Option<Vec<RefInfo>>,
-    /// Vero se qualcosa è cambiato (o non si sa): log e stato si rileggono.
+    /// True if something changed (or it is unknown): log and status are reread.
     pub changed: bool,
-    /// Un problema dopo il fetch riuscito (ref non riletti).
+    /// A problem after the successful fetch (refs not reread).
     pub warning: Option<String>,
 }
 
 impl FetchBox {
-    /// Il fetch in corso, se c'è.
+    /// The fetch in progress, if any.
     pub fn running(&self) -> Option<&Running> {
         self.running.as_ref()
     }
 
-    /// L'errore da spiegare nella finestra, se c'è.
+    /// The error to explain in the window, if any.
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
 
-    /// Chiude la finestra dell'errore.
+    /// Closes the error window.
     pub fn dismiss(&mut self) {
         self.failure = None;
     }
 
-    /// I parametri per un fetch da `remote` (`None`: quello scelto dal motore), se non ce n'è
-    /// già uno in corso.
+    /// The parameters for a fetch from `remote` (`None`: the one chosen by the engine), if there is
+    /// not one in progress already.
     pub fn request(&self, remote: Option<&str>) -> Option<Value> {
         if self.running.is_some() {
             return None;
@@ -104,7 +104,7 @@ impl FetchBox {
         })
     }
 
-    /// Il fetch chiesto con [`FetchBox::request`] è partito con `ticket`.
+    /// The fetch requested with [`FetchBox::request`] started with `ticket`.
     pub fn started(&mut self, ticket: Ticket, remote: Option<String>) {
         self.failure = None;
         self.running = Some(Running {
@@ -114,14 +114,14 @@ impl FetchBox {
         });
     }
 
-    /// "Interrompi": il ticket da annullare, una volta sola.
+    /// "Stop": the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
         let running = self.running.as_mut().filter(|r| !r.cancelling)?;
         running.cancelling = true;
         Some(running.ticket)
     }
 
-    /// La risposta di `remote.fetch` per `ticket`.
+    /// The response of `remote.fetch` for `ticket`.
     pub fn receive(
         &mut self,
         ticket: Ticket,
@@ -175,8 +175,8 @@ impl FetchBox {
                     reload: false,
                 }
             }
-            // Rifiutato prima di cominciare (remoto sconosciuto, nessun remoto): niente è
-            // cambiato.
+            // Refused before starting (unknown remote, no remote): nothing has
+            // changed.
             Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams) => Received::Failed {
                 message: tr!("fetch-not-possible", label = label, error = error),
                 reload: false,
@@ -187,7 +187,7 @@ impl FetchBox {
                     explanation: error.clone(),
                     git: detail,
                 });
-                // Git potrebbe aver aggiornato qualche branch remoto prima di fallire.
+                // Git may have updated some remote branch before failing.
                 Received::Failed {
                     message: tr!("fetch-failed", label = label, error = error),
                     reload: true,
@@ -197,7 +197,7 @@ impl FetchBox {
     }
 }
 
-/// Il soggetto delle finestre di errore: «Il remoto "origin"», o «Il remoto» senza nome.
+/// The subject of the error windows: "The remote “origin”", or "The remote" without a name.
 pub fn who(remote: Option<&str>) -> String {
     match remote {
         Some(remote) => tr!("fetch-who-remote", remote = remote),
@@ -205,13 +205,13 @@ pub fn who(remote: Option<&str>) -> String {
     }
 }
 
-/// La frase che chiude le spiegazioni di [`auth_failure`] e [`unreachable_failure`].
+/// The sentence that closes the explanations of [`auth_failure`] and [`unreachable_failure`].
 pub fn nothing_changed() -> String {
     tr!("fetch-nothing-changed")
 }
 
-/// La finestra per un remoto (`who`: «Il remoto "origin"») che rifiuta le credenziali o
-/// servirebbe chiederle; `detail` è il testo di git. Vale per fetch, pull e push.
+/// The window for a remote (`who`: "The remote “origin”") that rejects the credentials or
+/// would need to ask for them; `detail` is git's text. Used for fetch, pull and push.
 pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
     Failure {
         title: tr!("fetch-auth-title"),
@@ -224,7 +224,7 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
     }
 }
 
-/// La finestra per un remoto che non si raggiunge (vedi [`auth_failure`]).
+/// The window for a remote that cannot be reached (see [`auth_failure`]).
 pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
     Failure {
         title: tr!("fetch-unreachable-title"),
@@ -237,7 +237,7 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
     }
 }
 
-/// Un ref cambiato dal fetch.
+/// A ref changed by the fetch.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RefUpdate {
     pub name: String,
@@ -245,7 +245,7 @@ pub struct RefUpdate {
     pub after: Option<Oid>,
 }
 
-/// Risultato di `remote.fetch`.
+/// Result of `remote.fetch`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FetchResult {
     pub remote: String,
@@ -253,16 +253,16 @@ pub struct FetchResult {
     pub updated: Option<Vec<RefUpdate>>,
     #[serde(default)]
     pub messages: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
     pub warnings: Vec<String>,
     pub refs: Option<Vec<RefInfo>>,
     pub refs_error: Option<String>,
 }
 
-/// Quanti nomi di ref elencare nell'avviso prima di "e altri N".
+/// How many ref names to list in the notice before "and N more".
 const NAMES_SHOWN: usize = 3;
 
-/// Il nome di un ref per l'avviso: `origin/main`, `tag v1`.
+/// The name of a ref for the notice: `origin/main`, `tag v1`.
 fn ref_text(name: &str) -> String {
     if let Some(remote) = name.strip_prefix("refs/remotes/") {
         remote.to_owned()
@@ -274,9 +274,9 @@ fn ref_text(name: &str) -> String {
 }
 
 impl FetchResult {
-    /// L'avviso per la barra di stato (anche per il fetch di `remote.add`).
+    /// The notice for the status bar (also for the fetch of `remote.add`).
     pub(crate) fn outcome(self) -> Outcome {
-        // Le righe di git (`From ...`, `* [new branch] ...`) vanno solo nel log.
+        // git's lines (`From ...`, `* [new branch] ...`) go only in the log.
         for line in &self.messages {
             log::info!("{COMMAND}: {line}");
         }
@@ -327,7 +327,7 @@ impl FetchResult {
     }
 }
 
-/// Il nome tradotto di una fase di git, se è una di quelle note.
+/// The translated name of a git phase, if it is one of the known ones.
 fn phase_name(phase: &str) -> String {
     match phase {
         "Enumerating objects" => tr!("fetch-phase-enumerating"),
@@ -342,8 +342,8 @@ fn phase_name(phase: &str) -> String {
     }
 }
 
-/// Come mostrare un passo di avanzamento: il testo (fase e conteggio) e la frazione per la
-/// barra, se git dà la percentuale.
+/// How to show a progress step: the text (phase and count) and the fraction for the
+/// bar, if git gives the percentage.
 pub fn describe(progress: &Progress) -> (String, Option<f32>) {
     let phase = phase_name(&progress.phase);
     let mut text = if progress.remote {
@@ -361,7 +361,7 @@ pub fn describe(progress: &Progress) -> (String, Option<f32>) {
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, dispatched by [`App::apply`].
     pub(crate) fn apply_fetch(&mut self, action: Action) {
         match action {
             Action::Fetch(remote) => {
@@ -393,15 +393,15 @@ impl App {
                     repo.fetch.dismiss();
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
-    /// Risposta di `remote.fetch`: i ref dalla risposta (la colonna mostra i branch remoti
-    /// nuovi e quanto i branch locali sono indietro), poi log e stato riletti se qualcosa è
-    /// cambiato; l'avviso con i ref aggiornati, o l'errore.
+    /// Response of `remote.fetch`: the refs from the response (the column shows the new remote
+    /// branches and how far behind the local branches are), then log and status reread if something
+    /// changed; the notice with the updated refs, or the error.
     pub(crate) fn receive_fetch(&mut self, generation: u64, done: Done) {
-        // Quanti branch remoti ha ogni remoto: un fetch ne porta di nuovi o ne toglie.
+        // How many remote branches each remote has: a fetch brings new ones or removes some.
         if self.current(generation).is_some() {
             self.request_remotes(generation);
         }
@@ -432,7 +432,7 @@ impl App {
             fetch::Received::Cancelled { notice } => {
                 self.notice = notice;
                 self.error.clear();
-                // Qualche branch remoto può essere già aggiornato.
+                // Some remote branch may already be updated.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
                 self.reload_after_fetch(generation);
             }
@@ -448,8 +448,8 @@ impl App {
         }
     }
 
-    /// Dopo un fetch: lo stato (avanti/indietro rispetto all'upstream) e il log (i commit
-    /// nuovi dei branch remoti).
+    /// After a fetch: the status (ahead/behind the upstream) and the log (the new
+    /// commits of the remote branches).
     pub(crate) fn reload_after_fetch(&mut self, generation: u64) {
         self.submit("repo.status", json!({}), Request::Status(generation));
         if let Some(repo) = self.current(generation) {
@@ -470,7 +470,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Come sul web: il job gira dentro `spawn`, sullo stesso thread.
+    /// As on the web: the job runs inside `spawn`, on the same thread.
     struct Inline;
 
     impl Platform for Inline {
@@ -502,7 +502,7 @@ mod tests {
         };
         assert_eq!(
             describe(&p),
-            ("Ricezione oggetti 9/20".to_owned(), Some(0.45))
+            ("Receiving objects 9/20".to_owned(), Some(0.45))
         );
         let remote = Progress {
             phase: "Enumerating objects".into(),
@@ -515,7 +515,7 @@ mod tests {
         };
         assert_eq!(
             describe(&remote),
-            ("remoto: Enumerazione oggetti 5".to_owned(), None)
+            ("remote: Enumerating objects 5".to_owned(), None)
         );
     }
 
@@ -527,20 +527,20 @@ mod tests {
             f.request(Some("origin")),
             Some(json!({ "remote": "origin" }))
         );
-        assert_eq!(f.cancel(), None, "niente da interrompere");
+        assert_eq!(f.cancel(), None, "nothing to stop");
         let ticket = Ticket::for_test(4);
         f.started(ticket, Some("origin".to_owned()));
         assert_eq!(f.request(None), None);
         assert_eq!(f.cancel(), Some(ticket));
         assert!(f.running().unwrap().cancelling);
         assert_eq!(f.cancel(), None);
-        // Una risposta di un altro ticket non chiude quello in corso.
+        // A response for another ticket does not close the one in progress.
         let other = f.receive(Ticket::for_test(9), Ok(json!({})), None, None);
         assert!(matches!(other, Received::Failed { reload: true, .. }));
         assert!(f.running().is_some());
         let r = f.receive(
             ticket,
-            Err("annullato".into()),
+            Err("cancelled".into()),
             Some(ErrorKind::Cancelled),
             None,
         );
@@ -548,7 +548,7 @@ mod tests {
             panic!("{r:?}")
         };
         assert!(
-            notice.starts_with("Fetch da «origin» interrotto"),
+            notice.starts_with("Fetch from “origin” cancelled"),
             "{notice}"
         );
         assert!(f.running().is_none());
@@ -562,7 +562,7 @@ mod tests {
         f.started(ticket, None);
         let r = f.receive(
             ticket,
-            Err("autenticazione...".into()),
+            Err("authentication...".into()),
             Some(ErrorKind::Auth),
             Some("fatal: Authentication failed for 'https://x'".into()),
         );
@@ -570,10 +570,10 @@ mod tests {
             panic!("{r:?}")
         };
         assert!(!reload);
-        assert!(message.contains("autenticazione"), "{message}");
+        assert!(message.contains("authentication"), "{message}");
         let failure = f.failure().unwrap();
-        assert_eq!(failure.title, "Autenticazione non riuscita");
-        assert!(failure.explanation.contains("non chiede mai credenziali"));
+        assert_eq!(failure.title, "Authentication failed");
+        assert!(failure.explanation.contains("never asks for credentials"));
         assert!(failure.explanation.contains("credential helper"));
         assert!(failure.explanation.contains("ssh-agent"));
         assert_eq!(
@@ -591,15 +591,15 @@ mod tests {
             Some("fatal: Could not resolve host".into()),
         );
         let failure = f.failure().unwrap();
-        assert_eq!(failure.title, "Remoto non raggiungibile");
-        assert!(failure.explanation.starts_with("Il remoto «origin»"));
+        assert_eq!(failure.title, "Remote unreachable");
+        assert!(failure.explanation.starts_with("The remote “origin”"));
 
-        // Un nuovo fetch toglie la finestra vecchia; un rifiuto va solo nella barra.
-        f.started(ticket, Some("altro".to_owned()));
+        // A new fetch removes the old window; a refusal goes only in the bar.
+        f.started(ticket, Some("other".to_owned()));
         assert!(f.failure().is_none());
         let r = f.receive(
             ticket,
-            Err("non esiste un remoto `altro`".into()),
+            Err("there is no remote `other`".into()),
             Some(ErrorKind::NotAllowed),
             None,
         );
@@ -608,7 +608,7 @@ mod tests {
         };
         assert_eq!(
             message,
-            "Fetch da «altro» non possibile: non esiste un remoto `altro`"
+            "Fetch from “other” not possible: there is no remote `other`"
         );
         assert!(!reload);
         assert!(f.failure().is_none());
@@ -629,7 +629,7 @@ mod tests {
         let result = registry.run(COMMAND, &mut session, params);
         let kind = result.as_ref().err().map(ErrorKind::of);
         let detail = result.as_ref().err().and_then(ErrorKind::detail);
-        let received = f.receive(ticket, result.map_err(|e| e.to_string()), kind, detail);
+        let received = f.receive(ticket, result.map_err(|e| e.text()), kind, detail);
         (registry, session, received, f)
     }
 
@@ -641,30 +641,29 @@ mod tests {
         };
         assert_eq!(
             outcome.notice,
-            "Fetch da «origin»: 1 ref aggiornato (origin/feature/grafo)"
+            "Fetch from “origin”: 1 ref updated (origin/feature/graph)"
         );
         assert!(outcome.changed);
         assert_eq!(outcome.warning, None);
         let refs = outcome.refs.unwrap();
-        let grafo = refs
+        let graph_tip = refs
             .iter()
-            .find(|r| r.name == "refs/heads/feature/grafo")
+            .find(|r| r.name == "refs/heads/feature/graph")
             .unwrap();
-        // Il branch locale resta dov'era ed è indietro di uno rispetto al remoto.
-        assert_eq!(grafo.upstream.as_ref().unwrap().behind, Some(1));
+        // The local branch stays where it was and is one behind the remote.
+        assert_eq!(graph_tip.upstream.as_ref().unwrap().behind, Some(1));
 
-        // Il secondo fetch non ha niente di nuovo.
+        // The second fetch has nothing new.
         let mut f = FetchBox::default();
         let ticket = Ticket::for_test(1);
         let params = f.request(None).unwrap();
         f.started(ticket, None);
         let result = registry.run(COMMAND, &mut session, params);
-        let Received::Done(again) =
-            f.receive(ticket, result.map_err(|e| e.to_string()), None, None)
+        let Received::Done(again) = f.receive(ticket, result.map_err(|e| e.text()), None, None)
         else {
             panic!()
         };
-        assert_eq!(again.notice, "Fetch da «origin»: niente di nuovo");
+        assert_eq!(again.notice, "Fetch from “origin”: nothing new");
         assert!(!again.changed);
     }
 
@@ -680,7 +679,7 @@ mod tests {
         let (_, _, r, f) = fetch_on(repo, 0);
         assert!(matches!(r, Received::Failed { reload: false, .. }), "{r:?}");
         let failure = f.failure().unwrap();
-        assert_eq!(failure.title, "Autenticazione non riuscita");
+        assert_eq!(failure.title, "Authentication failed");
         assert_eq!(
             failure.git.as_deref(),
             Some("fatal: could not read Username for 'https://example.com'")
@@ -699,18 +698,18 @@ mod tests {
         ex.submit("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH }));
         assert!(ex.poll()[0].result.is_ok());
         let before = wakes.load(Ordering::SeqCst);
-        // Sul web il fetch finisce dentro `submit`: l'avanzamento arriva prima del risultato,
-        // e ognuno chiede un frame.
+        // On the web the fetch ends inside `submit`: progress arrives before the result,
+        // and each one requests a frame.
         let ticket = ex.submit(COMMAND, json!({}));
         assert!(
             wakes.load(Ordering::SeqCst) > before + 1,
-            "avanzamento senza frame"
+            "progress without a frame"
         );
         let last = ex.progress(ticket).expect("ultimo avanzamento");
         assert!(last.done, "{last:?}");
         let done = ex.poll().remove(0);
         assert!(done.result.is_ok(), "{:?}", done.result);
-        assert_eq!(ex.progress(ticket), None, "raccolto: niente avanzamento");
+        assert_eq!(ex.progress(ticket), None, "collected: no progress");
         assert!(!ex.cancel(ticket));
     }
 }

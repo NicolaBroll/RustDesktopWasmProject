@@ -1,4 +1,4 @@
-//! Test di `remote.list`, `remote.add`, `remote.remove` sul `MemoryBackend`.
+//! Tests of `remote.list`, `remote.add`, `remote.remove` on the `MemoryBackend`.
 
 use crate::{EngineError, GitBackend, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::Oid;
@@ -47,7 +47,7 @@ fn upstream_of(s: &Session, branch: &str) -> Option<String> {
 #[test]
 fn list_masks_credentials_and_marks_the_defaults() {
     let mut repo = MemoryBackend::sample();
-    repo.add_remote("fork", "https://nicola:segreto@example.com/fork.git");
+    repo.add_remote("fork", "https://nicola:secret@example.com/fork.git");
     repo.add_remote("gh", "https://ghp_token@github.com/x/y.git");
     repo.set_config("remote.fork.pushurl", &["ssh://git@example.com/fork.git"]);
     repo.set_config("remote.pushDefault", &["fork"]);
@@ -55,7 +55,7 @@ fn list_masks_credentials_and_marks_the_defaults() {
     let out = run(&r, &mut s, "remote.list", json!({}));
     let text = out.to_string();
     assert!(
-        !text.contains("segreto") && !text.contains("ghp_token"),
+        !text.contains("secret") && !text.contains("ghp_token"),
         "{text}"
     );
     let names: Vec<&str> = out["remotes"]
@@ -81,7 +81,7 @@ fn list_masks_credentials_and_marks_the_defaults() {
     );
     assert_eq!(out["remotes"][1]["url"], "https://***@github.com/x/y.git");
     let origin = &out["remotes"][2];
-    assert_eq!(origin["url"], "https://example.com/progetto.git");
+    assert_eq!(origin["url"], "https://example.com/project.git");
     assert_eq!(origin["credentials"], false);
     assert_eq!(origin["push_urls"], json!([]));
     assert_eq!(origin["branches"], 2);
@@ -97,10 +97,10 @@ fn list_masks_credentials_and_marks_the_defaults() {
 
 #[test]
 fn add_with_fetch_then_undo_and_redo() {
-    // Il "server" di origin resta da parte togliendo il remoto: aggiunto con lo stesso URL,
-    // il fetch ne scarica i branch.
+    // The origin "server" stays aside when the remote is removed: added with the same URL,
+    // the fetch downloads its branches.
     let mut repo = MemoryBackend::sample();
-    repo.add_remote("copia", "https://u:pw@example.com/copia.git");
+    repo.add_remote("copia", "https://u:pw@example.com/copy.git");
     repo.set_branch_on_remote("copia", "main", oid(12));
     let snapshot = repo.remote_snapshot("copia").unwrap();
     repo.remove_remote_config(&snapshot);
@@ -110,17 +110,22 @@ fn add_with_fetch_then_undo_and_redo() {
         &r,
         &mut s,
         "remote.add",
-        json!({ "name": "nuovo", "url": "https://u:pw@example.com/copia.git", "fetch": true }),
+        json!({ "name": "fresh", "url": "https://u:pw@example.com/copy.git", "fetch": true }),
     );
-    assert_eq!(out["remote"], "nuovo");
-    assert_eq!(out["url"], "https://u:***@example.com/copia.git");
+    assert_eq!(out["remote"], "fresh");
+    assert_eq!(out["url"], "https://u:***@example.com/copy.git");
     assert_eq!(out["credentials"], true);
     assert_eq!(out["fetched"], true);
     assert_eq!(out["fetch_error"], Value::Null);
-    assert!(out["warnings"][0].as_str().unwrap().contains("in chiaro"));
+    assert!(
+        out["warnings"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("in clear text")
+    );
     assert_eq!(
         out["fetch"]["updated"],
-        json!([{ "name": "refs/remotes/nuovo/main", "before": null, "after": oid(12).to_string() }])
+        json!([{ "name": "refs/remotes/fresh/main", "before": null, "after": oid(12).to_string() }])
     );
     assert!(!out.to_string().contains("pw@"), "{out}");
     assert!(
@@ -128,13 +133,13 @@ fn add_with_fetch_then_undo_and_redo() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|r| r["name"] == "nuovo" && r["branches"] == 1)
+            .any(|r| r["name"] == "fresh" && r["branches"] == 1)
     );
     assert_eq!(
-        out["next_undo"],
-        "Aggiungi remoto `nuovo` (con fetch: 1 branch remoti)"
+        out["next_undo"]["text"],
+        "Add remote `fresh` (with fetch: 1 remote branch)"
     );
-    // Il diario non mostra la password.
+    // The journal does not show the password.
     let history = run(&r, &mut s, "edit.history", json!({}));
     assert!(!history.to_string().contains("pw@"), "{history}");
 
@@ -144,20 +149,20 @@ fn add_with_fetch_then_undo_and_redo() {
             .unwrap()
             .remotes()
             .unwrap()
-            .contains(&"nuovo".to_owned())
+            .contains(&"fresh".to_owned())
     );
-    assert!(remote_refs(&s, "nuovo").is_empty());
+    assert!(remote_refs(&s, "fresh").is_empty());
     run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(
-        remote_refs(&s, "nuovo"),
-        [("refs/remotes/nuovo/main".to_owned(), oid(12))]
+        remote_refs(&s, "fresh"),
+        [("refs/remotes/fresh/main".to_owned(), oid(12))]
     );
     assert_eq!(
-        s.repo().unwrap().config_values("remote.nuovo.url").unwrap(),
-        ["https://u:pw@example.com/copia.git"]
+        s.repo().unwrap().config_values("remote.fresh.url").unwrap(),
+        ["https://u:pw@example.com/copy.git"]
     );
-    let snapshot = s.repo().unwrap().remote_snapshot("nuovo").unwrap();
-    assert_eq!(snapshot.url(), Some("https://u:pw@example.com/copia.git"));
+    let snapshot = s.repo().unwrap().remote_snapshot("fresh").unwrap();
+    assert_eq!(snapshot.url(), Some("https://u:pw@example.com/copy.git"));
 }
 
 #[test]
@@ -173,7 +178,7 @@ fn add_without_fetch_and_fetch_errors_do_not_undo_the_add() {
     assert_eq!(out["fetch"], Value::Null);
     assert_eq!(out["credentials"], false);
     assert_eq!(out["warnings"], json!([]));
-    assert_eq!(out["next_undo"], "Aggiungi remoto `fork`");
+    assert_eq!(out["next_undo"]["text"], "Add remote `fork`");
 
     let mut repo = MemoryBackend::sample();
     repo.add_remote("rotto", "/srv/rotto.git");
@@ -212,7 +217,7 @@ fn add_refuses_existing_names_and_bad_names_or_urls() {
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert_eq!(
         s.repo().unwrap().remote_snapshot("origin").unwrap().url(),
-        Some("https://example.com/progetto.git")
+        Some("https://example.com/project.git")
     );
     for name in ["-x", "--upload-pack=x", "", "a b", "a..b"] {
         let err = r
@@ -256,7 +261,7 @@ fn add_refuses_existing_names_and_bad_names_or_urls() {
         false
     );
 
-    // Branch remoti rimasti da un remoto tolto a mano: l'undo li cancellerebbe.
+    // Remote-tracking branches left over from a remote removed by hand: undo would delete them.
     let mut repo = MemoryBackend::sample();
     repo.set_remote_branch("vecchio/main", oid(11));
     let (r, mut s) = opened_with(repo);
@@ -273,7 +278,7 @@ fn add_refuses_existing_names_and_bad_names_or_urls() {
 #[test]
 fn remove_needs_confirm_and_undo_restores_everything() {
     let mut repo = MemoryBackend::sample();
-    repo.set_config("branch.feature/grafo.pushRemote", &["origin"]);
+    repo.set_config("branch.feature/graph.pushRemote", &["origin"]);
     let (r, mut s) = opened_with(repo);
     let before = s.repo().unwrap().remote_snapshot("origin").unwrap();
     let err = r
@@ -282,9 +287,9 @@ fn remove_needs_confirm_and_undo_restores_everything() {
     let EngineError::ConfirmRequired { reason, .. } = &err else {
         panic!("{err}");
     };
-    assert!(reason.contains("2 branch remoti"), "{reason}");
+    assert!(reason.contains("2 remote-tracking branches"), "{reason}");
     assert!(
-        reason.contains("`feature/grafo`, `main`") || reason.contains("`main`"),
+        reason.contains("`feature/graph`, `main`") || reason.contains("`main`"),
         "{reason}"
     );
     assert!(reason.contains("pushRemote"), "{reason}");
@@ -297,12 +302,12 @@ fn remove_needs_confirm_and_undo_restores_everything() {
         json!({ "name": "origin", "confirm": true }),
     );
     assert_eq!(out["remote"], "origin");
-    assert_eq!(out["upstreams_removed"], json!(["feature/grafo", "main"]));
-    assert_eq!(out["push_remotes_removed"], json!(["feature/grafo"]));
+    assert_eq!(out["upstreams_removed"], json!(["feature/graph", "main"]));
+    assert_eq!(out["push_remotes_removed"], json!(["feature/graph"]));
     assert_eq!(out["push_default_removed"], false);
     assert_eq!(out["removed"]["refs"].as_array().unwrap().len(), 2);
     assert_eq!(out["remotes"], json!([]));
-    // origin/main (11) e origin/feature/grafo (9) sono raggiungibili da main: niente backup.
+    // origin/main (11) and origin/feature/graph (9) are reachable from main: no backup.
     assert_eq!(out["backups"], json!([]));
     assert!(remote_refs(&s, "origin").is_empty());
     assert_eq!(upstream_of(&s, "main"), None);
@@ -310,7 +315,7 @@ fn remove_needs_confirm_and_undo_restores_everything() {
     assert!(
         s.repo()
             .unwrap()
-            .config_values("branch.feature/grafo.pushRemote")
+            .config_values("branch.feature/graph.pushRemote")
             .unwrap()
             .is_empty()
     );
@@ -322,13 +327,13 @@ fn remove_needs_confirm_and_undo_restores_everything() {
         upstream_of(&s, "main").as_deref(),
         Some("refs/remotes/origin/main")
     );
-    // Il "server" è tornato: il fetch funziona come prima.
+    // The "server" is back: the fetch works as before.
     let fetch = run(&r, &mut s, "remote.fetch", json!({}));
     assert_eq!(
         fetch["updated"][0]["name"],
-        "refs/remotes/origin/feature/grafo"
+        "refs/remotes/origin/feature/graph"
     );
-    // Dopo il fetch il remoto è cambiato: il redo è rifiutato e niente cambia.
+    // After the fetch the remote has changed: the redo is refused and nothing changes.
     let err = r.run("edit.redo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
     assert_eq!(remote_refs(&s, "origin").len(), 2);
@@ -338,7 +343,7 @@ fn remove_needs_confirm_and_undo_restores_everything() {
 fn remove_a_remote_with_commits_only_there_saves_a_backup() {
     let (r, mut s) = opened_with(MemoryBackend::sample());
     run(&r, &mut s, "remote.fetch", json!({}));
-    // oid(13) è solo su origin/feature/grafo.
+    // oid(13) is only on origin/feature/graph.
     let out = run(
         &r,
         &mut s,
@@ -349,9 +354,9 @@ fn remove_a_remote_with_commits_only_there_saves_a_backup() {
     run(&r, &mut s, "edit.undo", json!({}));
     assert!(
         remote_refs(&s, "origin")
-            .contains(&("refs/remotes/origin/feature/grafo".to_owned(), oid(13)))
+            .contains(&("refs/remotes/origin/feature/graph".to_owned(), oid(13)))
     );
-    // Redo: di nuovo via, senza un nuovo backup.
+    // Redo: removed again, without a new backup.
     let redo = run(&r, &mut s, "edit.redo", json!({}));
     assert_eq!(redo["backups"], json!([]));
     assert!(remote_refs(&s, "origin").is_empty());
@@ -386,7 +391,7 @@ fn remove_push_default_and_undo_conflicts() {
     assert_eq!(config(&s), ["fork"]);
     run(&r, &mut s, "edit.redo", json!({}));
 
-    // Ricreato fuori dal diario: UndoConflict, niente cambia.
+    // Recreated outside the journal: UndoConflict, nothing changes.
     let (r, mut s) = opened_with(MemoryBackend::sample());
     run(
         &r,
@@ -396,14 +401,14 @@ fn remove_push_default_and_undo_conflicts() {
     );
     s.repo_mut()
         .unwrap()
-        .create_remote("origin", "/srv/nuovo.git")
+        .create_remote("origin", "/srv/fresh.git")
         .unwrap();
     let err = r.run("edit.undo", &mut s, json!({})).unwrap_err();
     assert!(matches!(err, EngineError::UndoConflict { .. }), "{err}");
     assert!(remote_refs(&s, "origin").is_empty());
     assert_eq!(
         s.repo().unwrap().remote_snapshot("origin").unwrap().url(),
-        Some("/srv/nuovo.git")
+        Some("/srv/fresh.git")
     );
 }
 
@@ -422,7 +427,7 @@ fn undo_of_add_is_refused_once_a_branch_uses_the_remote() {
         "remote.add",
         json!({ "name": "fork", "url": "/srv/fork.git" }),
     );
-    // Il primo push imposta l'upstream di `main` su `fork/main` (il push non è nel diario).
+    // The first push sets `main`'s upstream to `fork/main` (the push is not in the journal).
     run(&r, &mut s, "remote.push", json!({ "remote": "fork" }));
     assert_eq!(
         upstream_of(&s, "main").as_deref(),
@@ -497,12 +502,12 @@ fn ahead_and_behind_follow_fetch_pull_and_push() {
     let refs = json!({ "refs": refs });
     assert_eq!(track(&refs, "refs/heads/main"), (json!(1), json!(0)));
     assert_eq!(
-        track(&refs, "refs/heads/feature/grafo"),
+        track(&refs, "refs/heads/feature/graph"),
         (json!(0), json!(0))
     );
     let out = run(&r, &mut s, "remote.fetch", json!({}));
     assert_eq!(
-        track(&out, "refs/heads/feature/grafo"),
+        track(&out, "refs/heads/feature/graph"),
         (json!(0), json!(1))
     );
     let out = run(&r, &mut s, "remote.push", json!({}));
@@ -511,10 +516,10 @@ fn ahead_and_behind_follow_fetch_pull_and_push() {
         &r,
         &mut s,
         "remote.pull",
-        json!({ "branch": "feature/grafo" }),
+        json!({ "branch": "feature/graph" }),
     );
     assert_eq!(
-        track(&out, "refs/heads/feature/grafo"),
+        track(&out, "refs/heads/feature/graph"),
         (json!(0), json!(0))
     );
 }
@@ -578,7 +583,7 @@ fn cancelled_fetch_of_remote_add_names_the_command() {
 #[test]
 fn masked_values_and_valueless_keys() {
     let mut repo = MemoryBackend::sample();
-    repo.set_config("remote.origin.proxy", &["http://u:segreto@proxy:3128"]);
+    repo.set_config("remote.origin.proxy", &["http://u:secret@proxy:3128"]);
     let (r, mut s) = opened_with(repo);
     let out = run(
         &r,
@@ -586,7 +591,7 @@ fn masked_values_and_valueless_keys() {
         "remote.remove",
         json!({ "name": "origin", "confirm": true }),
     );
-    assert!(!out.to_string().contains("segreto"), "{out}");
+    assert!(!out.to_string().contains("secret"), "{out}");
     assert!(out.to_string().contains("http://u:***@proxy:3128"), "{out}");
 
     let mut a = crate::RemoteSnapshot {
@@ -618,9 +623,9 @@ fn a_remote_still_listed_after_removal_is_put_back() {
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert!(err.to_string().contains("rimesso com'era"), "{err}");
+    assert!(err.to_string().contains("put back as it was"), "{err}");
     assert_eq!(s.repo().unwrap().remote_snapshot("origin").unwrap(), before);
-    // Rimesso tutto: niente nel diario.
+    // Everything put back: nothing in the journal.
     assert_eq!(
         run(&r, &mut s, "edit.history", json!({}))["can_undo"],
         false
@@ -631,7 +636,7 @@ fn a_remote_still_listed_after_removal_is_put_back() {
 fn a_failed_put_back_writes_the_config_and_keeps_the_journal_entry() {
     let mut repo = MemoryBackend::sample();
     repo.keep_remote_listed("origin");
-    // La rimozione riesce, il ripristino dei branch remoti no.
+    // The removal succeeds, the restoration of the remote-tracking branches does not.
     repo.fail_restore_refs_after(1);
     let (r, mut s) = opened_with(repo);
     let err = r
@@ -643,12 +648,12 @@ fn a_failed_put_back_writes_the_config_and_keeps_the_journal_entry() {
         .unwrap_err();
     let text = err.to_string();
     assert!(
-        text.contains("solo in parte") && text.contains("diario"),
+        text.contains("only in part") && text.contains("journal"),
         "{text}"
     );
-    // La configurazione è stata riscritta comunque; i branch remoti no.
+    // The configuration was rewritten anyway; the remote-tracking branches were not.
     let now = s.repo().unwrap().remote_snapshot("origin").unwrap();
-    assert_eq!(now.url(), Some("https://example.com/progetto.git"));
+    assert_eq!(now.url(), Some("https://example.com/project.git"));
     assert!(now.refs.is_empty());
     assert_eq!(
         upstream_of(&s, "main").as_deref(),

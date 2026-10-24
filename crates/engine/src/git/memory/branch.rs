@@ -1,27 +1,27 @@
-//! Branch sul [`MemoryBackend`] (`branch.create`, `branch.checkout`, `branch.delete`,
-//! `branch.rename` e i loro undo/redo), con gli stessi rifiuti del `CliBackend`.
+//! Branches on the [`MemoryBackend`] (`branch.create`, `branch.checkout`, `branch.delete`,
+//! `branch.rename` and their undo/redo), with the same refusals as the `CliBackend`.
 //!
-//! Il checkout è più severo di git: rifiuta ([`EngineError::CheckoutConflict`]) se un file
-//! diverso fra HEAD e la destinazione ha una modifica qualsiasi (in stage o no), o se la
-//! destinazione contiene un file che nel worktree è non tracciato o ignorato; git accetta
-//! anche alcuni casi in cui la modifica coincide con la destinazione. I backup delle
-//! eliminazioni vanno in [`MemoryBackend::commit_backups`] (`refs/project/backup/delete-<n>`).
-//! Il repo in memoria non ha worktree aggiuntivi né configurazione: l'upstream segue la
-//! rinomina e sparisce con l'eliminazione, come la sezione `branch.<nome>` in git.
+//! The checkout is stricter than git: it refuses ([`EngineError::CheckoutConflict`]) if a file
+//! that differs between HEAD and the destination has any change (staged or not), or if the
+//! destination contains a file that is untracked or ignored in the worktree; git also accepts
+//! some cases where the change matches the destination. The deletion backups
+//! go in [`MemoryBackend::commit_backups`] (`refs/project/backup/delete-<n>`).
+//! The in-memory repo has no extra worktrees or configuration: the upstream follows the
+//! rename and disappears with the deletion, like the `branch.<name>` section in git.
 
 use super::write::TreeEntry;
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES};
-use crate::EngineError;
 use crate::git::{
     BACKUP_PREFIX, BranchDeleted, ConfigEntry, HeadState, RestoreOutcome, check_new_branch_name,
     check_no_operation, short,
 };
+use crate::{EngineError, Message};
 use project_domain::{EntryKind, Oid, RepoPath};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MemoryBackend {
-    /// Errore se `full` non si può creare: esiste già, o esiste un ref che lo contiene o che
-    /// esso contiene (`a` per `a/b`, `a/b` per `a`), come per git.
+    /// Error if `full` cannot be created: it already exists, or a ref exists that contains it or that
+    /// it contains (`a` for `a/b`, `a/b` for `a`), as for git.
     fn check_free(&self, full: &str) -> Result<(), EngineError> {
         let clash = self.refs.keys().find(|name| {
             *name == full
@@ -29,25 +29,28 @@ impl MemoryBackend {
                 || full.starts_with(&format!("{name}/"))
         });
         match clash {
-            Some(name) => Err(EngineError::NotAllowed(format!(
-                "il nome `{full}` è già preso da `{name}`, niente modificato (un ref non si \
-                 sovrascrive)"
+            Some(name) => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-name-taken",
+                full = full,
+                name = name
             ))),
             None => Ok(()),
         }
     }
 
-    /// Il valore del branch `full`, che deve essere `expected`.
+    /// The value of the branch `full`, which must be `expected`.
     pub(super) fn check_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
         match self.refs.get(full) {
             Some(entry) if entry.target == *expected => Ok(()),
-            Some(entry) => Err(EngineError::NotAllowed(format!(
-                "`{full}` è cambiato: doveva essere {}, ora è {}; niente modificato",
-                short(expected),
-                short(&entry.target)
+            Some(entry) => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-changed",
+                full = full,
+                expected = short(expected),
+                now = short(&entry.target)
             ))),
-            None => Err(EngineError::NotAllowed(format!(
-                "non esiste un branch `{full}`, niente modificato"
+            None => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-missing",
+                full = full
             ))),
         }
     }
@@ -76,7 +79,11 @@ impl MemoryBackend {
         &mut self,
         target: &HeadState,
     ) -> Result<RestoreOutcome, EngineError> {
-        check_no_operation("branch.checkout", "cambierebbe branch", self.operation)?;
+        check_no_operation(
+            "branch.checkout",
+            msg!("engine-busy-checkout"),
+            self.operation,
+        )?;
         let unmerged: Vec<String> = self
             .entries
             .iter()
@@ -84,21 +91,18 @@ impl MemoryBackend {
             .map(|e| e.path.to_string())
             .collect();
         if !unmerged.is_empty() {
-            return Err(EngineError::NotAllowed(format!(
-                "ci sono file in conflitto ({}): risolverli prima di cambiare branch, niente \
-                 modificato",
-                unmerged.join(", ")
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-checkout-conflicts",
+                files = unmerged.join(", ")
             )));
         }
         let (head, oid, label) = match target {
             HeadState::Branch(full) => {
                 let name = full.strip_prefix(HEADS).ok_or_else(|| {
-                    EngineError::NotAllowed(format!("`{full}` non è un branch locale"))
+                    EngineError::NotAllowed(msg!("engine-branch-not-local", full = full))
                 })?;
                 let entry = self.refs.get(full).ok_or_else(|| {
-                    EngineError::NotAllowed(format!(
-                        "non esiste un branch locale `{name}`, niente modificato"
-                    ))
+                    EngineError::NotAllowed(msg!("engine-branch-no-local", name = name))
                 })?;
                 (
                     HeadRef::Branch(name.to_owned()),
@@ -128,10 +132,10 @@ impl MemoryBackend {
         Ok(RestoreOutcome::default())
     }
 
-    /// Per portare HEAD (indice e worktree) all'albero `new_tree`: i file diversi fra HEAD e
-    /// `new_tree`, e i file con modifiche locali che lo impedirebbero (una modifica qualsiasi,
-    /// in stage o no, a un file diverso; un non tracciato o ignorato che è un file, una
-    /// cartella di un file o un file al posto di una cartella di `new_tree`).
+    /// To bring HEAD (index and worktree) to the tree `new_tree`: the files that differ between HEAD and
+    /// `new_tree`, and the files with local changes that would prevent it (any change,
+    /// staged or not, to a differing file; an untracked or ignored one that is a file, a
+    /// folder of a file or a file in place of a folder of `new_tree`).
     pub(super) fn switch_plan(
         &self,
         new_tree: &BTreeMap<RepoPath, TreeEntry>,
@@ -146,8 +150,8 @@ impl MemoryBackend {
         let mut files = Vec::new();
         for entry in &self.entries {
             let hit = match &entry.kind {
-                // Il file stesso, una sua cartella che diventa un file (`d/x` non tracciato e
-                // `d` nella destinazione), o un file al posto di una cartella della destinazione.
+                // The file itself, a folder of it that becomes a file (`d/x` untracked and
+                // `d` in the destination), or a file in place of a folder of the destination.
                 EntryKind::Untracked | EntryKind::Ignored => {
                     let path = entry.path.as_bytes();
                     let inside = |dir: &[u8]| {
@@ -174,9 +178,9 @@ impl MemoryBackend {
         (differing, files)
     }
 
-    /// L'indice dopo il passaggio a `new_tree` (i file `differing` presi da lì, gli altri
-    /// com'erano), e il worktree di quei file torna pulito. Da chiamare dopo [`Self::switch_plan`]
-    /// senza file in conflitto, poi spostare HEAD e chiamare `rebase_entries` con l'indice.
+    /// The index after switching to `new_tree` (the `differing` files taken from there, the others
+    /// as they were), and the worktree of those files becomes clean. To call after [`Self::switch_plan`]
+    /// without conflicted files, then move HEAD and call `rebase_entries` with the index.
     pub(super) fn switch_index(
         &mut self,
         differing: &BTreeSet<RepoPath>,
@@ -203,8 +207,9 @@ impl MemoryBackend {
         expected: &Oid,
     ) -> Result<BranchDeleted, EngineError> {
         if self.head == HeadRef::Branch(name.to_owned()) {
-            return Err(EngineError::NotAllowed(format!(
-                "`{name}` è il branch attivo (HEAD), niente eliminato"
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-delete-current",
+                name = name
             )));
         }
         let full = format!("{HEADS}{name}");
@@ -228,8 +233,8 @@ impl MemoryBackend {
         })
     }
 
-    /// La "configurazione" `branch.<name>.*` del repo in memoria: l'upstream, come lo
-    /// scriverebbe git (`remote` e `merge`).
+    /// The `branch.<name>.*` "configuration" of the in-memory repo: the upstream, as git
+    /// would write it (`remote` and `merge`).
     fn branch_config(&self, name: &str) -> Vec<ConfigEntry> {
         let Some(upstream) = self.upstreams.get(&format!("{HEADS}{name}")) else {
             return Vec::new();
@@ -253,7 +258,7 @@ impl MemoryBackend {
         name: &str,
         entries: &[ConfigEntry],
         remove: bool,
-    ) -> Vec<String> {
+    ) -> Vec<Message> {
         let current = self.branch_config(name);
         let full = format!("{HEADS}{name}");
         if remove {
@@ -261,17 +266,12 @@ impl MemoryBackend {
                 self.upstreams.remove(&full);
                 Vec::new()
             } else {
-                vec![format!(
-                    "la configurazione `branch.{name}.*` è cambiata dopo l'undo: lasciata com'è"
-                )]
+                vec![msg!("engine-branch-config-changed", name = name)]
             }
         } else if entries.is_empty() {
             Vec::new()
         } else if !current.is_empty() {
-            vec![format!(
-                "esiste già una configurazione `branch.{name}.*`: quella salvata non è stata \
-                 riscritta"
-            )]
+            vec![msg!("engine-branch-config-exists", name = name)]
         } else {
             let value = |suffix: &str| {
                 entries
@@ -286,10 +286,7 @@ impl MemoryBackend {
                         .insert(full, format!("{REMOTES}{remote}/{branch}"));
                     Vec::new()
                 }
-                _ => vec![format!(
-                    "configurazione `branch.{name}.*` senza upstream: non riscritta nel repo in \
-                     memoria"
-                )],
+                _ => vec![msg!("engine-branch-memory-no-upstream", name = name)],
             }
         }
     }

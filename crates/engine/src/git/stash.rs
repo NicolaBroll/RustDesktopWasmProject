@@ -1,68 +1,68 @@
-//! Stash (`stash.list`, `stash.push`, `stash.apply`, `stash.pop`, `stash.drop`, S28): tipi e
-//! controlli comuni ai backend (`impl-docs/git/stash.md`).
+//! Stash (`stash.list`, `stash.push`, `stash.apply`, `stash.pop`, `stash.drop`, S28): types and
+//! checks shared by the backends (`impl-docs/git/stash.md`).
 //!
-//! Scelte:
+//! Choices:
 //!
-//! - **Uno stash si indica con la posizione e l'id.** `stash@{n}` cambia a ogni push e drop;
-//!   i comandi ricevono la posizione `index` (quella mostrata) e, facoltativo ma consigliato,
-//!   l'id completo `expected` visto da chi chiama. Al backend arriva sempre l'id: la posizione
-//!   attuale la ricalcola lui subito prima di scrivere.
-//! - **`apply` e `pop` non sovrascrivono mai niente.** Prima di chiamare git: niente operazione
-//!   in corso, niente file in conflitto, nessuna modifica locale (in stage, fuori stage, non
-//!   tracciata o ignorata) ai file che lo stash cambia, e nessun file al posto dei non
-//!   tracciati che lo stash rimette ([`stash_local_changes`]). Git farebbe da sé parte di questi
-//!   controlli, ma non tutti prima di scrivere: con un non tracciato già presente rimette i
-//!   file tracciati e poi fallisce ("could not restore untracked files"), e con una modifica
-//!   locale rifiuta dopo aver già rimesso i non tracciati.
-//! - **Conflitti: lasciati come li lascia git.** Lo stash si applica con un merge a tre vie
-//!   (base dello stash, HEAD, stash): se HEAD ha cambiato gli stessi file il merge si ferma con
-//!   i file in conflitto nell'indice. Non c'è un'operazione in corso da annullare (`git stash`
-//!   non lascia `MERGE_HEAD`), e i file in conflitto non avevano modifiche locali (controllo
-//!   sopra): la versione "nostra" è quella di HEAD e lo stash resta nell'elenco (`pop` non lo
-//!   elimina), quindi niente si perde. Il risultato lo dice in `conflicts`; si risolvono con
-//!   `index.stage` del file (e poi con l'editor dei conflitti, S30).
-//! - **Diario** (§7): `stash.push` e `stash.drop` ci entrano, `stash.apply` e `stash.pop` no
-//!   (vedi [`StashRecord`]).
+//! - **A stash is identified by position and id.** `stash@{n}` changes on every push and drop;
+//!   the commands receive the position `index` (the one shown) and, optional but recommended,
+//!   the full id `expected` seen by the caller. The backend always receives the id: it recomputes
+//!   the current position itself right before writing.
+//! - **`apply` and `pop` never overwrite anything.** Before calling git: no operation
+//!   in progress, no conflicted files, no local changes (staged, unstaged, untracked
+//!   or ignored) to the files the stash changes, and no file in place of the untracked
+//!   files the stash puts back ([`stash_local_changes`]). Git would do part of these
+//!   checks itself, but not all before writing: with an untracked file already present it puts back the
+//!   tracked files and then fails ("could not restore untracked files"), and with a local
+//!   change it refuses after having already put back the untracked files.
+//! - **Conflicts: left as git leaves them.** The stash is applied with a three-way merge
+//!   (stash base, HEAD, stash): if HEAD changed the same files the merge stops with
+//!   the conflicted files in the index. There is no operation in progress to abort (`git stash`
+//!   does not leave `MERGE_HEAD`), and the conflicted files had no local changes (check
+//!   above): the "ours" version is that of HEAD and the stash stays in the list (`pop` does not
+//!   remove it), so nothing is lost. The result says it in `conflicts`; they are resolved with
+//!   `index.stage` of the file (and then with the conflict editor, S30).
+//! - **Journal** (§7): `stash.push` and `stash.drop` go in, `stash.apply` and `stash.pop` do not
+//!   (see [`StashRecord`]).
 
 use super::branch::check_no_operation;
-use crate::EngineError;
+use crate::{EngineError, Message};
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
-/// Il ref dello stash: punta allo stash più recente, il suo reflog è l'elenco.
+/// The stash ref: it points to the most recent stash, its reflog is the list.
 pub const STASH_REF: &str = "refs/stash";
 
-/// Uno stash dell'elenco (`stash.list`), dal più recente.
+/// A stash of the list (`stash.list`), most recent first.
 ///
-/// JSON: `{"index": 0, "name": "stash@{0}", "id", "base", "message": "On main: prova",
+/// JSON: `{"index": 0, "name": "stash@{0}", "id", "base", "message": "On main: test",
 /// "branch": "main" | null, "time", "untracked": bool}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashEntry {
-    /// La posizione nell'elenco: `n` di `stash@{n}`, 0 il più recente.
+    /// The position in the list: `n` of `stash@{n}`, 0 the most recent.
     pub index: usize,
     /// `stash@{n}`.
     pub name: String,
-    /// Il commit dello stash (il worktree salvato); il suo albero, confrontato con `base`, dà
-    /// le modifiche dei file tracciati (`commit.show`/`diff.commit` con questo id).
+    /// The commit of the stash (the saved worktree); its tree, compared with `base`, gives
+    /// the changes of the tracked files (`commit.show`/`diff.commit` with this id).
     pub id: Oid,
-    /// Il commit di HEAD quando lo stash è stato creato (il primo genitore): la UI lo disegna
-    /// accanto a questo commit nel grafo.
+    /// The commit of HEAD when the stash was created (the first parent): the UI draws it
+    /// next to this commit in the graph.
     pub base: Oid,
-    /// Il messaggio del reflog come lo mostra `git stash list`: `On <branch>: <messaggio>` o
-    /// `WIP on <branch>: <id breve> <oggetto>`.
+    /// The reflog message as `git stash list` shows it: `On <branch>: <message>` or
+    /// `WIP on <branch>: <short id> <subject>`.
     pub message: String,
-    /// Il branch su cui è stato creato, letto da `message`; `None` con HEAD staccata (`(no
-    /// branch)`) o con un messaggio di altro formato (`git stash store -m`).
+    /// The branch it was created on, read from `message`; `None` with detached HEAD (`(no
+    /// branch)`) or with a message in another format (`git stash store -m`).
     pub branch: Option<String>,
-    /// Data del commit dello stash (secondi Unix).
+    /// Date of the stash commit (Unix seconds).
     pub time: i64,
-    /// Vero se contiene anche file non tracciati (terzo genitore, `include_untracked`).
+    /// True if it also contains untracked files (third parent, `include_untracked`).
     pub untracked: bool,
 }
 
 impl StashEntry {
-    /// La voce in posizione `index` del commit `id` con i genitori `parents`; `None` se il
-    /// commit non ha genitori (non è uno stash).
+    /// The entry at position `index` of commit `id` with parents `parents`; `None` if the
+    /// commit has no parents (it is not a stash).
     pub fn new(
         index: usize,
         id: Oid,
@@ -84,9 +84,9 @@ impl StashEntry {
     }
 }
 
-/// Il branch di un messaggio di stash (`WIP on main: ...`, `On feature/x: ...`); `None` per
-/// `(no branch)` o un altro formato. Un nome di ref non contiene `:`, quindi il primo `: `
-/// chiude il nome.
+/// The branch of a stash message (`WIP on main: ...`, `On feature/x: ...`); `None` for
+/// `(no branch)` or another format. A ref name does not contain `:`, so the first `: `
+/// ends the name.
 pub fn stash_branch(message: &str) -> Option<String> {
     let rest = message
         .strip_prefix("WIP on ")
@@ -96,40 +96,38 @@ pub fn stash_branch(message: &str) -> Option<String> {
         .then(|| branch.to_owned())
 }
 
-/// Lo stash con id `id` nell'elenco, se c'è.
+/// The stash with id `id` in the list, if present.
 pub fn find_stash<'a>(list: &'a [StashEntry], id: &Oid) -> Option<&'a StashEntry> {
     list.iter().find(|s| s.id == *id)
 }
 
-/// Parametri di `stash.push`: `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}`.
-/// Anche la voce del diario li tiene, per il redo.
+/// Parameters of `stash.push`: `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}`.
+/// The journal entry keeps them too, for the redo.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StashPush {
-    /// Il messaggio (una riga); senza, git scrive `WIP on <branch>: <id> <oggetto>`.
+    /// The message (one line); without it, git writes `WIP on <branch>: <id> <subject>`.
     pub message: Option<String>,
-    /// Anche i file non tracciati (non gli ignorati): `--include-untracked`, che dopo averli
-    /// salvati li toglie dal worktree.
+    /// Also the untracked files (not the ignored ones): `--include-untracked`, which after saving
+    /// them removes them from the worktree.
     pub include_untracked: bool,
-    /// Le modifiche in stage restano anche nell'indice e nel worktree (`--keep-index`); lo
-    /// stash le contiene comunque.
+    /// The staged changes stay in the index and the worktree too (`--keep-index`); the
+    /// stash contains them anyway.
     pub keep_index: bool,
-    /// Solo questi file o cartelle (alla lettera, come `index.stage`); `None` = tutti.
+    /// Only these files or folders (literally, like `index.stage`); `None` = all.
     pub paths: Option<Vec<RepoPath>>,
 }
 
 impl StashPush {
-    /// Errore se il messaggio non si può passare a git così com'è: una riga sola, senza NUL né
-    /// caratteri di controllo (finisce in un argomento `--message=` e nel reflog, che lo
-    /// ridurrebbe a una riga). Un messaggio vuoto o di soli spazi vale come assente.
+    /// Error if the message cannot be passed to git as is: a single line, without NUL or
+    /// control characters (it ends up in a `--message=` argument and in the reflog, which would
+    /// reduce it to one line). An empty or whitespace-only message counts as absent.
     pub fn check(&mut self) -> Result<(), EngineError> {
         if let Some(message) = &self.message {
             if message.chars().any(char::is_control) {
                 return Err(EngineError::InvalidParams {
                     id: "stash.push",
-                    reason: "il messaggio dello stash è una riga sola, senza a capo né \
-                             caratteri di controllo"
-                        .to_owned(),
+                    reason: msg!("engine-stash-message-control"),
                 });
             }
             if message.trim().is_empty() {
@@ -139,7 +137,7 @@ impl StashPush {
         Ok(())
     }
 
-    /// Vero se la voce `path` dello stato rientra nei `paths` richiesti (tutte senza `paths`).
+    /// True if the status entry `path` falls within the requested `paths` (all of them without `paths`).
     fn selects(&self, path: &RepoPath) -> bool {
         self.paths
             .as_ref()
@@ -147,36 +145,31 @@ impl StashPush {
     }
 }
 
-/// I controlli di `stash.push` sullo stato letto prima di scrivere, comuni ai backend:
-/// operazione in corso, file in conflitto, branch senza commit, file `intent-to-add` (con
-/// questi git non salva lo stash: "Cannot save the current index state/worktree state") e
-/// niente da mettere da parte fra i file scelti (modifiche ai file tracciati, in stage o no, e
-/// con `include_untracked` i non tracciati). Errori [`EngineError::NotAllowed`], niente cambia.
+/// The checks of `stash.push` on the state read before writing, shared by the backends:
+/// operation in progress, conflicted files, branch without commits, `intent-to-add` files (with
+/// these git does not save the stash: "Cannot save the current index state/worktree state") and
+/// nothing to set aside among the chosen files (changes to tracked files, staged or not, and
+/// with `include_untracked` the untracked ones). Errors [`EngineError::NotAllowed`], nothing changes.
 pub fn check_stash_push(status: &Status, request: &StashPush) -> Result<(), EngineError> {
     const ID: &str = "stash.push";
-    check_no_operation(ID, "metterebbe da parte le modifiche", status.operation)?;
+    check_no_operation(ID, msg!("engine-busy-stash-push"), status.operation)?;
     if status.head.target().is_none() {
-        return Err(EngineError::NotAllowed(
-            "il branch non ha ancora commit: uno stash si appoggia a HEAD, niente messo da parte"
-                .to_owned(),
-        ));
+        return Err(EngineError::NotAllowed(msg!("engine-stash-unborn")));
     }
     let unmerged = paths_where(status, |e| matches!(e.kind, EntryKind::Unmerged(_)));
     if !unmerged.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file in conflitto ({}): risolverli prima di mettere da parte le modifiche, \
-             niente modificato",
-            unmerged.join(", ")
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-stash-push-conflicts",
+            files = unmerged.join(", ")
         )));
     }
     let intent = paths_where(status, |e| {
         tracked(&e.kind) && e.worktree == Change::Added && e.index == Change::Unmodified
     });
     if !intent.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file `intent-to-add` (`git add -N`: {}): git non riesce a salvarli in uno \
-             stash. Metterli in stage o toglierli dallo stage e riprovare, niente modificato",
-            intent.join(", ")
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-stash-intent-to-add",
+            files = intent.join(", ")
         )));
     }
     let any = status.entries.iter().any(|e| {
@@ -188,53 +181,45 @@ pub fn check_stash_push(status: &Status, request: &StashPush) -> Result<(), Engi
             }
     });
     if !any {
-        let what = if request.include_untracked {
-            "nessuna modifica né file non tracciato"
-        } else {
-            "nessuna modifica ai file tracciati (i non tracciati entrano solo con \
-             `include_untracked`)"
+        let reason = match (request.include_untracked, request.paths.is_some()) {
+            (true, false) => msg!("engine-stash-nothing-untracked"),
+            (true, true) => msg!("engine-stash-nothing-untracked-paths"),
+            (false, false) => msg!("engine-stash-nothing"),
+            (false, true) => msg!("engine-stash-nothing-paths"),
         };
-        let scope = if request.paths.is_some() {
-            " fra i percorsi scelti"
-        } else {
-            ""
-        };
-        return Err(EngineError::NotAllowed(format!(
-            "niente da mettere da parte: {what}{scope}"
-        )));
+        return Err(EngineError::NotAllowed(reason));
     }
     Ok(())
 }
 
-/// I controlli di `stash.apply`/`stash.pop` sullo stato: operazione in corso, file in
-/// conflitto. [`EngineError::NotAllowed`], niente cambia.
+/// The checks of `stash.apply`/`stash.pop` on the state: operation in progress, conflicted
+/// files. [`EngineError::NotAllowed`], nothing changes.
 pub fn check_stash_apply(command: &'static str, status: &Status) -> Result<(), EngineError> {
-    check_no_operation(command, "applicherebbe lo stash", status.operation)?;
+    check_no_operation(command, msg!("engine-busy-stash-apply"), status.operation)?;
     let unmerged = paths_where(status, |e| matches!(e.kind, EntryKind::Unmerged(_)));
     if !unmerged.is_empty() {
-        return Err(EngineError::NotAllowed(format!(
-            "ci sono file in conflitto ({}): risolverli prima di applicare uno stash, niente \
-             modificato",
-            unmerged.join(", ")
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-stash-apply-conflicts",
+            files = unmerged.join(", ")
         )));
     }
     Ok(())
 }
 
-/// I file dello stato che impediscono di applicare uno stash che cambia i file tracciati
-/// `tracked` e rimette i non tracciati `untracked`: ogni voce (modifica in stage o fuori,
-/// non tracciato, ignorato) su uno di quei percorsi, o su una cartella che li contiene, o
-/// dentro uno di loro. Il `CliBackend` aggiunge i file del worktree che lo stato non mostra (un
-/// ignorato, un file al posto di una cartella).
+/// The files of the status that prevent applying a stash that changes the tracked files
+/// `tracked` and puts back the untracked ones `untracked`: every entry (staged change or not,
+/// untracked, ignored) on one of those paths, or on a folder that contains them, or
+/// inside one of them. The `CliBackend` adds the worktree files that the status does not show (an
+/// ignored one, a file in place of a folder).
 ///
-/// Non blocca un file tracciato che ha **già** la versione dello stash: worktree uguale
-/// all'indice (nessuna modifica fuori stage) e `in_stash(percorso, modo, id)` vero per la sua
-/// voce dell'indice, cioè la stessa voce nell'indice salvato dallo stash e nel suo worktree
-/// salvato (modo 0: assente da tutti e due). È il caso delle modifiche in stage rimaste dopo un
-/// push con `keep_index` (o con `paths`, che salva comunque tutto l'indice): il merge non ha
-/// niente da cambiare in quel file, e senza questa eccezione l'undo del push e il pop dopo un
-/// `keep_index` sarebbero sempre rifiutati. Un file con anche modifiche fuori stage resta
-/// bloccato.
+/// It does not block a tracked file that **already** has the stash's version: worktree equal
+/// to the index (no unstaged changes) and `in_stash(path, mode, id)` true for its
+/// index entry, that is the same entry in the index saved by the stash and in its saved
+/// worktree (mode 0: absent from both). This is the case of the staged changes left after a
+/// push with `keep_index` (or with `paths`, which saves the whole index anyway): the merge has
+/// nothing to change in that file, and without this exception the undo of the push and the pop after a
+/// `keep_index` would always be rejected. A file that also has unstaged changes stays
+/// blocked.
 pub fn stash_local_changes(
     status: &Status,
     tracked: &[RepoPath],
@@ -249,8 +234,8 @@ pub fn stash_local_changes(
         .filter(|e| {
             let changed = match &e.kind {
                 EntryKind::Untracked | EntryKind::Ignored | EntryKind::Unmerged(_) => true,
-                // Solo per i file tracciati dello stash: un non tracciato da rimettere non deve
-                // esserci affatto (con modo 0 `in_stash` sarebbe vero anche per lui).
+                // Only for the tracked files of the stash: an untracked one to put back must not
+                // be there at all (with mode 0 `in_stash` would be true for it too).
                 EntryKind::Ordinary(info)
                     if e.worktree == Change::Unmodified
                         && !untracked.iter().any(|t| near(&e.path, t))
@@ -268,19 +253,19 @@ pub fn stash_local_changes(
     hits
 }
 
-/// Inizio del messaggio di [`EngineError::NotAllowed`] quando la parte in stage di uno stash non
-/// si applica sopra l'indice attuale (`restore_index`, "conflicts in index"): l'undo di
-/// `stash.push` lo riconosce per dare un messaggio suo.
-pub const INDEX_NOT_RESTORED: &str = "con `restore_index` le modifiche in stage di";
+/// The message key of [`EngineError::NotAllowed`] when the staged part of a stash does not
+/// apply on top of the current index (`restore_index`, "conflicts in index"): the undo of
+/// `stash.push` recognizes it to give a message of its own.
+pub const INDEX_NOT_RESTORED: &str = "engine-stash-index-not-restored";
 
-/// [`EngineError::NotAllowed`] di `stash.apply`/`stash.pop` quando dei file locali sarebbero
-/// sovrascritti (`files`): niente è stato modificato.
+/// [`EngineError::NotAllowed`] of `stash.apply`/`stash.pop` when local files would be
+/// overwritten (`files`): nothing was modified.
 pub fn stash_blocked(command: &str, stash: &str, files: &[String]) -> EngineError {
-    EngineError::NotAllowed(format!(
-        "`{command}` di `{stash}` sovrascriverebbe file con modifiche locali, non tracciati o \
-         ignorati ({}): niente modificato. Committarli, metterli da parte o spostarli e \
-         riprovare",
-        files
+    EngineError::NotAllowed(msg!(
+        "engine-stash-blocked",
+        command = command,
+        stash = stash,
+        files = files
             .iter()
             .map(|f| format!("`{f}`"))
             .collect::<Vec<_>>()
@@ -288,64 +273,64 @@ pub fn stash_blocked(command: &str, stash: &str, files: &[String]) -> EngineErro
     ))
 }
 
-/// Richiesta a [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
+/// Request to [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashApply {
-    /// Il comando, per i messaggi (`stash.apply`, `stash.pop`, `edit.undo`).
+    /// The command, for messages (`stash.apply`, `stash.pop`, `edit.undo`).
     pub command: &'static str,
-    /// Lo stash da applicare: deve essere ancora nell'elenco.
+    /// The stash to apply: it must still be in the list.
     pub id: Oid,
-    /// Rimette anche la divisione fra in stage e non (`--index`); senza, tutto torna fuori
-    /// stage, tranne i file nuovi, che git lascia in stage.
+    /// Also restores the split between staged and unstaged (`--index`); without it, everything comes back unstaged,
+    /// except new files, which git leaves staged.
     pub restore_index: bool,
 }
 
-/// Esito di [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
+/// Outcome of [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashApplied {
-    /// I file rimasti in conflitto (il merge dello stash con HEAD si è fermato): vuoto se lo
-    /// stash si è applicato del tutto.
+    /// The files left in conflict (the merge of the stash with HEAD stopped): empty if the
+    /// stash applied completely.
     pub conflicts: Vec<String>,
-    /// Avvisi scoperti dopo l'applicazione.
-    pub warnings: Vec<String>,
+    /// Warnings found after the application.
+    pub warnings: Vec<Message>,
 }
 
-/// Richiesta a [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
+/// Request to [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashDrop {
-    /// Il comando, per i messaggi e il reflog del backup.
+    /// The command, for messages and the backup's reflog.
     pub command: &'static str,
-    /// Lo stash da eliminare: deve essere ancora nell'elenco (in qualunque posizione).
+    /// The stash to remove: it must still be in the list (at any position).
     pub id: Oid,
-    /// Il tipo del ref di backup da creare prima (`refs/project/backup/<tipo>-...`), `None`
-    /// per non crearlo (il redo di un drop: il backup c'è già).
+    /// The kind of the backup ref to create first (`refs/project/backup/<kind>-...`), `None`
+    /// to not create it (the redo of a drop: the backup already exists).
     pub backup: Option<&'static str>,
 }
 
-/// Esito di [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
+/// Outcome of [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashDropped {
-    /// Il ref di backup sul commit dello stash, se creato.
+    /// The backup ref on the stash commit, if created.
     pub backup: Option<String>,
-    /// Avvisi scoperti dopo l'eliminazione (es. l'elenco cambiato da un altro processo).
-    pub warnings: Vec<String>,
+    /// Warnings found after the removal (e.g. the list changed by another process).
+    pub warnings: Vec<Message>,
 }
 
-/// Lo stash di una voce del diario (`stash.push`, `stash.drop`).
+/// The stash of a journal entry (`stash.push`, `stash.drop`).
 ///
-/// - **`stash.push`**: undo = `pop` di quello stash con `restore_index` (come
-///   `git stash pop --index`), solo se HEAD è ancora quella della voce e sul commit `base`
-///   (così il merge non può andare in conflitto) e lo stash è ancora nell'elenco; il commit
-///   dello stash resta in un backup `refs/project/backup/undo-...`. Redo = di nuovo
-///   `stash.push` con gli stessi parametri (`push`) e stessa HEAD: lo stash nuovo ha un altro
-///   id (la voce si aggiorna) e contiene le modifiche che ci sono al momento del redo.
-/// - **`stash.drop`**: undo = `git stash store` dello stesso commit (tenuto dal backup), solo se
-///   non è già nell'elenco: torna **in cima** (`stash@{0}`), non nella posizione di prima
-///   (`git stash store` non sa inserire altrove). Redo = di nuovo il drop, ovunque sia ora.
-/// - **`stash.apply` e `stash.pop` non entrano**: cambiano solo indice e worktree e annullarli
-///   vorrebbe dire togliere dai file quello che lo stash ha aggiunto, mescolato alle modifiche
-///   che c'erano già o fatte dopo; lo stash applicato resta (apply) o è nel backup
-///   `refs/project/backup/stash-...` (pop), quindi niente si perde.
+/// - **`stash.push`**: undo = `pop` of that stash with `restore_index` (like
+///   `git stash pop --index`), only if HEAD is still that of the entry and on commit `base`
+///   (so the merge cannot conflict) and the stash is still in the list; the stash
+///   commit stays in a `refs/project/backup/undo-...` backup. Redo = `stash.push` again
+///   with the same parameters (`push`) and same HEAD: the new stash has another
+///   id (the entry is updated) and contains the changes present at the time of the redo.
+/// - **`stash.drop`**: undo = `git stash store` of the same commit (held by the backup), only if
+///   it is not already in the list: it comes back **on top** (`stash@{0}`), not at the previous
+///   position (`git stash store` cannot insert elsewhere). Redo = the drop again, wherever it is now.
+/// - **`stash.apply` and `stash.pop` do not go in**: they change only index and worktree and undoing them
+///   would mean removing from the files what the stash added, mixed with the changes
+///   that were already there or made afterwards; the applied stash stays (apply) or is in the backup
+///   `refs/project/backup/stash-...` (pop), so nothing is lost.
 ///
 /// JSON: `{"id", "message", "base", "push": StashPush | null}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,26 +338,26 @@ pub struct StashRecord {
     pub id: Oid,
     pub message: String,
     pub base: Oid,
-    /// Solo per `stash.push`: i parametri, per il redo.
+    /// Only for `stash.push`: the parameters, for the redo.
     #[serde(default)]
     pub push: Option<StashPush>,
 }
 
-/// Esito di [`pop_stash`].
+/// Outcome of [`pop_stash`].
 #[derive(Debug)]
 pub struct StashPopped {
     pub applied: StashApplied,
-    /// L'esito del drop, se fatto (niente con conflitti o se il drop è fallito).
+    /// The outcome of the drop, if done (none with conflicts or if the drop failed).
     pub dropped: Option<StashDropped>,
-    /// Il drop è fallito **dopo** un apply riuscito: le modifiche sono nei file, lo stash è
-    /// ancora nell'elenco. Non è un errore dell'operazione (l'apply non va ripetuto).
+    /// The drop failed **after** a successful apply: the changes are in the files, the stash is
+    /// still in the list. It is not an error of the operation (the apply must not be repeated).
     pub drop_error: Option<EngineError>,
 }
 
-/// `apply` dello stash `id` e, se non restano conflitti, il suo drop (con un backup del tipo
-/// `backup`): `stash.pop` e l'undo di `stash.push`. Con conflitti lo stash resta nell'elenco
-/// (come `git stash pop`) e il drop non si fa. Un errore dell'apply è l'errore (niente è
-/// cambiato); un errore del drop no: l'apply è fatto, ed è in [`StashPopped::drop_error`].
+/// `apply` of the stash `id` and, if no conflicts remain, its drop (with a backup of kind
+/// `backup`): `stash.pop` and the undo of `stash.push`. With conflicts the stash stays in the list
+/// (like `git stash pop`) and the drop is not done. An error of the apply is the error (nothing
+/// changed); an error of the drop is not: the apply is done, and is in [`StashPopped::drop_error`].
 pub fn pop_stash(
     repo: &mut dyn crate::GitBackend,
     command: &'static str,
@@ -438,13 +423,13 @@ mod tests {
 
     #[test]
     fn branch_from_message() {
-        assert_eq!(stash_branch("On main: prova"), Some("main".to_owned()));
+        assert_eq!(stash_branch("On main: test"), Some("main".to_owned()));
         assert_eq!(
-            stash_branch("WIP on feature/x: abc1234 Oggetto: con due punti"),
+            stash_branch("WIP on feature/x: abc1234 Subject: with two colons"),
             Some("feature/x".to_owned())
         );
         assert_eq!(stash_branch("WIP on (no branch): abc1234 x"), None);
-        assert_eq!(stash_branch("messaggio libero"), None);
+        assert_eq!(stash_branch("free message"), None);
         assert_eq!(stash_branch("On : x"), None);
     }
 
@@ -467,7 +452,7 @@ mod tests {
     fn push_checks() {
         let status = MemoryBackend::sample().status().unwrap();
         assert!(check_stash_push(&status, &StashPush::default()).is_ok());
-        // Solo un non tracciato: serve `include_untracked`.
+        // Only an untracked file: `include_untracked` is needed.
         let only_note = StashPush {
             paths: Some(vec![RepoPath::from("note.txt")]),
             ..StashPush::default()
@@ -488,7 +473,7 @@ mod tests {
         ));
         let empty = MemoryBackend::new().status().unwrap();
         let err = check_stash_push(&empty, &StashPush::default()).unwrap_err();
-        assert!(err.to_string().contains("non ha ancora commit"), "{err}");
+        assert!(err.to_string().contains("has no commits yet"), "{err}");
 
         let mut m = StashPush {
             message: Some("  ".to_owned()),
@@ -509,27 +494,27 @@ mod tests {
         let status = MemoryBackend::sample().status().unwrap();
         let p = |s: &str| RepoPath::from(s);
         assert_eq!(
-            stash_local_changes(&status, &[p("README.md"), p("altro.rs")], &[], none),
+            stash_local_changes(&status, &[p("README.md"), p("other.rs")], &[], none),
             ["README.md"]
         );
-        // Una cartella dello stash contiene un file modificato; un non tracciato da rimettere
-        // è già lì.
+        // A folder of the stash contains a modified file; an untracked one to put back
+        // is already there.
         assert_eq!(
             stash_local_changes(&status, &[p("src")], &[p("note.txt")], none),
             ["src/lib.rs", "note.txt"]
         );
         assert!(stash_local_changes(&status, &[p("Cargo.toml")], &[], none).is_empty());
-        // `docs/guida.md` (`A.`) ha già la versione dello stash: non blocca. `README.md` (`MM`)
-        // ha modifiche fuori stage: blocca anche se l'indice coincide.
+        // `docs/guide.md` (`A.`) already has the stash's version: it does not block. `README.md` (`MM`)
+        // has unstaged changes: it blocks even if the index matches.
         let all = |_: &RepoPath, _: u32, _: Oid| true;
         assert_eq!(
-            stash_local_changes(&status, &[p("README.md"), p("docs/guida.md")], &[], all),
+            stash_local_changes(&status, &[p("README.md"), p("docs/guide.md")], &[], all),
             ["README.md"]
         );
-        // L'eccezione non vale per un non tracciato da rimettere: `docs/guida.md` lì blocca.
+        // The exception does not apply to an untracked file to put back: `docs/guide.md` blocks there.
         assert_eq!(
-            stash_local_changes(&status, &[], &[p("docs/guida.md")], all),
-            ["docs/guida.md"]
+            stash_local_changes(&status, &[], &[p("docs/guide.md")], all),
+            ["docs/guide.md"]
         );
     }
 }

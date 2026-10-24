@@ -1,7 +1,7 @@
-//! Test di integrazione di `remote.fetch` (S25) con il `CliBackend` e remoti locali (`git init
-//! --bare` in una cartella temporanea): commit nuovi, niente di nuovo, un solo branch, tag,
-//! remoto inesistente o con l'URL verso una cartella che non c'è, nomi di remoto che iniziano
-//! con `-`, avanzamento, credenziali rifiutate, nessuna attesa di input, annullamento.
+//! Integration tests of `remote.fetch` (S25) with the `CliBackend` and local remotes (`git init
+//! --bare` in a temporary folder): new commits, nothing new, a single branch, tags,
+//! nonexistent remote or with a URL pointing to a folder that does not exist, remote names
+//! starting with `-`, progress, rejected credentials, no waiting for input, cancellation.
 
 mod common;
 
@@ -25,8 +25,8 @@ fn fetch(r: &Registry, s: &mut Session, params: Value) -> Value {
         .unwrap_or_else(|e| panic!("remote.fetch: {e}"))
 }
 
-/// Il remoto bare, un clone che ci scrive (`other`) e il repo sotto test (`work`), che ha il
-/// remoto `origin` ma non ha ancora scaricato niente.
+/// The bare remote, a clone that writes to it (`other`) and the repo under test (`work`), which
+/// has the remote `origin` but has not downloaded anything yet.
 struct Setup {
     remote: Repo,
     other: Repo,
@@ -65,7 +65,7 @@ fn fetch_brings_new_commits_then_nothing() {
         other,
         work,
     } = setup();
-    let c1 = other.commit_file("a.txt", "uno\n", "primo");
+    let c1 = other.commit_file("a.txt", "one\n", "first");
     other.push("origin", "HEAD", "main");
     let (r, mut s) = open(&work);
 
@@ -91,7 +91,7 @@ fn fetch_brings_new_commits_then_nothing() {
         messages.iter().any(|m| m.contains("[new branch]")),
         "{messages:?}"
     );
-    // Niente righe di avanzamento nei messaggi.
+    // No progress lines in the messages.
     assert!(
         messages.iter().all(|m| !m.contains("objects:")),
         "{messages:?}"
@@ -104,7 +104,7 @@ fn fetch_brings_new_commits_then_nothing() {
             .any(|r| r["name"] == "refs/remotes/origin/main")
     );
     assert_eq!(work.rev("origin/main"), c1);
-    // Branch locali, HEAD e diario intatti.
+    // Local branches, HEAD and journal untouched.
     assert!(
         work.git_output(&["rev-parse", "-q", "--verify", "HEAD"])
             .stdout
@@ -113,9 +113,9 @@ fn fetch_brings_new_commits_then_nothing() {
     let history = r.run("edit.history", &mut s, json!({})).unwrap();
     assert_eq!(history["can_undo"], false);
 
-    // Un commit nuovo sul remoto, e un tag annotato che lo indica.
-    let c2 = other.commit_file("a.txt", "due\n", "secondo");
-    other.annotated_tag("v1", "HEAD", "versione 1");
+    // A new commit on the remote, and an annotated tag pointing to it.
+    let c2 = other.commit_file("a.txt", "two\n", "second");
+    other.annotated_tag("v1", "HEAD", "version 1");
     other.git(&[
         "push",
         "--quiet",
@@ -132,7 +132,7 @@ fn fetch_brings_new_commits_then_nothing() {
         ])
     );
 
-    // Niente di nuovo: nessun ref cambiato, niente scritto da git.
+    // Nothing new: no ref changed, nothing written by git.
     let before = all_refs(&work);
     let out = fetch(&r, &mut s, json!({}));
     assert_eq!(out["updated"], json!([]));
@@ -147,7 +147,7 @@ fn fetch_of_a_single_branch() {
         other,
         work,
     } = setup();
-    let c1 = other.commit_file("a.txt", "uno\n", "primo");
+    let c1 = other.commit_file("a.txt", "one\n", "first");
     other.push("origin", "HEAD", "main");
     other.push("origin", "HEAD", "feature");
     let (r, mut s) = open(&work);
@@ -159,10 +159,10 @@ fn fetch_of_a_single_branch() {
         json!([update("refs/remotes/origin/feature", None, Some(c1))])
     );
     let err = r
-        .run("remote.fetch", &mut s, json!({ "branch": "manca" }))
+        .run("remote.fetch", &mut s, json!({ "branch": "missing" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-    assert!(err.to_string().contains("manca"), "{err}");
+    assert!(err.to_string().contains("missing"), "{err}");
 }
 
 #[test]
@@ -172,13 +172,13 @@ fn the_default_remote_follows_the_upstream() {
         other,
         work,
     } = setup();
-    let c1 = other.commit_file("a.txt", "uno\n", "primo");
+    let c1 = other.commit_file("a.txt", "one\n", "first");
     other.push("origin", "HEAD", "main");
     work.add_remote("fork", &remote);
     work.git(&["fetch", "--quiet", "fork"]);
     work.git(&["switch", "--quiet", "-c", "main", "fork/main"]);
     work.set_upstream("main", "fork");
-    let c2 = other.commit_file("a.txt", "due\n", "secondo");
+    let c2 = other.commit_file("a.txt", "two\n", "second");
     other.push("origin", "HEAD", "main");
     let (r, mut s) = open(&work);
 
@@ -188,7 +188,7 @@ fn the_default_remote_follows_the_upstream() {
         out["updated"],
         json!([update("refs/remotes/fork/main", Some(c1), Some(c2))])
     );
-    // `origin` non è stato toccato.
+    // `origin` was not touched.
     assert!(
         work.git_output(&["rev-parse", "-q", "--verify", "refs/remotes/origin/main"])
             .stdout
@@ -206,9 +206,9 @@ fn unknown_remote_and_missing_folder() {
     let (r, mut s) = open(&work);
     let before = all_refs(&work);
 
-    // Non configurato: mai passato a git (che lo userebbe come percorso o URL).
+    // Not configured: never passed to git (which would use it as a path or URL).
     let elsewhere = Repo::bare();
-    for remote in ["nessuno", elsewhere.path_str()] {
+    for remote in ["nobody", elsewhere.path_str()] {
         let err = r
             .run("remote.fetch", &mut s, json!({ "remote": remote }))
             .unwrap_err();
@@ -221,24 +221,24 @@ fn unknown_remote_and_missing_folder() {
         );
     }
 
-    // Configurato, con l'URL verso una cartella che non c'è.
-    let gone = work.path().join("non-esiste");
-    work.git(&["remote", "add", "rotto", gone.to_str().unwrap()]);
+    // Configured, with a URL pointing to a folder that does not exist.
+    let gone = work.path().join("does-not-exist");
+    work.git(&["remote", "add", "broken", gone.to_str().unwrap()]);
     let (r, mut s) = open(&work);
     let err = r
-        .run("remote.fetch", &mut s, json!({ "remote": "rotto" }))
+        .run("remote.fetch", &mut s, json!({ "remote": "broken" }))
         .unwrap_err();
     match &err {
         EngineError::RemoteUnreachable { remote, message } => {
-            assert_eq!(remote, "rotto");
+            assert_eq!(remote, "broken");
             assert!(
                 message.contains("does not appear to be a git repository"),
                 "{message}"
             );
         }
-        other => panic!("errore inatteso: {other}"),
+        other => panic!("unexpected error: {other}"),
     }
-    assert!(err.to_string().contains("non è raggiungibile"), "{err}");
+    assert!(err.to_string().contains("cannot be reached"), "{err}");
     assert_eq!(all_refs(&work), before);
 }
 
@@ -249,10 +249,10 @@ fn remote_names_that_look_like_options() {
         other,
         work,
     } = setup();
-    let c1 = other.commit_file("a.txt", "uno\n", "primo");
+    let c1 = other.commit_file("a.txt", "one\n", "first");
     other.push("origin", "HEAD", "main");
-    // Due remoti con nomi che git leggerebbe come opzioni senza `--end-of-options`; il secondo,
-    // come opzione, farebbe eseguire `false` al posto di `git-upload-pack`.
+    // Two remotes with names that git would read as options without `--end-of-options`; the
+    // second, as an option, would run `false` in place of `git-upload-pack`.
     for name in ["-x", "--upload-pack=false"] {
         work.git(&["remote", "add", "--", name, remote.path_str()]);
     }
@@ -291,7 +291,7 @@ fn progress_events_arrive_while_fetching() {
     let out = r.run_with("remote.fetch", &mut s, json!({}), job).unwrap();
     assert_eq!(out["updated"].as_array().unwrap().len(), 1);
     let seen = seen.lock().unwrap();
-    assert!(!seen.is_empty(), "nessun avanzamento");
+    assert!(!seen.is_empty(), "no progress");
     assert!(seen.iter().any(|p| p.done), "{seen:?}");
     assert!(
         seen.iter()
@@ -305,13 +305,13 @@ fn progress_events_arrive_while_fetching() {
     );
 }
 
-/// Uno script al posto di `ssh` (`core.sshCommand`) per simulare il remoto: il repo ha il
-/// remoto `origin` con un URL ssh finto.
+/// A script in place of `ssh` (`core.sshCommand`) to simulate the remote: the repo has the
+/// remote `origin` with a fake ssh URL.
 #[cfg(unix)]
 fn with_fake_ssh(script: &str) -> (Repo, tempfile::TempDir) {
     use std::os::unix::fs::PermissionsExt as _;
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("finto-ssh");
+    let path = dir.path().join("fake-ssh");
     std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     let work = Repo::new();
@@ -335,19 +335,19 @@ fn rejected_credentials_are_an_auth_error() {
                 "{message}"
             );
         }
-        other => panic!("errore inatteso: {other}"),
+        other => panic!("unexpected error: {other}"),
     }
 }
 
 #[cfg(unix)]
 #[test]
 fn never_waits_for_input() {
-    // Un "ssh" che chiede una passphrase o la conferma della chiave dell'host dal terminale,
-    // come fa ssh (il suo stdin è il canale con git, non la tastiera). Il processo non ha un
-    // terminale di controllo: l'apertura di `/dev/tty` fallisce subito, anche se i test girano
-    // in un terminale.
+    // An "ssh" that asks for a passphrase or host key confirmation from the terminal,
+    // as ssh does (its stdin is the channel with git, not the keyboard). The process has no
+    // controlling terminal: opening `/dev/tty` fails right away, even if the tests run
+    // in a terminal.
     let (work, _dir) = with_fake_ssh(
-        "if read answer < /dev/tty; then echo 'letto dal terminale' >&2; exit 0; fi\n\
+        "if read answer < /dev/tty; then echo 'read from the terminal' >&2; exit 0; fi\n\
          echo 'Host key verification failed.' >&2\nexit 255",
     );
     let (r, mut s) = open(&work);
@@ -355,10 +355,10 @@ fn never_waits_for_input() {
     let err = r.run("remote.fetch", &mut s, json!({})).unwrap_err();
     assert!(
         start.elapsed() < Duration::from_secs(20),
-        "ha aspettato input"
+        "waited for input"
     );
     assert!(matches!(err, EngineError::Auth { .. }), "{err}");
-    assert!(!err.to_string().contains("letto"), "{err}");
+    assert!(!err.to_string().contains("read from the terminal"), "{err}");
 }
 
 #[cfg(unix)]
@@ -388,7 +388,7 @@ fn cancel_stops_the_fetch() {
         "{:?}",
         start.elapsed()
     );
-    // Dopo l'annullamento il repo funziona: nessun lock rimasto.
+    // After the cancellation the repo works: no lock left behind.
     let refs = r.run("repo.refs", &mut s, json!({})).unwrap();
     assert_eq!(refs, json!([]));
 }
@@ -397,6 +397,6 @@ fn cancel_stops_the_fetch() {
 fn backend_lists_remotes() {
     use project_engine::GitBackend as _;
     let Setup { remote, work, .. } = setup();
-    work.add_remote("b-secondo", &remote);
-    assert_eq!(work.open().remotes().unwrap(), ["b-secondo", "origin"]);
+    work.add_remote("b-second", &remote);
+    assert_eq!(work.open().remotes().unwrap(), ["b-second", "origin"]);
 }

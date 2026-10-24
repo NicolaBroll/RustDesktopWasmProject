@@ -1,9 +1,9 @@
-//! L6 — server MCP (Model Context Protocol).
+//! L6 — MCP server (Model Context Protocol).
 //!
-//! Trasporto: JSON-RPC 2.0, un messaggio per riga su stdin/stdout; nessuna
-//! porta di rete. Ogni percorso è risolto dentro la radice data a
-//! [`Server::new`] e rifiutato se ne esce (anche tramite link simbolici): i repository si
-//! aprono solo con il tool `open_repo`, non con `repo.open` tramite `execute_command`.
+//! Transport: JSON-RPC 2.0, one message per line on stdin/stdout; no network
+//! port. Every path is resolved inside the root given to
+//! [`Server::new`] and rejected if it escapes (also through symbolic links): repositories are
+//! opened only with the `open_repo` tool, not with `repo.open` through `execute_command`.
 
 mod paths;
 
@@ -29,7 +29,7 @@ pub struct Server {
 }
 
 impl Server {
-    /// Server confinato in `root`, che apre i repository con `opener`.
+    /// Server confined to `root`, opening repositories with `opener`.
     pub fn new(root: &Path, opener: Arc<dyn RepoOpener>) -> io::Result<Self> {
         Ok(Self {
             session: Session::new(opener),
@@ -38,12 +38,12 @@ impl Server {
         })
     }
 
-    /// Apre il repository nella radice, come `open_repo` con `.`.
+    /// Opens the repository at the root, like `open_repo` with `.`.
     pub fn open_root(&mut self) -> Result<Value, String> {
         self.open_repo(json!({ "path": "." }))
     }
 
-    /// Legge richieste da `input` fino a EOF e scrive le risposte su `output`.
+    /// Reads requests from `input` until EOF and writes the responses to `output`.
     pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> io::Result<()> {
         for line in input.lines() {
             let line = line?;
@@ -63,16 +63,16 @@ impl Server {
         Ok(())
     }
 
-    /// Gestisce un messaggio JSON-RPC. `None` per le notifiche.
+    /// Handles a JSON-RPC message. `None` for notifications.
     pub fn handle(&mut self, message: Value) -> Option<Value> {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return Some(error(
                 message.get("id").cloned().unwrap_or(Value::Null),
                 INVALID_REQUEST,
-                "manca `method`",
+                "missing `method`",
             ));
         };
-        // Le notifiche (senza id) non ricevono risposta.
+        // Notifications (without an id) get no response.
         let id = message.get("id")?.clone();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         Some(match method {
@@ -96,11 +96,7 @@ impl Server {
                 Ok(call) => ok(id, self.call_tool(&call.name, call.arguments)),
                 Err(e) => error(id, INVALID_PARAMS, &e.to_string()),
             },
-            other => error(
-                id,
-                METHOD_NOT_FOUND,
-                &format!("metodo sconosciuto: {other}"),
-            ),
+            other => error(id, METHOD_NOT_FOUND, &format!("unknown method: {other}")),
         })
     }
 
@@ -109,7 +105,7 @@ impl Server {
             "list_commands" => self.list_commands(args),
             "execute_command" => self.execute_command(args),
             "open_repo" => self.open_repo(args),
-            other => Err(format!("tool sconosciuto: {other}")),
+            other => Err(format!("unknown tool: {other}")),
         };
         match result {
             Ok(value) => tool_result(&value, false),
@@ -136,9 +132,9 @@ impl Server {
             params: Value,
         }
         let Args { id, params } = parse_args(args)?;
-        // `repo.open` accetta qualunque percorso: da qui si passa per `open_repo`.
+        // `repo.open` accepts any path: from here we go through `open_repo`.
         if id == "repo.open" {
-            return Err("per aprire un repository usa il tool `open_repo`".to_owned());
+            return Err("to open a repository use the `open_repo` tool".to_owned());
         }
         self.registry
             .run(&id, &mut self.session, params)
@@ -150,7 +146,7 @@ impl Server {
         let path = self.root.existing(&path)?;
         let path = path
             .to_str()
-            .ok_or_else(|| format!("{}: percorso non UTF-8", path.display()))?;
+            .ok_or_else(|| format!("{}: non-UTF-8 path", path.display()))?;
         self.registry
             .run("repo.open", &mut self.session, json!({ "path": path }))
             .map_err(|e| e.to_string())
@@ -171,19 +167,19 @@ struct PathArg {
 
 fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
     let args = if args.is_null() { json!({}) } else { args };
-    serde_json::from_value(args).map_err(|e| format!("argomenti non validi: {e}"))
+    serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
 
 fn tools() -> Value {
     let path_schema = json!({
         "type": "object",
-        "properties": { "path": { "type": "string", "description": "Cartella relativa alla radice" } },
+        "properties": { "path": { "type": "string", "description": "Folder relative to the root" } },
         "required": ["path"],
     });
     json!([
         {
             "name": "list_commands",
-            "description": "Elenca i comandi del catalogo, filtrati per testo nell'id o nel titolo.",
+            "description": "Lists the catalog commands, filtered by text in the id or title.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "search": { "type": "string" } },
@@ -191,7 +187,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Esegue un comando del catalogo sulla sessione corrente. Vedi list_commands per id e parametri; i comandi con `writes: true` modificano il repository dell'utente (es. `index.stage`, `commit.create`, `branch.checkout`, `edit.undo`), quelli che possono far perdere dati o riscrivere commit pubblicati (es. `worktree.discard`, `branch.delete` di un branch non unito, che accetta anche `expected` con l'id completo del commit visto, `amend` di un commit pubblicato) chiedono `\"confirm\": true` (passarlo solo se l'utente lo ha chiesto). `remote.fetch` scarica da un remoto configurato (per nome, mai un URL) e aggiorna solo branch remoti e tag; `remote.pull` scarica e integra l'upstream nel branch (fast-forward, merge o rebase secondo la configurazione, annullabile con `edit.undo`; un merge con conflitti resta in corso come con `merge.start`, `\"in_progress\": true` e i file in `conflicts`, un rebase con conflitti si annulla); `remote.push` pubblica il branch sul remoto (il force, `\"force\": true`, usa sempre force-with-lease e, se il remoto perderebbe commit, chiede `\"confirm\": true` con `\"expected\"`, l'id indicato dall'errore di conferma): usano la rete e possono essere lenti, e un push non si annulla. `remote.list` elenca i remoti (le credenziali negli URL sono sempre mascherate), `remote.add` aggiunge un remoto per nome e URL (con `\"fetch\": true` poi scarica; URL che iniziano con `-` o con `ext::`/`fd::` sono rifiutati), `remote.remove` lo rimuove con i suoi branch remoti e l'upstream dei branch che lo usano e chiede sempre `\"confirm\": true`; tutti e due si annullano con `edit.undo`. `stash.list` elenca gli stash (posizione `index`, `id`, `base`, messaggio); `stash.push` mette da parte le modifiche (annullabile con `edit.undo`); `stash.apply`/`stash.pop` le riapplicano (passare `index` e `expected`, l'id dello stash visto; rifiutati se toccherebbero file con modifiche locali; con conflitti lo stash resta); `stash.drop` elimina uno stash e chiede sempre `\"confirm\": true` insieme a `\"expected\"`, l'id dello stash indicato dall'errore di conferma (salva un backup, annullabile con `edit.undo`). `merge.start` unisce una rev (`\"rev\"`: branch, branch remoto, tag o id) nel branch attivo (fast-forward o commit di merge; rifiutato con modifiche ai file tracciati): con conflitti il merge resta in corso e il risultato elenca i file; `repo.operation` dice l'operazione in corso, i file in conflitto e i commit in ingresso; `merge.continue` conclude il merge quando non restano conflitti (i file risolti vanno messi in stage con `index.stage`); `merge.abort` lo annulla, chiede sempre `\"confirm\": true` e prima salva indice e worktree in un backup. Un merge concluso si annulla con `edit.undo`.",
+            "description": "Runs a catalog command on the current session. See list_commands for ids and parameters; commands with `writes: true` change the user's repository (e.g. `index.stage`, `commit.create`, `branch.checkout`, `edit.undo`), those that can lose data or rewrite published commits (e.g. `worktree.discard`, `branch.delete` of an unmerged branch, which also accepts `expected` with the full id of the commit seen, `amend` of a published commit) ask for `\"confirm\": true` (pass it only if the user asked for it). `remote.fetch` downloads from a configured remote (by name, never a URL) and updates only remote branches and tags; `remote.pull` downloads and integrates the upstream into the branch (fast-forward, merge or rebase according to the configuration, undoable with `edit.undo`; a merge with conflicts stays in progress as with `merge.start`, `\"in_progress\": true` and the files in `conflicts`, a rebase with conflicts is aborted); `remote.push` publishes the branch to the remote (force, `\"force\": true`, always uses force-with-lease and, if the remote would lose commits, asks for `\"confirm\": true` with `\"expected\"`, the id given by the confirmation error): they use the network and can be slow, and a push cannot be undone. `remote.list` lists the remotes (credentials in URLs are always masked), `remote.add` adds a remote by name and URL (with `\"fetch\": true` it then downloads; URLs starting with `-` or with `ext::`/`fd::` are refused), `remote.remove` removes it with its remote branches and the upstream of the branches that use it and always asks for `\"confirm\": true`; both are undone with `edit.undo`. `stash.list` lists the stashes (position `index`, `id`, `base`, message); `stash.push` stashes the changes (undoable with `edit.undo`); `stash.apply`/`stash.pop` apply them again (pass `index` and `expected`, the id of the stash seen; refused if they would touch files with local changes; with conflicts the stash stays); `stash.drop` drops a stash and always asks for `\"confirm\": true` together with `\"expected\"`, the id of the stash given by the confirmation error (it saves a backup, undoable with `edit.undo`). `merge.start` merges a rev (`\"rev\"`: branch, remote branch, tag or id) into the current branch (fast-forward or merge commit; refused with changes to tracked files): with conflicts the merge stays in progress and the result lists the files; `repo.operation` tells the operation in progress, the conflicted files and the incoming commits; `merge.continue` finishes the merge when no conflicts are left (the resolved files must be staged with `index.stage`); `merge.abort` aborts it, always asks for `\"confirm\": true` and first saves index and worktree in a backup. A finished merge is undone with `edit.undo`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -203,7 +199,7 @@ fn tools() -> Value {
         },
         {
             "name": "open_repo",
-            "description": "Apre il repository git nella cartella indicata (`.` per la radice); i comandi `repo.*` lavorano poi su questo repo.",
+            "description": "Opens the git repository in the given folder (`.` for the root); the `repo.*` commands then work on this repo.",
             "inputSchema": path_schema,
         },
     ])
@@ -212,7 +208,7 @@ fn tools() -> Value {
 fn tool_result(value: &Value, is_error: bool) -> Value {
     let text = match value {
         Value::String(s) => s.clone(),
-        other => serde_json::to_string_pretty(other).expect("Value è serializzabile"),
+        other => serde_json::to_string_pretty(other).expect("Value is serializable"),
     };
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
 }
@@ -237,7 +233,7 @@ mod tests {
         dir.canonicalize().unwrap()
     }
 
-    /// Server su `root` con il repo di esempio registrato nella sottocartella `repo`.
+    /// Server on `root` with the sample repo registered in the `repo` subfolder.
     fn server(root: &Path) -> Server {
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -276,7 +272,7 @@ mod tests {
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
-        assert_eq!(lines.len(), 3, "la notifica non ha risposta");
+        assert_eq!(lines.len(), 3, "the notification gets no response");
         assert_eq!(lines[0]["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 3);
         assert_eq!(lines[2]["error"]["code"], PARSE_ERROR);
@@ -287,7 +283,7 @@ mod tests {
         let root = temp_root("open");
         let mut server = server(&root);
         let r = call(&mut server, "execute_command", json!({"id": "repo.status"}));
-        assert_eq!(r["isError"], true, "nessun repo aperto");
+        assert_eq!(r["isError"], true, "no repository open");
 
         let r = call(&mut server, "open_repo", json!({"path": "repo"}));
         assert_eq!(r["isError"], false, "{r}");
@@ -369,11 +365,11 @@ mod tests {
         let r = call(
             &mut server,
             "execute_command",
-            json!({"id": "index.unstage", "params": {"paths": ["../fuori"]}}),
+            json!({"id": "index.unstage", "params": {"paths": ["../outside"]}}),
         );
         assert_eq!(r["isError"], true, "{r}");
 
-        // Righe: prima il diff (numeri di riga e digest), poi lo stage di una riga.
+        // Lines: first the diff (line numbers and digest), then staging one line.
         let r = call(
             &mut server,
             "execute_command",
@@ -409,7 +405,7 @@ mod tests {
             .unwrap();
         assert_eq!(lib["index"], "Modified");
         assert_eq!(lib["worktree"], "Modified");
-        // Lo stesso digest è ormai vecchio: errore che spiega cosa fare.
+        // The same digest is now stale: an error that explains what to do.
         let r = call(
             &mut server,
             "execute_command",
@@ -417,7 +413,7 @@ mod tests {
         );
         assert_eq!(r["isError"], true, "{r}");
         let text = r["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("rileggere il diff"), "{text}");
+        assert!(text.contains("reload the diff"), "{text}");
     }
 
     #[test]
@@ -438,15 +434,15 @@ mod tests {
         let r = call(
             &mut server,
             "execute_command",
-            json!({"id": "commit.create", "params": {"message": "Da un agente"}}),
+            json!({"id": "commit.create", "params": {"message": "From an agent"}}),
         );
         assert_eq!(r["isError"], false, "{r}");
         let text = r["content"][0]["text"].as_str().unwrap();
         let out: Value = serde_json::from_str(text).unwrap();
-        assert_eq!(out["commit"]["summary"], "Da un agente");
+        assert_eq!(out["commit"]["summary"], "From an agent");
         assert_eq!(out["branch"], "refs/heads/main");
 
-        // Un repo in cui HEAD è già su `origin/main`: `amend` chiede una conferma esplicita.
+        // A repo where HEAD is already on `origin/main`: `amend` asks for an explicit confirmation.
         let root = temp_root("commit-published");
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -502,7 +498,7 @@ mod tests {
         let r = call(
             &mut server,
             "execute_command",
-            json!({"id": "commit.create", "params": {"message": "Da un agente"}}),
+            json!({"id": "commit.create", "params": {"message": "From an agent"}}),
         );
         let text = r["content"][0]["text"].as_str().unwrap();
         let commit: Value = serde_json::from_str(text).unwrap();
@@ -532,11 +528,11 @@ mod tests {
             history["done"][0]["description"],
             undo["undone"]["description"]
         );
-        // Niente più da rifare: errore che lo dice.
+        // Nothing left to redo: an error that says so.
         let r = call(&mut server, "execute_command", json!({"id": "edit.redo"}));
         assert_eq!(r["isError"], true, "{r}");
         let text = r["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("niente da rifare"), "{text}");
+        assert!(text.contains("nothing to redo"), "{text}");
     }
 
     #[test]
@@ -580,7 +576,7 @@ mod tests {
     fn paths_outside_root_are_rejected() {
         let root = temp_root("escape");
         let mut server = server(&root);
-        for path in ["..", "/etc", "repo/../..", "non-esiste"] {
+        for path in ["..", "/etc", "repo/../..", "does-not-exist"] {
             let r = call(&mut server, "open_repo", json!({ "path": path }));
             assert_eq!(r["isError"], true, "{path}");
         }

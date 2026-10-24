@@ -1,10 +1,10 @@
-//! Tipi del client git: identificatori, commit, ref, HEAD, corsie del grafo.
+//! Git client types: identifiers, commits, refs, HEAD, graph lanes.
 //!
-//! Solo dati e funzioni pure: i parser dell'output di git lavorano su `&[u8]`
-//! (il log, [`parse_log`], lo stato, [`parse_status`], i ref, [`parse_refs`], i file cambiati
-//! da un commit, [`parse_diff_tree`], e il diff, [`parse_diff`]); [`build_patch`] costruisce le
-//! patch per lo stage di singole righe; [`parse_conflicts`] legge i marcatori di conflitto di un
-//! file e [`resolve_block`]/[`resolve_all`] li risolvono.
+//! Only data and pure functions: the parsers of git's output work on `&[u8]`
+//! (the log, [`parse_log`], the status, [`parse_status`], the refs, [`parse_refs`], the files changed
+//! by a commit, [`parse_diff_tree`], and the diff, [`parse_diff`]); [`build_patch`] builds the
+//! patches for staging single lines; [`parse_conflicts`] reads the conflict markers of a
+//! file and [`resolve_block`]/[`resolve_all`] resolve them.
 
 mod conflict;
 mod diff;
@@ -54,41 +54,41 @@ pub use text::ByteText;
 
 use serde::{Deserialize, Serialize};
 
-/// Autore o committer di un commit.
+/// Author or committer of a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature {
-    /// Nome come scritto nel commit (convertito con `from_utf8_lossy` se non UTF-8).
+    /// Name as written in the commit (converted with `from_utf8_lossy` if not UTF-8).
     pub name: String,
     pub email: String,
-    /// Secondi dall'epoca Unix (UTC).
+    /// Seconds since the Unix epoch (UTC).
     pub time: i64,
-    /// Fuso orario di chi ha firmato, in minuti rispetto a UTC (es. `120` per +0200).
+    /// Time zone of the signer, in minutes relative to UTC (e.g. `120` for +0200).
     pub offset_min: i32,
 }
 
-/// Un commit letto dal log.
+/// A commit read from the log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Commit {
     pub id: Oid,
-    /// Genitori in ordine: vuoto per un commit radice, due o più per un merge.
+    /// Parents in order: empty for a root commit, two or more for a merge.
     pub parents: Vec<Oid>,
     pub author: Signature,
     pub committer: Signature,
-    /// Oggetto: il primo paragrafo del messaggio con le righe unite da uno spazio (`%s` di git).
+    /// Subject: the first paragraph of the message with lines joined by a space (git's `%s`).
     pub summary: String,
-    /// Resto del messaggio dopo il primo paragrafo (`%b` di git), senza gli a capo finali;
-    /// può essere vuoto.
+    /// Rest of the message after the first paragraph (git's `%b`), without trailing newlines;
+    /// may be empty.
     pub body: String,
 }
 
 impl Commit {
-    /// Vero se il commit ha più di un genitore.
+    /// True if the commit has more than one parent.
     pub fn is_merge(&self) -> bool {
         self.parents.len() > 1
     }
 }
 
-/// Tipo di un ref.
+/// Kind of a ref.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RefKind {
     /// `refs/heads/*`
@@ -101,39 +101,39 @@ pub enum RefKind {
     Stash,
 }
 
-/// Branch remoto seguito da un branch locale.
+/// Remote branch tracked by a local branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Upstream {
-    /// Nome dell'upstream nella forma data da git: completo in [`RefInfo`]
-    /// (es. `refs/remotes/origin/main`), breve in [`Status`] (es. `origin/main`, come in
-    /// `# branch.upstream` di `git status`).
+    /// Name of the upstream in the form given by git: full in [`RefInfo`]
+    /// (e.g. `refs/remotes/origin/main`), short in [`Status`] (e.g. `origin/main`, as in
+    /// `# branch.upstream` of `git status`).
     pub name: String,
-    /// Commit locali non presenti nell'upstream. `None` se git non lo sa (es. upstream sparito).
+    /// Local commits not present in the upstream. `None` if git does not know (e.g. upstream gone).
     pub ahead: Option<u32>,
-    /// Commit dell'upstream non presenti in locale. `None` se git non lo sa.
+    /// Upstream commits not present locally. `None` if git does not know.
     pub behind: Option<u32>,
 }
 
-/// Un ref (branch, tag, stash) e il commit a cui punta.
+/// A ref (branch, tag, stash) and the commit it points to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RefInfo {
-    /// Nome completo, es. `refs/heads/main`.
+    /// Full name, e.g. `refs/heads/main`.
     pub name: String,
     pub kind: RefKind,
-    /// Il commit a cui punta il ref. Per un tag annotato è l'oggetto puntato dal tag (di solito
-    /// un commit; un tag su un albero o un blob punta a quello), non il tag.
+    /// The commit the ref points to. For an annotated tag it is the object the tag points to (usually
+    /// a commit; a tag on a tree or a blob points to that), not the tag.
     pub target: Oid,
-    /// Solo per i tag annotati: l'id dell'oggetto tag, cioè il valore del ref (serve, ad esempio,
-    /// come valore atteso in `git update-ref -d <ref> <vecchio>`). `None` per i tag leggeri e gli
-    /// altri ref.
+    /// Only for annotated tags: the id of the tag object, i.e. the value of the ref (needed, for example,
+    /// as the expected value in `git update-ref -d <ref> <old>`). `None` for lightweight tags and
+    /// other refs.
     pub tag_object: Option<Oid>,
-    /// Solo per i branch locali che ne hanno uno.
+    /// Only for local branches that have one.
     pub upstream: Option<Upstream>,
 }
 
 impl RefInfo {
-    /// Nome senza il prefisso del tipo (`refs/heads/`, `refs/remotes/`, `refs/tags/`), per la UI.
-    /// Se il prefisso non c'è restituisce il nome completo.
+    /// Name without the kind prefix (`refs/heads/`, `refs/remotes/`, `refs/tags/`), for the UI.
+    /// If the prefix is absent it returns the full name.
     pub fn short_name(&self) -> &str {
         let prefix = match self.kind {
             RefKind::LocalBranch => "refs/heads/",
@@ -145,18 +145,18 @@ impl RefInfo {
     }
 }
 
-/// Dove punta HEAD.
+/// Where HEAD points.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Head {
-    /// Su un branch. `name` è il nome breve (es. `main`, come in `git status --branch`);
-    /// `target` è `None` se il branch non ha ancora commit (repo vuoto).
+    /// On a branch. `name` is the short name (e.g. `main`, as in `git status --branch`);
+    /// `target` is `None` if the branch has no commits yet (empty repo).
     Branch { name: String, target: Option<Oid> },
-    /// HEAD staccata su un commit.
+    /// HEAD detached on a commit.
     Detached(Oid),
 }
 
 impl Head {
-    /// Il commit di HEAD, se esiste.
+    /// The commit of HEAD, if it exists.
     pub fn target(&self) -> Option<Oid> {
         match self {
             Head::Branch { target, .. } => *target,
@@ -165,38 +165,38 @@ impl Head {
     }
 }
 
-/// Lo stato del repo: HEAD, upstream del branch corrente e file modificati.
+/// The repo state: HEAD, upstream of the current branch and modified files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub head: Head,
-    /// Upstream del branch corrente, con il nome breve (es. `origin/main`). `None` se il branch
-    /// non ne ha uno o HEAD è staccata. `ahead`/`behind` sono `None` se il ref dell'upstream
-    /// non esiste più.
+    /// Upstream of the current branch, with the short name (e.g. `origin/main`). `None` if the branch
+    /// has none or HEAD is detached. `ahead`/`behind` are `None` if the upstream's ref
+    /// no longer exists.
     pub upstream: Option<Upstream>,
-    /// Una voce per file, nell'ordine di git. Vuoto se il worktree è pulito.
+    /// One entry per file, in git's order. Empty if the worktree is clean.
     pub entries: Vec<StatusEntry>,
-    /// Operazione in corso. [`parse_status`] la lascia sempre a `None` (l'output di
-    /// `git status --porcelain=v2` non la riporta): la riempie il backend guardando in `.git`
+    /// Operation in progress. [`parse_status`] always leaves it `None` (the output of
+    /// `git status --porcelain=v2` does not report it): the backend fills it by looking in `.git`
     /// (`MERGE_HEAD`, `rebase-merge/`, `CHERRY_PICK_HEAD`, ...).
     pub operation: Option<Operation>,
 }
 
 impl Status {
-    /// Vero se non c'è niente da mettere in stage o da committare: nessuna voce tranne i file
-    /// ignorati.
+    /// True if there is nothing to stage or commit: no entries except ignored
+    /// files.
     pub fn is_clean(&self) -> bool {
         self.entries
             .iter()
             .all(|e| matches!(e.kind, EntryKind::Ignored))
     }
 
-    /// Vero se almeno un file è in conflitto.
+    /// True if at least one file is conflicted.
     pub fn has_conflicts(&self) -> bool {
         self.entries.iter().any(StatusEntry::is_conflict)
     }
 }
 
-/// Operazione in corso nel repo, da concludere o annullare.
+/// Operation in progress in the repo, to be finished or aborted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Operation {
     Merge,
@@ -204,18 +204,18 @@ pub enum Operation {
     CherryPick,
     Revert,
     Bisect,
-    /// `git am` fermo a metà (`.git/rebase-apply/applying`). Aggiunta dopo le altre.
+    /// `git am` stopped halfway (`.git/rebase-apply/applying`). Added after the others.
     Am,
 }
 
-/// Un file nello stato del repo.
+/// A file in the repo state.
 ///
-/// `index` e `worktree` sono le lettere `X` e `Y` di git: la modifica in stage (HEAD → indice)
-/// e quella non in stage (indice → worktree). Per i file non tracciati e ignorati valgono
-/// entrambe [`Change::Untracked`] o [`Change::Ignored`], come `??` e `!!` di `git status -s`.
+/// `index` and `worktree` are git's `X` and `Y` letters: the staged change (HEAD → index)
+/// and the unstaged one (index → worktree). For untracked and ignored files both are
+/// [`Change::Untracked`] or [`Change::Ignored`], like `??` and `!!` of `git status -s`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusEntry {
-    /// Percorso attuale (per una rinomina, quello nuovo).
+    /// Current path (for a rename, the new one).
     pub path: RepoPath,
     pub index: Change,
     pub worktree: Change,
@@ -223,28 +223,28 @@ pub struct StatusEntry {
 }
 
 impl StatusEntry {
-    /// Vero se il file ha modifiche in stage (esclusi i conflitti).
+    /// True if the file has staged changes (excluding conflicts).
     pub fn is_staged(&self) -> bool {
         !self.is_conflict() && self.index.is_change()
     }
 
-    /// Vero se il file ha modifiche nel worktree non ancora in stage (esclusi conflitti, file
-    /// non tracciati e ignorati). Include i file aggiunti con `git add -N` (`.A`).
+    /// True if the file has worktree changes not yet staged (excluding conflicts, untracked
+    /// and ignored files). Includes files added with `git add -N` (`.A`).
     pub fn is_unstaged(&self) -> bool {
         !self.is_conflict() && self.worktree.is_change()
     }
 
-    /// Vero se il file è in conflitto (record `u`).
+    /// True if the file is conflicted (record `u`).
     pub fn is_conflict(&self) -> bool {
         matches!(self.kind, EntryKind::Unmerged(_))
     }
 
-    /// Vero se il file non è tracciato.
+    /// True if the file is untracked.
     pub fn is_untracked(&self) -> bool {
         matches!(self.kind, EntryKind::Untracked)
     }
 
-    /// Percorso di partenza di una rinomina o copia.
+    /// Original path of a rename or copy.
     pub fn original_path(&self) -> Option<&RepoPath> {
         match &self.kind {
             EntryKind::Renamed { original, .. } | EntryKind::Copied { original, .. } => {
@@ -254,7 +254,7 @@ impl StatusEntry {
         }
     }
 
-    /// Stato del sottomodulo, se il percorso è un sottomodulo.
+    /// Submodule state, if the path is a submodule.
     pub fn submodule(&self) -> Option<SubmoduleStatus> {
         match &self.kind {
             EntryKind::Ordinary(info)
@@ -266,14 +266,14 @@ impl StatusEntry {
     }
 }
 
-/// Una lettera `X` o `Y` dello stato di git.
+/// One `X` or `Y` letter of git's status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Change {
     /// `.`
     Unmodified,
     /// `M`
     Modified,
-    /// `T`: cambiato il tipo (es. da file a link simbolico).
+    /// `T`: the type changed (e.g. from file to symbolic link).
     TypeChanged,
     /// `A`
     Added,
@@ -283,7 +283,7 @@ pub enum Change {
     Renamed,
     /// `C`
     Copied,
-    /// `U`: in conflitto.
+    /// `U`: conflicted.
     Unmerged,
     /// `?`
     Untracked,
@@ -292,7 +292,7 @@ pub enum Change {
 }
 
 impl Change {
-    /// La lettera usata da git.
+    /// The letter used by git.
     pub fn letter(self) -> char {
         match self {
             Change::Unmodified => '.',
@@ -308,7 +308,7 @@ impl Change {
         }
     }
 
-    /// Vero per una modifica vera e propria: né `.`, né `U`, né `?`, né `!`.
+    /// True for an actual modification: neither `.`, nor `U`, nor `?`, nor `!`.
     pub fn is_change(self) -> bool {
         !matches!(
             self,
@@ -317,37 +317,37 @@ impl Change {
     }
 }
 
-/// Il tipo di voce, con i dati propri di ciascun record di `git status --porcelain=v2`.
+/// The entry kind, with the data specific to each record of `git status --porcelain=v2`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EntryKind {
-    /// Record `1`: file tracciato modificato.
+    /// Record `1`: modified tracked file.
     Ordinary(TrackedInfo),
-    /// Record `2` con `R`: rinominato da `original`; `score` è la somiglianza (0–100).
+    /// Record `2` with `R`: renamed from `original`; `score` is the similarity (0–100).
     Renamed {
         info: TrackedInfo,
         original: RepoPath,
         score: u8,
     },
-    /// Record `2` con `C`: copiato da `original` (solo con `status.renames=copies`).
+    /// Record `2` with `C`: copied from `original` (only with `status.renames=copies`).
     Copied {
         info: TrackedInfo,
         original: RepoPath,
         score: u8,
     },
-    /// Record `u`: in conflitto.
+    /// Record `u`: conflicted.
     Unmerged(UnmergedInfo),
     /// Record `?`.
     Untracked,
-    /// Record `!` (solo con `--ignored`).
+    /// Record `!` (only with `--ignored`).
     Ignored,
 }
 
-/// Modi e id di un file tracciato. I modi sono numeri ottali (es. `0o100644`, `0o120000` per un
-/// link, `0o160000` per un sottomodulo, `0` se il file non c'è); gli id sono zero se l'oggetto
-/// non esiste (es. `oid_head` di un file aggiunto).
+/// Modes and ids of a tracked file. Modes are octal numbers (e.g. `0o100644`, `0o120000` for a
+/// link, `0o160000` for a submodule, `0` if the file does not exist); ids are zero if the object
+/// does not exist (e.g. `oid_head` of an added file).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrackedInfo {
-    /// `Some` se il percorso è un sottomodulo.
+    /// `Some` if the path is a submodule.
     pub submodule: Option<SubmoduleStatus>,
     pub mode_head: u32,
     pub mode_index: u32,
@@ -356,8 +356,8 @@ pub struct TrackedInfo {
     pub oid_index: Oid,
 }
 
-/// Dati di un file in conflitto: gli stadi 1 (base), 2 (nostro) e 3 (loro) dell'indice.
-/// Uno stadio assente ha modo `0` e id zero.
+/// Data of a conflicted file: stages 1 (base), 2 (ours) and 3 (theirs) of the index.
+/// A missing stage has mode `0` and zero id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnmergedInfo {
     pub conflict: Conflict,
@@ -371,7 +371,7 @@ pub struct UnmergedInfo {
     pub oid_theirs: Oid,
 }
 
-/// Tipo di conflitto, dal codice XY di un record `u`.
+/// Kind of conflict, from the XY code of a `u` record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Conflict {
     /// `DD`
@@ -390,13 +390,13 @@ pub enum Conflict {
     BothModified,
 }
 
-/// Stato di un sottomodulo (campo `S<c><m><u>`).
+/// State of a submodule (field `S<c><m><u>`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SubmoduleStatus {
-    /// `C`: il commit del sottomodulo è cambiato.
+    /// `C`: the submodule commit changed.
     pub commit_changed: bool,
-    /// `M`: il sottomodulo ha modifiche ai file tracciati.
+    /// `M`: the submodule has changes to tracked files.
     pub modified: bool,
-    /// `U`: il sottomodulo ha file non tracciati.
+    /// `U`: the submodule has untracked files.
     pub untracked: bool,
 }

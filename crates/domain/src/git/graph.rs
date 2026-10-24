@@ -1,83 +1,83 @@
-//! Corsie del grafo dei commit (`impl-docs/ARCHITETTURA-git.md` §3).
+//! Commit graph lanes (`impl-docs/ARCHITECTURE-git.md` §3).
 //!
-//! Funzione pura: riceve i commit in ordine topologico, dal più recente (come `git log`), e
-//! restituisce una riga per commit con la colonna del commit e i segmenti da disegnare fino
-//! alla riga successiva.
+//! Pure function: it receives the commits in topological order, most recent first (like `git log`), and
+//! returns one row per commit with the commit's column and the segments to draw up to
+//! the next row.
 //!
-//! Algoritmo:
-//! 1. si tiene un vettore di corsie attive; ogni corsia "aspetta" un [`Oid`];
-//! 2. per ogni commit la colonna è la prima corsia che lo aspetta, oppure la prima corsia libera;
-//!    le altre corsie che lo aspettavano convergono qui e si liberano;
-//! 3. la corsia del commit passa ad aspettare il primo genitore; ogni altro genitore va sulla
-//!    prima corsia che lo aspetta già, oppure sulla prima corsia libera (si apre una diramazione).
+//! Algorithm:
+//! 1. keep a vector of active lanes; each lane "waits" for an [`Oid`];
+//! 2. for each commit the column is the first lane waiting for it, or else the first free lane;
+//!    the other lanes that were waiting for it converge here and become free;
+//! 3. the commit's lane goes on to wait for the first parent; every other parent goes on the
+//!    first lane already waiting for it, or else on the first free lane (a fork opens).
 //!
-//! Le corsie non si spostano: una corsia resta nella stessa colonna finché è aperta, quindi la
-//! colonna può servire anche da indice del colore. Le corsie libere vengono riusate e quelle
-//! libere in fondo si tolgono, così la larghezza resta limitata.
+//! Lanes do not move: a lane stays in the same column as long as it is open, so the
+//! column can also serve as the color index. Free lanes are reused and the free
+//! ones at the end are dropped, so the width stays bounded.
 //!
-//! Input non topologico o troncato (es. `git log -n 100`) non causa errori: un genitore che non
-//! compare più avanti tiene aperta la sua corsia fino all'ultima riga, i cui segmenti restano
-//! "sospesi" verso il basso.
+//! Non-topological or truncated input (e.g. `git log -n 100`) causes no errors: a parent that does not
+//! appear later keeps its lane open until the last row, whose segments stay
+//! "dangling" downwards.
 
 use serde::{Deserialize, Serialize};
 
 use super::{Commit, Oid};
 
-/// Un tratto di arco genitore–figlio tra una riga e la successiva.
+/// A parent–child edge segment between one row and the next.
 ///
-/// Parte dalla riga in cui si trova, nella colonna `from`, e arriva alla riga successiva nella
-/// colonna `to`. Se `from` è la colonna del commit della riga, il tratto esce da quel commit;
-/// se `to` è la colonna del commit della riga successiva, il tratto entra in quel commit;
-/// altrimenti il tratto continua nella riga successiva da `to`.
+/// It starts from the row it is in, at column `from`, and arrives at the next row at
+/// column `to`. If `from` is the column of the row's commit, the segment leaves that commit;
+/// if `to` is the column of the next row's commit, the segment enters that commit;
+/// otherwise the segment continues in the next row from `to`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GraphSegment {
-    /// Colonna di partenza, nella riga del segmento.
+    /// Starting column, in the segment's row.
     pub from: usize,
-    /// Colonna di arrivo, nella riga successiva.
+    /// Arrival column, in the next row.
     pub to: usize,
-    /// Corsia su cui viaggia l'arco (utile per il colore): coincide con `to` per una
-    /// diramazione, con `from` per una convergenza, con entrambe per un tratto verticale.
+    /// Lane the edge travels on (useful for the color): it equals `to` for a
+    /// fork, `from` for a convergence, and both for a vertical segment.
     pub lane: usize,
 }
 
-/// Una riga del grafo: un commit e i tratti verso la riga successiva.
+/// A graph row: a commit and the segments towards the next row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphRow {
-    /// Colonna del commit.
+    /// Column of the commit.
     pub column: usize,
-    /// Tratti verso la riga successiva, ordinati per `(lane, from)`. Nell'ultima riga sono i
-    /// tratti verso genitori che non compaiono nell'input.
+    /// Segments towards the next row, sorted by `(lane, from)`. In the last row they are the
+    /// segments towards parents that do not appear in the input.
     pub segments: Vec<GraphSegment>,
 }
 
-/// Disposizione del grafo: una riga per commit, nello stesso ordine dell'input.
+/// Layout of the graph: one row per commit, in the same order as the input.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphLayout {
     pub rows: Vec<GraphRow>,
-    /// Numero di colonne necessarie: `1 +` la colonna più grande usata da commit o tratti
-    /// (`0` se non ci sono commit).
+    /// Number of columns needed: `1 +` the largest column used by a commit or segment
+    /// (`0` if there are no commits).
     pub width: usize,
 }
 
-/// Calcola le corsie per una lista di commit in ordine topologico, dal più recente.
+/// Computes the lanes for a list of commits in topological order, most recent first.
 pub fn layout_graph(commits: &[Commit]) -> GraphLayout {
     layout_graph_nodes(commits.iter().map(|c| (&c.id, c.parents.as_slice())))
 }
 
-/// Come [`layout_graph`], ma riceve solo identificatore e genitori di ogni commit.
+/// Like [`layout_graph`], but it receives only the identifier and parents of each commit.
 pub fn layout_graph_nodes<'a, I>(nodes: I) -> GraphLayout
 where
     I: IntoIterator<Item = (&'a Oid, &'a [Oid])>,
 {
-    // Corsie attive: `Some(oid)` aspetta quel commit, `None` è libera.
+    // Active lanes: `Some(oid)` waits for that commit, `None` is free.
     let mut lanes: Vec<Option<Oid>> = Vec::new();
-    // Tratti della riga precedente non ancora risolti: (from, lane). La colonna di arrivo
-    // dipende da dove cade il commit successivo.
+    // Segments of the previous row not yet resolved: (from, lane). The arrival column
+    // depends on where the next commit falls.
     let mut pending: Vec<(usize, usize)> = Vec::new();
     let mut rows: Vec<GraphRow> = Vec::new();
 
     for (id, parents) in nodes {
-        // Passo 2: colonna del commit e corsie che convergono.
+        // Step 2: the commit's column and the converging lanes.
         let waiting: Vec<usize> = lanes
             .iter()
             .enumerate()
@@ -89,7 +89,7 @@ where
             None => first_free(&mut lanes),
         };
 
-        // Ora si conosce l'arrivo dei tratti della riga precedente.
+        // Now the arrival of the previous row's segments is known.
         if let Some(prev) = rows.last_mut() {
             prev.segments = resolve(&pending, &waiting, column);
         }
@@ -97,11 +97,11 @@ where
             lanes[j] = None;
         }
 
-        // Passo 3: genitori, senza duplicati (non dovrebbero esserci, ma un arco va disegnato
-        // una volta sola).
+        // Step 3: parents, without duplicates (there should be none, but an edge must be drawn
+        // only once).
         pending.clear();
-        // Tratti verticali delle corsie che passano accanto al commit: quelle già aperte prima
-        // dei suoi genitori (la sua corsia si è appena liberata).
+        // Vertical segments of the lanes passing next to the commit: those already open before
+        // its parents (its lane has just become free).
         for (j, w) in lanes.iter().enumerate() {
             if w.is_some() {
                 pending.push((j, j));
@@ -125,7 +125,7 @@ where
             pending.push((column, lane));
         }
 
-        // Le corsie libere in fondo non servono più.
+        // Free lanes at the end are no longer needed.
         while lanes.last().is_some_and(Option::is_none) {
             lanes.pop();
         }
@@ -136,7 +136,7 @@ where
         });
     }
 
-    // Ultima riga: i tratti restano sospesi nella loro corsia.
+    // Last row: the segments stay dangling in their lane.
     if let Some(last) = rows.last_mut() {
         last.segments = resolve(&pending, &[], usize::MAX);
     }
@@ -152,7 +152,7 @@ where
     GraphLayout { rows, width }
 }
 
-/// Prima corsia libera, aggiungendone una in fondo se servono.
+/// First free lane, adding one at the end if needed.
 fn first_free(lanes: &mut Vec<Option<Oid>>) -> usize {
     match lanes.iter().position(Option::is_none) {
         Some(j) => j,
@@ -163,8 +163,8 @@ fn first_free(lanes: &mut Vec<Option<Oid>>) -> usize {
     }
 }
 
-/// Trasforma i tratti in sospeso in segmenti: chi viaggia su una corsia che aspettava il
-/// commit successivo converge sulla sua colonna, gli altri proseguono dritti.
+/// Turns the pending segments into segments: one travelling on a lane that was waiting for the
+/// next commit converges on its column, the others go straight on.
 fn resolve(pending: &[(usize, usize)], waiting: &[usize], column: usize) -> Vec<GraphSegment> {
     let mut segments: Vec<GraphSegment> = pending
         .iter()

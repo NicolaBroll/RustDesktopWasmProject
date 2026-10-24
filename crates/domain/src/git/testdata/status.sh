@@ -1,10 +1,10 @@
 #!/bin/sh
-# Rigenera i file status-*.bin (usati da status_tests.rs) in repo temporanei.
-# Uso: sh status.sh <cartella-di-uscita>
+# Regenerates the status-*.bin files (used by status_tests.rs) in temporary repos.
+# Usage: sh status.sh <output-folder>
 #
-# Ogni file è l'output di `git status --porcelain=v2 -z --branch --untracked-files=all`
-# (gli argomenti di STATUS_ARGS); `status-ignorati.bin` aggiunge `--ignored` e
-# `status-copie.bin` usa `-c status.renames=copies`.
+# Each file is the output of `git status --porcelain=v2 -z --branch --untracked-files=all`
+# (the STATUS_ARGS arguments); `status-ignored.bin` adds `--ignored` and
+# `status-copies.bin` uses `-c status.renames=copies`.
 set -eu
 out=$(cd "$1" && pwd)
 dir=$(mktemp -d)
@@ -12,7 +12,7 @@ trap 'rm -rf "$dir"' EXIT
 cd "$dir"
 
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 LC_ALL=C TZ=UTC
-export GIT_AUTHOR_NAME='Anna Autrice' GIT_AUTHOR_EMAIL=anna@example.com
+export GIT_AUTHOR_NAME='Anna Author' GIT_AUTHOR_EMAIL=anna@example.com
 export GIT_COMMITTER_NAME='Carlo Committer' GIT_COMMITTER_EMAIL=carlo@example.com
 export GIT_AUTHOR_DATE='1700000000 +0000' GIT_COMMITTER_DATE='1700000000 +0000'
 
@@ -20,153 +20,153 @@ status() {
     git status --porcelain=v2 -z --branch --untracked-files=all "$@"
 }
 
-# --- Repo vuoto: nessun commit, poi un file in stage e uno non tracciato. ---------------
-git init -q -b main vuoto
+# --- Empty repo: no commits, then a staged file and an untracked one. ------------------
+git init -q -b main empty
 (
-    cd vuoto
-    status >"$out/status-vuoto.bin"
-    echo nuovo >nuovo.txt
-    git add nuovo.txt
-    echo libero >libero.txt
-    status >"$out/status-vuoto-file.bin"
+    cd empty
+    status >"$out/status-empty.bin"
+    echo new >new.txt
+    git add new.txt
+    echo loose >loose.txt
+    status >"$out/status-empty-file.bin"
 )
 
-# --- Sottomodulo usato dal repo misto. -----------------------------------------------------
+# --- Submodule used by the mixed repo. ---------------------------------------------------
 git init -q -b main sub
 (
     cd sub
     echo sub >sub.txt
     git add sub.txt
-    git commit -q -m 'Sottomodulo'
+    git commit -q -m 'Submodule'
 )
 
-# --- Repo misto: upstream con ahead/behind e ogni tipo di modifica. ------------------------
-git init -q -b main misto
+# --- Mixed repo: upstream with ahead/behind and every kind of change. --------------------
+git init -q -b main mixed
 (
-    cd misto
-    for f in modificato.txt in-stage.txt entrambi.txt cancellato.txt cancellato-wt.txt \
-        vecchio-nome.txt tipo.txt eseguibile.sh 'con spazio.txt'; do
-        printf 'riga 1 di %s\nriga 2\nriga 3\nriga 4\n' "$f" >"$f"
+    cd mixed
+    for f in modified.txt in-stage.txt both.txt removed.txt removed-wt.txt \
+        old-name.txt kind.txt executable.sh 'with space.txt'; do
+        printf 'line 1 di %s\nline 2\nline 3\nline 4\n' "$f" >"$f"
     done
-    printf 'contenuto latin1\n' >"$(printf 'vecchio-\351.txt')"
+    printf 'latin1 content\n' >"$(printf 'old-\351.txt')"
     git add .
-    git -c protocol.file.allow=always submodule add -q ../sub modulo
+    git -c protocol.file.allow=always submodule add -q ../sub module
     git commit -q -m 'Base'
     base=$(git rev-parse HEAD)
 
-    # Upstream: origin/main ha un commit che main non ha (behind 1); main ne ha due (ahead 2).
+    # Upstream: origin/main has a commit main does not have (behind 1); main has two (ahead 2).
     git config remote.origin.url ../origin.git
     git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
     git config branch.main.remote origin
     git config branch.main.merge refs/heads/main
-    git checkout -q -b remoto
-    git commit -q --allow-empty -m 'Solo sul remoto'
+    git checkout -q -b remote
+    git commit -q --allow-empty -m 'Only on the remote'
     git update-ref refs/remotes/origin/main "$(git rev-parse HEAD)"
     git checkout -q main
-    git branch -q -D remoto
-    git commit -q --allow-empty -m 'Locale 1'
-    git commit -q --allow-empty -m 'Locale 2'
+    git branch -q -D remote
+    git commit -q --allow-empty -m 'Local 1'
+    git commit -q --allow-empty -m 'Local 2'
 
-    echo modifica >>modificato.txt
-    echo modifica >>in-stage.txt
+    echo change >>modified.txt
+    echo change >>in-stage.txt
     git add in-stage.txt
-    echo modifica >>entrambi.txt
-    git add entrambi.txt
-    echo ancora >>entrambi.txt
-    git rm -q cancellato.txt
-    rm cancellato-wt.txt
-    git mv vecchio-nome.txt nuovo-nome.txt
-    git mv "$(printf 'vecchio-\351.txt')" "$(printf 'nuovo-\351.txt')"
-    echo modifica >>'con spazio.txt'
-    rm tipo.txt
-    ln -s modificato.txt tipo.txt
-    chmod +x eseguibile.sh
-    echo aggiunto >aggiunto.txt
-    git add aggiunto.txt
-    echo intento >intento.txt
-    git add -N intento.txt
-    mkdir -p cartella/interna
-    echo a >cartella/interna/profondo.txt
+    echo change >>both.txt
+    git add both.txt
+    echo more >>both.txt
+    git rm -q removed.txt
+    rm removed-wt.txt
+    git mv old-name.txt new-name.txt
+    git mv "$(printf 'old-\351.txt')" "$(printf 'new-\351.txt')"
+    echo change >>'with space.txt'
+    rm kind.txt
+    ln -s modified.txt kind.txt
+    chmod +x executable.sh
+    echo added >added.txt
+    git add added.txt
+    echo intent >intent.txt
+    git add -N intent.txt
+    mkdir -p folder/inner
+    echo a >folder/inner/deep.txt
     echo b >"$(printf 'non-utf8-\377.txt')"
-    printf 'nome\ncon a capo' >"$(printf 'a\ncapo.txt')"
-    # Sottomodulo con un file modificato e uno non tracciato.
-    echo modifica >>modulo/sub.txt
-    echo x >modulo/libero.txt
+    printf 'name\nwith newline' >"$(printf 'a\nbreak.txt')"
+    # Submodule with a modified file and an untracked one.
+    echo change >>module/sub.txt
+    echo x >module/loose.txt
 
-    status >"$out/status-misto.bin"
+    status >"$out/status-mixed.bin"
 
 )
 
-# --- Upstream sparito: configurato ma senza il ref remoto, quindi niente `branch.ab`. ------
-git init -q -b main sparito
+# --- Upstream gone: configured but without the remote ref, so no `branch.ab`. ----------
+git init -q -b main gone
 (
-    cd sparito
+    cd gone
     git commit -q --allow-empty -m 'Base'
     git config remote.origin.url ../origin.git
     git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
     git config branch.main.remote origin
     git config branch.main.merge refs/heads/main
-    status >"$out/status-upstream-sparito.bin"
+    status >"$out/status-upstream-gone.bin"
 )
 
-# --- Ignorati e copie. ---------------------------------------------------------------------
-git init -q -b main ignorati
+# --- Ignored and copies. -----------------------------------------------------------------
+git init -q -b main ignored
 (
-    cd ignorati
+    cd ignored
     printf '*.log\nbuild/\n' >.gitignore
-    printf 'una riga abbastanza lunga da essere riconosciuta come copia\n' >originale.txt
+    printf 'a line long enough to be recognized as a copy\n' >originale.txt
     git add .
     git commit -q -m 'Base'
     echo log >debug.log
     mkdir build
     echo o >build/out.o
-    echo libero >libero.txt
-    status --ignored >"$out/status-ignorati.bin"
-    cp originale.txt copia.txt
-    echo modifica >>originale.txt
+    echo loose >loose.txt
+    status --ignored >"$out/status-ignored.bin"
+    cp originale.txt copy.txt
+    echo change >>originale.txt
     git add .
     git -c status.renames=copies status --porcelain=v2 -z --branch --untracked-files=all \
-        >"$out/status-copie.bin"
+        >"$out/status-copies.bin"
 )
 
-# --- Conflitti di merge su main senza upstream. --------------------------------------------
-git init -q -b main conflitto
+# --- Merge conflicts on main without upstream. --------------------------------------------
+git init -q -b main conflict
 (
-    cd conflitto
-    for f in entrambi-modificati.txt cancellato-da-noi.txt cancellato-da-loro.txt; do
+    cd conflict
+    for f in both-modified.txt removed-by-us.txt removed-by-them.txt; do
         printf 'base di %s\n' "$f" >"$f"
     done
     git add .
     git commit -q -m 'Base'
-    git checkout -q -b laterale
-    echo laterale >entrambi-modificati.txt
-    echo laterale >cancellato-da-noi.txt
-    git rm -q cancellato-da-loro.txt
-    echo laterale >entrambi-aggiunti.txt
+    git checkout -q -b side
+    echo side >both-modified.txt
+    echo side >removed-by-us.txt
+    git rm -q removed-by-them.txt
+    echo side >both-added.txt
     git add .
-    git commit -q -m 'Laterale'
+    git commit -q -m 'Side'
     git checkout -q main
-    echo main >entrambi-modificati.txt
-    git rm -q cancellato-da-noi.txt
-    echo main >cancellato-da-loro.txt
-    echo main >entrambi-aggiunti.txt
+    echo main >both-modified.txt
+    git rm -q removed-by-us.txt
+    echo main >removed-by-them.txt
+    echo main >both-added.txt
     git add .
     git commit -q -m 'Main'
-    git merge -q laterale >/dev/null 2>&1 || true
-    echo pulito >pulito.txt
-    status >"$out/status-conflitto.bin"
+    git merge -q side >/dev/null 2>&1 || true
+    echo clean >clean.txt
+    status >"$out/status-conflict.bin"
 )
 
-# --- HEAD staccata con un file modificato. -------------------------------------------------
-git init -q -b main staccata
+# --- Detached HEAD with a modified file. -------------------------------------------------
+git init -q -b main detached
 (
-    cd staccata
-    echo uno >file.txt
+    cd detached
+    echo one >file.txt
     git add file.txt
-    git commit -q -m 'Uno'
-    echo due >file.txt
-    git commit -q -am 'Due'
+    git commit -q -m 'One'
+    echo two >file.txt
+    git commit -q -am 'Two'
     git checkout -q --detach HEAD~1
-    echo modifica >file.txt
-    status >"$out/status-staccata.bin"
+    echo change >file.txt
+    status >"$out/status-detached.bin"
 )

@@ -1,10 +1,10 @@
-//! Messaggio di commit nell'area di stage: la bozza (oggetto, corpo, amend), quando il
-//! pulsante "Commit" è attivo e perché no, i parametri di `commit.create`, la risposta e gli
-//! errori. Solo dati, senza egui: si prova con test unitari.
+//! Commit message in the stage area: the draft (subject, body, amend), when the
+//! "Commit" button is active and why not, the parameters of `commit.create`, the answer and the
+//! errors. Data only, no egui: tested with unit tests.
 //!
-//! La bozza è stato della UI, non persistente: resta finché il repo è aperto, anche se si
-//! seleziona un commit e poi si torna alla riga delle modifiche, e non si perde se il commit
-//! fallisce. Si svuota solo dopo un commit riuscito.
+//! The draft is UI state, not persistent: it stays while the repo is open, even if a
+//! commit is selected and then you go back to the changes row, and it is not lost if the commit
+//! fails. It is emptied only after a successful commit.
 
 use crate::executor::ErrorKind;
 use crate::{Action, App, Done, Request};
@@ -13,21 +13,21 @@ use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// Oltre questa lunghezza l'oggetto si segnala con un avviso tenue (convenzione di git: le
-/// righe del log restano leggibili).
+/// Beyond this length the subject is flagged with a mild warning (git convention: the
+/// log lines stay readable).
 pub const SUBJECT_LIMIT: usize = 72;
 
-/// Il messaggio in scrittura.
+/// The message being written.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommitDraft {
-    /// Oggetto, su una riga.
+    /// Subject, on one line.
     pub subject: String,
-    /// Corpo, anche su più righe; può essere vuoto.
+    /// Body, also on several lines; can be empty.
     pub body: String,
-    /// Riscrive l'ultimo commit invece di crearne uno nuovo.
+    /// Rewrites the last commit instead of creating a new one.
     amend: bool,
-    /// Il messaggio dell'ultimo commit proposto attivando amend con la bozza vuota: se si
-    /// disattiva amend senza averlo cambiato, la bozza torna vuota.
+    /// The message of the last commit proposed by turning on amend with an empty draft: if
+    /// amend is turned off without changing it, the draft goes back to empty.
     proposed: Option<(String, String)>,
 }
 
@@ -36,8 +36,8 @@ impl CommitDraft {
         self.amend
     }
 
-    /// Il messaggio da mandare: l'oggetto, poi una riga vuota e il corpo se c'è. Gli spazi in
-    /// fondo e le righe vuote in più li toglie git (`commit.cleanup`).
+    /// The message to send: the subject, then a blank line and the body if any. Trailing spaces
+    /// and extra blank lines are removed by git (`commit.cleanup`).
     pub fn message(&self) -> String {
         let subject = self.subject.trim_end();
         let body = self.body.trim_end();
@@ -48,12 +48,12 @@ impl CommitDraft {
         }
     }
 
-    /// Vero se il messaggio è vuoto o di soli spazi.
+    /// True if the message is empty or only spaces.
     pub fn is_blank(&self) -> bool {
         self.subject.trim().is_empty() && self.body.trim().is_empty()
     }
 
-    /// Caratteri dell'oggetto (la sua prima riga, senza gli spazi in fondo).
+    /// Characters of the subject (its first line, without trailing spaces).
     pub fn subject_len(&self) -> usize {
         self.subject
             .lines()
@@ -68,10 +68,10 @@ impl CommitDraft {
         self.subject_len() > SUBJECT_LIMIT
     }
 
-    /// Attiva o disattiva amend. Attivandolo con la bozza vuota propone il messaggio di
-    /// `last` (l'ultimo commit, se è noto); disattivandolo toglie il messaggio proposto se non
-    /// è stato cambiato. Restituisce `true` se serve il messaggio dell'ultimo commit e `last`
-    /// non c'era: va chiesto e passato poi a [`CommitDraft::propose`].
+    /// Turns amend on or off. Turning it on with an empty draft proposes the message of
+    /// `last` (the last commit, if known); turning it off removes the proposed message if it
+    /// was not changed. Returns `true` if the message of the last commit is needed and `last`
+    /// was not there: it must be requested and then passed to [`CommitDraft::propose`].
     pub fn set_amend(&mut self, on: bool, last: Option<&Commit>) -> bool {
         self.amend = on;
         if !on {
@@ -93,7 +93,7 @@ impl CommitDraft {
         }
     }
 
-    /// Propone il messaggio di `commit` (l'ultimo) se amend è attivo e la bozza è vuota.
+    /// Proposes the message of `commit` (the last one) if amend is on and the draft is empty.
     pub fn propose(&mut self, commit: &Commit) {
         if self.amend && self.is_blank() {
             self.subject = commit.summary.clone();
@@ -102,7 +102,7 @@ impl CommitDraft {
         }
     }
 
-    /// Vero se la bozza è il messaggio proposto, non ancora cambiato.
+    /// True if the draft is the proposed message, not yet changed.
     pub fn is_proposed(&self) -> bool {
         self.proposed
             .as_ref()
@@ -114,20 +114,20 @@ impl CommitDraft {
     }
 }
 
-/// Perché il pulsante "Commit" è disabilitato; il testo spiega cosa fare.
+/// Why the "Commit" button is disabled; the text explains what to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Blocked {
-    /// Una scrittura (anche un commit) è in corso, o una conferma è aperta.
+    /// A write (even a commit) is in progress, or a confirmation is open.
     Busy,
-    /// File in conflitto.
+    /// Conflicted files.
     Conflicts,
-    /// Merge, rebase, cherry-pick o revert in corso.
+    /// Merge, rebase, cherry-pick or revert in progress.
     Operation(Operation),
-    /// Amend senza un commit da riscrivere (branch senza commit).
+    /// Amend without a commit to rewrite (branch without commits).
     NoCommitToAmend,
-    /// Niente in stage, senza amend.
+    /// Nothing staged, without amend.
     NothingStaged,
-    /// Messaggio vuoto o di soli spazi.
+    /// Empty message or only spaces.
     NoMessage,
 }
 
@@ -149,30 +149,30 @@ impl Blocked {
     }
 }
 
-/// Ciò che serve per decidere se il pulsante "Commit" è attivo.
+/// What is needed to decide whether the "Commit" button is active.
 #[derive(Debug, Clone, Copy)]
 pub struct Gate<'a> {
     pub draft: &'a CommitDraft,
     pub status: Option<&'a Status>,
-    /// Quanti file ci sono nella lista "In stage".
+    /// How many files are in the "Staged" list.
     pub staged: usize,
-    /// Vero se HEAD punta a un commit.
+    /// True if HEAD points to a commit.
     pub has_head: bool,
-    /// Una scrittura in corso o una conferma aperta.
+    /// A write in progress or a confirmation open.
     pub busy: bool,
 }
 
 impl Gate<'_> {
-    /// `Ok` se si può committare, altrimenti il primo motivo per cui no.
+    /// `Ok` if it is possible to commit, otherwise the first reason why not.
     pub fn check(&self) -> Result<(), Blocked> {
         if self.busy {
             return Err(Blocked::Busy);
         }
-        // Un merge in corso si conclude con `merge.continue` (il riquadro dell'operazione),
-        // che entra nel diario come merge; il commit della casella resta per i commit normali.
+        // A merge in progress is concluded with `merge.continue` (the operation box),
+        // which enters the journal as a merge; the commit box stays for normal commits.
         match self.status {
             Some(status) if status.has_conflicts() => return Err(Blocked::Conflicts),
-            // Durante un bisect si committa normalmente.
+            // During a bisect you commit normally.
             Some(Status {
                 operation: Some(op),
                 ..
@@ -193,7 +193,7 @@ impl Gate<'_> {
     }
 }
 
-/// Un commit mandato (o da mandare) a `commit.create`.
+/// A commit sent (or to be sent) to `commit.create`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitSend {
     pub message: String,
@@ -208,12 +208,12 @@ impl CommitSend {
         }
     }
 
-    /// L'id del comando del Registry.
+    /// The Registry command id.
     pub fn command(&self) -> &'static str {
         "commit.create"
     }
 
-    /// I parametri di `commit.create`; `confirm` solo dopo la conferma dell'utente.
+    /// The parameters of `commit.create`; `confirm` only after the user's confirmation.
     pub fn params(&self, confirm: bool) -> Value {
         let mut params = json!({ "message": self.message });
         if self.amend {
@@ -225,7 +225,7 @@ impl CommitSend {
         params
     }
 
-    /// Nome dell'operazione per la barra di stato: "Commit in corso…".
+    /// Name of the operation for the status bar: "Committing…".
     pub fn label(&self) -> String {
         if self.amend {
             tr!("commit-amend-label")
@@ -235,24 +235,24 @@ impl CommitSend {
     }
 }
 
-/// Risultato di `commit.create` (il campo `branch` non serve alla UI: i ref si rileggono).
+/// Result of `commit.create` (the `branch` field is not needed by the UI: refs are reread).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitResult {
     pub commit: Commit,
-    /// HEAD prima del commit (con amend, il commit riscritto).
+    /// HEAD before the commit (with amend, the rewritten commit).
     pub previous: Option<Oid>,
-    /// Con amend, il ref di backup del commit riscritto.
+    /// With amend, the backup ref of the rewritten commit.
     pub backup: Option<String>,
-    /// Con amend, gli altri branch e tag rimasti sul commit riscritto.
+    /// With amend, the other branches and tags left on the rewritten commit.
     #[serde(default)]
     pub also_on: Vec<String>,
     pub status: Status,
 }
 
 impl CommitResult {
-    /// Il messaggio per la barra di stato.
+    /// The message for the status bar.
     pub fn notice(&self) -> String {
-        // Amend che ha prodotto lo stesso commit: il motore non ha cambiato niente.
+        // Amend that produced the same commit: the engine changed nothing.
         if self.previous == Some(self.commit.id) && self.backup.is_none() {
             return tr!("commit-unchanged", id = self.commit.id.short());
         }
@@ -274,9 +274,9 @@ impl CommitResult {
     }
 }
 
-/// Gli altri branch locali e tag che puntano proprio a `head` (nomi completi): con amend
-/// restano sul commit vecchio. Solo quelli che puntano direttamente a HEAD, dai ref già letti;
-/// l'elenco completo (anche i ref più avanti) arriva in `also_on` dopo l'amend.
+/// The other local branches and tags that point exactly at `head` (full names): with amend
+/// they stay on the old commit. Only those pointing directly at HEAD, from the refs already read;
+/// the full list (also the refs further ahead) arrives in `also_on` after the amend.
 pub fn refs_left_behind(
     refs: &[project_domain::RefInfo],
     head: Option<Oid>,
@@ -297,23 +297,23 @@ pub fn refs_left_behind(
         .collect()
 }
 
-/// Un amend di un commit già pubblicato, in attesa della conferma dell'utente.
+/// An amend of an already published commit, waiting for the user's confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmAmend {
     pub send: CommitSend,
-    /// Il motivo dato dal motore (es. i branch remoti che contengono il commit).
+    /// The reason given by the engine (e.g. the remote branches containing the commit).
     pub reason: String,
 }
 
-/// L'errore dell'ultimo commit, mostrato sotto la casella del messaggio.
+/// The error of the last commit, shown under the message box.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitError {
     pub message: String,
-    /// L'output completo di git (hook, firma, identità), da mostrare in un'area scorrevole.
+    /// The full git output (hook, signature, identity), to show in a scrollable area.
     pub output: Option<String>,
 }
 
-/// La casella del messaggio: la bozza, il commit in corso, la conferma e l'ultimo errore.
+/// The message box: the draft, the commit in progress, the confirmation and the last error.
 #[derive(Debug, Clone, Default)]
 pub struct CommitBox {
     pub draft: CommitDraft,
@@ -323,7 +323,7 @@ pub struct CommitBox {
 }
 
 impl CommitBox {
-    /// Il commit in corso, se c'è.
+    /// The commit in progress, if any.
     pub fn sending(&self) -> Option<&CommitSend> {
         self.sending.as_ref()
     }
@@ -340,8 +340,8 @@ impl CommitBox {
         self.error = None;
     }
 
-    /// Prepara il commit della bozza: restituisce il comando da mandare e i parametri.
-    /// `None` se c'è già un commit in corso o una conferma aperta.
+    /// Prepares the commit of the draft: returns the command to send and the parameters.
+    /// `None` if there is already a commit in progress or a confirmation open.
     pub fn start(&mut self) -> Option<(CommitSend, Value)> {
         if self.sending.is_some() || self.confirm.is_some() {
             return None;
@@ -350,7 +350,7 @@ impl CommitBox {
         Some(self.begin(send, false))
     }
 
-    /// L'utente ha confermato l'amend: lo stesso commit, con `"confirm": true`.
+    /// The user confirmed the amend: the same commit, with `"confirm": true`.
     pub fn confirmed(&mut self) -> Option<(CommitSend, Value)> {
         let ConfirmAmend { send, .. } = self.confirm.take()?;
         Some(self.begin(send, true))
@@ -367,15 +367,15 @@ impl CommitBox {
         (send, params)
     }
 
-    /// Il commit è riuscito: la bozza si svuota (e amend si disattiva).
+    /// The commit succeeded: the draft is emptied (and amend is turned off).
     pub fn succeeded(&mut self) {
         self.sending = None;
         self.error = None;
         self.draft.clear();
     }
 
-    /// Il commit è riuscito ma il motore segnala un problema dopo (`PostCommit`): la bozza si
-    /// svuota come dopo un successo (il commit non va ripetuto) e l'errore si mostra.
+    /// The commit succeeded but the engine reports a problem afterwards (`PostCommit`): the draft is
+    /// emptied as after a success (the commit must not be repeated) and the error is shown.
     pub fn done_with_error(&mut self, message: &str) {
         self.succeeded();
         self.error = Some(CommitError {
@@ -384,8 +384,8 @@ impl CommitBox {
         });
     }
 
-    /// Il commit è fallito. La bozza resta com'era. Con [`ErrorKind::ConfirmRequired`] si apre
-    /// la conferma; gli altri errori si mostrano sotto la casella.
+    /// The commit failed. The draft stays as it was. With [`ErrorKind::ConfirmRequired`] the
+    /// confirmation opens; other errors are shown under the box.
     pub fn failed(&mut self, kind: Option<ErrorKind>, message: &str, detail: Option<String>) {
         let send = self.sending.take();
         match (kind, send) {
@@ -400,7 +400,7 @@ impl CommitBox {
     }
 }
 
-/// Il testo dell'errore per l'utente; il messaggio scritto non si perde mai.
+/// The error text for the user; the written message is never lost.
 fn error(kind: Option<ErrorKind>, message: &str, detail: Option<String>) -> CommitError {
     match kind {
         Some(ErrorKind::Git) => CommitError {
@@ -419,7 +419,7 @@ fn error(kind: Option<ErrorKind>, message: &str, detail: Option<String>) -> Comm
 }
 
 impl App {
-    /// Le azioni di questa funzione, smistate da [`App::apply`].
+    /// The actions of this function, dispatched by [`App::apply`].
     pub(crate) fn apply_commit(&mut self, action: Action) {
         match action {
             Action::SetAmend(on) => {
@@ -449,12 +449,12 @@ impl App {
                     repo.commit.dismiss_error();
                 }
             }
-            _ => unreachable!("azione smistata alla funzione sbagliata"),
+            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
-    /// Manda il commit della bozza (`confirmed`: quello in attesa di conferma, con
-    /// `"confirm": true`), se il pulsante è attivo: mai insieme a un'altra scrittura.
+    /// Sends the commit of the draft (`confirmed`: the one waiting for confirmation, with
+    /// `"confirm": true`), if the button is active: never together with another write.
     pub(crate) fn send_commit(&mut self, confirmed: bool) {
         let writing = self.executor.writing().is_some();
         let generation = self.generation;
@@ -480,8 +480,8 @@ impl App {
         self.submit(send.command(), params, Request::Commit(generation));
     }
 
-    /// Risultato di `commit.create`: stato dalla risposta, log e ref riletti; oppure l'errore
-    /// (o la conferma) nella casella, con il messaggio scritto conservato.
+    /// Result of `commit.create`: state from the answer, log and refs reread; or the error
+    /// (or the confirmation) in the box, with the written message kept.
     pub(crate) fn receive_commit(&mut self, generation: u64, done: Done) {
         let result = done.result.and_then(|value| {
             serde_json::from_value::<CommitResult>(value).map_err(|e| {
@@ -502,18 +502,18 @@ impl App {
                 let notice = result.notice();
                 let id = result.commit.id;
                 repo.set_status(result.status);
-                // Con altre modifiche si resta sulla riga delle modifiche; se è sparita si
-                // seleziona il nuovo commit appena arriva il log.
+                // With other changes you stay on the changes row; if it is gone the
+                // new commit is selected as soon as the log arrives.
                 if !repo.worktree_selected {
                     repo.select_after_load = Some(id);
                 }
                 self.error.clear();
                 self.notice = notice;
                 self.follow_diff();
-                // Il nuovo commit in cima (con amend il vecchio sparisce) e le etichette dei
-                // ref spostate.
+                // The new commit on top (with amend the old one disappears) and the shifted
+                // ref labels.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
-                // Il commit è nel diario: Annulla ora lo propone.
+                // The commit is in the journal: Undo now proposes it.
                 self.submit("edit.history", json!({}), Request::History(generation));
                 if let Some(repo) = self.current(generation) {
                     let first = repo.list.reset();
@@ -521,7 +521,7 @@ impl App {
                 }
             }
             Err(e) if done.error_kind == Some(ErrorKind::PostCommit) => {
-                // Il commit c'è: si rilegge tutto, e non si ripropone il messaggio.
+                // The commit is there: everything is reread, and the message is not proposed again.
                 log::warn!("{}: {e}", done.command);
                 repo.commit.done_with_error(&e);
                 self.error = e;
@@ -607,61 +607,61 @@ mod tests {
 
     #[test]
     fn message_joins_subject_and_body() {
-        assert_eq!(draft("Oggetto  ", "").message(), "Oggetto");
-        assert_eq!(draft("Oggetto", " \n\n").message(), "Oggetto");
+        assert_eq!(draft("Subject  ", "").message(), "Subject");
+        assert_eq!(draft("Subject", " \n\n").message(), "Subject");
         assert_eq!(
-            draft("Oggetto", "Riga 1\n\nRiga 2\n\n").message(),
-            "Oggetto\n\nRiga 1\n\nRiga 2"
+            draft("Subject", "Line 1\n\nLine 2\n\n").message(),
+            "Subject\n\nLine 1\n\nLine 2"
         );
-        // Senza oggetto il corpo passa com'è: git usa la sua prima riga come oggetto.
-        assert_eq!(draft("", "solo corpo").message(), "\n\nsolo corpo");
+        // Without a subject the body passes as is: git uses its first line as the subject.
+        assert_eq!(draft("", "body only").message(), "\n\nbody only");
         assert!(draft(" ", "\n\t").is_blank());
         assert!(!draft("", "x").is_blank());
     }
 
     #[test]
     fn subject_counter_counts_characters() {
-        assert_eq!(draft("è già", "").subject_len(), 5);
+        assert_eq!(draft("na\u{ef}ve", "").subject_len(), 5);
         assert_eq!(draft("abc   ", "").subject_len(), 3);
         assert!(!draft(&"a".repeat(72), "").subject_too_long());
-        assert!(draft(&"à".repeat(73), "").subject_too_long());
+        assert!(draft(&"\u{e9}".repeat(73), "").subject_too_long());
     }
 
     #[test]
     fn amend_proposes_the_last_message() {
-        let last = commit("Ultimo commit", "Con un corpo");
+        let last = commit("Last commit", "With a body");
         let mut d = CommitDraft::default();
         assert!(!d.set_amend(true, Some(&last)));
         assert!(d.amend());
         assert_eq!(
             (d.subject.as_str(), d.body.as_str()),
-            ("Ultimo commit", "Con un corpo")
+            ("Last commit", "With a body")
         );
         assert!(d.is_proposed());
-        // Disattivato senza cambiarlo: la bozza torna vuota.
+        // Turned off without changing it: the draft goes back to empty.
         d.set_amend(false, Some(&last));
         assert!(d.is_blank());
         assert!(!d.amend());
 
-        // Cambiato: resta.
+        // Changed: it stays.
         d.set_amend(true, Some(&last));
-        d.subject.push_str(" corretto");
+        d.subject.push_str(" fixed");
         assert!(!d.is_proposed());
         d.set_amend(false, None);
-        assert_eq!(d.subject, "Ultimo commit corretto");
+        assert_eq!(d.subject, "Last commit fixed");
 
-        // Con un messaggio già scritto non si propone niente.
+        // With a message already written nothing is proposed.
         let mut d = draft("Mio", "");
         d.set_amend(true, Some(&last));
         assert_eq!(d.subject, "Mio");
         assert!(!d.is_proposed());
 
-        // Ultimo commit non caricato: va chiesto, poi proposto.
+        // Last commit not loaded: it must be requested, then proposed.
         let mut d = CommitDraft::default();
         assert!(d.set_amend(true, None));
         d.propose(&last);
-        assert_eq!(d.subject, "Ultimo commit");
-        // Arrivato dopo che si è disattivato amend: niente.
+        assert_eq!(d.subject, "Last commit");
+        // Arrived after amend was turned off: nothing.
         let mut d = CommitDraft::default();
         d.set_amend(true, None);
         d.set_amend(false, None);
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn the_button_explains_why_it_is_disabled() {
-        let ready = draft("Messaggio", "");
+        let ready = draft("Message", "");
         let clean = status(Vec::new(), None);
         let gate = |d: &CommitDraft, s: &Status, staged, busy| {
             Gate {
@@ -702,7 +702,7 @@ mod tests {
             gate(&ready, &am, 1, false),
             Err(Blocked::Operation(Operation::Am))
         );
-        // Merge risolto: si conclude dal riquadro dell'operazione, non con un commit.
+        // Merge resolved: it is concluded from the operation box, not with a commit.
         let merge = status(Vec::new(), Some(Operation::Merge));
         assert_eq!(
             gate(&ready, &merge, 0, false),
@@ -744,7 +744,7 @@ mod tests {
         let id = c.id.short();
         assert_eq!(
             result(Some(other), None, vec![]).notice(),
-            format!("Commit {id} creato")
+            format!("Commit {id} created")
         );
         let amend = result(
             Some(other),
@@ -754,17 +754,13 @@ mod tests {
         assert_eq!(
             amend.notice(),
             format!(
-                "Commit {id} creato al posto di {}; backup del commit precedente in \
-                 refs/project/backup/amend-1; il commit precedente resta su refs/tags/v1",
+                "Commit {id} created in place of {}; backup of the previous commit in \
+                 refs/project/backup/amend-1; the previous commit is still on refs/tags/v1",
                 other.short()
             )
         );
         let same = result(Some(c.id), None, vec![]);
-        assert!(
-            same.notice().starts_with("Nessun cambiamento"),
-            "{}",
-            same.notice()
-        );
+        assert!(same.notice().starts_with("No change"), "{}", same.notice());
     }
 
     #[test]
@@ -779,10 +775,10 @@ mod tests {
             upstream: None,
         };
         let refs = [
-            r("refs/heads/altro", RefKind::LocalBranch, head),
+            r("refs/heads/other", RefKind::LocalBranch, head),
             r("refs/heads/main", RefKind::LocalBranch, head),
             r(
-                "refs/heads/vecchio",
+                "refs/heads/old",
                 RefKind::LocalBranch,
                 Oid::from_bytes([2; 20]),
             ),
@@ -791,101 +787,94 @@ mod tests {
         ];
         assert_eq!(
             refs_left_behind(&refs, Some(head), Some("refs/heads/main")),
-            ["refs/heads/altro", "refs/tags/v1"]
+            ["refs/heads/other", "refs/tags/v1"]
         );
         assert!(refs_left_behind(&refs, None, None).is_empty());
     }
 
     #[test]
     fn params_carry_amend_and_confirm_only_when_set() {
-        let mut d = draft("Oggetto", "Corpo");
+        let mut d = draft("Subject", "Body");
         let send = CommitSend::new(&d);
         assert_eq!(send.command(), "commit.create");
-        assert_eq!(send.params(false), json!({ "message": "Oggetto\n\nCorpo" }));
+        assert_eq!(send.params(false), json!({ "message": "Subject\n\nBody" }));
         assert_eq!(send.label(), "Commit");
         d.set_amend(true, None);
         let send = CommitSend::new(&d);
         assert_eq!(
             send.params(true),
-            json!({ "message": "Oggetto\n\nCorpo", "amend": true, "confirm": true })
+            json!({ "message": "Subject\n\nBody", "amend": true, "confirm": true })
         );
-        assert_eq!(send.label(), "Amend dell'ultimo commit");
+        assert_eq!(send.label(), "Amending the last commit");
     }
 
     #[test]
     fn errors_keep_the_draft() {
         let mut b = CommitBox {
-            draft: draft("Oggetto", ""),
+            draft: draft("Subject", ""),
             ..CommitBox::default()
         };
         let (_, params) = b.start().unwrap();
-        assert_eq!(params, json!({ "message": "Oggetto" }));
+        assert_eq!(params, json!({ "message": "Subject" }));
         assert!(b.sending().is_some());
-        assert!(b.start().is_none(), "mai due commit insieme");
+        assert!(b.start().is_none(), "never two commits at once");
 
         b.failed(
             Some(ErrorKind::Git),
-            "`git commit` non riuscito: ...",
-            Some("pre-commit: trovato TODO\nin a.rs:3".to_owned()),
+            "`git commit` failed: ...",
+            Some("pre-commit: found TODO\nin a.rs:3".to_owned()),
         );
         assert!(b.sending().is_none());
-        assert_eq!(b.draft.subject, "Oggetto");
+        assert_eq!(b.draft.subject, "Subject");
         let error = b.error().unwrap();
         assert!(error.message.contains("hook"), "{}", error.message);
         assert_eq!(
             error.output.as_deref(),
-            Some("pre-commit: trovato TODO\nin a.rs:3")
+            Some("pre-commit: found TODO\nin a.rs:3")
         );
 
         b.start().unwrap();
-        assert!(b.error().is_none(), "un nuovo tentativo toglie l'errore");
-        b.failed(
-            Some(ErrorKind::NothingToCommit),
-            "niente da committare",
-            None,
-        );
+        assert!(b.error().is_none(), "a new attempt clears the error");
+        b.failed(Some(ErrorKind::NothingToCommit), "nothing to commit", None);
         let error = b.error().unwrap();
-        assert!(error.message.contains("niente da committare"));
-        assert!(error.message.contains("conservato"));
+        assert!(error.message.contains("nothing to commit"));
+        assert!(error.message.contains("kept"));
         assert_eq!(error.output, None);
         b.dismiss_error();
         assert!(b.error().is_none());
 
         b.start().unwrap();
         b.failed(Some(ErrorKind::Git), "x", Some("  \n".to_owned()));
-        assert_eq!(
-            b.error().unwrap().output.as_deref(),
-            Some("(nessun output)")
-        );
+        assert_eq!(b.error().unwrap().output.as_deref(), Some("(no output)"));
 
-        // Commit riuscito con un problema dopo: non va ripetuto, la bozza si svuota.
+        // Commit succeeded with a problem afterwards: it must not be repeated, the draft empties.
         b.start().unwrap();
-        b.done_with_error("il commit abc è stato creato, ma HEAD è cambiato");
+        b.done_with_error("commit abc was created, but HEAD changed");
         assert!(b.draft.is_blank());
         assert!(b.sending().is_none());
-        assert!(b.error().unwrap().message.contains("è stato creato"));
+        assert!(b.error().unwrap().message.contains("was created"));
     }
 
     #[test]
     fn a_published_amend_asks_then_resends_with_confirm() {
         let mut b = CommitBox::default();
-        b.draft.subject = "Riscrivo".to_owned();
+        b.draft.subject = "Rewrite".to_owned();
         b.draft.set_amend(true, None);
         b.start().unwrap();
         b.failed(
             Some(ErrorKind::ConfirmRequired),
-            "chiede una conferma",
-            Some("il commit è già su refs/remotes/origin/main".to_owned()),
+            "asks for confirmation",
+            Some("the commit is already on refs/remotes/origin/main".to_owned()),
         );
         let confirm = b.confirm().unwrap();
         assert_eq!(
             confirm.reason,
-            "il commit è già su refs/remotes/origin/main"
+            "the commit is already on refs/remotes/origin/main"
         );
         assert!(b.error().is_none());
-        assert!(b.start().is_none(), "niente commit con la conferma aperta");
+        assert!(b.start().is_none(), "no commit with the confirmation open");
 
-        // Annullata: niente da mandare, la bozza resta.
+        // Cancelled: nothing to send, the draft stays.
         b.cancel_confirm();
         assert!(b.confirm().is_none());
         assert!(b.draft.amend());
@@ -896,7 +885,7 @@ mod tests {
         assert!(send.amend);
         assert_eq!(
             params,
-            json!({ "message": "Riscrivo", "amend": true, "confirm": true })
+            json!({ "message": "Rewrite", "amend": true, "confirm": true })
         );
         b.succeeded();
         assert!(b.draft.is_blank());
@@ -904,8 +893,8 @@ mod tests {
         assert!(b.sending().is_none());
     }
 
-    /// Il percorso completo con il repo di esempio del `MemoryBackend`, come lo fa la UI:
-    /// stage di note.txt, commit, poi il log e lo stato dalla risposta; infine amend.
+    /// The full path with the sample repo of the `MemoryBackend`, as the UI does it:
+    /// stage of note.txt, commit, then the log and the status from the answer; finally amend.
     #[test]
     fn commit_and_amend_with_the_sample_repo() {
         use crate::stage::StageLists;
@@ -930,8 +919,8 @@ mod tests {
         let head = status.head.target();
 
         let mut b = CommitBox::default();
-        b.draft.subject = "Aggiunge gli appunti".to_owned();
-        b.draft.body = "Con README e guida.".to_owned();
+        b.draft.subject = "Adds the notes".to_owned();
+        b.draft.body = "With README and guide.".to_owned();
         let gate = Gate {
             draft: &b.draft,
             status: Some(&status),
@@ -947,26 +936,26 @@ mod tests {
         assert!(b.draft.is_blank());
         assert_eq!(result.previous, head);
         assert_eq!(result.backup, None);
-        assert_eq!(result.commit.summary, "Aggiunge gli appunti");
+        assert_eq!(result.commit.summary, "Adds the notes");
         assert_eq!(result.commit.author.name, "Ada Rossi");
         assert_eq!(
             result.notice(),
-            format!("Commit {} creato", result.commit.id.short())
+            format!("Commit {} created", result.commit.id.short())
         );
-        // Lo stato dalla risposta: niente più in stage.
+        // The state from the answer: nothing more staged.
         let lists = StageLists::new(&result.status);
         assert!(lists.staged.is_empty());
         assert_eq!(result.status.head.target(), Some(result.commit.id));
-        // Il log ricaricato ha il nuovo commit in cima.
+        // The reloaded log has the new commit on top.
         let log = registry
             .run("repo.log", &mut session, json!({ "limit": 2 }))
             .unwrap();
         let log: Vec<Commit> = serde_json::from_value(log["commits"].clone()).unwrap();
         assert_eq!(log[0], result.commit);
 
-        // Un altro commit senza niente in stage: il pulsante è disabilitato, e il motore
-        // comunque rifiuterebbe.
-        b.draft.subject = "Ancora".to_owned();
+        // Another commit with nothing staged: the button is disabled, and the engine
+        // would refuse anyway.
+        b.draft.subject = "Again".to_owned();
         let gate = Gate {
             draft: &b.draft,
             status: Some(&result.status),
@@ -985,32 +974,35 @@ mod tests {
         assert!(matches!(err, EngineError::NothingToCommit), "{err}");
         b.failed(
             Some(ErrorKind::of(&err)),
-            &err.to_string(),
+            &err.text(),
             ErrorKind::detail(&err),
         );
-        assert_eq!(b.draft.subject, "Ancora", "il messaggio non si perde");
+        assert_eq!(b.draft.subject, "Again", "the message is not lost");
 
-        // Amend: proposto il messaggio dell'ultimo commit, poi cambiato.
+        // Amend: the message of the last commit is proposed, then changed.
         b.draft.clear();
         b.draft.set_amend(true, Some(&log[0]));
-        assert_eq!(b.draft.subject, "Aggiunge gli appunti");
-        b.draft.subject = "Aggiunge gli appunti di lavoro".to_owned();
+        assert_eq!(b.draft.subject, "Adds the notes");
+        b.draft.subject = "Adds the work notes".to_owned();
         let (send, params) = b.start().unwrap();
         assert_eq!(params["amend"], true);
         let out = registry.run(send.command(), &mut session, params).unwrap();
         let amended: CommitResult = serde_json::from_value(out).unwrap();
         b.succeeded();
         assert_eq!(amended.previous, Some(result.commit.id));
-        let backup = amended.backup.clone().expect("backup del commit riscritto");
+        let backup = amended
+            .backup
+            .clone()
+            .expect("backup of the rewritten commit");
         assert!(amended.notice().contains(&backup), "{}", amended.notice());
         assert_eq!(amended.commit.parents, result.commit.parents);
         let log = registry
             .run("repo.log", &mut session, json!({ "limit": 2 }))
             .unwrap();
         let log: Vec<Commit> = serde_json::from_value(log["commits"].clone()).unwrap();
-        // Il vecchio commit sparisce dal log, il nuovo è in cima.
+        // The old commit disappears from the log, the new one is on top.
         assert_eq!(log[0].id, amended.commit.id);
-        assert_eq!(log[0].summary, "Aggiunge gli appunti di lavoro");
+        assert_eq!(log[0].summary, "Adds the work notes");
         assert!(log.iter().all(|c| c.id != result.commit.id));
     }
 }

@@ -3,6 +3,14 @@
 //! The implementations live in the executables (L7); the UI receives an
 //! `Arc<dyn Platform>` and does not know which target it is running on.
 
+use std::sync::Arc;
+
+/// Keeps a [`Platform::watch`] going: dropping it stops the watch.
+pub type Watch = Box<dyn Send>;
+
+/// Called by a [`Platform::watch`] when the repository changed, from any thread.
+pub type OnChange = Arc<dyn Fn() + Send + Sync>;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Capabilities {
     /// [`Platform::pick_folder`] opens a dialog.
@@ -19,4 +27,13 @@ pub trait Platform: Send + Sync {
     /// Runs `job` off the UI thread (see `impl-docs/ARCHITECTURE-git.md` §6): a
     /// thread on desktop; a test platform may run it immediately, before returning.
     fn spawn(&self, job: Box<dyn FnOnce() + Send>);
+    /// Watches the git directory of the repository whose worktree root is `repo` (the `path` of
+    /// `repo.open`) and calls `on_change`, debounced, when HEAD, the index, the refs or the
+    /// operation in progress change: a commit from a terminal, an agent through MCP. The worktree
+    /// is not watched (see `impl-docs/ARCHITECTURE-git.md` §8). `None`: the platform does not
+    /// watch (the default, test platforms).
+    fn watch(&self, repo: &str, on_change: OnChange) -> Option<Watch> {
+        let _ = (repo, on_change);
+        None
+    }
 }

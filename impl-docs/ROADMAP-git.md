@@ -434,11 +434,20 @@ out on purpose).
   `Capabilities` fields (only `open_folder` is left).
 
 ### S40 — Refresh when the repo changes
-- [ ] **Agent:** `egui-ui` (watcher in the desktop app), `git-engine` if the engine needs a hook
+- [x] **Agent:** `egui-ui` (watcher in the desktop app), `git-engine` if the engine needs a hook
 - **Goal:** the open tabs reload refs, status and log when `.git/` or the worktree change outside
   the app (terminal, an agent through MCP), debounced, ignoring the app's own writes and
   `target/`-like ignored folders. Through `Platform`, implemented in `apps/project` (crate `notify`).
 - **Done when:** a `git commit` in a terminal shows up in the app without Refresh; CI green.
+- **Done:** `Platform::watch(repo, on_change) -> Option<Watch>` (default `None`); desktop
+  (`apps/project/src/watch.rs`): `notify` on the git directory (and `refs/` recursive; for a
+  linked worktree also the common directory from `commondir`), no worktree watch; reads, `*.lock`,
+  `objects/`, `logs/` ignored; 300 ms debounce (at most 2 s). UI (`crates/ui/src/refresh.rs`):
+  per-tab flag, dropped during the tab's write and for 600 ms after it; re-read only for the tab
+  shown, not with a dialog open or a command running (stays dirty); focus gained re-reads the tab
+  shown (worktree edits). The light refresh re-reads status, history, remotes, stashes, then refs;
+  the log only if refs or HEAD changed, as many commits as loaded (`CommitList::reload`), so
+  selection and scroll stay. Manual Refresh unchanged.
 
 ### S41 — Windows MSI
 - [ ] **Agent:** `git-engine`

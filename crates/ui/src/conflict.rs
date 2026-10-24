@@ -14,7 +14,7 @@
 //!   `StaleDiff` (the file changed after reading) rereads the file.
 
 use crate::ErrorKind;
-use crate::{Action, App, Done, Request};
+use crate::{Action, Done, Request, Tab};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
 };
@@ -578,8 +578,8 @@ impl ConflictBox {
     }
 }
 
-impl App {
-    /// The actions of the conflict editor, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of the conflict editor, dispatched by [`Tab::apply`].
     pub(crate) fn apply_conflict(&mut self, action: Action) {
         let generation = self.generation;
         let writing = self.executor.writing().is_some();

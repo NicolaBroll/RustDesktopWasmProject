@@ -7,7 +7,7 @@
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
-use crate::{Action, App, Done, Request, discard};
+use crate::{Action, Done, Request, Tab, discard};
 use project_domain::{Change, RepoPath, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -339,8 +339,8 @@ impl UndoResult {
     }
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_discard(&mut self, action: Action) {
         match action {
             Action::Discard(paths) => {

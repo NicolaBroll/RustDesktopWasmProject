@@ -477,7 +477,11 @@ Undo does not cover remote operations: a push cannot be undone from here (the pu
 
 GitKraken-like layout:
 
-- **Top bar**: open repo, fetch/pull/push buttons, undo/redo, state of the job in progress.
+- **Tabs** (S35): one per open repo, above the top bar, each with its own `Session` (undo journal
+  per repo); "+"/"Open…" open in a new tab, a repo already open only shows its tab. Open tabs and
+  recent repos (at most 10) are saved in the eframe storage and reopened at the next launch.
+- **Top bar**: open repo, recent repos, fetch/pull/push buttons, undo/redo, state of the job in
+  progress.
 - **Left column**: local branches, remotes, tags, stashes ([git/stash.md](git/stash.md)).
 - **Center**: commit graph and list, with an "uncommitted changes" row at the top. Virtualized
   list (`ScrollArea::show_rows`): only visible rows are drawn, the log loads

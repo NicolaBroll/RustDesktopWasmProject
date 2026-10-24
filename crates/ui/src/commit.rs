@@ -7,7 +7,7 @@
 //! fails. It is emptied only after a successful commit.
 
 use crate::executor::ErrorKind;
-use crate::{Action, App, Done, Request};
+use crate::{Action, Done, Request, Tab};
 use project_domain::{Commit, Oid, Operation, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -418,8 +418,8 @@ fn error(kind: Option<ErrorKind>, message: &str, detail: Option<String>) -> Comm
     }
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_commit(&mut self, action: Action) {
         match action {
             Action::SetAmend(on) => {

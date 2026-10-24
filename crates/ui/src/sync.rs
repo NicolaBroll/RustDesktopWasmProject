@@ -23,7 +23,7 @@
 use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
-use crate::{Action, App, Done, sync};
+use crate::{Action, Done, Tab, sync};
 use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{PullOperation, PushRejection};
 use project_i18n::tr;
@@ -780,8 +780,8 @@ impl PushResult {
     }
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_sync(&mut self, action: Action) {
         match action {
             Action::Pull(branch, strategy) => {

@@ -4,7 +4,7 @@
 //! an [`Action`]; commands go through the [`Executor`], which runs them with
 //! [`Registry::run`](project_engine::Registry::run) off the UI thread.
 //!
-//! Layout (`impl-docs/ARCHITECTURE-git.md` §8): top bar, refs on the left, commits in the
+//! Layout (`impl-docs/ARCHITECTURE-git.md` §8): one tab per open repo (`tabs`), top bar, refs on the left, commits in the
 //! center, details of the selected commit on the right. At the top of the list the "Uncommitted
 //! changes" row opens the stage area on the right. A file's diff opens in place of the graph,
 //! with the side panel next to it to switch between files. Under the stage area lists there is
@@ -34,6 +34,7 @@ mod remotes;
 mod stage;
 mod stash;
 mod sync;
+mod tabs;
 mod view;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
@@ -51,7 +52,7 @@ use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
-use project_engine::{Platform, Registry, RepoOpener, Session};
+
 use project_i18n::tr;
 use rebase::RebaseBox;
 use remotes::{AddFields, RemotesBox};
@@ -60,15 +61,21 @@ use serde_json::{Value, json};
 use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
 use stash::{PushFields, StashBox};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+
 use sync::SyncBox;
+pub use tabs::App;
 
 /// What the user asked for during the frame.
 #[derive(Debug, Clone)]
 enum Action {
     /// Dialog to choose the repo folder.
     PickFolder,
+    /// Opens the repo in a tab: a new one, the empty one shown, or the one where it is already open.
     Open(String),
+    /// Shows the tab at that index.
+    SwitchTab(usize),
+    /// Closes the tab at that index (not while it is writing).
+    CloseTab(usize),
     /// Re-reads refs, status and log of the open repo.
     Refresh,
     /// Selects the commit at the given row of the list.
@@ -111,10 +118,7 @@ enum Action {
     Undo(UndoOp),
     /// Click on a diff row (index in `DiffDoc::rows`): selects or deselects it;
     /// with Shift selects the range from the last clicked one.
-    SelectLine {
-        row: usize,
-        shift: bool,
-    },
+    SelectLine { row: usize, shift: bool },
     /// Dragging over the diff rows.
     DragLines(Drag),
     /// Deselects all the diff rows.
@@ -247,15 +251,9 @@ enum Action {
     DismissMergeError,
     /// Opens the interactive rebase editor for the commits after `base` (the parent of the chosen
     /// commit, shown as `what`).
-    OpenRebase {
-        base: Oid,
-        what: String,
-    },
+    OpenRebase { base: Oid, what: String },
     /// Moves step `from` into the gap above row `to` of the rebase plan (`len` = at the bottom).
-    RebaseMove {
-        from: usize,
-        to: usize,
-    },
+    RebaseMove { from: usize, to: usize },
     /// The action of a step of the rebase plan.
     RebaseChoose(usize, RebaseAction),
     /// The message of a step of the rebase plan.
@@ -595,52 +593,59 @@ struct LogPage {
     has_more: bool,
 }
 
-pub struct App {
+/// One open repository: its own `Session` (journal for undo/redo included) in the executor, the
+/// requests it is waiting for and its view. Results always land in the tab that sent the request,
+/// shown or not.
+struct Tab {
     executor: Executor,
-    platform: Arc<dyn Platform>,
-    /// Folder chosen in the dialog; on desktop it arrives at once, in general from a callback.
-    picked: Arc<Mutex<Option<String>>>,
     pending: HashMap<Ticket, Request>,
     /// Grows with every repo opened.
     generation: u64,
     repo: Option<RepoView>,
+    /// The path asked to `repo.open`, until its answer arrives.
+    requested: Option<String>,
+    /// The path `repo.open` just opened, collected by [`App`] for the tabs and the recent list.
+    opened: Option<String>,
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
     notice: String,
 }
 
-impl App {
-    /// `opener` opens repositories: `CliOpener` in the app, `MemoryOpener` in tests. If present,
-    /// `repo` opens at once, in the background.
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        platform: Arc<dyn Platform>,
-        opener: Arc<dyn RepoOpener>,
-        repo: Option<String>,
-    ) -> Self {
-        let ctx = cc.egui_ctx.clone();
-        let wake: Wake = Arc::new(move || ctx.request_repaint());
-        let mut app = Self {
-            executor: Executor::new(
-                Session::new(opener),
-                Registry::builtin(),
-                Arc::clone(&platform),
-                wake,
-            ),
-            platform,
-            picked: Arc::default(),
+impl Tab {
+    fn new(executor: Executor) -> Self {
+        Self {
+            executor,
             pending: HashMap::new(),
             generation: 0,
             repo: None,
+            requested: None,
+            opened: None,
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
-        };
-        if let Some(path) = repo {
-            app.apply(&cc.egui_ctx, Action::Open(path));
         }
-        app
+    }
+
+    /// Opens `path` in this tab, in the background.
+    fn open(&mut self, path: String) {
+        self.submit("repo.open", json!({ "path": &path }), Request::Open);
+        self.requested = Some(path);
+    }
+
+    /// The repo of the tab, or the one being opened.
+    fn path(&self) -> Option<&str> {
+        self.repo_path().or(self.requested.as_deref())
+    }
+
+    /// The repo open in the tab.
+    fn repo_path(&self) -> Option<&str> {
+        self.repo.as_ref().map(|r| r.path.as_str())
+    }
+
+    /// Nothing open and nothing in progress: a new repo can open here.
+    fn is_empty(&self) -> bool {
+        self.repo.is_none() && !self.executor.is_busy()
     }
 
     fn submit(&mut self, command: &str, params: Value, request: Request) {
@@ -648,19 +653,10 @@ impl App {
         self.pending.insert(ticket, request);
     }
 
-    fn apply(&mut self, ctx: &egui::Context, action: Action) {
+    fn apply(&mut self, action: Action) {
         match action {
-            Action::PickFolder => {
-                let picked = Arc::clone(&self.picked);
-                let ctx = ctx.clone();
-                self.platform.pick_folder(Box::new(move |folder| {
-                    if let Some(folder) = folder {
-                        *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some(folder);
-                        ctx.request_repaint();
-                    }
-                }));
-            }
-            Action::Open(path) => self.submit("repo.open", json!({ "path": path }), Request::Open),
+            // The tabs and the folder dialog belong to `App`.
+            Action::PickFolder | Action::Open(_) | Action::SwitchTab(_) | Action::CloseTab(_) => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -1039,15 +1035,14 @@ impl App {
         self.submit(remotes::LIST, json!({}), Request::Remotes(generation));
     }
 
-    fn receive(&mut self, ctx: &egui::Context) {
-        let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(folder) = folder {
-            self.apply(ctx, Action::Open(folder));
-        }
+    fn receive(&mut self) {
         for done in self.executor.poll() {
             let Some(request) = self.pending.remove(&done.ticket) else {
                 continue;
             };
+            if matches!(request, Request::Open) {
+                self.requested = None;
+            }
             // Details have their own state, errors included: the panel shows them.
             if let Request::Show(generation, id) = request {
                 let result = done.result.and_then(|value| {
@@ -1272,6 +1267,7 @@ impl App {
                 let Opened { path, head } = serde_json::from_value(value)?;
                 self.generation += 1;
                 self.notice.clear();
+                self.opened = Some(path.clone());
                 self.repo = Some(RepoView::new(path, head));
                 self.load();
             }
@@ -1344,14 +1340,13 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl Tab {
+    /// Draws the tab shown; what the user asks for ends up in `actions`, applied afterwards by
+    /// [`App`]. `recent`: the recent repos, for the menus.
+    fn ui(&mut self, ui: &mut egui::Ui, can_pick: bool, recent: &[String]) -> Vec<Action> {
         let ctx = ui.ctx().clone();
-        self.receive(&ctx);
-        self.request_operation();
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
-        let can_pick = self.platform.capabilities().open_folder;
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
         // lent to the panel for this frame and then put back.
@@ -1398,6 +1393,7 @@ impl eframe::App for App {
                 ui,
                 self.repo.as_ref(),
                 can_pick,
+                recent,
                 writing,
                 network,
                 &mut actions,
@@ -1559,7 +1555,8 @@ impl eframe::App for App {
             }
             None => {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    view::welcome(ui, can_pick, self.executor.is_busy(), &mut actions);
+                    let busy = self.executor.is_busy();
+                    view::welcome(ui, can_pick, busy, recent, &mut actions);
                 });
             }
         }
@@ -1570,10 +1567,12 @@ impl eframe::App for App {
             repo.list.take_scroll_to();
             repo.scroll_header = false;
         }
-        for action in actions {
-            self.apply(&ctx, action);
-        }
-        // After the actions: the selection just changed is requested in this same frame.
+        actions
+    }
+
+    /// After the actions of the frame: the selection just changed is requested in this same
+    /// frame.
+    fn after_actions(&mut self) {
         self.close_stale_diff();
         self.request_details();
         self.request_file();

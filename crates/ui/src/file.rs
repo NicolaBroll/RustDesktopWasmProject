@@ -13,7 +13,7 @@
 //!   selecting an entry opens `diff.commit` of that commit for the entry's path.
 
 use crate::diff::{DiffTarget, MAX_LINE_COLS, number_width};
-use crate::{Action, App, Done, Request, Ticket};
+use crate::{Action, Done, Request, Tab, Ticket};
 use project_domain::{Blame, BlameLine, Change, FileLogEntry, Oid, RepoPath};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -427,7 +427,7 @@ pub fn entry_origin(entry: &FileLogEntry) -> Option<String> {
     }
 }
 
-impl App {
+impl Tab {
     pub(crate) fn apply_file(&mut self, action: Action) {
         let Some(repo) = &mut self.repo else {
             return;

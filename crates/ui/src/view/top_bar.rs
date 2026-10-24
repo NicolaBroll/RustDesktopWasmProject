@@ -1,7 +1,7 @@
 use super::*;
 
 /// Last component of the path, for the title.
-pub(super) fn repo_name(path: &str) -> &str {
+pub(crate) fn repo_name(path: &str) -> &str {
     path.trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
@@ -36,16 +36,18 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
 
 /// `writing`: a write is in progress, Undo, Redo, Refresh, Fetch, Pull and Push
 /// wait. `network`: the fetch, pull or push in progress with its latest progress.
+/// `recent`: the recent repos, for the "Recent" menu.
 pub(crate) fn top_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
+    recent: &[String],
     writing: bool,
     network: Option<Network>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
-        repo_bar(ui, repo, can_pick, writing, network, actions);
+        repo_bar(ui, repo, can_pick, recent, writing, network, actions);
     });
 }
 
@@ -53,14 +55,21 @@ fn repo_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     can_pick: bool,
+    recent: &[String],
     writing: bool,
     network: Option<Network>,
     actions: &mut Vec<Action>,
 ) {
     {
-        if can_pick && ui.button(tr!("top-bar-open")).clicked() {
+        if can_pick
+            && ui
+                .button(tr!("top-bar-open"))
+                .on_hover_text(tr!("top-bar-open-hint"))
+                .clicked()
+        {
             actions.push(Action::PickFolder);
         }
+        recent_menu(ui, recent, actions);
         let Some(repo) = repo else {
             return;
         };
@@ -115,6 +124,85 @@ fn repo_bar(
             }
         }
     }
+}
+
+/// The menu of the recent repos: one opens in a tab (or shows the tab where it is open).
+fn recent_menu(ui: &mut Ui, recent: &[String], actions: &mut Vec<Action>) {
+    ui.add_enabled_ui(!recent.is_empty(), |ui| {
+        ui.menu_button(tr!("top-bar-recent"), |ui| {
+            for path in recent {
+                if ui.button(recent_item(path)).clicked() {
+                    actions.push(Action::Open(path.clone()));
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(tr!("top-bar-recent-hint"))
+        .on_disabled_hover_text(tr!("top-bar-recent-none"));
+    });
+}
+
+/// Name and path of a recent repo: two folders with the same name stay distinguishable.
+fn recent_item(path: &str) -> String {
+    tr!("top-bar-recent-item", name = repo_name(path), path = path)
+}
+
+/// A tab of the strip, as [`tab_strip`] shows it.
+pub(crate) struct TabLabel {
+    pub(crate) title: String,
+    /// The repo open or opening, on hover.
+    pub(crate) path: Option<String>,
+    /// `repo.open` in progress.
+    pub(crate) opening: bool,
+    /// A write in progress: the tab cannot be closed.
+    pub(crate) writing: bool,
+}
+
+/// The open repos, one tab each, with "×" to close it and "+" to open another.
+pub(crate) fn tab_strip(
+    ui: &mut Ui,
+    tabs: &[TabLabel],
+    active: usize,
+    can_pick: bool,
+    actions: &mut Vec<Action>,
+) {
+    egui::ScrollArea::horizontal().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            for (index, tab) in tabs.iter().enumerate() {
+                if tab.opening {
+                    ui.spinner();
+                }
+                let label = ui.selectable_label(index == active, &tab.title);
+                let label = match &tab.path {
+                    Some(path) => label.on_hover_text(path),
+                    None => label,
+                };
+                if label.clicked() {
+                    actions.push(Action::SwitchTab(index));
+                }
+                let close = ui
+                    .add_enabled(
+                        !tab.writing,
+                        egui::Button::new(tr!("tabs-close")).frame(false).small(),
+                    )
+                    .on_hover_text(tr!("tabs-close-hint"))
+                    .on_disabled_hover_text(tr!("tabs-close-writing"));
+                if close.clicked() {
+                    actions.push(Action::CloseTab(index));
+                }
+                ui.separator();
+            }
+            if can_pick
+                && ui
+                    .button(tr!("tabs-new"))
+                    .on_hover_text(tr!("tabs-new-hint"))
+                    .clicked()
+            {
+                actions.push(Action::PickFolder);
+            }
+        });
+    });
 }
 
 /// The "Fetch" button and, with several remotes, the menu to choose one.
@@ -263,7 +351,14 @@ pub(crate) fn status_bar(
     });
 }
 
-pub(crate) fn welcome(ui: &mut Ui, can_pick: bool, busy: bool, actions: &mut Vec<Action>) {
+/// The screen of a tab without a repo: open one, or one of the `recent`.
+pub(crate) fn welcome(
+    ui: &mut Ui,
+    can_pick: bool,
+    busy: bool,
+    recent: &[String],
+    actions: &mut Vec<Action>,
+) {
     ui.vertical_centered(|ui| {
         ui.add_space(ui.available_height() / 3.0);
         if busy {
@@ -277,6 +372,15 @@ pub(crate) fn welcome(ui: &mut Ui, can_pick: bool, busy: bool, actions: &mut Vec
             }
         } else {
             ui.heading(tr!("top-bar-no-repo"));
+        }
+        if !busy && !recent.is_empty() {
+            ui.add_space(16.0);
+            ui.label(RichText::new(tr!("top-bar-recent-heading")).strong());
+            for path in recent {
+                if ui.link(recent_item(path)).clicked() {
+                    actions.push(Action::Open(path.clone()));
+                }
+            }
         }
     });
 }

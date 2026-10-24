@@ -8,7 +8,7 @@
 //! reload or another file). Only added and removed lines can be selected, never context.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
-use crate::{Action, App, Drag, Request, lines};
+use crate::{Action, Drag, Request, Tab, lines};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
 use project_i18n::tr;
 use std::collections::BTreeSet;
@@ -304,8 +304,8 @@ pub fn buttons(
     })
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_lines(&mut self, action: Action) {
         match action {
             Action::SelectLine { row, shift } => {
@@ -351,7 +351,7 @@ impl App {
         }
     }
 
-    /// Sends the stage or unstage of lines, like [`App::send_write`]: never two writes
+    /// Sends the stage or unstage of lines, like [`Tab::send_write`]: never two writes
     /// together, nor with a confirmation open.
     pub(crate) fn send_line_write(&mut self, write: LineWrite) {
         if self.executor.writing().is_some() || write.lines.is_empty() {

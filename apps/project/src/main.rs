@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // no console on Windows in release
 
-use project_engine::{Capabilities, Picked, Platform};
+use project_engine::{Capabilities, Platform};
 use project_git::CliOpener;
 use std::sync::Arc;
 
@@ -12,7 +12,6 @@ const ICON: &[u8] = include_bytes!("../../../assets/icon-256.png");
 fn main() -> eframe::Result {
     env_logger::init();
 
-    let platform = Arc::new(NativePlatform);
     let opener = Arc::new(CliOpener::new());
     // `project <path>` opens a repository right away (`repo.open` returns the absolute root, which
     // is what the tabs and the recent repos save).
@@ -29,51 +28,49 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "BinariGit",
         options,
-        Box::new(move |cc| Ok(Box::new(project_ui::App::new(cc, platform, opener, repo)))),
+        Box::new(move |cc| {
+            // Built here: the dialogs need the window, which exists only now.
+            let platform = Arc::new(NativePlatform::new(cc));
+            Ok(Box::new(project_ui::App::new(cc, platform, opener, repo)))
+        }),
     )
 }
 
-/// System dialogs via `rfd`. They are blocking: the callback is
-/// called before returning.
-struct NativePlatform;
+/// Folder dialog via `rfd`, and threads for slow jobs.
+struct NativePlatform {
+    /// The dialog to open, parented to the main window (modal to it on Windows and macOS; on
+    /// Linux the XDG portal, or zenity, receive the window id).
+    dialog: rfd::AsyncFileDialog,
+}
+
+impl NativePlatform {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self {
+            dialog: rfd::AsyncFileDialog::new().set_parent(cc),
+        }
+    }
+}
 
 impl Platform for NativePlatform {
     fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            window_control: true,
-            open_folder: true,
-            ..Default::default()
-        }
+        Capabilities { open_folder: true }
     }
 
-    fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>) {
-        let picked = rfd::FileDialog::new()
-            .add_filter("Documento", &["json"])
-            .pick_file()
-            .and_then(|path| match std::fs::read(&path) {
-                Ok(bytes) => Some(Picked {
-                    name: path
-                        .file_name()
-                        .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
-                    bytes,
-                }),
-                Err(e) => {
-                    log::error!("{}: {e}", path.display());
-                    None
-                }
-            });
-        on_done(picked);
-    }
-
+    /// The dialog is created here, on the UI thread (macOS wants the main thread), and shown by
+    /// `rfd` without blocking it: on Linux and Windows on a thread of its own. A job thread waits
+    /// for the result, so the window keeps repainting while the dialog is open.
     fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-        let folder = rfd::FileDialog::new().pick_folder().and_then(|path| {
-            let path = path.into_os_string().into_string();
-            if let Err(path) = &path {
-                log::error!("{}: the path is not UTF-8", path.to_string_lossy());
-            }
-            path.ok()
-        });
-        on_done(folder);
+        let picking = self.dialog.clone().pick_folder();
+        self.spawn(Box::new(move || {
+            let folder = pollster::block_on(picking).and_then(|handle| {
+                let path = handle.path().to_path_buf().into_os_string().into_string();
+                if let Err(path) = &path {
+                    log::error!("{}: the path is not UTF-8", path.to_string_lossy());
+                }
+                path.ok()
+            });
+            on_done(folder);
+        }));
     }
 
     /// One thread per job: slow commands are few and short (fetch, push, large logs).
@@ -83,19 +80,6 @@ impl Platform for NativePlatform {
             .spawn(job)
         {
             log::error!("cannot start a thread: {e}");
-        }
-    }
-
-    fn save_file(&self, suggested_name: &str, bytes: Vec<u8>) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Documento", &["json"])
-            .set_file_name(suggested_name)
-            .save_file()
-        else {
-            return;
-        };
-        if let Err(e) = std::fs::write(&path, bytes) {
-            log::error!("{}: {e}", path.display());
         }
     }
 }

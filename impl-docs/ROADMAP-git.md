@@ -423,11 +423,15 @@ out on purpose).
   `taiki-e/install-action`; `.github/workflows/audit.yml` (Mondays, PRs to master, by hand).
 
 ### S39 — Non-blocking file dialogs
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the folder dialog (`rfd::AsyncFileDialog`) no longer blocks the UI thread: the window
   keeps repainting (progress of a fetch or `repo.optimize`) while it is open; parented to the main
   window. Remove `pick_file`/`save_file` from `Platform` (template leftovers, unused).
 - **Done when:** on Xvfb the window repaints with the dialog open; CI green.
+- **Done:** `NativePlatform` keeps an `AsyncFileDialog` parented to the window (built in the
+  eframe creator) and waits for it with `pollster` on a job thread; one dialog at a time
+  (`App::picking`); `Platform` lost `pick_file`/`save_file`/`Picked` and the unused
+  `Capabilities` fields (only `open_folder` is left).
 
 ### S40 — Refresh when the repo changes
 - [ ] **Agent:** `egui-ui` (watcher in the desktop app), `git-engine` if the engine needs a hook

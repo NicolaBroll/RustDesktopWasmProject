@@ -22,7 +22,7 @@
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
-use crate::{Action, App, Done, Request, merge};
+use crate::{Action, Done, Request, Tab, merge};
 pub use pick::{MainlineDialog, Pick};
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
 use project_i18n::tr;
@@ -1091,8 +1091,8 @@ pub fn commit_name(id: Oid, refs: &[RefInfo]) -> String {
     id.short()
 }
 
-impl App {
-    /// The actions of this function, routed by [`App::apply`].
+impl Tab {
+    /// The actions of this function, routed by [`Tab::apply`].
     pub(crate) fn apply_merge(&mut self, action: Action) {
         match action {
             Action::Merge { rev, what, no_ff } => {

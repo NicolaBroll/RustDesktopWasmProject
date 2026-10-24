@@ -13,7 +13,7 @@
 
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
-use crate::{Action, App, Done, Request, remotes};
+use crate::{Action, Done, Request, Tab, remotes};
 use crate::{ErrorKind, Ticket};
 use project_domain::{RefInfo, Upstream};
 use project_engine::mask_url;
@@ -823,8 +823,8 @@ pub fn ahead_behind(upstream: &Upstream) -> (String, String) {
     }
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_remotes(&mut self, action: Action) {
         match action {
             Action::AddRemote => {

@@ -12,7 +12,7 @@
 
 use crate::discard::History;
 use crate::merge::{Outcome, Received, reread_warning};
-use crate::{Action, App, Done, ErrorKind, Request};
+use crate::{Action, Done, ErrorKind, Request, Tab};
 use project_domain::{
     Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep, RefInfo, RepoPath, Status,
 };
@@ -610,8 +610,8 @@ impl StartResult {
 #[path = "rebase_tests.rs"]
 mod tests;
 
-impl App {
-    /// The actions of the rebase editor, routed by [`App::apply`].
+impl Tab {
+    /// The actions of the rebase editor, routed by [`Tab::apply`].
     pub(crate) fn apply_rebase(&mut self, action: Action) {
         let generation = self.generation;
         let writing = self.executor.writing().is_some();

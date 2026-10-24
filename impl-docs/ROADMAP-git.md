@@ -357,10 +357,14 @@ Rules that apply to every step:
   `view/file_view.rs`), requests in the background cancelled when replaced.
 
 ### S35 — Multiple repos and recent repos
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** tabs with several open repos; list of recent repos saved between one launch and
   the next.
 - **Done when:** reopening the app with the previous tabs; CI green.
+- Done: one `Tab` per repo with its own executor and `Session` (per-repo undo journal, results
+  land in their tab even when hidden), tab strip above the top bar, "Recent" menu and list on
+  the empty screen (`crates/ui/src/tabs.rs`); open tabs, the one shown and the recent repos saved
+  in the eframe storage as soon as they change, reopened at startup.
 
 ### S36 — Huge repos with `gix`
 - [ ] **Agent:** `git-engine`

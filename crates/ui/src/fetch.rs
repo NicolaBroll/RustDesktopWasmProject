@@ -6,7 +6,7 @@
 //! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
 //! network errors are explained in a window with git's text.
 
-use crate::{Action, App, Done, Request, fetch};
+use crate::{Action, Done, Request, Tab, fetch};
 use crate::{ErrorKind, Ticket};
 use project_domain::{Oid, RefInfo};
 use project_engine::Progress;
@@ -360,8 +360,8 @@ pub fn describe(progress: &Progress) -> (String, Option<f32>) {
     (text, fraction)
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_fetch(&mut self, action: Action) {
         match action {
             Action::Fetch(remote) => {

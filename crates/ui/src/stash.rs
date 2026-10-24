@@ -17,7 +17,7 @@
 //!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
-use crate::{Action, App, Done, Request, stash};
+use crate::{Action, Done, Request, Tab, stash};
 use crate::{ErrorKind, format};
 use project_domain::{Oid, Signature, Status};
 use project_i18n::tr;
@@ -771,8 +771,8 @@ struct DropResult {
     history: History,
 }
 
-impl App {
-    /// The actions of this function, routed by [`App::apply`].
+impl Tab {
+    /// The actions of this function, routed by [`Tab::apply`].
     pub(crate) fn apply_stash(&mut self, action: Action) {
         match action {
             Action::OpenStash => {

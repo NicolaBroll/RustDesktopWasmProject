@@ -10,7 +10,7 @@
 
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
-use crate::{Action, App, Done, Request, branch};
+use crate::{Action, Done, Request, Tab, branch};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -656,8 +656,8 @@ fn refs_warning(error: String) -> String {
     tr!("branch-refs-warning", error = error)
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_branch(&mut self, action: Action) {
         match action {
             Action::NewBranch(start, name) => {

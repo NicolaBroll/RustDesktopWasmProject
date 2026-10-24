@@ -1,0 +1,480 @@
+//! Several repos open in tabs, the recent repos and their persistence between launches.
+//!
+//! Each [`Tab`] has its own executor and `Session`: undo/redo journals stay per repo and the
+//! results of a tab not shown keep landing in it. What is saved (eframe storage): the paths of the
+//! open tabs, the one shown and the recent repos; at startup the tabs reopen.
+
+use crate::executor::{Executor, Wake};
+use crate::{Action, Tab, view};
+use project_engine::{Platform, Registry, RepoOpener, Session};
+use project_i18n::tr;
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+
+/// Key of the state in the eframe storage.
+const KEY: &str = "tabs";
+
+/// How many recent repos are remembered.
+const MAX_RECENT: usize = 10;
+
+/// What survives between one launch and the next.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Saved {
+    /// Paths of the open tabs, in order.
+    tabs: Vec<String>,
+    /// Index in `tabs` of the tab shown.
+    active: usize,
+    /// Most recent first.
+    recent: Vec<String>,
+}
+
+pub struct App {
+    tabs: Vec<Tab>,
+    /// Index in `tabs` of the tab shown; there is always at least one tab.
+    active: usize,
+    /// Repos opened successfully, most recent first.
+    recent: Vec<String>,
+    platform: Arc<dyn Platform>,
+    opener: Arc<dyn RepoOpener>,
+    wake: Wake,
+    /// Folder chosen in the dialog; on desktop it arrives at once, in general from a callback.
+    picked: Arc<Mutex<Option<String>>>,
+    /// The state last written to the storage: written again only when it changes.
+    saved: Saved,
+}
+
+impl App {
+    /// `opener` opens repositories: `CliOpener` in the app, `MemoryOpener` in tests. The tabs of
+    /// the previous launch reopen in the background; `repo`, if present, opens in one more tab (or
+    /// shows the one where it is already open).
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        platform: Arc<dyn Platform>,
+        opener: Arc<dyn RepoOpener>,
+        repo: Option<String>,
+    ) -> Self {
+        let ctx = cc.egui_ctx.clone();
+        let wake: Wake = Arc::new(move || ctx.request_repaint());
+        let saved = cc
+            .storage
+            .and_then(|s| eframe::get_value::<Saved>(s, KEY))
+            .unwrap_or_default();
+        Self::restore(platform, opener, wake, saved, repo)
+    }
+
+    fn restore(
+        platform: Arc<dyn Platform>,
+        opener: Arc<dyn RepoOpener>,
+        wake: Wake,
+        saved: Saved,
+        repo: Option<String>,
+    ) -> Self {
+        let mut app = Self {
+            tabs: Vec::new(),
+            active: 0,
+            recent: saved.recent.clone(),
+            platform,
+            opener,
+            wake,
+            picked: Arc::default(),
+            saved: saved.clone(),
+        };
+        for path in &saved.tabs {
+            let mut tab = app.new_tab();
+            tab.open(path.clone());
+            app.tabs.push(tab);
+        }
+        if app.tabs.is_empty() {
+            app.tabs.push(app.new_tab());
+        }
+        app.active = saved.active.min(app.tabs.len() - 1);
+        if let Some(path) = repo {
+            app.open(path);
+        }
+        app
+    }
+
+    fn new_tab(&self) -> Tab {
+        Tab::new(Executor::new(
+            Session::new(Arc::clone(&self.opener)),
+            Registry::builtin(),
+            Arc::clone(&self.platform),
+            Arc::clone(&self.wake),
+        ))
+    }
+
+    /// Shows the tab where `path` is open (or opening); otherwise opens it in the empty tab shown
+    /// or in a new tab.
+    fn open(&mut self, path: String) {
+        if let Some(index) = self.tabs.iter().position(|t| t.path() == Some(&path)) {
+            self.active = index;
+            return;
+        }
+        if !self.tabs[self.active].is_empty() {
+            let tab = self.new_tab();
+            self.tabs.push(tab);
+            self.active = self.tabs.len() - 1;
+        }
+        self.tabs[self.active].open(path);
+    }
+
+    /// Closes tab `index`, not while it is writing: the write would go on without anyone
+    /// showing its outcome.
+    fn close(&mut self, index: usize) {
+        if self
+            .tabs
+            .get(index)
+            .is_none_or(|t| t.executor.writing().is_some())
+        {
+            return;
+        }
+        self.remove(index);
+    }
+
+    fn remove(&mut self, index: usize) {
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            let tab = self.new_tab();
+            self.tabs.push(tab);
+        }
+        self.active = after_close(self.active, index, self.tabs.len());
+    }
+
+    /// Collects the results of every tab, shown or not, and the repos just opened: they enter the
+    /// recent list; the same repo already open in another tab (reached by another path) closes the
+    /// new tab and shows the other one.
+    fn receive(&mut self) {
+        let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(folder) = folder {
+            self.open(folder);
+        }
+        for tab in &mut self.tabs {
+            tab.receive();
+            tab.request_operation();
+        }
+        let mut index = 0;
+        while index < self.tabs.len() {
+            let Some(path) = self.tabs[index].opened.take() else {
+                index += 1;
+                continue;
+            };
+            remember(&mut self.recent, &path);
+            let paths: Vec<_> = self.tabs.iter().map(|t| t.repo_path()).collect();
+            match twin(&paths, index) {
+                Some(other) => {
+                    let shown = self.active == index;
+                    self.remove(index);
+                    if shown {
+                        self.active = if other > index { other - 1 } else { other };
+                    }
+                }
+                None => index += 1,
+            }
+        }
+    }
+
+    fn apply(&mut self, ctx: &egui::Context, action: Action) {
+        match action {
+            Action::PickFolder => {
+                let picked = Arc::clone(&self.picked);
+                let ctx = ctx.clone();
+                self.platform.pick_folder(Box::new(move |folder| {
+                    if let Some(folder) = folder {
+                        *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some(folder);
+                        ctx.request_repaint();
+                    }
+                }));
+            }
+            Action::Open(path) => self.open(path),
+            Action::SwitchTab(index) => {
+                if index < self.tabs.len() {
+                    self.active = index;
+                }
+            }
+            Action::CloseTab(index) => self.close(index),
+            action => self.tabs[self.active].apply(action),
+        }
+    }
+
+    /// The tabs with a repo open or opening (not those whose opening failed).
+    fn state(&self) -> Saved {
+        let mut tabs = Vec::new();
+        let mut active = 0;
+        for (index, tab) in self.tabs.iter().enumerate() {
+            if let Some(path) = tab.path() {
+                if index == self.active {
+                    active = tabs.len();
+                }
+                tabs.push(path.to_owned());
+            }
+        }
+        Saved {
+            tabs,
+            active,
+            recent: self.recent.clone(),
+        }
+    }
+
+    /// Writes the state as soon as it changes: the app can be closed without `save` being called
+    /// (a killed process, `make desktop-stop`).
+    fn persist(&mut self, storage: Option<&mut (dyn eframe::Storage + '_)>) {
+        let state = self.state();
+        if state == self.saved {
+            return;
+        }
+        if let Some(storage) = storage {
+            eframe::set_value(storage, KEY, &state);
+            storage.flush();
+        }
+        self.saved = state;
+    }
+
+    fn labels(&self) -> Vec<view::TabLabel> {
+        self.tabs
+            .iter()
+            .map(|tab| view::TabLabel {
+                title: tab
+                    .path()
+                    .map_or_else(|| tr!("tabs-empty"), |p| view::repo_name(p).to_owned()),
+                path: tab.path().map(str::to_owned),
+                opening: tab.repo.is_none() && tab.requested.is_some(),
+                writing: tab.executor.writing().is_some(),
+            })
+            .collect()
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.receive();
+        let can_pick = self.platform.capabilities().open_folder;
+        // The strip's actions after the tab's: they can change the tab shown.
+        let mut strip = Vec::new();
+        if self.tabs.len() > 1 || self.tabs[0].path().is_some() {
+            let labels = self.labels();
+            egui::Panel::top("tabs").show(ui, |ui| {
+                view::tab_strip(ui, &labels, self.active, can_pick, &mut strip);
+            });
+        }
+        let actions = self.tabs[self.active].ui(ui, can_pick, &self.recent);
+        for action in actions.into_iter().chain(strip) {
+            self.apply(&ctx, action);
+        }
+        self.tabs[self.active].after_actions();
+        self.persist(frame.storage_mut());
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.saved = self.state();
+        eframe::set_value(storage, KEY, &self.saved);
+    }
+}
+
+/// `path` at the top of the recent list, without duplicates and at most [`MAX_RECENT`].
+fn remember(recent: &mut Vec<String>, path: &str) {
+    recent.retain(|p| p != path);
+    recent.insert(0, path.to_owned());
+    recent.truncate(MAX_RECENT);
+}
+
+/// The tab shown after closing `closed`, with `len` tabs left (at least one): the same one if it
+/// was another, otherwise the one that took its place or the last.
+fn after_close(active: usize, closed: usize, len: usize) -> usize {
+    if active > closed {
+        active - 1
+    } else {
+        active.min(len - 1)
+    }
+}
+
+/// Another tab with the same repo as tab `index`.
+fn twin(paths: &[Option<&str>], index: usize) -> Option<usize> {
+    let path = paths.get(index).copied().flatten()?;
+    (0..paths.len()).find(|&other| other != index && paths[other] == Some(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use project_engine::{Capabilities, MemoryBackend, MemoryOpener, Picked};
+
+    /// The job runs inside `spawn`, on the same thread.
+    struct Inline;
+
+    impl Platform for Inline {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+        fn pick_file(&self, on_done: Box<dyn FnOnce(Option<Picked>) + Send>) {
+            on_done(None);
+        }
+        fn save_file(&self, _: &str, _: Vec<u8>) {}
+        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+            on_done(None);
+        }
+        fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+            job();
+        }
+    }
+
+    /// An app with repos `a` and `b`, restored from `saved`, after the answers arrived.
+    fn app(saved: Saved, repo: Option<&str>) -> App {
+        let mut opener = MemoryOpener::new();
+        opener.insert("a", MemoryBackend::sample());
+        opener.insert("b", MemoryBackend::sample());
+        let mut app = App::restore(
+            Arc::new(Inline),
+            Arc::new(opener),
+            Arc::new(|| {}),
+            saved,
+            repo.map(str::to_owned),
+        );
+        app.receive();
+        app
+    }
+
+    fn paths(app: &App) -> Vec<Option<&str>> {
+        app.tabs.iter().map(|t| t.path()).collect()
+    }
+
+    #[test]
+    fn recent_is_deduplicated_and_capped() {
+        let mut recent = Vec::new();
+        for n in 0..12 {
+            remember(&mut recent, &format!("r{n}"));
+        }
+        assert_eq!(recent.len(), MAX_RECENT);
+        assert_eq!(recent[0], "r11");
+        remember(&mut recent, "r5");
+        assert_eq!(recent[0], "r5");
+        assert_eq!(recent.iter().filter(|p| *p == "r5").count(), 1);
+        assert_eq!(recent.len(), MAX_RECENT);
+    }
+
+    #[test]
+    fn active_tab_after_close() {
+        // Closing a tab before the one shown: the same tab, one place to the left.
+        assert_eq!(after_close(2, 0, 2), 1);
+        // Closing one after: unchanged.
+        assert_eq!(after_close(0, 1, 2), 0);
+        // Closing the one shown: the one that took its place, or the last.
+        assert_eq!(after_close(1, 1, 2), 1);
+        assert_eq!(after_close(2, 2, 2), 1);
+        assert_eq!(after_close(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn twin_finds_the_same_repo_in_another_tab() {
+        let paths = [Some("a"), None, Some("b"), Some("a")];
+        assert_eq!(twin(&paths, 3), Some(0));
+        assert_eq!(twin(&paths, 0), Some(3));
+        assert_eq!(twin(&paths, 2), None);
+        assert_eq!(twin(&paths, 1), None);
+    }
+
+    #[test]
+    fn saved_state_round_trips_and_tolerates_missing_fields() {
+        let saved = Saved {
+            tabs: vec!["/a".into(), "/b".into()],
+            active: 1,
+            recent: vec!["/b".into(), "/a".into(), "/c".into()],
+        };
+        let text = serde_json::to_string(&saved).unwrap();
+        assert_eq!(serde_json::from_str::<Saved>(&text).unwrap(), saved);
+        let old: Saved = serde_json::from_str(r#"{"tabs":["/a"]}"#).unwrap();
+        assert_eq!(old.tabs, ["/a"]);
+        assert_eq!((old.active, old.recent.len()), (0, 0));
+    }
+
+    #[test]
+    fn opening_fills_the_empty_tab_then_adds_tabs_and_reuses_open_ones() {
+        let mut app = app(Saved::default(), None);
+        assert_eq!(paths(&app), [None]);
+        app.open("a".into());
+        app.receive();
+        assert_eq!(paths(&app), [Some("a")]);
+        app.open("b".into());
+        app.receive();
+        assert_eq!((paths(&app), app.active), (vec![Some("a"), Some("b")], 1));
+        // Already open: only shown.
+        app.open("a".into());
+        app.receive();
+        assert_eq!((app.tabs.len(), app.active), (2, 0));
+        assert_eq!(app.recent, ["b", "a"]);
+    }
+
+    #[test]
+    fn failed_open_stays_out_of_recent_and_saved_tabs() {
+        let mut app = app(Saved::default(), Some("a"));
+        app.open("missing".into());
+        app.receive();
+        assert_eq!(app.tabs.len(), 2);
+        assert!(app.tabs[1].repo.is_none());
+        assert!(!app.tabs[1].error.is_empty());
+        assert_eq!(app.recent, ["a"]);
+        assert_eq!(app.state().tabs, ["a"]);
+        // The failed tab is empty: the next repo opens there.
+        app.open("b".into());
+        app.receive();
+        assert_eq!(paths(&app), [Some("a"), Some("b")]);
+    }
+
+    #[test]
+    fn saved_tabs_reopen_and_the_argument_shows_its_tab() {
+        let saved = Saved {
+            tabs: vec!["a".into(), "b".into()],
+            active: 1,
+            recent: vec!["b".into(), "a".into()],
+        };
+        let app_ = app(saved.clone(), None);
+        assert_eq!(paths(&app_), [Some("a"), Some("b")]);
+        assert_eq!(app_.state(), saved);
+        // The argument already among the tabs: shown, not duplicated.
+        let app_ = app(saved, Some("a"));
+        assert_eq!((app_.tabs.len(), app_.active), (2, 0));
+    }
+
+    #[test]
+    fn closing_keeps_one_tab_and_persists_only_on_change() {
+        let mut app = app(Saved::default(), Some("a"));
+        app.open("b".into());
+        app.receive();
+        app.close(1);
+        assert_eq!((paths(&app), app.active), (vec![Some("a")], 0));
+        app.close(0);
+        assert_eq!(paths(&app), [None]);
+        let mut storage = Memory::default();
+        app.persist(Some(&mut storage));
+        assert_eq!(storage.flushes, 1);
+        app.persist(Some(&mut storage));
+        assert_eq!(storage.flushes, 1, "unchanged state: not written again");
+        let saved: Saved = eframe::get_value(&storage, KEY).unwrap();
+        assert_eq!(
+            (saved.tabs.len(), saved.recent),
+            (0, vec!["b".into(), "a".into()])
+        );
+    }
+
+    #[derive(Default)]
+    struct Memory {
+        values: std::collections::HashMap<String, String>,
+        flushes: usize,
+    }
+
+    impl eframe::Storage for Memory {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.values.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.values.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.values.remove(key);
+        }
+        fn flush(&mut self) {
+            self.flushes += 1;
+        }
+    }
+}

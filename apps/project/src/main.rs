@@ -14,8 +14,14 @@ fn main() -> eframe::Result {
 
     let platform = Arc::new(NativePlatform);
     let opener = Arc::new(CliOpener::new());
-    // `project <path>` opens a repository right away.
-    let repo = std::env::args().nth(1);
+    // `project <path>` opens a repository right away. Absolute: the path is saved among the tabs
+    // and the recent repos, and the next launch may start from another folder.
+    let repo = std::env::args().nth(1).map(|path| {
+        std::path::absolute(&path)
+            .ok()
+            .and_then(|p| p.into_os_string().into_string().ok())
+            .unwrap_or(path)
+    });
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 760.0])

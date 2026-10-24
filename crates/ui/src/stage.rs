@@ -2,7 +2,7 @@
 //! to send to `index.stage`/`index.unstage` and what to do with the open diff after a write.
 //! Data only, no egui: tested with unit tests.
 
-use crate::{Action, App, Request, stage};
+use crate::{Action, Request, Tab, stage};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
 use project_i18n::tr;
 use serde_json::json;
@@ -231,8 +231,8 @@ pub fn follow(lists: &StageLists, side: Side, path: &RepoPath) -> Follow {
     }
 }
 
-impl App {
-    /// The actions of this function, dispatched by [`App::apply`].
+impl Tab {
+    /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_stage(&mut self, action: Action) {
         match action {
             Action::Write(op, paths) => {

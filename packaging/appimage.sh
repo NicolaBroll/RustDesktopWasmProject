@@ -54,6 +54,9 @@ ln -s binarigit.png "$APPDIR/.DirIcon"
 install -m 644 "$ROOT/packaging/binarigit.desktop" "$APPDIR/binarigit.desktop"
 install -m 644 "$ROOT/packaging/binarigit.desktop" "$APPDIR/usr/share/applications/binarigit.desktop"
 install -m 755 "$ROOT/packaging/AppRun" "$APPDIR/AppRun"
+for doc in LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md; do
+    install -D -m 644 "$ROOT/$doc" "$APPDIR/usr/share/doc/binarigit/$doc"
+done
 
 rm -f "$OUT/$NAME"
 # No FUSE in containers: the tool extracts itself instead of mounting.

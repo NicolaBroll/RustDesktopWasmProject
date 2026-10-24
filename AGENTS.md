@@ -92,3 +92,11 @@ Tools (installed by `.devcontainer/post-create.sh`): `xvfb` + `xauth` (`xvfb-run
 `x11-utils` (`xwininfo`, `xprop`), `imagemagick` (`import`), `xdotool`; Chrome for
 `assets/render.sh`. VS Code's `WAYLAND_DISPLAY` must be unset, otherwise winit uses Wayland and the
 screen stays black (the target does this on its own).
+
+## Releases
+
+- `dev` goes into `master` with a pull request closed with a **merge commit** (not squash), so
+  `master` keeps the same commits as `dev`; step PRs to `dev` stay squash.
+- The release is a `v<version>` tag on `master` (version = `[workspace.package]` in `Cargo.toml`,
+  section `## [<version>]` in `CHANGELOG.md`): `.github/workflows/package.yml` builds the
+  packages and creates the GitHub Release.

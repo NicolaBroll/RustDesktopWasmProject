@@ -27,6 +27,9 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 install -m 644 "$ROOT/target/$TARGET/release/project.exe" "$STAGE/BinariGit.exe"
 sed "s/@VERSION@/$VERSION/" "$ROOT/packaging/windows-README.txt" | sed 's/$/\r/' > "$STAGE/README.txt"
+for doc in LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md; do
+    sed 's/$/\r/' "$ROOT/$doc" > "$STAGE/$doc.txt"
+done
 
 rm -f "$OUT/$NAME"
 (cd "$OUT" && zip -q -X -r "$NAME" BinariGit)

@@ -99,7 +99,12 @@ fn deny() -> anyhow::Result<()> {
 fn doc() -> anyhow::Result<()> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     run(Command::new(cargo)
-        .args(["doc", "--workspace", "--no-deps", "--document-private-items"])
+        .args([
+            "doc",
+            "--workspace",
+            "--no-deps",
+            "--document-private-items",
+        ])
         .env("RUSTDOCFLAGS", "-D warnings"))
 }
 

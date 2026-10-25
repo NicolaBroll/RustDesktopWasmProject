@@ -4,7 +4,7 @@
 //! [`GitBackend::delete_tag`](crate::GitBackend::delete_tag)). Both enter the journal: `edit.undo`
 //! deletes the created tag or recreates the deleted one on the same value (§7).
 
-use super::{Out, journal_state, to_json};
+use super::{Out, journal_state, put_reread};
 use crate::commands::parse_params;
 use crate::{
     EngineError, HeadState, JournalEntry, LogQuery, Session, check_new_tag_name, check_tag_name,
@@ -74,13 +74,7 @@ pub(super) fn tag_create(s: &mut Session, p: Value) -> Out {
     out["tag"] = Value::String(full);
     out["target"] = Value::String(target.to_string());
     out["annotated"] = Value::Bool(message.is_some());
-    match repo.refs() {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(&mut out, "refs", repo.refs());
     Ok(out)
 }
 
@@ -186,13 +180,7 @@ pub(super) fn tag_delete(s: &mut Session, p: Value) -> Out {
     out["annotated"] = Value::Bool(tag_object.is_some());
     out["tag_object"] = tag_object.map_or(Value::Null, |o| Value::String(o.to_string()));
     out["backup"] = Value::String(backup);
-    match repo.refs() {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(&mut out, "refs", repo.refs());
     Ok(out)
 }
 

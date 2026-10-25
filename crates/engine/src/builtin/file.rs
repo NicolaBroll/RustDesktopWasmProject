@@ -76,7 +76,7 @@ pub(super) fn file_log(s: &mut Session, p: Value) -> Out {
     let mut commits = s.repo()?.file_log(&query, &job)?;
     let has_more = commits.len() > limit;
     commits.truncate(limit);
-    Ok(json!({ "commits": to_json(commits), "has_more": has_more }))
+    Ok(json!({ "commits": commits, "has_more": has_more }))
 }
 
 #[cfg(test)]

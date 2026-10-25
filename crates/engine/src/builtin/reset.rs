@@ -2,8 +2,8 @@
 //! `branch.reset_preview`. Types and checks shared by the backends in `git/reset.rs`; contract in
 //! `impl-docs/git/reset.md`.
 
+use super::Out;
 use super::merge::finish;
-use super::{Out, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, LogQuery, Message, RefMove, RefRestore,
@@ -178,12 +178,12 @@ pub(super) fn branch_reset_preview(s: &mut Session, p: Value) -> Out {
         "branch": plan.branch,
         "before": plan.before.to_string(),
         "after": plan.after.to_string(),
-        "files": to_json(&plan.files),
+        "files": plan.files,
         "needs_confirm": plan.needs_confirm(mode),
         "expected": plan.before.to_string(),
         "published": plan.published.as_ref().map_or(0, |(_, n)| *n),
         "upstream": plan.published.as_ref().map(|(u, _)| u.clone()),
-        "warnings": to_json(published_warning(&plan).into_iter().collect::<Vec<_>>()),
+        "warnings": published_warning(&plan).into_iter().collect::<Vec<_>>(),
     }))
 }
 
@@ -307,13 +307,13 @@ pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
         "branch": plan.branch,
         "before": plan.before.to_string(),
         "after": plan.after.to_string(),
-        "files": to_json(&outcome.files),
+        "files": outcome.files,
         "backup": outcome.backup,
         "stash": outcome.stash.map(|o| o.to_string()),
         "index_backup": outcome.index_backup,
         "backups": outcome.backups,
         "published": plan.published.as_ref().map_or(0, |(_, n)| *n),
-        "warnings": to_json(&warnings),
+        "warnings": warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)

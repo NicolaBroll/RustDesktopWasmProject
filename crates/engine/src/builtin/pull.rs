@@ -7,7 +7,7 @@
 //! fetch stays cancellable while the integration is not interrupted halfway.
 
 use super::remote::{changes, unexpected};
-use super::{Out, journal_state, to_json};
+use super::{Out, put_journal_state, put_reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, FetchRequest, HeadState, JournalEntry, Message, PullMode, PullPolicy, PullRequest,
@@ -181,7 +181,7 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
     let after_fetch = repo.refs()?;
     let updated = changes(&refs, &after_fetch);
     let mut warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
-    let fetch = json!({ "updated": to_json(&updated), "messages": fetched.messages });
+    let fetch = json!({ "updated": updated, "messages": fetched.messages });
     let upstream_oid = after_fetch
         .iter()
         .find(|r| r.name == tracking)
@@ -201,7 +201,7 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
         "branch": branch,
         "remote": upstream.remote,
         "upstream": tracking,
-        "strategy_source": to_json(policy.source),
+        "strategy_source": policy.source,
         "before": before.to_string(),
         "ahead": ahead,
         "behind": behind,
@@ -234,7 +234,7 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
                     before,
                     outcome.after,
                     HeadState::from_head(&status.head),
-                    mode.name(),
+                    (&mode).into(),
                     tracking.strip_prefix("refs/remotes/").unwrap_or(&tracking),
                     outcome.backup.clone(),
                 ));
@@ -246,27 +246,12 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
             (outcome.after, Some(outcome.backup))
         }
     };
-    let state = journal_state(journal);
     out["after"] = json!(after.to_string());
     out["backup"] = json!(backup);
     out["warnings"] = to_json(warnings);
-    for key in ["can_undo", "can_redo", "next_undo", "next_redo"] {
-        out[key] = state[key].clone();
-    }
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
-    match repo.refs() {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
+    put_journal_state(&mut out, journal);
+    put_reread(&mut out, "status", repo.status());
+    put_reread(&mut out, "refs", repo.refs());
     Ok(out)
 }
 

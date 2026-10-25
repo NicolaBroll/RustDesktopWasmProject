@@ -20,9 +20,9 @@ mod tag;
 
 use crate::commands::parse_params;
 use crate::{
-    CommandSpec, CommitRequest, DiffSpec, EngineError, HeadState, Journal, JournalEntry,
-    LineSelection, LogQuery, Registry, RestoreOutcome, Session, commit_graph_disabled,
-    commit_graph_replaced, commit_graph_shallow, discard_plan, file_digest,
+    CommandSpec, CommitRequest, DiffSpec, EngineError, GitBackend, HeadState, Journal,
+    JournalEntry, LineSelection, LogQuery, Registry, RestoreOutcome, Session,
+    commit_graph_disabled, commit_graph_replaced, commit_graph_shallow, discard_plan, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
 use serde::Deserialize;
@@ -468,7 +468,7 @@ fn opened(s: &Session, path: String) -> Out {
     let path = repo.root().unwrap_or(path);
     let head = repo.head()?;
     let commit_graph = repo.commit_graph().is_ok_and(|g| g.in_use());
-    Ok(json!({ "path": path, "head": to_json(head), "commit_graph": commit_graph }))
+    Ok(json!({ "path": path, "head": head, "commit_graph": commit_graph }))
 }
 
 /// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`), so
@@ -562,21 +562,18 @@ fn check_opt_path(
 fn check_path(id: &'static str, path: RepoPath) -> Result<RepoPath, EngineError> {
     let bytes = path.as_bytes();
     let reason = if bytes.is_empty() {
-        Some(msg!("engine-path-empty", path = path))
+        msg!("engine-path-empty", path = path)
     } else if bytes.contains(&0) {
-        Some(msg!("engine-path-nul", path = path))
+        msg!("engine-path-nul", path = path)
     } else if bytes
         .split(|&b| b == b'/')
         .any(|c| c.is_empty() || c == b"." || c == b"..")
     {
-        Some(msg!("engine-path-not-relative", path = path))
+        msg!("engine-path-not-relative", path = path)
     } else {
-        None
+        return Ok(path);
     };
-    match reason {
-        Some(reason) => Err(EngineError::InvalidParams { id, reason }),
-        None => Ok(path),
-    }
+    Err(EngineError::InvalidParams { id, reason })
 }
 
 /// The JSON of a [`Diff`] with, in addition, in every file, the `digest` field ([`file_digest`]) to
@@ -662,19 +659,26 @@ fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPat
 /// the index backup ref, if before writing staged versions
 /// that existed only in the index were saved.
 fn index_stage(s: &mut Session, p: Value) -> Out {
-    let paths = check_paths("index.stage", p)?;
-    let repo = s.repo_mut()?;
-    let backup = repo.stage(&paths)?;
-    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
+    index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
 }
 
 /// Unstages `paths` (see [`GitBackend::unstage`](crate::GitBackend::unstage)),
 /// without touching the worktree. Result like `index.stage`.
 fn index_unstage(s: &mut Session, p: Value) -> Out {
-    let paths = check_paths("index.unstage", p)?;
+    index_paths("index.unstage", s, p, |repo, paths| repo.unstage(paths))
+}
+
+/// `index.stage`/`index.unstage`: `write` on the validated paths, then the new status.
+fn index_paths(
+    id: &'static str,
+    s: &mut Session,
+    p: Value,
+    write: fn(&mut dyn GitBackend, &[RepoPath]) -> Result<Option<String>, EngineError>,
+) -> Out {
+    let paths = check_paths(id, p)?;
     let repo = s.repo_mut()?;
-    let backup = repo.unstage(&paths)?;
-    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
+    let backup = write(repo, &paths)?;
+    Ok(json!({ "status": repo.status()?, "backup": backup }))
 }
 
 /// Parameters of `index.stage_lines` and `index.unstage_lines`.
@@ -710,7 +714,7 @@ fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: 
         digest,
         direction,
     })?;
-    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
+    Ok(json!({ "status": repo.status()?, "backup": backup }))
 }
 
 /// Stages the chosen lines of the worktree diff.
@@ -803,13 +807,7 @@ fn worktree_discard(s: &mut Session, p: Value) -> Out {
     out["files"] = to_json(&outcome.files);
     out["backup"] = Value::String(outcome.backup);
     out["stash"] = Value::String(outcome.stash.to_string());
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(&mut out, "status", repo.status());
     Ok(out)
 }
 
@@ -824,6 +822,28 @@ fn journal_state(journal: &Journal) -> Value {
     })
 }
 
+/// Adds the fields of [`journal_state`] to `out`.
+fn put_journal_state(out: &mut Value, journal: &Journal) {
+    if let Value::Object(state) = journal_state(journal) {
+        for (key, value) in state {
+            out[key] = value;
+        }
+    }
+}
+
+/// Puts what a command re-reads after a successful write at `out[key]` (`refs`, `status`...);
+/// if it cannot be re-read, `null` and the error at `out["<key>_error"]`: the operation is done
+/// anyway and must not look failed (or be repeated).
+fn put_reread<T: serde::Serialize>(out: &mut Value, key: &str, result: Result<T, EngineError>) {
+    match result {
+        Ok(value) => out[key] = to_json(value),
+        Err(e) => {
+            out[key] = Value::Null;
+            out[format!("{key}_error")] = Value::String(e.to_string());
+        }
+    }
+}
+
 /// Result of `edit.undo`/`edit.redo`: `{<key>: entry, "backups": [string], "warnings":
 /// [string], "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
 /// `warnings` reports something unexpected found after the successful move (usually
@@ -835,13 +855,7 @@ fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, outcome: Restore
     out[key] = to_json(entry);
     out["backups"] = to_json(outcome.backups);
     out["warnings"] = to_json(outcome.warnings);
-    match s.repo()?.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(&mut out, "status", s.repo()?.status());
     Ok(out)
 }
 
@@ -890,7 +904,7 @@ fn repo_log(s: &mut Session, p: Value) -> Out {
     let mut commits = s.repo()?.log(&probe)?;
     let has_more = commits.len() > limit;
     commits.truncate(limit);
-    Ok(json!({ "commits": to_json(commits), "has_more": has_more }))
+    Ok(json!({ "commits": commits, "has_more": has_more }))
 }
 
 #[cfg(test)]

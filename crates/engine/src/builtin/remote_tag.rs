@@ -3,7 +3,7 @@
 //! Like `remote.push` and `remote.delete_branch` they are slow, write (to the remote) and do not go
 //! into the journal: the remote belongs to others.
 
-use super::{Out, to_json};
+use super::{Out, put_reread};
 use crate::commands::parse_params;
 use crate::{
     EngineError, Message, RemoteTagDelete, Session, TagPush, check_remote_name, check_tag_name,
@@ -41,13 +41,7 @@ fn check_push_remote(s: &mut Session, remote: &str) -> Result<(), EngineError> {
 
 /// Adds `refs` (or `refs_error`) to the result.
 fn with_refs(s: &mut Session, out: &mut Value) {
-    match s.repo().and_then(|repo| repo.refs()) {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(out, "refs", s.repo().and_then(|repo| repo.refs()));
 }
 
 /// Parameters of `remote.push_tag`.
@@ -256,7 +250,7 @@ pub(super) fn remote_delete_tag(s: &mut Session, p: Value) -> Out {
         "summary": deleted.summary,
         "messages": deleted.messages,
         "incomplete": deleted.incomplete,
-        "warnings": to_json(warnings),
+        "warnings": warnings,
     });
     with_refs(s, &mut out);
     Ok(out)

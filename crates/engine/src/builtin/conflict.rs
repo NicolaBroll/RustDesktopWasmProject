@@ -42,8 +42,8 @@ pub(super) fn conflict_show(s: &mut Session, p: Value) -> Out {
     let v = s.repo()?.conflict_versions(&path)?;
     let version = |b: &Option<Vec<u8>>| to_json(b.as_deref().map(VersionText::of));
     Ok(json!({
-        "path": to_json(&v.path),
-        "kind": to_json(v.kind),
+        "path": v.path,
+        "kind": v.kind,
         "base": version(&v.base),
         "ours": version(&v.ours),
         "theirs": version(&v.theirs),
@@ -82,7 +82,7 @@ pub(super) fn conflict_resolve(s: &mut Session, p: Value) -> Out {
         content,
     })?;
     Ok(json!({
-        "status": to_json(repo.status()?),
+        "status": repo.status()?,
         "backup": resolved.backup,
         "index_backup": resolved.index_backup,
     }))

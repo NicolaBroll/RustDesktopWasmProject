@@ -55,6 +55,42 @@
 //! - The journal keeps at most [`Journal::MAX_ENTRIES`] entries: the oldest drop out.
 
 use crate::git::short;
+use crate::{
+    CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
+    MergeMode, Message, PullMode, RefMove, RefRestore, RemoteSnapshot, ResetMode, ResetRecord,
+    ResetRequest, RestoreOutcome, StashDrop, StashEntry, StashPush, StashRecord, WorktreeBackup,
+    WorktreeRestore, branch_short, check_no_operation, discard_description, find_stash, pop_stash,
+    remove_remote, restore_remote,
+};
+use project_domain::Oid;
+use serde::{Deserialize, Serialize};
+
+/// How a merge or a pull moved the branch: chooses the description of the journal entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Integration {
+    FastForward,
+    Merge,
+    Rebase,
+}
+
+impl From<&MergeMode> for Integration {
+    fn from(mode: &MergeMode) -> Self {
+        match mode {
+            MergeMode::FastForward => Integration::FastForward,
+            MergeMode::Merge { .. } => Integration::Merge,
+        }
+    }
+}
+
+impl From<&PullMode> for Integration {
+    fn from(mode: &PullMode) -> Self {
+        match mode {
+            PullMode::FastForward => Integration::FastForward,
+            PullMode::Merge { .. } => Integration::Merge,
+            PullMode::Rebase { .. } => Integration::Rebase,
+        }
+    }
+}
 
 /// The commands whose entries move the HEAD branch with index and worktree
 /// ([`JournalEntry::moves_worktree`]).
@@ -69,15 +105,6 @@ const WORKTREE_COMMANDS: &[&str] = &[
     "rebase.start",
     "rebase.continue",
 ];
-use crate::{
-    CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
-    Message, RefMove, RefRestore, RemoteSnapshot, ResetMode, ResetRecord, ResetRequest,
-    RestoreOutcome, StashDrop, StashEntry, StashPush, StashRecord, WorktreeBackup, WorktreeRestore,
-    branch_short, check_no_operation, discard_description, find_stash, pop_stash, remove_remote,
-    restore_remote,
-};
-use project_domain::Oid;
-use serde::{Deserialize, Serialize};
 
 /// A ref moved by an operation: full name, value before and after (`None` = the ref did not
 /// exist / was deleted).
@@ -392,14 +419,14 @@ impl JournalEntry {
         before: Oid,
         after: Oid,
         head: HeadState,
-        strategy: &str,
+        strategy: Integration,
         upstream: &str,
         backup: String,
     ) -> Self {
         let how = match strategy {
-            "fast_forward" => msg!("engine-journal-pull-ff"),
-            "rebase" => msg!("engine-journal-pull-rebase", upstream = upstream),
-            _ => msg!("engine-journal-pull-merge", upstream = upstream),
+            Integration::FastForward => msg!("engine-journal-pull-ff"),
+            Integration::Rebase => msg!("engine-journal-pull-rebase", upstream = upstream),
+            Integration::Merge => msg!("engine-journal-pull-merge", upstream = upstream),
         };
         Self::branch_entry(
             "remote.pull",
@@ -436,14 +463,13 @@ impl JournalEntry {
         before: Oid,
         after: Oid,
         head: HeadState,
-        strategy: &str,
+        strategy: Integration,
         source: &str,
         backup: Option<String>,
     ) -> Self {
-        let strategy = if strategy == "fast_forward" {
-            "fast_forward"
-        } else {
-            "merge"
+        let strategy = match strategy {
+            Integration::FastForward => "fast_forward",
+            Integration::Merge | Integration::Rebase => "merge",
         };
         Self::branch_entry(
             command,

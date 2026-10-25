@@ -105,6 +105,27 @@ impl Platform for NativePlatform {
     fn watch(&self, repo: &str, on_change: OnChange) -> Option<Watch> {
         watch::start(repo, on_change)
     }
+
+    fn system_language(&self) -> Option<String> {
+        language_from_env(|name| std::env::var(name).ok())
+    }
+}
+
+/// The language of the POSIX locale variables, in their order of precedence (`LC_ALL`,
+/// `LC_MESSAGES`, `LANG`): `it_IT.UTF-8` gives `it`. `C`/`POSIX` and empty values say nothing.
+/// Windows and macOS usually do not set them: `None`, and the UI shows English.
+fn language_from_env(var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .find_map(|name| {
+            let value = var(name)?;
+            let code: String = value
+                .chars()
+                .take_while(char::is_ascii_alphabetic)
+                .collect::<String>()
+                .to_ascii_lowercase();
+            (code.len() >= 2 && code != "c" && code != "posix").then_some(code)
+        })
 }
 
 #[cfg(test)]
@@ -113,5 +134,31 @@ mod tests {
     fn icon_is_valid_png() {
         let icon = eframe::icon_data::from_png_bytes(super::ICON).unwrap();
         assert_eq!((icon.width, icon.height), (256, 256));
+    }
+
+    #[test]
+    fn system_language_comes_from_the_locale_variables() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, v)| (*v).to_owned())
+            }
+        };
+        let lang = super::language_from_env;
+        assert_eq!(lang(env(&[("LANG", "it_IT.UTF-8")])).as_deref(), Some("it"));
+        assert_eq!(
+            lang(env(&[("LC_ALL", "en_US.UTF-8"), ("LANG", "it_IT.UTF-8")])).as_deref(),
+            Some("en")
+        );
+        // `C` says nothing: the next variable decides.
+        assert_eq!(
+            lang(env(&[("LC_ALL", "C"), ("LANG", "it_IT")])).as_deref(),
+            Some("it")
+        );
+        assert_eq!(lang(env(&[("LANG", "C.UTF-8")])), None);
+        assert_eq!(lang(env(&[("LANG", "")])), None);
+        assert_eq!(lang(env(&[])), None);
     }
 }

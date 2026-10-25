@@ -62,13 +62,14 @@ pub(crate) fn file_view(
     view: &FileView,
     pane: Pane<'_>,
     can_write: bool,
+    split: bool,
     actions: &mut Vec<Action>,
 ) {
     toolbar(ui, view, actions);
     ui.separator();
     match view.mode {
         Mode::Blame => blame(ui, view, actions),
-        Mode::History => history(ui, view, pane, can_write, actions),
+        Mode::History => history(ui, view, pane, can_write, split, actions),
     }
 }
 
@@ -343,6 +344,7 @@ fn history(
     view: &FileView,
     pane: Pane<'_>,
     can_write: bool,
+    split: bool,
     actions: &mut Vec<Action>,
 ) {
     let open = match pane {
@@ -365,6 +367,7 @@ fn history(
                 selection: None,
                 can_write,
                 back: false,
+                split,
             };
             diff_view::diff_panel(ui, pane, lines, actions);
         }

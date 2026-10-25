@@ -7,6 +7,7 @@ use crate::diff::{
 };
 use crate::icons;
 use crate::lines::{self, LineButtons, LineSelection, Partial};
+use crate::settings::Change;
 use crate::{Action, Drag};
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use project_domain::LineKind;
@@ -26,6 +27,8 @@ pub(crate) struct LinesUi<'a> {
     pub can_write: bool,
     /// Shows "Back" (closes the diff): not in the file history, where the list stays beside it.
     pub back: bool,
+    /// Side by side (`true`) or unified: a setting, the toolbar changes it.
+    pub split: bool,
 }
 
 /// The partial selection for the loaded diff: whether it is possible, and the buttons.
@@ -59,11 +62,8 @@ pub(crate) fn diff_panel(
         }
         _ => None,
     };
-    // Unified or side by side: a preference of the view, kept between launches.
-    let split_id = egui::Id::unique("diff-split");
-    let mut split = ui.data_mut(|d| *d.get_persisted_mut_or_default::<bool>(split_id));
-    toolbar(ui, target, pane, lines_ui.back, &mut split, actions);
-    ui.data_mut(|d| d.insert_persisted(split_id, split));
+    let split = lines_ui.split;
+    toolbar(ui, target, pane, lines_ui.back, split, actions);
     if let Some(state) = &state {
         if split {
             // The rows are selected in the unified view: here the hunks only.
@@ -119,7 +119,7 @@ fn toolbar(
     target: &DiffTarget,
     pane: Pane<'_>,
     back: bool,
-    split: &mut bool,
+    split: bool,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
@@ -154,9 +154,9 @@ fn toolbar(
                 (false, icons::UNIFIED, tr!("diff-unified-hint")),
             ];
             for (value, icon, hint) in layouts {
-                let button = egui::Button::selectable(*split == value, icons::text(icon, 14.0));
-                if ui.add(button).on_hover_text(hint).clicked() {
-                    *split = value;
+                let button = egui::Button::selectable(split == value, icons::text(icon, 14.0));
+                if ui.add(button).on_hover_text(hint).clicked() && split != value {
+                    actions.push(Action::Setting(Change::DiffSplit(value)));
                 }
             }
             if let Pane::Loaded(_, doc) = pane

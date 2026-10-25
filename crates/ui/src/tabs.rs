@@ -6,6 +6,7 @@
 
 use crate::clone::{CloneBox, Received};
 use crate::executor::{Executor, Wake};
+use crate::settings::{self, Settings, SettingsBox};
 use crate::{Action, Tab, view};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
@@ -68,6 +69,13 @@ pub struct App {
     /// The tab, not shown yet, whose session runs `repo.clone`/`repo.init`: it joins the tabs when
     /// the new repo is open.
     cloning: Option<Tab>,
+    /// Theme, language, diff layout.
+    settings: Settings,
+    /// The settings last written to the storage (`None`: never written): written again only when
+    /// they change.
+    settings_saved: Option<Settings>,
+    /// The "Settings…" window.
+    settings_box: SettingsBox,
 }
 
 /// What the folder chosen in the dialog is for.
@@ -96,7 +104,20 @@ impl App {
             .storage
             .and_then(|s| eframe::get_value::<Saved>(s, KEY))
             .unwrap_or_default();
-        Self::restore(platform, opener, wake, saved, repo)
+        let settings = Settings::load(cc.storage, &cc.egui_ctx);
+        let stored = cc
+            .storage
+            .and_then(|s| eframe::get_value::<Settings>(s, settings::KEY));
+        let mut app = Self::restore(platform, opener, wake, saved, repo);
+        app.set_settings(&cc.egui_ctx, settings, stored);
+        app
+    }
+
+    /// Applies `settings` (theme and language at once); `stored`: what the storage holds.
+    fn set_settings(&mut self, ctx: &egui::Context, settings: Settings, stored: Option<Settings>) {
+        settings.apply(ctx, self.platform.as_ref());
+        self.settings = settings;
+        self.settings_saved = stored;
     }
 
     /// Who draws the window frame (default: the platform).
@@ -130,6 +151,9 @@ impl App {
             frame: view::WindowFrame::Native,
             clone: CloneBox::default(),
             cloning: None,
+            settings: Settings::default(),
+            settings_saved: Some(Settings::default()),
+            settings_box: SettingsBox::default(),
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -312,6 +336,17 @@ impl App {
                 }
             }
             Action::CloseClone => self.clone.close(),
+            Action::OpenSettings => self.settings_box.open = true,
+            Action::CloseSettings => self.settings_box.open = false,
+            Action::SettingsSection(section) => self.settings_box.section = section,
+            Action::Setting(change) => {
+                let mut settings = self.settings.clone();
+                settings.change(change);
+                if settings != self.settings {
+                    settings.apply(ctx, self.platform.as_ref());
+                    self.settings = settings;
+                }
+            }
             Action::Open(path) => self.open(path),
             Action::SwitchTab(index) => {
                 if index < self.tabs.len() {
@@ -348,16 +383,28 @@ impl App {
 
     /// Writes the state as soon as it changes: the app can be closed without `save` being called
     /// (a killed process, `make desktop-stop`).
-    fn persist(&mut self, storage: Option<&mut (dyn eframe::Storage + '_)>) {
+    fn persist(&mut self, mut storage: Option<&mut (dyn eframe::Storage + '_)>) {
+        let mut changed = false;
         let state = self.state();
-        if state == self.saved {
-            return;
+        if state != self.saved {
+            if let Some(storage) = storage.as_deref_mut() {
+                eframe::set_value(storage, KEY, &state);
+                changed = true;
+            }
+            self.saved = state;
         }
-        if let Some(storage) = storage {
-            eframe::set_value(storage, KEY, &state);
+        if self.settings_saved.as_ref() != Some(&self.settings) {
+            if let Some(storage) = storage.as_deref_mut() {
+                eframe::set_value(storage, settings::KEY, &self.settings);
+                changed = true;
+            }
+            self.settings_saved = Some(self.settings.clone());
+        }
+        if let Some(storage) = storage
+            && changed
+        {
             storage.flush();
         }
-        self.saved = state;
     }
 
     /// Recomputes which recent folders are missing, at most every [`CHECK_EVERY`] seconds: not
@@ -427,18 +474,31 @@ impl eframe::App for App {
             repo: self.tabs[self.active].repo.as_ref(),
             can_pick,
             recent: &recent,
+            theme: self.settings.theme,
         };
         view::title_bar_panel(ui, &bar, &mut strip);
         if self.tabs.len() > 1 || self.tabs[0].path().is_some() {
             let labels = self.labels();
             view::tab_strip_panel(ui, &labels, self.active, can_pick, &mut strip);
         }
+        let modal = self.clone.dialog().is_some() || self.settings_box.open;
+        if !modal && ctx.input_mut(|i| i.consume_shortcut(&settings::SHORTCUT)) {
+            strip.push(Action::OpenSettings);
+        }
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];
+        let settings = &self.settings;
         let mut actions = ui
-            .push_id(("tab", tab.id), |ui| tab.ui(ui, can_pick, &recent))
+            .push_id(("tab", tab.id), |ui| {
+                tab.ui(ui, can_pick, &recent, settings)
+            })
             .inner;
-        if let Some(dialog) = self.clone.dialog() {
+        if self.settings_box.open {
+            // Modal as well: what happened under it is dropped.
+            actions.clear();
+            strip.clear();
+            view::settings_window(&ctx, &self.settings_box, &self.settings, &mut actions);
+        } else if let Some(dialog) = self.clone.dialog() {
             // The dialog is modal: the clicks under it are blocked, the tab's keys are dropped.
             actions.clear();
             strip.clear();
@@ -464,6 +524,8 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.saved = self.state();
         eframe::set_value(storage, KEY, &self.saved);
+        eframe::set_value(storage, settings::KEY, &self.settings);
+        self.settings_saved = Some(self.settings.clone());
     }
 }
 
@@ -774,6 +836,48 @@ mod tests {
         assert_eq!(
             (saved.tabs.len(), saved.recent),
             (0, vec!["b".into(), "a".into()])
+        );
+    }
+
+    #[test]
+    fn settings_are_written_under_their_key_only_when_they_change() {
+        use crate::settings::{Change, Theme};
+        let mut app = app(Saved::default(), None);
+        let ctx = egui::Context::default();
+        let mut storage = Memory::default();
+        app.persist(Some(&mut storage));
+        assert_eq!(storage.flushes, 0, "nothing changed");
+        app.apply(&ctx, Action::Setting(Change::Theme(Theme::Dark)));
+        app.apply(&ctx, Action::Setting(Change::DiffSplit(true)));
+        assert_eq!(
+            ctx.options(|o| o.theme_preference),
+            egui::ThemePreference::Dark
+        );
+        app.persist(Some(&mut storage));
+        assert_eq!(storage.flushes, 1);
+        app.persist(Some(&mut storage));
+        assert_eq!(storage.flushes, 1, "unchanged settings: not written again");
+        assert!(storage.values.contains_key(settings::KEY));
+        // Round trip through the storage.
+        let loaded = Settings::load(Some(&storage), &egui::Context::default());
+        assert_eq!(loaded, app.settings);
+        assert_eq!((loaded.theme, loaded.diff_split), (Theme::Dark, true));
+    }
+
+    #[test]
+    fn an_old_settings_save_without_the_new_fields_loads() {
+        use crate::settings::{Language, Theme};
+        let mut storage = Memory::default();
+        // RON, as eframe writes it, from before the language and the diff layout.
+        eframe::Storage::set_string(
+            &mut storage,
+            settings::KEY,
+            r#"(theme:"light",unknown:3)"#.to_owned(),
+        );
+        let loaded = Settings::load(Some(&storage), &egui::Context::default());
+        assert_eq!(
+            (loaded.theme, loaded.language, loaded.diff_split),
+            (Theme::Light, Language::System, false)
         );
     }
 

@@ -71,8 +71,7 @@ fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
             && resize_direction(ui.ctx(), bar.frame).is_none()
         {
             ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
-            ui.ctx().data_mut(|d| d.insert_temp(moving_id(), true));
-            ui.ctx().request_repaint();
+            handed_to_system(ui.ctx());
         }
     }
     ui.horizontal_centered(|ui| {
@@ -220,15 +219,24 @@ fn about_dialog(ctx: &egui::Context) {
     }
 }
 
-/// Set when the title bar hands the move of the window to the system: from then on the system has the
-/// mouse, and the release of the button never reaches the app.
+/// Set when the app hands the move or the resize of the window to the system: from then on the
+/// system has the mouse, and the release of the button never reaches the app.
 fn moving_id() -> egui::Id {
     egui::Id::unique("title-bar-moving")
 }
 
-/// After a move of the window started from the bar, gives egui the release of the button that the
-/// system kept: otherwise egui still sees the drag of the bar, and no widget lights up under the
-/// mouse until the next click. Called before each frame with its input.
+/// The system now moves or resizes the window: the next frame gets the release it keeps.
+fn handed_to_system(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(moving_id(), true));
+    ctx.request_repaint();
+}
+
+/// After a move of the window started from the bar, or a resize from its edges, gives egui the
+/// release of the button that the system kept: otherwise egui still sees a drag, and no widget
+/// lights up under the mouse until the next click. The release happens away from the window, so
+/// it is never a click on the widget under the edge (a resize starts on the press, without
+/// moving); the next real movement brings the pointer back. Called before each frame with its
+/// input.
 pub(crate) fn end_window_move(ctx: &egui::Context, input: &mut egui::RawInput) {
     if ctx
         .data_mut(|d| d.remove_temp::<bool>(moving_id()))
@@ -236,15 +244,17 @@ pub(crate) fn end_window_move(ctx: &egui::Context, input: &mut egui::RawInput) {
     {
         return;
     }
-    let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else {
-        return;
-    };
-    input.events.push(egui::Event::PointerButton {
-        pos,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: ctx.input(|i| i.modifiers),
-    });
+    let away = ctx.content_rect().min - vec2(10_000.0, 10_000.0);
+    input.events.extend([
+        egui::Event::PointerMoved(away),
+        egui::Event::PointerButton {
+            pos: away,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: ctx.input(|i| i.modifiers),
+        },
+        egui::Event::PointerGone,
+    ]);
 }
 
 /// System, light or dark: egui keeps the choice between launches.
@@ -380,6 +390,7 @@ pub(crate) fn window_edges(ctx: &egui::Context, frame: WindowFrame) {
     ctx.set_cursor_icon(resize_cursor(direction));
     if ctx.input(|i| i.pointer.primary_pressed()) {
         ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+        handed_to_system(ctx);
     }
 }
 

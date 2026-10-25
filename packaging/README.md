@@ -2,7 +2,7 @@
 
 | Command | Output (in `target/`) |
 | --- | --- |
-| `make appimage` | `appimage/BinariGit-<version>-x86_64.AppImage` + `appimage/SHA256SUMS.txt` |
+| `make appimage` | `appimage/BinariGit-<version>-x86_64.AppImage` + its `.zsync` + `appimage/SHA256SUMS.txt` |
 | `make windows` | `windows/BinariGit-<version>-x86_64-windows.zip` + `windows/SHA256SUMS.txt` |
 
 The version comes from `[workspace.package]` in the root `Cargo.toml`. Neither package bundles
@@ -19,6 +19,13 @@ only after its sha256 matches the one in the script (the digests GitHub publishe
 | --- | --- | --- |
 | [appimagetool](https://github.com/AppImage/appimagetool/releases/tag/1.9.1) `appimagetool-x86_64.AppImage` | 1.9.1 | `ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0` |
 | [type2-runtime](https://github.com/AppImage/type2-runtime/releases/tag/20251108) `runtime-x86_64` | 20251108 | `2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d` |
+
+The AppImage embeds the update information
+`gh-releases-zsync|<owner>|<repo>|latest|BinariGit-*-x86_64.AppImage.zsync` (repo from
+`GITHUB_REPOSITORY`, `NicolaBroll/RustDesktopWasmProject` outside CI), and appimagetool writes the
+`.zsync` next to it. The Release publishes both, so AppImageUpdate, Gear Lever or AppImageLauncher
+update an installed AppImage to the latest (non-prerelease) Release, downloading only the changed
+blocks. Check with `objcopy -O binary --only-section=.upd_info <AppImage> /dev/stdout`.
 
 The runtime is passed with `--runtime-file`, so appimagetool does not fetch the unpinned
 "continuous" one. appimagetool runs with `APPIMAGE_EXTRACT_AND_RUN=1` (no FUSE needed).
@@ -74,6 +81,6 @@ line in `SHA256SUMS.txt`.
 the glibc baseline; Windows cross-compiled) on every push to `master`, on `v*` tags, on pull requests that touch `packaging/`, the
 workflow or `apps/project/build.rs`, and by hand ("Run workflow" in the Actions tab, any branch,
 once the workflow is on `master`). The packages are artifacts of the run (`appimage`,
-`windows`, kept 90 days). On a `v*` tag a GitHub Release is created with the AppImage, the zip and
+`windows`, kept 90 days). On a `v*` tag a GitHub Release is created with the AppImage, its `.zsync`, the zip and
 one `SHA256SUMS.txt` for both. Artifacts are downloaded as zip files, which drop the executable
 bit: after extracting, `chmod +x BinariGit-*.AppImage` (same for a download from the Release).

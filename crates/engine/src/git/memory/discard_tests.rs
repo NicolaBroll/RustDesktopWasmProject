@@ -105,7 +105,7 @@ fn undo_of_a_deleted_file_deletes_it_again() {
 
     let out = discard(&mut repo, &mut journal, &["src/lib.rs"]);
     assert_eq!(out.files[0].change, Change::Deleted);
-    assert!(repo.worktree_file(&p("src/lib.rs")).is_some(), "ricreato");
+    assert!(repo.worktree_file(&p("src/lib.rs")).is_some(), "recreated");
     journal.undo(&mut repo).unwrap();
     assert_eq!((repo.status().unwrap(), repo.worktree.clone()), before);
 }
@@ -140,7 +140,7 @@ fn undo_refused_if_the_file_changed_after_the_discard() {
     };
     assert_eq!(*command, "edit.undo");
     assert!(refs[0].contains("src/lib.rs"), "{refs:?}");
-    assert_eq!(repo, snapshot, "niente cambiato");
+    assert_eq!(repo, snapshot, "nothing changed");
     assert!(journal.can_undo(), "the entry stays");
 }
 

@@ -1094,7 +1094,7 @@ mod tests {
         assert_eq!(sync.cancel(), None);
         let r = sync.receive(
             ticket,
-            Err("annullato".into()),
+            Err("cancelled".into()),
             Some(ErrorKind::Cancelled),
             None,
             None,

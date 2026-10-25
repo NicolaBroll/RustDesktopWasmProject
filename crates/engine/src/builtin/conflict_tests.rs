@@ -233,7 +233,7 @@ fn not_a_conflict_is_refused() {
     let before = status(&r, &mut s);
     for (id, params) in [
         ("conflict.show", json!({ "path": "b.txt" })),
-        ("conflict.show", json!({ "path": "manca.txt" })),
+        ("conflict.show", json!({ "path": "missing.txt" })),
         (
             "conflict.resolve",
             json!({ "path": "b.txt", "digest": worktree_digest(None), "delete": true }),
@@ -336,7 +336,7 @@ fn binary_versions_and_missing_worktree() {
         &r,
         &mut s,
         "conflict.resolve",
-        json!({ "path": "a.txt", "digest": shown["digest"], "content": "nuovo\n" }),
+        json!({ "path": "a.txt", "digest": shown["digest"], "content": "new\n" }),
     );
     assert_eq!(out["backup"], Value::Null);
     let entries = out["status"]["entries"].as_array().unwrap();

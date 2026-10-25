@@ -304,7 +304,7 @@ fn detached_head_moves_only_head() {
     let feature = repo.resolve("feature/graph").unwrap();
     repo.detach_head(feature);
     repo.stage(&[p("note.txt")]).unwrap();
-    let out = repo.commit(&CommitRequest::new("staccato")).unwrap();
+    let out = repo.commit(&CommitRequest::new("detached")).unwrap();
     assert_eq!(out.branch, None);
     assert_eq!(out.previous, Some(feature));
     assert_eq!(repo.head().unwrap(), Head::Detached(out.commit.id));

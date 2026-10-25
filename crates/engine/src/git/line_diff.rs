@@ -209,10 +209,10 @@ mod tests {
     #[test]
     fn change_with_context() {
         let old = "1\n2\n3\n4\n5\n6\n7\n8\n";
-        let new = "1\n2\n3\n4\nCINQUE\n6\n7\n8\n";
+        let new = "1\n2\n3\n4\nFIVE\n6\n7\n8\n";
         assert_eq!(
             text(old, new),
-            "@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+CINQUE\n 6\n 7\n 8\n"
+            "@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+FIVE\n 6\n 7\n 8\n"
         );
     }
 

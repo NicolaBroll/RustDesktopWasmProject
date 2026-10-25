@@ -96,7 +96,7 @@ fn the_annotated_tag_points_to_the_merge() {
         .find(|r| r.kind == RefKind::Tag)
         .unwrap();
     assert_eq!(tag.short_name(), "v0.1.0");
-    let tag_object = tag.tag_object.expect("tag annotato");
+    let tag_object = tag.tag_object.expect("annotated tag");
     assert_ne!(tag_object, tag.target);
     let merge = log(&repo, LogQuery::default().from_rev("v0.1.0"));
     assert_eq!(merge[0].id, tag.target);
@@ -455,7 +455,7 @@ fn log_of_all_refs() {
     assert_eq!(pages, all);
 
     // Detached HEAD on a commit that no ref reaches.
-    let detached = extra_commit(&mut repo, 94, base, "HEAD staccata");
+    let detached = extra_commit(&mut repo, 94, base, "detached HEAD");
     repo.detach_head(detached);
     let all = log(&repo, LogQuery::all().from_all_refs());
     assert_eq!(all[0].id, detached);

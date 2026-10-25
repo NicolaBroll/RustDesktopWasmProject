@@ -300,7 +300,7 @@ impl MemoryBackend {
         check_new_branch_name("branch.rename", to)?;
         let (old, new) = (format!("{HEADS}{from}"), format!("{HEADS}{to}"));
         self.check_value(&old, expected)?;
-        let entry = self.refs.remove(&old).expect("controllato sopra");
+        let entry = self.refs.remove(&old).expect("checked above");
         if let Err(e) = self.check_free(&new) {
             self.refs.insert(old, entry);
             return Err(e);

@@ -124,7 +124,7 @@ impl I18n {
         self.lang
     }
 
-    /// Vero se la chiave esiste.
+    /// True if the key exists.
     pub fn has(&self, key: &str) -> bool {
         self.bundle.has_message(key)
     }

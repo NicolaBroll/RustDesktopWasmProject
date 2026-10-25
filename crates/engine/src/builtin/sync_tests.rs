@@ -53,7 +53,7 @@ fn diverged(file: Option<&str>) -> MemoryBackend {
             parents: vec![oid(11)],
             author: who(),
             committer: who(),
-            summary: "Dal remoto".into(),
+            summary: "From the remote".into(),
             body: String::new(),
         },
     );
@@ -383,7 +383,7 @@ fn pull_refusals() {
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     let err = r
-        .run("remote.pull", &mut s, json!({ "branch": "manca" }))
+        .run("remote.pull", &mut s, json!({ "branch": "missing" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
@@ -528,7 +528,7 @@ fn push_rejections_and_force() {
     else {
         panic!("{err}");
     };
-    assert!(reason.contains("“Dal remoto”"), "{reason}");
+    assert!(reason.contains("“From the remote”"), "{reason}");
     assert_eq!(expected.as_deref(), Some(oid(20).to_string().as_str()));
     assert!(
         reason.contains(&format!("\"expected\": \"{}\"", oid(20))),
@@ -611,7 +611,7 @@ fn push_refusals() {
     for params in [
         json!({ "remote": "missing" }),
         json!({ "remote": "-x" }),
-        json!({ "branch": "manca" }),
+        json!({ "branch": "missing" }),
     ] {
         let err = r.run("remote.push", &mut s, params.clone()).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{params}: {err}");

@@ -26,7 +26,7 @@ pub(crate) fn details_panel(
     // The message can be long: it scrolls on its own and leaves at least half the panel to the files.
     let max_header = (ui.available_height() * 0.5).max(120.0);
     egui::ScrollArea::vertical()
-        .id_salt("dettagli-testa")
+        .id_salt("details-head")
         .max_height(max_header)
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -69,7 +69,7 @@ pub(super) fn commit_header(
         ui.add(egui::Label::new(&commit.body).wrap());
     }
     ui.add_space(8.0);
-    egui::Grid::new("dettagli-commit")
+    egui::Grid::new("details-commit")
         .num_columns(2)
         .spacing(vec2(12.0, 4.0))
         .show(ui, |ui| {
@@ -164,7 +164,7 @@ pub(super) fn changed_files(
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     egui::ScrollArea::vertical()
-        .id_salt("dettagli-file")
+        .id_salt("details-file")
         .auto_shrink(false)
         .show_rows(ui, FILE_ROW_HEIGHT, files.len(), |ui, range| {
             for file in &files[range] {

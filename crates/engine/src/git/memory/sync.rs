@@ -328,7 +328,7 @@ impl MemoryBackend {
         request.check(self.operation)?;
         let (moved, target) = match (request.refs.as_slice(), &request.head_expected) {
             ([r], crate::HeadState::Branch(b)) if r.name == *b && r.target.is_some() => {
-                (r.name.clone(), r.target.expect("controllato"))
+                (r.name.clone(), r.target.expect("checked above"))
             }
             _ => {
                 return Err(EngineError::NotAllowed(msg!(
@@ -460,7 +460,7 @@ impl MemoryBackend {
         let remote = self
             .remotes
             .get_mut(&request.remote)
-            .expect("controllato sopra");
+            .expect("checked above");
         for commit in commits {
             remote.commits.insert(commit.id, commit);
         }

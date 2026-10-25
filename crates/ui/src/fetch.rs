@@ -705,7 +705,7 @@ mod tests {
             wakes.load(Ordering::SeqCst) > before + 1,
             "progress without a frame"
         );
-        let last = ex.progress(ticket).expect("ultimo avanzamento");
+        let last = ex.progress(ticket).expect("last progress");
         assert!(last.done, "{last:?}");
         let done = ex.poll().remove(0);
         assert!(done.result.is_ok(), "{:?}", done.result);

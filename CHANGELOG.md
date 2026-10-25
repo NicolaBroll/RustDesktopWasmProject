@@ -8,6 +8,14 @@ All notable changes to BinariGit. The format follows
 
 ### Added
 
+- **Automatic fetch**: every open tab downloads from its remote in the background (fetch, never
+  pull: local branches and files are not touched), every 5 minutes by default; Settings → Remotes
+  sets 1, 5 or 15 minutes or turns it off. It waits while a dialog, a command or an operation
+  (merge, rebase, ...) is in progress; a hidden tab catches up when shown. The graph updates
+  keeping selection and scroll, with a notice like “2 new commits on origin/main”. Rejected
+  credentials pause it with a notice and “Retry”; an unreachable remote shows an icon in the bar
+  and waits longer between attempts (up to 30 minutes).
+
 - **Settings window** (File → “Settings…”, Ctrl+,): a General section with the theme (as the
   system, light, dark) and the language (as the system, Italiano, English), applied at once
   without restarting. The settings are kept between launches; the theme menu and the

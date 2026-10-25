@@ -12,6 +12,7 @@
 //! With an operation in progress (merge, rebase, ...) its panel sits under the bar
 //! (`merge_view`), with the conflicted files and the commands to finish or abort it.
 
+mod auto_fetch;
 mod branch;
 mod clone;
 mod commit;
@@ -204,6 +205,8 @@ enum Action {
     CancelFetch,
     /// Closes the fetch error window.
     DismissFetchError,
+    /// "Retry" in the notice of the automatic fetch suspended by an authentication error.
+    RetryAutoFetch,
     /// "Optimize" in the commit-graph notice: `repo.optimize` in the background.
     Optimize,
     /// "Stop" the `repo.optimize` in progress.
@@ -514,6 +517,8 @@ struct RepoView {
     branch: BranchBox,
     /// The fetch in progress and the last error to explain.
     fetch: FetchBox,
+    /// The timer of the automatic fetch (S50).
+    auto_fetch: auto_fetch::AutoFetch,
     /// The commit-graph notice and `repo.optimize` in progress.
     optimize: OptimizeBox,
     /// The pull or push in progress and the open window (conflict, rejection, force confirmation).
@@ -570,6 +575,7 @@ impl RepoView {
             discard: DiscardBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
+            auto_fetch: auto_fetch::AutoFetch::default(),
             optimize: OptimizeBox::default(),
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
@@ -934,6 +940,7 @@ impl Tab {
             Action::Fetch(..) | Action::CancelFetch | Action::DismissFetchError => {
                 self.apply_fetch(action)
             }
+            Action::RetryAutoFetch => self.retry_auto_fetch(),
             Action::Optimize | Action::CancelOptimize | Action::DismissOptimize => {
                 self.apply_optimize(action)
             }
@@ -1619,7 +1626,11 @@ impl Tab {
         }
         if let Some(running) = r.fetch.running() {
             return Some(view::Network {
-                what: fetch::label(running.remote.as_deref()),
+                what: if running.auto {
+                    tr!("fetch-auto-label")
+                } else {
+                    fetch::label(running.remote.as_deref())
+                },
                 cancelling: running.cancelling,
                 progress: self.executor.progress(running.ticket),
                 stop_hint: tr!("app-stop-fetch-hint"),
@@ -1703,6 +1714,14 @@ impl Tab {
             let can_write = !writing && !repo.modal_open();
             egui::Panel::top("optimize").show(ui, |ui| {
                 view::optimize_notice(ui, &repo.optimize, can_write, &mut actions);
+            });
+        }
+        // The automatic fetch suspended by an authentication error (S50), under the bar too.
+        if let Some(repo) = &self.repo
+            && let Some(suspended) = repo.auto_fetch.suspended()
+        {
+            egui::Panel::top("auto-fetch").show(ui, |ui| {
+                view::auto_fetch_notice(ui, suspended, &mut actions);
             });
         }
         // Side panels do not exceed a third of the window: the content wraps.

@@ -25,6 +25,7 @@ use project_domain::{
 use project_engine::Progress;
 use project_i18n::tr;
 
+mod auto_fetch_view;
 mod branches;
 mod clone_view;
 mod commits;
@@ -45,6 +46,8 @@ mod tab_strip;
 mod title_bar;
 mod top_bar;
 
+pub(crate) use auto_fetch_view::auto_fetch_notice;
+use auto_fetch_view::offline_icon;
 pub(crate) use branches::branch_dialog;
 pub(crate) use clone_view::clone_dialog;
 use clone_view::create_buttons;

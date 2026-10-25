@@ -186,9 +186,6 @@ fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
         if clear.clicked() {
             actions.push(Action::ClearLines);
         }
-        let hint = tr!("diff-select-hint");
-        ui.add(egui::Label::new(egui::RichText::new(&hint).weak()).truncate())
-            .on_hover_text(hint);
     });
 }
 

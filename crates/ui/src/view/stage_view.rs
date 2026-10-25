@@ -16,9 +16,11 @@ pub(crate) fn stage_panel(
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
         .show(ui, |ui| commit_box(ui, repo, draft, writing, actions));
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.heading(tr!("stage-heading"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    // In a narrow panel the title is cut, the button stays whole.
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| ui.heading(tr!("stage-heading")),
+        |ui| {
             stash_push_button(
                 ui,
                 repo,
@@ -26,8 +28,8 @@ pub(crate) fn stage_panel(
                 egui::Button::new(tr!("stage-stash-button")),
                 actions,
             );
-        });
-    });
+        },
+    );
     if writing {
         ui.horizontal(|ui| {
             ui.spinner();
@@ -273,9 +275,10 @@ pub(super) fn stage_section(
             tr!("stage-stage-all-help"),
         ),
     };
-    ui.horizontal(|ui| {
-        ui.strong(tr!("stage-section-title", title = &title, n = items.len()));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| ui.strong(tr!("stage-section-title", title = &title, n = items.len())),
+        |ui| {
             let button = ui
                 .add_enabled(
                     enabled && !items.is_empty(),
@@ -301,8 +304,8 @@ pub(super) fn stage_section(
                     actions.push(Action::Discard(paths));
                 }
             }
-        });
-    });
+        },
+    );
     if items.is_empty() {
         let text = match side {
             Side::Staged => tr!("stage-empty-staged"),

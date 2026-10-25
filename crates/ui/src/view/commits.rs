@@ -36,6 +36,12 @@ pub(crate) fn commit_list(
         head_fill: ui.visuals().strong_text_color(),
         head_text: ui.visuals().panel_fill,
     };
+    // On the selected row the text takes the selection's color: gray on blue is hard to read.
+    let on_selection = RowStyle {
+        text: ui.visuals().selection.stroke.color,
+        weak: ui.visuals().selection.stroke.color.gamma_multiply(0.75),
+        ..style.clone()
+    };
     // One more row at the bottom while there are more commits to load.
     let rows = offset + list.commits().len() + usize::from(list.has_more());
     let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
@@ -71,7 +77,12 @@ pub(crate) fn commit_list(
                 ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
             if header && row == 0 {
                 let column = anchor.map_or(0, |a| a.column);
-                changes_row(ui, rect, &response, repo, column, graph_w, &style);
+                let style = if repo.worktree_selected {
+                    &on_selection
+                } else {
+                    &style
+                };
+                changes_row(ui, rect, &response, repo, column, graph_w, style);
                 header_rect = Some(rect);
                 if response.clicked() {
                     actions.push(Action::SelectWorktree);
@@ -93,7 +104,8 @@ pub(crate) fn commit_list(
                 );
                 continue;
             };
-            if list.selected() == Some(index) && !repo.worktree_selected {
+            let selected = list.selected() == Some(index) && !repo.worktree_selected;
+            if selected {
                 ui.painter()
                     .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
             } else if response.hovered() {
@@ -121,14 +133,18 @@ pub(crate) fn commit_list(
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
             let text_rect = rect.with_min_x(rect.left() + graph_w);
-            commit_row(
+            let more = commit_row(
                 ui,
                 text_rect,
                 commit,
                 labels,
                 graph::lane_color(lane),
-                &style,
+                if selected { &on_selection } else { &style },
             );
+            if let Some(more) = more {
+                ui.interact(more, response.id.with("more"), Sense::hover())
+                    .on_hover_text(labels_tooltip(labels));
+            }
             drawn.push((index, rect));
         }
         if let (Some(rect), Some(anchor)) = (header_rect, anchor) {
@@ -299,6 +315,7 @@ pub(super) fn scroll_target(target: Option<usize>, viewport: &ListViewport) -> O
 }
 
 /// Font and colors of the list rows, read once per frame.
+#[derive(Clone)]
 pub(super) struct RowStyle {
     font: FontId,
     mono: FontId,
@@ -310,7 +327,28 @@ pub(super) struct RowStyle {
     head_text: Color32,
 }
 
-/// Columns: id | ref labels and subject (elastic) | author | date.
+/// Width of the id column.
+const ID_W: f32 = 70.0;
+/// Width of the date column.
+const DATE_W: f32 = 120.0;
+/// The subject keeps at least this much: in a narrow list the author goes first, then the date.
+const SUMMARY_MIN: f32 = 220.0;
+
+/// Widths of the author and date columns in a row `width` wide (0: hidden).
+pub(super) fn side_columns(width: f32) -> (f32, f32) {
+    let author = (width * 0.2).clamp(80.0, 180.0);
+    let room = width - ID_W - SUMMARY_MIN;
+    if room >= author + DATE_W {
+        (author, DATE_W)
+    } else if room >= DATE_W {
+        (0.0, DATE_W)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// Columns: id | ref labels and subject (elastic) | author | date. Returns where the `+N` of the
+/// labels that did not fit is, if any.
 pub(super) fn commit_row(
     ui: &Ui,
     rect: egui::Rect,
@@ -318,13 +356,11 @@ pub(super) fn commit_row(
     labels: &[RefLabel],
     lane: Color32,
     style: &RowStyle,
-) {
-    let date_w = 120.0;
-    let author_w = (rect.width() * 0.2).clamp(80.0, 180.0);
-    let id_w = 70.0;
-    let summary_w = (rect.width() - id_w - author_w - date_w).max(40.0);
+) -> Option<egui::Rect> {
+    let (author_w, date_w) = side_columns(rect.width());
+    let summary_w = (rect.width() - ID_W - author_w - date_w).max(40.0);
     let columns = [
-        (id_w, commit.id.short(), &style.mono, style.weak),
+        (ID_W, commit.id.short(), &style.mono, style.weak),
         (summary_w, commit.summary.clone(), &style.font, style.text),
         (
             author_w,
@@ -335,17 +371,48 @@ pub(super) fn commit_row(
         (date_w, date_time(&commit.author), &style.font, style.weak),
     ];
     let mut x = rect.left() + 8.0;
+    let mut more = None;
     for (i, (width, value, font, color)) in columns.into_iter().enumerate() {
+        if width <= 0.0 {
+            continue;
+        }
         let cell =
             egui::Rect::from_min_size(egui::pos2(x, rect.top()), vec2(width - 8.0, rect.height()));
         let painter = ui.painter_at(cell);
-        let mut start = cell.left_center();
+        let mut start = cell.left_top();
         if i == 1 {
-            start.x += ref_labels(&painter, cell, labels, lane, style);
+            let (used, hidden) = ref_labels(&painter, cell, labels, lane, style);
+            start.x += used;
+            more = hidden;
         }
-        painter.text(start, Align2::LEFT_CENTER, value, font.clone(), color);
+        let galley = elided(&painter, value, font.clone(), color, cell.right() - start.x);
+        let top = cell.center().y - galley.size().y / 2.0;
+        painter.galley(egui::pos2(start.x, top), galley, color);
         x += width;
     }
+    more
+}
+
+/// `text` on one line, cut with "…" if wider than `width`.
+pub(super) fn elided(
+    painter: &egui::Painter,
+    text: String,
+    font: FontId,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text, font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(0.0));
+    painter.layout_job(job)
+}
+
+/// The tooltip of the `+N` of a row: every label, one per line.
+pub(super) fn labels_tooltip(labels: &[RefLabel]) -> String {
+    labels
+        .iter()
+        .map(|label| label.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Space between one label and the next, and horizontal inner margin.
@@ -354,17 +421,17 @@ pub(super) const LABEL_GAP: f32 = 4.0;
 pub(super) const LABEL_PAD: f32 = 4.0;
 
 /// Draws the ref labels at the start of `cell`, in the color of the commit's lane, and
-/// returns the width used. They take at most half the cell; those that do not fit
-/// become `+N`.
+/// returns the width used and where the `+N` is. They take at most half the cell; those that do
+/// not fit become `+N`.
 pub(super) fn ref_labels(
     painter: &egui::Painter,
     cell: egui::Rect,
     labels: &[RefLabel],
     lane: Color32,
     style: &RowStyle,
-) -> f32 {
+) -> (f32, Option<egui::Rect>) {
     if labels.is_empty() {
-        return 0.0;
+        return (0.0, None);
     }
     let look = |kind: LabelKind| -> (Color32, egui::Stroke, Color32) {
         let dark = Color32::from_gray(20);
@@ -414,6 +481,7 @@ pub(super) fn ref_labels(
         painter.galley(egui::pos2(pill.left() + LABEL_PAD, top), galley, color);
         x += width;
     }
+    let mut more = None;
     if shown < labels.len() {
         let rest = painter.layout_no_wrap(
             hidden_text(labels.len() - shown),
@@ -422,10 +490,11 @@ pub(super) fn ref_labels(
         );
         let top = cell.center().y - rest.size().y / 2.0;
         let width = rest.size().x + LABEL_GAP;
+        more = Some(egui::Rect::from_min_size(egui::pos2(x, top), rest.size()));
         painter.galley(egui::pos2(x, top), rest, style.weak);
         x += width;
     }
-    x - cell.left()
+    (x - cell.left(), more)
 }
 
 /// "Cherry-pick onto «branch»" and "Revert" of the commit menu: off like merge (detached
@@ -551,4 +620,18 @@ fn on_first_parent_history(repo: &RepoView, id: Oid) -> bool {
         next = by_id.get(&current).and_then(|c| c.parents.first().copied());
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_narrow_list_hides_the_author_then_the_date() {
+        assert_eq!(side_columns(900.0), (180.0, DATE_W));
+        assert_eq!(side_columns(600.0), (120.0, DATE_W));
+        assert_eq!(side_columns(500.0), (0.0, DATE_W));
+        assert_eq!(side_columns(420.0), (0.0, DATE_W));
+        assert_eq!(side_columns(300.0), (0.0, 0.0));
+    }
 }

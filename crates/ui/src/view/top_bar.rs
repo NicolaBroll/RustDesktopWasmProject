@@ -125,12 +125,12 @@ impl egui::Widget for ToolButton<'_> {
         let icon = ui
             .painter()
             .layout_no_wrap(self.icon.to_owned(), icons::font(20.0), color);
-        let font = egui::TextStyle::Small.resolve(ui.style());
+        let font = egui::FontId::proportional(11.0);
         let label = ui
             .painter()
             .layout_no_wrap(self.label.to_owned(), font, color);
-        let width = (label.size().x.max(icon.size().x) + 12.0).max(44.0);
-        let (rect, response) = ui.allocate_exact_size(vec2(width, 42.0), Sense::click());
+        let width = (label.size().x.max(icon.size().x) + 14.0).max(48.0);
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 46.0), Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), self.label)
         });
@@ -140,11 +140,11 @@ impl egui::Widget for ToolButton<'_> {
                 ui.painter()
                     .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
             }
-            let top = rect.top() + 4.0;
+            let top = rect.top() + 5.0;
             let icon_pos = egui::pos2(rect.center().x - icon.size().x / 2.0, top);
             let label_pos = egui::pos2(
                 rect.center().x - label.size().x / 2.0,
-                rect.bottom() - 4.0 - label.size().y,
+                rect.bottom() - 5.0 - label.size().y,
             );
             ui.painter().galley(icon_pos, icon, color);
             ui.painter().galley(label_pos, label, color);

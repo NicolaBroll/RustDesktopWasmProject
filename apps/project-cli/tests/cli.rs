@@ -470,10 +470,12 @@ fn commands_lists_the_catalog() {
             "rebase.start",
             "remote.add",
             "remote.delete_branch",
+            "remote.delete_tag",
             "remote.fetch",
             "remote.list",
             "remote.pull",
             "remote.push",
+            "remote.push_tag",
             "remote.remove",
             "repo.clone",
             "repo.init",
@@ -491,6 +493,7 @@ fn commands_lists_the_catalog() {
             "stash.pop",
             "stash.push",
             "tag.create",
+            "tag.delete",
             "worktree.discard"
         ]
     );
@@ -528,9 +531,11 @@ fn commands_lists_the_catalog() {
             "rebase.start",
             "remote.add",
             "remote.delete_branch",
+            "remote.delete_tag",
             "remote.fetch",
             "remote.pull",
             "remote.push",
+            "remote.push_tag",
             "remote.remove",
             "repo.clone",
             "repo.init",
@@ -542,6 +547,7 @@ fn commands_lists_the_catalog() {
             "stash.pop",
             "stash.push",
             "tag.create",
+            "tag.delete",
             "worktree.discard"
         ]
     );

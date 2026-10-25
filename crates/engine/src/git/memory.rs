@@ -15,6 +15,7 @@ mod reset;
 mod restore;
 mod stash;
 mod sync;
+mod tags;
 mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
@@ -31,9 +32,9 @@ use super::{
     FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, LineSelection, LogQuery,
     MergeAborted, MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest, PullOutcome,
     PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore,
-    RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    UpstreamConfig, WorktreeRestore,
+    RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener,
+    RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
+    StashPush, TagPush, TagPushed, UpstreamConfig, WorktreeRestore,
 };
 use super::{CloneOutcome, CloneRequest, InitRequest};
 use crate::{CommitGraphState, EngineError, JobContext, Message, Progress};
@@ -257,6 +258,9 @@ impl MemoryBackend {
     /// Creates or moves the tag `name` on commit `target`. `tag_object` is the id of the tag object
     /// for an annotated tag, `None` for a lightweight one.
     pub fn set_tag(&mut self, name: &str, target: Oid, tag_object: Option<Oid>) {
+        if let Some(object) = tag_object {
+            self.tag_objects.insert(object, target);
+        }
         self.set_ref(format!("{TAGS}{name}"), target, tag_object);
     }
 
@@ -320,8 +324,9 @@ impl MemoryBackend {
             return Ok(entry.target);
         }
         // Commit backups are refs too (`refs/project/backup/...`).
+        // A backup of a tag object (`tag.delete`, `remote.delete_tag`) leads to its commit, like `^{commit}`.
         if let Some((_, id)) = self.commit_backups.iter().find(|(name, _)| name == rev) {
-            return Ok(*id);
+            return Ok(self.tag_objects.get(id).copied().unwrap_or(*id));
         }
         let hex = rev.to_ascii_lowercase();
         if (4..=Oid::HEX_LEN).contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -920,6 +925,31 @@ impl GitBackend for MemoryBackend {
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError> {
         self.delete_branch_on_remote(request, job)
+    }
+
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError> {
+        self.tag_value_on_remote(remote, name, job)
+    }
+
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError> {
+        self.push_tag_to_remote(request, job)
+    }
+
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_tag_on_remote(request, job)
+    }
+
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
+        self.delete_local_tag(name, expected)
     }
 
     fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {

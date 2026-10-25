@@ -180,6 +180,11 @@ enum Action {
     DeleteBranch(String, Oid),
     /// Confirms the pending deletion: resends with `"confirm": true`.
     ConfirmDeleteBranch,
+    /// Deletes the local tag (short name): first without confirmation, the engine always asks
+    /// and the dialog opens.
+    DeleteTag(String),
+    /// Confirms the pending tag deletion: resends with `"confirm": true`.
+    ConfirmDeleteTag,
     /// Closes the open branch dialog without sending anything.
     CloseBranchDialog,
     /// Fetch from the given remote (`None`: the one the engine chooses: upstream, `origin`,
@@ -200,6 +205,8 @@ enum Action {
     Pull(Option<String>, Option<sync::Strategy>),
     /// Push the given branch (`None`: HEAD's), never forced.
     Push(Option<String>),
+    /// Push the tag (second value, short name) to the remote (first value), never forced.
+    PushTag(String, String),
     /// "Force (with lease)…" in the rejected push window: `"force": true` without
     /// `confirm`.
     ForcePush,
@@ -230,6 +237,12 @@ enum Action {
     /// Confirms the pending deletion of the remote branch: resends with `"confirm": true` and the
     /// commit seen.
     ConfirmDeleteRemoteBranch,
+    /// Deletes the tag (second value) from the remote (first value): first without confirmation,
+    /// the engine always asks and the dialog opens.
+    DeleteRemoteTag(String, String),
+    /// Confirms the pending deletion of the remote tag: resends with `"confirm": true` and the
+    /// value seen.
+    ConfirmDeleteRemoteTag,
     /// Closes the open remotes dialog without sending anything.
     CloseRemoteDialog,
     /// Closes the fetch error window after the add.
@@ -883,6 +896,8 @@ impl Tab {
             | Action::Checkout(..)
             | Action::DeleteBranch(..)
             | Action::ConfirmDeleteBranch
+            | Action::DeleteTag(..)
+            | Action::ConfirmDeleteTag
             | Action::CloseBranchDialog => self.apply_branch(action),
             Action::Fetch(..) | Action::CancelFetch | Action::DismissFetchError => {
                 self.apply_fetch(action)
@@ -892,6 +907,7 @@ impl Tab {
             }
             Action::Pull(..)
             | Action::Push(..)
+            | Action::PushTag(..)
             | Action::ForcePush
             | Action::ConfirmForcePush
             | Action::CancelSync
@@ -905,6 +921,8 @@ impl Tab {
             | Action::ConfirmRemoveRemote
             | Action::DeleteRemoteBranch(..)
             | Action::ConfirmDeleteRemoteBranch
+            | Action::DeleteRemoteTag(..)
+            | Action::ConfirmDeleteRemoteTag
             | Action::CloseRemoteDialog
             | Action::DismissRemoteError => self.apply_remotes(action),
             Action::OpenStash
@@ -1561,7 +1579,7 @@ impl Tab {
             progress: self.executor.progress(running.ticket),
             stop_hint: match running.request.op {
                 sync::Op::Pull => tr!("app-stop-pull-hint"),
-                sync::Op::Push => tr!("app-stop-push-hint"),
+                sync::Op::Push | sync::Op::PushTag => tr!("app-stop-push-hint"),
             },
             cancel: Action::CancelSync,
         })

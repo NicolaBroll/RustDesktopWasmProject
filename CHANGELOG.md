@@ -6,6 +6,15 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Delete and publish tags** (engine; `tag.delete`, `remote.push_tag`, `remote.delete_tag` for CLI
+  and MCP). Deleting a local tag always asks for confirmation, keeps it in a backup
+  (`refs/project/backup/tag-delete-…`) and “Undo” puts back the same tag. Publishing never
+  overwrites a tag already on the remote with another value. Deleting from the remote asks for
+  confirmation with the value seen there, keeps it in a backup (`refs/project/backup/push-delete-…`)
+  and is rejected if the tag moved in the meantime.
+
 ## [0.4.0] - 2026-10-25
 
 Tags created from the app, a fetch that drops the branches deleted on the remote, and a tidier

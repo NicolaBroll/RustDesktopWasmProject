@@ -11,6 +11,7 @@ mod push;
 mod rebase;
 mod remote;
 mod remote_branch;
+mod remote_tag;
 mod remotes;
 mod reset;
 mod stash;
@@ -197,6 +198,12 @@ impl Registry {
             tag::tag_create,
         );
         add(
+            "tag.delete",
+            "Delete a tag",
+            r#"{"name": string, "confirm": true (always required; the tag is saved in a backup ref first), "expected"?: string (full id of the value shown in the confirmation)}"#,
+            tag::tag_delete,
+        );
+        add(
             "remote.fetch",
             "Download from the remote (fetch)",
             r#"{"remote"?: string (configured remote; upstream, origin or the only one), "branch"?: string (only that branch), "prune"?: bool (also remove the remote branches gone from the remote; not with branch)}"#,
@@ -219,6 +226,18 @@ impl Registry {
             "Delete a branch from the remote",
             r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
             remote_branch::remote_delete_branch,
+        );
+        add(
+            "remote.push_tag",
+            "Publish a tag to the remote",
+            r#"{"remote": string, "name": string (local tag; never overwrites a tag on the remote)}"#,
+            remote_tag::remote_push_tag,
+        );
+        add(
+            "remote.delete_tag",
+            "Delete a tag from the remote",
+            r#"{"remote": string, "name": string (tag on the remote), "confirm": true, "expected": string (full id of the remote tag shown in the confirmation)}"#,
+            remote_tag::remote_delete_tag,
         );
         add(
             "remote.list",
@@ -387,9 +406,11 @@ const WRITES: &[&str] = &[
     "rebase.start",
     "remote.add",
     "remote.delete_branch",
+    "remote.delete_tag",
     "remote.fetch",
     "remote.pull",
     "remote.push",
+    "remote.push_tag",
     "remote.remove",
     "repo.clone",
     "repo.init",
@@ -401,6 +422,7 @@ const WRITES: &[&str] = &[
     "stash.pop",
     "stash.push",
     "tag.create",
+    "tag.delete",
     "worktree.discard",
 ];
 
@@ -935,10 +957,12 @@ mod tests {
                 "rebase.start",
                 "remote.add",
                 "remote.delete_branch",
+                "remote.delete_tag",
                 "remote.fetch",
                 "remote.list",
                 "remote.pull",
                 "remote.push",
+                "remote.push_tag",
                 "remote.remove",
                 "repo.clone",
                 "repo.init",
@@ -956,6 +980,7 @@ mod tests {
                 "stash.pop",
                 "stash.push",
                 "tag.create",
+                "tag.delete",
                 "worktree.discard"
             ]
         );
@@ -990,9 +1015,11 @@ mod tests {
                 "rebase.start",
                 "remote.add",
                 "remote.delete_branch",
+                "remote.delete_tag",
                 "remote.fetch",
                 "remote.pull",
                 "remote.push",
+                "remote.push_tag",
                 "remote.remove",
                 "repo.clone",
                 "repo.init",
@@ -1004,6 +1031,7 @@ mod tests {
                 "stash.pop",
                 "stash.push",
                 "tag.create",
+                "tag.delete",
                 "worktree.discard"
             ]
         );

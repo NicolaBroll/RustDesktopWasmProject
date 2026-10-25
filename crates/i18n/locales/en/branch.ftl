@@ -64,3 +64,12 @@ branch-refused-files = { $n ->
         [one] File:
        *[other] { $n } files:
     }
+branch-tag-delete-label = Deleting tag “{ $name }”
+branch-tag-delete-refused = Cannot delete tag “{ $name }”: { $error }
+branch-tag-delete-failed = Deleting tag “{ $name }” failed: { $error }
+branch-tag-deleted = Tag “{ $tag }” deleted (was at { $id }); backup in { $backup }. “Undo” recreates it
+branch-tag-deleted-annotated = Annotated tag “{ $tag }” deleted (was at { $id }); the tag object is in { $backup }. “Undo” recreates it
+branch-tag-delete-heading = Delete tag “{ $name }”?
+branch-tag-delete-text = The tag is deleted only here: the remotes keep their copy (use “Delete from the remote…” for that).
+branch-tag-delete-backup = Before deleting, the tag is saved in a backup (refs/project/backup/tag-delete-…), with the message and author of an annotated tag: “Undo” in the top bar recreates it on the same value, as long as the app stays open.
+branch-tag-delete-button = Delete tag

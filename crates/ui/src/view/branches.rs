@@ -13,6 +13,12 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
                 };
                 delete_dialog(ui, delete, reason, actions);
             }
+            Dialog::DeleteTag(delete) => {
+                let discard::Phase::Confirm { reason } = &delete.phase else {
+                    return;
+                };
+                delete_tag_dialog(ui, delete, reason, actions);
+            }
             Dialog::Refused(refused) => refused_dialog(ui, refused, actions),
         }
     });
@@ -132,6 +138,36 @@ pub(super) fn delete_dialog(
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
             actions.push(Action::ConfirmDeleteBranch);
+        }
+        if ui.button(tr!("branch-dont-delete")).clicked() {
+            actions.push(Action::CloseBranchDialog);
+        }
+    });
+}
+
+/// Confirmation of the deletion of a local tag: the remote is not touched.
+pub(super) fn delete_tag_dialog(
+    ui: &mut Ui,
+    delete: &branch::DeleteTagDialog,
+    reason: &str,
+    actions: &mut Vec<Action>,
+) {
+    ui.heading(tr!("branch-tag-delete-heading", name = &delete.name));
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("branch-tag-delete-text")).wrap());
+    ui.add_space(6.0);
+    ui.strong(tr!("branch-reason"));
+    ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("branch-tag-delete-backup")).wrap());
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let button = egui::Button::new(
+            RichText::new(tr!("branch-tag-delete-button")).color(ui.visuals().strong_text_color()),
+        )
+        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        if ui.add_enabled(delete.expected.is_some(), button).clicked() {
+            actions.push(Action::ConfirmDeleteTag);
         }
         if ui.button(tr!("branch-dont-delete")).clicked() {
             actions.push(Action::CloseBranchDialog);

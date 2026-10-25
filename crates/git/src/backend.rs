@@ -36,9 +36,10 @@ use project_engine::{
     LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
     OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
     PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
-    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
-    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore, apply_patch,
-    backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
+    StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed, UpstreamConfig,
+    WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -573,6 +574,33 @@ impl CliBackend {
 
         let reflog = format!("project: backup of the index before {operation}");
         self.create_backup_ref("index", &commit, &reflog)
+    }
+
+    /// A name `refs/project/backup/<kind>-<seconds>-<nanoseconds>` (with a `-<n>` suffix if
+    /// taken) that no ref has now, for a backup written by another command (a fetch straight
+    /// into it); whoever writes it must still refuse to overwrite.
+    fn free_backup_name(&self, kind: &str) -> Result<String, EngineError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let base = format!(
+            "{BACKUP_PREFIX}{kind}-{}-{:09}",
+            now.as_secs(),
+            now.subsec_nanos()
+        );
+        for attempt in 0..10 {
+            let name = match attempt {
+                0 => base.clone(),
+                n => format!("{base}-{n}"),
+            };
+            if self.ref_value(&name)?.is_none() {
+                return Ok(name);
+            }
+        }
+        Err(EngineError::GitWithReason {
+            command: "update-ref".to_owned(),
+            reason: msg!("engine-backup-no-name", base = base),
+        })
     }
 
     /// Creates a new ref `refs/project/backup/<kind>-<seconds>-<nanoseconds>` pointing to
@@ -1286,6 +1314,31 @@ impl GitBackend for CliBackend {
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError> {
         self.delete_branch_on_remote(request, job)
+    }
+
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError> {
+        self.tag_value_on_remote(remote, name, job)
+    }
+
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError> {
+        self.push_tag_to_remote(request, job)
+    }
+
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_tag_on_remote(request, job)
+    }
+
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
+        self.delete_tag_ref(name, expected)
     }
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {

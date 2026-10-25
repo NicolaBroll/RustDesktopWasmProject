@@ -82,7 +82,7 @@ pub use pull::{
 };
 pub use push::{
     PushKind, PushOutcome, PushRejection, PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
-    tracking_ref,
+    RemoteTagDelete, TagPush, TagPushed, tracking_ref,
 };
 pub use rebase::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
@@ -106,7 +106,7 @@ pub use stash::{
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
-pub use tag::{TAGS_PREFIX, check_new_tag_name, tag_ref};
+pub use tag::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
@@ -353,6 +353,14 @@ pub trait GitBackend: Send {
         message: Option<&str>,
     ) -> Result<Oid, EngineError>;
 
+    /// Deletes the local tag `name` (`tag.delete` and the redo of `tag.create` undone), only if
+    /// `refs/tags/<name>` still has the value `expected` (the commit, or the tag object of an annotated tag).
+    /// First it saves `expected` in a new backup ref `refs/project/backup/tag-delete-...`
+    /// (returned): if the backup fails nothing is deleted. Then `update-ref --no-deref -d
+    /// refs/tags/<name> <expected>`; if that fails the backup is removed. A tag missing or with
+    /// another value gives [`EngineError::NotAllowed`] and nothing changes.
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError>;
+
     /// Moves HEAD to `target` updating index and worktree (`git switch`): the local branch
     /// (full name, must exist) or a commit with detached HEAD (for the undo of a checkout
     /// made from detached HEAD). `branch.checkout` and its undo/redo.
@@ -496,6 +504,39 @@ pub trait GitBackend: Send {
     fn delete_remote_branch(
         &mut self,
         request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError>;
+
+    /// The value of `refs/tags/<name>` on the remote `remote` (`git ls-remote`, slow: it contacts
+    /// the remote; cancellation from `job`), as the remote stores it: the tag object of an annotated
+    /// tag, not the peeled commit. `None` if the remote does not have it. Errors as
+    /// [`GitBackend::fetch`]: [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
+    /// [`EngineError::Cancelled`]. A read.
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError>;
+
+    /// Publishes the local tag `request.name` to the remote (`remote.push_tag`, slow like the
+    /// push): only `refs/tags/<name>:refs/tags/<name>`, never `--force` (a tag already on the
+    /// remote with another value → [`EngineError::PushRejected`] with
+    /// [`PushRejection::TagExists`]); the same value already there is a success with
+    /// `up_to_date`. Other errors as [`GitBackend::push`].
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError>;
+
+    /// Deletes the tag `request.name` from the remote (`remote.delete_tag`), like
+    /// [`GitBackend::delete_remote_branch`]: always with
+    /// `--force-with-lease=refs/tags/<name>:<expected>`, after saving `request.expected` in a backup ref
+    /// `refs/project/backup/push-delete-...`. If the object is not here it is first fetched from the
+    /// remote straight into the backup ref (only that ref: no tags, no `FETCH_HEAD`), which must then
+    /// equal `expected` (otherwise [`EngineError::PushRejected`] with
+    /// [`PushRejection::StaleLease`], nothing deleted). If the backup cannot be made nothing is
+    /// deleted. Backup removal and errors as [`GitBackend::delete_remote_branch`].
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError>;
 

@@ -178,7 +178,7 @@ fn build_trees(
             RefKind::RemoteBranch => key.3.iter().map(String::as_str).collect(),
             _ => Vec::new(),
         };
-        let rows = ref_tree::rows(&infos, &roots, filter, &closed);
+        let rows = ref_tree::rows(&infos, &roots, filter, &closed, kind == RefKind::Tag);
         let matches = if filter.is_empty() {
             refs.len()
         } else {
@@ -229,6 +229,8 @@ pub(super) fn section(
             .max_rect(rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
+            // Labels that are not selectable: a click on the caret or the icon opens the section.
+            ui.style_mut().interaction.selectable_labels = false;
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.add_space(2.0);
             ui.label(icons::text(caret, 11.0).weak());
@@ -440,8 +442,10 @@ fn remotes_section(
     actions.extend(body_actions);
 }
 
-/// The click area of a whole row, lit under the mouse.
+/// The click area of a whole row, lit under the mouse. The labels drawn after it in the row are not
+/// selectable, so a click on the icon or the name reaches the row.
 pub(super) fn row_response(ui: &mut Ui, id: egui::Id) -> egui::Response {
+    ui.style_mut().interaction.selectable_labels = false;
     let rect = ui.max_rect();
     let response = ui.interact(rect, id, Sense::click());
     if response.hovered() {
@@ -494,8 +498,8 @@ pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
     }
 }
 
-/// The context menu of a ref: on local branches checkout, new branch, merge into the current
-/// branch, rename, pull, push and delete; on remote branches and tags new branch and merge, and on
+/// The context menu of a ref: on local branches checkout, new branch, new tag, merge into the current
+/// branch, rename, pull, push and delete; on remote branches and tags new branch, new tag and merge, and on
 /// remote branches "Delete from the remote…" (`on_remote`: the remote and the branch on it).
 pub(super) fn ref_menu(
     ui: &mut Ui,
@@ -531,6 +535,14 @@ pub(super) fn ref_menu(
     if button.clicked() {
         let (start, proposed) = Start::from_ref(info);
         actions.push(Action::NewBranch(start, proposed));
+        ui.close();
+    }
+    let button = ui
+        .add_enabled(can_write, egui::Button::new(tr!("refs-new-tag")))
+        .on_hover_text(tr!("refs-new-tag-hint", id = info.target.short()))
+        .on_disabled_hover_text(wait());
+    if button.clicked() {
+        actions.push(Action::NewTag(Start::from_ref(info).0));
         ui.close();
     }
     if !is_head {

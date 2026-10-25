@@ -6,6 +6,48 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
+Tags created from the app, a fetch that drops the branches deleted on the remote, and a tidier
+title bar.
+
+### Added
+
+- **Create tags**: “New tag here…” in the menu of a commit, a local branch, a remote branch or a
+  tag (`tag.create` for CLI and MCP). With a message the tag is annotated, without it is
+  lightweight; “Undo” deletes it.
+- **Fetch removes the branches deleted on the remote** (`remote.fetch` with `"prune": true`), so
+  the column no longer shows them; commits that were only there stay in a backup
+  (`refs/project/backup/prune-…`).
+- **Help → About** with version and license, and the app icon in the title bar.
+
+### Changed
+
+- Tags are listed newest version first (`v0.10.0` before `v0.9.0`).
+- No line between the title bar and the tabs.
+
+### Fixed
+
+- After moving the window by its title bar or resizing it from its edges, buttons light up under
+  the mouse again without an extra click.
+- A click on the arrow of a section (Local branches, Remotes, Tags, Stashes) opens and closes it,
+  like a click on its name.
+- The close button of the window was cut by the right edge: its × is centered again.
+
+### Packages
+
+- Linux: `BinariGit-0.4.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.4.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.4.0-x86_64-windows.zip` (Windows 10 or newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- Tags are created locally only: there is no push of tags from the app yet.
+- The Windows build is cross-compiled and has not been tested on a Windows PC yet; it is not
+  signed, so SmartScreen warns on first start.
+- No macOS build; no deb or MSI packages yet.
+
 ## [0.3.0] - 2026-10-25
 
 Branches deleted on the remote from the app, and an AppImage that updates itself from GitHub.
@@ -119,7 +161,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/releases/tag/v0.1.0

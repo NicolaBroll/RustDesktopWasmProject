@@ -23,7 +23,7 @@ impl MemoryBackend {
         request.check(self.operation)?;
         let head = self.head_state();
         let conflicts =
-            request.conflicts(&head, |name| Ok(self.refs.get(name).map(|r| r.target)))?;
+            request.conflicts(&head, |name| Ok(self.refs.get(name).map(RefEntry::value)))?;
         if !conflicts.is_empty() {
             return Err(EngineError::UndoConflict {
                 command: request.command,
@@ -52,7 +52,8 @@ impl MemoryBackend {
 
         let mut backups = Vec::new();
         for oid in request.abandoned() {
-            if reachable.contains(&oid) {
+            let commit = self.tag_objects.get(&oid).copied().unwrap_or(oid);
+            if reachable.contains(&commit) {
                 continue;
             }
             let n = self
@@ -68,13 +69,18 @@ impl MemoryBackend {
         for r in &request.refs {
             match r.target {
                 Some(target) => {
-                    self.refs.insert(
-                        r.name.clone(),
-                        RefEntry {
+                    // A tag object goes back with the commit it points to.
+                    let entry = match self.tag_objects.get(&target) {
+                        Some(commit) => RefEntry {
+                            target: *commit,
+                            tag_object: Some(target),
+                        },
+                        None => RefEntry {
                             target,
                             tag_object: None,
                         },
-                    );
+                    };
+                    self.refs.insert(r.name.clone(), entry);
                 }
                 None => {
                     self.refs.remove(&r.name);

@@ -4,6 +4,7 @@ engine-journal-discard-one = Discard changes to “{ $path }”
 engine-journal-discard-many = Discard changes to { $n } files ({ $names })
 engine-journal-quoted = “{ $name }”
 engine-journal-branch-create = Create branch `{ $name }` at { $id }
+engine-journal-tag-create = Create tag `{ $name }` at { $id }
 engine-journal-branch-delete = Delete branch `{ $name }` (was { $id })
 engine-journal-branch-rename = Rename branch `{ $from }` to `{ $to }`
 engine-journal-head-branch = `{ $name }`

@@ -13,7 +13,7 @@ use super::write::TreeEntry;
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES};
 use crate::git::{
     BACKUP_PREFIX, BranchDeleted, ConfigEntry, HeadState, RestoreOutcome, check_new_branch_name,
-    check_no_operation, short,
+    check_new_tag_name, check_no_operation, short, tag_ref,
 };
 use crate::{EngineError, Message};
 use project_domain::{EntryKind, Oid, RepoPath};
@@ -73,6 +73,28 @@ impl MemoryBackend {
         }
         self.set_ref(full, *target, None);
         Ok(())
+    }
+
+    pub(super) fn create_tag_ref(
+        &mut self,
+        name: &str,
+        target: &Oid,
+        message: Option<&str>,
+    ) -> Result<Oid, EngineError> {
+        check_new_tag_name("tag.create", name)?;
+        let full = tag_ref(name);
+        self.check_free(&full)?;
+        if !self.commits.contains_key(target) {
+            return Err(EngineError::UnknownRev(target.to_string()));
+        }
+        let tag_object = message.map(|_| {
+            let n = u64::try_from(self.tag_objects.len()).unwrap_or(u64::MAX);
+            let id = Self::fake_oid(0x5441_4700_0000_0000 + n);
+            self.tag_objects.insert(id, *target);
+            id
+        });
+        self.set_ref(full, *target, tag_object);
+        Ok(tag_object.unwrap_or(*target))
     }
 
     pub(super) fn checkout_head(

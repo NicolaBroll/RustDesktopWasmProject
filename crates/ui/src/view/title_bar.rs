@@ -1,9 +1,16 @@
-//! The bar at the top of the window, VS Code style: the "File" menu (open a repo, the recent ones)
-//! and, when the app draws the window frame itself, the title, the drag area, the minimize, maximize and close buttons and the edges
-//! to resize the window.
+//! The bar at the top of the window, VS Code style: the app icon, the "File" menu (open a repo, the
+//! recent ones), the "Help" menu (about) and, when the app draws the window frame itself, the title,
+//! the drag area, the minimize, maximize and close buttons and the edges to resize the window.
 
 use super::*;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Stroke, StrokeKind, ViewportCommand};
+
+/// The app icon in the bar (source in `assets/icon.svg`).
+const ICON_SMALL: &[u8] = include_bytes!("../../../../assets/favicon-32.png");
+/// The app icon in the "About" dialog.
+const ICON_LARGE: &[u8] = include_bytes!("../../../../assets/icon-256.png");
+/// Where the project lives, shown in the "About" dialog.
+const HOMEPAGE: &str = "https://github.com/NicolaBroll/RustDesktopWasmProject";
 
 /// Who draws the window frame. The UI has no `cfg(target_os)`: the app chooses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -40,7 +47,7 @@ pub(crate) struct TitleBar<'a> {
 pub(crate) fn title_bar_panel(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     let visuals = ui.visuals();
     let mut frame = egui::Frame::new().fill(visuals.extreme_bg_color);
-    let panel = egui::Panel::top("title-bar");
+    let panel = egui::Panel::top("title-bar").show_separator_line(false);
     let panel = if bar.frame == WindowFrame::Native {
         frame = frame.inner_margin(egui::Margin::symmetric(4, 2));
         panel
@@ -50,6 +57,7 @@ pub(crate) fn title_bar_panel(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec
     panel
         .frame(frame)
         .show(ui, |ui| title_bar(ui, bar, actions));
+    about_dialog(ui.ctx());
 }
 
 fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
@@ -63,13 +71,15 @@ fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
             && resize_direction(ui.ctx(), bar.frame).is_none()
         {
             ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+            handed_to_system(ui.ctx());
         }
     }
     ui.horizontal_centered(|ui| {
         ui.add_space(match bar.frame {
             WindowFrame::MacOs => MAC_BUTTONS_WIDTH,
-            WindowFrame::Native | WindowFrame::Custom => 6.0,
+            WindowFrame::Native | WindowFrame::Custom => 8.0,
         });
+        app_icon(ui, ICON_SMALL, 16.0);
         // The end of the last menu: the bar itself takes the whole width.
         let menus_end = egui::MenuBar::new()
             .ui(ui, |ui| {
@@ -83,11 +93,22 @@ fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         let mut free = rect;
         free.min.x = menus_end;
         if bar.frame == WindowFrame::Custom {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                window_buttons(ui);
-                free.max.x = ui.min_rect().min.x;
-            });
+            // At the right edge of the bar, not of the layout: its margin would push them out of
+            // the window.
+            let buttons = Rect::from_min_max(
+                Pos2::new(rect.max.x - 3.0 * BUTTON_WIDTH, rect.min.y),
+                rect.max,
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(buttons)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    window_buttons(ui);
+                },
+            );
+            free.max.x = buttons.min.x;
         }
         title(ui, bar, rect, free);
     });
@@ -133,6 +154,107 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         ui.separator();
         theme_menu(ui);
     });
+    ui.menu_button(tr!("title-bar-help"), |ui| {
+        if ui.button(tr!("title-bar-about")).clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(about_id(), true));
+            ui.close();
+        }
+    });
+}
+
+/// The app icon, `size` points wide, decoded once per image.
+fn app_icon(ui: &mut Ui, png: &'static [u8], size: f32) {
+    let id = egui::Id::unique(("app-icon", png.len()));
+    let texture = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(id));
+    let texture = texture.or_else(|| {
+        let icon = eframe::icon_data::from_png_bytes(png).ok()?;
+        let size = [icon.width as usize, icon.height as usize];
+        let image = egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
+        let texture = ui
+            .ctx()
+            .load_texture("app-icon", image, egui::TextureOptions::LINEAR);
+        ui.ctx().data_mut(|d| d.insert_temp(id, texture.clone()));
+        Some(texture)
+    });
+    if let Some(texture) = texture {
+        ui.add(egui::Image::new(&texture).fit_to_exact_size(vec2(size, size)));
+    }
+}
+
+fn about_id() -> egui::Id {
+    egui::Id::unique("title-bar-about")
+}
+
+/// "About": icon, name, version, license and where the project lives.
+fn about_dialog(ctx: &egui::Context) {
+    if !ctx.data(|d| d.get_temp::<bool>(about_id()).unwrap_or(false)) {
+        return;
+    }
+    let modal = egui::Modal::new(egui::Id::unique("about-dialog")).show(ctx, |ui| {
+        ui.set_width(300.0);
+        let mut close = false;
+        ui.vertical_centered(|ui| {
+            ui.add_space(8.0);
+            app_icon(ui, ICON_LARGE, 64.0);
+            ui.add_space(4.0);
+            ui.heading(tr!("title-bar-title"));
+            ui.label(tr!(
+                "title-bar-about-version",
+                version = env!("CARGO_PKG_VERSION")
+            ));
+            ui.add_space(4.0);
+            ui.label(tr!("title-bar-about-description"));
+            ui.weak(tr!(
+                "title-bar-about-license",
+                license = env!("CARGO_PKG_LICENSE")
+            ));
+            ui.hyperlink(HOMEPAGE);
+            ui.add_space(8.0);
+            close = ui.button(tr!("title-bar-about-close")).clicked();
+        });
+        close
+    });
+    if modal.inner || modal.should_close() {
+        ctx.data_mut(|d| d.remove_temp::<bool>(about_id()));
+    }
+}
+
+/// Set when the app hands the move or the resize of the window to the system: from then on the
+/// system has the mouse, and the release of the button never reaches the app.
+fn moving_id() -> egui::Id {
+    egui::Id::unique("title-bar-moving")
+}
+
+/// The system now moves or resizes the window: the next frame gets the release it keeps.
+fn handed_to_system(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(moving_id(), true));
+    ctx.request_repaint();
+}
+
+/// After a move of the window started from the bar, or a resize from its edges, gives egui the
+/// release of the button that the system kept: otherwise egui still sees a drag, and no widget
+/// lights up under the mouse until the next click. The release happens away from the window, so
+/// it is never a click on the widget under the edge (a resize starts on the press, without
+/// moving); the next real movement brings the pointer back. Called before each frame with its
+/// input.
+pub(crate) fn end_window_move(ctx: &egui::Context, input: &mut egui::RawInput) {
+    if ctx
+        .data_mut(|d| d.remove_temp::<bool>(moving_id()))
+        .is_none()
+    {
+        return;
+    }
+    let away = ctx.content_rect().min - vec2(10_000.0, 10_000.0);
+    input.events.extend([
+        egui::Event::PointerMoved(away),
+        egui::Event::PointerButton {
+            pos: away,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: ctx.input(|i| i.modifiers),
+        },
+        egui::Event::PointerGone,
+    ]);
 }
 
 /// System, light or dark: egui keeps the choice between launches.
@@ -268,6 +390,7 @@ pub(crate) fn window_edges(ctx: &egui::Context, frame: WindowFrame) {
     ctx.set_cursor_icon(resize_cursor(direction));
     if ctx.input(|i| i.pointer.primary_pressed()) {
         ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+        handed_to_system(ctx);
     }
 }
 

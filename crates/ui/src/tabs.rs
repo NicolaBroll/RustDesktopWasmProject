@@ -373,6 +373,10 @@ impl eframe::App for App {
         self.persist(frame.storage_mut());
     }
 
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        view::end_window_move(ctx, raw_input);
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.saved = self.state();
         eframe::set_value(storage, KEY, &self.saved);

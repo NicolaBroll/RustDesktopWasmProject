@@ -24,6 +24,7 @@ mod remote_admin;
 mod restore;
 mod sample;
 mod stash;
+mod tag;
 
 #[cfg(test)]
 mod memory_diff_tests;
@@ -95,6 +96,7 @@ pub use stash::{
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
+pub use tag::{TAGS_PREFIX, check_new_tag_name, tag_ref};
 
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
@@ -328,6 +330,18 @@ pub trait GitBackend: Send {
     /// contains it, like `a` for `a/b`) gives [`EngineError::NotAllowed`]; a name git rejects gives
     /// [`EngineError::InvalidParams`].
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError>;
+
+    /// Creates the tag `name` on commit `target` (`tag.create`), **only if it does not exist**:
+    /// lightweight without `message`, annotated (a tag object with the user's identity, signed if
+    /// `tag.gpgSign` says so) with it. HEAD, index, worktree and the other refs are not touched. A
+    /// name already taken gives [`EngineError::NotAllowed`]. Returns the value of the new ref:
+    /// the commit, or the tag object for an annotated tag.
+    fn create_tag(
+        &mut self,
+        name: &str,
+        target: &Oid,
+        message: Option<&str>,
+    ) -> Result<Oid, EngineError>;
 
     /// Moves HEAD to `target` updating index and worktree (`git switch`): the local branch
     /// (full name, must exist) or a commit with detached HEAD (for the undo of a checkout

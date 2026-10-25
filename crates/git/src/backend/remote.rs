@@ -7,8 +7,13 @@
 //!   as destination, and the remote branch is updated with the configured refspec;
 //! - `-c protocol.ext.allow=never -c protocol.fd.allow=never` (for push too): a remote
 //!   configured by hand with `ext::`/`fd::` does not run commands, whatever `protocol.allow` says;
-//! - no `--prune`, `--force`, `--tags`, `--update-head-ok`: tags and pruning follow the
-//!   configuration (`fetch.prune`, `remote.<name>.tagOpt`, ...);
+//! - no `--force`, `--tags`, `--update-head-ok`: tags follow the configuration
+//!   (`remote.<name>.tagOpt`, ...); `--prune` only when asked (`FetchRequest::prune`), with
+//!   `--no-prune-tags` (a `fetch.pruneTags` would delete local tags) and `--no-auto-gc`; every ref
+//!   the fetch removes is then saved in `refs/project/backup/prune-...` (the objects are still
+//!   there: nothing runs gc in between): a remote-tracking branch only if no other ref reaches its
+//!   commits, any other ref (a refspec toward `refs/heads/`, a mirror) always; without it pruning
+//!   follows `fetch.prune`;
 //! - stdin closed, `GIT_TERMINAL_PROMPT=0` and no controlling terminal (`setsid`): the fetch
 //!   never waits for an answer from the keyboard (see `Git::run_streaming`); credential helpers,
 //!   `ssh-agent` and `SSH_ASKPASS` work as usual;
@@ -61,6 +66,12 @@ impl CliBackend {
         job: &JobContext,
     ) -> Result<FetchOutcome, EngineError> {
         let refspec = request.branch.as_ref().map(|b| format!("refs/heads/{b}"));
+        let prune = request.prune && request.branch.is_none();
+        let before = if prune {
+            self.ref_values("refs/")?
+        } else {
+            Vec::new()
+        };
         let mut args = vec![
             "-c",
             "protocol.ext.allow=never",
@@ -68,9 +79,11 @@ impl CliBackend {
             "protocol.fd.allow=never",
             "fetch",
             "--progress",
-            "--end-of-options",
-            &request.remote,
         ];
+        if prune {
+            args.extend(["--prune", "--no-prune-tags", "--no-auto-gc"]);
+        }
+        args.extend(["--end-of-options", &request.remote]);
         args.extend(refspec.as_deref());
 
         let mut lines = Vec::new();
@@ -109,7 +122,61 @@ impl CliBackend {
                 },
             ));
         }
-        Ok(FetchOutcome { messages: lines })
+        let mut backups = Vec::new();
+        if prune {
+            let after = self.ref_values("refs/")?;
+            for (name, oid) in before.iter().filter(|r| !after.contains(r)) {
+                if after.iter().any(|(n, _)| n == name) {
+                    continue;
+                }
+                match self.save_pruned(name, oid) {
+                    Ok(Some(backup)) => backups.push(backup),
+                    Ok(None) => {}
+                    Err(e) => lines.push(format!("warning: no backup of {name} ({oid}): {e}")),
+                }
+            }
+        }
+        Ok(FetchOutcome {
+            messages: lines,
+            backups,
+        })
+    }
+
+    /// The refs under `prefix` with their value (`for-each-ref`), without the symbolic ones
+    /// (`origin/HEAD`) and the app's own (`refs/project/`).
+    fn ref_values(&self, prefix: &str) -> Result<Vec<(String, String)>, EngineError> {
+        let out = self.run(&[
+            "for-each-ref",
+            "--format=%(refname)%00%(objectname)%00%(symref)",
+            prefix,
+        ])?;
+        Ok(out
+            .split(|&b| b == b'\n')
+            .filter_map(|line| {
+                let mut fields = line.split(|&b| b == 0);
+                let name = std::str::from_utf8(fields.next()?).ok()?;
+                let oid = std::str::from_utf8(fields.next()?).ok()?;
+                let symref = fields.next().unwrap_or_default();
+                let own = name.starts_with("refs/project/");
+                (symref.is_empty() && !name.is_empty() && !own)
+                    .then(|| (name.to_owned(), oid.to_owned()))
+            })
+            .collect())
+    }
+
+    /// The backup of the ref `name` removed by `--prune`, which held `oid`: for a remote-tracking
+    /// branch only if some of its commits are no longer reachable from any ref; any other ref always.
+    fn save_pruned(&self, name: &str, oid: &str) -> Result<Option<String>, EngineError> {
+        let reflog = format!("project: backup of {name} removed by fetch --prune");
+        if !name.starts_with("refs/remotes/") {
+            return self.create_backup_ref("prune", oid, &reflog).map(Some);
+        }
+        let out = self.run(&["rev-list", "--count", oid, "--not", "--all"])?;
+        let count = String::from_utf8_lossy(&out);
+        if count.trim() == "0" {
+            return Ok(None);
+        }
+        self.create_backup_ref("prune", oid, &reflog).map(Some)
     }
 }
 

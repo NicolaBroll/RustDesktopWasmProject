@@ -91,3 +91,4 @@ engine-remote-branch-mirror = remote `{ $remote }` is a mirror (`remote.{ $remot
 engine-remote-branch-no-tracking = no fetch refspec of remote `{ $remote }` maps `refs/heads/{ $branch }` to a local remote-tracking branch: nothing deleted (the commit to confirm and back up would not be known)
 engine-remote-branch-unknown = `{ $tracking }` does not exist here: run `remote.fetch` of `{ $remote }` and try again; nothing deleted
 engine-remote-branch-incomplete = `{ $branch }` was deleted from only some of the push URLs of `{ $remote }` (or git failed afterwards): it may still be on the remote, see git's messages. The commit is in `{ $backup }`
+engine-remote-fetch-prune-branch = `prune` removes the branches gone from the remote: it cannot be combined with `branch`

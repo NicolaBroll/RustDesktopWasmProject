@@ -125,6 +125,14 @@ pub(crate) fn commit_list(
                     actions.push(Action::NewBranch(Start::from_commit(id), String::new()));
                     ui.close();
                 }
+                let button = ui
+                    .add_enabled(can_write, egui::Button::new(tr!("commit-new-tag")))
+                    .on_hover_text(tr!("commit-new-tag-hint", id = id.short()))
+                    .on_disabled_hover_text(wait());
+                if button.clicked() {
+                    actions.push(Action::NewTag(Start::from_commit(id)));
+                    ui.close();
+                }
                 let what = merge::commit_name(id, &repo.refs);
                 merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
                 pick_items(ui, commit, &what, &merge, can_write, actions);

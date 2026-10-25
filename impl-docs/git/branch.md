@@ -47,6 +47,27 @@ Parameters: `{"name", "new_name"}`.
 `create`, never over an existing branch (`NotAllowed`). Result: `{"branch", "previous", "target",
 "head", "warnings", "refs", ...journal}`.
 
+### `tag.create`
+
+Parameters: `{"name", "target"?, "message"?}`.
+
+Creates `refs/tags/<name>` on `target` (a rev: id, branch, remote branch or tag; HEAD if missing,
+`NotAllowed` if HEAD has no commits). With `message` (not empty after trimming) the tag is
+**annotated** (tag object with the user's identity, signed if `tag.gpgSign` says so), without it
+is **lightweight**. Never over an existing tag (`NotAllowed`). New name checked by
+`check_new_tag_name`: empty, full `refs/...`, leading `-`, invalid ref name → `InvalidParams`.
+Not pushed: the tag stays local. Result: `{"tag", "target", "annotated", "refs", ...journal}`.
+
+`CliBackend`: lightweight with `update-ref --no-deref -m "project: tag.create ..." refs/tags/<name>
+<id> ""` (only if absent, as `branch.create`); annotated with `git tag -a --cleanup=whitespace -F -
+--end-of-options <name> <id>` and the message on stdin, without `-f` (git refuses an existing tag);
+`--cleanup=whitespace` keeps lines starting with `#`. Journal entry: the tag from absent to its
+value as git stores it (the commit, or the **tag object** of an annotated tag); undo = deletion with
+that expected value, redo = creation of the ref on the same value (the same tag object). The undo always saves the tag
+object in `refs/project/backup/undo-...` (`RefRestore::abandoned` with `cat-file -t` = `tag`): its
+message and author exist only there, even when the commit stays reachable. No backup on creation: nothing is
+overwritten.
+
 ## Undo and backup
 
 The `branch.*` commands receive **short** names (`feature/x`); the full name is always

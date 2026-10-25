@@ -1,9 +1,10 @@
 # `remote.push` errors (`push.rs`, `builtin/push.rs`, backend).
 engine-push-non-fast-forward = the remote has commits that the local branch does not have: run `remote.pull` (or fetch and merge/rebase) and push again
-engine-push-stale-lease = the branch on the remote moved compared to the local remote-tracking branch (force-with-lease): run `remote.fetch`, check the incoming commits and decide again
+engine-push-stale-lease = the branch or tag on the remote moved since it was seen (force-with-lease): run `remote.fetch` (or read the remote again), check what arrived and decide again
 engine-push-remote-rejected = the remote rejected the update
 engine-push-hook = a `pre-push` hook (or a local git check) stopped the push before it started
 engine-push-other = git rejected the push
+engine-push-tag-exists = the remote already has a tag with this name and another value: a tag is never overwritten (delete it from the remote first, with its own confirmation, or use another name)
 engine-push-no-tracking = (no local remote-tracking branch)
 engine-push-lost-others = and { $n } more
 engine-push-lost-and-others = { $commits }, and { $n } more

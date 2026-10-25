@@ -274,6 +274,31 @@ impl JournalEntry {
         )
     }
 
+    /// The entry of a successful `tag.delete`: the tag `tag` (full name) that had the value
+    /// `value` (the commit, or the tag object of an annotated tag) on commit `target`, with the backup
+    /// ref. Undo recreates it on `value` (the same tag object) only if it is still absent, redo
+    /// deletes it again only if it still has `value`.
+    pub fn tag_delete(tag: &str, value: Oid, target: Oid, head: HeadState, backup: String) -> Self {
+        Self::branch_entry(
+            "tag.delete",
+            msg!(
+                "engine-journal-tag-delete",
+                name = tag.strip_prefix(crate::TAGS_PREFIX).unwrap_or(tag),
+                id = short(&target)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: tag.to_owned(),
+                before: Some(value),
+                after: None,
+            }],
+            Some(backup),
+        )
+    }
+
     /// The entry of a successful `branch.delete`: the branch `branch` (full name) that held
     /// `target`, with the backup ref. Undo recreates it on `target` (only if in the meantime
     /// nobody created a branch with the same name), redo deletes it again (only if it

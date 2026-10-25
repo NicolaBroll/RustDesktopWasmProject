@@ -61,6 +61,13 @@ engine-tag-name-invalid = not a valid tag name
 engine-tag-exists = a tag `{ $name }` already exists, nothing changed (a tag is never overwritten)
 engine-tag-name-taken-git = the tag name `{ $name }` is already taken, nothing changed (a tag is never overwritten): { $stderr }
 engine-tag-unborn-target = the repository has no commits yet: nothing to tag
+engine-tag-not-found = there is no tag `{ $name }` here
+engine-tag-changed = `{ $full }` changed since it was read (expected { $expected }, now { $now }): nothing deleted
+engine-tag-missing = `{ $full }` no longer exists: nothing deleted
+engine-tag-delete-confirm = deletes the lightweight tag `{ $name }` (on commit { $target }); the tag is first saved in `refs/project/backup/tag-delete-...` and `edit.undo` puts it back. The remote is not touched. To confirm: "confirm": true
+engine-tag-delete-confirm-annotated = deletes the annotated tag `{ $name }` (tag object { $object } on commit { $target }: its message and author exist only there); the tag object is first saved in `refs/project/backup/tag-delete-...` and `edit.undo` puts it back. The remote is not touched. To confirm: "confirm": true
+engine-tag-moved = tag `{ $name }` changed since it was seen: it was { $seen }, now it is { $value }. Nothing deleted; reload the tags and try again
+engine-tag-expected-hex = `expected` must be the full id ({ $len } hexadecimal digits) of the tag shown in the confirmation: `{ $value }`
 # Operation in progress (`check_no_operation`): `$what` is one of the `engine-busy-*`.
 engine-operation-in-progress = { $operation ->
     [merge] a merge

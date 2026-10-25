@@ -530,7 +530,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   and without `branch`; CI green.
 
 ### S47 — Tags: delete and push
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** next to `tag.create` ([git/branch.md](git/branch.md)): `tag.delete {"name",
   "confirm"}` (always `confirm`; the tag object of an annotated tag saved in
   `refs/project/backup/tag-delete-...` before deleting, `JournalEntry` so undo recreates it on the

@@ -34,13 +34,21 @@
 //! --no-follow-tags --force-with-lease=refs/heads/<b>:<oid> --end-of-options <remote>
 //! :refs/heads/<b>`, same environment; never `--delete` with several names, `--prune` or
 //! `--force`. The lease makes the deletion fail (`stale info`) if the branch moved or is already gone.
+//!
+//! Tags (`remote.push_tag`, `remote.delete_tag`, S47): the push of `refs/tags/<n>:refs/tags/<n>`
+//! like the branch push, never forced (`[rejected] (already exists)` → `tag_exists`); the remote
+//! value read with `git ls-remote --tags --refs`; the deletion like the branch one, with the lease
+//! on the value read and the backup fetched straight into `refs/project/backup/push-delete-...`
+//! when the object is not here.
 
 use super::CliBackend;
-use crate::command::{Segment, failure};
+use crate::command::{Segment, Streamed, failure};
 use crate::progress::{parse_progress, remote_error};
+use project_domain::Oid;
 use project_engine::{
     EngineError, FetchOutcome, FetchRequest, JobContext, PushKind, PushOutcome, PushRejection,
-    PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
+    PushRequest, RemoteBranchDelete, RemoteBranchDeleted, RemoteTagDelete, TagPush, TagPushed,
+    tag_ref,
 };
 use std::process::Output;
 
@@ -336,10 +344,309 @@ impl CliBackend {
         request: &RemoteBranchDelete,
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError> {
-        const ID: &str = "remote.delete_branch";
-        let dst = format!("refs/heads/{}", request.branch);
-        let refspec = format!(":{dst}");
         let expected = request.expected.to_string();
+        // Before the deletion, the commit of the branch goes into a backup ref.
+        let backup = self.create_backup_ref(
+            "push-delete",
+            &expected,
+            &format!(
+                "project: backup of {}/{} before deleting it from the remote",
+                request.remote, request.branch
+            ),
+        )?;
+        self.delete_on_remote(
+            "remote.delete_branch",
+            &request.remote,
+            &format!("refs/heads/{}", request.branch),
+            &request.branch,
+            &expected,
+            backup,
+            job,
+        )
+    }
+
+    /// [`GitBackend::remote_tag`](project_engine::GitBackend::remote_tag): `git ls-remote --tags
+    /// --refs --end-of-options <remote> refs/tags/<name>`. `--refs` leaves out the peeled lines
+    /// (`^{}`), so the value is the one the remote stores (the tag object of an annotated tag);
+    /// the pattern matches the tail of the names, so only the line with exactly `refs/tags/<name>`
+    /// counts.
+    pub(super) fn tag_value_on_remote(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError> {
+        let full = tag_ref(name);
+        let args = [
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
+            "ls-remote",
+            "--tags",
+            "--refs",
+            "--end-of-options",
+            remote,
+            &full,
+        ];
+        let (streamed, lines) = self.stream_remote(&args, job)?;
+        if streamed.cancelled {
+            return Err(EngineError::Cancelled {
+                command: "remote.delete_tag",
+            });
+        }
+        if !streamed.status.success() {
+            return Err(remote_failure(remote, &args, streamed.status, lines));
+        }
+        for line in streamed.stdout.split(|&b| b == b'\n') {
+            let Some(tab) = line.iter().position(|&b| b == b'\t') else {
+                continue;
+            };
+            if &line[tab + 1..] == full.as_bytes() {
+                return Ok(Some(Oid::from_hex(&line[..tab])?));
+            }
+        }
+        Ok(None)
+    }
+
+    /// [`GitBackend::push_tag`](project_engine::GitBackend::push_tag): `git push --porcelain
+    /// --progress --no-follow-tags --recurse-submodules=check --end-of-options <remote>
+    /// refs/tags/<name>:refs/tags/<name>`, never `--force`.
+    pub(super) fn push_tag_to_remote(
+        &self,
+        request: &TagPush,
+        job: &JobContext,
+    ) -> Result<TagPushed, EngineError> {
+        let dst = tag_ref(&request.name);
+        let refspec = format!("{dst}:{dst}");
+        let args = [
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
+            "push",
+            "--porcelain",
+            "--progress",
+            "--no-follow-tags",
+            "--recurse-submodules=check",
+            "--end-of-options",
+            &request.remote,
+            &refspec,
+        ];
+        let (streamed, lines) = self.stream_remote(&args, job)?;
+        if streamed.cancelled {
+            return Err(EngineError::Cancelled {
+                command: "remote.push_tag",
+            });
+        }
+        let stdout = String::from_utf8_lossy(&streamed.stdout).into_owned();
+        let status = porcelain_status(&stdout, &dst);
+        if streamed.status.success()
+            && let Some((flag, summary)) = &status
+            && *flag != '!'
+        {
+            let mut messages = lines;
+            messages.extend(
+                stdout
+                    .lines()
+                    .filter(|l| l.starts_with("To "))
+                    .map(str::to_owned),
+            );
+            return Ok(TagPushed {
+                up_to_date: *flag == '=',
+                summary: summary.clone(),
+                messages,
+            });
+        }
+        let stderr = lines.join("\n");
+        let reject = |reason, message: String| EngineError::PushRejected {
+            remote: request.remote.clone(),
+            branch: dst.clone(),
+            reason,
+            message,
+        };
+        match status {
+            Some(('!', summary)) => {
+                let reason = if summary.contains("already exists") {
+                    PushRejection::TagExists
+                } else {
+                    rejection(&summary)
+                };
+                let message = if stderr.is_empty() {
+                    summary
+                } else {
+                    format!("{summary}\n{stderr}")
+                };
+                Err(reject(reason, message))
+            }
+            _ => {
+                if let Some(error) = remote_error(&request.remote, &stderr) {
+                    return Err(error);
+                }
+                if stderr.contains("failed to push some refs") {
+                    let reason = if stderr.contains("submodule") {
+                        PushRejection::Other
+                    } else {
+                        PushRejection::Hook
+                    };
+                    return Err(reject(reason, stderr));
+                }
+                Err(remote_failure(
+                    &request.remote,
+                    &args,
+                    streamed.status,
+                    Vec::from([stderr]),
+                ))
+            }
+        }
+    }
+
+    /// [`GitBackend::delete_remote_tag`](project_engine::GitBackend::delete_remote_tag).
+    pub(super) fn delete_tag_on_remote(
+        &self,
+        request: &RemoteTagDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        const ID: &str = "remote.delete_tag";
+        let dst = tag_ref(&request.name);
+        let expected = request.expected.to_string();
+        let here = self
+            .git
+            .output(Some(&self.workdir), &["cat-file", "-e", &expected])?
+            .status
+            .success();
+        let backup = if here {
+            self.create_backup_ref(
+                "push-delete",
+                &expected,
+                &format!(
+                    "project: backup of {dst} on {} before deleting it from the remote",
+                    request.remote
+                ),
+            )?
+        } else {
+            self.fetch_into_backup(ID, &request.remote, &dst, &expected, job)?
+        };
+        self.delete_on_remote(ID, &request.remote, &dst, &dst, &expected, backup, job)
+    }
+
+    /// The remote value of `dst` (a tag whose object is not here) fetched straight into a new
+    /// backup ref `refs/project/backup/push-delete-...`: `git fetch --no-tags --no-write-fetch-head
+    /// --no-recurse-submodules --no-prune --no-auto-gc --refmap= --end-of-options <remote>
+    /// <dst>:<backup>`. Only that ref is written: no tags followed, no `FETCH_HEAD`, and `--refmap=`
+    /// keeps a configured refspec (e.g. `+refs/tags/*:refs/tags/*`) from also updating the local
+    /// tag. The backup must then equal `expected`: otherwise it is removed and
+    /// [`EngineError::PushRejected`] with `stale_lease` (the tag moved on the remote).
+    fn fetch_into_backup(
+        &self,
+        id: &'static str,
+        remote: &str,
+        dst: &str,
+        expected: &str,
+        job: &JobContext,
+    ) -> Result<String, EngineError> {
+        let backup = self.free_backup_name("push-delete")?;
+        let refspec = format!("{dst}:{backup}");
+        let args = [
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
+            "fetch",
+            "--progress",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--no-recurse-submodules",
+            "--no-prune",
+            "--no-auto-gc",
+            "--refmap=",
+            "--end-of-options",
+            remote,
+            &refspec,
+        ];
+        let (streamed, lines) = self.stream_remote(&args, job)?;
+        if streamed.cancelled {
+            return Err(EngineError::Cancelled { command: id });
+        }
+        if !streamed.status.success() {
+            let stderr = lines.join("\n");
+            if stderr
+                .to_ascii_lowercase()
+                .contains("couldn't find remote ref")
+            {
+                // Gone from the remote since it was read: nothing to delete any more.
+                return Err(EngineError::PushRejected {
+                    remote: remote.to_owned(),
+                    branch: dst.to_owned(),
+                    reason: PushRejection::StaleLease,
+                    message: stderr,
+                });
+            }
+            return Err(remote_failure(remote, &args, streamed.status, vec![stderr]));
+        }
+        match self.ref_value(&backup)? {
+            Some(oid) if oid.to_string() == expected => Ok(backup),
+            now => {
+                if let Some(oid) = now {
+                    let oid = oid.to_string();
+                    let _ = self
+                        .git
+                        .output(Some(&self.workdir), &["update-ref", "-d", &backup, &oid]);
+                }
+                Err(EngineError::PushRejected {
+                    remote: remote.to_owned(),
+                    branch: dst.to_owned(),
+                    reason: PushRejection::StaleLease,
+                    message: format!(
+                        "{dst} on {remote} is now {}, not {expected}",
+                        now.map(|o| o.to_string()).unwrap_or_default()
+                    ),
+                })
+            }
+        }
+    }
+
+    /// A git command that contacts the remote, with the environment of the fetch (see
+    /// `Git::run_streaming`): progress to `job`, the other stderr lines returned; stdout captured.
+    fn stream_remote(
+        &self,
+        args: &[&str],
+        job: &JobContext,
+    ) -> Result<(Streamed, Vec<String>), EngineError> {
+        let mut lines = Vec::new();
+        let streamed = self.git.run_streaming(
+            &self.workdir,
+            args,
+            true,
+            |Segment { text, newline }| match parse_progress(&text) {
+                Some(progress) => job.report(&progress),
+                None if newline && !text.trim().is_empty() => {
+                    lines.push(text.trim_end().to_owned())
+                }
+                None => {}
+            },
+            &|| job.is_cancelled(),
+        )?;
+        Ok((streamed, lines))
+    }
+
+    /// The deletion of `dst` from the remote (`remote.delete_branch`, `remote.delete_tag`), after
+    /// the backup of `expected` in `backup`: `git push --porcelain --progress --no-follow-tags
+    /// --force-with-lease=<dst>:<expected> --end-of-options <remote> :<dst>`. `label` names the
+    /// ref in [`EngineError::PushRejected`]. The backup is removed only when nothing was certainly
+    /// deleted.
+    #[allow(clippy::too_many_arguments)]
+    fn delete_on_remote(
+        &self,
+        id: &'static str,
+        remote: &str,
+        dst: &str,
+        label: &str,
+        expected: &str,
+        backup: String,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        let refspec = format!(":{dst}");
         let lease = format!("--force-with-lease={dst}:{expected}");
         let args = [
             "-c",
@@ -352,52 +659,29 @@ impl CliBackend {
             "--no-follow-tags",
             &lease,
             "--end-of-options",
-            &request.remote,
+            remote,
             &refspec,
         ];
-        // Before the deletion, the commit of the branch goes into a backup ref.
-        let backup = self.create_backup_ref(
-            "push-delete",
-            &expected,
-            &format!(
-                "project: backup of {}/{} before deleting it from the remote",
-                request.remote, request.branch
-            ),
-        )?;
         let drop_backup = || {
             let _ = self.git.output(
                 Some(&self.workdir),
-                &["update-ref", "-d", &backup, &expected],
+                &["update-ref", "-d", &backup, expected],
             );
         };
-
-        let mut lines = Vec::new();
-        let streamed = match self.git.run_streaming(
-            &self.workdir,
-            &args,
-            true,
-            |Segment { text, newline }| match parse_progress(&text) {
-                Some(progress) => job.report(&progress),
-                None if newline && !text.trim().is_empty() => {
-                    lines.push(text.trim_end().to_owned())
-                }
-                None => {}
-            },
-            &|| job.is_cancelled(),
-        ) {
-            Ok(streamed) => streamed,
+        let (streamed, lines) = match self.stream_remote(&args, job) {
+            Ok(result) => result,
             Err(e) => {
                 drop_backup();
                 return Err(e);
             }
         };
         if streamed.cancelled {
-            // The remote may have already deleted the branch: the backup stays.
-            return Err(EngineError::Cancelled { command: ID });
+            // The remote may have already deleted the ref: the backup stays.
+            return Err(EngineError::Cancelled { command: id });
         }
         let stdout = String::from_utf8_lossy(&streamed.stdout).into_owned();
         // With several push URLs git pushes to each one: a line per URL.
-        let statuses = porcelain_statuses(&stdout, &dst);
+        let statuses = porcelain_statuses(&stdout, dst);
         let deleted = statuses.iter().find(|(flag, _)| *flag == '-');
         let stderr = lines.join("\n");
         if let Some((_, summary)) = deleted {
@@ -420,15 +704,15 @@ impl CliBackend {
         }
         let status = statuses.into_iter().next();
         let reject = |reason, message: String| EngineError::PushRejected {
-            remote: request.remote.clone(),
-            branch: request.branch.clone(),
+            remote: remote.to_owned(),
+            branch: label.to_owned(),
             reason,
             message,
         };
         // The backup is removed only when nothing was certainly deleted: git rejected the ref
         // everywhere, a `pre-push` hook stopped it before sending, the credentials were refused.
         // In every other case (connection lost, unknown error) the remote may have deleted the
-        // branch already, and the backup stays.
+        // ref already, and the backup stays.
         match status {
             Some(('!', summary)) => {
                 drop_backup();
@@ -440,7 +724,7 @@ impl CliBackend {
                 Err(reject(rejection(&summary), message))
             }
             _ => {
-                if let Some(error) = remote_error(&request.remote, &stderr) {
+                if let Some(error) = remote_error(remote, &stderr) {
                     if matches!(error, EngineError::Auth { .. }) {
                         drop_backup();
                     }
@@ -461,6 +745,28 @@ impl CliBackend {
             }
         }
     }
+}
+
+/// The error of a failed command that contacts `remote`: [`EngineError::Auth`] /
+/// [`EngineError::RemoteUnreachable`] from the text, otherwise git's error with the stderr `lines`.
+fn remote_failure(
+    remote: &str,
+    args: &[&str],
+    status: std::process::ExitStatus,
+    lines: Vec<String>,
+) -> EngineError {
+    let stderr = lines.join("\n");
+    if let Some(error) = remote_error(remote, &stderr) {
+        return error;
+    }
+    failure(
+        args,
+        &Output {
+            status,
+            stdout: Vec::new(),
+            stderr: stderr.into_bytes(),
+        },
+    )
 }
 
 /// The `git push --porcelain` line for the remote ref `dst`: the flag (` ` fast-forward,

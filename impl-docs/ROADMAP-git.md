@@ -464,6 +464,11 @@ out on purpose).
 - **Goal:** after the hand test of the S37 zip on Windows, an unsigned MSI built on Linux with
   `wixl` (`msitools`): per-user install, Start menu shortcut, icon, uninstall; in `package.yml`.
 - **Done when:** the MSI installs and uninstalls on a Windows PC (by hand); CI green.
+- **Status:** built, waiting for the hand test on Windows (install, Start menu, upgrade over an
+  older MSI, uninstall). `make windows` also builds `BinariGit-<version>-x86_64.msi` from
+  `packaging/binarigit.wxs` (per-user in `%LOCALAPPDATA%\Programs\BinariGit`, no dialogs,
+  `MajorUpgrade`); `package.yml` uploads it and attaches it to the Release. Details in
+  `packaging/README.md`.
 
 ### S42 — macOS build (unsigned DMG)
 - [ ] **Agent:** `git-engine`

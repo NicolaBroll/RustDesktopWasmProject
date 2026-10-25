@@ -223,6 +223,11 @@ impl CommitList {
         })
     }
 
+    /// The row of commit `id`, if loaded.
+    pub fn index_of(&self, id: Oid) -> Option<usize> {
+        self.position(id)
+    }
+
     fn position(&self, id: Oid) -> Option<usize> {
         self.commits.iter().position(|c| c.id == id)
     }

@@ -25,6 +25,7 @@ mod remote_admin;
 mod reset;
 mod restore;
 mod sample;
+mod search;
 mod stash;
 mod tag;
 
@@ -101,6 +102,7 @@ pub use reset::{
 };
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
+pub use search::{SearchField, SearchQuery, contains_literal};
 pub use stash::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
@@ -133,6 +135,13 @@ pub trait GitBackend: Send {
     /// tags and HEAD (a HEAD without commits is skipped); `rev` and `all` together give
     /// [`EngineError::InvalidParams`] ([`LogQuery::check`]).
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
+
+    /// All the commits that match `query` (`repo.search`), in the order of
+    /// [`GitBackend::log`] over [`SearchQuery::range`]: the text literally in any of the fields
+    /// (OR), only among the commits that touch `query.path` if given. Slow on long histories:
+    /// `job` cancels it ([`EngineError::Cancelled`]). HEAD without commits (without `all`) →
+    /// empty.
+    fn search(&self, query: &SearchQuery, job: &JobContext) -> Result<Vec<Oid>, EngineError>;
 
     /// State of the worktree and the index, with HEAD and upstream of the current branch.
     fn status(&self) -> Result<Status, EngineError>;

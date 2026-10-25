@@ -44,6 +44,46 @@ attaches a stash to is always in the graph, even if no branch contains it any mo
 `stash.list`. `rev` and `all` together → `InvalidParams`. `skip`/`limit` paginate in the same order,
 so the pages are contiguous.
 
+### `repo.search`
+
+Parameters: `{"query", "in"?, "path"?, "all"?, "stashes"?, "skip"?, "limit"?}` (S48). A read (not in
+`WRITES`). Result `{"ids": [oid], "total": number, "has_more": bool}`: the page `skip..skip + limit`
+(`limit` 200 if missing) of the ids of the matching commits, in the order of `repo.log` with the same
+`all`/`stashes` (from HEAD, or from all refs; `stashes` without `all` → `InvalidParams`), so the UI
+highlights the matches in the graph instead of filtering it; `total` = all the matches, `has_more` =
+others after the page. Pages are contiguous.
+
+- `query`: the text, taken **literally** (never a regex) and case-insensitive for ASCII letters
+  (`LC_ALL=C`); empty or with a newline/NUL → `InvalidParams` (git would split it into one pattern per
+  line, ORed).
+- `in`: any of `"message"` (subject and body), `"author"` (name or email, as written in the commit:
+  no mailmap), `"id"` (prefix of the full id, any case; only a hexadecimal text can match); default
+  all three, empty → `InvalidParams`. A commit matches if **any** field matches (OR).
+- `path` (`RepoPath`): only the commits that change that path, or anything under it if a folder,
+  with respect to **at least one** parent (`--full-history`: commits of side branches and merges that
+  bring a change in count). **No rename following** (`--follow` is not used: git allows it with one
+  path only, applies it badly to several starting points and does not combine it with the history of
+  all refs): a rename matches both the old and the new name, the commits before it only the old one.
+  `file.log` follows renames.
+
+Slow on long histories (several full walks, §6): cancellable through `Session::job()`
+(`Cancelled { command: "repo.search" }`). HEAD without commits (without `all`) → empty.
+
+`CliBackend` (`crates/git/src/backend/search.rs`): git ANDs `--author` with `--grep`, so each field is
+a separate `git --literal-pathspecs log --format=tformat:%H --no-show-signature --no-color` run over
+the range of `repo.log` (`CliBackend::log_range`) and the ids are merged here, in the order of one
+unfiltered `--date-order` run (a filtered `--date-order` run with a path could order the commits
+differently, since git sorts only the commits it keeps):
+
+- order: `--date-order`; the id prefix is checked on these ids;
+- message: `--fixed-strings --regexp-ignore-case --encoding=UTF-8 --grep=<text>`;
+- author: the same with `--no-mailmap --author=<text>`;
+- path: `--full-history --no-follow ... -- <path>` (`--no-follow`: independent of `log.follow`).
+
+The text reaches git only as the value of `--grep=`/`--author=` (cannot become an option); only `%H`
+comes out, so non-UTF-8 messages and names do not affect the parsing. `MemoryBackend`: the same rules
+on `repo.log` (`contains_literal`, `SearchQuery::id_matches`, trees compared with each parent).
+
 ### `commit.show`
 
 Parameters: `{"id"}`.

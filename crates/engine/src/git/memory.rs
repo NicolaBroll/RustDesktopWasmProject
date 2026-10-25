@@ -13,6 +13,7 @@ mod remote;
 mod remote_admin;
 mod reset;
 mod restore;
+mod search;
 mod stash;
 mod sync;
 mod tags;
@@ -36,7 +37,7 @@ use super::{
     RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPush, TagPush, TagPushed, UpstreamConfig, WorktreeRestore,
 };
-use super::{CloneOutcome, CloneRequest, InitRequest};
+use super::{CloneOutcome, CloneRequest, InitRequest, SearchQuery};
 use crate::{CommitGraphState, EngineError, JobContext, Message, Progress};
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, FileLogEntry, Head, Oid,
@@ -701,6 +702,10 @@ impl GitBackend for MemoryBackend {
             out.push(commit);
         }
         Ok(out.into_iter().skip(query.skip).cloned().collect())
+    }
+
+    fn search(&self, query: &SearchQuery, job: &JobContext) -> Result<Vec<Oid>, EngineError> {
+        self.memory_search(query, job)
     }
 
     fn status(&self) -> Result<Status, EngineError> {

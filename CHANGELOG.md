@@ -8,6 +8,10 @@ All notable changes to BinariGit. The format follows
 
 ### Added
 
+- **Search in the history** (engine; `repo.search` for CLI and MCP): the commits whose message,
+  author (name or email) or id contain a text, taken literally and ignoring case, in the same order
+  as the history, with the number of matches; optionally only those that touch a path.
+
 - **Delete and publish tags** (engine; `tag.delete`, `remote.push_tag`, `remote.delete_tag` for CLI
   and MCP). Deleting a local tag always asks for confirmation, keeps it in a backup
   (`refs/project/backup/tag-delete-…`) and “Undo” puts back the same tag. Publishing never

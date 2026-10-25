@@ -14,6 +14,7 @@ mod remote_branch;
 mod remote_tag;
 mod remotes;
 mod reset;
+mod search;
 mod stash;
 mod tag;
 
@@ -76,6 +77,12 @@ impl Registry {
             "Commit history",
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (with all: also the stash bases)}"#,
             repo_log,
+        );
+        add(
+            "repo.search",
+            "Commits whose message, author or id contains a text (literal, case-insensitive), in the order of repo.log",
+            r#"{"query": string, "in"?: ["message" | "author" | "id"] (all three), "path"?: path (only commits touching it, no rename following), "all"?: bool, "stashes"?: bool (as in repo.log), "skip"?: number, "limit"?: number (200)} -> {"ids", "total", "has_more"}"#,
+            search::repo_search,
         );
         add(
             "repo.optimize",
@@ -971,6 +978,7 @@ mod tests {
                 "repo.operation",
                 "repo.optimize",
                 "repo.refs",
+                "repo.search",
                 "repo.status",
                 "revert.abort",
                 "revert.continue",

@@ -42,6 +42,9 @@ engine-lines-empty = `lines` è vuoto: indicare almeno una riga cambiata del dif
 engine-paths-empty = `paths` è vuoto: indicare almeno un percorso
 engine-log-stashes-without-all = `stashes` aggiunge le basi degli stash al grafo di tutti i ref: va insieme ad `"all": true`
 engine-log-rev-and-all = `rev` e `all` sono alternativi: `all` parte già da tutti i branch, i tag e HEAD
+engine-search-empty = il testo da cercare è vuoto
+engine-search-line = il testo da cercare deve stare su una sola riga
+engine-search-no-fields = `in` è vuoto: indica almeno uno tra "message", "author", "id" (o omettilo per tutti e tre)
 engine-memory-repos = repo in memoria disponibili: { $repos }
 engine-memory-no-repo = nessun repo in memoria
 # Branch names (`git/branch.rs`).

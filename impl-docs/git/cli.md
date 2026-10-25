@@ -8,6 +8,10 @@ cargo run -p project-cli -- commands
 cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"limit":5}'
 # graph of all branches (local and remote), tags and HEAD; without stashes and backups
 cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}'
+# search in the history: ids of the matching commits in repo.log order (highlight, not filter);
+# literal text, case-insensitive; "in" limits the fields, "path" the commits touching it
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"fix","all":true,"limit":20}'
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"ada@","in":["author"],"path":"README.md"}'
 # huge repo: does it have a commit-graph ("commit_graph" in the repo.open result)? write it
 # (~19 s on the Linux kernel, then the first log page goes from ~16 s to ~40 ms)
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize

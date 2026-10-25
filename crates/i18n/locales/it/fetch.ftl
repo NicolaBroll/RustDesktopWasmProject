@@ -29,6 +29,10 @@ fetch-updated = { $what }: { $n ->
     [one] 1 ref aggiornato
    *[other] { $n } ref aggiornati
 } ({ $names })
+fetch-pruned-backups = ; { $n ->
+    [one] i commit presenti solo su un branch eliminato restano in un backup
+   *[other] i commit presenti solo su { $n } branch eliminati restano in backup
+} (refs/project/backup/prune-…)
 fetch-warning = ; attenzione: { $warning }
 fetch-refs-not-reread = Fetch fatto, ma i ref non si rileggono: { $error }
 fetch-progress-remote = remoto: { $phase }

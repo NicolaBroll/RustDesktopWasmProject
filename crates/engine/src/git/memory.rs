@@ -58,6 +58,13 @@ struct RefEntry {
     tag_object: Option<Oid>,
 }
 
+impl RefEntry {
+    /// The value of the ref as git stores it: for an annotated tag the tag object.
+    fn value(&self) -> Oid {
+        self.tag_object.unwrap_or(self.target)
+    }
+}
+
 /// Repository built in code, without processes or file system.
 ///
 /// Start from [`MemoryBackend::new`] (empty repo on `main`) or from [`MemoryBackend::sample`]
@@ -120,6 +127,9 @@ pub struct MemoryBackend {
     /// There is a commit-graph ([`GitBackend::commit_graph`]): written by
     /// [`GitBackend::write_commit_graph`].
     commit_graph: bool,
+    /// The annotated tag objects created by `tag.create`, with the commit they point to: an undo
+    /// and redo of the tag put the ref back on the same object.
+    tag_objects: BTreeMap<Oid, Oid>,
 }
 
 impl Default for MemoryBackend {
@@ -159,6 +169,7 @@ impl MemoryBackend {
             merge_state: None,
             rebase_state: None,
             commit_graph: false,
+            tag_objects: BTreeMap::new(),
         }
     }
 
@@ -847,6 +858,15 @@ impl GitBackend for MemoryBackend {
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
         self.create_local_branch(name, target)
+    }
+
+    fn create_tag(
+        &mut self,
+        name: &str,
+        target: &Oid,
+        message: Option<&str>,
+    ) -> Result<Oid, EngineError> {
+        self.create_tag_ref(name, target, message)
     }
 
     fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {

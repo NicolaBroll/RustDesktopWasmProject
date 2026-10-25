@@ -823,6 +823,7 @@ impl AddResult {
                 warnings: fetch.warnings,
                 refs: None,
                 refs_error: None,
+                backups: Vec::new(),
             }
             .outcome()
             .notice;

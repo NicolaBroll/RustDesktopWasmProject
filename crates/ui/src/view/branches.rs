@@ -25,6 +25,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     let (title, button) = match &dialog.kind {
         NameKind::Create(_) => (tr!("branch-new-title"), tr!("branch-create-button")),
         NameKind::Rename(_) => (tr!("branch-rename-title"), tr!("branch-rename-button")),
+        NameKind::Tag(_) => (tr!("branch-tag-title"), tr!("branch-tag-button")),
     };
     ui.heading(title);
     ui.add_space(6.0);
@@ -39,6 +40,13 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
         NameKind::Rename(old) => {
             ui.label(tr!("branch-rename-text", name = old));
         }
+        NameKind::Tag(start) => {
+            ui.label(tr!(
+                "branch-tag-text",
+                start = &start.label,
+                id = start.target.short()
+            ));
+        }
     }
     ui.add_space(6.0);
     let id = ui.make_persistent_id("branch-name");
@@ -48,7 +56,10 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     let mut name = dialog.name.clone();
     let edit = egui::TextEdit::singleline(&mut name)
         .id(id)
-        .hint_text(tr!("branch-name-hint"))
+        .hint_text(match &dialog.kind {
+            NameKind::Tag(_) => tr!("branch-tag-name-hint"),
+            _ => tr!("branch-name-hint"),
+        })
         .desired_width(f32::INFINITY)
         .interactive(!dialog.sending);
     let response = ui.add(edit);
@@ -58,6 +69,18 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     }
     if response.changed() {
         actions.push(Action::BranchName(name));
+    }
+    if matches!(dialog.kind, NameKind::Tag(_)) {
+        ui.add_space(6.0);
+        let mut message = dialog.message.clone();
+        let edit = egui::TextEdit::multiline(&mut message)
+            .hint_text(tr!("branch-tag-message-hint"))
+            .desired_rows(3)
+            .desired_width(f32::INFINITY)
+            .interactive(!dialog.sending);
+        if ui.add(edit).changed() {
+            actions.push(Action::TagMessage(message));
+        }
     }
     if let Some(error) = &dialog.error {
         ui.add_space(4.0);

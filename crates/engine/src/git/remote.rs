@@ -20,6 +20,10 @@ pub struct FetchRequest {
     /// Only this branch of the remote (short name, e.g. `main`); `None`: what the remote's
     /// configuration says (`remote.<name>.fetch`, usually all branches).
     pub branch: Option<String>,
+    /// Also remove the remote-tracking branches whose branch no longer exists on the remote
+    /// (`--prune`, only with `branch: None`). `false`: as the configuration says (`fetch.prune`).
+    #[serde(default)]
+    pub prune: bool,
 }
 
 /// The result of [`GitBackend::fetch`](super::GitBackend::fetch). The updated refs are computed by
@@ -29,6 +33,10 @@ pub struct FetchOutcome {
     /// The git lines that are not progress (`From <url>`, ` * [new branch] main ->
     /// origin/main`, warnings), in order.
     pub messages: Vec<String>,
+    /// The backup refs (`refs/project/backup/prune-...`) of the removed remote-tracking branches
+    /// whose commits no other ref reaches: the remote no longer has them, the repo keeps them here.
+    #[serde(default)]
+    pub backups: Vec<String>,
 }
 
 /// The name of a remote passed to `remote.*`: not empty, without control characters, and such

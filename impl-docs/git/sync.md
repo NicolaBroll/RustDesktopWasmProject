@@ -8,9 +8,14 @@ undo and backup of this function. "§n" always refers to the main document.
 
 ### `remote.fetch`
 
-Parameters: `{"remote"?, "branch"?}`.
+Parameters: `{"remote"?, "branch"?, "prune"?}`.
 
-Slow (§6), writes (`writes`: remote branches, tags, `FETCH_HEAD`). `remote`: the **name** of a configured
+Slow (§6), writes (`writes`: remote branches, tags, `FETCH_HEAD`). `prune: true` (not with `branch`:
+`InvalidParams`) also removes the remote-tracking branches whose branch the remote no longer has
+(`--prune`); the UI's "Fetch" always asks for it, so a branch deleted on the remote disappears from
+the column. A removed remote-tracking branch with commits no other ref reaches is saved first in
+`refs/project/backup/prune-...` (result `backups`): the remote no longer has them, the repo keeps
+them. `remote`: the **name** of a configured
 remote (`GitBackend::remotes`, i.e. `git remote`), checked with `check_remote_name` (like
 git: `refs/remotes/<name>/x` must be a valid ref name; a leading `-` is allowed) and looked up
 among the configured ones before calling the backend: a name that does not exist → `NotAllowed` with the list of
@@ -21,9 +26,9 @@ none or ambiguous → `NotAllowed`). `branch`: short name of a branch **of the r
 `NotAllowed`. Errors: rejected credentials or credentials to be requested → `Auth { remote, message }`; remote not
 reachable (directory that does not exist, host, network, repository nonexistent on the server) →
 `RemoteUnreachable { remote, message }`; cancelled → `Cancelled`; other → `Git`. Result:
-`{"remote", "branch": string | null, "updated": [{"name", "before": oid | null, "after": oid |
-null}] | null, "messages": [string], "warnings": [Message], "refs": [RefInfo] | null,
-"refs_error"?}`: `updated` are the changed refs (comparison of `refs()` before and after, an annotated tag
+`{"remote", "branch": string | null, "prune": bool, "updated": [{"name", "before": oid | null,
+"after": oid | null}] | null, "messages": [string], "warnings": [Message], "backups": [string],
+"refs": [RefInfo] | null, "refs_error"?}`: `updated` are the changed refs (comparison of `refs()` before and after, an annotated tag
 with the commit pointed to; `null` with `refs_error` if the refs cannot be re-read: the fetch is done),
 `warnings` are `Message` objects `{"text", "key", "args"?}` (English text plus Fluent key and
 arguments, see `impl-docs/i18n.md`), like the journal `description` and `next_undo`/`next_redo` in every result;
@@ -178,9 +183,15 @@ unknown failure or a lost connection it stays. To put a branch back: a branch on
 go after `--end-of-options`: a remote called `-x` or `--upload-pack=false` does not
 become an option (tests with these names). The branch is a refspec without destination, without
 `:` or `+`: it writes no local refs, and the remote branch is updated with the configured refspec.
-No `--prune`, `--force`, `--tags`, `--update-head-ok`, `--recurse-submodules`: tags,
-pruning of vanished remote branches (`fetch.prune`, `remote.<name>.prune`) and submodules as
-the user's configuration says, like `git fetch` from the terminal. **No input
+No `--force`, `--tags`, `--update-head-ok`, `--recurse-submodules`: tags and submodules as the
+user's configuration says, like `git fetch` from the terminal. `--prune` only with `prune: true`,
+together with `--no-prune-tags` (a configured `fetch.pruneTags` would delete local tags) and
+`--no-auto-gc` (no gc between the fetch and the backups): all refs (symbolic ones and
+`refs/project/` excluded) are read before and after (`for-each-ref`); a removed remote-tracking branch
+whose commits `rev-list --count <id> --not --all` finds unreachable gets a backup ref, and any other
+removed ref (a refspec toward `refs/heads/`, a mirror) always gets one; a backup
+that fails becomes a line in `messages`, the fetch is done. Without it pruning follows `fetch.prune` /
+`remote.<name>.prune`. **No input
 requests**, ever: stdin closed, `GIT_TERMINAL_PROMPT=0` and, on Unix, the process starts in a new
 session (`setsid`, `libc` dependency) without a controlling terminal, so neither git, nor
 ssh (passphrase, host key confirmation), nor a credential helper can open

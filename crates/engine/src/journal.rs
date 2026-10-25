@@ -242,6 +242,31 @@ impl JournalEntry {
         )
     }
 
+    /// The entry of a successful `tag.create`: the tag `tag` (full name) created with the value
+    /// `value` (the commit, or the tag object of an annotated tag) on commit `target`, HEAD as it
+    /// was. Undo deletes it (only if it still has `value`), redo recreates it (only if it does not
+    /// exist).
+    pub fn tag_create(tag: &str, value: Oid, target: Oid, head: HeadState) -> Self {
+        Self::branch_entry(
+            "tag.create",
+            msg!(
+                "engine-journal-tag-create",
+                name = tag.strip_prefix(crate::TAGS_PREFIX).unwrap_or(tag),
+                id = short(&target)
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            vec![RefChange {
+                name: tag.to_owned(),
+                before: None,
+                after: Some(value),
+            }],
+            None,
+        )
+    }
+
     /// The entry of a successful `branch.delete`: the branch `branch` (full name) that held
     /// `target`, with the backup ref. Undo recreates it on `target` (only if in the meantime
     /// nobody created a branch with the same name), redo deletes it again (only if it

@@ -93,14 +93,15 @@ impl FetchBox {
     }
 
     /// The parameters for a fetch from `remote` (`None`: the one chosen by the engine), if there is
-    /// not one in progress already.
+    /// not one in progress already. With `prune`: the branches deleted on the remote also disappear
+    /// from the view (the engine saves a backup of commits that only they had).
     pub fn request(&self, remote: Option<&str>) -> Option<Value> {
         if self.running.is_some() {
             return None;
         }
         Some(match remote {
-            Some(remote) => json!({ "remote": remote }),
-            None => json!({}),
+            Some(remote) => json!({ "remote": remote, "prune": true }),
+            None => json!({ "prune": true }),
         })
     }
 
@@ -257,6 +258,9 @@ pub struct FetchResult {
     pub warnings: Vec<String>,
     pub refs: Option<Vec<RefInfo>>,
     pub refs_error: Option<String>,
+    /// The backups of the remote-tracking branches removed by `prune`.
+    #[serde(default)]
+    pub backups: Vec<String>,
 }
 
 /// How many ref names to list in the notice before "and N more".
@@ -316,8 +320,13 @@ impl FetchResult {
             .iter()
             .map(|w| tr!("fetch-warning", warning = w))
             .collect();
+        let backups = if self.backups.is_empty() {
+            String::new()
+        } else {
+            tr!("fetch-pruned-backups", n = self.backups.len())
+        };
         Outcome {
-            notice: summary + &warnings,
+            notice: summary + &backups + &warnings,
             changed: self.updated.as_ref().is_none_or(|u| !u.is_empty()),
             refs: self.refs,
             warning: self
@@ -522,10 +531,10 @@ mod tests {
     #[test]
     fn one_fetch_at_a_time_and_cancel_once() {
         let mut f = FetchBox::default();
-        assert_eq!(f.request(None), Some(json!({})));
+        assert_eq!(f.request(None), Some(json!({ "prune": true })));
         assert_eq!(
             f.request(Some("origin")),
-            Some(json!({ "remote": "origin" }))
+            Some(json!({ "remote": "origin", "prune": true }))
         );
         assert_eq!(f.cancel(), None, "nothing to stop");
         let ticket = Ticket::for_test(4);

@@ -28,9 +28,11 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Fixed 
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message":"Version 9"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","new_name":"test2"}' --cmd 'branch.delete={"name":"test2"}'
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'
 # pull (fetch + fast-forward/merge/rebase according to pull.rebase/pull.ff, or "strategy"; undoable with edit.undo;
 # merge with conflicts: stays in progress, "in_progress":true, then merge.continue or merge.abort)
 cargo run -p project-cli -- --repo . run --cmd remote.pull --cmd edit.undo

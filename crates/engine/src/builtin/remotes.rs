@@ -174,6 +174,7 @@ fn fetch_all(
             &FetchRequest {
                 remote: remote.to_owned(),
                 branch: None,
+                prune: false,
             },
             job,
         )

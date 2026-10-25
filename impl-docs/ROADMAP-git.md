@@ -552,3 +552,35 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
 - **Done when:** tests (regex characters taken literally, non-UTF-8 message, author by name and
   by email, short hash, `path` with a rename, `all` with an unmerged branch, contiguous pages) and
   on the `MemoryBackend`; desktop screenshot on Xvfb with highlighted matches; CI green.
+
+### S49 — Settings window
+- [ ] **Agent:** `egui-ui`
+- **Goal:** today the preferences are scattered (theme in a title bar menu, unified/side by side
+  in the diff view) and the language cannot be chosen (`project_i18n::set_lang` exists, the app
+  always starts in English). A "Settings…" window (File menu in the title bar, Ctrl+,) with the
+  sections **General** (theme: as the system / light / dark; language: as the system / Italiano /
+  English, applied at once) and room for the next ones. One `Settings` struct in `crates/ui`, saved in
+  the eframe storage under its own key as the tabs (`crates/ui/src/tabs.rs`), written only when it
+  changes, unknown or missing fields → defaults (`#[serde(default)]`, so older saves keep working).
+  The theme menu stays as a shortcut to the same setting; the system language comes through
+  `Platform` (implemented in `apps/project`), `None` → English. Settings never go through the
+  `Registry`: they do not touch the repo. Texts in `settings.ftl`.
+- **Done when:** UI tests (round trip of the storage, an old save without the new fields, language
+  applied without restarting); desktop screenshot on Xvfb of the window in Italian; CI green.
+
+### S50 — Auto fetch
+- [ ] **Agent:** `egui-ui` (`git-engine` only if `remote.fetch` needs a change)
+- **Goal:** each open tab runs `remote.fetch` on a timer, interval in the S49 settings
+  (**Remotes** section: off / 1 / 5 / 15 minutes, default 5). Only fetch, never pull: local
+  branches and files are not touched. Skipped (and retried at the next tick) with a dialog open, a
+  command running or an operation in progress (merge, rebase, cherry-pick, revert); hidden tabs
+  fetch when shown again if their interval has passed; never two fetches of the same tab at once.
+  Authentication error (`GIT_TERMINAL_PROMPT=0`, the credentials come from the git
+  configuration): auto fetch suspended for that tab, one notice under the bar with "Retry",
+  no dialog at every tick. Network error: doubled wait up to 30 minutes, then back to the
+  interval; only an icon in the bar. After a fetch the S40 light refresh (selection and scroll
+  stay) and, if remote branches moved, a discreet notice ("3 new commits on origin/main"). A
+  manual Fetch restarts the timer.
+- **Done when:** UI tests with a fake clock (interval, skips, backoff, suspension on an
+  authentication error and Retry, hidden tab); by hand on Xvfb: a commit pushed to a local
+  remote from a terminal shows up in the graph without pressing Fetch; CI green.

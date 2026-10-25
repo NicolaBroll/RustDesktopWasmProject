@@ -59,6 +59,7 @@ pub(crate) fn top_bar(
         ui.separator();
         let enabled = can_write && network.is_none();
         fetch_buttons(ui, repo, enabled, actions);
+        offline_icon(ui, &repo.auto_fetch);
         sync_buttons(ui, repo, enabled, actions);
         ui.separator();
         stash_push_button(

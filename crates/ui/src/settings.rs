@@ -1,4 +1,4 @@
-//! The app's preferences (theme, language, diff layout), the "Settings…" window that changes them
+//! The app's preferences (theme, language, diff layout, automatic fetch), the "Settings…" window that changes them
 //! and their persistence between launches.
 //!
 //! They live in the eframe storage under their own key, next to the tabs, and never go through
@@ -119,6 +119,59 @@ impl From<Language> for &'static str {
     }
 }
 
+/// How often every open tab runs `remote.fetch` on its own (S50): off, 1, 5 or 15 minutes. Saved
+/// as minutes (`0`: off); an unknown number (a newer version's) is the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "u32", into = "u32")]
+pub(crate) enum FetchInterval {
+    Off,
+    One,
+    #[default]
+    Five,
+    Fifteen,
+}
+
+impl FetchInterval {
+    pub(crate) const ALL: [FetchInterval; 4] = [
+        FetchInterval::Off,
+        FetchInterval::One,
+        FetchInterval::Five,
+        FetchInterval::Fifteen,
+    ];
+
+    pub(crate) fn minutes(self) -> u32 {
+        match self {
+            FetchInterval::Off => 0,
+            FetchInterval::One => 1,
+            FetchInterval::Five => 5,
+            FetchInterval::Fifteen => 15,
+        }
+    }
+
+    /// The wait between two automatic fetches; `None`: off.
+    pub(crate) fn duration(self) -> Option<std::time::Duration> {
+        match self.minutes() {
+            0 => None,
+            m => Some(std::time::Duration::from_secs(u64::from(m) * 60)),
+        }
+    }
+}
+
+impl From<u32> for FetchInterval {
+    fn from(minutes: u32) -> Self {
+        FetchInterval::ALL
+            .into_iter()
+            .find(|i| i.minutes() == minutes)
+            .unwrap_or_default()
+    }
+}
+
+impl From<FetchInterval> for u32 {
+    fn from(interval: FetchInterval) -> Self {
+        interval.minutes()
+    }
+}
+
 /// What survives between launches; missing fields take their default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -127,6 +180,8 @@ pub(crate) struct Settings {
     pub language: Language,
     /// The diff side by side (`true`) or unified.
     pub diff_split: bool,
+    /// The automatic fetch of every tab.
+    pub fetch_minutes: FetchInterval,
 }
 
 /// One setting changed, from the window, the theme menu or the diff view.
@@ -135,6 +190,7 @@ pub(crate) enum Change {
     Theme(Theme),
     Language(Language),
     DiffSplit(bool),
+    FetchInterval(FetchInterval),
 }
 
 impl Settings {
@@ -151,6 +207,7 @@ impl Settings {
                 d.get_persisted::<bool>(egui::Id::unique(OLD_DIFF_SPLIT))
                     .unwrap_or(false)
             }),
+            fetch_minutes: FetchInterval::default(),
         }
     }
 
@@ -159,6 +216,7 @@ impl Settings {
             Change::Theme(theme) => self.theme = theme,
             Change::Language(language) => self.language = language,
             Change::DiffSplit(split) => self.diff_split = split,
+            Change::FetchInterval(interval) => self.fetch_minutes = interval,
         }
     }
 
@@ -176,10 +234,11 @@ impl Settings {
 pub(crate) enum Section {
     #[default]
     General,
+    Remotes,
 }
 
 impl Section {
-    pub(crate) const ALL: [Section; 1] = [Section::General];
+    pub(crate) const ALL: [Section; 2] = [Section::General, Section::Remotes];
 }
 
 /// The "Settings…" window: whether it is open and the section shown.
@@ -199,11 +258,12 @@ mod tests {
             theme: Theme::Dark,
             language: Language::Fixed(Lang::It),
             diff_split: true,
+            fetch_minutes: FetchInterval::Fifteen,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(
             json,
-            r#"{"theme":"dark","language":"it","diff_split":true}"#
+            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15}"#
         );
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
     }
@@ -219,9 +279,10 @@ mod tests {
                 ..Settings::default()
             }
         );
+        assert_eq!(old.fetch_minutes, FetchInterval::Five, "default 5 minutes");
         // From a newer version: unknown fields and values are ignored.
         let newer: Settings = serde_json::from_str(
-            r#"{"theme":"sepia","language":"de","diff_split":true,"fetch_minutes":5}"#,
+            r#"{"theme":"sepia","language":"de","diff_split":true,"fetch_minutes":7,"x":1}"#,
         )
         .unwrap();
         assert_eq!(
@@ -235,6 +296,17 @@ mod tests {
             serde_json::from_str::<Settings>("{}").unwrap(),
             Settings::default()
         );
+    }
+
+    #[test]
+    fn fetch_intervals() {
+        assert_eq!(FetchInterval::Off.duration(), None);
+        assert_eq!(
+            FetchInterval::One.duration(),
+            Some(std::time::Duration::from_secs(60))
+        );
+        let off: Settings = serde_json::from_str(r#"{"fetch_minutes":0}"#).unwrap();
+        assert_eq!(off.fetch_minutes, FetchInterval::Off);
     }
 
     #[test]

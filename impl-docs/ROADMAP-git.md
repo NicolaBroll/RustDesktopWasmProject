@@ -578,7 +578,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   applied without restarting); desktop screenshot on Xvfb of the window in Italian; CI green.
 
 ### S50 — Auto fetch
-- [ ] **Agent:** `egui-ui` (`git-engine` only if `remote.fetch` needs a change)
+- [x] **Agent:** `egui-ui` (`git-engine` only if `remote.fetch` needs a change)
 - **Goal:** each open tab runs `remote.fetch` on a timer, interval in the S49 settings
   (**Remotes** section: off / 1 / 5 / 15 minutes, default 5). Only fetch, never pull: local
   branches and files are not touched. Skipped (and retried at the next tick) with a dialog open, a

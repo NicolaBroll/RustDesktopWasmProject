@@ -36,6 +36,12 @@ arguments, see `impl-docs/i18n.md`), like the journal `description` and `next_un
 `warnings` the refs outside `refs/remotes/` and `refs/tags/` moved by a configured refspec (e.g. a
 mirror toward `refs/heads/`). It does not go into the journal (§7). `CliBackend` details below.
 
+**Automatic fetch** (S50, UI only: `crates/ui/src/auto_fetch.rs`): every tab sends the same
+`remote.fetch` as the bar's "Fetch" (`{"prune": true}`, the remote the engine chooses) on a timer
+(Settings → Remotes: off / 1 / 5 / 15 minutes, default 5), only for the tab shown and with no dialog,
+command or operation in progress; `Auth` suspends it until "Retry", `RemoteUnreachable` doubles the
+wait up to 30 minutes. No engine change.
+
 ### `remote.pull`
 
 Parameters: `{"remote"?, "branch"?, "strategy"?}`.

@@ -46,3 +46,20 @@ fetch-phase-writing = Writing objects
 fetch-phase-total = Total
 fetch-phase-expanding-graph = Collecting commits
 fetch-phase-writing-graph = Writing the commit-graph
+fetch-auto-label = Automatic fetch
+fetch-auto-news = Automatic fetch: { $news }
+fetch-auto-new-commits = { $n ->
+    [one] 1 new commit on { $branch }
+   *[other] { $n } new commits on { $branch }
+}
+fetch-auto-branch-moved = { $branch } updated
+fetch-auto-new-branch = new branch { $branch }
+fetch-auto-branch-gone = { $branch } removed
+fetch-auto-suspended = Automatic fetch paused: the remote rejected the credentials.
+fetch-auto-suspended-hint = The app never asks for credentials: git takes them from its configuration (credential helper, ssh-agent). Fix them, then press “Retry”.
+fetch-auto-retry = Retry
+fetch-auto-retry-hint = Fetch again now and, if it works, resume the automatic fetch.
+fetch-auto-offline = The remote cannot be reached: the automatic fetch tries again in { $minutes ->
+    [one] 1 minute
+   *[other] { $minutes } minutes
+} (the wait doubles at every error, up to 30 minutes).

@@ -439,8 +439,16 @@ impl App {
             self.tabs[self.active].auto.mark();
         }
         let now = std::time::Instant::now();
+        let interval = self.settings.fetch_minutes.duration();
+        let app_blocked = self.clone.dialog().is_some() || self.settings_box.open;
         for (index, tab) in self.tabs.iter_mut().enumerate() {
-            tab.tick(now, index == self.active);
+            let shown = index == self.active;
+            tab.tick(now, shown);
+            tab.tick_fetch(now, shown, interval, app_blocked);
+        }
+        // The timer of the tab shown ticks even when nothing else repaints the window.
+        if let Some(wait) = self.tabs[self.active].fetch_wake(now) {
+            ctx.request_repaint_after(wait);
         }
     }
 

@@ -2,7 +2,7 @@
 //! change is applied at once (no "Save"): it leaves as an [`Action::Setting`].
 
 use super::*;
-use crate::settings::{Change, Language, Section, Settings, SettingsBox, Theme};
+use crate::settings::{Change, FetchInterval, Language, Section, Settings, SettingsBox, Theme};
 use project_i18n::Lang;
 
 /// Width of the column with the sections.
@@ -30,6 +30,7 @@ fn language_label(language: Language) -> String {
 fn section_title(section: Section) -> String {
     match section {
         Section::General => tr!("settings-general"),
+        Section::Remotes => tr!("settings-remotes"),
     }
 }
 
@@ -63,6 +64,7 @@ pub(crate) fn settings_window(
             ui.add_space(GAP);
             ui.vertical(|ui| match window.section {
                 Section::General => general(ui, settings, actions),
+                Section::Remotes => remotes(ui, settings, actions),
             });
             sections.response.rect.max.x + GAP / 2.0
         });
@@ -114,4 +116,28 @@ fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         }
     });
     ui.weak(tr!("settings-language-hint"));
+}
+
+fn interval_label(interval: FetchInterval) -> String {
+    match interval {
+        FetchInterval::Off => tr!("settings-fetch-off"),
+        other => tr!("settings-fetch-minutes", n = other.minutes()),
+    }
+}
+
+/// The automatic fetch (S50).
+fn remotes(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
+    ui.strong(tr!("settings-fetch"));
+    ui.horizontal_wrapped(|ui| {
+        for interval in FetchInterval::ALL {
+            if ui
+                .radio(settings.fetch_minutes == interval, interval_label(interval))
+                .clicked()
+                && settings.fetch_minutes != interval
+            {
+                actions.push(Action::Setting(Change::FetchInterval(interval)));
+            }
+        }
+    });
+    ui.weak(tr!("settings-fetch-hint"));
 }

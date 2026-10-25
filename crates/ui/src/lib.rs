@@ -32,6 +32,7 @@ mod merge;
 mod merge_view;
 mod optimize;
 mod rebase;
+mod ref_tree;
 mod refresh;
 mod remotes;
 mod stage;
@@ -423,6 +424,8 @@ struct RepoView {
     list: CommitList,
     /// Ref labels per commit, rebuilt when refs or HEAD change.
     labels: HashMap<Oid, Vec<RefLabel>>,
+    /// Grows every time `labels` is rebuilt: the left column rebuilds its tree only then.
+    refs_version: u64,
     /// Details of the selected commit (`commit.show`).
     details: DetailsState,
     /// Diff of the open file (`diff.commit`), shown in place of the graph.
@@ -480,6 +483,7 @@ impl RepoView {
             write_error: None,
             list: CommitList::default(),
             labels: HashMap::new(),
+            refs_version: 0,
             details: DetailsState::default(),
             diff: DiffState::default(),
             commit: CommitBox::default(),
@@ -504,6 +508,7 @@ impl RepoView {
     }
 
     fn update_labels(&mut self) {
+        self.refs_version += 1;
         self.labels = graph::ref_labels(&self.refs, &self.head);
         let stashes = self.stash.list().unwrap_or_default();
         graph::add_stash_labels(

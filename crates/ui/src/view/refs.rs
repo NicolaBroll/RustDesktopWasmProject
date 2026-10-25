@@ -1,97 +1,470 @@
 use super::*;
+use crate::ref_tree::{self, Row};
+use egui::{Rect, UiBuilder};
+use std::collections::HashSet;
 
+/// Height of a row of the column: all equal, so only the rows in view are drawn.
+pub(super) const ROW: f32 = 20.0;
+/// Indentation of a tree level.
+const INDENT: f32 = 14.0;
+/// Width of the caret of a folder (and the space before a ref at the same level).
+const CARET: f32 = 14.0;
+
+/// What the column remembers between frames, per tab: the filter, the folders closed by the user
+/// and the trees built for them, rebuilt only when the refs, the remotes, the filter or the
+/// folders change.
+/// `Clone` only because egui's memory asks for it: the state is taken and put back, never cloned.
+#[derive(Clone, Default)]
+struct ColumnState {
+    filter: String,
+    /// `<section>:<path>` of the closed folders.
+    closed: HashSet<String>,
+    /// Grows at every open or close.
+    toggles: u64,
+    trees: Option<Trees>,
+}
+
+/// The rows of the three ref sections and what they were built from.
+#[derive(Clone)]
+struct Trees {
+    key: (u64, String, u64, Vec<String>),
+    sections: [Section; 3],
+}
+
+/// The rows of a section; `refs` maps the rows' indices to `RepoView::refs`.
+#[derive(Clone, Default)]
+struct Section {
+    refs: Vec<usize>,
+    rows: Vec<Row>,
+    /// Refs matching the filter (all without a filter).
+    matches: usize,
+}
+
+/// The sections, in their order, with what tells them apart.
+const SECTIONS: [(RefKind, &str); 3] = [
+    (RefKind::LocalBranch, "ref-local"),
+    (RefKind::RemoteBranch, "ref-remote"),
+    (RefKind::Tag, "ref-tag"),
+];
+
+/// The left column: a filter, then local branches, remotes with their branches, tags and stashes.
 /// `writing`: a write is in progress, the menu entries that write wait.
 pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
+    let state_id = ui.make_persistent_id("refs-column");
+    let mut state: ColumnState =
+        ui.data_mut(|d| std::mem::take(d.get_temp_mut_or_default(state_id)));
+    filter_box(ui, &mut state.filter);
+    let filter = state.filter.trim().to_lowercase();
+    let remotes: Vec<String> = repo
+        .remotes
+        .list()
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+    let key = (repo.refs_version, filter.clone(), state.toggles, remotes);
+    if state.trees.as_ref().is_none_or(|t| t.key != key) {
+        state.trees = Some(build_trees(repo, &filter, &state.closed, key));
+    }
+    let Some(trees) = state.trees.take() else {
+        return;
+    };
     let current = match &repo.head {
         Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
         Head::Detached(_) => None,
     };
-    let can_write = !writing && !repo.modal_open();
-    let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        let sections = [
-            (RefKind::LocalBranch, tr!("refs-local-branches")),
-            (RefKind::RemoteBranch, tr!("refs-remote-branches")),
-            (RefKind::Tag, tr!("refs-tags")),
-        ];
-        for (kind, title) in sections {
-            // The configured remotes under their branches, before the tags.
-            if kind == RefKind::Tag {
-                remotes_section(ui, repo, can_write, actions);
+    let column = Column {
+        repo,
+        current: current.as_deref(),
+        can_write: !writing && !repo.modal_open(),
+        merge: merge::Gate::new(&repo.head, repo.status.as_ref()),
+        filtering: !filter.is_empty(),
+    };
+    let mut toggled = Vec::new();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let [local, remote, tags] = &trees.sections;
+            if !column.filtering || local.matches > 0 {
+                let title = tr!(
+                    "refs-section",
+                    title = tr!("refs-local-branches"),
+                    n = local.matches
+                );
+                section(
+                    ui,
+                    "ref-local",
+                    icons::BRANCH,
+                    &title,
+                    true,
+                    |_| {},
+                    |ui| {
+                        column.rows(ui, "ref-local", local, &mut toggled, actions);
+                    },
+                );
             }
-            let refs: Vec<&RefInfo> = repo.refs.iter().filter(|r| r.kind == kind).collect();
-            if refs.is_empty() {
-                continue;
+            remotes_section(ui, &column, remote, &mut toggled, actions);
+            if !column.filtering || tags.matches > 0 {
+                let title = tr!("refs-section", title = tr!("refs-tags"), n = tags.matches);
+                section(
+                    ui,
+                    "ref-tag",
+                    icons::TAG,
+                    &title,
+                    false,
+                    |_| {},
+                    |ui| {
+                        column.rows(ui, "ref-tag", tags, &mut toggled, actions);
+                    },
+                );
             }
-            egui::CollapsingHeader::new(tr!("refs-section", title = &title, n = refs.len()))
-                .id_salt(kind_salt(kind))
-                .default_open(kind != RefKind::Tag)
-                .show(ui, |ui| {
-                    for info in refs {
-                        let is_head = current.as_deref() == Some(&info.name);
-                        ref_row(ui, info, is_head, can_write, &merge, actions);
-                    }
-                });
+            if !column.filtering {
+                stash_section(ui, repo, column.can_write, actions);
+            }
+        });
+    state.trees = Some(trees);
+    for key in toggled {
+        if !state.closed.remove(&key) {
+            state.closed.insert(key);
         }
-        stash_section(ui, repo, can_write, actions);
-    });
+        state.toggles += 1;
+    }
+    ui.data_mut(|d| d.insert_temp(state_id, state));
 }
 
-/// `can_write`: the entries that write are enabled (no write in progress, no dialog).
-/// `merge`: in which branch "Merge" would merge, or why it cannot.
-pub(super) fn ref_row(
-    ui: &mut Ui,
-    info: &RefInfo,
-    is_head: bool,
-    can_write: bool,
-    merge: &merge::Gate,
-    actions: &mut Vec<Action>,
-) {
-    // The row id comes from the ref name, not from the position: if the refs are reread between
-    // the two clicks, a double click does not land on another branch.
-    ui.push_id(&info.name, |ui| {
-        ref_row_inner(ui, info, is_head, can_write, merge, actions);
-    });
-}
-
-pub(super) fn ref_row_inner(
-    ui: &mut Ui,
-    info: &RefInfo,
-    is_head: bool,
-    can_write: bool,
-    merge: &merge::Gate,
-    actions: &mut Vec<Action>,
-) {
-    let local = info.kind == RefKind::LocalBranch;
+/// The filter field, with "×" to empty it.
+fn filter_box(ui: &mut Ui, filter: &mut String) {
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        // The current branch is highlighted and bold.
-        let name = RichText::new(info.short_name());
+        ui.label(icons::text(icons::SEARCH, 14.0).weak());
+        let clear = !filter.is_empty();
+        let width = ui.available_width() - if clear { 24.0 } else { 0.0 };
+        let edit = egui::TextEdit::singleline(filter)
+            .hint_text(tr!("refs-filter-hint"))
+            .desired_width(width);
+        let response = ui.add(edit);
+        if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            filter.clear();
+        }
+        if clear
+            && ui
+                .add(egui::Button::new(icons::text(icons::CLOSE, 12.0)).frame(false))
+                .on_hover_text(tr!("refs-filter-clear"))
+                .clicked()
+        {
+            filter.clear();
+        }
+    });
+    ui.add_space(2.0);
+}
+
+fn build_trees(
+    repo: &RepoView,
+    filter: &str,
+    closed: &HashSet<String>,
+    key: (u64, String, u64, Vec<String>),
+) -> Trees {
+    let sections = SECTIONS.map(|(kind, salt)| {
+        let refs: Vec<usize> = (0..repo.refs.len())
+            .filter(|&i| repo.refs[i].kind == kind)
+            .collect();
+        let infos: Vec<&RefInfo> = refs.iter().map(|&i| &repo.refs[i]).collect();
+        let prefix = format!("{salt}:");
+        let closed: HashSet<String> = closed
+            .iter()
+            .filter_map(|c| c.strip_prefix(&prefix).map(str::to_owned))
+            .collect();
+        let roots: Vec<&str> = match kind {
+            RefKind::RemoteBranch => key.3.iter().map(String::as_str).collect(),
+            _ => Vec::new(),
+        };
+        let rows = ref_tree::rows(&infos, &roots, filter, &closed);
+        let matches = if filter.is_empty() {
+            refs.len()
+        } else {
+            rows.iter().filter(|r| matches!(r, Row::Ref { .. })).count()
+        };
+        Section {
+            refs,
+            rows,
+            matches,
+        }
+    });
+    Trees { key, sections }
+}
+
+/// A section of the column: caret, icon, title and on the right what `header_right` adds (a "+");
+/// the body only when open. A click on the header opens or closes it.
+pub(super) fn section(
+    ui: &mut Ui,
+    salt: &str,
+    icon: &str,
+    title: &str,
+    default_open: bool,
+    header_right: impl FnOnce(&mut Ui),
+    body: impl FnOnce(&mut Ui),
+) {
+    let id = ui.make_persistent_id(salt);
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        default_open,
+    );
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), ROW + 4.0), Sense::click());
+    if response.clicked() {
+        state.toggle(ui);
+    }
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    let caret = if state.is_open() {
+        icons::CARET_DOWN
+    } else {
+        icons::CARET_RIGHT
+    };
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(2.0);
+            ui.label(icons::text(caret, 11.0).weak());
+            ui.label(icons::text(icon, 14.0));
+            // The button on the right first: the title takes the rest, cut if needed.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                header_right(ui);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(title).strong())
+                            .truncate()
+                            .selectable(false),
+                    );
+                });
+            });
+        },
+    );
+    state.show_body_unindented(ui, body);
+}
+
+/// The "+" of a section header.
+pub(super) fn add_button(ui: &mut Ui, enabled: bool) -> egui::Response {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(icons::text(icons::PLUS, 13.0)).frame(false),
+    )
+}
+
+/// The indices of the `n` rows of height [`ROW`] starting at `top` that fall in `clip`.
+pub(super) fn visible_rows(n: usize, top: f32, clip: egui::Rangef) -> std::ops::Range<usize> {
+    let first = ((clip.min - top) / ROW).floor().max(0.0) as usize;
+    let last = ((clip.max - top) / ROW).ceil().max(0.0) as usize;
+    first.min(n)..last.min(n)
+}
+
+/// `n` rows of height [`ROW`], drawn by `row` only if in view: the others are empty space.
+pub(super) fn virtual_rows(ui: &mut Ui, n: usize, mut row: impl FnMut(&mut Ui, usize)) {
+    let width = ui.available_width();
+    let (block, _) = ui.allocate_exact_size(vec2(width, n as f32 * ROW), Sense::hover());
+    for i in visible_rows(n, block.top(), ui.clip_rect().y_range()) {
+        let rect = Rect::from_min_size(block.min + vec2(0.0, i as f32 * ROW), vec2(width, ROW));
+        ui.scope_builder(
+            UiBuilder::new()
+                .id_salt(("row", i))
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| row(ui, i),
+        );
+    }
+}
+
+/// What every row of the column needs.
+struct Column<'a> {
+    repo: &'a RepoView,
+    /// The full name of the current branch.
+    current: Option<&'a str>,
+    can_write: bool,
+    merge: merge::Gate,
+    filtering: bool,
+}
+
+impl Column<'_> {
+    /// The rows of a section; the folders clicked end up in `toggled` (`<salt>:<path>`).
+    fn rows(
+        &self,
+        ui: &mut Ui,
+        salt: &str,
+        section: &Section,
+        toggled: &mut Vec<String>,
+        actions: &mut Vec<Action>,
+    ) {
+        if section.rows.is_empty() {
+            ui.weak(tr!("refs-none"));
+            return;
+        }
+        virtual_rows(ui, section.rows.len(), |ui, i| match &section.rows[i] {
+            Row::Folder {
+                depth,
+                path,
+                name,
+                count,
+                open,
+            } => {
+                let remote = (salt == "ref-remote" && *depth == 0)
+                    .then(|| self.repo.remotes.list().unwrap_or_default())
+                    .and_then(|list| list.iter().find(|r| &r.name == name));
+                let clicked = match remote {
+                    Some(remote) => remote_row(ui, remote, *open, *count, self.can_write, actions),
+                    None => folder_row(ui, *depth, path, name, *count, *open),
+                };
+                if clicked && !self.filtering {
+                    toggled.push(format!("{salt}:{path}"));
+                }
+            }
+            Row::Ref { depth, index, leaf } => {
+                let info = &self.repo.refs[section.refs[*index]];
+                self.ref_row(ui, info, *depth, *leaf, actions);
+            }
+        });
+    }
+
+    /// A ref: its icon (a check on the current branch), the last part of the name, ahead/behind.
+    /// Click: shows its commit; double click on a local branch: checkout.
+    fn ref_row(
+        &self,
+        ui: &mut Ui,
+        info: &RefInfo,
+        depth: usize,
+        leaf: usize,
+        actions: &mut Vec<Action>,
+    ) {
+        let is_head = self.current == Some(info.name.as_str());
+        // The id comes from the ref name, not from the position: if the refs are reread between
+        // the two clicks, a double click does not land on another branch.
+        let response = row_response(ui, ui.make_persistent_id(&info.name));
+        indent(ui, depth);
+        ui.add_space(CARET);
+        let icon = match (info.kind, is_head) {
+            (_, true) => icons::text(icons::CHECK, 13.0).color(ui.visuals().hyperlink_color),
+            (RefKind::Tag, _) => icons::text(icons::TAG, 13.0).weak(),
+            _ => icons::text(icons::BRANCH, 13.0).weak(),
+        };
+        ui.label(icon);
+        let name = RichText::new(&info.short_name()[leaf..]);
         let name = if is_head { name.strong() } else { name };
-        let response = ui.selectable_label(is_head, name);
-        if response.double_clicked() && local && !is_head && can_write {
+        ui.add(egui::Label::new(name).truncate().selectable(false));
+        if let Some(upstream) = &info.upstream {
+            upstream_label(ui, upstream);
+        }
+        let local = info.kind == RefKind::LocalBranch;
+        if response.double_clicked() && local && !is_head && self.can_write {
             actions.push(Action::Checkout(info.short_name().to_owned()));
         } else if response.clicked() {
             actions.push(Action::SelectCommit(info.target));
         }
-        if info.kind != RefKind::Stash {
-            response.context_menu(|ui| ref_menu(ui, info, is_head, can_write, merge, actions));
-        }
-        if let Some(upstream) = &info.upstream {
-            upstream_label(ui, upstream);
-        }
-    })
-    .response
-    .on_hover_text(ref_tooltip(info, is_head));
+        let response = response.on_hover_text(ref_tooltip(info, is_head));
+        response.context_menu(|ui| {
+            ref_menu(ui, info, is_head, self.can_write, &self.merge, actions);
+        });
+    }
 }
 
-/// The id of a section header: it does not change with the language or the number of refs.
-fn kind_salt(kind: RefKind) -> &'static str {
-    match kind {
-        RefKind::LocalBranch => "ref-local",
-        RefKind::RemoteBranch => "ref-remote",
-        RefKind::Tag => "ref-tag",
-        RefKind::Stash => "ref-stash",
+/// "Remotes": each remote with its branches under it, "+" to add one.
+fn remotes_section(
+    ui: &mut Ui,
+    column: &Column<'_>,
+    branches: &Section,
+    toggled: &mut Vec<String>,
+    actions: &mut Vec<Action>,
+) {
+    let repo = column.repo;
+    let list = repo.remotes.list();
+    if column.filtering && branches.matches == 0 {
+        return;
     }
+    let title = match list {
+        Some(list) => tr!("remotes-section-count", n = list.len()),
+        None => tr!("remotes-section"),
+    };
+    let add = |ui: &mut Ui| {
+        let button = add_button(ui, column.can_write)
+            .on_hover_text(tr!("remotes-add-button-hint"))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::AddRemote);
+        }
+    };
+    let mut body_actions = Vec::new();
+    section(ui, "ref-remote", icons::CLOUD, &title, true, add, |ui| {
+        match list {
+            Some([]) if branches.rows.is_empty() => {
+                ui.weak(tr!("remotes-none"));
+            }
+            None if repo.remotes.list_error().is_none() => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.weak(tr!("remotes-loading"));
+                });
+            }
+            _ => {}
+        }
+        if let Some(error) = repo.remotes.list_error() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(tr!("remotes-list-error", error = error))
+                        .color(ui.visuals().error_fg_color)
+                        .small(),
+                )
+                .wrap(),
+            );
+        }
+        if !branches.rows.is_empty() {
+            column.rows(ui, "ref-remote", branches, toggled, &mut body_actions);
+        }
+    });
+    actions.extend(body_actions);
+}
+
+/// The click area of a whole row, lit under the mouse.
+pub(super) fn row_response(ui: &mut Ui, id: egui::Id) -> egui::Response {
+    let rect = ui.max_rect();
+    let response = ui.interact(rect, id, Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    response
+}
+
+fn indent(ui: &mut Ui, depth: usize) {
+    ui.add_space(6.0 + depth as f32 * INDENT);
+}
+
+/// The caret of an open or closed folder.
+pub(super) fn caret(ui: &mut Ui, open: bool) {
+    let icon = if open {
+        icons::CARET_DOWN
+    } else {
+        icons::CARET_RIGHT
+    };
+    ui.add_sized(
+        vec2(CARET, ROW),
+        egui::Label::new(icons::text(icon, 10.0).weak()).selectable(false),
+    );
+}
+
+/// A folder (`feature` of `feature/login`): caret, icon, name and how many refs it holds. Returns
+/// whether it was clicked (to open or close it).
+fn folder_row(ui: &mut Ui, depth: usize, path: &str, name: &str, count: usize, open: bool) -> bool {
+    let response = row_response(ui, ui.make_persistent_id(("folder", path)));
+    indent(ui, depth);
+    caret(ui, open);
+    ui.label(icons::text(icons::FOLDER, 13.0).weak());
+    ui.add(egui::Label::new(name).truncate().selectable(false));
+    ui.label(RichText::new(count.to_string()).small().weak());
+    response.clicked()
 }
 
 pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
@@ -275,5 +648,22 @@ pub(super) fn merge_items(
             });
             ui.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_rows_in_view_are_drawn() {
+        let clip = |min: f32, max: f32| egui::Rangef::new(min, max);
+        // 100 rows from y = 50: the view 50..150 holds the first five.
+        assert_eq!(visible_rows(100, 50.0, clip(50.0, 150.0)), 0..5);
+        // Scrolled: from row 10, a partial row at the bottom included.
+        assert_eq!(visible_rows(100, 50.0, clip(250.0, 355.0)), 10..16);
+        // Past the end, or above the start.
+        assert_eq!(visible_rows(3, 50.0, clip(0.0, 1000.0)), 0..3);
+        assert_eq!(visible_rows(100, 500.0, clip(0.0, 100.0)), 0..0);
     }
 }

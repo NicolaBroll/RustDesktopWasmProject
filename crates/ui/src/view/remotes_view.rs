@@ -1,96 +1,47 @@
 use super::*;
 
-/// The "Remotes" section: the configured remotes (`remote.list`), with fetch and removal for
-/// each one, and "Add remote...".
-pub(super) fn remotes_section(
+/// A remote, at the top of its branches in the "Remotes" section: caret, name (in the warning
+/// color if its URL holds credentials), labels, how many branches, and "…" with its menu. The URL
+/// is in the tooltip. Returns whether it was clicked (to open or close its branches).
+pub(super) fn remote_row(
     ui: &mut Ui,
-    repo: &RepoView,
+    remote: &Remote,
+    open: bool,
+    count: usize,
     can_write: bool,
     actions: &mut Vec<Action>,
-) {
-    let list = repo.remotes.list();
-    let title = match list {
-        Some(list) => tr!("remotes-section-count", n = list.len()),
-        None => tr!("remotes-section"),
-    };
-    egui::CollapsingHeader::new(title)
-        .id_salt("remotes-section")
-        .default_open(true)
-        .show(ui, |ui| {
-            match list {
-                Some([]) => {
-                    ui.weak(tr!("remotes-none"));
-                }
-                Some(list) => {
-                    for remote in list {
-                        ui.push_id(("remote", &remote.name), |ui| {
-                            remote_row(ui, remote, can_write, actions);
-                        });
-                    }
-                }
-                None if repo.remotes.list_error().is_none() => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak(tr!("remotes-loading"));
-                    });
-                }
-                None => {}
-            }
-            if let Some(error) = repo.remotes.list_error() {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(tr!("remotes-list-error", error = error))
-                            .color(ui.visuals().error_fg_color)
-                            .small(),
-                    )
-                    .wrap(),
-                );
-            }
-            let button = ui
-                .add_enabled(can_write, egui::Button::new(tr!("remotes-add-button")))
-                .on_hover_text(tr!("remotes-add-button-hint"))
-                .on_disabled_hover_text(wait());
-            if button.clicked() {
-                actions.push(Action::AddRemote);
-            }
-        });
-}
-
-/// A row of the "Remotes" section: name, labels, how many branches, URL (masked by the
-/// engine) and the menu with fetch and removal.
-pub(super) fn remote_row(ui: &mut Ui, remote: &Remote, can_write: bool, actions: &mut Vec<Action>) {
+) -> bool {
     let tooltip = remote.tooltip();
-    ui.horizontal(|ui| {
-        let name = ui
-            .add(egui::Label::new(RichText::new(&remote.name).strong()).sense(Sense::click()))
-            .on_hover_text(tr!("remotes-row-hint", tooltip = &tooltip));
-        name.context_menu(|ui| remote_menu(ui, remote, can_write, actions));
-        for (badge, hint) in remote.badges() {
-            let text = RichText::new(badge)
-                .small()
-                .color(ui.visuals().strong_text_color())
-                .background_color(ui.visuals().selection.bg_fill.gamma_multiply(0.6));
-            ui.label(text).on_hover_text(hint);
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.menu_button("…", |ui| remote_menu(ui, remote, can_write, actions))
-                .response
-                .on_hover_text(tr!("remotes-menu-hint"));
-        });
+    let response = row_response(ui, ui.make_persistent_id(("remote", &remote.name)));
+    ui.add_space(6.0);
+    caret(ui, open);
+    ui.label(icons::text(icons::CLOUD, 13.0).weak());
+    let name = RichText::new(&remote.name).strong();
+    let name = if remote.credentials {
+        name.color(ui.visuals().warn_fg_color)
+    } else {
+        name
+    };
+    ui.add(egui::Label::new(name).truncate().selectable(false));
+    for (badge, hint) in remote.badges() {
+        let text = RichText::new(badge)
+            .small()
+            .color(ui.visuals().strong_text_color())
+            .background_color(ui.visuals().selection.bg_fill.gamma_multiply(0.6));
+        ui.label(text).on_hover_text(hint);
+    }
+    ui.label(RichText::new(count.to_string()).small().weak());
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let more = egui::Button::new(icons::text(icons::MORE, 14.0)).frame(false);
+        egui::containers::menu::MenuButton::from_button(more)
+            .ui(ui, |ui| remote_menu(ui, remote, can_write, actions))
+            .0
+            .on_hover_text(tr!("remotes-menu-hint"));
     });
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(remote.branches_text()).small().weak());
-        ui.label(RichText::new("·").small().weak());
-        let url = RichText::new(remote.url_text()).small().weak();
-        let url = if remote.credentials {
-            url.color(ui.visuals().warn_fg_color)
-        } else {
-            url
-        };
-        ui.add(egui::Label::new(url).truncate())
-            .on_hover_text(tooltip);
-    });
-    ui.add_space(2.0);
+    let clicked = response.clicked();
+    let response = response.on_hover_text(tr!("remotes-row-hint", tooltip = &tooltip));
+    response.context_menu(|ui| remote_menu(ui, remote, can_write, actions));
+    clicked
 }
 
 /// The menu of a remote: fetch and removal.

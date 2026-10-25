@@ -1,7 +1,6 @@
 # Refs column and ref menu (view/refs.rs).
 
 refs-local-branches = Branch locali
-refs-remote-branches = Branch remoti
 refs-tags = Tag
 refs-section = { $title } ({ $n })
 refs-tooltip-head =
@@ -46,3 +45,6 @@ refs-merge-item = Unisci in «{ $into }»
 refs-merge-hint = Unisce «{ $what }» in «{ $into }»: fast-forward se «{ $into }» non ha commit propri, altrimenti un commit di merge. Con conflitti il merge resta in corso (si risolve o si annulla dal riquadro in alto). «Annulla» annulla un merge concluso
 refs-merge-no-ff-item = Unisci in «{ $into }» con commit di merge
 refs-merge-no-ff-hint = Unisce «{ $what }» in «{ $into }» sempre con un commit di merge, anche dove basterebbe il fast-forward (--no-ff)
+refs-filter-hint = Filtra branch e tag
+refs-filter-clear = Svuota il filtro (Esc)
+refs-none = Nessuno

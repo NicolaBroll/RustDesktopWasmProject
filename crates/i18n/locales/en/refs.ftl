@@ -1,7 +1,6 @@
 # Refs column and ref menu (view/refs.rs).
 
 refs-local-branches = Local branches
-refs-remote-branches = Remote branches
 refs-tags = Tags
 refs-section = { $title } ({ $n })
 refs-tooltip-head =
@@ -46,3 +45,6 @@ refs-merge-item = Merge into “{ $into }”
 refs-merge-hint = Merges “{ $what }” into “{ $into }”: fast-forward if “{ $into }” has no commits of its own, otherwise a merge commit. With conflicts the merge stays in progress (resolve or abort it from the panel at the top). “Undo” undoes a completed merge
 refs-merge-no-ff-item = Merge into “{ $into }” with a merge commit
 refs-merge-no-ff-hint = Merges “{ $what }” into “{ $into }” always with a merge commit, even where a fast-forward would do (--no-ff)
+refs-filter-hint = Filter branches and tags
+refs-filter-clear = Clear the filter (Esc)
+refs-none = None

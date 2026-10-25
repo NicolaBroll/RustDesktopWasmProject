@@ -497,7 +497,11 @@ GitKraken-like layout:
   buttons with the name underneath at the center (undo/redo, fetch/pull/push, stash, refresh;
   icons from a subset of Phosphor, `crates/ui/assets/icons.ttf`, rebuilt by
   `scripts/icon-font.py`), changed files and the network job in progress.
-- **Left column**: local branches, remotes, tags, stashes ([git/stash.md](git/stash.md)).
+- **Left column** (`view/refs.rs`, tree in `ref_tree.rs`): a filter, then local branches, remotes
+  (each remote heads its branches), tags and stashes ([git/stash.md](git/stash.md)). Names split
+  on `/` become folders; the rows are all the same height and only those in view are drawn, the
+  tree is rebuilt only when refs, remotes, filter or folders change (thousands of refs stay
+  fluid). The current branch has a check; "+" in the headers adds a remote or a stash.
 - **Center**: commit graph and list, with an "uncommitted changes" row at the top. Virtualized
   list (`ScrollArea::show_rows`): only visible rows are drawn, the log loads
   in pages while scrolling.

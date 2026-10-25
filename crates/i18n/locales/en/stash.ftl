@@ -44,7 +44,6 @@ stash-section-title-loading = Stashes
 stash-none = No stashes
 stash-loading = Reading stashes…
 stash-list-error = Stashes not read: { $error }
-stash-new-button = New stash…
 stash-push-help = Sets the changes aside (staged and unstaged; optionally untracked files too) and restores the files to the last commit. “Undo” brings them back
 stash-no-changes = No changes to stash
 stash-origin-untracked = { $origin } · with untracked

@@ -14,56 +14,67 @@ pub(super) fn stash_section(
         Some(list) => tr!("stash-section-title", n = list.len()),
         None => tr!("stash-section-title-loading"),
     };
-    egui::CollapsingHeader::new(title)
-        .id_salt("stash-section")
-        .default_open(true)
-        .show(ui, |ui| {
-            match list {
-                Some([]) => {
-                    ui.weak(tr!("stash-none"));
-                }
-                Some(list) => {
-                    let selected = repo.stash.selected().map(|s| s.id);
-                    let restore_index = repo.stash.restore_index;
-                    for stash in list {
-                        ui.push_id(("stash", stash.id), |ui| {
-                            let row = StashRow {
-                                stash,
-                                selected: selected == Some(stash.id),
-                                can_write,
-                                restore_index,
-                                pop_blocked: repo.stash.pop_blocked(stash.id),
-                            };
-                            stash_row(ui, &row, actions);
-                        });
-                    }
-                }
-                None if repo.stash.list_error().is_none() => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak(tr!("stash-loading"));
-                    });
-                }
-                None => {}
+    let mut body_actions = Vec::new();
+    let add = |ui: &mut Ui| stash_push_button(ui, repo, can_write, add_button_widget(), actions);
+    section(ui, "stash-section", icons::STASH, &title, true, add, |ui| {
+        // Under the header's title, as the refs.
+        let margin = egui::Margin {
+            left: 20,
+            ..egui::Margin::ZERO
+        };
+        egui::Frame::new()
+            .inner_margin(margin)
+            .show(ui, |ui| stash_rows(ui, repo, can_write, &mut body_actions));
+    });
+    actions.extend(body_actions);
+}
+
+/// The stashes, or why there are none.
+fn stash_rows(ui: &mut Ui, repo: &RepoView, can_write: bool, actions: &mut Vec<Action>) {
+    let list = repo.stash.list();
+    match list {
+        Some([]) => {
+            ui.weak(tr!("stash-none"));
+        }
+        Some(list) => {
+            let selected = repo.stash.selected().map(|s| s.id);
+            let restore_index = repo.stash.restore_index;
+            for stash in list {
+                ui.push_id(("stash", stash.id), |ui| {
+                    let row = StashRow {
+                        stash,
+                        selected: selected == Some(stash.id),
+                        can_write,
+                        restore_index,
+                        pop_blocked: repo.stash.pop_blocked(stash.id),
+                    };
+                    stash_row(ui, &row, actions);
+                });
             }
-            if let Some(error) = repo.stash.list_error() {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(tr!("stash-list-error", error = error))
-                            .color(ui.visuals().error_fg_color)
-                            .small(),
-                    )
-                    .wrap(),
-                );
-            }
-            stash_push_button(
-                ui,
-                repo,
-                can_write,
-                egui::Button::new(tr!("stash-new-button")),
-                actions,
-            );
-        });
+        }
+        None if repo.stash.list_error().is_none() => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak(tr!("stash-loading"));
+            });
+        }
+        None => {}
+    }
+    if let Some(error) = repo.stash.list_error() {
+        ui.add(
+            egui::Label::new(
+                RichText::new(tr!("stash-list-error", error = error))
+                    .color(ui.visuals().error_fg_color)
+                    .small(),
+            )
+            .wrap(),
+        );
+    }
+}
+
+/// The "+" of the section, as a widget for [`stash_push_button`].
+fn add_button_widget() -> egui::Button<'static> {
+    egui::Button::new(icons::text(icons::PLUS, 13.0)).frame(false)
 }
 
 /// The button that opens the "Stash" dialog: enabled if there are changes and no write in progress.

@@ -15,6 +15,16 @@ pub(crate) const CLOSE_HOVER: Color32 = Color32::from_rgb(0xc4, 0x2b, 0x1c);
 pub(crate) const MERGE: Color32 = Color32::from_rgb(0x9b, 0x6b, 0xdf);
 
 /// Badge color of a change type.
+/// Background of the commit rows that match the search (S48): a warm tint, lighter than the
+/// selection.
+pub(crate) fn search_match(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgba_unmultiplied(0xf5, 0xc5, 0x18, 48)
+    } else {
+        Color32::from_rgba_unmultiplied(0xf5, 0xc5, 0x18, 90)
+    }
+}
+
 pub(crate) fn change(change: Change) -> Color32 {
     match change {
         Change::Added => Color32::from_rgb(0x3f, 0xb9, 0x50),

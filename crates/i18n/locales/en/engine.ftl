@@ -45,6 +45,9 @@ engine-lines-empty = `lines` is empty: give at least one changed line of the dif
 engine-paths-empty = `paths` is empty: give at least one path
 engine-log-stashes-without-all = `stashes` adds the stash bases to the graph of all refs: it goes together with `"all": true`
 engine-log-rev-and-all = `rev` and `all` are alternatives: `all` already starts from all branches, tags and HEAD
+engine-search-empty = the text to search for is empty
+engine-search-line = the text to search for must be on a single line
+engine-search-no-fields = `in` is empty: give at least one of "message", "author", "id" (or omit it for all three)
 engine-memory-repos = in-memory repos available: { $repos }
 engine-memory-no-repo = no in-memory repo
 # Branch names (`git/branch.rs`).

@@ -550,7 +550,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   local deletion) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
 
 ### S48 — Search in the history
-- [ ] **Agent:** `git-engine`, then `egui-ui`
+- [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** `repo.search {"query", "in"?: ["message", "author", "id"], "path"?, "all"?, "skip"?,
   "limit"?}` (read-only, in [git/reading.md](git/reading.md)) returns the ids of the matching
   commits in the same `--date-order` as `repo.log`, so the graph stays whole: the search

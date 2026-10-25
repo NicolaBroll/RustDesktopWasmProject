@@ -452,7 +452,7 @@ impl eframe::App for App {
         for action in actions.into_iter().chain(strip) {
             self.apply(&ctx, action);
         }
-        self.tabs[self.active].after_actions();
+        self.tabs[self.active].after_actions(&ctx);
         view::window_edges(&ctx, self.frame);
         self.persist(frame.storage_mut());
     }

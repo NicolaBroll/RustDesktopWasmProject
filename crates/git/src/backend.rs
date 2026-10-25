@@ -14,6 +14,7 @@ mod remote;
 mod remote_admin;
 mod reset;
 mod restore;
+mod search;
 mod stash;
 mod sync;
 mod tag;
@@ -36,9 +37,9 @@ use project_engine::{
     LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
     OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
     PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
-    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
-    StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed, UpstreamConfig,
-    WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
+    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
     versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -973,6 +974,41 @@ fn sequencer_operation(todo: &[u8]) -> Operation {
     }
 }
 
+impl CliBackend {
+    /// The revisions `git log` starts from for `query` (`repo.log`): `--branches --remotes
+    /// --tags` with `all`, then `--end-of-options` and the ids (HEAD, `rev`, the stash bases);
+    /// `None` if the log is empty (HEAD without commits and no `all`). Unaffected by
+    /// `skip`/`limit`.
+    pub(crate) fn log_range(&self, query: &LogQuery) -> Result<Option<Vec<String>>, EngineError> {
+        query.check()?;
+        let start = match &query.rev {
+            Some(rev) => Some(
+                self.resolve(rev)?
+                    .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?,
+            ),
+            // Branch with no commits: empty log (with `all` the other refs remain).
+            None => self.resolve("HEAD")?,
+        };
+        if start.is_none() && !query.all {
+            return Ok(None);
+        }
+        let mut range = Vec::new();
+        if query.all {
+            // Only these namespaces: `refs/stash`, the backups in `refs/project/` and notes stay
+            // out. With no refs the log is empty (git does not fall back to HEAD).
+            range.extend(["--branches", "--remotes", "--tags"].map(String::from));
+        }
+        // HEAD as an id, so a detached HEAD also appears with `all`.
+        range.push("--end-of-options".to_owned());
+        range.extend(start.map(|oid| oid.to_string()));
+        // With `stashes` also the stash bases (not the stashes themselves).
+        if query.stashes {
+            range.extend(self.stash_entries()?.iter().map(|s| s.base.to_string()));
+        }
+        Ok(Some(range))
+    }
+}
+
 impl GitBackend for CliBackend {
     fn head(&self) -> Result<Head, EngineError> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
@@ -1003,30 +1039,14 @@ impl GitBackend for CliBackend {
     }
 
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError> {
-        query.check()?;
-        let start = match &query.rev {
-            Some(rev) => Some(
-                self.resolve(rev)?
-                    .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?,
-            ),
-            // Branch with no commits: empty log (with `all` the other refs remain).
-            None => self.resolve("HEAD")?,
+        let Some(range) = self.log_range(query)? else {
+            return Ok(Vec::new());
         };
-        if query.limit == Some(0) || (start.is_none() && !query.all) {
+        if query.limit == Some(0) {
             return Ok(Vec::new());
         }
-        // With `stashes` also the stash bases (not the stashes themselves).
-        let bases: Vec<String> = if query.stashes {
-            self.stash_entries()?
-                .iter()
-                .map(|s| s.base.to_string())
-                .collect()
-        } else {
-            Vec::new()
-        };
         let skip = format!("--skip={}", query.skip);
         let max_count = query.limit.map(|n| format!("--max-count={n}"));
-        let start = start.map(|oid| oid.to_string());
 
         let mut args = vec!["log"];
         args.extend_from_slice(LOG_ARGS);
@@ -1034,17 +1054,13 @@ impl GitBackend for CliBackend {
         // with multiple starting points.
         args.extend(["--date-order", &skip]);
         args.extend(max_count.as_deref());
-        if query.all {
-            // Only these namespaces: `refs/stash`, the backups in `refs/project/` and notes stay
-            // out. With no refs the log is empty (git does not fall back to HEAD).
-            args.extend(["--branches", "--remotes", "--tags"]);
-        }
-        // HEAD as an id, so a detached HEAD also appears with `all`.
-        args.push("--end-of-options");
-        args.extend(start.as_deref());
-        args.extend(bases.iter().map(String::as_str));
+        args.extend(range.iter().map(String::as_str));
         args.push("--");
         Ok(parse_log(&self.run(&args)?)?)
+    }
+
+    fn search(&self, query: &SearchQuery, job: &JobContext) -> Result<Vec<Oid>, EngineError> {
+        self.search_log(query, job)
     }
 
     fn status(&self) -> Result<Status, EngineError> {

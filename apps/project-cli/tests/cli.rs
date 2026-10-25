@@ -484,6 +484,7 @@ fn commands_lists_the_catalog() {
             "repo.operation",
             "repo.optimize",
             "repo.refs",
+            "repo.search",
             "repo.status",
             "revert.abort",
             "revert.continue",

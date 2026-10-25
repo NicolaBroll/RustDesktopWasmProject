@@ -43,7 +43,10 @@ the folder it created; not available over MCP),
 (pages of 200 commits if `limit` is missing, with `has_more`; from HEAD, from `rev`, or with
 `"all": true` from all local and remote branches, tags and HEAD, without stashes or backups, and with
 `"stashes": true` in addition also from the commits the stashes were created on; `rev` and
-`all` together, or `stashes` without `all`, are an error), `commit.show {"id"}` (metadata and files
+`all` together, or `stashes` without `all`, are an error), `repo.search {"query", "in"?, "path"?,
+"all"?, "stashes"?, "skip"?, "limit"?}` (ids of the commits whose message, author name or email, or id
+prefix contain the text, literal and case-insensitive, in the order of `repo.log`; `in` limits to
+`"message"`, `"author"`, `"id"`; result `{"ids", "total", "has_more"}`), `commit.show {"id"}` (metadata and files
 changed relative to the first parent), `diff.worktree {"path"?}` (unstaged changes),
 `diff.index {"path"?}` (staged changes) and `diff.commit {"id", "path"?}` (commit relative to its
 first parent). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and

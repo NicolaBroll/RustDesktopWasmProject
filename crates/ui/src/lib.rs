@@ -37,6 +37,7 @@ mod ref_tree;
 mod refresh;
 mod remotes;
 mod reset;
+mod search;
 mod stage;
 mod stash;
 mod sync;
@@ -370,6 +371,16 @@ enum Action {
     FileRetry,
     /// Shows the diff of entry `n` of the history.
     FileSelect(usize),
+    /// Ctrl+F: opens the search bar above the list and focuses its field.
+    SearchOpen,
+    /// The text of the search field, typed at that time (seconds of `egui::InputState::time`).
+    SearchText(String, f64),
+    /// Selects the next match (button or Enter).
+    SearchNext,
+    /// Selects the previous match (button or Shift+Enter).
+    SearchPrevious,
+    /// Escape: closes the search bar and removes the highlight.
+    SearchClose,
 }
 
 /// A step of dragging over the diff rows.
@@ -455,6 +466,8 @@ enum Request {
     Reset(u64),
     /// `file.blame`/`file.log` with the request number of [`file::FileBox`].
     File(u64, u64),
+    /// `repo.search` with the request number of [`search::SearchBox`].
+    Search(u64, u64),
 }
 
 /// The repo shown and the data read so far.
@@ -510,6 +523,8 @@ struct RepoView {
     conflict: ConflictBox,
     /// Blame and history of a file, in place of the graph when open.
     file: file::FileBox,
+    /// The search in the history: field, matches, next/previous.
+    search: search::SearchBox,
     /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
     /// What Undo and Redo would do.
@@ -555,6 +570,7 @@ impl RepoView {
             reset: reset::ResetBox::default(),
             conflict: ConflictBox::default(),
             file: file::FileBox::default(),
+            search: search::SearchBox::default(),
             status_seq: 0,
             history: History::default(),
             select_after_load,
@@ -865,6 +881,9 @@ impl Tab {
                 }
             }
             Action::Visible(end) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.search_visible(end);
+                }
                 if let Some(request) = self.repo.as_mut().and_then(|r| r.list.next_page(end)) {
                     self.request_page(request);
                 }
@@ -977,6 +996,11 @@ impl Tab {
             | Action::FileMore
             | Action::FileRetry
             | Action::FileSelect(..) => self.apply_file(action),
+            Action::SearchOpen
+            | Action::SearchText(..)
+            | Action::SearchNext
+            | Action::SearchPrevious
+            | Action::SearchClose => self.apply_search(action),
         }
     }
 
@@ -1109,7 +1133,19 @@ impl Tab {
             return;
         };
         // With the confirmation open the keys go only to it.
-        if ctx.egui_wants_keyboard_input() || repo.modal_open() {
+        if repo.modal_open() {
+            return;
+        }
+        let list_in_view = repo.conflict.editor().is_none()
+            && repo.file.view().is_none()
+            && repo.diff.target().is_none();
+        // Ctrl+F also from another field (e.g. the commit message): the search field takes the keyboard.
+        let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
+        if list_in_view && ctx.input_mut(|i| i.consume_shortcut(&find)) {
+            actions.push(Action::SearchOpen);
+            return;
+        }
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
         // With the conflict editor open the list is not in view.
@@ -1137,6 +1173,10 @@ impl Tab {
                 }
             }
             return;
+        }
+        // Esc with the search open (the field without the keyboard) closes it.
+        if repo.search.is_open() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            actions.push(Action::SearchClose);
         }
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
@@ -1396,6 +1436,11 @@ impl Tab {
                 self.receive_file(generation, seq, done);
                 continue;
             }
+            // The search shows its errors in its bar.
+            if let Request::Search(generation, seq) = request {
+                self.receive_search(generation, seq, done);
+                continue;
+            }
             // The diff too: errors in its view, old answers discarded.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1487,6 +1532,10 @@ impl Tab {
                     if !repo.list.receive(page, commits, has_more) {
                         return Ok(());
                     }
+                    // The order of the list may have changed: the ids of the search too.
+                    if page.skip == 0 {
+                        repo.search.refresh();
+                    }
                     if page.skip == 0
                         && let Some(id) = repo.select_after_load.take()
                         && !repo.worktree_selected
@@ -1535,7 +1584,8 @@ impl Tab {
             | Request::Reset(..)
             | Request::ConflictShow(..)
             | Request::ConflictResolve(..)
-            | Request::File(..) => {}
+            | Request::File(..)
+            | Request::Search(..) => {}
         }
         Ok(())
     }
@@ -1596,6 +1646,7 @@ impl Tab {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
+        let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
         // lent to the panel for this frame and then put back.
@@ -1767,7 +1818,9 @@ impl Tab {
                             view::file_view(ui, file, repo.diff.pane(), can_write, &mut actions);
                         }
                     }
-                    Pane::Closed => view::commit_list(ui, repo, viewport, writing, &mut actions),
+                    Pane::Closed => {
+                        view::commit_list(ui, repo, viewport, writing, focus_search, &mut actions)
+                    }
                     pane => {
                         let lines = diff_view::LinesUi {
                             selection: repo.diff.selection(),
@@ -1797,10 +1850,11 @@ impl Tab {
 
     /// After the actions of the frame: the selection just changed is requested in this same
     /// frame.
-    fn after_actions(&mut self) {
+    fn after_actions(&mut self, ctx: &egui::Context) {
         self.close_stale_diff();
         self.request_details();
         self.request_file();
+        self.request_search(ctx);
     }
 }
 

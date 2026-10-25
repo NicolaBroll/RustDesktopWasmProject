@@ -12,6 +12,7 @@ use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
 use crate::merge;
 use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, Remote, RemoveDialog};
+use crate::search::{SearchBox, State as SearchState};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
 use crate::sync::{self, Window};

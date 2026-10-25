@@ -38,6 +38,9 @@ cargo run -p project-cli -- --repo . run --cmd 'remote.pull={"branch":"main","st
 # push of the active branch (remote: pushRemote/pushDefault/upstream/origin; first push: sets the upstream);
 # force only with lease and, if the remote would lose commits, "confirm":true with "expected" (the id shown by the confirmation)
 cargo run -p project-cli -- --repo . run --cmd remote.push --cmd 'remote.push={"force":true,"confirm":true,"expected":"<id from the confirmation>"}'
+# delete a branch from the remote: first without confirm (the engine says what disappears and gives the id), then with "expected"
+cargo run -p project-cli -- --repo . run --cmd 'remote.delete_branch={"remote":"origin","branch":"old-feature"}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.delete_branch={"remote":"origin","branch":"old-feature","confirm":true,"expected":"<id from the confirmation>"}'
 # remotes: list (credentials in URLs masked), add (with fetch), remove ("confirm":true) and undo
 cargo run -p project-cli -- --repo . run --cmd remote.list
 cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo

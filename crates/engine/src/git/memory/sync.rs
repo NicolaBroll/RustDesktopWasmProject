@@ -14,8 +14,8 @@ use super::commit::{Tree, tree_changes};
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES, RefEntry};
 use crate::git::{
     BACKUP_PREFIX, LogQuery, PullMode, PullOutcome, PullRequest, PullSettings, PushKind,
-    PushOutcome, PushRejection, PushRequest, RebaseRecord, RefRestore, RestoreOutcome,
-    UpstreamConfig, check_pull_state, short,
+    PushOutcome, PushRejection, PushRequest, RebaseRecord, RefRestore, RemoteBranchDelete,
+    RemoteBranchDeleted, RestoreOutcome, UpstreamConfig, check_pull_state, short,
 };
 use crate::{EngineError, FetchFailure, GitBackend, JobContext, Progress};
 use project_domain::{Commit, Oid, Signature};
@@ -500,6 +500,74 @@ impl MemoryBackend {
             summary,
             messages,
             backup,
+        })
+    }
+
+    /// [`GitBackend::delete_remote_branch`]: with the same lease as the `CliBackend` (a branch
+    /// moved or already gone on the remote → `stale info`), the backup first and the local
+    /// remote-tracking branch removed after.
+    pub(super) fn delete_branch_on_remote(
+        &mut self,
+        request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        let remote = self.remotes.get(&request.remote).ok_or_else(|| {
+            EngineError::NotAllowed(msg!("engine-remote-missing", remote = request.remote))
+        })?;
+        match &remote.failure {
+            Some(FetchFailure::Auth(message)) => {
+                return Err(EngineError::Auth {
+                    remote: request.remote.clone(),
+                    message: message.clone(),
+                });
+            }
+            Some(FetchFailure::Unreachable(message)) => {
+                return Err(EngineError::RemoteUnreachable {
+                    remote: request.remote.clone(),
+                    message: message.clone(),
+                });
+            }
+            None => {}
+        }
+        let reject = |reason, message: &str| EngineError::PushRejected {
+            remote: request.remote.clone(),
+            branch: request.branch.clone(),
+            reason,
+            message: message.to_owned(),
+        };
+        if let Some(message) = &self.pre_push_failure {
+            return Err(reject(PushRejection::Hook, message));
+        }
+        if job.is_cancelled() {
+            return Err(EngineError::Cancelled {
+                command: "remote.delete_branch",
+            });
+        }
+        if remote.branches.get(&request.branch) != Some(&request.expected) {
+            return Err(reject(PushRejection::StaleLease, "[rejected] (stale info)"));
+        }
+        let url = remote.url.clone();
+        let prefix = format!("{BACKUP_PREFIX}push-delete-");
+        let n = self
+            .commit_backups
+            .iter()
+            .filter(|(b, _)| b.starts_with(&prefix))
+            .count()
+            + 1;
+        let backup = format!("{prefix}{n}");
+        self.commit_backups.push((backup.clone(), request.expected));
+        self.remotes
+            .get_mut(&request.remote)
+            .expect("checked above")
+            .branches
+            .remove(&request.branch);
+        self.refs
+            .remove(&format!("{REMOTES}{}/{}", request.remote, request.branch));
+        Ok(RemoteBranchDeleted {
+            summary: "[deleted]".to_owned(),
+            messages: vec![format!("To {url}")],
+            backup,
+            incomplete: false,
         })
     }
 }

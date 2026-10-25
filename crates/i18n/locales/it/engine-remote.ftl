@@ -69,3 +69,22 @@ engine-remote-push-default-taken = `remote.pushDefault` ha già un altro valore:
 engine-remote-memory-no-merge = upstream di `{ $branch }` senza `merge`: non riscritto nel repo in memoria
 engine-remote-fetch-unexpected-ref = il fetch ha cambiato `{ $name }` (da { $before } a { $after }) per un refspec configurato in `remote.<nome>.fetch`: il valore di prima è nel reflog del ref
 engine-remote-url-credentials = l'URL contiene credenziali: git le ha salvate in chiaro nella configurazione del repo (`remote.{ $name }.url`); meglio un credential helper
+# `remote.delete_branch` (`builtin/remote_branch.rs`, backend).
+engine-remote-branch-confirm = elimina `{ $branch }` dal remoto `{ $remote }`, per tutti quelli che lo usano (`{ $tracking }` = { $theirs }){ $only }{ $upstreams }. Prima il commit si salva in `refs/project/backup/push-delete-...`; con `--force-with-lease`, se nel frattempo il branch si è spostato sul remoto l'eliminazione è rifiutata; per confermare: "confirm": true, "expected": "{ $theirs }"
+engine-remote-branch-moved = `{ $tracking }` si è spostato da quando è stato visto (atteso { $expected }, ora { $now }): l'eliminazione non è più quella confermata{ $only }{ $upstreams }; per confermare: "confirm": true, "expected": "{ $now }"
+engine-remote-branch-only-none = ; i suoi commit sono anche in altri branch o tag qui
+engine-remote-branch-only = ; { $n ->
+    [one] 1 commit non è
+   *[other] { $n } commit non sono
+} in nessun altro branch o tag qui ({ $commits }): { $n ->
+    [one] lo terrà
+   *[other] li terrà
+} solo il backup
+engine-remote-branch-upstream-of = ; è l'upstream { $n ->
+    [one] del branch locale
+   *[other] dei branch locali
+} { $branches } (l'upstream resta configurato, mostrato come sparito)
+engine-remote-branch-mirror = il remoto `{ $remote }` è un mirror (`remote.{ $remote }.mirror=true`): niente eliminato; usare git da terminale per il mirror
+engine-remote-branch-no-tracking = nessun refspec di fetch del remoto `{ $remote }` porta `refs/heads/{ $branch }` in un branch remoto locale: niente eliminato (non si conoscerebbe il commit da confermare e salvare)
+engine-remote-branch-unknown = `{ $tracking }` non esiste qui: fare `remote.fetch` di `{ $remote }` e riprovare; niente eliminato
+engine-remote-branch-incomplete = `{ $branch }` è stato eliminato solo da alcuni URL di push di `{ $remote }` (o git ha fallito dopo): potrebbe essere ancora sul remoto, vedere i messaggi di git. Il commit è in `{ $backup }`

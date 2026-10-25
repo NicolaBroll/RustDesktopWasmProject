@@ -9,6 +9,7 @@ mod pull;
 mod push;
 mod rebase;
 mod remote;
+mod remote_branch;
 mod remotes;
 mod stash;
 
@@ -181,6 +182,12 @@ impl Registry {
             push::remote_push,
         );
         add(
+            "remote.delete_branch",
+            "Delete a branch from the remote",
+            r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
+            remote_branch::remote_delete_branch,
+        );
+        add(
             "remote.list",
             "Configured remotes",
             "{}",
@@ -345,6 +352,7 @@ const WRITES: &[&str] = &[
     "rebase.continue",
     "rebase.start",
     "remote.add",
+    "remote.delete_branch",
     "remote.fetch",
     "remote.pull",
     "remote.push",
@@ -882,6 +890,7 @@ mod tests {
                 "rebase.plan",
                 "rebase.start",
                 "remote.add",
+                "remote.delete_branch",
                 "remote.fetch",
                 "remote.list",
                 "remote.pull",
@@ -932,6 +941,7 @@ mod tests {
                 "rebase.continue",
                 "rebase.start",
                 "remote.add",
+                "remote.delete_branch",
                 "remote.fetch",
                 "remote.pull",
                 "remote.push",

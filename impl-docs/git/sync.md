@@ -139,6 +139,38 @@ the branch, re-read with a fetch). Result: `{"remote", "remote_source": "param" 
 "forced", "lost": [Commit], "backup": string | null, "updated" | null, "messages", "warnings",
 "status" | null, "refs" | null}`.
 
+### `remote.delete_branch`
+
+Parameters: `{"remote", "branch", "confirm"?, "expected"?}`.
+
+Slow (§6), writes (`writes`), does **not** go into the journal (like the push: the remote belongs to
+others). Deletes **only** `refs/heads/<branch>` from the configured remote `remote` (`branch` is the
+name on the remote, `check_branch_name`; `remote` with `check_remote_name`, not configured →
+`NotAllowed` with the list, `remote.<r>.mirror=true` → `NotAllowed`). The local remote-tracking branch
+(`tracking_ref` on `remote.<r>.fetch`) must **exist**: it is the commit the user saw, the one confirmed
+and saved; no refspec mapping it, or not fetched yet → `NotAllowed` (do a `remote.fetch`), nothing
+reaches git. It **always** requires `"confirm": true` **with `"expected"`**, the full id (40 digits) of
+the local remote-tracking branch: without them `ConfirmRequired` with the id, the commits of the branch
+that no other ref here reaches (`unmerged_count` against all the other refs, at most 10 listed with
+`missing_commits`), the local branches that have it as upstream and the fixed phrase `"expected":
+"<id>"`; nothing changes. An `expected` that is not the value read now (a fetch in the meantime) →
+`ConfirmRequired` again with the new id. `confirm` without `expected`, `expected` not full →
+`InvalidParams`. Before the push the commit goes into `refs/project/backup/push-delete-...` (removed
+if git rejects or fails before starting; kept if cancelled midway). Then always
+`--force-with-lease=refs/heads/<branch>:<expected>`: if the branch moved on the remote or someone
+already deleted it, git answers `stale info` → `PushRejected { reason: stale_lease }` and nothing
+changes. git removes the local remote-tracking branch; the upstream of the local branches stays
+configured (shown as gone), like `git push --delete`. A branch the server refuses to delete (its
+default branch, a protected branch) → `PushRejected { reason: remote_rejected }`. Errors as the push:
+`Auth`, `RemoteUnreachable`, `Cancelled`. **Several push URLs** (`remote.<r>.pushurl`): git deletes on
+each in turn; deleted on at least one → success with `"incomplete": true` if another refused (or git
+failed after) and a warning naming the backup. The backup is removed **only** when nothing was
+certainly deleted (`!` on every URL, a `pre-push` hook before sending, credentials refused); after an
+unknown failure or a lost connection it stays. To put a branch back: a branch on the backup and
+`remote.push`. Result: `{"remote", "branch", "tracking", "deleted": oid, "only_here": n, "lost":
+[Commit], "upstream_of": [branch], "backup", "summary", "messages", "incomplete", "updated" | null, "warnings",
+"status" | null, "refs" | null}`.
+
 ## CliBackend: fetch
 
 **Fetch** (`remote.fetch`, S25): `git fetch --progress --end-of-options <remote>
@@ -235,6 +267,12 @@ forced, `*` new, `=` already up to date, `!` rejected: `non-fast-forward`/`fetch
 `stale info`, `remote rejected`). Non-zero exit without that line: `Auth`/`RemoteUnreachable`
 from the text like the fetch, otherwise with "failed to push some refs" a `pre-push` hook (or the
 submodule check): `PushRejected` with the hook's output.
+
+**Deletion on the remote** (`remote.delete_branch`): `git push --porcelain --progress
+--no-follow-tags --force-with-lease=refs/heads/<b>:<oid> --end-of-options <remote> :refs/heads/<b>`,
+same environment as the push; never `--delete` with a list, `--prune`, `--force`, `--mirror`. The
+outcome is the `--porcelain` line of `refs/heads/<b>` (`-` deleted; `!` rejected, `stale info` also
+for a branch already gone). Before the push `create_backup_ref("push-delete", <oid>)`.
 
 ## Undo of the pull
 

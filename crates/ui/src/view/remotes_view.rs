@@ -97,6 +97,12 @@ pub(crate) fn remote_dialog(
                 };
                 remove_remote_dialog(ui, remove, reason, actions);
             }
+            remotes::Dialog::DeleteBranch(delete) => {
+                let discard::Phase::Confirm { reason } = &delete.phase else {
+                    return;
+                };
+                delete_branch_dialog(ui, delete, reason, actions);
+            }
         }
     });
     if modal.should_close() {
@@ -236,6 +242,48 @@ pub(super) fn add_remote_dialog(
             }
         });
     }
+}
+
+/// Confirmation of the deletion of a branch from the remote: it disappears for everyone.
+pub(super) fn delete_branch_dialog(
+    ui: &mut Ui,
+    delete: &DeleteBranchDialog,
+    reason: &str,
+    actions: &mut Vec<Action>,
+) {
+    let name = delete.full_name();
+    ui.heading(
+        RichText::new(tr!("remotes-delete-branch-title", name = &name))
+            .color(ui.visuals().error_fg_color),
+    );
+    ui.add_space(6.0);
+    ui.add(
+        egui::Label::new(tr!(
+            "remotes-delete-branch-explanation",
+            branch = &delete.branch,
+            remote = &delete.remote
+        ))
+        .wrap(),
+    );
+    ui.add_space(6.0);
+    ui.strong(tr!("remotes-remove-what"));
+    ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("remotes-delete-branch-undo")).wrap());
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let button = egui::Button::new(
+            RichText::new(tr!("remotes-delete-branch-confirm"))
+                .color(ui.visuals().strong_text_color()),
+        )
+        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        if ui.add_enabled(delete.expected.is_some(), button).clicked() {
+            actions.push(Action::ConfirmDeleteRemoteBranch);
+        }
+        if ui.button(tr!("remotes-delete-branch-cancel")).clicked() {
+            actions.push(Action::CloseRemoteDialog);
+        }
+    });
 }
 
 pub(super) fn remove_remote_dialog(

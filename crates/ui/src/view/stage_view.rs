@@ -340,10 +340,19 @@ pub(super) fn stage_section(
                     source,
                     path: item.path.clone(),
                 };
-                if open == Some(&target) {
+                let selected = open == Some(&target);
+                // Over the button the row's response is not hovered: the pointer decides.
+                let hovered = ui.rect_contains_pointer(rect);
+                let (text, weak) = if selected {
+                    let color = ui.visuals().selection.stroke.color;
+                    (color, color.gamma_multiply(0.75))
+                } else {
+                    (text, weak)
+                };
+                if selected {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
-                } else if response.hovered() {
+                } else if hovered {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
@@ -361,30 +370,36 @@ pub(super) fn stage_section(
                     Color32::from_gray(20),
                 );
 
-                // On the right the row's button.
-                let button_w = 62.0;
-                let button_rect = egui::Rect::from_min_max(
-                    egui::pos2(rect.right() - button_w, rect.top()),
-                    rect.right_bottom(),
-                );
-                let mut cell = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(button_rect)
-                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                );
-                let button = cell
-                    .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
-                    .on_hover_text(row_action_help(op, item));
+                // On the right the row's button, only under the mouse and on the open file: a
+                // column of buttons on every row is noise.
+                let mut clicked = false;
+                let mut right = rect.right() - 4.0;
+                if hovered || selected {
+                    let button_w = 62.0;
+                    let button_rect = egui::Rect::from_min_max(
+                        egui::pos2(rect.right() - button_w, rect.top()),
+                        rect.right_bottom(),
+                    );
+                    let mut cell = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(button_rect)
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    );
+                    clicked = cell
+                        .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
+                        .on_hover_text(row_action_help(op, item))
+                        .clicked();
+                    right = button_rect.left() - 4.0;
+                }
 
                 let left = badge.right() + 6.0;
-                let right = button_rect.left() - 4.0;
                 let job = stage_path_job(item, &font, text, weak, right - left);
                 let galley = painter.layout_job(job);
                 let top = rect.center().y - galley.size().y / 2.0;
                 painter.galley(egui::pos2(left, top), galley, text);
 
                 let response = response.on_hover_text(stage_tooltip(op, item));
-                if (button.clicked() || response.double_clicked()) && enabled {
+                if (clicked || response.double_clicked()) && enabled {
                     actions.push(Action::Write(op, vec![item.path.clone()]));
                 } else if response.clicked() {
                     actions.push(if item.is_conflict() && op == StageOp::Stage {

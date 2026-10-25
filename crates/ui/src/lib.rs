@@ -1497,6 +1497,7 @@ impl Tab {
             let write = self.repo.as_ref().and_then(|r| r.write_label.as_deref());
             view::status_bar(
                 ui,
+                self.repo.as_ref(),
                 self.executor.running(),
                 write,
                 &self.error,

@@ -35,7 +35,7 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
 }
 
 /// The toolbar of the repo shown, GitKraken style: the branch on the left, the icon buttons
-/// at the center, the changed files on the right. `writing`: a write is in progress, Undo, Redo,
+/// at the center. `writing`: a write is in progress, Undo, Redo,
 /// Refresh, Fetch, Pull and Push wait. `network`: the fetch, pull or push in progress with its
 /// latest progress. Open and the recent repos are in the "File" menu of the title bar.
 pub(crate) fn top_bar(
@@ -75,12 +75,6 @@ pub(crate) fn top_bar(
             ui.separator();
             network_progress(ui, network, actions);
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let changes = repo.status.as_ref().map_or(0, |s| s.entries.len());
-            if changes > 0 {
-                ui.label(tr!("top-bar-changed-files", n = changes));
-            }
-        });
     });
 }
 
@@ -364,9 +358,11 @@ fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
 }
 
 /// `write` is the write in progress, described: it takes precedence over the other commands. `notice`
-/// is an informational message, shown if there is nothing in progress and no error.
+/// is an informational message, shown if there is nothing in progress and no error. `repo`: the repo
+/// shown, for the changed files and its path on the right.
 pub(crate) fn status_bar(
     ui: &mut Ui,
+    repo: Option<&RepoView>,
     running: &[Job],
     write: Option<&str>,
     error: &str,
@@ -388,8 +384,18 @@ pub(crate) fn status_bar(
         } else if !notice.is_empty() {
             ui.label(notice);
         }
+        // On the right what is always useful: the changed files and where the repo is.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::warn_if_debug_build(ui);
+            let Some(repo) = repo else {
+                return;
+            };
+            let changes = repo.status.as_ref().map_or(0, |s| s.entries.len());
+            if changes > 0 {
+                ui.label(RichText::new(tr!("top-bar-changed-files", n = changes)).small());
+                ui.separator();
+            }
+            ui.add(egui::Label::new(RichText::new(&repo.path).small().weak()).truncate());
         });
     });
 }

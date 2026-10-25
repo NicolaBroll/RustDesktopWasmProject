@@ -6,6 +6,13 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Windows installer**: `BinariGit-<version>-x86_64.msi`, next to the zip. It installs for the
+  current user only (no administrator rights) in `%LOCALAPPDATA%\Programs\BinariGit`, adds
+  BinariGit to the Start menu and is removed from “Installed apps”; a newer MSI replaces the
+  installed version. It is not signed yet and has not been tested on a Windows PC yet.
+
 ## [0.5.0] - 2026-10-25
 
 Repository management: clone and new repository, reset of the branch, tags deleted and published,

@@ -41,6 +41,7 @@ mod sync;
 mod tabs;
 mod theme;
 mod view;
+mod word_diff;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 

@@ -49,3 +49,6 @@ diff-lines-label-unstage-lines = { $n ->
     [one] Unstage di 1 riga di { $path }
    *[other] Unstage di { $n } righe di { $path }
 }
+diff-unified-hint = Vista unificata: righe vecchie e nuove una sotto l'altra
+diff-split-hint = Vista affiancata: il file vecchio a sinistra, il nuovo a destra
+diff-split-lines-hint = Per mettere in stage singole righe passa alla vista unificata

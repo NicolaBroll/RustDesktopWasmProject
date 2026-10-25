@@ -9,8 +9,11 @@
 
 use crate::format::change_name;
 use crate::lines::LineSelection;
+use crate::word_diff;
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
 use project_i18n::tr;
+use std::collections::HashMap;
+use std::ops::Range;
 
 /// Where the diff of a file comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +206,23 @@ pub struct DiffDoc {
     pub number_width: usize,
     /// Text columns of the widest row (after tabs and any cut).
     pub max_cols: usize,
+    /// The changed parts of the paired removed and added lines, in columns, by
+    /// `(file, hunk, line)` (see [`word_diff`](crate::word_diff)).
+    pub emphasis: HashMap<(usize, usize, usize), Vec<Range<usize>>>,
+    /// The rows of the side by side view.
+    pub split: Vec<SplitRow>,
+}
+
+/// A row of the side by side view: the old file on the left, the new on the right.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SplitRow {
+    File(usize),
+    Note(usize, String),
+    Hunk(usize, usize),
+    /// Lines `l` of hunk `h` of file `f`: removed or context on the left, added or context on
+    /// the right; a side is empty where the other has more lines.
+    Lines(usize, usize, Option<usize>, Option<usize>),
+    Gap,
 }
 
 impl DiffDoc {
@@ -237,11 +257,15 @@ impl DiffDoc {
                 }
             }
         }
+        let emphasis = emphasis(&diff);
+        let split = split_rows(&diff, &rows);
         Self {
             diff,
             rows,
             number_width: number_width(max_number),
             max_cols,
+            emphasis,
+            split,
         }
     }
 
@@ -253,6 +277,68 @@ impl DiffDoc {
             .map(FileDiff::line_counts)
             .fold((0, 0), |(a, d), (fa, fd)| (a + fa, d + fd))
     }
+}
+
+/// The changed parts of every pair of removed and added lines, in columns.
+fn emphasis(diff: &Diff) -> HashMap<(usize, usize, usize), Vec<Range<usize>>> {
+    let mut out = HashMap::new();
+    for (f, file) in diff.files.iter().enumerate() {
+        for (h, hunk) in file.hunks.iter().enumerate() {
+            let kinds: Vec<LineKind> = hunk.lines.iter().map(|l| l.kind).collect();
+            for (old, new) in word_diff::pairs(&kinds) {
+                let a = hunk.lines[old].content.to_string_lossy();
+                let b = hunk.lines[new].content.to_string_lossy();
+                if let Some((in_old, in_new)) = word_diff::changed(&a, &b) {
+                    out.insert((f, h, old), columns(&a, &in_old));
+                    out.insert((f, h, new), columns(&b, &in_new));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The side by side rows: the unified rows, with each run of removed lines next to the run of
+/// added lines after it.
+fn split_rows(diff: &Diff, rows: &[Row]) -> Vec<SplitRow> {
+    let mut out = Vec::new();
+    for row in rows {
+        match row {
+            Row::File(f) => out.push(SplitRow::File(*f)),
+            Row::Note(f, note) => out.push(SplitRow::Note(*f, note.clone())),
+            Row::Gap => out.push(SplitRow::Gap),
+            Row::Hunk(f, h) => {
+                out.push(SplitRow::Hunk(*f, *h));
+                let lines = &diff.files[*f].hunks[*h].lines;
+                let mut l = 0;
+                while l < lines.len() {
+                    if lines[l].kind == LineKind::Context {
+                        out.push(SplitRow::Lines(*f, *h, Some(l), Some(l)));
+                        l += 1;
+                        continue;
+                    }
+                    let removed: Vec<usize> = (l..lines.len())
+                        .take_while(|&i| lines[i].kind == LineKind::Removed)
+                        .collect();
+                    let after = l + removed.len();
+                    let added: Vec<usize> = (after..lines.len())
+                        .take_while(|&i| lines[i].kind == LineKind::Added)
+                        .collect();
+                    for k in 0..removed.len().max(added.len()) {
+                        out.push(SplitRow::Lines(
+                            *f,
+                            *h,
+                            removed.get(k).copied(),
+                            added.get(k).copied(),
+                        ));
+                    }
+                    l = after + added.len();
+                }
+            }
+            Row::Line(..) | Row::NoNewline => {}
+        }
+    }
+    out
 }
 
 /// File title: the path, or `old -> new` for renames and copies (ASCII: the default fonts
@@ -376,6 +462,30 @@ pub fn display_line(content: &str) -> DisplayLine {
         }
     }
     out
+}
+
+/// The char ranges `ranges` of `content` as the columns [`display_line`] puts them in (tabs
+/// expanded, control characters two columns wide, nothing past the cut).
+pub fn columns(content: &str, ranges: &[Range<usize>]) -> Vec<Range<usize>> {
+    let mut starts = Vec::with_capacity(content.len() + 1);
+    let mut cols = 0;
+    for c in content.chars() {
+        starts.push(cols);
+        cols += match c {
+            '\t' => TAB_WIDTH - cols % TAB_WIDTH,
+            c if c.is_ascii_control() => 2,
+            _ => 1,
+        };
+    }
+    starts.push(cols);
+    ranges
+        .iter()
+        .filter_map(|r| {
+            let start = *starts.get(r.start)?;
+            let end = (*starts.get(r.end)?).min(MAX_LINE_COLS);
+            (start < end).then_some(start..end)
+        })
+        .collect()
 }
 
 /// Digits needed to write `max` (at least 1).
@@ -733,5 +843,62 @@ mod tests {
             assert_eq!(command, expected);
             assert_eq!(params, serde_json::json!({ "path": "src/lib.rs" }));
         }
+    }
+
+    #[test]
+    #[expect(
+        clippy::single_range_in_vec_init,
+        reason = "the expected ranges, not a range of values"
+    )]
+    fn char_ranges_become_display_columns() {
+        // The tab takes the columns up to 4, the control character two.
+        assert_eq!(columns("a\tb", &[2..3]), vec![4..5]);
+        assert_eq!(columns("\u{1b}x", &[1..2]), vec![2..3]);
+        assert_eq!(columns("abc", &[0..1, 3..9]), [0..1]);
+    }
+
+    #[test]
+    fn split_rows_put_removed_lines_next_to_the_added_ones() {
+        // a | b\tc -> B | end (added, no newline)
+        let doc = DiffDoc::new(
+            diff(vec![file(Change::Modified, "a.rs", "a.rs", vec![hunk()])]),
+            &"a.rs".into(),
+        );
+        assert_eq!(
+            doc.split,
+            [
+                SplitRow::File(0),
+                SplitRow::Hunk(0, 0),
+                SplitRow::Lines(0, 0, Some(0), Some(0)),
+                SplitRow::Lines(0, 0, Some(1), Some(2)),
+                SplitRow::Lines(0, 0, None, Some(3)),
+            ]
+        );
+    }
+
+    #[test]
+    #[expect(
+        clippy::single_range_in_vec_init,
+        reason = "the expected ranges, not a range of values"
+    )]
+    fn paired_lines_mark_their_changed_words() {
+        let hunk = Hunk {
+            old_start: 1,
+            old_count: 1,
+            new_start: 1,
+            new_count: 1,
+            section: ByteText::from(""),
+            lines: vec![
+                line(LineKind::Removed, Some(1), None, "\tlet total = price * 2;"),
+                line(LineKind::Added, None, Some(1), "\tlet total = price * qty;"),
+            ],
+        };
+        let doc = DiffDoc::new(
+            diff(vec![file(Change::Modified, "a.rs", "a.rs", vec![hunk])]),
+            &"a.rs".into(),
+        );
+        // After the tab (4 columns): `let total = price * ` is 20 columns.
+        assert_eq!(doc.emphasis[&(0, 0, 0)], [24..25]);
+        assert_eq!(doc.emphasis[&(0, 0, 1)], [24..27]);
     }
 }

@@ -2,9 +2,10 @@
 //! Reads the state of [`crate::diff`] and produces [`Action`]; changes nothing directly.
 
 use crate::diff::{
-    DiffDoc, DiffSource, DiffTarget, Pane, Row, display_line, file_summary, file_title,
+    DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_summary, file_title,
     line_number, line_prefix,
 };
+use crate::icons;
 use crate::lines::{self, LineButtons, LineSelection, Partial};
 use crate::{Action, Drag};
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
@@ -58,9 +59,20 @@ pub(crate) fn diff_panel(
         }
         _ => None,
     };
-    toolbar(ui, target, pane, lines_ui.back, actions);
+    // Unified or side by side: a preference of the view, kept between launches.
+    let split_id = egui::Id::unique("diff-split");
+    let mut split = ui.data_mut(|d| *d.get_persisted_mut_or_default::<bool>(split_id));
+    toolbar(ui, target, pane, lines_ui.back, &mut split, actions);
+    ui.data_mut(|d| d.insert_persisted(split_id, split));
     if let Some(state) = &state {
-        lines_bar(ui, state, actions);
+        if split {
+            // The rows are selected in the unified view: here the hunks only.
+            if state.buttons.is_some() {
+                ui.weak(tr!("diff-split-lines-hint"));
+            }
+        } else {
+            lines_bar(ui, state, actions);
+        }
     }
     ui.separator();
     match pane {
@@ -91,7 +103,11 @@ pub(crate) fn diff_panel(
         }
         Pane::Loaded(_, doc) => {
             if let Some(state) = &state {
-                rows(ui, doc, state, actions);
+                if split {
+                    split_view(ui, doc, state.buttons, actions);
+                } else {
+                    rows(ui, doc, state, actions);
+                }
             }
         }
     }
@@ -103,6 +119,7 @@ fn toolbar(
     target: &DiffTarget,
     pane: Pane<'_>,
     back: bool,
+    split: &mut bool,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
@@ -131,15 +148,26 @@ fn toolbar(
                     .on_hover_text(tr!("diff-staged-hint"));
             }
         }
-        if let Pane::Loaded(_, doc) = pane
-            && doc.line_counts() != (0, 0)
-        {
-            let (added, removed) = doc.line_counts();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let layouts = [
+                (true, icons::SPLIT, tr!("diff-split-hint")),
+                (false, icons::UNIFIED, tr!("diff-unified-hint")),
+            ];
+            for (value, icon, hint) in layouts {
+                let button = egui::Button::selectable(*split == value, icons::text(icon, 14.0));
+                if ui.add(button).on_hover_text(hint).clicked() {
+                    *split = value;
+                }
+            }
+            if let Pane::Loaded(_, doc) = pane
+                && doc.line_counts() != (0, 0)
+            {
+                let (added, removed) = doc.line_counts();
+                ui.separator();
                 ui.colored_label(removed_text(ui), format!("-{removed}"));
                 ui.colored_label(added_text(ui), format!("+{added}"));
-            });
-        }
+            }
+        });
     });
 }
 
@@ -217,6 +245,9 @@ struct Style {
     removed_bg: Color32,
     added_gutter: Color32,
     removed_gutter: Color32,
+    /// Behind the changed words of a paired line.
+    added_word: Color32,
+    removed_word: Color32,
     hunk_bg: Color32,
     hunk_text: Color32,
     file_bg: Color32,
@@ -265,6 +296,8 @@ impl Style {
             removed_bg,
             added_gutter,
             removed_gutter,
+            added_word: alpha(0x2e, 0xa0, 0x43, if dark { 110 } else { 90 }),
+            removed_word: alpha(0xf8, 0x51, 0x49, if dark { 110 } else { 80 }),
             hunk_bg: alpha(0x4c, 0x9a, 0xf0, if dark { 34 } else { 28 }),
             hunk_text: if dark {
                 Color32::from_rgb(0x8c, 0xb8, 0xf0)
@@ -476,8 +509,20 @@ fn paint_row(
                 }
                 Mark::None => {}
             }
+            let words = match line.kind {
+                LineKind::Added => style.added_word,
+                _ => style.removed_word,
+            };
+            paint_words(
+                painter,
+                doc.emphasis.get(&(*f, *h, *l)),
+                text_x,
+                rect,
+                words,
+                style,
+            );
             paint_text(
-                ui,
+                painter,
                 &line.content.to_string_lossy(),
                 pos2(text_x, mid),
                 style,
@@ -523,7 +568,7 @@ fn paint_row(
 
 /// The content of a row, with expanded tabs, dim control characters and the cut sign
 /// if it is too long.
-fn paint_text(ui: &Ui, content: &str, at: egui::Pos2, style: &Style) {
+fn paint_text(painter: &egui::Painter, content: &str, at: egui::Pos2, style: &Style) {
     let shown = display_line(content);
     let format = |color| egui::TextFormat {
         font_id: style.mono.clone(),
@@ -545,7 +590,137 @@ fn paint_text(ui: &Ui, content: &str, at: egui::Pos2, style: &Style) {
             format(style.weak),
         );
     }
-    let galley = ui.painter().layout_job(job);
+    let galley = painter.layout_job(job);
     let top = at.y - galley.size().y / 2.0;
-    ui.painter().galley(pos2(at.x, top), galley, style.text);
+    painter.galley(pos2(at.x, top), galley, style.text);
+}
+
+/// The background of the changed words (`columns`) of a line whose text starts at `text_x`.
+fn paint_words(
+    painter: &egui::Painter,
+    columns: Option<&Vec<std::ops::Range<usize>>>,
+    text_x: f32,
+    row: Rect,
+    color: Color32,
+    style: &Style,
+) {
+    for range in columns.into_iter().flatten() {
+        let word = Rect::from_x_y_ranges(
+            text_x + range.start as f32 * style.char_w..=text_x + range.end as f32 * style.char_w,
+            row.y_range(),
+        );
+        painter.rect_filled(word.shrink2(vec2(0.0, 1.0)), 2.0, color);
+    }
+}
+
+/// The side by side view: the old file on the left, the new one on the right, each line next
+/// to the one that replaces it. The text is cut at the middle (no horizontal scroll); the hunks
+/// keep their button, the rows are selected in the unified view.
+fn split_view(ui: &mut Ui, doc: &DiffDoc, buttons: Option<LineButtons>, actions: &mut Vec<Action>) {
+    let style = Style::new(ui, doc);
+    egui::ScrollArea::vertical()
+        .id_salt("diff-split")
+        .auto_shrink(false)
+        .show_rows(ui, ROW_HEIGHT, doc.split.len(), |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let width = ui.available_width();
+            for row in &doc.split[range] {
+                let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
+                let gutter = Rect::from_min_size(rect.min, vec2(style.gutter_w, ROW_HEIGHT));
+                let unified = match row {
+                    SplitRow::File(f) => Some(Row::File(*f)),
+                    SplitRow::Note(f, note) => Some(Row::Note(*f, note.clone())),
+                    SplitRow::Hunk(f, h) => Some(Row::Hunk(*f, *h)),
+                    SplitRow::Gap => Some(Row::Gap),
+                    SplitRow::Lines(..) => None,
+                };
+                if let Some(unified) = unified {
+                    paint_row(ui, doc, &unified, rect, gutter, &style, Mark::None);
+                }
+                match row {
+                    SplitRow::Hunk(_, h) => {
+                        if let Some(b) = buttons {
+                            hunk_button(ui, rect, *h, b, actions);
+                        }
+                    }
+                    SplitRow::Lines(f, h, old, new) => {
+                        let middle = rect.center().x;
+                        let (left, right) = (rect.with_max_x(middle), rect.with_min_x(middle));
+                        paint_side(ui, doc, (*f, *h, *old), left, false, &style);
+                        paint_side(ui, doc, (*f, *h, *new), right, true, &style);
+                        let border = ui.visuals().widgets.noninteractive.bg_stroke;
+                        ui.painter().vline(middle, rect.y_range(), border);
+                    }
+                    _ => {}
+                }
+            }
+        });
+}
+
+/// One side of a side by side row: its number, sign and text, or an empty band where this side
+/// has no line. `new`: the right side (new line numbers).
+fn paint_side(
+    ui: &Ui,
+    doc: &DiffDoc,
+    (f, h, l): (usize, usize, Option<usize>),
+    rect: Rect,
+    new: bool,
+    style: &Style,
+) {
+    let painter = ui.painter_at(rect);
+    let Some(l) = l else {
+        painter.rect_filled(rect, 0.0, style.file_bg);
+        return;
+    };
+    let line = &doc.diff.files[f].hunks[h].lines[l];
+    let (bg, gutter_fill, words) = match line.kind {
+        LineKind::Added => (
+            Some(style.added_bg),
+            Some(style.added_gutter),
+            style.added_word,
+        ),
+        LineKind::Removed => (
+            Some(style.removed_bg),
+            Some(style.removed_gutter),
+            style.removed_word,
+        ),
+        LineKind::Context => (None, None, Color32::TRANSPARENT),
+    };
+    if let Some(bg) = bg {
+        painter.rect_filled(rect, 0.0, bg);
+    }
+    // One number and the sign.
+    let gutter_w = (style.number_w + 2) as f32 * style.char_w + 2.0 * PAD;
+    let gutter = Rect::from_min_size(rect.min, vec2(gutter_w, ROW_HEIGHT));
+    if let Some(fill) = gutter_fill {
+        painter.rect_filled(gutter, 0.0, fill);
+    }
+    let number = if new { line.new_line } else { line.old_line };
+    let mid = rect.center().y;
+    painter.text(
+        pos2(gutter.left() + PAD, mid),
+        Align2::LEFT_CENTER,
+        format!(
+            "{} {}",
+            line_number(number, style.number_w),
+            line_prefix(line.kind)
+        ),
+        style.mono.clone(),
+        style.weak,
+    );
+    let text_x = gutter.right() + PAD;
+    paint_words(
+        &painter,
+        doc.emphasis.get(&(f, h, l)),
+        text_x,
+        rect,
+        words,
+        style,
+    );
+    paint_text(
+        &painter,
+        &line.content.to_string_lossy(),
+        pos2(text_x, mid),
+        style,
+    );
 }

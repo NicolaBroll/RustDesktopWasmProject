@@ -507,10 +507,17 @@ GitKraken-like layout:
   fluid). The current branch has a check; "+" in the headers adds a remote or a stash.
 - **Center**: commit graph and list, with an "uncommitted changes" row at the top. Virtualized
   list (`ScrollArea::show_rows`): only visible rows are drawn, the log loads
-  in pages while scrolling.
+  in pages while scrolling. In a narrow list the author column hides first, then the date;
+  long texts are cut with "…".
 - **Right**: details of the selected commit, or stage area (unstaged and staged files,
-  commit message) when the changes row is selected.
-- **Diff**: below or in place of the graph, with hunk and line selection.
+  commit message) when the changes row is selected. A file's Stage/Unstage button shows under
+  the mouse and on the open file.
+- **Diff**: in place of the graph, unified (with hunk and line selection) or side by side (hunks
+  only; the choice is kept). The removed and added lines that replace each other are compared
+  word by word (`word_diff.rs`) and the changed words are highlighted, unless the lines have
+  little in common.
+- **Status bar**: the job in progress, the last error or notice; on the right the changed files
+  and the repo path.
 
 Every interaction produces an `Action` that goes through `Registry::run`, as today.
 

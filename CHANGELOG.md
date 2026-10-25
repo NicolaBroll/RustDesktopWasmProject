@@ -16,6 +16,16 @@ All notable changes to BinariGit. The format follows
 - **Tabs** in VS Code style: flat tabs side by side, the active one joined to the toolbar below
   with a blue line on top instead of the blue fill; the "×" shows on the active tab and under the
   mouse, the middle button closes a tab too.
+- **Left column**: a filter on top; branch names with `/` grouped in folders; each remote heads
+  its branches; section headers with icons and "+" (add remote, new stash); the current branch
+  has a check. Only the rows in view are drawn: thousands of branches or tags stay fluid.
+- **Diff**: the changed words of a modified line are highlighted; a side by side view next to the
+  unified one.
+- **Theme**: File → Theme (as the system, light, dark); remote branch labels readable on light.
+- Ahead/behind arrows (↑ ↓) no longer show as boxes; in a narrow window the commit list hides
+  author and date before cutting the subject, and the panel headers no longer overlap their
+  buttons; the stage area shows a file's button only under the mouse; the status bar shows the
+  repo path and the changed files; the commit id in the details is short with a copy icon.
 
 ## [0.1.0] - 2026-10-24
 

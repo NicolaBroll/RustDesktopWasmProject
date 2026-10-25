@@ -17,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+project-engine = { workspace = true, features = ["test-support"] }
 project-i18n = { workspace = true }
 
 [lints]

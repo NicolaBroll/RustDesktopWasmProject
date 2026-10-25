@@ -2,7 +2,7 @@
 //!
 //! The engine does not run `git` and does not touch the file system: it reads the repo through
 //! [`GitBackend`], opened by a [`RepoOpener`] injected by the app. The implementations are
-//! [`MemoryBackend`] (here, for tests) and `CliBackend` (in `project-git`).
+//! `MemoryBackend` (here, for tests: feature `test-support`) and `CliBackend` (in `project-git`).
 
 mod backup;
 mod branch;
@@ -11,9 +11,11 @@ mod commit;
 mod conflict;
 mod discard;
 mod file;
+#[cfg(any(test, feature = "test-support"))]
 mod line_diff;
 mod lines;
 mod maintenance;
+#[cfg(any(test, feature = "test-support"))]
 mod memory;
 mod merge;
 mod pick;
@@ -24,6 +26,7 @@ mod remote;
 mod remote_admin;
 mod reset;
 mod restore;
+#[cfg(any(test, feature = "test-support"))]
 mod sample;
 mod search;
 mod stash;
@@ -48,8 +51,9 @@ pub use clone::{
 };
 pub use commit::{
     CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
-    cleanup_message, split_message,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use commit::{cleanup_message, split_message};
 pub use conflict::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,
@@ -58,14 +62,17 @@ pub use discard::{
     DiscardOutcome, DiscardedFile, WorktreeBackup, WorktreeRestore, check_same_plan,
     discard_description, discard_plan,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use file::is_binary_content;
 pub use file::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
-    blame_missing_worktree, blame_no_commits, is_binary_content,
+    blame_missing_worktree, blame_no_commits,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use maintenance::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
 };
+#[cfg(any(test, feature = "test-support"))]
 pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
 pub(crate) use merge::check_in_progress;
 pub use merge::{
@@ -102,7 +109,7 @@ pub use reset::{
 };
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
-pub use search::{SearchField, SearchQuery, contains_literal};
+pub use search::{SearchField, SearchQuery};
 pub use stash::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
@@ -757,7 +764,7 @@ impl DiffSpec {
 }
 
 /// Opens a repository given the path. The app injects it into the session: desktop and CLI use
-/// `CliOpener` of `project-git`, the tests [`MemoryOpener`].
+/// `CliOpener` of `project-git`, the tests `MemoryOpener`.
 pub trait RepoOpener: Send + Sync {
     /// [`EngineError::RepoNotFound`] if there is no repository at the path.
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;

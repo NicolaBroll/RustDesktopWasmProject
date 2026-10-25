@@ -69,6 +69,7 @@ pub fn blame_binary(path: &RepoPath) -> EngineError {
 }
 
 /// True if `content` is binary for git: a NUL in the first 8000 bytes.
+#[cfg(any(test, feature = "test-support"))]
 pub fn is_binary_content(content: &[u8]) -> bool {
     content.iter().take(8000).any(|&b| b == 0)
 }

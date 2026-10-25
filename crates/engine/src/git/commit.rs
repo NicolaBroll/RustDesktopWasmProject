@@ -232,6 +232,7 @@ pub fn check_amend_published(
 /// trailing spaces on lines removed, leading and trailing blank lines removed, consecutive blank lines
 /// reduced to one, a final newline. Comment lines stay. Used by the
 /// `MemoryBackend`, which has no git; the `CliBackend` leaves it to git.
+#[cfg(any(test, feature = "test-support"))]
 pub fn cleanup_message(message: &str) -> String {
     let mut out = String::new();
     let mut blank = false;
@@ -254,6 +255,7 @@ pub fn cleanup_message(message: &str) -> String {
 /// `(subject, body)` of a cleaned message, like git's `%s` and `%b`: the subject is the first
 /// paragraph with its lines joined by a space, the body the rest after the blank lines, without
 /// trailing newlines.
+#[cfg(any(test, feature = "test-support"))]
 pub fn split_message(message: &str) -> (String, String) {
     let mut lines = message.lines();
     let mut summary = Vec::new();

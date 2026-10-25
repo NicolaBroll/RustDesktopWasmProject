@@ -13,6 +13,11 @@ serde.workspace = true
 serde_json.workspace = true
 project-i18n.workspace = true
 
+[features]
+# `MemoryBackend`/`MemoryOpener` (in-memory repo with a sample): only for the tests of the
+# crates that use it (`[dev-dependencies]`), never in the app binaries.
+test-support = []
+
 [dev-dependencies]
 fluent-syntax.workspace = true
 proptest.workspace = true

@@ -563,7 +563,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   on the `MemoryBackend`; desktop screenshot on Xvfb with highlighted matches; CI green.
 
 ### S49 — Settings window
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** today the preferences are scattered (theme in a title bar menu, unified/side by side
   in the diff view) and the language cannot be chosen (`project_i18n::set_lang` exists, the app
   always starts in English). A "Settings…" window (File menu in the title bar, Ctrl+,) with the

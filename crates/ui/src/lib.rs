@@ -38,6 +38,7 @@ mod refresh;
 mod remotes;
 mod reset;
 mod search;
+mod settings;
 mod stage;
 mod stash;
 mod sync;
@@ -101,6 +102,14 @@ enum Action {
     CancelClone,
     /// Closes that dialog (not while its command runs).
     CloseClone,
+    /// Opens the "Settings…" window.
+    OpenSettings,
+    /// Closes it.
+    CloseSettings,
+    /// Shows that section of the window.
+    SettingsSection(settings::Section),
+    /// Changes a setting (from the window, the theme menu or the diff view).
+    Setting(settings::Change),
     /// Re-reads refs, status and log of the open repo.
     Refresh,
     /// Selects the commit at the given row of the list.
@@ -809,7 +818,11 @@ impl Tab {
             | Action::BrowseCloneFolder
             | Action::SubmitClone
             | Action::CancelClone
-            | Action::CloseClone => {}
+            | Action::CloseClone
+            | Action::OpenSettings
+            | Action::CloseSettings
+            | Action::SettingsSection(_)
+            | Action::Setting(_) => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -1642,6 +1655,7 @@ impl Tab {
         ui: &mut egui::Ui,
         can_pick: bool,
         recent: &[view::RecentRepo],
+        settings: &settings::Settings,
     ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
@@ -1815,7 +1829,15 @@ impl Tab {
                     _ if repo.file.view().is_some() => {
                         if let Some(file) = repo.file.view() {
                             let can_write = !writing && !repo.modal_open();
-                            view::file_view(ui, file, repo.diff.pane(), can_write, &mut actions);
+                            let split = settings.diff_split;
+                            view::file_view(
+                                ui,
+                                file,
+                                repo.diff.pane(),
+                                can_write,
+                                split,
+                                &mut actions,
+                            );
                         }
                     }
                     Pane::Closed => {
@@ -1826,6 +1848,7 @@ impl Tab {
                             selection: repo.diff.selection(),
                             can_write: !writing && !repo.modal_open(),
                             back: true,
+                            split: settings.diff_split,
                         };
                         diff_view::diff_panel(ui, pane, lines, &mut actions);
                     }

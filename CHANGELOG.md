@@ -8,6 +8,11 @@ All notable changes to BinariGit. The format follows
 
 ### Added
 
+- **Settings window** (File → “Settings…”, Ctrl+,): a General section with the theme (as the
+  system, light, dark) and the language (as the system, Italiano, English), applied at once
+  without restarting. The settings are kept between launches; the theme menu and the
+  unified/side by side toggle of the diff change the same settings.
+
 - **Search in the history** (engine; `repo.search` for CLI and MCP): the commits whose message,
   author (name or email) or id contain a text, taken literally and ignoring case, in the same order
   as the history, with the number of matches; optionally only those that touch a path.

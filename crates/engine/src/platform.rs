@@ -36,4 +36,10 @@ pub trait Platform: Send + Sync {
         let _ = (repo, on_change);
         None
     }
+    /// The language of the user's system as an ISO 639-1 code (`it`, `en`, ...), for the
+    /// "as the system" UI language. `None`: not known (the default, test platforms); the UI then
+    /// uses English.
+    fn system_language(&self) -> Option<String> {
+        None
+    }
 }

@@ -2386,7 +2386,6 @@ version = "0.5.0"
 dependencies = [
  "fluent-bundle",
  "fluent-syntax",
- "unic-langid",
 ]
 
 [[package]]

@@ -114,3 +114,12 @@ fn an_optional_count_can_disappear() {
     );
     assert!(it.contains('B') && it.contains('3'));
 }
+
+#[test]
+fn the_index_of_a_language_is_its_position_in_all() {
+    for (i, lang) in Lang::ALL.into_iter().enumerate() {
+        assert_eq!(usize::from(lang.index()), i);
+        assert_eq!(Lang::from_index(lang.index()), lang);
+    }
+    assert_eq!(Lang::from_index(u8::MAX), Lang::default());
+}

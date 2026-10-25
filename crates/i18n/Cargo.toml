@@ -8,10 +8,6 @@ publish.workspace = true
 
 [dependencies]
 fluent-bundle.workspace = true
-unic-langid.workspace = true
-
-[features]
-# Only for the UI tests, which compare the Italian texts: they start in Italian.
 
 [dev-dependencies]
 fluent-syntax.workspace = true

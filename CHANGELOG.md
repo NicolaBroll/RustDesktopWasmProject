@@ -6,8 +6,21 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-25
+
+Repository management: clone and new repository, reset of the branch, tags deleted and published,
+search in the history, a settings window with the language, and automatic fetch.
+
 ### Added
 
+- **Clone and new repository**: “Clone…” and “New repository…” in the File menu and on the empty
+  screen (`repo.clone`, `repo.init` for the CLI). The clone runs in the background with progress
+  and “Cancel”, never over existing files; a cancelled clone leaves no folder behind. The new repo
+  opens in a tab and goes in the recent ones.
+- **Reset of the current branch**: “Reset … to here…” in the menu of a commit, with the three
+  modes (soft, mixed, hard) and the list of the files a hard reset overwrites
+  (`branch.reset` for CLI and MCP). Changes overwritten by a hard reset are kept first in a backup
+  (`refs/project/backup/reset-…`); “Undo” puts the branch back.
 - **Automatic fetch**: every open tab downloads from its remote in the background (fetch, never
   pull: local branches and files are not touched), every 5 minutes by default; Settings → Remotes
   sets 1, 5 or 15 minutes or turns it off. It waits while a dialog, a command or an operation
@@ -15,19 +28,18 @@ All notable changes to BinariGit. The format follows
   keeping selection and scroll, with a notice like “2 new commits on origin/main”. Rejected
   credentials pause it with a notice and “Retry”; an unreachable remote shows an icon in the bar
   and waits longer between attempts (up to 30 minutes).
-
 - **Settings window** (File → “Settings…”, Ctrl+,): a General section with the theme (as the
   system, light, dark) and the language (as the system, Italiano, English), applied at once
   without restarting. The settings are kept between launches; the theme menu and the
   unified/side by side toggle of the diff change the same settings.
-
-- **Search in the history** (engine; `repo.search` for CLI and MCP): the commits whose message,
-  author (name or email) or id contain a text, taken literally and ignoring case, in the same order
-  as the history, with the number of matches; optionally only those that touch a path.
-
-- **Delete and publish tags** (engine; `tag.delete`, `remote.push_tag`, `remote.delete_tag` for CLI
-  and MCP). Deleting a local tag always asks for confirmation, keeps it in a backup
-  (`refs/project/backup/tag-delete-…`) and “Undo” puts back the same tag. Publishing never
+- **Search in the history** (Ctrl+F above the commit list; `repo.search` for CLI and MCP): the
+  commits whose message, author (name or email) or id contain a text, taken literally and ignoring
+  case, are highlighted in the graph, with “n of total” and next/previous; Escape closes the
+  search.
+- **Delete and publish tags**: “Push to …”, “Delete…” and “Delete from …” in the menu of a tag
+  (`tag.delete`, `remote.push_tag`, `remote.delete_tag` for CLI and MCP). Deleting a local tag
+  always asks for confirmation, keeps it in a backup (`refs/project/backup/tag-delete-…`) and
+  “Undo” puts back the same tag. Publishing never
   overwrites a tag already on the remote with another value. Deleting from the remote asks for
   confirmation with the value seen there, keeps it in a backup (`refs/project/backup/push-delete-…`)
   and is rejected if the tag moved in the meantime.
@@ -187,7 +199,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.1.0...v0.2.0

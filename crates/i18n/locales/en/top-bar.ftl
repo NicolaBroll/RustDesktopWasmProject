@@ -1,6 +1,6 @@
 # Top bar, status bar and welcome screen (view/top_bar.rs).
 
-top-bar-open = Open…
+top-bar-branch = branch
 top-bar-refresh = Refresh
 top-bar-refresh-hint = Reloads refs, status and log
 top-bar-after-operation = After the current operation
@@ -15,7 +15,6 @@ top-bar-head-unborn = { $name } (no commits yet)
 top-bar-head-detached = HEAD detached at { $id }
 top-bar-fetch = Fetch
 top-bar-fetch-hint = Downloads commits, remote branches and tags from the remote of the current branch's upstream (otherwise origin, or the only remote). Does not touch local branches, the index or files
-top-bar-fetch-from-menu = From…
 top-bar-fetch-from = Fetch from “{ $remote }”
 top-bar-fetch-from-hint = Choose the remote to fetch from
 top-bar-pull = Pull
@@ -33,8 +32,7 @@ top-bar-running-queued = { $what } in progress… (+{ $n } queued)
 top-bar-opening = Opening the repository…
 top-bar-no-repo = No repository open
 top-bar-open-repo = Open a repository…
-top-bar-open-hint = Open a repository in a new tab
-top-bar-recent = Recent
+top-bar-recent = Open recent
 top-bar-recent-hint = Repositories opened recently: one opens in a tab, or shows its tab if already open
 top-bar-recent-none = No repository opened yet
 top-bar-recent-item = { $name } — { $path }

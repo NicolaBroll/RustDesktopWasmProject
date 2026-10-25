@@ -63,7 +63,6 @@ remotes-section-count = Remoti ({ $n })
 remotes-none = Nessun remoto configurato
 remotes-loading = Lettura dei remoti…
 remotes-list-error = Remoti non letti: { $error }
-remotes-add-button = Aggiungi remoto…
 remotes-add-button-hint = Aggiunge un remoto (nome e URL) e, se scelto, ne scarica subito i branch. «Annulla» lo toglie
 remotes-row-hint =
     { $tooltip }

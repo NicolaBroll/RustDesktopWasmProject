@@ -482,18 +482,42 @@ Undo does not cover remote operations: a push cannot be undone from here (the pu
 
 GitKraken-like layout:
 
-- **Tabs** (S35): one per open repo, above the top bar, each with its own `Session` (undo journal
-  per repo); "+"/"Open…" open in a new tab, a repo already open only shows its tab. Open tabs and
-  recent repos (at most 10) are saved in the eframe storage and reopened at the next launch.
-- **Top bar**: open repo, recent repos, fetch/pull/push buttons, undo/redo, state of the job in
-  progress.
-- **Left column**: local branches, remotes, tags, stashes ([git/stash.md](git/stash.md)).
+- **Title bar** (`view/title_bar.rs`), VS Code style: the File menu (open a repo, recent repos,
+  theme: what is not about the repo shown), the title "repo — BinariGit" at the center. Who draws the window frame is a `WindowFrame` chosen by the
+  app (the UI has no `cfg`): `Custom` (Windows, Linux) is a window without decorations, where the
+  bar is dragged, maximizes with a double click, has its own minimize, maximize/restore and close
+  buttons and the window edges resize it; `MacOs` keeps the native buttons over a transparent title
+  bar; `Native` (default, e.g. the browser) shows only the menus.
+- **Tabs** (S35, `view/tab_strip.rs`): one per open repo, under the title bar, VS Code style (the
+  active one has the toolbar's background and a colored line on top; "×" on the active tab and
+  under the mouse, middle click closes), each with its own `Session` (undo journal per repo); "+"/"Open repository…" open in a new tab, a repo already open only shows its tab.
+  Open tabs and recent repos (at most 10) are saved in the eframe storage and reopened at the next
+  launch.
+- **Top bar** (toolbar, only with a repo open), GitKraken style: the branch on the left (the repo is the tab), icon
+  buttons with the name underneath at the center (undo/redo, fetch/pull/push, stash, refresh;
+  icons from a subset of Phosphor, `crates/ui/assets/icons.ttf`, rebuilt by
+  `scripts/icon-font.py`), changed files and the network job in progress.
+- **Colors**: egui's visuals, dark or light (as the system or chosen in File → Theme); the few
+  colors of their own (change types, text on badges, lanes used as text) are in `theme.rs`, with
+  a contrast test for the light theme.
+- **Left column** (`view/refs.rs`, tree in `ref_tree.rs`): a filter, then local branches, remotes
+  (each remote heads its branches), tags and stashes ([git/stash.md](git/stash.md)). Names split
+  on `/` become folders; the rows are all the same height and only those in view are drawn, the
+  tree is rebuilt only when refs, remotes, filter or folders change (thousands of refs stay
+  fluid). The current branch has a check; "+" in the headers adds a remote or a stash.
 - **Center**: commit graph and list, with an "uncommitted changes" row at the top. Virtualized
   list (`ScrollArea::show_rows`): only visible rows are drawn, the log loads
-  in pages while scrolling.
+  in pages while scrolling. In a narrow list the author column hides first, then the date;
+  long texts are cut with "…".
 - **Right**: details of the selected commit, or stage area (unstaged and staged files,
-  commit message) when the changes row is selected.
-- **Diff**: below or in place of the graph, with hunk and line selection.
+  commit message) when the changes row is selected. A file's Stage/Unstage button shows under
+  the mouse and on the open file.
+- **Diff**: in place of the graph, unified (with hunk and line selection) or side by side (hunks
+  only; the choice is kept). The removed and added lines that replace each other are compared
+  word by word (`word_diff.rs`) and the changed words are highlighted, unless the lines have
+  little in common.
+- **Status bar**: the job in progress, the last error or notice; on the right the changed files
+  and the repo path.
 
 Every interaction produces an `Action` that goes through `Registry::run`, as today.
 

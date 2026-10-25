@@ -29,11 +29,10 @@ diff-stage-selected = Stage righe selezionate ({ $n })
 diff-unstage-selected = Unstage righe selezionate ({ $n })
 diff-stage-selected-hint = Mette in stage solo le righe selezionate; il resto del file resta fuori
 diff-unstage-selected-hint = Toglie dallo stage solo le righe selezionate; il worktree non cambia
-diff-no-lines-selected = Nessuna riga selezionata: clic su una riga + o - per selezionarla
+diff-no-lines-selected = Nessuna riga selezionata: clic su una riga + o - per selezionarla, Maiusc+clic per un intervallo, trascina per più righe
 diff-wait-write = Attendere la fine della scrittura in corso
 diff-clear = Deseleziona
 diff-clear-hint = Deseleziona tutte le righe (Esc)
-diff-select-hint = Clic su una riga + o - per selezionarla, Maiusc+clic per un intervallo, trascina per più righe
 diff-stage-hunk = Stage hunk
 diff-unstage-hunk = Unstage hunk
 diff-stage-hunk-hint = Mette in stage tutte le righe cambiate di questo hunk
@@ -50,3 +49,6 @@ diff-lines-label-unstage-lines = { $n ->
     [one] Unstage di 1 riga di { $path }
    *[other] Unstage di { $n } righe di { $path }
 }
+diff-unified-hint = Vista unificata: righe vecchie e nuove una sotto l'altra
+diff-split-hint = Vista affiancata: il file vecchio a sinistra, il nuovo a destra
+diff-split-lines-hint = Per mettere in stage singole righe passa alla vista unificata

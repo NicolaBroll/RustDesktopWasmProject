@@ -72,7 +72,6 @@ remotes-section-count = Remotes ({ $n })
 remotes-none = No remotes configured
 remotes-loading = Reading remotes…
 remotes-list-error = Remotes not read: { $error }
-remotes-add-button = Add remote…
 remotes-add-button-hint = Adds a remote (name and URL) and, if chosen, fetches its branches right away. “Undo” removes it
 remotes-row-hint =
     { $tooltip }

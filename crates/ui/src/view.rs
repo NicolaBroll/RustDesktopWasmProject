@@ -16,6 +16,7 @@ use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
 use crate::sync::{self, Window};
 use crate::{Action, Job, ListViewport, RepoView};
+use crate::{icons, theme};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
@@ -36,6 +37,8 @@ mod remotes_view;
 mod stage_view;
 mod stash_view;
 mod sync_view;
+mod tab_strip;
+mod title_bar;
 mod top_bar;
 
 pub(crate) use branches::branch_dialog;
@@ -57,10 +60,11 @@ use stash_view::*;
 pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
 use sync_view::*;
 pub(crate) use sync_view::{failure_window, sync_window};
+pub(crate) use tab_strip::{TabLabel, tab_strip_panel};
+pub use title_bar::WindowFrame;
+pub(crate) use title_bar::{TitleBar, title_bar_panel, window_edges};
 use top_bar::*;
-pub(crate) use top_bar::{
-    RecentRepo, TabLabel, repo_name, status_bar, tab_strip, top_bar, welcome,
-};
+pub(crate) use top_bar::{RecentRepo, repo_name, status_bar, top_bar, welcome};
 
 /// The network operation in progress (fetch, pull or push), for the bar.
 pub(crate) struct Network {
@@ -102,20 +106,6 @@ fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
         .on_hover_text(tr!("common-oid-hint", id = id.to_string()));
     if response.clicked() {
         actions.push(Action::SelectCommit(id));
-    }
-}
-
-/// Color of the letter of the change type.
-fn change_color(change: Change) -> Color32 {
-    match change {
-        Change::Added => Color32::from_rgb(0x3f, 0xb9, 0x50),
-        Change::Deleted => Color32::from_rgb(0xe5, 0x53, 0x4b),
-        Change::Modified => Color32::from_rgb(0xd2, 0x99, 0x22),
-        Change::TypeChanged => Color32::from_rgb(0xb0, 0x7c, 0xe8),
-        Change::Renamed => Color32::from_rgb(0x4c, 0x9a, 0xf0),
-        Change::Copied => Color32::from_rgb(0x2a, 0xb7, 0xa9),
-        Change::Unmerged => Color32::from_rgb(0xf5, 0x7c, 0x00),
-        _ => Color32::GRAY,
     }
 }
 

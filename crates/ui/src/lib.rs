@@ -25,19 +25,23 @@ mod fetch;
 mod file;
 mod format;
 mod graph;
+mod icons;
 mod lines;
 mod list;
 mod merge;
 mod merge_view;
 mod optimize;
 mod rebase;
+mod ref_tree;
 mod refresh;
 mod remotes;
 mod stage;
 mod stash;
 mod sync;
 mod tabs;
+mod theme;
 mod view;
+mod word_diff;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
@@ -67,6 +71,7 @@ use std::collections::HashMap;
 
 use sync::SyncBox;
 pub use tabs::App;
+pub use view::WindowFrame;
 
 /// What the user asked for during the frame.
 #[derive(Debug, Clone)]
@@ -421,6 +426,8 @@ struct RepoView {
     list: CommitList,
     /// Ref labels per commit, rebuilt when refs or HEAD change.
     labels: HashMap<Oid, Vec<RefLabel>>,
+    /// Grows every time `labels` is rebuilt: the left column rebuilds its tree only then.
+    refs_version: u64,
     /// Details of the selected commit (`commit.show`).
     details: DetailsState,
     /// Diff of the open file (`diff.commit`), shown in place of the graph.
@@ -478,6 +485,7 @@ impl RepoView {
             write_error: None,
             list: CommitList::default(),
             labels: HashMap::new(),
+            refs_version: 0,
             details: DetailsState::default(),
             diff: DiffState::default(),
             commit: CommitBox::default(),
@@ -502,6 +510,7 @@ impl RepoView {
     }
 
     fn update_labels(&mut self) {
+        self.refs_version += 1;
         self.labels = graph::ref_labels(&self.refs, &self.head);
         let stashes = self.stash.list().unwrap_or_default();
         graph::add_stash_labels(
@@ -1417,6 +1426,49 @@ impl Tab {
 }
 
 impl Tab {
+    /// The fetch, pull or push in progress with its latest progress, for the bar.
+    fn network(&self) -> Option<view::Network> {
+        let r = self.repo.as_ref()?;
+        if let Some(running) = r.optimize.running() {
+            return Some(view::Network {
+                what: tr!("optimize-label"),
+                cancelling: running.cancelling,
+                progress: self.executor.progress(running.ticket),
+                stop_hint: tr!("optimize-stop-hint"),
+                cancel: Action::CancelOptimize,
+            });
+        }
+        if let Some(running) = r.fetch.running() {
+            return Some(view::Network {
+                what: fetch::label(running.remote.as_deref()),
+                cancelling: running.cancelling,
+                progress: self.executor.progress(running.ticket),
+                stop_hint: tr!("app-stop-fetch-hint"),
+                cancel: Action::CancelFetch,
+            });
+        }
+        if let Some(adding) = r.remotes.running_fetch() {
+            return Some(view::Network {
+                what: adding.label(),
+                cancelling: adding.cancelling,
+                progress: adding.ticket.and_then(|t| self.executor.progress(t)),
+                stop_hint: tr!("app-stop-add-remote-hint"),
+                cancel: Action::CancelAddRemote,
+            });
+        }
+        let running = r.sync.running()?;
+        Some(view::Network {
+            what: running.request.label(),
+            cancelling: running.cancelling,
+            progress: self.executor.progress(running.ticket),
+            stop_hint: match running.request.op {
+                sync::Op::Pull => tr!("app-stop-pull-hint"),
+                sync::Op::Push => tr!("app-stop-push-hint"),
+            },
+            cancel: Action::CancelSync,
+        })
+    }
+
     /// Draws the tab shown; what the user asks for ends up in `actions`, applied afterwards by
     /// [`App`]. `recent`: the recent repos, for the menus.
     fn ui(
@@ -1437,62 +1489,17 @@ impl Tab {
             .map(|r| std::mem::take(&mut r.commit.draft))
             .unwrap_or_default();
 
-        // The fetch, pull or push in progress with its latest progress, for the bar.
-        let network = self.repo.as_ref().and_then(|r| {
-            if let Some(running) = r.optimize.running() {
-                return Some(view::Network {
-                    what: tr!("optimize-label"),
-                    cancelling: running.cancelling,
-                    progress: self.executor.progress(running.ticket),
-                    stop_hint: tr!("optimize-stop-hint"),
-                    cancel: Action::CancelOptimize,
-                });
-            }
-            if let Some(running) = r.fetch.running() {
-                return Some(view::Network {
-                    what: fetch::label(running.remote.as_deref()),
-                    cancelling: running.cancelling,
-                    progress: self.executor.progress(running.ticket),
-                    stop_hint: tr!("app-stop-fetch-hint"),
-                    cancel: Action::CancelFetch,
-                });
-            }
-            if let Some(adding) = r.remotes.running_fetch() {
-                return Some(view::Network {
-                    what: adding.label(),
-                    cancelling: adding.cancelling,
-                    progress: adding.ticket.and_then(|t| self.executor.progress(t)),
-                    stop_hint: tr!("app-stop-add-remote-hint"),
-                    cancel: Action::CancelAddRemote,
-                });
-            }
-            let running = r.sync.running()?;
-            Some(view::Network {
-                what: running.request.label(),
-                cancelling: running.cancelling,
-                progress: self.executor.progress(running.ticket),
-                stop_hint: match running.request.op {
-                    sync::Op::Pull => tr!("app-stop-pull-hint"),
-                    sync::Op::Push => tr!("app-stop-push-hint"),
-                },
-                cancel: Action::CancelSync,
-            })
-        });
-        egui::Panel::top("bar").show(ui, |ui| {
-            view::top_bar(
-                ui,
-                self.repo.as_ref(),
-                can_pick,
-                recent,
-                writing,
-                network,
-                &mut actions,
-            );
-        });
+        let network = self.network();
+        if let Some(repo) = &self.repo {
+            egui::Panel::top("bar").show(ui, |ui| {
+                view::top_bar(ui, repo, writing, network, &mut actions);
+            });
+        }
         egui::Panel::bottom("status").show(ui, |ui| {
             let write = self.repo.as_ref().and_then(|r| r.write_label.as_deref());
             view::status_bar(
                 ui,
+                self.repo.as_ref(),
                 self.executor.running(),
                 write,
                 &self.error,

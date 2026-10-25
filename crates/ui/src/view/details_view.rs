@@ -74,11 +74,16 @@ pub(super) fn commit_header(
         .spacing(vec2(12.0, 4.0))
         .show(ui, |ui| {
             ui.weak(tr!("details-commit"));
-            ui.horizontal_wrapped(|ui| {
+            // The short id on one line, the full one on hover and in the copy.
+            ui.horizontal(|ui| {
                 let id = commit.id.to_string();
-                ui.add(egui::Label::new(RichText::new(&id).monospace()).selectable(true));
+                ui.add(egui::Label::new(
+                    RichText::new(commit.id.short()).monospace(),
+                ))
+                .on_hover_text(&id);
+                let copy = egui::Button::new(icons::text(icons::COPY, 13.0)).frame(false);
                 if ui
-                    .small_button(tr!("details-copy"))
+                    .add(copy)
                     .on_hover_text(tr!("details-copy-hint"))
                     .clicked()
                 {
@@ -135,10 +140,7 @@ pub(super) fn commit_header(
         });
     if commit.is_merge() {
         ui.add_space(4.0);
-        ui.colored_label(
-            Color32::from_rgb(0x9b, 0x6b, 0xdf),
-            tr!("details-merge-commit"),
-        );
+        ui.colored_label(theme::MERGE, tr!("details-merge-commit"));
     }
     ui.add_space(4.0);
 }
@@ -179,7 +181,7 @@ pub(super) fn changed_files(
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
                 let painter = ui.painter_at(rect);
-                let color = change_color(file.change);
+                let color = theme::change(file.change);
                 let badge = egui::Rect::from_center_size(
                     egui::pos2(rect.left() + 11.0, rect.center().y),
                     vec2(18.0, 16.0),
@@ -190,7 +192,7 @@ pub(super) fn changed_files(
                     Align2::CENTER_CENTER,
                     change_letter(file.change),
                     mono.clone(),
-                    Color32::from_gray(20),
+                    theme::ON_BADGE,
                 );
 
                 // On the right: similarity and submodule marker.

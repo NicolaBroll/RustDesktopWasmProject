@@ -34,7 +34,7 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
     ui.label(text).on_hover_text(long);
 }
 
-/// The toolbar of the repo shown, GitKraken style: repo and branch on the left, the icon buttons
+/// The toolbar of the repo shown, GitKraken style: the branch on the left, the icon buttons
 /// at the center, the changed files on the right. `writing`: a write is in progress, Undo, Redo,
 /// Refresh, Fetch, Pull and Push wait. `network`: the fetch, pull or push in progress with its
 /// latest progress. Open and the recent repos are in the "File" menu of the title bar.
@@ -47,7 +47,7 @@ pub(crate) fn top_bar(
 ) {
     let bar = ui.max_rect();
     ui.horizontal(|ui| {
-        repo_info(ui, repo);
+        branch_info(ui, repo);
         // The width of the buttons is known only after drawing them: the last frame's centers them.
         let width_id = ui.scope_id().with("tools-width");
         let width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(0.0);
@@ -84,13 +84,9 @@ pub(crate) fn top_bar(
     });
 }
 
-/// Repo and branch, each under its caption.
-fn repo_info(ui: &mut Ui, repo: &RepoView) {
+/// The branch under its caption (the repo is the tab's name).
+fn branch_info(ui: &mut Ui, repo: &RepoView) {
     ui.add_space(4.0);
-    caption(ui, &tr!("top-bar-repository"), |ui| {
-        ui.strong(repo_name(&repo.path)).on_hover_text(&repo.path);
-    });
-    ui.add_space(8.0);
     caption(ui, &tr!("top-bar-branch"), |ui| {
         ui.horizontal(|ui| {
             ui.label(head_text(&repo.head));

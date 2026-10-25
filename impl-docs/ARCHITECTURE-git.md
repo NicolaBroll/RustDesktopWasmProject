@@ -492,7 +492,7 @@ GitKraken-like layout:
   per repo); "+"/"Open repository…" open in a new tab, a repo already open only shows its tab.
   Open tabs and recent repos (at most 10) are saved in the eframe storage and reopened at the next
   launch.
-- **Top bar** (toolbar, only with a repo open), GitKraken style: repo and branch on the left, icon
+- **Top bar** (toolbar, only with a repo open), GitKraken style: the branch on the left (the repo is the tab), icon
   buttons with the name underneath at the center (undo/redo, fetch/pull/push, stash, refresh;
   icons from a subset of Phosphor, `crates/ui/assets/icons.ttf`, rebuilt by
   `scripts/icon-font.sh`), changed files and the network job in progress.

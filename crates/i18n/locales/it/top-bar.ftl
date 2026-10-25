@@ -1,6 +1,5 @@
 # Top bar, status bar and welcome screen (view/top_bar.rs).
 
-top-bar-repository = repository
 top-bar-branch = branch
 top-bar-refresh = Aggiorna
 top-bar-refresh-hint = Rilegge ref, stato e log

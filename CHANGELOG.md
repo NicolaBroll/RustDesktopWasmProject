@@ -12,7 +12,7 @@ All notable changes to BinariGit. The format follows
   repositories) are in the window's title bar, with the app's own minimize, maximize/restore and
   close buttons (Windows and Linux; on macOS the native buttons stay).
 - **Toolbar** in GitKraken style: icon buttons with their name underneath (undo, redo, fetch,
-  pull, push, stash, refresh) at the center, repository and branch on the left.
+  pull, push, stash, refresh) at the center, the branch on the left.
 
 ## [0.1.0] - 2026-10-24
 

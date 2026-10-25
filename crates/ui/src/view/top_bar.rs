@@ -419,8 +419,11 @@ pub(crate) fn welcome(
             if ui.button(tr!("top-bar-open-repo")).clicked() {
                 actions.push(Action::PickFolder);
             }
+            create_buttons(ui, actions);
         } else {
             ui.heading(tr!("top-bar-no-repo"));
+            ui.add_space(8.0);
+            create_buttons(ui, actions);
         }
         if !busy && !recent.is_empty() {
             ui.add_space(16.0);

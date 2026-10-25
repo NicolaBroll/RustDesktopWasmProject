@@ -25,6 +25,7 @@ use project_engine::Progress;
 use project_i18n::tr;
 
 mod branches;
+mod clone_view;
 mod commits;
 mod confirm;
 mod conflict_view;
@@ -43,6 +44,8 @@ mod title_bar;
 mod top_bar;
 
 pub(crate) use branches::branch_dialog;
+pub(crate) use clone_view::clone_dialog;
+use clone_view::create_buttons;
 pub(crate) use commits::commit_list;
 pub(crate) use confirm::{confirm_amend, confirm_discard, confirm_write};
 pub(crate) use conflict_view::conflict_editor;

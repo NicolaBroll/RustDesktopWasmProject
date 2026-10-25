@@ -1,0 +1,39 @@
+# Clone and new repository: the File menu entries, the dialog and its errors (clone.rs, view/clone_view.rs).
+# $url: the address typed in the dialog.
+
+clone-menu-clone = Clona repository…
+clone-menu-clone-hint = Copia un repository remoto in una nuova cartella e lo apre in una scheda
+clone-menu-init = Nuovo repository…
+clone-menu-init-hint = Crea un repository vuoto (git init) e lo apre in una scheda
+clone-title = Clona un repository
+clone-explanation = Scarica il repository con la sua storia in una nuova cartella; poi si apre in una scheda. Le credenziali non vengono mai chieste: arrivano dalla configurazione di git (credential helper, ssh-agent).
+clone-init-title = Nuovo repository
+clone-init-explanation = Crea un repository vuoto (git init) nella cartella; poi si apre in una scheda.
+clone-url = URL
+clone-url-hint = https://…, git@host:percorso o una cartella locale
+clone-path = Cartella
+clone-path-hint = Cartella di destinazione
+clone-browse = Sfoglia…
+clone-browse-hint = Scegli la cartella che conterrà il clone: viene aggiunto il nome preso dall'URL
+clone-init-browse-hint = Scegli la cartella del nuovo repository (deve essere vuota)
+clone-path-rule = La cartella non deve ancora esistere (viene creata, dentro una cartella esistente) oppure deve essere vuota: niente di ciò che c'è già viene mai sovrascritto.
+clone-branch = Branch
+clone-branch-hint = Facoltativo: il branch predefinito del remoto
+clone-init-branch-hint = Facoltativo: quello predefinito di git (init.defaultBranch)
+clone-depth = Profondità
+clone-depth-hint = Tutta la storia
+clone-depth-tooltip = Facoltativo: scarica solo gli ultimi N commit (clone shallow). git lo ignora per un semplice percorso locale.
+clone-depth-invalid = La profondità deve essere un numero intero maggiore di 0, oppure vuota per tutta la storia.
+clone-submit = Clona
+clone-init-submit = Crea
+clone-close = Chiudi
+clone-cancel = Annulla
+clone-cancel-hint = Ferma il clone: la cartella torna com'era
+clone-cancelling = Annullamento…
+clone-connecting = Connessione…
+clone-init-running = Creazione del repository…
+clone-cancelled = Clone annullato: la cartella è tornata com'era.
+clone-who = Il repository «{ $url }»
+clone-not-possible-title = Non possibile
+clone-failed-title = Clone non riuscito
+clone-init-failed-title = Non è stato possibile creare il repository

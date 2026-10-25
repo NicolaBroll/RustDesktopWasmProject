@@ -38,6 +38,11 @@ cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","ne
 cargo run -p project-cli -- --repo . run --cmd 'branch.reset_preview={"target":"HEAD~1","mode":"hard"}'
 cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1","mode":"soft"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1","mode":"hard","confirm":true}' --cmd edit.undo
+# clone (no --repo needed: it opens the clone; destination absent or an empty folder, progress on
+# stderr; an error removes the folder it created) and a new empty repository
+cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/rust-lang/log.git","path":"target/log"}' --cmd 'repo.log={"limit":3}'
+cargo run -p project-cli -- run --cmd 'repo.clone={"url":"file:///path/to/repo","path":"target/shallow","branch":"main","depth":1}'
+cargo run -p project-cli -- run --cmd 'repo.init={"path":"target/new-repo","branch":"main"}' --cmd repo.status
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'

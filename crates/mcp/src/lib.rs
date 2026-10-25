@@ -3,7 +3,8 @@
 //! Transport: JSON-RPC 2.0, one message per line on stdin/stdout; no network
 //! port. Every path is resolved inside the root given to
 //! [`Server::new`] and rejected if it escapes (also through symbolic links): repositories are
-//! opened only with the `open_repo` tool, not with `repo.open` through `execute_command`.
+//! opened only with the `open_repo` tool, not with `repo.open` through `execute_command`;
+//! `repo.clone` and `repo.init` are refused (their paths would not be confined).
 
 mod paths;
 
@@ -135,6 +136,12 @@ impl Server {
         // `repo.open` accepts any path: from here we go through `open_repo`.
         if id == "repo.open" {
             return Err("to open a repository use the `open_repo` tool".to_owned());
+        }
+        // Destination and URL (a local path is a URL) could be anywhere: not confined to the root.
+        if id == "repo.clone" || id == "repo.init" {
+            return Err(format!(
+                "`{id}` is not available over MCP: its paths are not confined to the root"
+            ));
         }
         self.registry
             .run(&id, &mut self.session, params)
@@ -552,6 +559,25 @@ mod tests {
 
     fn server_without_repos(root: &Path) -> Server {
         Server::new(root, Arc::new(MemoryOpener::new())).unwrap()
+    }
+
+    #[test]
+    fn clone_and_init_are_not_available() {
+        let root = temp_root("clone");
+        let mut server = server(&root);
+        for (id, params) in [
+            ("repo.clone", json!({"url": "/", "path": "/tmp/x"})),
+            ("repo.init", json!({"path": "/tmp/x"})),
+        ] {
+            let r = call(
+                &mut server,
+                "execute_command",
+                json!({"id": id, "params": params}),
+            );
+            assert_eq!(r["isError"], true, "{id}");
+            let text = r["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("not available over MCP"), "{text}");
+        }
     }
 
     #[test]

@@ -150,6 +150,7 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         {
             actions.push(Action::PickFolder);
         }
+        create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
         ui.separator();
         theme_menu(ui);

@@ -13,6 +13,7 @@
 //! (`merge_view`), with the conflicted files and the commands to finish or abort it.
 
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod details;
@@ -87,6 +88,18 @@ enum Action {
     CloseTab(usize),
     /// Drops from the recent list the repos whose folder no longer exists.
     ForgetMissing,
+    /// Opens the "Clone…" or "New repository…" dialog.
+    OpenClone(clone::Kind),
+    /// The fields of that dialog changed.
+    CloneFields(clone::Fields),
+    /// "Browse…" in that dialog: the folder dialog, the choice goes into the destination.
+    BrowseCloneFolder,
+    /// "Clone"/"Create" in that dialog.
+    SubmitClone,
+    /// "Cancel" the clone in progress.
+    CancelClone,
+    /// Closes that dialog (not while its command runs).
+    CloseClone,
     /// Re-reads refs, status and log of the open repo.
     Refresh,
     /// Selects the commit at the given row of the list.
@@ -383,6 +396,8 @@ enum Request {
     /// is the new status.
     Write(u64),
     Open,
+    /// `repo.clone`/`repo.init` (the dialog state is in [`clone::CloneBox`], held by [`App`]).
+    Clone,
     Refs(u64),
     Status(u64),
     /// `repo.status` of the automatic refresh: afterwards the refs ([`Request::AutoRefs`]).
@@ -687,6 +702,8 @@ struct Tab {
     /// The path `repo.open` refused because there is no repository there: [`App`] drops it from
     /// the recent list.
     not_found: Option<String>,
+    /// The answer of `repo.clone`/`repo.init`, collected by [`App`] for its dialog.
+    clone_done: Option<Done>,
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
@@ -706,6 +723,7 @@ impl Tab {
             requested: None,
             opened: None,
             not_found: None,
+            clone_done: None,
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
@@ -717,6 +735,29 @@ impl Tab {
     fn open(&mut self, path: String) {
         self.submit("repo.open", json!({ "path": &path }), Request::Open);
         self.requested = Some(path);
+    }
+
+    /// Sends `repo.clone`/`repo.init` (the session opens the new repo at the end): the answer
+    /// waits in `clone_done`.
+    fn create_repo(&mut self, command: &str, params: Value) -> Ticket {
+        let ticket = self.executor.submit(command, params);
+        self.pending.insert(ticket, Request::Clone);
+        ticket
+    }
+
+    /// The repo created by [`Tab::create_repo`] is open in the session: shown as after
+    /// `repo.open`, with git's messages (`notice`) in the status bar.
+    fn created(&mut self, value: Value, notice: String) {
+        match self.store(Request::Open, value) {
+            Ok(()) => self.notice = notice,
+            Err(e) => {
+                self.error = tr!(
+                    "common-unexpected-result",
+                    command = "repo.clone",
+                    error = e.to_string()
+                );
+            }
+        }
     }
 
     /// The repo of the tab, or the one being opened.
@@ -746,7 +787,13 @@ impl Tab {
             | Action::Open(_)
             | Action::SwitchTab(_)
             | Action::CloseTab(_)
-            | Action::ForgetMissing => {}
+            | Action::ForgetMissing
+            | Action::OpenClone(_)
+            | Action::CloneFields(_)
+            | Action::BrowseCloneFolder
+            | Action::SubmitClone
+            | Action::CancelClone
+            | Action::CloseClone => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -1152,6 +1199,10 @@ impl Tab {
             let Some(request) = self.pending.remove(&done.ticket) else {
                 continue;
             };
+            if matches!(request, Request::Clone) {
+                self.clone_done = Some(done);
+                continue;
+            }
             if matches!(request, Request::Open) {
                 let path = self.requested.take();
                 if done.error_kind == Some(ErrorKind::RepoNotFound) {
@@ -1461,7 +1512,8 @@ impl Tab {
                 }
             }
             // Handled separately in `receive`.
-            Request::Show(..)
+            Request::Clone
+            | Request::Show(..)
             | Request::Diff(..)
             | Request::Write(..)
             | Request::Commit(..)

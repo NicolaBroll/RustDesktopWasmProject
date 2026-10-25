@@ -6,6 +6,7 @@
 
 mod backup;
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod discard;
@@ -39,6 +40,10 @@ pub use backup::{
 pub use branch::{
     BranchDeleted, ConfigEntry, HEADS_PREFIX, branch_ref, branch_short, check_branch_name,
     check_new_branch_name, check_no_operation,
+};
+pub use clone::{
+    CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
+    destination_not_empty, destination_not_folder,
 };
 pub use commit::{
     CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
@@ -747,6 +752,22 @@ impl DiffSpec {
 pub trait RepoOpener: Send + Sync {
     /// [`EngineError::RepoNotFound`] if there is no repository at the path.
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;
+
+    /// `repo.clone` (`impl-docs/git/clone.md`): clones `request.url` into `request.path`, which
+    /// must be absent or an empty folder ([`destination_not_empty`], [`destination_not_folder`],
+    /// [`destination_no_parent`]: nothing written). Progress and cancellation from `job`; on
+    /// cancellation ([`EngineError::Cancelled`]) or error the destination goes back to how it was
+    /// (a folder the call created is removed). The request is already checked
+    /// ([`CloneRequest::check`]). The caller then opens `request.path` with [`RepoOpener::open`].
+    fn clone_repo(
+        &self,
+        request: &CloneRequest,
+        job: &JobContext,
+    ) -> Result<CloneOutcome, EngineError>;
+
+    /// `repo.init`: a new empty repository in `request.path`, with the same destination rules
+    /// as [`RepoOpener::clone_repo`]. The caller then opens it with [`RepoOpener::open`].
+    fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError>;
 }
 
 /// A page of the log: parameters of `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,

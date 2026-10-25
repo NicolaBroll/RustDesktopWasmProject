@@ -1,0 +1,9 @@
+engine-clone-url-empty = `url` è vuoto: indica l'indirizzo o il percorso del repository da clonare
+engine-clone-url-invalid = `url` contiene un a capo o un carattere NUL
+engine-clone-path-empty = `path` è vuoto (o contiene un carattere NUL): indica la cartella di destinazione
+engine-clone-depth-zero = `depth` deve essere maggiore di 0 (il numero di commit da scaricare)
+engine-clone-not-empty = `{ $path }` esiste già e non è vuota: scegli una cartella che non esiste o una vuota; niente è stato scritto
+engine-clone-not-folder = `{ $path }` esiste già e non è una cartella (un file o un collegamento): niente è stato scritto
+engine-clone-no-parent = la cartella che dovrebbe contenere `{ $path }` non esiste: niente è stato scritto
+engine-clone-no-such-branch = `{ $url }` non ha il branch `{ $branch }`, niente clonato: { $message }
+engine-clone-cleanup-failed = { $error }. Inoltre non è stato possibile ripulire `{ $path }` ({ $reason }): controllala a mano

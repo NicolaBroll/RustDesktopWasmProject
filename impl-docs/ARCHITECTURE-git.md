@@ -482,8 +482,8 @@ Undo does not cover remote operations: a push cannot be undone from here (the pu
 
 GitKraken-like layout:
 
-- **Title bar** (`view/title_bar.rs`), VS Code style: the File menu (open a repo, recent repos:
-  what is not about the repo shown), the title "repo — BinariGit" at the center. Who draws the window frame is a `WindowFrame` chosen by the
+- **Title bar** (`view/title_bar.rs`), VS Code style: the File menu (open a repo, recent repos,
+  theme: what is not about the repo shown), the title "repo — BinariGit" at the center. Who draws the window frame is a `WindowFrame` chosen by the
   app (the UI has no `cfg`): `Custom` (Windows, Linux) is a window without decorations, where the
   bar is dragged, maximizes with a double click, has its own minimize, maximize/restore and close
   buttons and the window edges resize it; `MacOs` keeps the native buttons over a transparent title
@@ -497,6 +497,9 @@ GitKraken-like layout:
   buttons with the name underneath at the center (undo/redo, fetch/pull/push, stash, refresh;
   icons from a subset of Phosphor, `crates/ui/assets/icons.ttf`, rebuilt by
   `scripts/icon-font.py`), changed files and the network job in progress.
+- **Colors**: egui's visuals, dark or light (as the system or chosen in File → Theme); the few
+  colors of their own (change types, text on badges, lanes used as text) are in `theme.rs`, with
+  a contrast test for the light theme.
 - **Left column** (`view/refs.rs`, tree in `ref_tree.rs`): a filter, then local branches, remotes
   (each remote heads its branches), tags and stashes ([git/stash.md](git/stash.md)). Names split
   on `/` become folders; the rows are all the same height and only those in view are drawn, the

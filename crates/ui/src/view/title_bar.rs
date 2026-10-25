@@ -26,8 +26,6 @@ const BUTTON_WIDTH: f32 = 46.0;
 const MAC_BUTTONS_WIDTH: f32 = 76.0;
 /// Width of the edges that resize the window.
 const RESIZE_EDGE: f32 = 5.0;
-/// Background of "Close" under the mouse (as Windows).
-const CLOSE_HOVER: Color32 = Color32::from_rgb(0xc4, 0x2b, 0x1c);
 
 /// What the bar shows and enables.
 pub(crate) struct TitleBar<'a> {
@@ -132,6 +130,26 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
             actions.push(Action::PickFolder);
         }
         recent_menu(ui, bar.recent, actions);
+        ui.separator();
+        theme_menu(ui);
+    });
+}
+
+/// System, light or dark: egui keeps the choice between launches.
+fn theme_menu(ui: &mut Ui) {
+    ui.menu_button(tr!("title-bar-theme"), |ui| {
+        let current = ui.ctx().options(|o| o.theme_preference);
+        let choices = [
+            (egui::ThemePreference::System, tr!("title-bar-theme-system")),
+            (egui::ThemePreference::Light, tr!("title-bar-theme-light")),
+            (egui::ThemePreference::Dark, tr!("title-bar-theme-dark")),
+        ];
+        for (choice, label) in choices {
+            if ui.radio(current == choice, label).clicked() {
+                ui.ctx().set_theme(choice);
+                ui.close();
+            }
+        }
     });
 }
 
@@ -179,9 +197,9 @@ fn window_button(ui: &mut Ui, kind: WindowButton) -> egui::Response {
             WindowButton::Close => {
                 color = Color32::WHITE;
                 if response.is_pointer_button_down_on() {
-                    CLOSE_HOVER.gamma_multiply(0.8)
+                    theme::CLOSE_HOVER.gamma_multiply(0.8)
                 } else {
-                    CLOSE_HOVER
+                    theme::CLOSE_HOVER
                 }
             }
             _ if response.is_pointer_button_down_on() => visuals.widgets.active.weak_bg_fill,

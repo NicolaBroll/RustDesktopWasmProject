@@ -434,12 +434,18 @@ pub(super) fn ref_labels(
         return (0.0, None);
     }
     let look = |kind: LabelKind| -> (Color32, egui::Stroke, Color32) {
-        let dark = Color32::from_gray(20);
+        let on_badge = theme::ON_BADGE;
+        // Outlines and text in the lane's color must read on the panel too.
+        let outline = theme::as_text(lane, painter.ctx().global_style().visuals.dark_mode);
         match kind {
             LabelKind::Head => (style.head_fill, egui::Stroke::NONE, style.head_text),
-            LabelKind::CurrentBranch => (lane, egui::Stroke::new(1.5, style.text), dark),
-            LabelKind::Branch => (lane, egui::Stroke::NONE, dark),
-            LabelKind::Remote => (Color32::TRANSPARENT, egui::Stroke::new(1.0, lane), lane),
+            LabelKind::CurrentBranch => (lane, egui::Stroke::new(1.5, style.text), on_badge),
+            LabelKind::Branch => (lane, egui::Stroke::NONE, on_badge),
+            LabelKind::Remote => (
+                Color32::TRANSPARENT,
+                egui::Stroke::new(1.0, outline),
+                outline,
+            ),
             LabelKind::Tag => (
                 style.tag_fill,
                 egui::Stroke::new(1.0, style.weak),

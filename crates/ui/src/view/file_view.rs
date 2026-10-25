@@ -421,13 +421,13 @@ fn history_list(
                     pos2(rect.left() + 11.0, rect.top() + 11.0),
                     vec2(18.0, 16.0),
                 );
-                painter.rect_filled(badge, 3.0, change_color(entry.status));
+                painter.rect_filled(badge, 3.0, theme::change(entry.status));
                 painter.text(
                     badge.center(),
                     Align2::CENTER_CENTER,
                     change_letter(entry.status),
                     mono.clone(),
-                    Color32::from_gray(20),
+                    theme::ON_BADGE,
                 );
                 let left = badge.right() + 6.0;
                 let width = rect.right() - left - 4.0;

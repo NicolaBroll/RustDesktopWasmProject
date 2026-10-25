@@ -39,6 +39,7 @@ mod stage;
 mod stash;
 mod sync;
 mod tabs;
+mod theme;
 mod view;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};

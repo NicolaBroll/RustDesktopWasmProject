@@ -1,4 +1,4 @@
-# Title bar: the File menu, window title and buttons (view/title_bar.rs).
+# Title bar: the File menu (open, recent, theme), window title and buttons (view/title_bar.rs).
 
 title-bar-file = File
 title-bar-open = Open repository…
@@ -9,3 +9,7 @@ title-bar-minimize = Minimize
 title-bar-maximize = Maximize
 title-bar-restore = Restore
 title-bar-close = Close
+title-bar-theme = Theme
+title-bar-theme-system = As the system
+title-bar-theme-light = Light
+title-bar-theme-dark = Dark

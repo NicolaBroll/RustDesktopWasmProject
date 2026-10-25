@@ -9,7 +9,6 @@ use crate::discard::{self, Discard, UndoOp};
 use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
-use crate::icons;
 use crate::list::{Anchor, CommitList};
 use crate::merge;
 use crate::remotes::{self, AddDialog, AddFields, Remote, RemoveDialog};
@@ -17,6 +16,7 @@ use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
 use crate::sync::{self, Window};
 use crate::{Action, Job, ListViewport, RepoView};
+use crate::{icons, theme};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
@@ -106,20 +106,6 @@ fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
         .on_hover_text(tr!("common-oid-hint", id = id.to_string()));
     if response.clicked() {
         actions.push(Action::SelectCommit(id));
-    }
-}
-
-/// Color of the letter of the change type.
-fn change_color(change: Change) -> Color32 {
-    match change {
-        Change::Added => Color32::from_rgb(0x3f, 0xb9, 0x50),
-        Change::Deleted => Color32::from_rgb(0xe5, 0x53, 0x4b),
-        Change::Modified => Color32::from_rgb(0xd2, 0x99, 0x22),
-        Change::TypeChanged => Color32::from_rgb(0xb0, 0x7c, 0xe8),
-        Change::Renamed => Color32::from_rgb(0x4c, 0x9a, 0xf0),
-        Change::Copied => Color32::from_rgb(0x2a, 0xb7, 0xa9),
-        Change::Unmerged => Color32::from_rgb(0xf5, 0x7c, 0x00),
-        _ => Color32::GRAY,
     }
 }
 

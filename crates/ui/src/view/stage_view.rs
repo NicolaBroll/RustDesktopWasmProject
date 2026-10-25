@@ -361,13 +361,13 @@ pub(super) fn stage_section(
                     egui::pos2(rect.left() + 11.0, rect.center().y),
                     vec2(18.0, 16.0),
                 );
-                painter.rect_filled(badge, 3.0, change_color(item.change));
+                painter.rect_filled(badge, 3.0, theme::change(item.change));
                 painter.text(
                     badge.center(),
                     Align2::CENTER_CENTER,
                     change_letter(item.change),
                     mono.clone(),
-                    Color32::from_gray(20),
+                    theme::ON_BADGE,
                 );
 
                 // On the right the row's button, only under the mouse and on the open file: a

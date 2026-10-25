@@ -13,6 +13,9 @@ All notable changes to BinariGit. The format follows
   are only there and which local branches track it; the commit stays in a backup
   (`refs/project/backup/push-delete-…`) and, with `--force-with-lease`, if someone pushed to the
   branch after the last fetch the deletion is refused.
+- **AppImage updates from GitHub**: the AppImage embeds its update information and the Release
+  also publishes `BinariGit-<version>-x86_64.AppImage.zsync`, so AppImageUpdate, Gear Lever or
+  AppImageLauncher update it to the latest Release, downloading only what changed.
 
 ## [0.2.0] - 2026-10-25
 

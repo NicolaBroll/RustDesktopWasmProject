@@ -34,6 +34,7 @@ jobs:
           name: appimage
           path: |
             target/appimage/*.AppImage
+            target/appimage/*.AppImage.zsync
             target/appimage/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -80,6 +81,7 @@ jobs:
           test -s dist/notes.md || { echo "no section for $version in CHANGELOG.md" >&2; exit 1; }
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "BinariGit $version" --notes-file dist/notes.md --generate-notes \
-            dist/appimage/*.AppImage dist/windows/*.zip dist/SHA256SUMS.txt
+            dist/appimage/*.AppImage dist/appimage/*.AppImage.zsync dist/windows/*.zip \
+            dist/SHA256SUMS.txt
         env:
           GH_TOKEN: ${{ github.token }}

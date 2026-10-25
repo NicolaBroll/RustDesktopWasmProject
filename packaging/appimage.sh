@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds target/appimage/BinariGit-<version>-x86_64.AppImage and SHA256SUMS.txt.
+# Builds target/appimage/BinariGit-<version>-x86_64.AppImage, its .zsync and SHA256SUMS.txt.
 # Usage: packaging/appimage.sh   (or: make appimage)
 set -euo pipefail
 
@@ -35,6 +35,10 @@ fetch() {
 VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT/Cargo.toml")"
 [ -n "$VERSION" ] || { echo "version not found in Cargo.toml" >&2; exit 1; }
 NAME="BinariGit-${VERSION}-x86_64.AppImage"
+# Update information embedded in the AppImage: updaters (AppImageUpdate, Gear Lever...) read the
+# .zsync of the latest GitHub Release. In CI the repo is the one running the workflow.
+GITHUB_REPO="${GITHUB_REPOSITORY:-NicolaBroll/RustDesktopWasmProject}"
+UPDATE_INFO="gh-releases-zsync|${GITHUB_REPO%%/*}|${GITHUB_REPO#*/}|latest|BinariGit-*-x86_64.AppImage.zsync"
 
 mkdir -p "$CACHE" "$OUT"
 fetch "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256" "$CACHE/appimagetool-${APPIMAGETOOL_VERSION}-x86_64.AppImage"
@@ -58,10 +62,12 @@ for doc in LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md; do
     install -D -m 644 "$ROOT/$doc" "$APPDIR/usr/share/doc/binarigit/$doc"
 done
 
-rm -f "$OUT/$NAME"
+rm -f "$OUT/$NAME" "$OUT/$NAME.zsync"
 # No FUSE in containers: the tool extracts itself instead of mounting.
 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$CACHE/appimagetool-${APPIMAGETOOL_VERSION}-x86_64.AppImage" \
-    --no-appstream --runtime-file "$CACHE/runtime-${RUNTIME_VERSION}-x86_64" "$APPDIR" "$OUT/$NAME"
+    --no-appstream --runtime-file "$CACHE/runtime-${RUNTIME_VERSION}-x86_64" \
+    --updateinformation "$UPDATE_INFO" "$APPDIR" "$OUT/$NAME"
+[ -f "$OUT/$NAME.zsync" ] || { echo "appimagetool did not write $NAME.zsync" >&2; exit 1; }
 
 (cd "$OUT" && sha256sum "$NAME" > SHA256SUMS.txt)
 echo "AppImage: $OUT/$NAME"

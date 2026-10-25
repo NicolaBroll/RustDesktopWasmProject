@@ -13,6 +13,9 @@ All notable changes to BinariGit. The format follows
   close buttons (Windows and Linux; on macOS the native buttons stay).
 - **Toolbar** in GitKraken style: icon buttons with their name underneath (undo, redo, fetch,
   pull, push, stash, refresh) at the center, the branch on the left.
+- **Tabs** in VS Code style: flat tabs side by side, the active one joined to the toolbar below
+  with a blue line on top instead of the blue fill; the "×" shows on the active tab and under the
+  mouse, the middle button closes a tab too.
 
 ## [0.1.0] - 2026-10-24
 

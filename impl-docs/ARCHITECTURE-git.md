@@ -488,8 +488,9 @@ GitKraken-like layout:
   bar is dragged, maximizes with a double click, has its own minimize, maximize/restore and close
   buttons and the window edges resize it; `MacOs` keeps the native buttons over a transparent title
   bar; `Native` (default, e.g. the browser) shows only the menus.
-- **Tabs** (S35): one per open repo, under the title bar, each with its own `Session` (undo journal
-  per repo); "+"/"Open repository…" open in a new tab, a repo already open only shows its tab.
+- **Tabs** (S35, `view/tab_strip.rs`): one per open repo, under the title bar, VS Code style (the
+  active one has the toolbar's background and a colored line on top; "×" on the active tab and
+  under the mouse, middle click closes), each with its own `Session` (undo journal per repo); "+"/"Open repository…" open in a new tab, a repo already open only shows its tab.
   Open tabs and recent repos (at most 10) are saved in the eframe storage and reopened at the next
   launch.
 - **Top bar** (toolbar, only with a repo open), GitKraken style: the branch on the left (the repo is the tab), icon

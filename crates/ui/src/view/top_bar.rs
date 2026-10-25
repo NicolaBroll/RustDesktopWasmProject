@@ -246,63 +246,6 @@ fn recent_text(repo: &RecentRepo) -> RichText {
     }
 }
 
-/// A tab of the strip, as [`tab_strip`] shows it.
-pub(crate) struct TabLabel {
-    pub(crate) title: String,
-    /// The repo open or opening, on hover.
-    pub(crate) path: Option<String>,
-    /// `repo.open` in progress.
-    pub(crate) opening: bool,
-    /// A write in progress: the tab cannot be closed.
-    pub(crate) writing: bool,
-}
-
-/// The open repos, one tab each, with "×" to close it and "+" to open another.
-pub(crate) fn tab_strip(
-    ui: &mut Ui,
-    tabs: &[TabLabel],
-    active: usize,
-    can_pick: bool,
-    actions: &mut Vec<Action>,
-) {
-    egui::ScrollArea::horizontal().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            for (index, tab) in tabs.iter().enumerate() {
-                if tab.opening {
-                    ui.spinner();
-                }
-                let label = ui.selectable_label(index == active, &tab.title);
-                let label = match &tab.path {
-                    Some(path) => label.on_hover_text(path),
-                    None => label,
-                };
-                if label.clicked() {
-                    actions.push(Action::SwitchTab(index));
-                }
-                let close = ui
-                    .add_enabled(
-                        !tab.writing,
-                        egui::Button::new(tr!("tabs-close")).frame(false).small(),
-                    )
-                    .on_hover_text(tr!("tabs-close-hint"))
-                    .on_disabled_hover_text(tr!("tabs-close-writing"));
-                if close.clicked() {
-                    actions.push(Action::CloseTab(index));
-                }
-                ui.separator();
-            }
-            if can_pick
-                && ui
-                    .button(tr!("tabs-new"))
-                    .on_hover_text(tr!("tabs-new-hint"))
-                    .clicked()
-            {
-                actions.push(Action::PickFolder);
-            }
-        });
-    });
-}
-
 /// The "Fetch" button and, with several remotes, the menu to choose one.
 fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
     let button = ui

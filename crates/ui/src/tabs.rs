@@ -358,9 +358,7 @@ impl eframe::App for App {
         view::title_bar_panel(ui, &bar, &mut strip);
         if self.tabs.len() > 1 || self.tabs[0].path().is_some() {
             let labels = self.labels();
-            egui::Panel::top("tabs").show(ui, |ui| {
-                view::tab_strip(ui, &labels, self.active, can_pick, &mut strip);
-            });
+            view::tab_strip_panel(ui, &labels, self.active, can_pick, &mut strip);
         }
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];

@@ -22,8 +22,8 @@ All notable changes to BinariGit. The format follows
 
 ### Fixed
 
-- After moving the window by its title bar, buttons light up under the mouse again without
-  an extra click.
+- After moving the window by its title bar or resizing it from its edges, buttons light up under
+  the mouse again without an extra click.
 - A click on the arrow of a section (Local branches, Remotes, Tags, Stashes) opens and closes it,
   like a click on its name.
 - The close button of the window was cut by the right edge: its × is centered again.

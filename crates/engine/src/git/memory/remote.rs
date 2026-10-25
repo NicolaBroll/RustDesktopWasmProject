@@ -31,6 +31,10 @@ pub(super) struct MemoryRemote {
     pub(super) branches: BTreeMap<String, Oid>,
     /// The commits of the remote (also those the repo already has).
     pub(super) commits: BTreeMap<Oid, Commit>,
+    /// Short name of the tag on the remote → value (the tag object of an annotated tag).
+    pub(super) tags: BTreeMap<String, Oid>,
+    /// The annotated tag objects of the remote, with the commit they point to.
+    pub(super) tag_objects: BTreeMap<Oid, Oid>,
     pub(super) failure: Option<FetchFailure>,
 }
 
@@ -70,6 +74,29 @@ impl MemoryBackend {
     /// of a branch that reaches it.
     pub fn insert_remote_commit(&mut self, remote: &str, commit: Commit) {
         self.remote_mut(remote).commits.insert(commit.id, commit);
+    }
+
+    /// On the remote `remote` (which must exist) the tag `name` (short name) points to `target`,
+    /// lightweight, or annotated through the tag object `tag_object` (which the repo may not have).
+    pub fn set_tag_on_remote(
+        &mut self,
+        remote: &str,
+        name: &str,
+        target: Oid,
+        tag_object: Option<Oid>,
+    ) {
+        let remote = self.remote_mut(remote);
+        if let Some(object) = tag_object {
+            remote.tag_objects.insert(object, target);
+        }
+        remote
+            .tags
+            .insert(name.to_owned(), tag_object.unwrap_or(target));
+    }
+
+    /// The value of the tag `name` on the remote `remote`, if any.
+    pub fn tag_on_remote(&self, remote: &str, name: &str) -> Option<Oid> {
+        self.remotes.get(remote)?.tags.get(name).copied()
     }
 
     /// Fetches and pushes from `remote` fail with `failure` (`None`: they succeed again).

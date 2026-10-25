@@ -5,6 +5,7 @@ engine-journal-discard-many = Scarta le modifiche di { $n } file ({ $names })
 engine-journal-quoted = «{ $name }»
 engine-journal-branch-create = Crea branch `{ $name }` su { $id }
 engine-journal-tag-create = Crea tag `{ $name }` su { $id }
+engine-journal-tag-delete = Elimina tag `{ $name }` su { $id }
 engine-journal-branch-delete = Elimina branch `{ $name }` (era { $id })
 engine-journal-branch-rename = Rinomina branch `{ $from }` in `{ $to }`
 engine-journal-head-branch = `{ $name }`

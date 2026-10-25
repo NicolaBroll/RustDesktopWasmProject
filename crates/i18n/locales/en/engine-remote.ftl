@@ -92,3 +92,14 @@ engine-remote-branch-no-tracking = no fetch refspec of remote `{ $remote }` maps
 engine-remote-branch-unknown = `{ $tracking }` does not exist here: run `remote.fetch` of `{ $remote }` and try again; nothing deleted
 engine-remote-branch-incomplete = `{ $branch }` was deleted from only some of the push URLs of `{ $remote }` (or git failed afterwards): it may still be on the remote, see git's messages. The commit is in `{ $backup }`
 engine-remote-fetch-prune-branch = `prune` removes the branches gone from the remote: it cannot be combined with `branch`
+# `remote.push_tag`, `remote.delete_tag` (`builtin/remote_tag.rs`, backend).
+engine-remote-tag-mirror = remote `{ $remote }` is a mirror (`remote.{ $remote }.mirror=true`): nothing published or deleted; use git from a terminal for the mirror
+engine-remote-tag-confirm-without-expected = with `"confirm": true`, `expected` is required: the full value of the tag on the remote shown in the confirmation (the confirmation applies only to that value)
+engine-remote-tag-expected-hex = `expected` must be the full id ({ $len } hexadecimal digits) of the tag on the remote shown in the confirmation: `{ $value }`
+engine-remote-tag-unknown = remote `{ $remote }` has no tag `{ $name }`: nothing deleted
+engine-remote-tag-local-same = ; the local tag has the same value
+engine-remote-tag-local-other = ; the local tag with this name has another value ({ $value }) and stays
+engine-remote-tag-local-none = ; there is no local tag with this name
+engine-remote-tag-confirm = deletes tag `{ $name }` from remote `{ $remote }`, for everyone who uses it (value { $theirs }){ $local }. The value is first saved in `refs/project/backup/push-delete-...`; with `--force-with-lease`, if the tag moved on the remote in the meantime the deletion is rejected; to confirm: "confirm": true, "expected": "{ $theirs }"
+engine-remote-tag-moved = tag `{ $name }` on remote `{ $remote }` moved since it was seen (expected { $expected }, now { $now }): the deletion is no longer the one confirmed{ $local }; to confirm: "confirm": true, "expected": "{ $now }"
+engine-remote-tag-incomplete = tag `{ $name }` was deleted from only some of the push URLs of `{ $remote }` (or git failed afterwards): it may still be on the remote, see git's messages. The value is in `{ $backup }`

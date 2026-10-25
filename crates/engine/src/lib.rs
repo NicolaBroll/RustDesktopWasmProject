@@ -60,7 +60,8 @@ pub use git::{
 pub use git::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     PushKind, PushOutcome, PushRejection, PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
-    StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode, tracking_ref,
+    RemoteTagDelete, StrategySource, TagPush, TagPushed, UpstreamConfig, check_pull_state,
+    merge_message, pull_mode, tracking_ref,
 };
 pub use git::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
@@ -71,7 +72,7 @@ pub use git::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
 };
-pub use git::{TAGS_PREFIX, check_new_tag_name, tag_ref};
+pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};

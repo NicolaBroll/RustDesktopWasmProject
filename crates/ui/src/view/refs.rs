@@ -373,11 +373,17 @@ impl Column<'_> {
                     remotes::split_remote_branch(info.short_name(), &self.repo.remotes.names())
                 })
                 .flatten();
+            let remotes = if info.kind == RefKind::Tag {
+                self.repo.remotes.names()
+            } else {
+                Vec::new()
+            };
             ref_menu(
                 ui,
                 info,
                 is_head,
                 on_remote,
+                &remotes,
                 self.can_write,
                 &self.merge,
                 actions,
@@ -500,12 +506,15 @@ pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
 
 /// The context menu of a ref: on local branches checkout, new branch, new tag, merge into the current
 /// branch, rename, pull, push and delete; on remote branches and tags new branch, new tag and merge, and on
-/// remote branches "Delete from the remote…" (`on_remote`: the remote and the branch on it).
+/// remote branches "Delete from the remote…" (`on_remote`: the remote and the branch on it); on tags
+/// push and delete, also from each of the configured `remotes`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn ref_menu(
     ui: &mut Ui,
     info: &RefInfo,
     is_head: bool,
     on_remote: Option<(String, String)>,
+    remotes: &[String],
     can_write: bool,
     merge: &merge::Gate,
     actions: &mut Vec<Action>,
@@ -570,6 +579,9 @@ pub(super) fn ref_menu(
             actions.push(Action::DeleteRemoteBranch(remote, branch));
             ui.close();
         }
+    }
+    if info.kind == RefKind::Tag {
+        tag_items(ui, name, remotes, can_write, actions);
     }
     if info.kind != RefKind::LocalBranch {
         return;
@@ -653,6 +665,71 @@ pub(super) fn ref_menu(
     if button.clicked() {
         actions.push(Action::DeleteBranch(name.to_owned(), info.target));
         ui.close();
+    }
+}
+
+/// The entries of a tag: "Push to “<remote>”" for each remote, "Delete…" (only here) and
+/// "Delete from “<remote>”…" for each remote. All of them ask the engine, which confirms the deletions.
+fn tag_items(
+    ui: &mut Ui,
+    name: &str,
+    remotes: &[String],
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    ui.separator();
+    if remotes.is_empty() {
+        ui.add_enabled(false, egui::Button::new(tr!("refs-tag-push")))
+            .on_disabled_hover_text(tr!("refs-tag-no-remote"));
+    }
+    for remote in remotes {
+        let button = ui
+            .add_enabled(
+                can_write,
+                egui::Button::new(tr!("refs-tag-push-to", remote = remote)),
+            )
+            .on_hover_text(tr!("refs-tag-push-hint", name = name, remote = remote))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::PushTag(remote.clone(), name.to_owned()));
+            ui.close();
+        }
+    }
+    ui.separator();
+    let color = if can_write {
+        ui.visuals().error_fg_color
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let button = ui
+        .add_enabled(
+            can_write,
+            egui::Button::new(RichText::new(tr!("refs-tag-delete")).color(color)),
+        )
+        .on_hover_text(tr!("refs-tag-delete-hint", name = name))
+        .on_disabled_hover_text(wait());
+    if button.clicked() {
+        actions.push(Action::DeleteTag(name.to_owned()));
+        ui.close();
+    }
+    for remote in remotes {
+        let button = ui
+            .add_enabled(
+                can_write,
+                egui::Button::new(
+                    RichText::new(tr!("refs-tag-delete-remote", remote = remote)).color(color),
+                ),
+            )
+            .on_hover_text(tr!(
+                "refs-tag-delete-remote-hint",
+                name = name,
+                remote = remote
+            ))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::DeleteRemoteTag(remote.clone(), name.to_owned()));
+            ui.close();
+        }
     }
 }
 

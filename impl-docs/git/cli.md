@@ -29,6 +29,8 @@ cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["READ
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message":"Version 9"}' --cmd edit.undo
+# delete a local tag: always "confirm":true; the value (tag object or commit) goes to refs/project/backup/tag-delete-..., edit.undo puts it back
+cargo run -p project-cli -- --repo . run --cmd 'tag.delete={"name":"v9","confirm":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","new_name":"test2"}' --cmd 'branch.delete={"name":"test2"}'
 # reset of the current branch: soft (ref only), mixed (also the index), hard (also the worktree);
 # the preview lists the files a hard would overwrite; a hard with local changes needs "confirm":true
@@ -49,6 +51,11 @@ cargo run -p project-cli -- --repo . run --cmd remote.push --cmd 'remote.push={"
 # delete a branch from the remote: first without confirm (the engine says what disappears and gives the id), then with "expected"
 cargo run -p project-cli -- --repo . run --cmd 'remote.delete_branch={"remote":"origin","branch":"old-feature"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.delete_branch={"remote":"origin","branch":"old-feature","confirm":true,"expected":"<id from the confirmation>"}'
+# tags on the remote: publish one (never forced: a tag there with another value is rejected, "tag_exists");
+# delete one: first without confirm (the engine reads the remote value), then with "expected"
+cargo run -p project-cli -- --repo . run --cmd 'remote.push_tag={"remote":"origin","name":"v9"}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.delete_tag={"remote":"origin","name":"v9"}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.delete_tag={"remote":"origin","name":"v9","confirm":true,"expected":"<id from the confirmation>"}'
 # remotes: list (credentials in URLs masked), add (with fetch), remove ("confirm":true) and undo
 cargo run -p project-cli -- --repo . run --cmd remote.list
 cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo

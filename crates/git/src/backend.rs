@@ -487,7 +487,7 @@ impl CliBackend {
     }
 
     /// Before rewriting the index for `operation` on `paths`: if there are staged versions
-    /// that exist only in the index ([`versions_at_risk`]) saves them with [`Self::save_backup`]
+    /// that exist only in the index ([`versions_at_risk_hidden`]) saves them with [`Self::save_backup`]
     /// and returns the ref; `None` if nothing is at risk.
     fn backup(
         &self,

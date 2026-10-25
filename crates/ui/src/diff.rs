@@ -207,7 +207,7 @@ pub struct DiffDoc {
     /// Text columns of the widest row (after tabs and any cut).
     pub max_cols: usize,
     /// The changed parts of the paired removed and added lines, in columns, by
-    /// `(file, hunk, line)` (see [`word_diff`](crate::word_diff)).
+    /// `(file, hunk, line)` (see [`word_diff`]).
     pub emphasis: HashMap<(usize, usize, usize), Vec<Range<usize>>>,
     /// The rows of the side by side view.
     pub split: Vec<SplitRow>,

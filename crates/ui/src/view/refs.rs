@@ -668,8 +668,8 @@ pub(super) fn ref_menu(
     }
 }
 
-/// The entries of a tag: "Push to “<remote>”" for each remote, "Delete…" (only here) and
-/// "Delete from “<remote>”…" for each remote. All of them ask the engine, which confirms the deletions.
+/// The entries of a tag: "Push to “`<remote>`”" for each remote, "Delete…" (only here) and
+/// "Delete from “`<remote>`”…" for each remote. All of them ask the engine, which confirms the deletions.
 fn tag_items(
     ui: &mut Ui,
     name: &str,
@@ -733,7 +733,7 @@ fn tag_items(
     }
 }
 
-/// The "Merge into <branch>" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for
+/// The "Merge into `<branch>`" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for
 /// `rev`, shown as `what`; disabled with the reason if the current branch does not allow it.
 pub(super) fn merge_items(
     ui: &mut Ui,

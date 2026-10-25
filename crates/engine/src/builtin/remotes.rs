@@ -193,7 +193,7 @@ fn fetch_all(
 }
 
 /// Adds the remote `name` with `url` (see
-/// [`GitBackend::create_remote`](crate::GitBackend::create_remote): `git remote add`, default
+/// [`GitBackend::create_remote`]: `git remote add`, default
 /// refspec) and, with `"fetch": true`, then fetches from there like `remote.fetch` (slow: progress
 /// and cancellation from the [`JobContext`]).
 ///

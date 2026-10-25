@@ -1,4 +1,4 @@
-//! Reset of the current branch (S45) from the commit menu: "Reset <branch> to here…" opens a
+//! Reset of the current branch (S45) from the commit menu: "Reset `<branch>` to here…" opens a
 //! dialog with the three modes (`soft`, `mixed`, `hard`). Every mode chosen asks the engine for the
 //! plan (`branch.reset_preview`, read-only): the files a `hard` overwrites, the commits already
 //! published, the refusals. "Reset" sends `branch.reset` with the `expected` of the preview, and

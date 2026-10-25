@@ -612,7 +612,7 @@ fn diff_index(s: &mut Session, p: Value) -> Out {
     ))
 }
 
-/// The [`Diff`](project_domain::Diff) of commit `id` against the first parent (like
+/// The [`Diff`] of commit `id` against the first parent (like
 /// `commit.show`).
 fn diff_commit(s: &mut Session, p: Value) -> Out {
     let CommitDiffParams { id, path } = parse_params("diff.commit", p)?;

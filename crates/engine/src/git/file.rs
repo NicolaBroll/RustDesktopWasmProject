@@ -74,7 +74,7 @@ pub fn is_binary_content(content: &[u8]) -> bool {
     content.iter().take(8000).any(|&b| b == 0)
 }
 
-/// True if the file the blame describes is binary ([`is_binary_content`] on its lines).
+/// True if the file the blame describes is binary (`is_binary_content` on its lines).
 pub fn blame_is_binary(blame: &Blame) -> bool {
     let mut seen = 0usize;
     for line in &blame.lines {

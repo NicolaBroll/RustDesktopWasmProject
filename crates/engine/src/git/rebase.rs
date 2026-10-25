@@ -4,7 +4,7 @@
 //! The plan is pure data ([`RebasePlan`], in the domain). The command reads the range
 //! `base..HEAD` ([`rebase_range`]), validates the plan ([`plan_error`]) and checks the state
 //! ([`check_rebase_state`]); the backend saves the branch in a backup and executes
-//! ([`GitBackend::rebase`](super::GitBackend::rebase)). **A stop (conflict, failed hook or
+//! ([`GitBackend::rebase`]). **A stop (conflict, failed hook or
 //! signing) leaves the rebase in progress**: what `rebase.continue` needs to conclude it (branch,
 //! value before, backup, messages still to apply) is the [`RebaseRecord`], kept by the backend
 //! next to git's own data and removed with it. The pull with rebase uses the same record.
@@ -71,7 +71,7 @@ impl RebaseRecord {
     }
 }
 
-/// What `rebase.start` asks of the backend ([`GitBackend::rebase`](super::GitBackend::rebase)).
+/// What `rebase.start` asks of the backend ([`GitBackend::rebase`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RebaseRequest {
     /// The branch of HEAD (short name): the rebase does not start with detached HEAD.

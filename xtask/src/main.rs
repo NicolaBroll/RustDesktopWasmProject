@@ -14,7 +14,7 @@ static QUIET: AtomicBool = AtomicBool::new(false);
 const USAGE: &str = "\
 usage: cargo xtask <task>
 
-  ci        fmt, clippy, test, layering, cargo deny (licenses, bans, sources)
+  ci        fmt, clippy, test, doc, layering, cargo deny (licenses, bans, sources)
             (`ci --quiet`: one line per step, output only of the failing step)
   layers    checks that every crate depends only on lower layers
   release   optimized desktop/CLI build";
@@ -58,6 +58,7 @@ fn ci() -> anyhow::Result<()> {
     } else {
         cargo(&["test", "--workspace"])?;
     }
+    doc()?;
     step("layering");
     layers::check_layers()?;
     deny()?;
@@ -91,6 +92,15 @@ fn deny() -> anyhow::Result<()> {
         "bans",
         "sources",
     ])
+}
+
+/// `cargo doc` with warnings as errors, private items included: broken intra-doc links
+/// (renamed or removed items) fail CI instead of rotting.
+fn doc() -> anyhow::Result<()> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    run(Command::new(cargo)
+        .args(["doc", "--workspace", "--no-deps", "--document-private-items"])
+        .env("RUSTDOCFLAGS", "-D warnings"))
 }
 
 fn release() -> anyhow::Result<()> {

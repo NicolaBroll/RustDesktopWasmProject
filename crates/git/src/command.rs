@@ -307,8 +307,8 @@ impl Git {
 
     /// A slow read (`git blame`, `git log` of one file) that can be cancelled: like
     /// [`Git::run_streaming`] with `paths` after `args` (which must end with `--`), and all of
-    /// stdout, however long git takes to close it after exiting. The stderr lines go to
-    /// [`Streamed::stderr`].
+    /// stdout, however long git takes to close it after exiting. The stderr lines (trimmed,
+    /// without the empty ones) come back joined by newlines next to the [`Streamed`].
     pub(crate) fn run_cancellable(
         &self,
         dir: &Path,

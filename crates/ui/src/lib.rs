@@ -1,7 +1,7 @@
 //! L6 — egui interface of the desktop app.
 //!
 //! Rule: graphical callbacks do not modify the repository directly, they produce
-//! an [`Action`]; commands go through the [`Executor`], which runs them with
+//! an `Action`; commands go through the [`Executor`], which runs them with
 //! [`Registry::run`](project_engine::Registry::run) off the UI thread.
 //!
 //! Layout (`impl-docs/ARCHITECTURE-git.md` §8): one tab per open repo (`tabs`), top bar, refs on the left, commits in the

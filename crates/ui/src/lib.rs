@@ -206,6 +206,12 @@ enum Action {
     RemoveRemote(String),
     /// Confirms the pending removal: resends with `"confirm": true`.
     ConfirmRemoveRemote,
+    /// Deletes the branch (second value) from the remote (first value): first without
+    /// confirmation, the engine always asks and the dialog opens.
+    DeleteRemoteBranch(String, String),
+    /// Confirms the pending deletion of the remote branch: resends with `"confirm": true` and the
+    /// commit seen.
+    ConfirmDeleteRemoteBranch,
     /// Closes the open remotes dialog without sending anything.
     CloseRemoteDialog,
     /// Closes the fetch error window after the add.
@@ -826,6 +832,8 @@ impl Tab {
             | Action::CancelAddRemote
             | Action::RemoveRemote(..)
             | Action::ConfirmRemoveRemote
+            | Action::DeleteRemoteBranch(..)
+            | Action::ConfirmDeleteRemoteBranch
             | Action::CloseRemoteDialog
             | Action::DismissRemoteError => self.apply_remotes(action),
             Action::OpenStash

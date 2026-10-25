@@ -99,13 +99,7 @@ fn repo() -> MemoryBackend {
         "theirs",
         &[("a.txt", Some("base\n"), "theirs\n")],
     );
-    commit(
-        &mut repo,
-        4,
-        Some(1),
-        "nuovo",
-        &[("n.txt", None, "nuovo\n")],
-    );
+    commit(&mut repo, 4, Some(1), "new", &[("n.txt", None, "new\n")]);
     commit(&mut repo, 5, Some(2), "ahead", &[("c.txt", None, "c\n")]);
     repo.set_branch("main", oid(2));
     repo.set_branch("other", oid(3));
@@ -394,7 +388,7 @@ fn refusals() {
             oid_index: b,
         }),
     }]);
-    dirty.set_worktree_file("b.txt", "cambiato\n");
+    dirty.set_worktree_file("b.txt", "changed\n");
     let (r, mut s) = opened_with(dirty);
     let err = r
         .run("merge.start", &mut s, json!({ "rev": "feat" }))

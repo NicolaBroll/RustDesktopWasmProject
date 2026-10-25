@@ -58,6 +58,18 @@ remotes-removed-backup = ; backup in { $backup }
 remotes-removed-backups = ; { $n } backup in refs/project/backup/remote-…
 remotes-removed-undo = . «Annulla» lo rimette
 remotes-removed-short = Remoto rimosso
+remotes-delete-branch-check-label = Controllo eliminazione di «{ $name }»
+remotes-delete-branch-label = Eliminazione di «{ $name }» dal remoto
+remotes-delete-branch-refused = Eliminare «{ $name }» dal remoto non è possibile: { $error }
+remotes-delete-branch-failed = Eliminazione di «{ $name }» dal remoto non riuscita: { $error }
+remotes-branch-deleted = Branch «{ $name }» eliminato dal remoto
+remotes-branch-deleted-only-here = ; { $n ->
+    [one] 1 commit era
+   *[other] { $n } commit erano
+} solo lì
+remotes-branch-deleted-backup = ; backup in { $backup }
+remotes-branch-deleted-upstreams = ; upstream sparito per { $names }
+remotes-branch-deleted-short = Branch eliminato dal remoto
 remotes-section = Remoti
 remotes-section-count = Remoti ({ $n })
 remotes-none = Nessun remoto configurato
@@ -97,3 +109,8 @@ remotes-remove-what = Cosa succede:
 remotes-remove-undo = Con «Annulla» nella barra in alto il remoto torna com'era (URL, branch remoti, upstream), finché l'app resta aperta: il diario delle operazioni è in memoria. Dopo la chiusura restano solo i backup dei commit in refs/project/backup/remote-…: il remoto si riaggiunge a mano e un Fetch riscarica i branch.
 remotes-remove-confirm = Rimuovi il remoto
 remotes-remove-cancel = Non rimuovere
+remotes-delete-branch-title = Eliminare «{ $name }» dal remoto?
+remotes-delete-branch-explanation = Il branch «{ $branch }» viene eliminato sul remoto «{ $remote }»: sparisce per tutti quelli che lo usano, e sparisce anche qui il suo branch remoto locale. I branch locali non cambiano.
+remotes-delete-branch-undo = Non si annulla con «Annulla»: il remoto è anche di altri. Il commit resta qui in un backup (refs/project/backup/push-delete-…): per rimettere il branch, crearne uno su quel commit e pubblicarlo. Se qualcuno ha aggiornato il branch dopo il tuo ultimo Fetch, l'eliminazione è rifiutata e non cambia niente.
+remotes-delete-branch-confirm = Elimina dal remoto
+remotes-delete-branch-cancel = Non eliminare

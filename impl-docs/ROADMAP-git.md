@@ -237,6 +237,16 @@ Rules that apply to every step:
   branches.
 - **Done when:** integration tests; CI green.
 
+### S27b — Deleting branches on the remote
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `remote.delete_branch` (always `confirm` with `expected`, the commit of the local
+  remote-tracking branch; backup `refs/project/backup/push-delete-...`; `--force-with-lease`, never
+  `--force`); "Delete from the remote…" in the menu of the remote branches
+  ([git/sync.md](git/sync.md)).
+- **Done when:** integration tests (confirmation, lease that fails because the branch moved or is
+  gone, names with `-`, `pre-push` hook) and on the `MemoryBackend`; `safety-reviewer` review; CI
+  green.
+
 ## Phase 5 — Advanced features
 
 ### S28 — Stash

@@ -227,9 +227,9 @@ mod tests {
 
     #[test]
     fn non_ascii_ranges_are_in_chars() {
-        let (old, new) = ("città = 1", "città = 2");
+        let (old, new) = ("naïve = 1", "naïve = 2");
         let (a, b) = changed(old, new).unwrap();
-        // `à` is two bytes: the digit is char 8, byte 9.
+        // `ï` is two bytes: the digit is char 8, byte 9.
         assert_eq!((a[0].clone(), b[0].clone()), (8..9, 8..9));
         assert_eq!((a.len(), b.len()), (1, 1));
     }

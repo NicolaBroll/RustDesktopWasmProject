@@ -73,7 +73,10 @@ pub use pull::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode,
 };
-pub use push::{PushKind, PushOutcome, PushRejection, PushRequest, tracking_ref};
+pub use push::{
+    PushKind, PushOutcome, PushRejection, PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
+    tracking_ref,
+};
 pub use rebase::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
     check_rebase_state, check_rebasing, explicit_squash_messages, plan_error, rebase_range,
@@ -455,6 +458,22 @@ pub trait GitBackend: Send {
     /// [`EngineError::Cancelled`].
     fn push(&mut self, request: &PushRequest, job: &JobContext)
     -> Result<PushOutcome, EngineError>;
+
+    /// Deletes the branch `request.branch` from the remote (`remote.delete_branch`, slow like the
+    /// push): only `:refs/heads/<branch>`, always with
+    /// `--force-with-lease=refs/heads/<branch>:<expected>` (never `--force`, `--prune`,
+    /// `--mirror`). Before the push it saves `request.expected` in a backup ref
+    /// `refs/project/backup/push-delete-...` (removed if the push is rejected or fails before
+    /// starting); git then removes the local remote-tracking branch. Errors as
+    /// [`GitBackend::push`]: rejected (lease, `pre-push` hook, remote, branch already gone) →
+    /// [`EngineError::PushRejected`]; credentials → [`EngineError::Auth`]; remote not
+    /// reachable → [`EngineError::RemoteUnreachable`]; cancelled → [`EngineError::Cancelled`]
+    /// (the backup stays: the remote may have already deleted the branch).
+    fn delete_remote_branch(
+        &mut self,
+        request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError>;
 
     // --- Remote management (S27). The name arrives already checked by the command; configuration
     // writes touch only the repo file (`git config --local`).

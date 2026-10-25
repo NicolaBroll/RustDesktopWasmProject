@@ -85,11 +85,11 @@ fn repo() -> MemoryBackend {
     commit(&mut repo, 2, &[1], "Ada", "ours", &ours);
     let theirs = [("a.txt", Some("base\n"), "theirs\n")];
     commit(&mut repo, 3, &[1], "Ada", "theirs", &theirs);
-    let nuovo = [("n.txt", None, "nuovo\n")];
-    commit(&mut repo, 4, &[1], "Bea", "nuovo", &nuovo);
+    let added = [("n.txt", None, "new\n")];
+    commit(&mut repo, 4, &[1], "Bea", "new", &added);
     let later = [("a.txt", Some("ours\n"), "later\n")];
     commit(&mut repo, 5, &[2], "Ada", "later", &later);
-    commit(&mut repo, 6, &[1, 4], "Ada", "Merge branch 'feat'", &nuovo);
+    commit(&mut repo, 6, &[1, 4], "Ada", "Merge branch 'feat'", &added);
     repo.set_branch("main", oid(2));
     repo.set_branch("other", oid(3));
     repo.set_branch("feat", oid(4));
@@ -148,7 +148,7 @@ fn cherry_pick_keeps_the_author_and_undo_redo() {
     assert_eq!(out["backup"], "refs/project/backup/cherry-pick-1");
     let after = out["after"].as_str().unwrap().to_owned();
     let show = run(&r, &mut s, "commit.show", json!({ "id": after }));
-    assert_eq!(show["commit"]["summary"], "nuovo");
+    assert_eq!(show["commit"]["summary"], "new");
     assert_eq!(show["commit"]["author"]["name"], "Bea");
     assert_eq!(show["commit"]["committer"]["name"], "Ada");
     assert_eq!(show["commit"]["parents"], json!([oid(2).to_string()]));
@@ -425,7 +425,7 @@ fn refusals() {
             oid_index: b,
         }),
     }]);
-    dirty.set_worktree_file("b.txt", "cambiato\n");
+    dirty.set_worktree_file("b.txt", "changed\n");
     let (r, mut s) = opened_with(dirty);
     for id in ["commit.cherry_pick", "commit.revert"] {
         let err = r.run(id, &mut s, json!({ "rev": "feat" })).unwrap_err();

@@ -6,6 +6,38 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
+Branches deleted on the remote from the app, and an AppImage that updates itself from GitHub.
+
+### Added
+
+- **Delete a branch from the remote**: “Delete from the remote…” in the menu of a remote branch
+  (`remote.delete_branch` for CLI and MCP). It always asks for confirmation, saying which commits
+  are only there and which local branches track it; the commit stays in a backup
+  (`refs/project/backup/push-delete-…`) and, with `--force-with-lease`, if someone pushed to the
+  branch after the last fetch the deletion is refused.
+- **AppImage updates from GitHub**: the AppImage embeds its update information and the Release
+  also publishes `BinariGit-<version>-x86_64.AppImage.zsync`, so AppImageUpdate, Gear Lever or
+  AppImageLauncher update it to the latest Release, downloading only what changed.
+
+### Packages
+
+- Linux: `BinariGit-0.3.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.3.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.3.0-x86_64-windows.zip` (Windows 10 or newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- AppImages of 0.1.0 and 0.2.0 carry no update information: install 0.3.0 by hand once, later
+  releases arrive through the updater.
+- The window has no system frame on Windows and Linux: minimize, maximize, drag and resize are
+  the app's own and have not been tried yet with a real window manager.
+- The Windows build is cross-compiled and has not been tested on a Windows PC yet; it is not
+  signed, so SmartScreen warns on first start.
+- No macOS build; no deb or MSI packages yet.
+
 ## [0.2.0] - 2026-10-25
 
 A new look, VS Code and GitKraken style, and a left column that stays fluid with thousands of
@@ -87,6 +119,7 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/releases/tag/v0.1.0

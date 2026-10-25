@@ -72,3 +72,22 @@ engine-remote-push-default-taken = `remote.pushDefault` already has another valu
 engine-remote-memory-no-merge = upstream of `{ $branch }` without `merge`: not rewritten in the in-memory repo
 engine-remote-fetch-unexpected-ref = the fetch changed `{ $name }` (from { $before } to { $after }) because of a refspec configured in `remote.<name>.fetch`: the previous value is in the reflog of the ref
 engine-remote-url-credentials = the URL contains credentials: git saved them in clear text in the repo configuration (`remote.{ $name }.url`); a credential helper is better
+# `remote.delete_branch` (`builtin/remote_branch.rs`, backend).
+engine-remote-branch-confirm = deletes `{ $branch }` from remote `{ $remote }`, for everyone who uses it (`{ $tracking }` = { $theirs }){ $only }{ $upstreams }. The commit is first saved in `refs/project/backup/push-delete-...`; with `--force-with-lease`, if the branch moved on the remote in the meantime the deletion is rejected; to confirm: "confirm": true, "expected": "{ $theirs }"
+engine-remote-branch-moved = `{ $tracking }` moved since it was seen (expected { $expected }, now { $now }): the deletion is no longer the one confirmed{ $only }{ $upstreams }; to confirm: "confirm": true, "expected": "{ $now }"
+engine-remote-branch-only-none = ; its commits are also in other branches or tags here
+engine-remote-branch-only = ; { $n ->
+    [one] 1 commit is
+   *[other] { $n } commits are
+} in no other branch or tag here ({ $commits }): only the backup will keep { $n ->
+    [one] it
+   *[other] them
+}
+engine-remote-branch-upstream-of = ; it is the upstream of { $n ->
+    [one] the local branch
+   *[other] the local branches
+} { $branches } (the upstream stays configured, shown as gone)
+engine-remote-branch-mirror = remote `{ $remote }` is a mirror (`remote.{ $remote }.mirror=true`): nothing deleted; use git from a terminal for the mirror
+engine-remote-branch-no-tracking = no fetch refspec of remote `{ $remote }` maps `refs/heads/{ $branch }` to a local remote-tracking branch: nothing deleted (the commit to confirm and back up would not be known)
+engine-remote-branch-unknown = `{ $tracking }` does not exist here: run `remote.fetch` of `{ $remote }` and try again; nothing deleted
+engine-remote-branch-incomplete = `{ $branch }` was deleted from only some of the push URLs of `{ $remote }` (or git failed afterwards): it may still be on the remote, see git's messages. The commit is in `{ $backup }`

@@ -563,7 +563,7 @@ fn errors_on_malformed_input() {
               1123456789012345678901234567890123456789 100644\n--- a/x\n+++ b/x\n";
     let cases: Vec<(String, &str)> = vec![
         ("diff --git a/x b/x".into(), "does not end with a newline"),
-        ("ciao\n".into(), "line 1: unexpected `ciao`"),
+        ("hello\n".into(), "line 1: unexpected `hello`"),
         (
             format!("{ok}@@ -1,2 +1 @@\n-a\n"),
             "truncated hunk: 1 lines",
@@ -686,7 +686,7 @@ fn path_strategy() -> impl Strategy<Value = RepoPath> {
 
 fn content_strategy() -> impl Strategy<Value = Vec<u8>> {
     proptest::collection::vec(
-        any::<u8>().prop_filter("niente newline", |b| *b != b'\n'),
+        any::<u8>().prop_filter("no newline", |b| *b != b'\n'),
         0..10,
     )
 }

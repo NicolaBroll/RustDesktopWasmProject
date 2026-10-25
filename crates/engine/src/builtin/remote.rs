@@ -265,10 +265,10 @@ mod tests {
         );
 
         let err = r
-            .run("remote.fetch", &mut s, json!({ "branch": "manca" }))
+            .run("remote.fetch", &mut s, json!({ "branch": "missing" }))
             .unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
-        assert!(err.to_string().contains("manca"), "{err}");
+        assert!(err.to_string().contains("missing"), "{err}");
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
     fn unknown_and_invalid_remotes_never_reach_the_backend() {
         let (r, mut s) = sample();
         // A name that is not a configured remote (git would use it as a URL or path).
-        for remote in ["altro", "tmp/repo", "-x", "--upload-pack=x"] {
+        for remote in ["other", "tmp/repo", "-x", "--upload-pack=x"] {
             let err = r
                 .run("remote.fetch", &mut s, json!({ "remote": remote }))
                 .unwrap_err();

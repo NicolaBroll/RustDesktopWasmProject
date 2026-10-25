@@ -100,9 +100,9 @@ fn add_with_fetch_then_undo_and_redo() {
     // The origin "server" stays aside when the remote is removed: added with the same URL,
     // the fetch downloads its branches.
     let mut repo = MemoryBackend::sample();
-    repo.add_remote("copia", "https://u:pw@example.com/copy.git");
-    repo.set_branch_on_remote("copia", "main", oid(12));
-    let snapshot = repo.remote_snapshot("copia").unwrap();
+    repo.add_remote("copy", "https://u:pw@example.com/copy.git");
+    repo.set_branch_on_remote("copy", "main", oid(12));
+    let snapshot = repo.remote_snapshot("copy").unwrap();
     repo.remove_remote_config(&snapshot);
     let (r, mut s) = opened_with(repo);
 
@@ -181,16 +181,16 @@ fn add_without_fetch_and_fetch_errors_do_not_undo_the_add() {
     assert_eq!(out["next_undo"]["text"], "Add remote `fork`");
 
     let mut repo = MemoryBackend::sample();
-    repo.add_remote("rotto", "/srv/rotto.git");
-    repo.fail_fetch("rotto", Some(crate::FetchFailure::Auth("HTTP 401".into())));
-    let snapshot = repo.remote_snapshot("rotto").unwrap();
+    repo.add_remote("broken", "/srv/broken.git");
+    repo.fail_fetch("broken", Some(crate::FetchFailure::Auth("HTTP 401".into())));
+    let snapshot = repo.remote_snapshot("broken").unwrap();
     repo.remove_remote_config(&snapshot);
     let (r, mut s) = opened_with(repo);
     let out = run(
         &r,
         &mut s,
         "remote.add",
-        json!({ "name": "rotto", "url": "/srv/rotto.git", "fetch": true }),
+        json!({ "name": "broken", "url": "/srv/broken.git", "fetch": true }),
     );
     assert_eq!(out["fetched"], false);
     assert_eq!(out["fetch_error"]["kind"], "auth");
@@ -199,7 +199,7 @@ fn add_without_fetch_and_fetch_errors_do_not_undo_the_add() {
             .unwrap()
             .remotes()
             .unwrap()
-            .contains(&"rotto".to_owned())
+            .contains(&"broken".to_owned())
     );
     assert_eq!(out["can_undo"], true);
 }
@@ -263,16 +263,12 @@ fn add_refuses_existing_names_and_bad_names_or_urls() {
 
     // Remote-tracking branches left over from a remote removed by hand: undo would delete them.
     let mut repo = MemoryBackend::sample();
-    repo.set_remote_branch("vecchio/main", oid(11));
+    repo.set_remote_branch("old/main", oid(11));
     let (r, mut s) = opened_with(repo);
     let err = r
-        .run(
-            "remote.add",
-            &mut s,
-            json!({ "name": "vecchio", "url": "/x" }),
-        )
+        .run("remote.add", &mut s, json!({ "name": "old", "url": "/x" }))
         .unwrap_err();
-    assert!(err.to_string().contains("refs/remotes/vecchio/"), "{err}");
+    assert!(err.to_string().contains("refs/remotes/old/"), "{err}");
 }
 
 #[test]
@@ -458,7 +454,7 @@ fn remove_refuses_unknown_remotes_and_operations() {
         .run(
             "remote.remove",
             &mut s,
-            json!({ "name": "manca", "confirm": true }),
+            json!({ "name": "missing", "confirm": true }),
         )
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");

@@ -24,13 +24,18 @@
 //! refuses a push that refers to unpublished submodule commits). Never `--force`, `+refspec`,
 //! `--mirror`, `--all`, `--tags`, `--no-verify`: the `pre-push` hooks run. The outcome is read
 //! from the stdout of `--porcelain` (`<flag>\t<from>:<to>\t<summary>`).
+//!
+//! Deletion of a remote branch (`remote.delete_branch`): `git push --porcelain --progress
+//! --no-follow-tags --force-with-lease=refs/heads/<b>:<oid> --end-of-options <remote>
+//! :refs/heads/<b>`, same environment; never `--delete` with several names, `--prune` or
+//! `--force`. The lease makes the deletion fail (`stale info`) if the branch moved or is already gone.
 
 use super::CliBackend;
 use crate::command::{Segment, failure};
 use crate::progress::{parse_progress, remote_error};
 use project_engine::{
     EngineError, FetchOutcome, FetchRequest, JobContext, PushKind, PushOutcome, PushRejection,
-    PushRequest,
+    PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
 };
 use std::process::Output;
 
@@ -257,6 +262,140 @@ impl CliBackend {
     }
 }
 
+impl CliBackend {
+    /// [`GitBackend::delete_remote_branch`](project_engine::GitBackend::delete_remote_branch).
+    pub(super) fn delete_branch_on_remote(
+        &self,
+        request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        const ID: &str = "remote.delete_branch";
+        let dst = format!("refs/heads/{}", request.branch);
+        let refspec = format!(":{dst}");
+        let expected = request.expected.to_string();
+        let lease = format!("--force-with-lease={dst}:{expected}");
+        let args = [
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
+            "push",
+            "--porcelain",
+            "--progress",
+            "--no-follow-tags",
+            &lease,
+            "--end-of-options",
+            &request.remote,
+            &refspec,
+        ];
+        // Before the deletion, the commit of the branch goes into a backup ref.
+        let backup = self.create_backup_ref(
+            "push-delete",
+            &expected,
+            &format!(
+                "project: backup of {}/{} before deleting it from the remote",
+                request.remote, request.branch
+            ),
+        )?;
+        let drop_backup = || {
+            let _ = self.git.output(
+                Some(&self.workdir),
+                &["update-ref", "-d", &backup, &expected],
+            );
+        };
+
+        let mut lines = Vec::new();
+        let streamed = match self.git.run_streaming(
+            &self.workdir,
+            &args,
+            true,
+            |Segment { text, newline }| match parse_progress(&text) {
+                Some(progress) => job.report(&progress),
+                None if newline && !text.trim().is_empty() => {
+                    lines.push(text.trim_end().to_owned())
+                }
+                None => {}
+            },
+            &|| job.is_cancelled(),
+        ) {
+            Ok(streamed) => streamed,
+            Err(e) => {
+                drop_backup();
+                return Err(e);
+            }
+        };
+        if streamed.cancelled {
+            // The remote may have already deleted the branch: the backup stays.
+            return Err(EngineError::Cancelled { command: ID });
+        }
+        let stdout = String::from_utf8_lossy(&streamed.stdout).into_owned();
+        // With several push URLs git pushes to each one: a line per URL.
+        let statuses = porcelain_statuses(&stdout, &dst);
+        let deleted = statuses.iter().find(|(flag, _)| *flag == '-');
+        let stderr = lines.join("\n");
+        if let Some((_, summary)) = deleted {
+            // Deleted at least on one URL: a success, the backup stays; if another URL refused
+            // (or git failed after), `incomplete` says so.
+            let incomplete = !streamed.status.success() || statuses.iter().any(|(f, _)| *f != '-');
+            let mut messages = lines;
+            messages.extend(
+                stdout
+                    .lines()
+                    .filter(|l| l.starts_with("To ") || (incomplete && l.starts_with('!')))
+                    .map(str::to_owned),
+            );
+            return Ok(RemoteBranchDeleted {
+                summary: summary.clone(),
+                messages,
+                backup,
+                incomplete,
+            });
+        }
+        let status = statuses.into_iter().next();
+        let reject = |reason, message: String| EngineError::PushRejected {
+            remote: request.remote.clone(),
+            branch: request.branch.clone(),
+            reason,
+            message,
+        };
+        // The backup is removed only when nothing was certainly deleted: git rejected the ref
+        // everywhere, a `pre-push` hook stopped it before sending, the credentials were refused.
+        // In every other case (connection lost, unknown error) the remote may have deleted the
+        // branch already, and the backup stays.
+        match status {
+            Some(('!', summary)) => {
+                drop_backup();
+                let message = if stderr.is_empty() {
+                    summary.clone()
+                } else {
+                    format!("{summary}\n{stderr}")
+                };
+                Err(reject(rejection(&summary), message))
+            }
+            _ => {
+                if let Some(error) = remote_error(&request.remote, &stderr) {
+                    if matches!(error, EngineError::Auth { .. }) {
+                        drop_backup();
+                    }
+                    return Err(error);
+                }
+                if status.is_none() && stderr.contains("failed to push some refs") {
+                    drop_backup();
+                    return Err(reject(PushRejection::Hook, stderr));
+                }
+                Err(failure(
+                    &args,
+                    &Output {
+                        status: streamed.status,
+                        stdout: Vec::new(),
+                        stderr: stderr.into_bytes(),
+                    },
+                ))
+            }
+        }
+    }
+}
+
 /// The `git push --porcelain` line for the remote ref `dst`: the flag (` ` fast-forward,
 /// `+` forced, `*` new, `=` up to date, `!` rejected, `-` deleted) and the summary.
 fn porcelain_status(stdout: &str, dst: &str) -> Option<(char, String)> {
@@ -270,6 +409,14 @@ fn porcelain_status(stdout: &str, dst: &str) -> Option<(char, String)> {
         let flag = chars.next()?;
         (to == dst && chars.next().is_none()).then(|| (flag, summary.to_owned()))
     })
+}
+
+/// All the `git push --porcelain` lines for the remote ref `dst`, one per push URL, in order.
+fn porcelain_statuses(stdout: &str, dst: &str) -> Vec<(char, String)> {
+    stdout
+        .split_inclusive('\n')
+        .filter_map(|line| porcelain_status(line, dst))
+        .collect()
 }
 
 /// The reason for a rejection from the summary of `--porcelain` (`[rejected] (non-fast-forward)`,

@@ -58,6 +58,35 @@ pub struct PushOutcome {
     pub backup: Option<String>,
 }
 
+/// The deletion of a branch on the remote ([`GitBackend::delete_remote_branch`](super::GitBackend::delete_remote_branch),
+/// `remote.delete_branch`). Names already checked by the command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteBranchDelete {
+    /// The configured remote.
+    pub remote: String,
+    /// The branch on the remote (short name): only `refs/heads/<branch>` is deleted.
+    pub branch: String,
+    /// The value of the local remote-tracking branch confirmed by the user: the deletion is
+    /// `--force-with-lease=refs/heads/<branch>:<expected>`, so if the branch moved on the remote
+    /// it is rejected ([`PushRejection::StaleLease`]); also saved in the backup ref.
+    pub expected: Oid,
+}
+
+/// Outcome of [`GitBackend::delete_remote_branch`](super::GitBackend::delete_remote_branch).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteBranchDeleted {
+    /// The git summary (`[deleted]`).
+    pub summary: String,
+    /// The git lines that are not progress (`To <url>`, warnings, hook output).
+    pub messages: Vec<String>,
+    /// The backup ref `refs/project/backup/push-delete-...` on the deleted commit.
+    pub backup: String,
+    /// Deleted only on some of the push URLs (`remote.<name>.pushurl`), or git failed after
+    /// the deletion: the branch may still be on the remote; `messages` has git's lines.
+    #[serde(default)]
+    pub incomplete: bool,
+}
+
 /// Why the push was rejected ([`EngineError::PushRejected`](crate::EngineError)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

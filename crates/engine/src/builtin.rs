@@ -9,6 +9,7 @@ mod pull;
 mod push;
 mod rebase;
 mod remote;
+mod remote_branch;
 mod remotes;
 mod stash;
 
@@ -181,6 +182,12 @@ impl Registry {
             push::remote_push,
         );
         add(
+            "remote.delete_branch",
+            "Delete a branch from the remote",
+            r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
+            remote_branch::remote_delete_branch,
+        );
+        add(
             "remote.list",
             "Configured remotes",
             "{}",
@@ -345,6 +352,7 @@ const WRITES: &[&str] = &[
     "rebase.continue",
     "rebase.start",
     "remote.add",
+    "remote.delete_branch",
     "remote.fetch",
     "remote.pull",
     "remote.push",
@@ -882,6 +890,7 @@ mod tests {
                 "rebase.plan",
                 "rebase.start",
                 "remote.add",
+                "remote.delete_branch",
                 "remote.fetch",
                 "remote.list",
                 "remote.pull",
@@ -932,6 +941,7 @@ mod tests {
                 "rebase.continue",
                 "rebase.start",
                 "remote.add",
+                "remote.delete_branch",
                 "remote.fetch",
                 "remote.pull",
                 "remote.push",
@@ -1505,9 +1515,9 @@ mod tests {
         let mut repo = MemoryBackend::sample();
         repo.set_remote_branch("origin/main", head);
         let mut opener = MemoryOpener::new();
-        opener.insert("pubblicato", repo);
+        opener.insert("published", repo);
         let mut s = Session::new(Arc::new(opener));
-        r.run("repo.open", &mut s, json!({ "path": "pubblicato" }))
+        r.run("repo.open", &mut s, json!({ "path": "published" }))
             .unwrap();
         let err = r
             .run(
@@ -1547,14 +1557,14 @@ mod tests {
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
         let first = r
-            .run("commit.create", &mut s, json!({ "message": "Uno" }))
+            .run("commit.create", &mut s, json!({ "message": "One" }))
             .unwrap();
         let first_id = first["commit"]["id"].as_str().unwrap().to_owned();
         // Stage and unstage do not go into the journal.
         r.run("index.stage", &mut s, json!({ "paths": ["src/lib.rs"] }))
             .unwrap();
         let second = r
-            .run("commit.create", &mut s, json!({ "message": "Due" }))
+            .run("commit.create", &mut s, json!({ "message": "Two" }))
             .unwrap();
         let second_id = second["commit"]["id"].as_str().unwrap().to_owned();
         let history = r.run("edit.history", &mut s, json!({})).unwrap();
@@ -1568,7 +1578,7 @@ mod tests {
         );
         assert_eq!(
             history["next_undo"]["text"],
-            format!("Commit {} “Due”", &second_id[..7])
+            format!("Commit {} “Two”", &second_id[..7])
         );
 
         // Two undos in a row.
@@ -1598,7 +1608,7 @@ mod tests {
         assert_eq!(out["can_undo"], false);
         assert_eq!(
             out["next_redo"]["text"],
-            format!("Commit {} “Uno”", &first_id[..7])
+            format!("Commit {} “One”", &first_id[..7])
         );
 
         // Redo of the last undone (the first commit).
@@ -1608,7 +1618,7 @@ mod tests {
         assert_eq!(out["can_redo"], true);
 
         // A new operation empties the redo.
-        r.run("commit.create", &mut s, json!({ "message": "Altro" }))
+        r.run("commit.create", &mut s, json!({ "message": "Other" }))
             .unwrap();
         let history = r.run("edit.history", &mut s, json!({})).unwrap();
         assert_eq!(history["can_redo"], false);
@@ -1725,13 +1735,13 @@ mod tests {
     fn undo_of_an_amend() {
         let (r, mut s) = opened();
         let out = r
-            .run("commit.create", &mut s, json!({ "message": "Uno" }))
+            .run("commit.create", &mut s, json!({ "message": "One" }))
             .unwrap();
         let out2 = r
             .run(
                 "commit.create",
                 &mut s,
-                json!({ "message": "Uno bis", "amend": true }),
+                json!({ "message": "One again", "amend": true }),
             )
             .unwrap();
         assert_eq!(out2["previous"], out["commit"]["id"]);
@@ -1757,7 +1767,7 @@ mod tests {
         ));
         for (id, params) in [
             ("repo.open", json!({})),
-            ("repo.open", json!({ "path": "x", "altro": 1 })),
+            ("repo.open", json!({ "path": "x", "other": 1 })),
             ("repo.status", json!({ "x": 1 })),
             ("repo.log", json!({ "limit": -1 })),
             ("repo.log", json!({ "page": 2 })),
@@ -1852,7 +1862,7 @@ mod tests {
             json!("a/../b"),
             json!("./a"),
             json!("a//b"),
-            json!("cartella/"),
+            json!("folder/"),
             json!([97, 0, 98]),
         ] {
             for (id, params) in [

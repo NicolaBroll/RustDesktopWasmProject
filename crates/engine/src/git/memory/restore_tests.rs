@@ -79,7 +79,7 @@ fn undo_refused_if_the_branch_moved() {
     assert_eq!(refs.len(), 1);
     assert!(refs[0].contains("refs/heads/main"), "{refs:?}");
     assert!(err.to_string().contains("Nothing changed"), "{err}");
-    assert_eq!(repo, snapshot, "niente cambia");
+    assert_eq!(repo, snapshot, "nothing changes");
     assert!(journal.can_undo(), "the entry stays");
 
     // Put back as it was, the undo succeeds.
@@ -199,7 +199,7 @@ fn undo_with_detached_head_moves_head() {
     let start = head(&repo).unwrap();
     repo.detach_head(start);
     let mut journal = Journal::new();
-    let new = commit(&mut repo, &mut journal, CommitRequest::new("staccata"));
+    let new = commit(&mut repo, &mut journal, CommitRequest::new("detached"));
     let main = repo.refs().unwrap();
 
     journal.undo(&mut repo).unwrap();
@@ -226,7 +226,7 @@ fn several_undos_in_a_row_and_no_backup_when_still_reachable() {
     repo.stage(&[RepoPath::from("src/lib.rs")]).unwrap();
     let b = commit(&mut repo, &mut journal, CommitRequest::new("two"));
     // A tag on `b`: stays reachable, no backup.
-    repo.set_tag("tenuto", b, None);
+    repo.set_tag("kept", b, None);
 
     let (_, outcome) = journal.undo(&mut repo).unwrap();
     let backups = outcome.backups;

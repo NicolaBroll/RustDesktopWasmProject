@@ -11,7 +11,7 @@ use crate::format::{self, change_letter, date_time, date_time_zone, file_path, f
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
 use crate::merge;
-use crate::remotes::{self, AddDialog, AddFields, Remote, RemoveDialog};
+use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, Remote, RemoveDialog};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
 use crate::sync::{self, Window};

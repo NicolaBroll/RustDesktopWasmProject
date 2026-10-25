@@ -26,7 +26,7 @@ fn both_languages_have_the_same_areas_and_keys() {
         let only_en: Vec<_> = en.difference(&it).collect();
         assert!(
             only_it.is_empty() && only_en.is_empty(),
-            "{area}.ftl: solo in it {only_it:?}, solo in en {only_en:?}"
+            "{area}.ftl: only in it {only_it:?}, only in en {only_en:?}"
         );
     }
 }

@@ -28,9 +28,10 @@ use super::{
     ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome,
     FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, LineSelection, LogQuery,
     MergeAborted, MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest, PullOutcome,
-    PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteSnapshot,
-    RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped,
-    StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
+    PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore,
+    RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot, RepoOpener, RestoreOutcome,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    UpstreamConfig, WorktreeRestore,
 };
 use crate::{CommitGraphState, EngineError, JobContext, Message};
 use project_domain::{
@@ -883,6 +884,14 @@ impl GitBackend for MemoryBackend {
         job: &JobContext,
     ) -> Result<PushOutcome, EngineError> {
         self.push_branch(request, job)
+    }
+
+    fn delete_remote_branch(
+        &mut self,
+        request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_branch_on_remote(request, job)
     }
 
     fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {

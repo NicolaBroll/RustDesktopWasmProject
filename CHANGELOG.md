@@ -6,6 +6,14 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Delete a branch from the remote**: “Delete from the remote…” in the menu of a remote branch
+  (`remote.delete_branch` for CLI and MCP). It always asks for confirmation, saying which commits
+  are only there and which local branches track it; the commit stays in a backup
+  (`refs/project/backup/push-delete-…`) and, with `--force-with-lease`, if someone pushed to the
+  branch after the last fetch the deletion is refused.
+
 ## [0.2.0] - 2026-10-25
 
 A new look, VS Code and GitKraken style, and a left column that stays fluid with thousands of

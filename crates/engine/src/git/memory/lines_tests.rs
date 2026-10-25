@@ -96,7 +96,7 @@ fn stage_and_unstage_of_one_line() {
     assert_eq!(
         repo.apply_lines(&sel).unwrap(),
         None,
-        "`.M`: niente a rischio"
+        "`.M`: nothing at risk"
     );
     let after: Vec<_> = letters(&repo)
         .into_iter()
@@ -153,7 +153,7 @@ fn unstage_lines_of_a_new_file() {
     assert_eq!(
         repo.apply_lines(&sel).unwrap(),
         None,
-        "`A.`: niente a rischio"
+        "`A.`: nothing at risk"
     );
     assert_eq!(repo.worktree.get(&p(path)), Some(&content));
     let entry: Vec<_> = letters(&repo)

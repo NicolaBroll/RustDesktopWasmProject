@@ -145,14 +145,14 @@ fn loaded_editor(
             block_rows(ui, &blocks, enabled, actions);
             let height = (ui.available_height() - footer).max(60.0);
             egui::ScrollArea::both()
-                .id_salt("risultato-conflitto")
+                .id_salt("conflict-result")
                 .max_height(height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let mut text = result.to_owned();
                     let edit = ui.add(
                         egui::TextEdit::multiline(&mut text)
-                            .id(ui.make_persistent_id(("risultato", editor.path.to_string())))
+                            .id(ui.make_persistent_id(("result", editor.path.to_string())))
                             .code_editor()
                             .desired_width(f32::INFINITY)
                             .desired_rows(8)
@@ -187,7 +187,7 @@ fn column(ui: &mut Ui, id: &str, title: &str, column: &Column, height: f32) {
                 .inner_margin(4)
                 .show(ui, |ui| {
                     egui::ScrollArea::both()
-                        .id_salt(("colonna-conflitto", id))
+                        .id_salt(("conflict-column", id))
                         .max_height(height)
                         .auto_shrink([false, false])
                         .show_rows(ui, row, lines.len(), |ui, range| {

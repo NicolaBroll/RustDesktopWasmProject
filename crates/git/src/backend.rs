@@ -31,10 +31,10 @@ use project_engine::{
     DiscardedFile, EngineError, FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend,
     HeadState, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
     MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
-    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteSnapshot, RepoOpener,
-    RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
-    StashPush, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
-    path_matches, versions_at_risk_hidden,
+    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
+    RemoteBranchDeleted, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
+    StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
+    apply_patch, backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1256,6 +1256,14 @@ impl GitBackend for CliBackend {
         job: &JobContext,
     ) -> Result<PushOutcome, EngineError> {
         self.push_branch(request, job)
+    }
+
+    fn delete_remote_branch(
+        &mut self,
+        request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_branch_on_remote(request, job)
     }
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {

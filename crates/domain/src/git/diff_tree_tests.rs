@@ -250,7 +250,7 @@ fn errors() {
     }
     // The record number is that of the wrong record.
     let mut input = MIXED.to_vec();
-    input.extend_from_slice(b":rotto\0x\0");
+    input.extend_from_slice(b":broken\0x\0");
     let err = reason(parse_diff_tree(&input).unwrap_err());
     assert!(err.starts_with("record 8:"), "{err}");
 }

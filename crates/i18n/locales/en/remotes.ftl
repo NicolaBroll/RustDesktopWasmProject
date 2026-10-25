@@ -67,6 +67,18 @@ remotes-removed-backup = ; backup in { $backup }
 remotes-removed-backups = ; { $n } backups in refs/project/backup/remote-…
 remotes-removed-undo = . “Undo” restores it
 remotes-removed-short = Remote removed
+remotes-delete-branch-check-label = Checking deletion of “{ $name }”
+remotes-delete-branch-label = Deleting “{ $name }” from the remote
+remotes-delete-branch-refused = Deleting “{ $name }” from the remote not possible: { $error }
+remotes-delete-branch-failed = Deleting “{ $name }” from the remote failed: { $error }
+remotes-branch-deleted = Branch “{ $name }” deleted from the remote
+remotes-branch-deleted-only-here = ; { $n ->
+    [one] 1 commit was
+   *[other] { $n } commits were
+} only there
+remotes-branch-deleted-backup = ; backup in { $backup }
+remotes-branch-deleted-upstreams = ; upstream gone for { $names }
+remotes-branch-deleted-short = Branch deleted from the remote
 remotes-section = Remotes
 remotes-section-count = Remotes ({ $n })
 remotes-none = No remotes configured
@@ -106,3 +118,8 @@ remotes-remove-what = What happens:
 remotes-remove-undo = With “Undo” in the top bar the remote goes back to how it was (URL, remote-tracking branches, upstreams), as long as the app stays open: the operation journal is in memory. After closing, only the commit backups in refs/project/backup/remote-… remain: re-add the remote by hand and a Fetch downloads the branches again.
 remotes-remove-confirm = Remove remote
 remotes-remove-cancel = Don't remove
+remotes-delete-branch-title = Delete “{ $name }” from the remote?
+remotes-delete-branch-explanation = The branch “{ $branch }” is deleted on the remote “{ $remote }”: it disappears for everyone who uses it, and its remote-tracking branch disappears here too. Local branches don't change.
+remotes-delete-branch-undo = It can't be undone with “Undo”: the remote belongs to others too. The commit stays here in a backup (refs/project/backup/push-delete-…): to put the branch back, create a branch on it and push it. If someone pushed to the branch after your last Fetch, the deletion is refused and nothing changes.
+remotes-delete-branch-confirm = Delete from the remote
+remotes-delete-branch-cancel = Don't delete

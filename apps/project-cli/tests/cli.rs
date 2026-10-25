@@ -157,7 +157,7 @@ fn run_diff_commands() {
 #[test]
 fn run_stage_and_unstage() {
     let repo = temp_repo(1);
-    std::fs::write(repo.path().join("a.txt"), "cambiato\n").unwrap();
+    std::fs::write(repo.path().join("a.txt"), "changed\n").unwrap();
     std::fs::write(repo.path().join("b.txt"), "new\n").unwrap();
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
@@ -184,7 +184,7 @@ fn run_stage_and_unstage() {
     assert_eq!(files[0]["new_path"], "b.txt");
     // The worktree does not change.
     let a = std::fs::read_to_string(repo.path().join("a.txt")).unwrap();
-    assert_eq!(a, "cambiato\n");
+    assert_eq!(a, "changed\n");
 
     let output = cli()
         .args(["--repo", path_str(repo.path()), "run"])
@@ -467,6 +467,7 @@ fn commands_lists_the_catalog() {
             "rebase.plan",
             "rebase.start",
             "remote.add",
+            "remote.delete_branch",
             "remote.fetch",
             "remote.list",
             "remote.pull",
@@ -520,6 +521,7 @@ fn commands_lists_the_catalog() {
             "rebase.continue",
             "rebase.start",
             "remote.add",
+            "remote.delete_branch",
             "remote.fetch",
             "remote.pull",
             "remote.push",
@@ -551,12 +553,12 @@ fn eval_with_repo_keeps_going_after_errors() {
     cmd.args(["--repo", path_str(repo.path()), "eval"]);
     let output = with_stdin(
         cmd,
-        "repo.log={\"rev\":\"nessuno\"}\n# commento\n\nrepo.log={\"limit\":1}\n",
+        "repo.log={\"rev\":\"no-such-rev\"}\n# comment\n\nrepo.log={\"limit\":1}\n",
     );
     assert!(output.status.success(), "{output:?}");
     let lines = json_lines(&output.stdout);
     assert_eq!(lines.len(), 2);
-    assert!(lines[0]["error"].as_str().unwrap().contains("nessuno"));
+    assert!(lines[0]["error"].as_str().unwrap().contains("no-such-rev"));
     assert_eq!(lines[1]["ok"]["commits"][0]["summary"], "commit 2");
 }
 
@@ -703,12 +705,12 @@ fn run_fetch_from_a_local_remote() {
 
     let output = cli()
         .args(["--repo", path_str(work.path()), "run"])
-        .args(["--cmd", r#"remote.fetch={"remote":"nessuno"}"#])
+        .args(["--cmd", r#"remote.fetch={"remote":"nowhere"}"#])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("there is no remote `nessuno`"), "{stderr}");
+    assert!(stderr.contains("there is no remote `nowhere`"), "{stderr}");
 }
 
 #[test]

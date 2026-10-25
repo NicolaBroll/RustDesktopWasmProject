@@ -53,7 +53,7 @@ fn diverged(file: Option<&str>) -> MemoryBackend {
             parents: vec![oid(11)],
             author: who(),
             committer: who(),
-            summary: "Dal remoto".into(),
+            summary: "From the remote".into(),
             body: String::new(),
         },
     );
@@ -383,7 +383,7 @@ fn pull_refusals() {
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     let err = r
-        .run("remote.pull", &mut s, json!({ "branch": "manca" }))
+        .run("remote.pull", &mut s, json!({ "branch": "missing" }))
         .unwrap_err();
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
 
@@ -528,7 +528,7 @@ fn push_rejections_and_force() {
     else {
         panic!("{err}");
     };
-    assert!(reason.contains("“Dal remoto”"), "{reason}");
+    assert!(reason.contains("“From the remote”"), "{reason}");
     assert_eq!(expected.as_deref(), Some(oid(20).to_string().as_str()));
     assert!(
         reason.contains(&format!("\"expected\": \"{}\"", oid(20))),
@@ -611,7 +611,7 @@ fn push_refusals() {
     for params in [
         json!({ "remote": "missing" }),
         json!({ "remote": "-x" }),
-        json!({ "branch": "manca" }),
+        json!({ "branch": "missing" }),
     ] {
         let err = r.run("remote.push", &mut s, params.clone()).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{params}: {err}");
@@ -712,5 +712,78 @@ fn rebase_never_passes_over_ignored_files() {
     assert_eq!(
         target(&r, &mut s, "refs/heads/main").unwrap(),
         oid(12).to_string()
+    );
+}
+
+#[test]
+fn delete_branch_on_the_remote() {
+    // In the sample `feature/graph` moved to 13 on the remote: here it is aligned with the fetch.
+    let mut repo = MemoryBackend::sample();
+    repo.set_branch_on_remote("origin", "feature/graph", oid(9));
+    let (r, mut s) = opened_with(repo);
+    let params = json!({ "remote": "origin", "branch": "feature/graph" });
+    let err = r
+        .run("remote.delete_branch", &mut s, params.clone())
+        .unwrap_err();
+    let EngineError::ConfirmRequired {
+        reason, expected, ..
+    } = &err
+    else {
+        panic!("{err}");
+    };
+    assert_eq!(expected.as_deref(), Some(oid(9).to_string().as_str()));
+    assert!(reason.contains("`feature/graph`"), "{reason}");
+    assert!(reason.contains("also in other branches"), "{reason}");
+    assert_eq!(
+        target(&r, &mut s, "refs/remotes/origin/feature/graph").unwrap(),
+        oid(9).to_string()
+    );
+    // An `expected` that is not the remote-tracking branch: asked again.
+    let wrong = json!({ "remote": "origin", "branch": "feature/graph", "confirm": true, "expected": oid(11).to_string() });
+    let err = r.run("remote.delete_branch", &mut s, wrong).unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+
+    let confirmed = json!({ "remote": "origin", "branch": "feature/graph", "confirm": true, "expected": oid(9).to_string() });
+    let out = r
+        .run("remote.delete_branch", &mut s, confirmed.clone())
+        .unwrap();
+    assert_eq!(out["summary"], "[deleted]");
+    assert_eq!(out["backup"], "refs/project/backup/push-delete-1");
+    assert_eq!(out["upstream_of"], json!(["feature/graph"]));
+    assert_eq!(out["only_here"], 0);
+    assert_eq!(
+        target(&r, &mut s, "refs/remotes/origin/feature/graph"),
+        None
+    );
+    let history = r.run("edit.history", &mut s, json!({})).unwrap();
+    assert_eq!(history["can_undo"], false);
+    // Now it is not known here any more: refused before the remote.
+    let err = r
+        .run("remote.delete_branch", &mut s, confirmed)
+        .unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+
+    // Moved on the remote since the last fetch (the sample: 13): the lease rejects it.
+    let (r, mut s) = opened_with(MemoryBackend::sample());
+    let err = r
+        .run(
+            "remote.delete_branch",
+            &mut s,
+            json!({ "remote": "origin", "branch": "feature/graph", "confirm": true, "expected": oid(9).to_string() }),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            EngineError::PushRejected {
+                reason: PushRejection::StaleLease,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(
+        target(&r, &mut s, "refs/remotes/origin/feature/graph").unwrap(),
+        oid(9).to_string()
     );
 }

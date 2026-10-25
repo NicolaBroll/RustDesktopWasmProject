@@ -366,7 +366,20 @@ impl Column<'_> {
         }
         let response = response.on_hover_text(ref_tooltip(info, is_head));
         response.context_menu(|ui| {
-            ref_menu(ui, info, is_head, self.can_write, &self.merge, actions);
+            let on_remote = (info.kind == RefKind::RemoteBranch)
+                .then(|| {
+                    remotes::split_remote_branch(info.short_name(), &self.repo.remotes.names())
+                })
+                .flatten();
+            ref_menu(
+                ui,
+                info,
+                is_head,
+                on_remote,
+                self.can_write,
+                &self.merge,
+                actions,
+            );
         });
     }
 }
@@ -482,11 +495,13 @@ pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
 }
 
 /// The context menu of a ref: on local branches checkout, new branch, merge into the current
-/// branch, rename, pull, push and delete; on remote branches and tags new branch and merge.
+/// branch, rename, pull, push and delete; on remote branches and tags new branch and merge, and on
+/// remote branches "Delete from the remote…" (`on_remote`: the remote and the branch on it).
 pub(super) fn ref_menu(
     ui: &mut Ui,
     info: &RefInfo,
     is_head: bool,
+    on_remote: Option<(String, String)>,
     can_write: bool,
     merge: &merge::Gate,
     actions: &mut Vec<Action>,
@@ -520,6 +535,29 @@ pub(super) fn ref_menu(
     }
     if !is_head {
         merge_items(ui, name, name, merge, can_write, actions);
+    }
+    if let Some((remote, branch)) = on_remote {
+        ui.separator();
+        let color = if can_write {
+            ui.visuals().error_fg_color
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let button = ui
+            .add_enabled(
+                can_write,
+                egui::Button::new(RichText::new(tr!("refs-delete-remote")).color(color)),
+            )
+            .on_hover_text(tr!(
+                "refs-delete-remote-hint",
+                branch = &branch,
+                remote = &remote
+            ))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::DeleteRemoteBranch(remote, branch));
+            ui.close();
+        }
     }
     if info.kind != RefKind::LocalBranch {
         return;

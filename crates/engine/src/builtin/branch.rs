@@ -398,24 +398,24 @@ mod tests {
     fn create_from_head_and_from_a_rev_then_undo_and_redo() {
         let (r, mut s) = open(MemoryBackend::sample());
         let main = head_oid(&s);
-        let out = run(&r, &mut s, "branch.create", json!({ "name": "nuovo" }));
-        assert_eq!(out["branch"], "refs/heads/nuovo");
+        let out = run(&r, &mut s, "branch.create", json!({ "name": "brand-new" }));
+        assert_eq!(out["branch"], "refs/heads/brand-new");
         assert_eq!(out["target"], main.to_string());
         assert_eq!(out["can_undo"], true);
         assert!(
             out["next_undo"]["text"]
                 .as_str()
                 .unwrap()
-                .starts_with("Create branch `nuovo` at ")
+                .starts_with("Create branch `brand-new` at ")
         );
         assert!(
             out["refs"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|r| r["name"] == "refs/heads/nuovo")
+                .any(|r| r["name"] == "refs/heads/brand-new")
         );
-        assert_eq!(branch(&s, "nuovo"), Some(main));
+        assert_eq!(branch(&s, "brand-new"), Some(main));
         // HEAD does not change.
         assert_eq!(on(&s).as_deref(), Some("main"));
 
@@ -448,7 +448,7 @@ mod tests {
         let refs = s.repo().unwrap().refs().unwrap();
         for (params, want_invalid) in [
             (json!({ "name": "main" }), false),
-            (json!({ "name": "feature" }), false), // `feature/graph` esiste
+            (json!({ "name": "feature" }), false), // `feature/graph` exists
             (json!({ "name": "main/under" }), false),
             (json!({ "name": "-x" }), true),
             (json!({ "name": "--force" }), true),
@@ -457,7 +457,7 @@ mod tests {
             (json!({ "name": "a..b" }), true),
             (json!({ "name": "refs/heads/x" }), true),
             (json!({ "name": "" }), true),
-            (json!({ "name": "x", "altro": 1 }), true),
+            (json!({ "name": "x", "other": 1 }), true),
         ] {
             let err = r.run("branch.create", &mut s, params.clone()).unwrap_err();
             if want_invalid {
@@ -637,7 +637,7 @@ mod tests {
         // Is `feature/graph` (commit 9) in the upstream and in `main`? A branch with a commit
         // all its own is not.
         let tip = repo
-            .commit(&crate::CommitRequest::new("Solo qui"))
+            .commit(&crate::CommitRequest::new("Only here"))
             .unwrap()
             .commit
             .id;

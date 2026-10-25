@@ -651,9 +651,9 @@ mod tests {
         assert_eq!(d.subject, "Last commit fixed");
 
         // With a message already written nothing is proposed.
-        let mut d = draft("Mio", "");
+        let mut d = draft("Mine", "");
         d.set_amend(true, Some(&last));
-        assert_eq!(d.subject, "Mio");
+        assert_eq!(d.subject, "Mine");
         assert!(!d.is_proposed());
 
         // Last commit not loaded: it must be requested, then proposed.

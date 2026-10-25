@@ -355,7 +355,7 @@ impl CliBackend {
     }
 
     /// [`GitBackend::rename_branch`](project_engine::GitBackend::rename_branch) with `git
-    /// branch -m` (mai `-M`).
+    /// branch -m` (never `-M`).
     pub(super) fn rename_local_branch(
         &mut self,
         from: &str,

@@ -59,8 +59,8 @@ pub use git::{
 };
 pub use git::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
-    PushKind, PushOutcome, PushRejection, PushRequest, StrategySource, UpstreamConfig,
-    check_pull_state, merge_message, pull_mode, tracking_ref,
+    PushKind, PushOutcome, PushRejection, PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
+    StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode, tracking_ref,
 };
 pub use git::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,

@@ -207,7 +207,7 @@ fn push_options() {
 fn push_refusals() {
     let (r, mut s) = opened();
     for params in [
-        json!({ "message": "due\nrighe" }),
+        json!({ "message": "two\nlines" }),
         json!({ "paths": [] }),
         json!({ "paths": ["../fuori"] }),
         json!({ "all": true }),
@@ -355,7 +355,7 @@ fn moved_head() -> (MemoryBackend, String) {
     let stash = repo.stash_push(&StashPush::default()).unwrap();
     let head = repo.head().unwrap().target().unwrap();
     let new = MemoryBackend::fake_oid(4242);
-    repo.set_blob(new, "README cambiato su main\n");
+    repo.set_blob(new, "README changed on main\n");
     let id = MemoryBackend::fake_oid(4243);
     let who = Signature {
         name: "Ada".to_owned(),
@@ -438,7 +438,7 @@ fn untracked_in_the_way_blocks_the_apply() {
     })
     .unwrap();
     // `note.txt` is back in the worktree.
-    repo.set_worktree_file("note.txt", "altro\n");
+    repo.set_worktree_file("note.txt", "other\n");
     repo.set_entries(vec![StatusEntry {
         path: RepoPath::from("note.txt"),
         index: Change::Untracked,

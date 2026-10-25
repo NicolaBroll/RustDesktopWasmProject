@@ -496,7 +496,7 @@ fn local_changes_and_files_in_the_way_are_refused() {
     assert_ne!(gone, main);
     assert!(backups(&repo, "cherry-pick").is_empty());
     assert!(backups(&repo, "revert").is_empty());
-    // Non tracciati otherve vanno bene.
+    // Untracked files are fine.
     std::fs::remove_file(repo.path().join("c.txt")).unwrap();
     repo.write("other.txt", "x\n");
     let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));

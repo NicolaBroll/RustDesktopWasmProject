@@ -35,6 +35,7 @@ mod rebase;
 mod ref_tree;
 mod refresh;
 mod remotes;
+mod reset;
 mod stage;
 mod stash;
 mod sync;
@@ -316,6 +317,15 @@ enum Action {
     ConfirmConflict,
     /// Gives up the resolution awaiting confirmation.
     CancelConflict,
+    /// Opens the dialog to reset the current branch (or a detached HEAD) to `target` (shown as
+    /// `what`): the plan of the chosen mode is read first.
+    OpenReset { target: Oid, what: String },
+    /// The mode chosen in the reset dialog: its plan is read again.
+    ResetMode(reset::Mode),
+    /// "Reset" in the dialog (`branch.reset` with the plan's `expected`).
+    SubmitReset,
+    /// Closes the reset dialog without resetting.
+    CloseReset,
     /// Opens blame or history of `path` at commit `rev` (`None`: working tree / HEAD).
     OpenFile {
         path: RepoPath,
@@ -411,6 +421,10 @@ enum Request {
     ConflictShow(u64, u64),
     /// `conflict.resolve` (the state is in [`ConflictBox`]).
     ConflictResolve(u64),
+    /// `branch.reset_preview` with the request number of [`reset::ResetBox`].
+    ResetPreview(u64, u64),
+    /// `branch.reset` (the dialog state is in [`reset::ResetBox`]).
+    Reset(u64),
     /// `file.blame`/`file.log` with the request number of [`file::FileBox`].
     File(u64, u64),
 }
@@ -462,6 +476,8 @@ struct RepoView {
     merge: MergeBox,
     /// The interactive rebase editor.
     rebase: RebaseBox,
+    /// The reset dialog (mode, plan, submission).
+    reset: reset::ResetBox,
     /// The conflict editor, in place of the graph when it is open.
     conflict: ConflictBox,
     /// Blame and history of a file, in place of the graph when open.
@@ -508,6 +524,7 @@ impl RepoView {
             stash: StashBox::default(),
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
+            reset: reset::ResetBox::default(),
             conflict: ConflictBox::default(),
             file: file::FileBox::default(),
             status_seq: 0,
@@ -557,6 +574,7 @@ impl RepoView {
             || self.stash.modal_open()
             || self.merge.modal_open()
             || self.rebase.modal_open()
+            || self.reset.modal_open()
     }
 
     /// The last commit (HEAD), if it is among the loaded ones.
@@ -872,6 +890,10 @@ impl Tab {
             | Action::ConfirmRebase
             | Action::CancelRebaseConfirm
             | Action::CloseRebase => self.apply_rebase(action),
+            Action::OpenReset { .. }
+            | Action::ResetMode(..)
+            | Action::SubmitReset
+            | Action::CloseReset => self.apply_reset(action),
             Action::OpenConflict(..)
             | Action::CloseConflict
             | Action::RestartConflict
@@ -1198,6 +1220,14 @@ impl Tab {
                 self.receive_undo(generation, done);
                 continue;
             }
+            if let Request::ResetPreview(generation, seq) = request {
+                self.receive_reset_preview(generation, seq, done);
+                continue;
+            }
+            if let Request::Reset(generation) = request {
+                self.receive_reset(generation, done);
+                continue;
+            }
             if let Request::Branch(generation, op) = request {
                 self.receive_branch(generation, op, done);
                 continue;
@@ -1431,6 +1461,8 @@ impl Tab {
             | Request::Merge(..)
             | Request::RebasePlan(..)
             | Request::Rebase(..)
+            | Request::ResetPreview(..)
+            | Request::Reset(..)
             | Request::ConflictShow(..)
             | Request::ConflictResolve(..)
             | Request::File(..) => {}
@@ -1618,6 +1650,9 @@ impl Tab {
                 }
                 if let Some(editor) = repo.rebase.editor() {
                     view::rebase_editor(&ctx, editor, &mut actions);
+                }
+                if let Some(dialog) = repo.reset.dialog() {
+                    view::reset_dialog(&ctx, dialog, &mut actions);
                 }
                 if let Some(failure) = repo.merge.failure() {
                     view::failure_window(

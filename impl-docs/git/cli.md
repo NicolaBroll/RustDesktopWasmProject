@@ -30,6 +30,12 @@ cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["READ
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message":"Version 9"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","new_name":"test2"}' --cmd 'branch.delete={"name":"test2"}'
+# reset of the current branch: soft (ref only), mixed (also the index), hard (also the worktree);
+# the preview lists the files a hard would overwrite; a hard with local changes needs "confirm":true
+# (and "expected": the HEAD id from the preview), saves them in refs/project/backup/reset-...
+cargo run -p project-cli -- --repo . run --cmd 'branch.reset_preview={"target":"HEAD~1","mode":"hard"}'
+cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1","mode":"soft"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1","mode":"hard","confirm":true}' --cmd edit.undo
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'

@@ -491,7 +491,7 @@ Gaps compared with the big clients (GitKraken & co.), in order of daily use. Eac
 the file of its function in [git/](git/) before the code (contract, `CliBackend`, undo and backup).
 
 ### S45 — Reset of the current branch
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** `branch.reset {"target", "mode": "soft"|"mixed"|"hard", "confirm"?}` moves the current
   branch (or a detached HEAD) to `target` (a rev) in the [git/rules.md](git/rules.md) style; new file
   `git/reset.md`. `soft` touches only the ref; `mixed` also the index, with the index backup of
@@ -505,6 +505,10 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   the branch are already on its upstream (the next push will need `--force-with-lease`).
   UI: "Reset <branch> to here" in the commit menu with the three modes and the confirmation
   dialog listing the files that a `hard` overwrites.
+- **Status:** engine and backend done (`branch.reset`, `branch.reset_preview`, [git/reset.md](git/reset.md));
+  UI done ("Reset … to here…" in the commit menu, dialog with the three modes and the plan of
+  `branch.reset_preview`: `crates/ui/src/reset.rs`, `view/reset_view.rs`); `safety-reviewer` review done (hidden files and
+  replaced tracked folders checked before the ref moves).
 - **Done when:** integration tests (three modes, `hard` with changed, staged, CRLF and conflicted
   files, detached HEAD, `target` that is not an ancestor, undo/redo, refs changed from outside
   between confirmation and write) and on the `MemoryBackend`; `safety-reviewer` review; CI green.

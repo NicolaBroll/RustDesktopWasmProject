@@ -10,6 +10,7 @@ mod pick;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod reset;
 mod restore;
 mod stash;
 mod sync;
@@ -803,6 +804,10 @@ impl GitBackend for MemoryBackend {
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError> {
         self.resolve_file(request)
+    }
+
+    fn reset(&mut self, request: &super::ResetRequest) -> Result<super::ResetOutcome, EngineError> {
+        self.reset_head(request)
     }
 
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {

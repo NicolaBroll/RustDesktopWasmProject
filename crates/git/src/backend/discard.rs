@@ -63,7 +63,7 @@ impl CliBackend {
         self.check_index_unlocked()?;
 
         let stash = self.stash_create()?;
-        let raw = self.save_raw(&stash, &targets)?;
+        let raw = self.save_raw(&stash, &targets, "worktree.discard")?;
         let backup = self.create_backup_ref(
             "discard",
             &raw.unwrap_or(stash).to_string(),
@@ -252,7 +252,7 @@ impl CliBackend {
     /// restore --source=<stash>` would recreate (with the `smudge` filters and line-ending
     /// conversions), or the bytes saved in `raw`, and the same mode (`git diff <stash>`). A file that is not
     /// in the backup must not exist.
-    fn not_as_in_backup(
+    pub(super) fn not_as_in_backup(
         &self,
         stash: &Oid,
         raw: Option<&Oid>,
@@ -384,7 +384,12 @@ impl CliBackend {
     /// commit with only those files and parent `stash`, which undo uses to rewrite them identically.
     /// `None` if not needed. A link or a file type different from the backup is an error: the
     /// backup does not represent it.
-    fn save_raw(&self, stash: &Oid, paths: &[RepoPath]) -> Result<Option<Oid>, EngineError> {
+    pub(super) fn save_raw(
+        &self,
+        stash: &Oid,
+        paths: &[RepoPath],
+        operation: &str,
+    ) -> Result<Option<Oid>, EngineError> {
         let in_stash = self.ls_tree(stash, paths)?;
         let mut raw = Vec::new();
         let mut wrong = Vec::new();
@@ -432,10 +437,10 @@ impl CliBackend {
         let tree = self.run_input(&write, b"", &index_env)?;
         let tree = String::from_utf8_lossy(tree.trim_ascii_end()).into_owned();
         let parent = stash.to_string();
-        let mut message = String::from(
-            "Byte-for-byte backup of the worktree, without filters, before worktree.discard\n\n\
+        let mut message = format!(
+            "Byte-for-byte backup of the worktree, without filters, before {operation}\n\n\
              The parent is the `git stash create` commit; here are the files whose bytes are not \
-             the ones git would recreate from it:\n\n",
+             the ones git would recreate from it:\n\n"
         );
         for (path, _, _) in &raw {
             message.push_str(&format!("{path}\n"));
@@ -476,17 +481,22 @@ impl CliBackend {
     /// skip a changed file, and with the fixed backup identity (works even without
     /// `user.name`).
     fn stash_create(&self) -> Result<Oid, EngineError> {
-        let args = [
-            "-c",
-            "core.fsmonitor=false",
-            "stash",
-            "create",
-            STASH_MESSAGE,
-        ];
-        let identity: Vec<(&str, &OsStr)> = super::BACKUP_IDENTITY
+        self.stash_create_with(STASH_MESSAGE, &[])
+    }
+
+    /// [`Self::stash_create`] with the commit message `message` and extra environment `env`
+    /// (e.g. `GIT_INDEX_FILE` for a temporary index).
+    pub(super) fn stash_create_with(
+        &self,
+        message: &str,
+        env: &[(&str, &OsStr)],
+    ) -> Result<Oid, EngineError> {
+        let args = ["-c", "core.fsmonitor=false", "stash", "create", message];
+        let mut identity: Vec<(&str, &OsStr)> = super::BACKUP_IDENTITY
             .iter()
             .map(|(k, v)| (*k, OsStr::new(v)))
             .collect();
+        identity.extend_from_slice(env);
         let out = self
             .git
             .output_with_input_env(Some(&self.workdir), &args, b"", &identity)?;

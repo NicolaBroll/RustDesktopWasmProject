@@ -103,6 +103,7 @@ impl RefRestore {
     pub fn backup_kind(&self) -> &'static str {
         match self.command {
             "remote.remove" => "remote",
+            "branch.reset" => "reset",
             command => command.strip_prefix("edit.").unwrap_or("undo"),
         }
     }

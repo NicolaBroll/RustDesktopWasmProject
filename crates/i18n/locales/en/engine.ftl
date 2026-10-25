@@ -77,6 +77,7 @@ engine-busy-stash-apply = would apply the stash
 engine-busy-stash-push = would stash the changes
 engine-busy-stash-undo = would change the stashes
 engine-busy-restore = would move the refs
+engine-busy-reset = would reset the branch
 engine-busy-pull = would integrate the upstream
 engine-busy-remote-remove = would remove a remote
 engine-busy-remote-restore = would put back a remote

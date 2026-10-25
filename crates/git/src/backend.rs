@@ -11,6 +11,7 @@ mod pick;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod reset;
 mod restore;
 mod stash;
 mod sync;
@@ -1363,6 +1364,13 @@ impl GitBackend for CliBackend {
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError> {
         self.resolve_file(request)
+    }
+
+    fn reset(
+        &mut self,
+        request: &project_engine::ResetRequest,
+    ) -> Result<project_engine::ResetOutcome, EngineError> {
+        self.reset_head(request)
     }
 
     fn operation_state(&self) -> Result<OperationState, EngineError> {

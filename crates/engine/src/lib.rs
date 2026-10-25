@@ -67,6 +67,10 @@ pub use git::{
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
 };
+pub use git::{
+    ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
+    reset_moved, status_paths, strict_conflicts,
+};
 pub use git::{TAGS_PREFIX, check_new_tag_name, tag_ref};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};

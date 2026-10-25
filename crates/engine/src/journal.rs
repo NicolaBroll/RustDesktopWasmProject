@@ -71,9 +71,10 @@ const WORKTREE_COMMANDS: &[&str] = &[
 ];
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
-    Message, RefMove, RefRestore, RemoteSnapshot, RestoreOutcome, StashDrop, StashEntry, StashPush,
-    StashRecord, WorktreeBackup, WorktreeRestore, branch_short, check_no_operation,
-    discard_description, find_stash, pop_stash, remove_remote, restore_remote,
+    Message, RefMove, RefRestore, RemoteSnapshot, ResetMode, ResetRecord, ResetRequest,
+    RestoreOutcome, StashDrop, StashEntry, StashPush, StashRecord, WorktreeBackup, WorktreeRestore,
+    branch_short, check_no_operation, discard_description, find_stash, pop_stash, remove_remote,
+    restore_remote,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
@@ -138,6 +139,10 @@ pub struct JournalEntry {
     /// redo of a push the entry has the id of the new stash.
     #[serde(default)]
     pub stash: Option<StashRecord>,
+    /// Only for `branch.reset`: the mode and the stash of a `hard` ([`ResetRecord`]). Undo and redo
+    /// go through [`GitBackend::reset`] with the same mode, strict (nothing may need a backup).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset: Option<ResetRecord>,
 }
 
 impl JournalEntry {
@@ -191,6 +196,7 @@ impl JournalEntry {
             branch_config: Vec::new(),
             remote: None,
             stash: None,
+            reset: None,
         })
     }
 
@@ -215,6 +221,7 @@ impl JournalEntry {
             branch_config: Vec::new(),
             remote: None,
             stash: None,
+            reset: None,
         }
     }
 
@@ -513,6 +520,59 @@ impl JournalEntry {
         )
     }
 
+    /// The entry of a successful `branch.reset`: HEAD (`head`, the same branch before and after,
+    /// or detached from `before` to `after`) and, on a branch, the branch moved; `backup` the ref of
+    /// the local changes saved by a `hard` (with `stash`, the `git stash create` commit). Undo and
+    /// redo go through [`GitBackend::reset`] with the same `mode`: index and worktree (for `mixed`
+    /// and `hard`) follow the ref, but only if nothing would need a new backup; the local
+    /// changes overwritten by a `hard` stay in the backup (the undo says so).
+    pub fn reset(
+        branch: Option<&str>,
+        before: Oid,
+        after: Oid,
+        mode: ResetMode,
+        backup: Option<String>,
+        stash: Option<Oid>,
+    ) -> Self {
+        let (head, refs, name) = match branch {
+            Some(b) => (
+                HeadChange {
+                    before: HeadState::Branch(b.to_owned()),
+                    after: HeadState::Branch(b.to_owned()),
+                },
+                vec![RefChange {
+                    name: b.to_owned(),
+                    before: Some(before),
+                    after: Some(after),
+                }],
+                branch_short(b).to_owned(),
+            ),
+            None => (
+                HeadChange {
+                    before: HeadState::Detached(before),
+                    after: HeadState::Detached(after),
+                },
+                Vec::new(),
+                "HEAD".to_owned(),
+            ),
+        };
+        let mut entry = Self::branch_entry(
+            "branch.reset",
+            msg!(
+                "engine-journal-reset",
+                branch = name,
+                mode = mode.as_str(),
+                before = short(&before),
+                after = short(&after)
+            ),
+            head,
+            refs,
+            backup,
+        );
+        entry.reset = Some(ResetRecord { mode, stash });
+        entry
+    }
+
     /// True if the entry moves the HEAD branch with index and worktree (a pull of the active
     /// branch, a merge, a cherry-pick or revert): undo and redo use
     /// [`GitBackend::reset_branch`].
@@ -540,6 +600,7 @@ impl JournalEntry {
             branch_config: Vec::new(),
             remote: None,
             stash: None,
+            reset: None,
         }
     }
 
@@ -922,6 +983,36 @@ impl JournalEntry {
                     Ok(outcome)
                 }
             }
+            "branch.reset" => {
+                let Some(record) = self.reset.clone() else {
+                    return Err(EngineError::NotAllowed(msg!(
+                        "engine-undo-bad-entry",
+                        description = self.description
+                    )));
+                };
+                Self::check_unchanged(repo, &request, msg!("engine-busy-reset"))?;
+                let outcome = repo.reset(&ResetRequest {
+                    mode: record.mode,
+                    refs: request,
+                    files: Vec::new(),
+                    strict: true,
+                })?;
+                let mut warnings = outcome.warnings;
+                if !redo
+                    && record.mode == ResetMode::Hard
+                    && let Some(backup) = &self.backup
+                {
+                    warnings.push(msg!(
+                        "engine-reset-undo-backup",
+                        backup = backup,
+                        stash = record.stash.map(|s| s.to_string()).unwrap_or_default()
+                    ));
+                }
+                Ok(RestoreOutcome {
+                    backups: outcome.backups,
+                    warnings,
+                })
+            }
             _ if self.moves_worktree() => {
                 Self::check_unchanged(repo, &request, msg!("engine-busy-branch-move"))?;
                 repo.reset_branch(&request)
@@ -1118,6 +1209,7 @@ mod tests {
             branch_config: Vec::new(),
             remote: None,
             stash: None,
+            reset: None,
         }
     }
 

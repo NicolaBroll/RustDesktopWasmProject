@@ -14,6 +14,7 @@ engine-journal-pull-ff = fast-forward
 engine-journal-pull-rebase = rebase onto { $upstream }
 engine-journal-pull-merge = merge of { $upstream }
 engine-journal-pull = Pull of `{ $branch }` ({ $how }: from { $before } to { $after })
+engine-journal-reset = Reset ({ $mode }) of `{ $branch }` from { $before } to { $after }
 engine-journal-merge = Merge of { $source } into `{ $branch }` ({ $strategy ->
     [fast_forward] fast-forward
    *[other] merge commit

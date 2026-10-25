@@ -149,7 +149,7 @@ impl MemoryBackend {
     /// [`GitBackend::stage`](crate::GitBackend::stage) on the status entries.
     /// Saves in a (in-memory) backup the staged versions that stage or unstage of `paths`
     /// would lose; the ref name, if there were any.
-    fn backup(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
+    pub(super) fn backup(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         let versions = versions_at_risk(&self.status()?, paths);
         if versions.is_empty() {
             return Ok(None);

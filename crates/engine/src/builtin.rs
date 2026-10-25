@@ -11,6 +11,7 @@ mod rebase;
 mod remote;
 mod remote_branch;
 mod remotes;
+mod reset;
 mod stash;
 mod tag;
 
@@ -163,6 +164,18 @@ impl Registry {
             "Rename a branch",
             r#"{"name": string, "new_name": string}"#,
             branch::branch_rename,
+        );
+        add(
+            "branch.reset",
+            "Reset the current branch to a commit",
+            r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard", "confirm"?: bool (hard with local changes), "expected"?: full oid (HEAD must be there)}"#,
+            reset::branch_reset,
+        );
+        add(
+            "branch.reset_preview",
+            "What a reset would do (files a hard overwrites)",
+            r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard"}"#,
+            reset::branch_reset_preview,
         );
         add(
             "tag.create",
@@ -340,6 +353,7 @@ const WRITES: &[&str] = &[
     "branch.create",
     "branch.delete",
     "branch.rename",
+    "branch.reset",
     "cherry_pick.abort",
     "cherry_pick.continue",
     "commit.cherry_pick",
@@ -870,6 +884,8 @@ mod tests {
                 "branch.create",
                 "branch.delete",
                 "branch.rename",
+                "branch.reset",
+                "branch.reset_preview",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
                 "commit.cherry_pick",
@@ -931,6 +947,7 @@ mod tests {
                 "branch.create",
                 "branch.delete",
                 "branch.rename",
+                "branch.reset",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
                 "commit.cherry_pick",

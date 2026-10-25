@@ -74,6 +74,7 @@ engine-busy-stash-apply = applicherebbe lo stash
 engine-busy-stash-push = metterebbe da parte le modifiche
 engine-busy-stash-undo = cambierebbe gli stash
 engine-busy-restore = sposterebbe i ref
+engine-busy-reset = farebbe il reset del branch
 engine-busy-pull = integrerebbe l'upstream
 engine-busy-remote-remove = rimuoverebbe un remoto
 engine-busy-remote-restore = rimetterebbe un remoto

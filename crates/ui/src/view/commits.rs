@@ -137,6 +137,7 @@ pub(crate) fn commit_list(
                 merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
                 pick_items(ui, commit, &what, &merge, can_write, actions);
                 rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
+                reset_item(ui, repo, commit, &what, can_write, actions);
             });
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);

@@ -123,6 +123,19 @@ configuration (if a new one has not appeared in the meantime; the reflog of the 
 restored), renames back, and returns to the previous branch (or commit) with another safe
 checkout; always only if nobody has touched those refs or HEAD in the meantime.
 
+`branch.reset {"target", "mode": "soft"|"mixed"|"hard", "confirm"?, "expected"?}` moves the current
+branch (or a detached HEAD) to `target` like `git reset`: `soft` only the ref, `mixed` also the index
+(staged versions that exist only there saved first in `refs/project/backup/index-...`), `hard` also the
+worktree of tracked files. A `hard` with local changes needs `"confirm": true` and saves them first in
+`refs/project/backup/reset-...` (`git stash create` plus a byte-for-byte copy); untracked and ignored files
+are never touched (one in the way refuses the reset). Refused during merge/rebase/cherry-pick/revert/bisect
+and on a branch without commits. `branch.reset_preview {"target", "mode"}` (read-only) gives the same plan
+as data: `files` a `hard` overwrites, `needs_confirm`, `expected`. Result: `{"mode", "branch", "before",
+"after", "files", "backup", "stash", "index_backup", "backups", "published", "warnings", "status",
+"refs"}`; `warnings` says when commits leaving the branch are already on its upstream. It goes into the
+journal: undo moves the ref back (with index and worktree for `mixed`/`hard`), the changes overwritten by a
+`hard` stay in the backup.
+
 `remote.fetch {"remote"?, "branch"?}` downloads from the remote (`git fetch --progress`): new commits,
 remote branches and tags as the remote's configuration says (also `fetch.prune`), never the local
 branches, the index or the worktree. `remote` is the name of a configured remote (never a URL or a

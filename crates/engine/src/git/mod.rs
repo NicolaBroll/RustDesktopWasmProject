@@ -21,6 +21,7 @@ mod push;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod reset;
 mod restore;
 mod sample;
 mod stash;
@@ -88,6 +89,10 @@ pub use remote_admin::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
+};
+pub use reset::{
+    ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
+    reset_moved, status_paths, strict_conflicts,
 };
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
@@ -651,6 +656,23 @@ pub trait GitBackend: Send {
         &mut self,
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError>;
+
+    // --- Reset (S45, `impl-docs/git/reset.md`).
+
+    /// Moves the branch of HEAD (or a detached HEAD) like `git reset --<mode>`
+    /// (`branch.reset`, and its undo and redo). Before writing, without changing anything:
+    /// no operation in progress, the target is a commit, HEAD and the branch still hold the
+    /// expected values of `request.refs` ([`EngineError::UndoConflict`] for undo/redo,
+    /// [`EngineError::NotAllowed`] for `branch.reset`); for `hard` the plan
+    /// ([`reset_files`]) is the confirmed one and no untracked or ignored file is where the
+    /// target puts a file. Then the backups: `mixed` the staged versions that exist only in the
+    /// index (`refs/project/backup/index-...`), `hard` the local changes (`git stash create` and
+    /// byte for byte, `refs/project/backup/reset-...`); the commits no longer reachable as for
+    /// [`GitBackend::restore_refs`]. If a backup fails nothing is written. The ref moves with
+    /// the old value checked by git; then index (`mixed`, `hard`) and worktree (`hard`). An
+    /// error after the ref move names the backups. With `request.strict` (undo/redo) nothing may
+    /// need an index or worktree backup ([`strict_conflicts`]).
+    fn reset(&mut self, request: &ResetRequest) -> Result<ResetOutcome, EngineError>;
 }
 
 /// What to compare in [`GitBackend::diff`]: parameters of `diff.worktree`, `diff.index` and

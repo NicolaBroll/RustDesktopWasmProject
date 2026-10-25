@@ -68,6 +68,30 @@ object in `refs/project/backup/undo-...` (`RefRestore::abandoned` with `cat-file
 message and author exist only there, even when the commit stays reachable. No backup on creation: nothing is
 overwritten.
 
+### `tag.delete`
+
+Parameters: `{"name", "confirm", "expected"?}`.
+
+Deletes the local tag `refs/tags/<name>`; the remote is not touched (`remote.delete_tag` in
+[sync.md](sync.md)). Any existing name is accepted (`check_tag_name`: a valid ref name, even `-x`
+or `--force`, created by other tools); empty, full `refs/...`, invalid → `InvalidParams`; a tag that
+does not exist → `NotAllowed`. **Always** requires `"confirm": true`: without it `ConfirmRequired`
+with the value in `expected` (the tag object of an annotated tag, otherwise the commit), saying the
+commit and, for an annotated tag, the tag object (its message and author exist only there); nothing
+changes. `expected` (optional, full id, otherwise `InvalidParams`): the value the user confirmed; if
+the tag now has another value → `NotAllowed`, nothing changes. Result: `{"tag", "target", "annotated", "tag_object":
+oid | null, "backup", "refs", ...journal}`.
+
+`CliBackend`: the value as git stores it (the tag object of an annotated tag, the commit of a
+lightweight one) first in `refs/project/backup/tag-delete-<s>-<ns>` (`create_backup_ref`: if it
+fails nothing is deleted), then `update-ref --no-deref -m "project: tag.delete ..." -d
+refs/tags/<name> <value>` (only if it still has that value; otherwise the backup is removed and
+`NotAllowed`). The name reaches git only as `refs/tags/<name>`. Journal entry: the tag from its value
+to absent, with the backup; undo = `restore_refs` that recreates the ref on the same value (the
+same tag object, kept by the backup) only if it is still absent (`UndoConflict` otherwise); redo =
+deletion with the expected value (the undo machinery saves the tag object again in
+`refs/project/backup/undo-...`).
+
 ## Undo and backup
 
 The `branch.*` commands receive **short** names (`feature/x`); the full name is always

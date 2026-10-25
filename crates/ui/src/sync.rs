@@ -33,12 +33,15 @@ use serde_json::{Value, json};
 /// The Registry command ids.
 pub const PULL: &str = "remote.pull";
 pub const PUSH: &str = "remote.push";
+pub const PUSH_TAG: &str = "remote.push_tag";
 
-/// Pull or push.
+/// Pull, push of a branch or push of a tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Pull,
     Push,
+    /// `remote.push_tag`: one tag to one remote, never forced.
+    PushTag,
 }
 
 impl Op {
@@ -46,6 +49,7 @@ impl Op {
         match self {
             Op::Pull => PULL,
             Op::Push => PUSH,
+            Op::PushTag => PUSH_TAG,
         }
     }
 }
@@ -93,6 +97,8 @@ pub struct Request {
     /// Confirmed forced push only: the oid of the local remote-tracking branch seen in the confirmation
     /// (`"expected"`), if the engine gave it.
     pub expected: Option<Oid>,
+    /// Push of a tag only: the remote and the tag (short name).
+    pub tag: Option<(String, String)>,
 }
 
 impl Request {
@@ -104,6 +110,7 @@ impl Request {
             force: false,
             confirm: false,
             expected: None,
+            tag: None,
         }
     }
 
@@ -115,11 +122,24 @@ impl Request {
             force: false,
             confirm: false,
             expected: None,
+            tag: None,
+        }
+    }
+
+    /// Push of the tag `name` (short name) to `remote`: only `refs/tags/<name>`, never forced.
+    pub fn push_tag(remote: String, name: String) -> Self {
+        Self {
+            op: Op::PushTag,
+            tag: Some((remote, name)),
+            ..Self::push(None)
         }
     }
 
     /// The command parameters.
     pub fn params(&self) -> Value {
+        if let Some((remote, name)) = &self.tag {
+            return json!({ "remote": remote, "name": name });
+        }
         let mut params = json!({});
         if let Some(branch) = &self.branch {
             params["branch"] = json!(branch);
@@ -141,6 +161,9 @@ impl Request {
 
     /// The description for the bar: `Pull of «main»`, `Forced push of «main»`, `Pull`.
     pub fn label(&self) -> String {
+        if let Some((remote, name)) = &self.tag {
+            return tr!("sync-label-push-tag", tag = name, remote = remote);
+        }
         match (self.op, self.force, &self.branch) {
             (Op::Pull, _, Some(branch)) => tr!("sync-label-pull-branch", branch = branch),
             (Op::Pull, _, None) => tr!("sync-label-pull"),
@@ -148,6 +171,7 @@ impl Request {
             (Op::Push, false, None) => tr!("sync-label-push"),
             (Op::Push, true, Some(branch)) => tr!("sync-label-force-branch", branch = branch),
             (Op::Push, true, None) => tr!("sync-label-force"),
+            (Op::PushTag, ..) => tr!("sync-label-push"),
         }
     }
 }
@@ -311,6 +335,7 @@ impl SyncBox {
             return None;
         }
         if request.branch.is_none()
+            && request.op != Op::PushTag
             && let Head::Branch { name, .. } = head
         {
             request.branch = Some(name.clone());
@@ -396,6 +421,9 @@ impl SyncBox {
                     Op::Push => {
                         serde_json::from_value::<PushResult>(value).map(PushResult::outcome)
                     }
+                    Op::PushTag => {
+                        serde_json::from_value::<PushTagResult>(value).map(PushTagResult::outcome)
+                    }
                 };
                 return match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
@@ -416,7 +444,7 @@ impl SyncBox {
             Some(ErrorKind::Cancelled) => Received::Cancelled {
                 notice: match request.op {
                     Op::Pull => tr!("sync-pull-cancelled", label = &label),
-                    Op::Push => tr!("sync-push-cancelled", label = &label),
+                    Op::Push | Op::PushTag => tr!("sync-push-cancelled", label = &label),
                 },
                 reload: true,
             },
@@ -528,6 +556,7 @@ fn rejection_text(reason: PushRejection) -> String {
         PushRejection::StaleLease => tr!("sync-rejection-stale-lease"),
         PushRejection::RemoteRejected => tr!("sync-rejection-remote"),
         PushRejection::Hook => tr!("sync-rejection-hook"),
+        PushRejection::TagExists => tr!("sync-rejection-tag-exists"),
         PushRejection::Other => tr!("sync-rejection-other"),
     }
 }
@@ -539,6 +568,7 @@ fn rejection_short(reason: PushRejection) -> String {
         PushRejection::StaleLease => tr!("sync-rejection-short-stale-lease"),
         PushRejection::RemoteRejected => tr!("sync-rejection-short-remote"),
         PushRejection::Hook => tr!("sync-rejection-short-hook"),
+        PushRejection::TagExists => tr!("sync-rejection-short-tag-exists"),
         PushRejection::Other => tr!("sync-rejection-short-other"),
     }
 }
@@ -780,6 +810,57 @@ impl PushResult {
     }
 }
 
+/// Result of `remote.push_tag`.
+#[derive(Debug, Clone, Deserialize)]
+struct PushTagResult {
+    remote: String,
+    name: String,
+    target: Oid,
+    annotated: bool,
+    kind: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    messages: Vec<String>,
+    refs: Option<Vec<RefInfo>>,
+    refs_error: Option<String>,
+}
+
+impl PushTagResult {
+    fn outcome(self) -> Outcome {
+        for line in &self.messages {
+            log::info!("{PUSH_TAG}: {line}");
+        }
+        let (tag, remote, id) = (&self.name, &self.remote, self.target.short());
+        let notice = match (self.kind.as_str(), self.annotated) {
+            ("up_to_date", _) => tr!("sync-push-tag-up-to-date", tag = tag, remote = remote),
+            (_, true) => tr!(
+                "sync-push-tag-new-annotated",
+                tag = tag,
+                remote = remote,
+                id = id
+            ),
+            (_, false) => tr!("sync-push-tag-new", tag = tag, remote = remote, id = id),
+        };
+        let notice = if self.summary.is_empty() {
+            notice
+        } else {
+            format!("{notice} ({})", self.summary)
+        };
+        Outcome {
+            notice,
+            refs: self.refs,
+            status: None,
+            history: None,
+            moved_head: false,
+            show_changes: false,
+            warning: self
+                .refs_error
+                .map(|e| tr!("sync-push-refs-not-reread", error = e)),
+        }
+    }
+}
+
 impl Tab {
     /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_sync(&mut self, action: Action) {
@@ -788,6 +869,9 @@ impl Tab {
                 self.send_sync(sync::Request::pull(branch, strategy), false);
             }
             Action::Push(branch) => self.send_sync(sync::Request::push(branch), false),
+            Action::PushTag(remote, name) => {
+                self.send_sync(sync::Request::push_tag(remote, name), false);
+            }
             Action::ForcePush => {
                 if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.force()) {
                     self.send_sync(request, false);
@@ -1424,6 +1508,65 @@ mod tests {
             "{}",
             outcome.notice
         );
+    }
+
+    #[test]
+    fn push_of_a_tag_new_then_up_to_date_then_rejected() {
+        let request = Request::push_tag("origin".into(), "v0.1.0".into());
+        assert_eq!(
+            request.params(),
+            json!({ "remote": "origin", "name": "v0.1.0" })
+        );
+        assert_eq!(request.label(), "Push of tag “v0.1.0” to “origin”");
+        // HEAD's branch is not pinned on a tag push.
+        let pinned = SyncBox::default().request(request.clone(), &main_head());
+        assert_eq!(pinned.as_ref().and_then(|r| r.branch.clone()), None);
+
+        let (r, mut s) = open(MemoryBackend::sample());
+        let mut sync = SyncBox::default();
+        let Received::Done(outcome) = run(&r, &mut s, &mut sync, request.clone()) else {
+            panic!()
+        };
+        assert!(
+            outcome
+                .notice
+                .starts_with("Annotated tag “v0.1.0” published on “origin” (at "),
+            "{}",
+            outcome.notice
+        );
+        assert!(outcome.history.is_none());
+        assert!(sync.running().is_none());
+        let Received::Done(outcome) = run(&r, &mut s, &mut sync, request.clone()) else {
+            panic!()
+        };
+        assert_eq!(
+            outcome.notice,
+            "Tag “v0.1.0” is already on “origin” with the same value ([up to date])"
+        );
+
+        // On the remote with another value: rejected with its own explanation, nothing to force.
+        let mut repo = MemoryBackend::sample();
+        repo.set_tag_on_remote("origin", "v0.1.0", oid(3), None);
+        let (r, mut s) = open(repo);
+        let received = run(&r, &mut s, &mut sync, request);
+        let Received::Failed { message, reload } = received else {
+            panic!("{received:?}")
+        };
+        assert!(!reload);
+        assert!(
+            message.contains("the remote already has this tag on another value"),
+            "{message}"
+        );
+        let Some(Window::Rejected(rejected)) = sync.window() else {
+            panic!()
+        };
+        assert_eq!(rejected.reason, PushRejection::TagExists);
+        assert!(
+            rejected.explanation.contains("a tag is never overwritten"),
+            "{}",
+            rejected.explanation
+        );
+        assert_eq!(sync.force(), None);
     }
 
     #[test]

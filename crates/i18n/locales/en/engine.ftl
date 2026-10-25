@@ -45,6 +45,9 @@ engine-lines-empty = `lines` is empty: give at least one changed line of the dif
 engine-paths-empty = `paths` is empty: give at least one path
 engine-log-stashes-without-all = `stashes` adds the stash bases to the graph of all refs: it goes together with `"all": true`
 engine-log-rev-and-all = `rev` and `all` are alternatives: `all` already starts from all branches, tags and HEAD
+engine-search-empty = the text to search for is empty
+engine-search-line = the text to search for must be on a single line
+engine-search-no-fields = `in` is empty: give at least one of "message", "author", "id" (or omit it for all three)
 engine-memory-repos = in-memory repos available: { $repos }
 engine-memory-no-repo = no in-memory repo
 # Branch names (`git/branch.rs`).
@@ -61,6 +64,13 @@ engine-tag-name-invalid = not a valid tag name
 engine-tag-exists = a tag `{ $name }` already exists, nothing changed (a tag is never overwritten)
 engine-tag-name-taken-git = the tag name `{ $name }` is already taken, nothing changed (a tag is never overwritten): { $stderr }
 engine-tag-unborn-target = the repository has no commits yet: nothing to tag
+engine-tag-not-found = there is no tag `{ $name }` here
+engine-tag-changed = `{ $full }` changed since it was read (expected { $expected }, now { $now }): nothing deleted
+engine-tag-missing = `{ $full }` no longer exists: nothing deleted
+engine-tag-delete-confirm = deletes the lightweight tag `{ $name }` (on commit { $target }); the tag is first saved in `refs/project/backup/tag-delete-...` and `edit.undo` puts it back. The remote is not touched. To confirm: "confirm": true
+engine-tag-delete-confirm-annotated = deletes the annotated tag `{ $name }` (tag object { $object } on commit { $target }: its message and author exist only there); the tag object is first saved in `refs/project/backup/tag-delete-...` and `edit.undo` puts it back. The remote is not touched. To confirm: "confirm": true
+engine-tag-moved = tag `{ $name }` changed since it was seen: it was { $seen }, now it is { $value }. Nothing deleted; reload the tags and try again
+engine-tag-expected-hex = `expected` must be the full id ({ $len } hexadecimal digits) of the tag shown in the confirmation: `{ $value }`
 # Operation in progress (`check_no_operation`): `$what` is one of the `engine-busy-*`.
 engine-operation-in-progress = { $operation ->
     [merge] a merge
@@ -77,6 +87,7 @@ engine-busy-stash-apply = would apply the stash
 engine-busy-stash-push = would stash the changes
 engine-busy-stash-undo = would change the stashes
 engine-busy-restore = would move the refs
+engine-busy-reset = would reset the branch
 engine-busy-pull = would integrate the upstream
 engine-busy-remote-remove = would remove a remote
 engine-busy-remote-restore = would put back a remote

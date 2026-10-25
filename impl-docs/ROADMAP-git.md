@@ -491,7 +491,7 @@ Gaps compared with the big clients (GitKraken & co.), in order of daily use. Eac
 the file of its function in [git/](git/) before the code (contract, `CliBackend`, undo and backup).
 
 ### S45 — Reset of the current branch
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** `branch.reset {"target", "mode": "soft"|"mixed"|"hard", "confirm"?}` moves the current
   branch (or a detached HEAD) to `target` (a rev) in the [git/rules.md](git/rules.md) style; new file
   `git/reset.md`. `soft` touches only the ref; `mixed` also the index, with the index backup of
@@ -505,12 +505,16 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   the branch are already on its upstream (the next push will need `--force-with-lease`).
   UI: "Reset <branch> to here" in the commit menu with the three modes and the confirmation
   dialog listing the files that a `hard` overwrites.
+- **Status:** engine and backend done (`branch.reset`, `branch.reset_preview`, [git/reset.md](git/reset.md));
+  UI done ("Reset … to here…" in the commit menu, dialog with the three modes and the plan of
+  `branch.reset_preview`: `crates/ui/src/reset.rs`, `view/reset_view.rs`); `safety-reviewer` review done (hidden files and
+  replaced tracked folders checked before the ref moves).
 - **Done when:** integration tests (three modes, `hard` with changed, staged, CRLF and conflicted
   files, detached HEAD, `target` that is not an ancestor, undo/redo, refs changed from outside
   between confirmation and write) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
 
 ### S46 — Clone and new repository
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `git-scenarios` for the edge cases
+- [x] **Agent:** `git-engine`, then `egui-ui`; `git-scenarios` for the edge cases
 - **Goal:** `repo.clone {"url", "path", "branch"?, "depth"?}` and `repo.init {"path",
   "branch"?}`, commands without an open repo (as `repo.open`) that open the new repo at the end;
   new file `git/clone.md`. Destination absent or an empty directory, never over existing files
@@ -521,12 +525,17 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `git init` (initial branch from `branch` or from `init.defaultBranch`). UI: "Clone…" and
   "New repository…" in the File menu and on the empty screen (URL, folder with the non-blocking
   dialog of S39, optional branch), the repo opens in a new tab and goes in the recent ones.
+- **Status:** engine and backend done (`repo.clone`, `repo.init`, [git/clone.md](git/clone.md):
+  `RepoOpener::clone_repo`/`init_repo`, `Session::clone_repo`/`init_repo`, refused over MCP); UI
+  done (`crates/ui/src/clone.rs`, `view/clone_view.rs`: File menu and empty screen, dialog with
+  "Browse…", progress and "Cancel" in the dialog, the clone runs in a tab's session that joins the
+  tabs and the recent list when the repo is open).
 - **Done when:** tests with a local remote (`file://` and a path), a URL starting with `-`, a
   non-empty destination, a cancel midway (no folder left), `depth`, an empty remote; init with
   and without `branch`; CI green.
 
 ### S47 — Tags: delete and push
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** next to `tag.create` ([git/branch.md](git/branch.md)): `tag.delete {"name",
   "confirm"}` (always `confirm`; the tag object of an annotated tag saved in
   `refs/project/backup/tag-delete-...` before deleting, `JournalEntry` so undo recreates it on the
@@ -541,7 +550,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   local deletion) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
 
 ### S48 — Search in the history
-- [ ] **Agent:** `git-engine`, then `egui-ui`
+- [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** `repo.search {"query", "in"?: ["message", "author", "id"], "path"?, "all"?, "skip"?,
   "limit"?}` (read-only, in [git/reading.md](git/reading.md)) returns the ids of the matching
   commits in the same `--date-order` as `repo.log`, so the graph stays whole: the search
@@ -552,3 +561,35 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
 - **Done when:** tests (regex characters taken literally, non-UTF-8 message, author by name and
   by email, short hash, `path` with a rename, `all` with an unmerged branch, contiguous pages) and
   on the `MemoryBackend`; desktop screenshot on Xvfb with highlighted matches; CI green.
+
+### S49 — Settings window
+- [x] **Agent:** `egui-ui`
+- **Goal:** today the preferences are scattered (theme in a title bar menu, unified/side by side
+  in the diff view) and the language cannot be chosen (`project_i18n::set_lang` exists, the app
+  always starts in English). A "Settings…" window (File menu in the title bar, Ctrl+,) with the
+  sections **General** (theme: as the system / light / dark; language: as the system / Italiano /
+  English, applied at once) and room for the next ones. One `Settings` struct in `crates/ui`, saved in
+  the eframe storage under its own key as the tabs (`crates/ui/src/tabs.rs`), written only when it
+  changes, unknown or missing fields → defaults (`#[serde(default)]`, so older saves keep working).
+  The theme menu stays as a shortcut to the same setting; the system language comes through
+  `Platform` (implemented in `apps/project`), `None` → English. Settings never go through the
+  `Registry`: they do not touch the repo. Texts in `settings.ftl`.
+- **Done when:** UI tests (round trip of the storage, an old save without the new fields, language
+  applied without restarting); desktop screenshot on Xvfb of the window in Italian; CI green.
+
+### S50 — Auto fetch
+- [x] **Agent:** `egui-ui` (`git-engine` only if `remote.fetch` needs a change)
+- **Goal:** each open tab runs `remote.fetch` on a timer, interval in the S49 settings
+  (**Remotes** section: off / 1 / 5 / 15 minutes, default 5). Only fetch, never pull: local
+  branches and files are not touched. Skipped (and retried at the next tick) with a dialog open, a
+  command running or an operation in progress (merge, rebase, cherry-pick, revert); hidden tabs
+  fetch when shown again if their interval has passed; never two fetches of the same tab at once.
+  Authentication error (`GIT_TERMINAL_PROMPT=0`, the credentials come from the git
+  configuration): auto fetch suspended for that tab, one notice under the bar with "Retry",
+  no dialog at every tick. Network error: doubled wait up to 30 minutes, then back to the
+  interval; only an icon in the bar. After a fetch the S40 light refresh (selection and scroll
+  stay) and, if remote branches moved, a discreet notice ("3 new commits on origin/main"). A
+  manual Fetch restarts the timer.
+- **Done when:** UI tests with a fake clock (interval, skips, backoff, suspension on an
+  authentication error and Retry, hidden tab); by hand on Xvfb: a commit pushed to a local
+  remote from a terminal shows up in the graph without pressing Fetch; CI green.

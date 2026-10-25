@@ -4,7 +4,7 @@
 //! is built by [`tag_ref`].
 
 use super::valid_ref_name;
-use crate::EngineError;
+use crate::{EngineError, Message};
 
 /// Prefix of tags.
 pub const TAGS_PREFIX: &str = "refs/tags/";
@@ -12,6 +12,37 @@ pub const TAGS_PREFIX: &str = "refs/tags/";
 /// The full name of the tag `name` (`refs/tags/<name>`).
 pub fn tag_ref(name: &str) -> String {
     format!("{TAGS_PREFIX}{name}")
+}
+
+/// The name of an **existing** tag (`tag.delete`, `remote.push_tag`, `remote.delete_tag`): a short
+/// name that gives a valid ref name ([`valid_ref_name`]). A name starting with `-` is accepted (it
+/// may exist, created by another tool): backends receive it only as `refs/tags/<name>`. Otherwise
+/// [`EngineError::InvalidParams`].
+pub fn check_tag_name(id: &'static str, name: &str) -> Result<(), EngineError> {
+    let reason = if name.is_empty() {
+        Some(msg!("engine-tag-name-empty"))
+    } else if name.starts_with("refs/") {
+        Some(msg!("engine-tag-name-full"))
+    } else if !valid_ref_name(&tag_ref(name)) {
+        Some(msg!("engine-tag-name-invalid"))
+    } else {
+        None
+    };
+    name_error(id, name, reason)
+}
+
+fn name_error(id: &'static str, name: &str, reason: Option<Message>) -> Result<(), EngineError> {
+    match reason {
+        Some(reason) => Err(EngineError::InvalidParams {
+            id,
+            reason: msg!(
+                "engine-with-name",
+                reason = reason,
+                name = name.escape_debug().to_string()
+            ),
+        }),
+        None => Ok(()),
+    }
 }
 
 /// The name of a **new** tag: not empty, short (without `refs/`), not starting with `-` and such
@@ -29,17 +60,7 @@ pub fn check_new_tag_name(id: &'static str, name: &str) -> Result<(), EngineErro
     } else {
         None
     };
-    match reason {
-        Some(reason) => Err(EngineError::InvalidParams {
-            id,
-            reason: msg!(
-                "engine-with-name",
-                reason = reason,
-                name = name.escape_debug().to_string()
-            ),
-        }),
-        None => Ok(()),
-    }
+    name_error(id, name, reason)
 }
 
 #[cfg(test)]
@@ -62,6 +83,12 @@ mod tests {
             "a:b",
         ] {
             assert!(check_new_tag_name("tag.create", bad).is_err(), "{bad}");
+        }
+        for good in ["-x", "--force", "v1"] {
+            assert!(check_tag_name("tag.delete", good).is_ok(), "{good}");
+        }
+        for bad in ["", "refs/tags/v1", "a b", "a..b"] {
+            assert!(check_tag_name("tag.delete", bad).is_err(), "{bad}");
         }
     }
 }

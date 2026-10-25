@@ -1,6 +1,7 @@
 //! [`CliBackend`] and [`CliOpener`]: reading a repository by running `git`.
 
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod discard;
@@ -11,7 +12,9 @@ mod pick;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod reset;
 mod restore;
+mod search;
 mod stash;
 mod sync;
 mod tag;
@@ -27,15 +30,17 @@ use project_domain::{
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, BlameQuery, BranchDeleted, CommitGraphState, CommitOutcome, CommitRequest,
-    ConfigEntry, ConflictResolution, ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome,
-    DiscardedFile, EngineError, FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend,
-    HeadState, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
-    MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
-    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
-    RemoteBranchDeleted, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
-    StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
-    apply_patch, backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, BlameQuery, BranchDeleted, CloneOutcome, CloneRequest, CommitGraphState,
+    CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
+    ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError, FetchOutcome,
+    FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, InitRequest, JobContext,
+    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
+    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
+    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
+    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
+    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -96,8 +101,8 @@ impl CliOpener {
         })
     }
 
-    /// Like [`RepoOpener::open`], but returns the concrete type.
-    pub fn open_cli(&self, path: &str) -> Result<CliBackend, EngineError> {
+    /// [`EngineError::GitTooOld`] if git is older than [`GitVersion::MIN`].
+    fn check_version(&self) -> Result<(), EngineError> {
         let version = self.git_version()?;
         if !version.is_supported() {
             return Err(EngineError::GitTooOld {
@@ -105,6 +110,12 @@ impl CliOpener {
                 required: GitVersion::MIN.to_string(),
             });
         }
+        Ok(())
+    }
+
+    /// Like [`RepoOpener::open`], but returns the concrete type.
+    pub fn open_cli(&self, path: &str) -> Result<CliBackend, EngineError> {
+        self.check_version()?;
         let not_found = |reason: Message| EngineError::RepoNotFound {
             path: path.to_owned(),
             reason,
@@ -253,6 +264,18 @@ fn failure_text(args: &[&str], stdout: &[u8]) -> EngineError {
 impl RepoOpener for CliOpener {
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError> {
         Ok(Box::new(self.open_cli(path)?))
+    }
+
+    fn clone_repo(
+        &self,
+        request: &CloneRequest,
+        job: &JobContext,
+    ) -> Result<CloneOutcome, EngineError> {
+        self.clone_into(request, job)
+    }
+
+    fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError> {
+        self.init_into(request)
     }
 }
 
@@ -552,6 +575,33 @@ impl CliBackend {
 
         let reflog = format!("project: backup of the index before {operation}");
         self.create_backup_ref("index", &commit, &reflog)
+    }
+
+    /// A name `refs/project/backup/<kind>-<seconds>-<nanoseconds>` (with a `-<n>` suffix if
+    /// taken) that no ref has now, for a backup written by another command (a fetch straight
+    /// into it); whoever writes it must still refuse to overwrite.
+    fn free_backup_name(&self, kind: &str) -> Result<String, EngineError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let base = format!(
+            "{BACKUP_PREFIX}{kind}-{}-{:09}",
+            now.as_secs(),
+            now.subsec_nanos()
+        );
+        for attempt in 0..10 {
+            let name = match attempt {
+                0 => base.clone(),
+                n => format!("{base}-{n}"),
+            };
+            if self.ref_value(&name)?.is_none() {
+                return Ok(name);
+            }
+        }
+        Err(EngineError::GitWithReason {
+            command: "update-ref".to_owned(),
+            reason: msg!("engine-backup-no-name", base = base),
+        })
     }
 
     /// Creates a new ref `refs/project/backup/<kind>-<seconds>-<nanoseconds>` pointing to
@@ -924,6 +974,41 @@ fn sequencer_operation(todo: &[u8]) -> Operation {
     }
 }
 
+impl CliBackend {
+    /// The revisions `git log` starts from for `query` (`repo.log`): `--branches --remotes
+    /// --tags` with `all`, then `--end-of-options` and the ids (HEAD, `rev`, the stash bases);
+    /// `None` if the log is empty (HEAD without commits and no `all`). Unaffected by
+    /// `skip`/`limit`.
+    pub(crate) fn log_range(&self, query: &LogQuery) -> Result<Option<Vec<String>>, EngineError> {
+        query.check()?;
+        let start = match &query.rev {
+            Some(rev) => Some(
+                self.resolve(rev)?
+                    .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?,
+            ),
+            // Branch with no commits: empty log (with `all` the other refs remain).
+            None => self.resolve("HEAD")?,
+        };
+        if start.is_none() && !query.all {
+            return Ok(None);
+        }
+        let mut range = Vec::new();
+        if query.all {
+            // Only these namespaces: `refs/stash`, the backups in `refs/project/` and notes stay
+            // out. With no refs the log is empty (git does not fall back to HEAD).
+            range.extend(["--branches", "--remotes", "--tags"].map(String::from));
+        }
+        // HEAD as an id, so a detached HEAD also appears with `all`.
+        range.push("--end-of-options".to_owned());
+        range.extend(start.map(|oid| oid.to_string()));
+        // With `stashes` also the stash bases (not the stashes themselves).
+        if query.stashes {
+            range.extend(self.stash_entries()?.iter().map(|s| s.base.to_string()));
+        }
+        Ok(Some(range))
+    }
+}
+
 impl GitBackend for CliBackend {
     fn head(&self) -> Result<Head, EngineError> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
@@ -954,30 +1039,14 @@ impl GitBackend for CliBackend {
     }
 
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError> {
-        query.check()?;
-        let start = match &query.rev {
-            Some(rev) => Some(
-                self.resolve(rev)?
-                    .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?,
-            ),
-            // Branch with no commits: empty log (with `all` the other refs remain).
-            None => self.resolve("HEAD")?,
+        let Some(range) = self.log_range(query)? else {
+            return Ok(Vec::new());
         };
-        if query.limit == Some(0) || (start.is_none() && !query.all) {
+        if query.limit == Some(0) {
             return Ok(Vec::new());
         }
-        // With `stashes` also the stash bases (not the stashes themselves).
-        let bases: Vec<String> = if query.stashes {
-            self.stash_entries()?
-                .iter()
-                .map(|s| s.base.to_string())
-                .collect()
-        } else {
-            Vec::new()
-        };
         let skip = format!("--skip={}", query.skip);
         let max_count = query.limit.map(|n| format!("--max-count={n}"));
-        let start = start.map(|oid| oid.to_string());
 
         let mut args = vec!["log"];
         args.extend_from_slice(LOG_ARGS);
@@ -985,17 +1054,13 @@ impl GitBackend for CliBackend {
         // with multiple starting points.
         args.extend(["--date-order", &skip]);
         args.extend(max_count.as_deref());
-        if query.all {
-            // Only these namespaces: `refs/stash`, the backups in `refs/project/` and notes stay
-            // out. With no refs the log is empty (git does not fall back to HEAD).
-            args.extend(["--branches", "--remotes", "--tags"]);
-        }
-        // HEAD as an id, so a detached HEAD also appears with `all`.
-        args.push("--end-of-options");
-        args.extend(start.as_deref());
-        args.extend(bases.iter().map(String::as_str));
+        args.extend(range.iter().map(String::as_str));
         args.push("--");
         Ok(parse_log(&self.run(&args)?)?)
+    }
+
+    fn search(&self, query: &SearchQuery, job: &JobContext) -> Result<Vec<Oid>, EngineError> {
+        self.search_log(query, job)
     }
 
     fn status(&self) -> Result<Status, EngineError> {
@@ -1267,6 +1332,31 @@ impl GitBackend for CliBackend {
         self.delete_branch_on_remote(request, job)
     }
 
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError> {
+        self.tag_value_on_remote(remote, name, job)
+    }
+
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError> {
+        self.push_tag_to_remote(request, job)
+    }
+
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_tag_on_remote(request, job)
+    }
+
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
+        self.delete_tag_ref(name, expected)
+    }
+
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
         self.create_local_branch(name, target)
     }
@@ -1363,6 +1453,13 @@ impl GitBackend for CliBackend {
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError> {
         self.resolve_file(request)
+    }
+
+    fn reset(
+        &mut self,
+        request: &project_engine::ResetRequest,
+    ) -> Result<project_engine::ResetOutcome, EngineError> {
+        self.reset_head(request)
     }
 
     fn operation_state(&self) -> Result<OperationState, EngineError> {

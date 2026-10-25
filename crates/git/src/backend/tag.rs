@@ -8,6 +8,11 @@
 //!   `--cleanup=whitespace` keeps the lines starting with `#` (`#123` is not a comment);
 //! - the name is already checked by `check_new_tag_name` (no leading `-`) and reaches git after
 //!   `--end-of-options` or as `refs/tags/<name>`.
+//!
+//! Deletion (`tag.delete`): the value (tag object or commit) first in
+//! `refs/project/backup/tag-delete-...`, then `update-ref --no-deref -d refs/tags/<name> <value>`
+//! (only if it still has that value). Any existing name (even `-x`) reaches git only as
+//! `refs/tags/<name>`.
 
 use super::CliBackend;
 use crate::command::failure;
@@ -65,5 +70,52 @@ impl CliBackend {
         }
         self.ref_value(&full)?
             .ok_or_else(|| EngineError::UnknownRev(full.clone()))
+    }
+}
+
+impl CliBackend {
+    /// [`GitBackend::delete_tag`](project_engine::GitBackend::delete_tag).
+    pub(super) fn delete_tag_ref(
+        &mut self,
+        name: &str,
+        expected: &Oid,
+    ) -> Result<String, EngineError> {
+        let full = tag_ref(name);
+        self.check_tag_value(&full, expected)?;
+        let oid = expected.to_string();
+        let backup = self.create_backup_ref(
+            "tag-delete",
+            &oid,
+            &format!("project: backup of {full} before tag.delete"),
+        )?;
+        let reflog = format!("project: tag.delete {name} (was {oid})");
+        let args = ["update-ref", "--no-deref", "-m", &reflog, "-d", &full, &oid];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        if !out.status.success() {
+            // Nothing deleted: the backup is not needed (removed only if it still points there).
+            let _ = self
+                .git
+                .output(Some(&self.workdir), &["update-ref", "-d", &backup, &oid]);
+            self.check_tag_value(&full, expected)?;
+            return Err(failure(&args, &out));
+        }
+        Ok(backup)
+    }
+
+    /// `full` still has the value `expected`, otherwise [`EngineError::NotAllowed`].
+    fn check_tag_value(&self, full: &str, expected: &Oid) -> Result<(), EngineError> {
+        match self.ref_value(full)? {
+            Some(now) if now == *expected => Ok(()),
+            Some(now) => Err(EngineError::NotAllowed(msg!(
+                "engine-tag-changed",
+                full = full,
+                expected = expected,
+                now = now
+            ))),
+            None => Err(EngineError::NotAllowed(msg!(
+                "engine-tag-missing",
+                full = full
+            ))),
+        }
     }
 }

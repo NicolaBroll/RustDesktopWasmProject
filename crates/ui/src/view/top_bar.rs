@@ -59,6 +59,7 @@ pub(crate) fn top_bar(
         ui.separator();
         let enabled = can_write && network.is_none();
         fetch_buttons(ui, repo, enabled, actions);
+        offline_icon(ui, &repo.auto_fetch);
         sync_buttons(ui, repo, enabled, actions);
         ui.separator();
         stash_push_button(
@@ -419,8 +420,11 @@ pub(crate) fn welcome(
             if ui.button(tr!("top-bar-open-repo")).clicked() {
                 actions.push(Action::PickFolder);
             }
+            create_buttons(ui, actions);
         } else {
             ui.heading(tr!("top-bar-no-repo"));
+            ui.add_space(8.0);
+            create_buttons(ui, actions);
         }
         if !busy && !recent.is_empty() {
             ui.add_space(16.0);

@@ -14,7 +14,9 @@
 //! Deleting a branch from the remote (`remote.delete_branch`, from the menu of a remote branch)
 //! goes the same way, and the confirmation holds only for the commit seen: the second submit carries
 //! `"expected"`, the id given by the engine with `ConfirmRequired`. If the branch moved in the
-//! meantime the engine asks again and the dialog shows the new reason.
+//! meantime the engine asks again and the dialog shows the new reason. Deleting a tag from the
+//! remote (`remote.delete_tag`, from the menu of a tag, S47) uses the same dialog: the value to
+//! confirm is the one the engine read from the remote.
 
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
@@ -35,6 +37,7 @@ pub enum Op {
     Add,
     Remove,
     DeleteBranch,
+    DeleteTag,
 }
 
 impl Op {
@@ -44,6 +47,7 @@ impl Op {
             Op::Add => "remote.add",
             Op::Remove => "remote.remove",
             Op::DeleteBranch => "remote.delete_branch",
+            Op::DeleteTag => "remote.delete_tag",
         }
     }
 }
@@ -216,14 +220,17 @@ pub struct RemoveDialog {
     pub phase: Phase,
 }
 
-/// The deletion of a branch from the remote, from the check to the answer.
+/// The deletion of a branch (or of a tag) from the remote, from the check to the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteBranchDialog {
     pub remote: String,
-    /// The branch on the remote (short name, without the remote).
+    /// The branch on the remote (short name, without the remote), or the tag's short name.
     pub branch: String,
+    /// True: it is the tag `branch` (`remote.delete_tag`), not a branch.
+    pub tag: bool,
     pub phase: Phase,
-    /// The id of the remote-tracking branch shown in the confirmation, to send back as `"expected"`.
+    /// The value shown in the confirmation (the remote-tracking branch, or the tag as read from the
+    /// remote), to send back as `"expected"`.
     pub expected: Option<String>,
 }
 
@@ -231,6 +238,27 @@ impl DeleteBranchDialog {
     /// `origin/feature`.
     pub fn full_name(&self) -> String {
         format!("{}/{}", self.remote, self.branch)
+    }
+
+    fn op(&self) -> Op {
+        if self.tag {
+            Op::DeleteTag
+        } else {
+            Op::DeleteBranch
+        }
+    }
+
+    /// The description for the status bar while it is being deleted.
+    fn label(&self) -> String {
+        if self.tag {
+            tr!(
+                "remotes-delete-tag-label",
+                name = &self.branch,
+                remote = &self.remote
+            )
+        } else {
+            tr!("remotes-delete-branch-label", name = self.full_name())
+        }
     }
 }
 
@@ -489,15 +517,34 @@ impl RemotesBox {
         self.dialog = Some(Dialog::DeleteBranch(DeleteBranchDialog {
             remote,
             branch,
+            tag: false,
             phase: Phase::Checking,
             expected: None,
         }));
         Some(params)
     }
 
-    /// The user confirmed the deletion: the parameters with `"confirm": true` and the commit
-    /// seen. `None` if the engine did not give it (nothing can be confirmed).
-    pub fn confirm_delete_branch(&mut self) -> Option<(Value, String)> {
+    /// Starts the deletion of the tag `name` from the remote `remote`: the parameters of the first
+    /// submit, without `confirm` (the engine reads the value on the remote and answers with it).
+    pub fn start_delete_tag(&mut self, remote: String, name: String) -> Option<Value> {
+        if self.dialog.is_some() {
+            return None;
+        }
+        let params = json!({ "remote": remote, "name": name });
+        self.dialog = Some(Dialog::DeleteBranch(DeleteBranchDialog {
+            remote,
+            branch: name,
+            tag: true,
+            phase: Phase::Checking,
+            expected: None,
+        }));
+        Some(params)
+    }
+
+    /// The user confirmed the deletion: the command, the parameters with `"confirm": true` and
+    /// the value seen, the description. `None` if the engine did not give the value (nothing can
+    /// be confirmed).
+    pub fn confirm_delete_branch(&mut self) -> Option<(Op, Value, String)> {
         let Some(Dialog::DeleteBranch(delete)) = &mut self.dialog else {
             return None;
         };
@@ -506,15 +553,14 @@ impl RemotesBox {
         }
         let expected = delete.expected.clone()?;
         delete.phase = Phase::Sending;
-        Some((
-            json!({
-                "remote": delete.remote,
-                "branch": delete.branch,
-                "confirm": true,
-                "expected": expected,
-            }),
-            tr!("remotes-delete-branch-label", name = delete.full_name()),
-        ))
+        let what = if delete.tag { "name" } else { "branch" };
+        let mut params = json!({
+            "remote": delete.remote,
+            "confirm": true,
+            "expected": expected,
+        });
+        params[what] = json!(delete.branch);
+        Some((delete.op(), params, delete.label()))
     }
 
     /// Closes the open dialog without sending anything; not during a submit.
@@ -542,7 +588,9 @@ impl RemotesBox {
         let received = match op {
             Op::Add => self.receive_add(result, kind),
             Op::Remove => self.receive_remove(result, kind, detail),
-            Op::DeleteBranch => self.receive_delete_branch(result, kind, detail, expected),
+            Op::DeleteBranch | Op::DeleteTag => {
+                self.receive_delete_branch(op, result, kind, detail, expected)
+            }
         };
         if let Received::Done(outcome) = &received
             && let Some(remotes) = &outcome.remotes
@@ -641,13 +689,18 @@ impl RemotesBox {
 impl RemotesBox {
     fn receive_delete_branch(
         &mut self,
+        op: Op,
         result: Result<Value, String>,
         kind: Option<ErrorKind>,
         detail: Option<String>,
         expected: Option<String>,
     ) -> Received {
-        let Some(Dialog::DeleteBranch(delete)) = self.dialog.take() else {
-            return unexpected(Op::DeleteBranch);
+        let delete = match self.dialog.take() {
+            Some(Dialog::DeleteBranch(delete)) if delete.op() == op => delete,
+            other => {
+                self.dialog = other;
+                return unexpected(op);
+            }
         };
         match result {
             // The first answer, or the branch moved since the confirmation: (again) the dialog,
@@ -663,25 +716,51 @@ impl RemotesBox {
                 Received::Confirm
             }
             Err(e) => {
-                let name = delete.full_name();
                 let refused = kind == Some(ErrorKind::NotAllowed);
-                let message = if refused {
-                    tr!("remotes-delete-branch-refused", name = name, error = e)
-                } else {
-                    tr!("remotes-delete-branch-failed", name = name, error = e)
+                let (name, remote) = (&delete.branch, &delete.remote);
+                let message = match (delete.tag, refused) {
+                    (false, true) => tr!(
+                        "remotes-delete-branch-refused",
+                        name = delete.full_name(),
+                        error = e
+                    ),
+                    (false, false) => tr!(
+                        "remotes-delete-branch-failed",
+                        name = delete.full_name(),
+                        error = e
+                    ),
+                    (true, true) => tr!(
+                        "remotes-delete-tag-refused",
+                        name = name,
+                        remote = remote,
+                        error = e
+                    ),
+                    (true, false) => tr!(
+                        "remotes-delete-tag-failed",
+                        name = name,
+                        remote = remote,
+                        error = e
+                    ),
                 };
                 Received::Failed {
                     message,
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<DeleteBranchResult>(Op::DeleteBranch, value) {
-                Ok(result) => Received::Done(Box::new(result.outcome())),
-                Err(message) => Received::Failed {
-                    message,
-                    reload: true,
-                },
-            },
+            Ok(value) => {
+                let outcome = if delete.tag {
+                    parse::<DeleteTagResult>(op, value).map(DeleteTagResult::outcome)
+                } else {
+                    parse::<DeleteBranchResult>(op, value).map(DeleteBranchResult::outcome)
+                };
+                match outcome {
+                    Ok(outcome) => Received::Done(Box::new(outcome)),
+                    Err(message) => Received::Failed {
+                        message,
+                        reload: true,
+                    },
+                }
+            }
         }
     }
 }
@@ -722,6 +801,37 @@ impl DeleteBranchResult {
             refs: self.refs,
             remotes: None,
             warning: reread_warning(&tr!("remotes-branch-deleted-short"), self.refs_error, None),
+            history: None,
+        }
+    }
+}
+
+/// Result of `remote.delete_tag`.
+#[derive(Debug, Clone, Deserialize)]
+struct DeleteTagResult {
+    remote: String,
+    name: String,
+    backup: String,
+    #[serde(default, deserialize_with = "crate::engine_text::texts")]
+    warnings: Vec<String>,
+    refs: Option<Vec<RefInfo>>,
+    refs_error: Option<String>,
+}
+
+impl DeleteTagResult {
+    fn outcome(self) -> Outcome {
+        let mut notice = tr!(
+            "remotes-tag-deleted",
+            name = &self.name,
+            remote = &self.remote
+        );
+        notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &self.backup));
+        notice.push_str(&warnings_text(&self.warnings));
+        Outcome {
+            notice,
+            refs: self.refs,
+            remotes: None,
+            warning: reread_warning(&tr!("remotes-tag-deleted-short"), self.refs_error, None),
             history: None,
         }
     }
@@ -1091,7 +1201,27 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::ConfirmDeleteRemoteBranch => {
+            Action::DeleteRemoteTag(remote, name) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = tr!(
+                    "remotes-delete-tag-check-label",
+                    name = name.as_str(),
+                    remote = remote.as_str()
+                );
+                if let Some(params) = repo.remotes.start_delete_tag(remote, name) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = remotes::Op::DeleteTag;
+                    self.submit(op.command(), params, Request::Remote(generation, op));
+                }
+            }
+            Action::ConfirmDeleteRemoteBranch | Action::ConfirmDeleteRemoteTag => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1099,9 +1229,8 @@ impl Tab {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                if let Some((params, label)) = repo.remotes.confirm_delete_branch() {
+                if let Some((op, params, label)) = repo.remotes.confirm_delete_branch() {
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteBranch;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1247,7 +1376,8 @@ mod tests {
         };
         let nine = MemoryBackend::fake_oid(9).to_string();
         assert_eq!(dialog.expected.as_deref(), Some(nine.as_str()));
-        let (params, label) = b.confirm_delete_branch().unwrap();
+        let (op, params, label) = b.confirm_delete_branch().unwrap();
+        assert_eq!(op, Op::DeleteBranch);
         assert_eq!(params["confirm"], true);
         assert_eq!(params["expected"], nine.as_str());
         assert_eq!(label, "Deleting “origin/feature/graph” from the remote");
@@ -1284,13 +1414,71 @@ mod tests {
             .start_delete_branch("origin".into(), "feature/graph".into())
             .unwrap();
         run(&registry, &mut session, &mut b, Op::DeleteBranch, params);
-        let (params, _) = b.confirm_delete_branch().unwrap();
+        let (_, params, _) = b.confirm_delete_branch().unwrap();
         let r = run(&registry, &mut session, &mut b, Op::DeleteBranch, params);
         let Received::Failed { message, reload } = r else {
             panic!("{r:?}")
         };
         assert!(reload);
         assert!(message.contains("remote.fetch"), "{message}");
+        assert!(b.dialog.is_none());
+    }
+
+    #[test]
+    fn delete_a_tag_from_the_remote_after_the_confirmation() {
+        let mut repo = MemoryBackend::sample();
+        let seven = MemoryBackend::fake_oid(7);
+        repo.set_tag_on_remote("origin", "v9", seven, None);
+        let (registry, mut session) = opened(repo);
+        let mut b = RemotesBox::default();
+        let params = b.start_delete_tag("origin".into(), "v9".into()).unwrap();
+        assert_eq!(params, json!({ "remote": "origin", "name": "v9" }));
+        assert!(!b.modal_open(), "no dialog while checking");
+        assert_eq!(b.confirm_delete_branch(), None);
+        let r = run(&registry, &mut session, &mut b, Op::DeleteTag, params);
+        assert!(matches!(r, Received::Confirm), "{r:?}");
+        let Some(Dialog::DeleteBranch(dialog)) = b.dialog() else {
+            panic!()
+        };
+        assert!(dialog.tag);
+        let seven = seven.to_string();
+        assert_eq!(dialog.expected.as_deref(), Some(seven.as_str()));
+        let (op, params, label) = b.confirm_delete_branch().unwrap();
+        assert_eq!(op, Op::DeleteTag);
+        assert_eq!(
+            params,
+            json!({ "remote": "origin", "name": "v9", "confirm": true, "expected": seven })
+        );
+        assert_eq!(label, "Deleting tag “v9” from “origin”");
+        // The answer of the other command does not consume this dialog.
+        let r = b.receive(Op::DeleteBranch, Ok(json!({})), None, None, None);
+        assert!(matches!(r, Received::Failed { .. }), "{r:?}");
+        assert!(b.dialog.is_some());
+        let r = run(&registry, &mut session, &mut b, Op::DeleteTag, params);
+        let Received::Done(outcome) = r else {
+            panic!("{r:?}")
+        };
+        assert!(
+            outcome
+                .notice
+                .starts_with("Tag “v9” deleted from “origin”; backup in "),
+            "{}",
+            outcome.notice
+        );
+        assert!(outcome.history.is_none());
+        assert!(b.dialog.is_none());
+
+        // No longer on the remote: refused, nothing to confirm.
+        let params = b.start_delete_tag("origin".into(), "v9".into()).unwrap();
+        let r = run(&registry, &mut session, &mut b, Op::DeleteTag, params);
+        let Received::Failed { message, reload } = r else {
+            panic!("{r:?}")
+        };
+        assert!(!reload);
+        assert!(
+            message.starts_with("Deleting tag “v9” from “origin” not possible"),
+            "{message}"
+        );
         assert!(b.dialog.is_none());
     }
 

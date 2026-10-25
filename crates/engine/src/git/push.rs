@@ -87,6 +87,42 @@ pub struct RemoteBranchDeleted {
     pub incomplete: bool,
 }
 
+/// The publication of a tag ([`GitBackend::push_tag`](super::GitBackend::push_tag),
+/// `remote.push_tag`). Names already checked by the command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagPush {
+    /// The configured remote.
+    pub remote: String,
+    /// The tag (short name): only `refs/tags/<name>:refs/tags/<name>` is published, never forced.
+    pub name: String,
+}
+
+/// Outcome of [`GitBackend::push_tag`](super::GitBackend::push_tag).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagPushed {
+    /// The remote already had the tag with the same value: nothing published.
+    pub up_to_date: bool,
+    /// The git summary (`[new tag]`, `[up to date]`).
+    pub summary: String,
+    /// The git lines that are not progress (`To <url>`, warnings, hook output).
+    pub messages: Vec<String>,
+}
+
+/// The deletion of a tag on the remote
+/// ([`GitBackend::delete_remote_tag`](super::GitBackend::delete_remote_tag), `remote.delete_tag`).
+/// Names already checked by the command. The outcome is a [`RemoteBranchDeleted`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTagDelete {
+    /// The configured remote.
+    pub remote: String,
+    /// The tag on the remote (short name): only `refs/tags/<name>` is deleted.
+    pub name: String,
+    /// The value of the tag on the remote (the tag object of an annotated tag) confirmed by the
+    /// user: the deletion is `--force-with-lease=refs/tags/<name>:<expected>`; also saved in the
+    /// backup ref (fetched first if the object is not here).
+    pub expected: Oid,
+}
+
 /// Why the push was rejected ([`EngineError::PushRejected`](crate::EngineError)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -100,6 +136,9 @@ pub enum PushRejection {
     /// A local `pre-push` hook (or another local check, such as unpublished
     /// submodules) stopped the push before it started.
     Hook,
+    /// A tag already on the remote with another value (`[rejected] (already exists)`): a tag is
+    /// never overwritten.
+    TagExists,
     /// Other git rejection.
     Other,
 }
@@ -112,6 +151,7 @@ impl PushRejection {
             PushRejection::StaleLease => msg!("engine-push-stale-lease"),
             PushRejection::RemoteRejected => msg!("engine-push-remote-rejected"),
             PushRejection::Hook => msg!("engine-push-hook"),
+            PushRejection::TagExists => msg!("engine-push-tag-exists"),
             PushRejection::Other => msg!("engine-push-other"),
         }
     }

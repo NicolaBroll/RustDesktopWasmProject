@@ -373,7 +373,7 @@ fn in_memory_opener() {
     let mut opener = MemoryOpener::new();
     assert!(opener.open("empty").is_err());
     opener.insert("empty", MemoryBackend::new());
-    assert_eq!(opener.paths().collect::<Vec<_>>(), ["empty"]);
+    assert_eq!(opener.paths(), ["empty"]);
     assert!(opener.open("empty").unwrap().refs().unwrap().is_empty());
 }
 

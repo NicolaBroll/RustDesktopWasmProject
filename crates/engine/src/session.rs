@@ -1,4 +1,7 @@
-use crate::{EngineError, GitBackend, JobContext, Journal, RepoOpener};
+use crate::{
+    CloneOutcome, CloneRequest, EngineError, GitBackend, InitRequest, JobContext, Journal,
+    RepoOpener,
+};
 use std::fmt;
 use std::sync::Arc;
 
@@ -47,6 +50,21 @@ impl Session {
             journal: Journal::starting_at(next_id),
         });
         Ok(())
+    }
+
+    /// `repo.clone`: clones with the opener (progress and cancellation from [`Session::job`]),
+    /// then opens the clone as [`Session::open`] does. If opening fails the clone stays on
+    /// disk and the previously open repo stays open.
+    pub fn clone_repo(&mut self, request: &CloneRequest) -> Result<CloneOutcome, EngineError> {
+        let outcome = self.opener.clone_repo(request, &self.job)?;
+        self.open(&request.path)?;
+        Ok(outcome)
+    }
+
+    /// `repo.init`: creates the repo with the opener, then opens it as [`Session::open`] does.
+    pub fn init_repo(&mut self, request: &InitRequest) -> Result<(), EngineError> {
+        self.opener.init_repo(request)?;
+        self.open(&request.path)
     }
 
     /// The path of the open repo, `None` if there is none.

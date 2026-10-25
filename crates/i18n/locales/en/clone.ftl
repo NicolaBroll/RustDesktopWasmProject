@@ -1,0 +1,39 @@
+# Clone and new repository: the File menu entries, the dialog and its errors (clone.rs, view/clone_view.rs).
+# $url: the address typed in the dialog.
+
+clone-menu-clone = Clone repository…
+clone-menu-clone-hint = Copy a remote repository into a new folder and open it in a tab
+clone-menu-init = New repository…
+clone-menu-init-hint = Create an empty repository (git init) and open it in a tab
+clone-title = Clone a repository
+clone-explanation = Downloads the repository with its history into a new folder; afterwards it opens in a tab. Credentials are never asked for: they come from your git configuration (credential helper, ssh-agent).
+clone-init-title = New repository
+clone-init-explanation = Creates an empty repository (git init) in the folder; afterwards it opens in a tab.
+clone-url = URL
+clone-url-hint = https://…, git@host:path or a local folder
+clone-path = Folder
+clone-path-hint = Destination folder
+clone-browse = Browse…
+clone-browse-hint = Choose the folder that will contain the clone: the name from the URL is added
+clone-init-browse-hint = Choose the folder of the new repository (it must be empty)
+clone-path-rule = The folder must not exist yet (it is created, inside an existing folder) or be empty: nothing already there is ever overwritten.
+clone-branch = Branch
+clone-branch-hint = Optional: the remote's default branch
+clone-init-branch-hint = Optional: git's default (init.defaultBranch)
+clone-depth = Depth
+clone-depth-hint = Whole history
+clone-depth-tooltip = Optional: download only the last N commits (shallow clone). Ignored by git for a plain local path.
+clone-depth-invalid = The depth must be a whole number greater than 0, or empty for the whole history.
+clone-submit = Clone
+clone-init-submit = Create
+clone-close = Close
+clone-cancel = Cancel
+clone-cancel-hint = Stop the clone: the folder goes back to how it was
+clone-cancelling = Cancelling…
+clone-connecting = Connecting…
+clone-init-running = Creating the repository…
+clone-cancelled = Clone cancelled: the folder went back to how it was.
+clone-who = The repository “{ $url }”
+clone-not-possible-title = Not possible
+clone-failed-title = Clone failed
+clone-init-failed-title = The repository could not be created

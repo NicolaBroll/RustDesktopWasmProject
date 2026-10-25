@@ -9,8 +9,12 @@ pub(crate) fn commit_list(
     repo: &RepoView,
     viewport: &mut ListViewport,
     writing: bool,
+    focus_search: bool,
     actions: &mut Vec<Action>,
 ) {
+    if repo.search.is_open() {
+        search_bar(ui, &repo.search, focus_search, actions);
+    }
     let can_write = !writing && !repo.modal_open();
     let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
     let list = &repo.list;
@@ -112,6 +116,10 @@ pub(crate) fn commit_list(
                 ui.painter()
                     .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
             }
+            if !selected && repo.search.is_match(commit.id) {
+                let tint = theme::search_match(ui.visuals().dark_mode);
+                ui.painter().rect_filled(rect, 2.0, tint);
+            }
             if response.clicked() {
                 actions.push(Action::Select(index));
             }
@@ -137,6 +145,7 @@ pub(crate) fn commit_list(
                 merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
                 pick_items(ui, commit, &what, &merge, can_write, actions);
                 rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
+                reset_item(ui, repo, commit, &what, can_write, actions);
             });
             let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
@@ -164,6 +173,87 @@ pub(crate) fn commit_list(
     viewport.rows = output.inner;
     viewport.height = output.inner_rect.height();
     actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
+}
+
+/// The search bar above the list: field, number of matches, previous/next, close. Enter and
+/// Shift+Enter in the field move between the matches, Esc closes the bar.
+fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Action>) {
+    ui.horizontal(|ui| {
+        ui.label(icons::text(icons::SEARCH, 14.0).weak());
+        let mut text = search.text().to_owned();
+        // Room on the right for the count and the three buttons.
+        let width = (ui.available_width() - 260.0).max(120.0);
+        let edit = egui::TextEdit::singleline(&mut text)
+            .id_salt("search-field")
+            .hint_text(tr!("search-hint"))
+            .desired_width(width);
+        let response = ui.add(edit);
+        if focus {
+            response.request_focus();
+        }
+        if response.changed() {
+            actions.push(Action::SearchText(text, ui.input(|i| i.time)));
+        }
+        let (escape, enter, shift) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::Escape),
+                i.key_pressed(egui::Key::Enter),
+                i.modifiers.shift,
+            )
+        });
+        if response.lost_focus() && escape {
+            actions.push(Action::SearchClose);
+        } else if response.lost_focus() && enter {
+            actions.push(if shift {
+                Action::SearchPrevious
+            } else {
+                Action::SearchNext
+            });
+            // The field keeps the keyboard: Enter again goes to the following match.
+            response.request_focus();
+        }
+        let status = match search.state() {
+            SearchState::Idle => RichText::new(""),
+            SearchState::Searching => RichText::new(tr!("search-searching")).weak(),
+            SearchState::NoMatches => {
+                RichText::new(tr!("search-no-matches")).color(ui.visuals().warn_fg_color)
+            }
+            SearchState::Matches {
+                current: Some(current),
+                total,
+            } => RichText::new(tr!("search-position", n = current + 1, total = total)),
+            SearchState::Matches {
+                current: None,
+                total,
+            } => RichText::new(tr!("search-count", total = total)),
+            SearchState::Failed(_) => {
+                RichText::new(tr!("search-failed")).color(ui.visuals().error_fg_color)
+            }
+        };
+        let label = ui.label(status);
+        if let SearchState::Failed(error) = search.state() {
+            label.on_hover_text(error);
+        }
+        let previous = ui
+            .add_enabled(search.can_previous(), egui::Button::new("↑"))
+            .on_hover_text(tr!("search-previous"));
+        if previous.clicked() {
+            actions.push(Action::SearchPrevious);
+        }
+        let next = ui
+            .add_enabled(search.can_next(), egui::Button::new("↓"))
+            .on_hover_text(tr!("search-next"));
+        if next.clicked() {
+            actions.push(Action::SearchNext);
+        }
+        let close = ui
+            .add(egui::Button::new(icons::text(icons::CLOSE, 12.0)).frame(false))
+            .on_hover_text(tr!("search-close"));
+        if close.clicked() {
+            actions.push(Action::SearchClose);
+        }
+    });
+    ui.separator();
 }
 
 /// The stroke from the changes ring down to HEAD's dot, if HEAD's column is

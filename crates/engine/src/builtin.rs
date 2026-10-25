@@ -1,6 +1,7 @@
 //! Catalog of the built-in commands.
 
 mod branch;
+mod clone;
 mod conflict;
 mod file;
 mod merge;
@@ -10,7 +11,10 @@ mod push;
 mod rebase;
 mod remote;
 mod remote_branch;
+mod remote_tag;
 mod remotes;
+mod reset;
+mod search;
 mod stash;
 mod tag;
 
@@ -48,6 +52,18 @@ impl Registry {
             r#"{"path": string}"#,
             repo_open,
         );
+        add(
+            "repo.clone",
+            "Clone a repository into an absent or empty folder and open it",
+            r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
+            clone::repo_clone,
+        );
+        add(
+            "repo.init",
+            "New empty repository in an absent or empty folder, then open it",
+            r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
+            clone::repo_init,
+        );
         add("repo.status", "Repository status", "{}", repo_status);
         add("repo.refs", "Branches, tags and stashes", "{}", repo_refs);
         add(
@@ -61,6 +77,12 @@ impl Registry {
             "Commit history",
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (with all: also the stash bases)}"#,
             repo_log,
+        );
+        add(
+            "repo.search",
+            "Commits whose message, author or id contains a text (literal, case-insensitive), in the order of repo.log",
+            r#"{"query": string, "in"?: ["message" | "author" | "id"] (all three), "path"?: path (only commits touching it, no rename following), "all"?: bool, "stashes"?: bool (as in repo.log), "skip"?: number, "limit"?: number (200)} -> {"ids", "total", "has_more"}"#,
+            search::repo_search,
         );
         add(
             "repo.optimize",
@@ -165,10 +187,28 @@ impl Registry {
             branch::branch_rename,
         );
         add(
+            "branch.reset",
+            "Reset the current branch to a commit",
+            r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard", "confirm"?: bool (hard with local changes), "expected"?: full oid (HEAD must be there)}"#,
+            reset::branch_reset,
+        );
+        add(
+            "branch.reset_preview",
+            "What a reset would do (files a hard overwrites)",
+            r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard"}"#,
+            reset::branch_reset_preview,
+        );
+        add(
             "tag.create",
             "Create a tag",
             r#"{"name": string, "target"?: string (rev, HEAD), "message"?: string (annotated tag; without: lightweight)}"#,
             tag::tag_create,
+        );
+        add(
+            "tag.delete",
+            "Delete a tag",
+            r#"{"name": string, "confirm": true (always required; the tag is saved in a backup ref first), "expected"?: string (full id of the value shown in the confirmation)}"#,
+            tag::tag_delete,
         );
         add(
             "remote.fetch",
@@ -193,6 +233,18 @@ impl Registry {
             "Delete a branch from the remote",
             r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
             remote_branch::remote_delete_branch,
+        );
+        add(
+            "remote.push_tag",
+            "Publish a tag to the remote",
+            r#"{"remote": string, "name": string (local tag; never overwrites a tag on the remote)}"#,
+            remote_tag::remote_push_tag,
+        );
+        add(
+            "remote.delete_tag",
+            "Delete a tag from the remote",
+            r#"{"remote": string, "name": string (tag on the remote), "confirm": true, "expected": string (full id of the remote tag shown in the confirmation)}"#,
+            remote_tag::remote_delete_tag,
         );
         add(
             "remote.list",
@@ -340,6 +392,7 @@ const WRITES: &[&str] = &[
     "branch.create",
     "branch.delete",
     "branch.rename",
+    "branch.reset",
     "cherry_pick.abort",
     "cherry_pick.continue",
     "commit.cherry_pick",
@@ -360,10 +413,14 @@ const WRITES: &[&str] = &[
     "rebase.start",
     "remote.add",
     "remote.delete_branch",
+    "remote.delete_tag",
     "remote.fetch",
     "remote.pull",
     "remote.push",
+    "remote.push_tag",
     "remote.remove",
+    "repo.clone",
+    "repo.init",
     "repo.optimize",
     "revert.abort",
     "revert.continue",
@@ -372,6 +429,7 @@ const WRITES: &[&str] = &[
     "stash.pop",
     "stash.push",
     "tag.create",
+    "tag.delete",
     "worktree.discard",
 ];
 
@@ -401,6 +459,11 @@ fn to_json(value: impl serde::Serialize) -> Value {
 fn repo_open(s: &mut Session, p: Value) -> Out {
     let PathParam { path } = parse_params("repo.open", p)?;
     s.open(&path)?;
+    opened(s, path)
+}
+
+/// The result of `repo.open` for the repo just opened at `path` (also `repo.clone`, `repo.init`).
+fn opened(s: &Session, path: String) -> Out {
     let repo = s.repo()?;
     let path = repo.root().unwrap_or(path);
     let head = repo.head()?;
@@ -870,6 +933,8 @@ mod tests {
                 "branch.create",
                 "branch.delete",
                 "branch.rename",
+                "branch.reset",
+                "branch.reset_preview",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
                 "commit.cherry_pick",
@@ -899,16 +964,21 @@ mod tests {
                 "rebase.start",
                 "remote.add",
                 "remote.delete_branch",
+                "remote.delete_tag",
                 "remote.fetch",
                 "remote.list",
                 "remote.pull",
                 "remote.push",
+                "remote.push_tag",
                 "remote.remove",
+                "repo.clone",
+                "repo.init",
                 "repo.log",
                 "repo.open",
                 "repo.operation",
                 "repo.optimize",
                 "repo.refs",
+                "repo.search",
                 "repo.status",
                 "revert.abort",
                 "revert.continue",
@@ -918,6 +988,7 @@ mod tests {
                 "stash.pop",
                 "stash.push",
                 "tag.create",
+                "tag.delete",
                 "worktree.discard"
             ]
         );
@@ -931,6 +1002,7 @@ mod tests {
                 "branch.create",
                 "branch.delete",
                 "branch.rename",
+                "branch.reset",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
                 "commit.cherry_pick",
@@ -951,10 +1023,14 @@ mod tests {
                 "rebase.start",
                 "remote.add",
                 "remote.delete_branch",
+                "remote.delete_tag",
                 "remote.fetch",
                 "remote.pull",
                 "remote.push",
+                "remote.push_tag",
                 "remote.remove",
+                "repo.clone",
+                "repo.init",
                 "repo.optimize",
                 "revert.abort",
                 "revert.continue",
@@ -963,6 +1039,7 @@ mod tests {
                 "stash.pop",
                 "stash.push",
                 "tag.create",
+                "tag.delete",
                 "worktree.discard"
             ]
         );

@@ -5,6 +5,7 @@ engine-journal-discard-many = Scarta le modifiche di { $n } file ({ $names })
 engine-journal-quoted = «{ $name }»
 engine-journal-branch-create = Crea branch `{ $name }` su { $id }
 engine-journal-tag-create = Crea tag `{ $name }` su { $id }
+engine-journal-tag-delete = Elimina tag `{ $name }` su { $id }
 engine-journal-branch-delete = Elimina branch `{ $name }` (era { $id })
 engine-journal-branch-rename = Rinomina branch `{ $from }` in `{ $to }`
 engine-journal-head-branch = `{ $name }`
@@ -14,6 +15,7 @@ engine-journal-pull-ff = fast-forward
 engine-journal-pull-rebase = rebase su { $upstream }
 engine-journal-pull-merge = merge di { $upstream }
 engine-journal-pull = Pull di `{ $branch }` ({ $how }: da { $before } a { $after })
+engine-journal-reset = Reset ({ $mode }) di `{ $branch }` da { $before } a { $after }
 engine-journal-merge = Merge di { $source } in `{ $branch }` ({ $strategy ->
     [fast_forward] fast-forward
    *[other] commit di merge

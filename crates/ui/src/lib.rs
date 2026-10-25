@@ -12,7 +12,9 @@
 //! With an operation in progress (merge, rebase, ...) its panel sits under the bar
 //! (`merge_view`), with the conflicted files and the commands to finish or abort it.
 
+mod auto_fetch;
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod details;
@@ -35,6 +37,9 @@ mod rebase;
 mod ref_tree;
 mod refresh;
 mod remotes;
+mod reset;
+mod search;
+mod settings;
 mod stage;
 mod stash;
 mod sync;
@@ -86,6 +91,26 @@ enum Action {
     CloseTab(usize),
     /// Drops from the recent list the repos whose folder no longer exists.
     ForgetMissing,
+    /// Opens the "Clone…" or "New repository…" dialog.
+    OpenClone(clone::Kind),
+    /// The fields of that dialog changed.
+    CloneFields(clone::Fields),
+    /// "Browse…" in that dialog: the folder dialog, the choice goes into the destination.
+    BrowseCloneFolder,
+    /// "Clone"/"Create" in that dialog.
+    SubmitClone,
+    /// "Cancel" the clone in progress.
+    CancelClone,
+    /// Closes that dialog (not while its command runs).
+    CloseClone,
+    /// Opens the "Settings…" window.
+    OpenSettings,
+    /// Closes it.
+    CloseSettings,
+    /// Shows that section of the window.
+    SettingsSection(settings::Section),
+    /// Changes a setting (from the window, the theme menu or the diff view).
+    Setting(settings::Change),
     /// Re-reads refs, status and log of the open repo.
     Refresh,
     /// Selects the commit at the given row of the list.
@@ -166,6 +191,11 @@ enum Action {
     DeleteBranch(String, Oid),
     /// Confirms the pending deletion: resends with `"confirm": true`.
     ConfirmDeleteBranch,
+    /// Deletes the local tag (short name): first without confirmation, the engine always asks
+    /// and the dialog opens.
+    DeleteTag(String),
+    /// Confirms the pending tag deletion: resends with `"confirm": true`.
+    ConfirmDeleteTag,
     /// Closes the open branch dialog without sending anything.
     CloseBranchDialog,
     /// Fetch from the given remote (`None`: the one the engine chooses: upstream, `origin`,
@@ -175,6 +205,8 @@ enum Action {
     CancelFetch,
     /// Closes the fetch error window.
     DismissFetchError,
+    /// "Retry" in the notice of the automatic fetch suspended by an authentication error.
+    RetryAutoFetch,
     /// "Optimize" in the commit-graph notice: `repo.optimize` in the background.
     Optimize,
     /// "Stop" the `repo.optimize` in progress.
@@ -186,6 +218,8 @@ enum Action {
     Pull(Option<String>, Option<sync::Strategy>),
     /// Push the given branch (`None`: HEAD's), never forced.
     Push(Option<String>),
+    /// Push the tag (second value, short name) to the remote (first value), never forced.
+    PushTag(String, String),
     /// "Force (with lease)…" in the rejected push window: `"force": true` without
     /// `confirm`.
     ForcePush,
@@ -216,6 +250,12 @@ enum Action {
     /// Confirms the pending deletion of the remote branch: resends with `"confirm": true` and the
     /// commit seen.
     ConfirmDeleteRemoteBranch,
+    /// Deletes the tag (second value) from the remote (first value): first without confirmation,
+    /// the engine always asks and the dialog opens.
+    DeleteRemoteTag(String, String),
+    /// Confirms the pending deletion of the remote tag: resends with `"confirm": true` and the
+    /// value seen.
+    ConfirmDeleteRemoteTag,
     /// Closes the open remotes dialog without sending anything.
     CloseRemoteDialog,
     /// Closes the fetch error window after the add.
@@ -316,6 +356,15 @@ enum Action {
     ConfirmConflict,
     /// Gives up the resolution awaiting confirmation.
     CancelConflict,
+    /// Opens the dialog to reset the current branch (or a detached HEAD) to `target` (shown as
+    /// `what`): the plan of the chosen mode is read first.
+    OpenReset { target: Oid, what: String },
+    /// The mode chosen in the reset dialog: its plan is read again.
+    ResetMode(reset::Mode),
+    /// "Reset" in the dialog (`branch.reset` with the plan's `expected`).
+    SubmitReset,
+    /// Closes the reset dialog without resetting.
+    CloseReset,
     /// Opens blame or history of `path` at commit `rev` (`None`: working tree / HEAD).
     OpenFile {
         path: RepoPath,
@@ -334,6 +383,16 @@ enum Action {
     FileRetry,
     /// Shows the diff of entry `n` of the history.
     FileSelect(usize),
+    /// Ctrl+F: opens the search bar above the list and focuses its field.
+    SearchOpen,
+    /// The text of the search field, typed at that time (seconds of `egui::InputState::time`).
+    SearchText(String, f64),
+    /// Selects the next match (button or Enter).
+    SearchNext,
+    /// Selects the previous match (button or Shift+Enter).
+    SearchPrevious,
+    /// Escape: closes the search bar and removes the highlight.
+    SearchClose,
 }
 
 /// A step of dragging over the diff rows.
@@ -360,6 +419,8 @@ enum Request {
     /// is the new status.
     Write(u64),
     Open,
+    /// `repo.clone`/`repo.init` (the dialog state is in [`clone::CloneBox`], held by [`App`]).
+    Clone,
     Refs(u64),
     Status(u64),
     /// `repo.status` of the automatic refresh: afterwards the refs ([`Request::AutoRefs`]).
@@ -411,8 +472,14 @@ enum Request {
     ConflictShow(u64, u64),
     /// `conflict.resolve` (the state is in [`ConflictBox`]).
     ConflictResolve(u64),
+    /// `branch.reset_preview` with the request number of [`reset::ResetBox`].
+    ResetPreview(u64, u64),
+    /// `branch.reset` (the dialog state is in [`reset::ResetBox`]).
+    Reset(u64),
     /// `file.blame`/`file.log` with the request number of [`file::FileBox`].
     File(u64, u64),
+    /// `repo.search` with the request number of [`search::SearchBox`].
+    Search(u64, u64),
 }
 
 /// The repo shown and the data read so far.
@@ -450,6 +517,8 @@ struct RepoView {
     branch: BranchBox,
     /// The fetch in progress and the last error to explain.
     fetch: FetchBox,
+    /// The timer of the automatic fetch (S50).
+    auto_fetch: auto_fetch::AutoFetch,
     /// The commit-graph notice and `repo.optimize` in progress.
     optimize: OptimizeBox,
     /// The pull or push in progress and the open window (conflict, rejection, force confirmation).
@@ -462,10 +531,14 @@ struct RepoView {
     merge: MergeBox,
     /// The interactive rebase editor.
     rebase: RebaseBox,
+    /// The reset dialog (mode, plan, submission).
+    reset: reset::ResetBox,
     /// The conflict editor, in place of the graph when it is open.
     conflict: ConflictBox,
     /// Blame and history of a file, in place of the graph when open.
     file: file::FileBox,
+    /// The search in the history: field, matches, next/previous.
+    search: search::SearchBox,
     /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
     /// What Undo and Redo would do.
@@ -502,14 +575,17 @@ impl RepoView {
             discard: DiscardBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
+            auto_fetch: auto_fetch::AutoFetch::default(),
             optimize: OptimizeBox::default(),
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
+            reset: reset::ResetBox::default(),
             conflict: ConflictBox::default(),
             file: file::FileBox::default(),
+            search: search::SearchBox::default(),
             status_seq: 0,
             history: History::default(),
             select_after_load,
@@ -557,6 +633,7 @@ impl RepoView {
             || self.stash.modal_open()
             || self.merge.modal_open()
             || self.rebase.modal_open()
+            || self.reset.modal_open()
     }
 
     /// The last commit (HEAD), if it is among the loaded ones.
@@ -656,6 +733,8 @@ struct Tab {
     /// The path `repo.open` refused because there is no repository there: [`App`] drops it from
     /// the recent list.
     not_found: Option<String>,
+    /// The answer of `repo.clone`/`repo.init`, collected by [`App`] for its dialog.
+    clone_done: Option<Done>,
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
@@ -675,6 +754,7 @@ impl Tab {
             requested: None,
             opened: None,
             not_found: None,
+            clone_done: None,
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
@@ -686,6 +766,29 @@ impl Tab {
     fn open(&mut self, path: String) {
         self.submit("repo.open", json!({ "path": &path }), Request::Open);
         self.requested = Some(path);
+    }
+
+    /// Sends `repo.clone`/`repo.init` (the session opens the new repo at the end): the answer
+    /// waits in `clone_done`.
+    fn create_repo(&mut self, command: &str, params: Value) -> Ticket {
+        let ticket = self.executor.submit(command, params);
+        self.pending.insert(ticket, Request::Clone);
+        ticket
+    }
+
+    /// The repo created by [`Tab::create_repo`] is open in the session: shown as after
+    /// `repo.open`, with git's messages (`notice`) in the status bar.
+    fn created(&mut self, value: Value, notice: String) {
+        match self.store(Request::Open, value) {
+            Ok(()) => self.notice = notice,
+            Err(e) => {
+                self.error = tr!(
+                    "common-unexpected-result",
+                    command = "repo.clone",
+                    error = e.to_string()
+                );
+            }
+        }
     }
 
     /// The repo of the tab, or the one being opened.
@@ -715,7 +818,17 @@ impl Tab {
             | Action::Open(_)
             | Action::SwitchTab(_)
             | Action::CloseTab(_)
-            | Action::ForgetMissing => {}
+            | Action::ForgetMissing
+            | Action::OpenClone(_)
+            | Action::CloneFields(_)
+            | Action::BrowseCloneFolder
+            | Action::SubmitClone
+            | Action::CancelClone
+            | Action::CloseClone
+            | Action::OpenSettings
+            | Action::CloseSettings
+            | Action::SettingsSection(_)
+            | Action::Setting(_) => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -787,6 +900,9 @@ impl Tab {
                 }
             }
             Action::Visible(end) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.search_visible(end);
+                }
                 if let Some(request) = self.repo.as_mut().and_then(|r| r.list.next_page(end)) {
                     self.request_page(request);
                 }
@@ -818,15 +934,19 @@ impl Tab {
             | Action::Checkout(..)
             | Action::DeleteBranch(..)
             | Action::ConfirmDeleteBranch
+            | Action::DeleteTag(..)
+            | Action::ConfirmDeleteTag
             | Action::CloseBranchDialog => self.apply_branch(action),
             Action::Fetch(..) | Action::CancelFetch | Action::DismissFetchError => {
                 self.apply_fetch(action)
             }
+            Action::RetryAutoFetch => self.retry_auto_fetch(),
             Action::Optimize | Action::CancelOptimize | Action::DismissOptimize => {
                 self.apply_optimize(action)
             }
             Action::Pull(..)
             | Action::Push(..)
+            | Action::PushTag(..)
             | Action::ForcePush
             | Action::ConfirmForcePush
             | Action::CancelSync
@@ -840,6 +960,8 @@ impl Tab {
             | Action::ConfirmRemoveRemote
             | Action::DeleteRemoteBranch(..)
             | Action::ConfirmDeleteRemoteBranch
+            | Action::DeleteRemoteTag(..)
+            | Action::ConfirmDeleteRemoteTag
             | Action::CloseRemoteDialog
             | Action::DismissRemoteError => self.apply_remotes(action),
             Action::OpenStash
@@ -872,6 +994,10 @@ impl Tab {
             | Action::ConfirmRebase
             | Action::CancelRebaseConfirm
             | Action::CloseRebase => self.apply_rebase(action),
+            Action::OpenReset { .. }
+            | Action::ResetMode(..)
+            | Action::SubmitReset
+            | Action::CloseReset => self.apply_reset(action),
             Action::OpenConflict(..)
             | Action::CloseConflict
             | Action::RestartConflict
@@ -890,6 +1016,11 @@ impl Tab {
             | Action::FileMore
             | Action::FileRetry
             | Action::FileSelect(..) => self.apply_file(action),
+            Action::SearchOpen
+            | Action::SearchText(..)
+            | Action::SearchNext
+            | Action::SearchPrevious
+            | Action::SearchClose => self.apply_search(action),
         }
     }
 
@@ -1022,7 +1153,19 @@ impl Tab {
             return;
         };
         // With the confirmation open the keys go only to it.
-        if ctx.egui_wants_keyboard_input() || repo.modal_open() {
+        if repo.modal_open() {
+            return;
+        }
+        let list_in_view = repo.conflict.editor().is_none()
+            && repo.file.view().is_none()
+            && repo.diff.target().is_none();
+        // Ctrl+F also from another field (e.g. the commit message): the search field takes the keyboard.
+        let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
+        if list_in_view && ctx.input_mut(|i| i.consume_shortcut(&find)) {
+            actions.push(Action::SearchOpen);
+            return;
+        }
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
         // With the conflict editor open the list is not in view.
@@ -1050,6 +1193,10 @@ impl Tab {
                 }
             }
             return;
+        }
+        // Esc with the search open (the field without the keyboard) closes it.
+        if repo.search.is_open() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            actions.push(Action::SearchClose);
         }
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
@@ -1112,6 +1259,10 @@ impl Tab {
             let Some(request) = self.pending.remove(&done.ticket) else {
                 continue;
             };
+            if matches!(request, Request::Clone) {
+                self.clone_done = Some(done);
+                continue;
+            }
             if matches!(request, Request::Open) {
                 let path = self.requested.take();
                 if done.error_kind == Some(ErrorKind::RepoNotFound) {
@@ -1196,6 +1347,14 @@ impl Tab {
             }
             if let Request::Undo(generation) = request {
                 self.receive_undo(generation, done);
+                continue;
+            }
+            if let Request::ResetPreview(generation, seq) = request {
+                self.receive_reset_preview(generation, seq, done);
+                continue;
+            }
+            if let Request::Reset(generation) = request {
+                self.receive_reset(generation, done);
                 continue;
             }
             if let Request::Branch(generation, op) = request {
@@ -1297,6 +1456,11 @@ impl Tab {
                 self.receive_file(generation, seq, done);
                 continue;
             }
+            // The search shows its errors in its bar.
+            if let Request::Search(generation, seq) = request {
+                self.receive_search(generation, seq, done);
+                continue;
+            }
             // The diff too: errors in its view, old answers discarded.
             if let Request::Diff(generation, seq) = request {
                 let result = done.result.and_then(|value| {
@@ -1388,6 +1552,10 @@ impl Tab {
                     if !repo.list.receive(page, commits, has_more) {
                         return Ok(());
                     }
+                    // The order of the list may have changed: the ids of the search too.
+                    if page.skip == 0 {
+                        repo.search.refresh();
+                    }
                     if page.skip == 0
                         && let Some(id) = repo.select_after_load.take()
                         && !repo.worktree_selected
@@ -1413,7 +1581,8 @@ impl Tab {
                 }
             }
             // Handled separately in `receive`.
-            Request::Show(..)
+            Request::Clone
+            | Request::Show(..)
             | Request::Diff(..)
             | Request::Write(..)
             | Request::Commit(..)
@@ -1431,9 +1600,12 @@ impl Tab {
             | Request::Merge(..)
             | Request::RebasePlan(..)
             | Request::Rebase(..)
+            | Request::ResetPreview(..)
+            | Request::Reset(..)
             | Request::ConflictShow(..)
             | Request::ConflictResolve(..)
-            | Request::File(..) => {}
+            | Request::File(..)
+            | Request::Search(..) => {}
         }
         Ok(())
     }
@@ -1454,7 +1626,11 @@ impl Tab {
         }
         if let Some(running) = r.fetch.running() {
             return Some(view::Network {
-                what: fetch::label(running.remote.as_deref()),
+                what: if running.auto {
+                    tr!("fetch-auto-label")
+                } else {
+                    fetch::label(running.remote.as_deref())
+                },
                 cancelling: running.cancelling,
                 progress: self.executor.progress(running.ticket),
                 stop_hint: tr!("app-stop-fetch-hint"),
@@ -1477,7 +1653,7 @@ impl Tab {
             progress: self.executor.progress(running.ticket),
             stop_hint: match running.request.op {
                 sync::Op::Pull => tr!("app-stop-pull-hint"),
-                sync::Op::Push => tr!("app-stop-push-hint"),
+                sync::Op::Push | sync::Op::PushTag => tr!("app-stop-push-hint"),
             },
             cancel: Action::CancelSync,
         })
@@ -1490,10 +1666,12 @@ impl Tab {
         ui: &mut egui::Ui,
         can_pick: bool,
         recent: &[view::RecentRepo],
+        settings: &settings::Settings,
     ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
+        let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
         // lent to the panel for this frame and then put back.
@@ -1536,6 +1714,14 @@ impl Tab {
             let can_write = !writing && !repo.modal_open();
             egui::Panel::top("optimize").show(ui, |ui| {
                 view::optimize_notice(ui, &repo.optimize, can_write, &mut actions);
+            });
+        }
+        // The automatic fetch suspended by an authentication error (S50), under the bar too.
+        if let Some(repo) = &self.repo
+            && let Some(suspended) = repo.auto_fetch.suspended()
+        {
+            egui::Panel::top("auto-fetch").show(ui, |ui| {
+                view::auto_fetch_notice(ui, suspended, &mut actions);
             });
         }
         // Side panels do not exceed a third of the window: the content wraps.
@@ -1619,6 +1805,9 @@ impl Tab {
                 if let Some(editor) = repo.rebase.editor() {
                     view::rebase_editor(&ctx, editor, &mut actions);
                 }
+                if let Some(dialog) = repo.reset.dialog() {
+                    view::reset_dialog(&ctx, dialog, &mut actions);
+                }
                 if let Some(failure) = repo.merge.failure() {
                     view::failure_window(
                         &ctx,
@@ -1659,15 +1848,26 @@ impl Tab {
                     _ if repo.file.view().is_some() => {
                         if let Some(file) = repo.file.view() {
                             let can_write = !writing && !repo.modal_open();
-                            view::file_view(ui, file, repo.diff.pane(), can_write, &mut actions);
+                            let split = settings.diff_split;
+                            view::file_view(
+                                ui,
+                                file,
+                                repo.diff.pane(),
+                                can_write,
+                                split,
+                                &mut actions,
+                            );
                         }
                     }
-                    Pane::Closed => view::commit_list(ui, repo, viewport, writing, &mut actions),
+                    Pane::Closed => {
+                        view::commit_list(ui, repo, viewport, writing, focus_search, &mut actions)
+                    }
                     pane => {
                         let lines = diff_view::LinesUi {
                             selection: repo.diff.selection(),
                             can_write: !writing && !repo.modal_open(),
                             back: true,
+                            split: settings.diff_split,
                         };
                         diff_view::diff_panel(ui, pane, lines, &mut actions);
                     }
@@ -1692,10 +1892,11 @@ impl Tab {
 
     /// After the actions of the frame: the selection just changed is requested in this same
     /// frame.
-    fn after_actions(&mut self) {
+    fn after_actions(&mut self, ctx: &egui::Context) {
         self.close_stale_diff();
         self.request_details();
         self.request_file();
+        self.request_search(ctx);
     }
 }
 

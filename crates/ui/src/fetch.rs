@@ -33,6 +33,8 @@ pub struct Running {
     pub remote: Option<String>,
     /// True after "Stop", until the command answers.
     pub cancelling: bool,
+    /// Started by the timer of the automatic fetch (S50), not by the button.
+    pub auto: bool,
 }
 
 /// A fetch that failed for a reason to explain: the window with git's text.
@@ -74,6 +76,8 @@ pub struct Outcome {
     pub changed: bool,
     /// A problem after the successful fetch (refs not reread).
     pub warning: Option<String>,
+    /// The remote branches (`refs/remotes/`) the fetch moved, created or removed.
+    pub moved: Vec<RefUpdate>,
 }
 
 impl FetchBox {
@@ -112,6 +116,18 @@ impl FetchBox {
             ticket,
             remote,
             cancelling: false,
+            auto: false,
+        });
+    }
+
+    /// The automatic fetch (S50) started with `ticket`, from the remote the engine chooses. It
+    /// opens no window: [`FetchBox::receive`] leaves none for it.
+    pub fn started_auto(&mut self, ticket: Ticket) {
+        self.running = Some(Running {
+            ticket,
+            remote: None,
+            cancelling: false,
+            auto: true,
         });
     }
 
@@ -130,8 +146,8 @@ impl FetchBox {
         kind: Option<ErrorKind>,
         detail: Option<String>,
     ) -> Received {
-        let remote = match self.running.take() {
-            Some(running) if running.ticket == ticket => running.remote,
+        let (remote, auto) = match self.running.take() {
+            Some(running) if running.ticket == ticket => (running.remote, running.auto),
             other => {
                 self.running = other;
                 return Received::Failed {
@@ -158,7 +174,7 @@ impl FetchBox {
             }
             Err(error) => error,
         };
-        match kind {
+        let received = match kind {
             Some(ErrorKind::Cancelled) => Received::Cancelled {
                 notice: tr!("fetch-cancelled", label = label),
             },
@@ -194,7 +210,12 @@ impl FetchBox {
                     reload: true,
                 }
             }
+        };
+        // The automatic fetch explains its errors without a window (see `auto_fetch`).
+        if auto {
+            self.failure = None;
         }
+        received
     }
 }
 
@@ -328,6 +349,13 @@ impl FetchResult {
         Outcome {
             notice: summary + &backups + &warnings,
             changed: self.updated.as_ref().is_none_or(|u| !u.is_empty()),
+            moved: self
+                .updated
+                .iter()
+                .flatten()
+                .filter(|u| u.name.starts_with("refs/remotes/"))
+                .cloned()
+                .collect(),
             refs: self.refs,
             warning: self
                 .refs_error
@@ -379,23 +407,14 @@ impl Tab {
     pub(crate) fn apply_fetch(&mut self, action: Action) {
         match action {
             Action::Fetch(remote) => {
-                let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let Some(params) = repo.fetch.request(remote.as_deref()) else {
-                    return;
-                };
                 repo.write_error = None;
-                repo.write_label = Some(fetch::label(remote.as_deref()));
-                let ticket = self.executor.submit(fetch::COMMAND, params);
-                self.pending.insert(ticket, Request::Fetch(generation));
-                if let Some(repo) = &mut self.repo {
-                    repo.fetch.started(ticket, remote);
-                }
+                self.start_fetch(remote, false);
             }
             Action::CancelFetch => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.fetch.cancel()) {
@@ -411,10 +430,45 @@ impl Tab {
         }
     }
 
+    /// Sends `remote.fetch` (the parameters of [`FetchBox::request`]) unless one is already in
+    /// progress; `auto`: from the timer of the automatic fetch (S50).
+    pub(crate) fn start_fetch(&mut self, remote: Option<String>, auto: bool) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let Some(params) = repo.fetch.request(remote.as_deref()) else {
+            return;
+        };
+        repo.write_label = Some(if auto {
+            tr!("fetch-auto-label")
+        } else {
+            fetch::label(remote.as_deref())
+        });
+        let ticket = self.executor.submit(fetch::COMMAND, params);
+        self.pending.insert(ticket, Request::Fetch(generation));
+        if let Some(repo) = &mut self.repo {
+            repo.auto_fetch.started();
+            if auto {
+                repo.fetch.started_auto(ticket);
+            } else {
+                repo.fetch.started(ticket, remote);
+            }
+        }
+    }
+
     /// Response of `remote.fetch`: the refs from the response (the column shows the new remote
     /// branches and how far behind the local branches are), then log and status reread if something
     /// changed; the notice with the updated refs, or the error.
     pub(crate) fn receive_fetch(&mut self, generation: u64, done: Done) {
+        let auto = self
+            .current(generation)
+            .and_then(|r| r.fetch.running())
+            .is_some_and(|r| r.auto);
+        if auto {
+            self.receive_auto_fetch(generation, done);
+            return;
+        }
         // How many remote branches each remote has: a fetch brings new ones or removes some.
         if self.current(generation).is_some() {
             self.request_remotes(generation);
@@ -430,6 +484,8 @@ impl Tab {
             fetch::Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 let refs_read = outcome.refs.is_some();
+                // The remote answers: the automatic fetch starts again if it had stopped.
+                repo.auto_fetch.succeeded();
                 if let Some(refs) = outcome.refs {
                     repo.refs = refs;
                     repo.update_labels();

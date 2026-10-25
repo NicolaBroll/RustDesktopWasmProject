@@ -8,6 +8,10 @@ cargo run -p project-cli -- commands
 cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"limit":5}'
 # graph of all branches (local and remote), tags and HEAD; without stashes and backups
 cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}'
+# search in the history: ids of the matching commits in repo.log order (highlight, not filter);
+# literal text, case-insensitive; "in" limits the fields, "path" the commits touching it
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"fix","all":true,"limit":20}'
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"ada@","in":["author"],"path":"README.md"}'
 # huge repo: does it have a commit-graph ("commit_graph" in the repo.open result)? write it
 # (~19 s on the Linux kernel, then the first log page goes from ~16 s to ~40 ms)
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize
@@ -29,7 +33,20 @@ cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["READ
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message":"Version 9"}' --cmd edit.undo
+# delete a local tag: always "confirm":true; the value (tag object or commit) goes to refs/project/backup/tag-delete-..., edit.undo puts it back
+cargo run -p project-cli -- --repo . run --cmd 'tag.delete={"name":"v9","confirm":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","new_name":"test2"}' --cmd 'branch.delete={"name":"test2"}'
+# reset of the current branch: soft (ref only), mixed (also the index), hard (also the worktree);
+# the preview lists the files a hard would overwrite; a hard with local changes needs "confirm":true
+# (and "expected": the HEAD id from the preview), saves them in refs/project/backup/reset-...
+cargo run -p project-cli -- --repo . run --cmd 'branch.reset_preview={"target":"HEAD~1","mode":"hard"}'
+cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1","mode":"soft"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1","mode":"hard","confirm":true}' --cmd edit.undo
+# clone (no --repo needed: it opens the clone; destination absent or an empty folder, progress on
+# stderr; an error removes the folder it created) and a new empty repository
+cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/rust-lang/log.git","path":"target/log"}' --cmd 'repo.log={"limit":3}'
+cargo run -p project-cli -- run --cmd 'repo.clone={"url":"file:///path/to/repo","path":"target/shallow","branch":"main","depth":1}'
+cargo run -p project-cli -- run --cmd 'repo.init={"path":"target/new-repo","branch":"main"}' --cmd repo.status
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'
@@ -43,6 +60,11 @@ cargo run -p project-cli -- --repo . run --cmd remote.push --cmd 'remote.push={"
 # delete a branch from the remote: first without confirm (the engine says what disappears and gives the id), then with "expected"
 cargo run -p project-cli -- --repo . run --cmd 'remote.delete_branch={"remote":"origin","branch":"old-feature"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.delete_branch={"remote":"origin","branch":"old-feature","confirm":true,"expected":"<id from the confirmation>"}'
+# tags on the remote: publish one (never forced: a tag there with another value is rejected, "tag_exists");
+# delete one: first without confirm (the engine reads the remote value), then with "expected"
+cargo run -p project-cli -- --repo . run --cmd 'remote.push_tag={"remote":"origin","name":"v9"}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.delete_tag={"remote":"origin","name":"v9"}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.delete_tag={"remote":"origin","name":"v9","confirm":true,"expected":"<id from the confirmation>"}'
 # remotes: list (credentials in URLs masked), add (with fetch), remove ("confirm":true) and undo
 cargo run -p project-cli -- --repo . run --cmd remote.list
 cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo

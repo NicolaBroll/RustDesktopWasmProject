@@ -2,7 +2,9 @@
 //! recent ones), the "Help" menu (about) and, when the app draws the window frame itself, the title,
 //! the drag area, the minimize, maximize and close buttons and the edges to resize the window.
 
+use super::settings_view::theme_label;
 use super::*;
+use crate::settings::{self, Change, Theme};
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Stroke, StrokeKind, ViewportCommand};
 
 /// The app icon in the bar (source in `assets/icon.svg`).
@@ -41,6 +43,8 @@ pub(crate) struct TitleBar<'a> {
     pub(crate) repo: Option<&'a RepoView>,
     pub(crate) can_pick: bool,
     pub(crate) recent: &'a [RecentRepo],
+    /// The theme setting, for the shortcut menu.
+    pub(crate) theme: Theme,
 }
 
 /// The bar in its own panel, above everything else.
@@ -150,9 +154,18 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         {
             actions.push(Action::PickFolder);
         }
+        create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
         ui.separator();
-        theme_menu(ui);
+        let shortcut = ui.ctx().format_shortcut(&settings::SHORTCUT);
+        if ui
+            .add(egui::Button::new(tr!("title-bar-settings")).shortcut_text(shortcut))
+            .clicked()
+        {
+            actions.push(Action::OpenSettings);
+            ui.close();
+        }
+        theme_menu(ui, bar.theme, actions);
     });
     ui.menu_button(tr!("title-bar-help"), |ui| {
         if ui.button(tr!("title-bar-about")).clicked() {
@@ -257,18 +270,12 @@ pub(crate) fn end_window_move(ctx: &egui::Context, input: &mut egui::RawInput) {
     ]);
 }
 
-/// System, light or dark: egui keeps the choice between launches.
-fn theme_menu(ui: &mut Ui) {
+/// System, light or dark: a shortcut to the same setting of the "Settings…" window.
+fn theme_menu(ui: &mut Ui, current: Theme, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-theme"), |ui| {
-        let current = ui.ctx().options(|o| o.theme_preference);
-        let choices = [
-            (egui::ThemePreference::System, tr!("title-bar-theme-system")),
-            (egui::ThemePreference::Light, tr!("title-bar-theme-light")),
-            (egui::ThemePreference::Dark, tr!("title-bar-theme-dark")),
-        ];
-        for (choice, label) in choices {
-            if ui.radio(current == choice, label).clicked() {
-                ui.ctx().set_theme(choice);
+        for choice in Theme::ALL {
+            if ui.radio(current == choice, theme_label(choice)).clicked() {
+                actions.push(Action::Setting(Change::Theme(choice)));
                 ui.close();
             }
         }

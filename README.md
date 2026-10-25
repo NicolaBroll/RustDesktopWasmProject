@@ -35,11 +35,18 @@ project-cli mcp [--root <dir>]                           # MCP server on stdin/s
 Commands: `repo.open {"path"}` (`{"path", "head", "commit_graph"}`: `commit_graph` false = no
 commit-graph, so `repo.log` is slow on huge histories), `repo.optimize` (writes the commit-graph,
 `git commit-graph write --reachable`: a cache, no `confirm`, nothing to undo; `{"commit_graph"}`),
+`repo.clone {"url", "path", "branch"?, "depth"?}` and `repo.init {"path", "branch"?}` (writes; no
+open repo needed: they create the repo in an absent or empty folder, never over existing files, and
+open it; result as `repo.open`, plus `messages` for the clone; a cancelled or failed clone removes
+the folder it created; not available over MCP),
 `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
 (pages of 200 commits if `limit` is missing, with `has_more`; from HEAD, from `rev`, or with
 `"all": true` from all local and remote branches, tags and HEAD, without stashes or backups, and with
 `"stashes": true` in addition also from the commits the stashes were created on; `rev` and
-`all` together, or `stashes` without `all`, are an error), `commit.show {"id"}` (metadata and files
+`all` together, or `stashes` without `all`, are an error), `repo.search {"query", "in"?, "path"?,
+"all"?, "stashes"?, "skip"?, "limit"?}` (ids of the commits whose message, author name or email, or id
+prefix contain the text, literal and case-insensitive, in the order of `repo.log`; `in` limits to
+`"message"`, `"author"`, `"id"`; result `{"ids", "total", "has_more"}`), `commit.show {"id"}` (metadata and files
 changed relative to the first parent), `diff.worktree {"path"?}` (unstaged changes),
 `diff.index {"path"?}` (staged changes) and `diff.commit {"id", "path"?}` (commit relative to its
 first parent). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and
@@ -122,6 +129,19 @@ journal: the undo deletes the created branch, recreates the deleted one at the s
 configuration (if a new one has not appeared in the meantime; the reflog of the deleted branch is not
 restored), renames back, and returns to the previous branch (or commit) with another safe
 checkout; always only if nobody has touched those refs or HEAD in the meantime.
+
+`branch.reset {"target", "mode": "soft"|"mixed"|"hard", "confirm"?, "expected"?}` moves the current
+branch (or a detached HEAD) to `target` like `git reset`: `soft` only the ref, `mixed` also the index
+(staged versions that exist only there saved first in `refs/project/backup/index-...`), `hard` also the
+worktree of tracked files. A `hard` with local changes needs `"confirm": true` and saves them first in
+`refs/project/backup/reset-...` (`git stash create` plus a byte-for-byte copy); untracked and ignored files
+are never touched (one in the way refuses the reset). Refused during merge/rebase/cherry-pick/revert/bisect
+and on a branch without commits. `branch.reset_preview {"target", "mode"}` (read-only) gives the same plan
+as data: `files` a `hard` overwrites, `needs_confirm`, `expected`. Result: `{"mode", "branch", "before",
+"after", "files", "backup", "stash", "index_backup", "backups", "published", "warnings", "status",
+"refs"}`; `warnings` says when commits leaving the branch are already on its upstream. It goes into the
+journal: undo moves the ref back (with index and worktree for `mixed`/`hard`), the changes overwritten by a
+`hard` stay in the backup.
 
 `remote.fetch {"remote"?, "branch"?}` downloads from the remote (`git fetch --progress`): new commits,
 remote branches and tags as the remote's configuration says (also `fetch.prune`), never the local

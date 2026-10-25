@@ -24,7 +24,7 @@ mod areas {
 }
 
 /// A UI language.
-/// The app is in English; Italian is not chosen from the app.
+/// English by default; the app's "Settings…" window chooses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Lang {
     It,

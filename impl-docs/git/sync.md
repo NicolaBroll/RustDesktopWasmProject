@@ -36,6 +36,12 @@ arguments, see `impl-docs/i18n.md`), like the journal `description` and `next_un
 `warnings` the refs outside `refs/remotes/` and `refs/tags/` moved by a configured refspec (e.g. a
 mirror toward `refs/heads/`). It does not go into the journal (§7). `CliBackend` details below.
 
+**Automatic fetch** (S50, UI only: `crates/ui/src/auto_fetch.rs`): every tab sends the same
+`remote.fetch` as the bar's "Fetch" (`{"prune": true}`, the remote the engine chooses) on a timer
+(Settings → Remotes: off / 1 / 5 / 15 minutes, default 5), only for the tab shown and with no dialog,
+command or operation in progress; `Auth` suspends it until "Retry", `RemoteUnreachable` doubles the
+wait up to 30 minutes. No engine change.
+
 ### `remote.pull`
 
 Parameters: `{"remote"?, "branch"?, "strategy"?}`.
@@ -176,6 +182,40 @@ unknown failure or a lost connection it stays. To put a branch back: a branch on
 [Commit], "upstream_of": [branch], "backup", "summary", "messages", "incomplete", "updated" | null, "warnings",
 "status" | null, "refs" | null}`.
 
+### `remote.push_tag`
+
+Parameters: `{"remote", "name"}`.
+
+Slow (§6), writes, does **not** go into the journal. Publishes **only**
+`refs/tags/<name>:refs/tags/<name>` to the configured remote `remote` (`check_remote_name`; not
+configured → `NotAllowed` with the list, `remote.<r>.mirror=true` → `NotAllowed`). The local tag
+must exist (`check_tag_name`: any valid name, even `-x`; missing → `NotAllowed`). **Never forced**:
+the same value already on the remote → success with `"kind": "up_to_date"`; a tag already there
+with another value → `PushRejected { reason: tag_exists }` (`branch` = `refs/tags/<name>`),
+nothing changes (to replace it: `remote.delete_tag` first, with its confirmation). Other errors as
+`remote.push` (`hook`, `remote_rejected`, `Auth`, `RemoteUnreachable`, `Cancelled`). Result:
+`{"remote", "tag", "name", "target", "annotated", "value" (as stored: the tag object of an
+annotated tag), "kind": "new" | "up_to_date", "summary", "messages", "refs" | null}`.
+
+### `remote.delete_tag`
+
+Parameters: `{"remote", "name", "confirm"?, "expected"?}`.
+
+Like `remote.delete_branch`: slow, writes, not in the journal, same remote checks. There is no
+remote-tracking ref for tags, so the value is **read from the remote** (`GitBackend::remote_tag`,
+`git ls-remote`; it contacts the remote even for the confirmation): the value as the remote stores
+it (the tag object of an annotated tag, not the peeled commit). Not on the remote → `NotAllowed`.
+**Always** `"confirm": true` with `"expected"`, the full id read: without them `ConfirmRequired` with
+the value, how it relates to the local tag (same value / another value / no local tag) and the fixed
+phrase `"expected": "<id>"`; an `expected` that is not the value read now → `ConfirmRequired`
+again with the new value. `confirm` without `expected`, `expected` not full → `InvalidParams`. The
+local tag is never touched. Before the push the value goes into `refs/project/backup/push-delete-...`
+(if the object is not here it is fetched into it first, see below); if the backup cannot be made
+nothing is deleted. Then `--force-with-lease=refs/tags/<name>:<expected>`: moved or already gone
+→ `PushRejected { reason: stale_lease }`. Backup removal, several push URLs (`incomplete`) and
+errors as `remote.delete_branch`. Result: `{"remote", "tag", "name", "deleted": oid, "backup",
+"summary", "messages", "incomplete", "warnings", "refs" | null}`.
+
 ## CliBackend: fetch
 
 **Fetch** (`remote.fetch`, S25): `git fetch --progress --end-of-options <remote>
@@ -284,6 +324,22 @@ submodule check): `PushRejected` with the hook's output.
 same environment as the push; never `--delete` with a list, `--prune`, `--force`, `--mirror`. The
 outcome is the `--porcelain` line of `refs/heads/<b>` (`-` deleted; `!` rejected, `stale info` also
 for a branch already gone). Before the push `create_backup_ref("push-delete", <oid>)`.
+
+**Tags** (`remote.push_tag`, `remote.delete_tag`, S47). The remote value: `git ls-remote --tags
+--refs --end-of-options <remote> refs/tags/<name>`, same environment as the fetch; `--refs` leaves
+out the peeled `^{}` lines and, since the pattern matches the tail of the names, only the line with
+exactly `refs/tags/<name>` counts (ls-remote reads the fetch URL; the push may use `pushurl`: the
+lease covers a difference). The push: `git push --porcelain --progress --no-follow-tags
+--recurse-submodules=check --end-of-options <remote> refs/tags/<n>:refs/tags/<n>`, never `--force`
+or `+`; `=` → up to date, `!` with `(already exists)` → `tag_exists`. The deletion: as for branches
+with `refs/tags/<n>` (shared code). Backup of the remote value: `create_backup_ref("push-delete",
+<oid>)` if `cat-file -e <oid>` finds the object here; otherwise `git fetch --progress --no-tags
+--no-write-fetch-head --no-recurse-submodules --no-prune --no-auto-gc --refmap= --end-of-options
+<remote> refs/tags/<n>:refs/project/backup/push-delete-<s>-<ns>` (a free name; without `+` an existing
+ref is never overwritten): only that ref is written (`--refmap=` keeps a configured refspec such as
+`+refs/tags/*:refs/tags/*` from updating the local tag too, `--no-tags` from following others). The
+backup must then equal `expected`; otherwise it is removed and `stale_lease` (the tag moved since it
+was read), nothing deleted.
 
 ## Undo of the pull
 

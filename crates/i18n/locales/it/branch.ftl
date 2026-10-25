@@ -64,3 +64,12 @@ branch-refused-files = { $n ->
         [one] File:
        *[other] { $n } file:
     }
+branch-tag-delete-label = Eliminazione del tag «{ $name }»
+branch-tag-delete-refused = Impossibile eliminare il tag «{ $name }»: { $error }
+branch-tag-delete-failed = Eliminazione del tag «{ $name }» non riuscita: { $error }
+branch-tag-deleted = Tag «{ $tag }» eliminato (era su { $id }); backup in { $backup }. «Annulla» lo ricrea
+branch-tag-deleted-annotated = Tag annotato «{ $tag }» eliminato (era su { $id }); l'oggetto tag è in { $backup }. «Annulla» lo ricrea
+branch-tag-delete-heading = Eliminare il tag «{ $name }»?
+branch-tag-delete-text = Il tag viene eliminato solo qui: i remoti tengono la loro copia (per quello c'è «Elimina dal remoto…»).
+branch-tag-delete-backup = Prima di eliminarlo, il tag viene salvato in un backup (refs/project/backup/tag-delete-…), con messaggio e autore se è annotato: «Annulla» nella barra in alto lo ricrea sullo stesso valore, finché l'app resta aperta.
+branch-tag-delete-button = Elimina il tag

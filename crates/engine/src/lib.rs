@@ -20,16 +20,21 @@ pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
     DiscardOutcome, DiscardedFile, FetchFailure, FetchOutcome, FetchRequest, GitBackend,
     HEADS_PREFIX, HeadState, LinePatch, LineSelection, LogQuery, MemoryBackend, MemoryOpener,
-    RefMove, RefRestore, RepoOpener, RestoreOutcome, StagedVersion, StashedFile, WorktreeBackup,
-    WorktreeRestore, WorktreeStash, amend_impact, apply_patch, backup_message, branch_ref,
-    branch_short, check_amend_published, check_branch_name, check_commit_state,
-    check_new_branch_name, check_no_operation, check_remote_name, check_same_plan, cleanup_message,
-    default_remote, discard_description, discard_plan, file_digest, line_patch, path_matches,
-    split_message, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
+    RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery, StagedVersion,
+    StashedFile, WorktreeBackup, WorktreeRestore, WorktreeStash, amend_impact, apply_patch,
+    backup_message, branch_ref, branch_short, check_amend_published, check_branch_name,
+    check_commit_state, check_new_branch_name, check_no_operation, check_remote_name,
+    check_same_plan, cleanup_message, default_remote, discard_description, discard_plan,
+    file_digest, line_patch, path_matches, split_message, unknown_remote, valid_ref_name,
+    versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
     blame_missing_worktree, blame_no_commits, is_binary_content,
+};
+pub use git::{
+    CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
+    destination_not_empty, destination_not_folder,
 };
 pub use git::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
@@ -60,14 +65,19 @@ pub use git::{
 pub use git::{
     PullMode, PullOperation, PullOutcome, PullPolicy, PullRequest, PullSettings, PullStrategy,
     PushKind, PushOutcome, PushRejection, PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
-    StrategySource, UpstreamConfig, check_pull_state, merge_message, pull_mode, tracking_ref,
+    RemoteTagDelete, StrategySource, TagPush, TagPushed, UpstreamConfig, check_pull_state,
+    merge_message, pull_mode, tracking_ref,
 };
 pub use git::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
 };
-pub use git::{TAGS_PREFIX, check_new_tag_name, tag_ref};
+pub use git::{
+    ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
+    reset_moved, status_paths, strict_conflicts,
+};
+pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};

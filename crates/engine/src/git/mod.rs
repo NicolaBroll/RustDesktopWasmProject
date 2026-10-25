@@ -6,6 +6,7 @@
 
 mod backup;
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod discard;
@@ -21,8 +22,10 @@ mod push;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod reset;
 mod restore;
 mod sample;
+mod search;
 mod stash;
 mod tag;
 
@@ -38,6 +41,10 @@ pub use backup::{
 pub use branch::{
     BranchDeleted, ConfigEntry, HEADS_PREFIX, branch_ref, branch_short, check_branch_name,
     check_new_branch_name, check_no_operation,
+};
+pub use clone::{
+    CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
+    destination_not_empty, destination_not_folder,
 };
 pub use commit::{
     CommitOutcome, CommitRequest, amend_impact, check_amend_published, check_commit_state,
@@ -76,7 +83,7 @@ pub use pull::{
 };
 pub use push::{
     PushKind, PushOutcome, PushRejection, PushRequest, RemoteBranchDelete, RemoteBranchDeleted,
-    tracking_ref,
+    RemoteTagDelete, TagPush, TagPushed, tracking_ref,
 };
 pub use rebase::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
@@ -89,14 +96,19 @@ pub use remote_admin::{
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
 };
+pub use reset::{
+    ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
+    reset_moved, status_paths, strict_conflicts,
+};
 pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
+pub use search::{SearchField, SearchQuery, contains_literal};
 pub use stash::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
-pub use tag::{TAGS_PREFIX, check_new_tag_name, tag_ref};
+pub use tag::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
@@ -123,6 +135,13 @@ pub trait GitBackend: Send {
     /// tags and HEAD (a HEAD without commits is skipped); `rev` and `all` together give
     /// [`EngineError::InvalidParams`] ([`LogQuery::check`]).
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
+
+    /// All the commits that match `query` (`repo.search`), in the order of
+    /// [`GitBackend::log`] over [`SearchQuery::range`]: the text literally in any of the fields
+    /// (OR), only among the commits that touch `query.path` if given. Slow on long histories:
+    /// `job` cancels it ([`EngineError::Cancelled`]). HEAD without commits (without `all`) →
+    /// empty.
+    fn search(&self, query: &SearchQuery, job: &JobContext) -> Result<Vec<Oid>, EngineError>;
 
     /// State of the worktree and the index, with HEAD and upstream of the current branch.
     fn status(&self) -> Result<Status, EngineError>;
@@ -343,6 +362,14 @@ pub trait GitBackend: Send {
         message: Option<&str>,
     ) -> Result<Oid, EngineError>;
 
+    /// Deletes the local tag `name` (`tag.delete` and the redo of `tag.create` undone), only if
+    /// `refs/tags/<name>` still has the value `expected` (the commit, or the tag object of an annotated tag).
+    /// First it saves `expected` in a new backup ref `refs/project/backup/tag-delete-...`
+    /// (returned): if the backup fails nothing is deleted. Then `update-ref --no-deref -d
+    /// refs/tags/<name> <expected>`; if that fails the backup is removed. A tag missing or with
+    /// another value gives [`EngineError::NotAllowed`] and nothing changes.
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError>;
+
     /// Moves HEAD to `target` updating index and worktree (`git switch`): the local branch
     /// (full name, must exist) or a commit with detached HEAD (for the undo of a checkout
     /// made from detached HEAD). `branch.checkout` and its undo/redo.
@@ -486,6 +513,39 @@ pub trait GitBackend: Send {
     fn delete_remote_branch(
         &mut self,
         request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError>;
+
+    /// The value of `refs/tags/<name>` on the remote `remote` (`git ls-remote`, slow: it contacts
+    /// the remote; cancellation from `job`), as the remote stores it: the tag object of an annotated
+    /// tag, not the peeled commit. `None` if the remote does not have it. Errors as
+    /// [`GitBackend::fetch`]: [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
+    /// [`EngineError::Cancelled`]. A read.
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError>;
+
+    /// Publishes the local tag `request.name` to the remote (`remote.push_tag`, slow like the
+    /// push): only `refs/tags/<name>:refs/tags/<name>`, never `--force` (a tag already on the
+    /// remote with another value → [`EngineError::PushRejected`] with
+    /// [`PushRejection::TagExists`]); the same value already there is a success with
+    /// `up_to_date`. Other errors as [`GitBackend::push`].
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError>;
+
+    /// Deletes the tag `request.name` from the remote (`remote.delete_tag`), like
+    /// [`GitBackend::delete_remote_branch`]: always with
+    /// `--force-with-lease=refs/tags/<name>:<expected>`, after saving `request.expected` in a backup ref
+    /// `refs/project/backup/push-delete-...`. If the object is not here it is first fetched from the
+    /// remote straight into the backup ref (only that ref: no tags, no `FETCH_HEAD`), which must then
+    /// equal `expected` (otherwise [`EngineError::PushRejected`] with
+    /// [`PushRejection::StaleLease`], nothing deleted). If the backup cannot be made nothing is
+    /// deleted. Backup removal and errors as [`GitBackend::delete_remote_branch`].
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError>;
 
@@ -651,6 +711,23 @@ pub trait GitBackend: Send {
         &mut self,
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError>;
+
+    // --- Reset (S45, `impl-docs/git/reset.md`).
+
+    /// Moves the branch of HEAD (or a detached HEAD) like `git reset --<mode>`
+    /// (`branch.reset`, and its undo and redo). Before writing, without changing anything:
+    /// no operation in progress, the target is a commit, HEAD and the branch still hold the
+    /// expected values of `request.refs` ([`EngineError::UndoConflict`] for undo/redo,
+    /// [`EngineError::NotAllowed`] for `branch.reset`); for `hard` the plan
+    /// ([`reset_files`]) is the confirmed one and no untracked or ignored file is where the
+    /// target puts a file. Then the backups: `mixed` the staged versions that exist only in the
+    /// index (`refs/project/backup/index-...`), `hard` the local changes (`git stash create` and
+    /// byte for byte, `refs/project/backup/reset-...`); the commits no longer reachable as for
+    /// [`GitBackend::restore_refs`]. If a backup fails nothing is written. The ref moves with
+    /// the old value checked by git; then index (`mixed`, `hard`) and worktree (`hard`). An
+    /// error after the ref move names the backups. With `request.strict` (undo/redo) nothing may
+    /// need an index or worktree backup ([`strict_conflicts`]).
+    fn reset(&mut self, request: &ResetRequest) -> Result<ResetOutcome, EngineError>;
 }
 
 /// What to compare in [`GitBackend::diff`]: parameters of `diff.worktree`, `diff.index` and
@@ -684,6 +761,22 @@ impl DiffSpec {
 pub trait RepoOpener: Send + Sync {
     /// [`EngineError::RepoNotFound`] if there is no repository at the path.
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError>;
+
+    /// `repo.clone` (`impl-docs/git/clone.md`): clones `request.url` into `request.path`, which
+    /// must be absent or an empty folder ([`destination_not_empty`], [`destination_not_folder`],
+    /// [`destination_no_parent`]: nothing written). Progress and cancellation from `job`; on
+    /// cancellation ([`EngineError::Cancelled`]) or error the destination goes back to how it was
+    /// (a folder the call created is removed). The request is already checked
+    /// ([`CloneRequest::check`]). The caller then opens `request.path` with [`RepoOpener::open`].
+    fn clone_repo(
+        &self,
+        request: &CloneRequest,
+        job: &JobContext,
+    ) -> Result<CloneOutcome, EngineError>;
+
+    /// `repo.init`: a new empty repository in `request.path`, with the same destination rules
+    /// as [`RepoOpener::clone_repo`]. The caller then opens it with [`RepoOpener::open`].
+    fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError>;
 }
 
 /// A page of the log: parameters of `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,

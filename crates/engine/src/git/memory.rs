@@ -1,6 +1,7 @@
 //! In-memory fake repository: for command and UI tests.
 
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod discard;
@@ -10,9 +11,12 @@ mod pick;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod reset;
 mod restore;
+mod search;
 mod stash;
 mod sync;
+mod tags;
 mod write;
 
 pub use discard::{StashedFile, WorktreeStash};
@@ -29,16 +33,18 @@ use super::{
     FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, LineSelection, LogQuery,
     MergeAborted, MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest, PullOutcome,
     PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore,
-    RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot, RepoOpener, RestoreOutcome,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    UpstreamConfig, WorktreeRestore,
+    RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener,
+    RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
+    StashPush, TagPush, TagPushed, UpstreamConfig, WorktreeRestore,
 };
-use crate::{CommitGraphState, EngineError, JobContext, Message};
+use super::{CloneOutcome, CloneRequest, InitRequest, SearchQuery};
+use crate::{CommitGraphState, EngineError, JobContext, Message, Progress};
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, FileLogEntry, Head, Oid,
     Operation, RefInfo, RefKind, RepoPath, Status, StatusEntry, Upstream,
 };
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::sync::Mutex;
 
 const HEADS: &str = "refs/heads/";
 const REMOTES: &str = "refs/remotes/";
@@ -253,6 +259,9 @@ impl MemoryBackend {
     /// Creates or moves the tag `name` on commit `target`. `tag_object` is the id of the tag object
     /// for an annotated tag, `None` for a lightweight one.
     pub fn set_tag(&mut self, name: &str, target: Oid, tag_object: Option<Oid>) {
+        if let Some(object) = tag_object {
+            self.tag_objects.insert(object, target);
+        }
         self.set_ref(format!("{TAGS}{name}"), target, tag_object);
     }
 
@@ -316,8 +325,9 @@ impl MemoryBackend {
             return Ok(entry.target);
         }
         // Commit backups are refs too (`refs/project/backup/...`).
+        // A backup of a tag object (`tag.delete`, `remote.delete_tag`) leads to its commit, like `^{commit}`.
         if let Some((_, id)) = self.commit_backups.iter().find(|(name, _)| name == rev) {
-            return Ok(*id);
+            return Ok(self.tag_objects.get(id).copied().unwrap_or(*id));
         }
         let hex = rev.to_ascii_lowercase();
         if (4..=Oid::HEX_LEN).contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -694,6 +704,10 @@ impl GitBackend for MemoryBackend {
         Ok(out.into_iter().skip(query.skip).cloned().collect())
     }
 
+    fn search(&self, query: &SearchQuery, job: &JobContext) -> Result<Vec<Oid>, EngineError> {
+        self.memory_search(query, job)
+    }
+
     fn status(&self) -> Result<Status, EngineError> {
         let upstream = match &self.head {
             HeadRef::Branch(name) => self.upstream_of(&format!("{HEADS}{name}")).map(|up| {
@@ -805,6 +819,10 @@ impl GitBackend for MemoryBackend {
         self.resolve_file(request)
     }
 
+    fn reset(&mut self, request: &super::ResetRequest) -> Result<super::ResetOutcome, EngineError> {
+        self.reset_head(request)
+    }
+
     fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         if let Some(budget) = self.restore_budget.as_mut() {
             if *budget == 0 {
@@ -914,6 +932,31 @@ impl GitBackend for MemoryBackend {
         self.delete_branch_on_remote(request, job)
     }
 
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError> {
+        self.tag_value_on_remote(remote, name, job)
+    }
+
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError> {
+        self.push_tag_to_remote(request, job)
+    }
+
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_tag_on_remote(request, job)
+    }
+
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
+        self.delete_local_tag(name, expected)
+    }
+
     fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
         self.checkout_head(target)
     }
@@ -1014,10 +1057,29 @@ impl GitBackend for MemoryBackend {
 }
 
 /// [`RepoOpener`] over in-memory repos, registered by path. Each `open` returns an independent
-/// copy of the registered repo.
-#[derive(Debug, Clone, Default)]
+/// copy of the registered repo. `repo.clone` and `repo.init` register the new repo at their
+/// `path` (`impl-docs/git/clone.md`): a clone copies the repo registered at the `url`.
+#[derive(Debug, Default)]
 pub struct MemoryOpener {
+    state: Mutex<OpenerState>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OpenerState {
     repos: BTreeMap<String, MemoryBackend>,
+    /// Paths that are a non-empty folder (or a file) without being a repo: clone and init
+    /// refuse them.
+    occupied: BTreeSet<String>,
+    /// URLs whose clone fails with [`EngineError::Auth`], with git's message.
+    denied: BTreeMap<String, String>,
+}
+
+impl Clone for MemoryOpener {
+    fn clone(&self) -> Self {
+        Self {
+            state: Mutex::new(self.lock().clone()),
+        }
+    }
 }
 
 impl MemoryOpener {
@@ -1036,23 +1098,52 @@ impl MemoryOpener {
         opener
     }
 
-    /// Registers (or replaces) the repo at path `path`.
-    pub fn insert(&mut self, path: impl Into<String>, repo: MemoryBackend) {
-        self.repos.insert(path.into(), repo);
+    fn lock(&self) -> std::sync::MutexGuard<'_, OpenerState> {
+        // A panic while holding the lock leaves a consistent map: every write is one insert.
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Registered paths, in order.
-    pub fn paths(&self) -> impl Iterator<Item = &str> {
-        self.repos.keys().map(String::as_str)
+    /// Registers (or replaces) the repo at path `path`.
+    pub fn insert(&mut self, path: impl Into<String>, repo: MemoryBackend) {
+        self.lock().repos.insert(path.into(), repo);
+    }
+
+    /// Registered paths, in order (also those created by `repo.clone` and `repo.init`).
+    pub fn paths(&self) -> Vec<String> {
+        self.lock().repos.keys().cloned().collect()
+    }
+
+    /// A copy of the repo registered at `path`, if any.
+    pub fn repo(&self, path: &str) -> Option<MemoryBackend> {
+        self.lock().repos.get(path).cloned()
+    }
+
+    /// `path` is a non-empty folder (or a file) that is not a repo: clone and init refuse it.
+    pub fn occupy(&mut self, path: impl Into<String>) {
+        self.lock().occupied.insert(path.into());
+    }
+
+    /// The clone of `url` fails with [`EngineError::Auth`] and `message`.
+    pub fn deny(&mut self, url: impl Into<String>, message: impl Into<String>) {
+        self.lock().denied.insert(url.into(), message.into());
+    }
+
+    /// The destination of a clone or init: neither a repo nor an occupied path.
+    fn check_destination(state: &OpenerState, path: &str) -> Result<(), EngineError> {
+        if state.repos.contains_key(path) || state.occupied.contains(path) {
+            return Err(super::destination_not_empty(path));
+        }
+        Ok(())
     }
 }
 
 impl RepoOpener for MemoryOpener {
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError> {
-        match self.repos.get(path) {
+        let state = self.lock();
+        match state.repos.get(path) {
             Some(repo) => Ok(Box::new(repo.clone())),
             None => {
-                let known: Vec<&str> = self.paths().collect();
+                let known: Vec<&str> = state.repos.keys().map(String::as_str).collect();
                 Err(EngineError::RepoNotFound {
                     path: path.to_owned(),
                     reason: if known.is_empty() {
@@ -1063,5 +1154,57 @@ impl RepoOpener for MemoryOpener {
                 })
             }
         }
+    }
+
+    fn clone_repo(
+        &self,
+        request: &CloneRequest,
+        job: &JobContext,
+    ) -> Result<CloneOutcome, EngineError> {
+        let mut state = self.lock();
+        Self::check_destination(&state, &request.path)?;
+        if let Some(message) = state.denied.get(&request.url) {
+            return Err(EngineError::Auth {
+                remote: request.url.clone(),
+                message: message.clone(),
+            });
+        }
+        let Some(remote) = state.repos.get(&request.url) else {
+            return Err(EngineError::RemoteUnreachable {
+                remote: request.url.clone(),
+                message: format!("fatal: repository '{}' does not exist", request.url),
+            });
+        };
+        let clone = remote.cloned(&request.url, request.branch.as_deref())?;
+        job.report(&Progress {
+            phase: "Receiving objects".to_owned(),
+            remote: false,
+            percent: Some(100),
+            current: None,
+            total: None,
+            done: true,
+            text: "Receiving objects: 100%, done.".to_owned(),
+        });
+        if job.is_cancelled() {
+            return Err(EngineError::Cancelled {
+                command: "repo.clone",
+            });
+        }
+        let mut messages = Vec::new();
+        if clone.commits.is_empty() {
+            messages.push("warning: You appear to have cloned an empty repository.".to_owned());
+        }
+        state.repos.insert(request.path.clone(), clone);
+        Ok(CloneOutcome { messages })
+    }
+
+    fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError> {
+        let mut state = self.lock();
+        Self::check_destination(&state, &request.path)?;
+        state.repos.insert(
+            request.path.clone(),
+            MemoryBackend::initialized(request.branch.as_deref()),
+        );
+        Ok(())
     }
 }

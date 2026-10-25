@@ -3,7 +3,8 @@
 //! Transport: JSON-RPC 2.0, one message per line on stdin/stdout; no network
 //! port. Every path is resolved inside the root given to
 //! [`Server::new`] and rejected if it escapes (also through symbolic links): repositories are
-//! opened only with the `open_repo` tool, not with `repo.open` through `execute_command`.
+//! opened only with the `open_repo` tool, not with `repo.open` through `execute_command`;
+//! `repo.clone` and `repo.init` are refused (their paths would not be confined).
 
 mod paths;
 
@@ -136,6 +137,12 @@ impl Server {
         if id == "repo.open" {
             return Err("to open a repository use the `open_repo` tool".to_owned());
         }
+        // Destination and URL (a local path is a URL) could be anywhere: not confined to the root.
+        if id == "repo.clone" || id == "repo.init" {
+            return Err(format!(
+                "`{id}` is not available over MCP: its paths are not confined to the root"
+            ));
+        }
         self.registry
             .run(&id, &mut self.session, params)
             .map_err(|e| e.to_string())
@@ -187,7 +194,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Runs a catalog command on the current session. See list_commands for ids and parameters; commands with `writes: true` change the user's repository (e.g. `index.stage`, `commit.create`, `branch.checkout`, `edit.undo`), those that can lose data or rewrite published commits (e.g. `worktree.discard`, `branch.delete` of an unmerged branch, which also accepts `expected` with the full id of the commit seen, `amend` of a published commit) ask for `\"confirm\": true` (pass it only if the user asked for it). `remote.fetch` downloads from a configured remote (by name, never a URL) and updates only remote branches and tags; `remote.pull` downloads and integrates the upstream into the branch (fast-forward, merge or rebase according to the configuration, undoable with `edit.undo`; a merge with conflicts stays in progress as with `merge.start`, `\"in_progress\": true` and the files in `conflicts`, a rebase with conflicts is aborted); `remote.push` publishes the branch to the remote (force, `\"force\": true`, always uses force-with-lease and, if the remote would lose commits, asks for `\"confirm\": true` with `\"expected\"`, the id given by the confirmation error): they use the network and can be slow, and a push cannot be undone. `remote.list` lists the remotes (credentials in URLs are always masked), `remote.add` adds a remote by name and URL (with `\"fetch\": true` it then downloads; URLs starting with `-` or with `ext::`/`fd::` are refused), `remote.remove` removes it with its remote branches and the upstream of the branches that use it and always asks for `\"confirm\": true`; both are undone with `edit.undo`. `stash.list` lists the stashes (position `index`, `id`, `base`, message); `stash.push` stashes the changes (undoable with `edit.undo`); `stash.apply`/`stash.pop` apply them again (pass `index` and `expected`, the id of the stash seen; refused if they would touch files with local changes; with conflicts the stash stays); `stash.drop` drops a stash and always asks for `\"confirm\": true` together with `\"expected\"`, the id of the stash given by the confirmation error (it saves a backup, undoable with `edit.undo`). `merge.start` merges a rev (`\"rev\"`: branch, remote branch, tag or id) into the current branch (fast-forward or merge commit; refused with changes to tracked files): with conflicts the merge stays in progress and the result lists the files; `repo.operation` tells the operation in progress, the conflicted files and the incoming commits; `merge.continue` finishes the merge when no conflicts are left (the resolved files must be staged with `index.stage`); `merge.abort` aborts it, always asks for `\"confirm\": true` and first saves index and worktree in a backup. A finished merge is undone with `edit.undo`.",
+            "description": "Runs a catalog command on the current session. See list_commands for ids and parameters; commands with `writes: true` change the user's repository (e.g. `index.stage`, `commit.create`, `branch.checkout`, `edit.undo`), those that can lose data or rewrite published commits (e.g. `worktree.discard`, `branch.delete` of an unmerged branch, which also accepts `expected` with the full id of the commit seen, `amend` of a published commit) ask for `\"confirm\": true` (pass it only if the user asked for it). `remote.fetch` downloads from a configured remote (by name, never a URL) and updates only remote branches and tags; `remote.pull` downloads and integrates the upstream into the branch (fast-forward, merge or rebase according to the configuration, undoable with `edit.undo`; a merge with conflicts stays in progress as with `merge.start`, `\"in_progress\": true` and the files in `conflicts`, a rebase with conflicts is aborted); `remote.push` publishes the branch to the remote (force, `\"force\": true`, always uses force-with-lease and, if the remote would lose commits, asks for `\"confirm\": true` with `\"expected\"`, the id given by the confirmation error): they use the network and can be slow, and a push cannot be undone. `remote.push_tag` publishes one local tag (never overwrites a tag already on the remote: `tag_exists`); `remote.delete_tag` deletes a tag from the remote and always asks for `\"confirm\": true` with `\"expected\"`, the value given by the confirmation error; `tag.delete` deletes a local tag, always asks for `\"confirm\": true` and is undone with `edit.undo`. `remote.list` lists the remotes (credentials in URLs are always masked), `remote.add` adds a remote by name and URL (with `\"fetch\": true` it then downloads; URLs starting with `-` or with `ext::`/`fd::` are refused), `remote.remove` removes it with its remote branches and the upstream of the branches that use it and always asks for `\"confirm\": true`; both are undone with `edit.undo`. `stash.list` lists the stashes (position `index`, `id`, `base`, message); `stash.push` stashes the changes (undoable with `edit.undo`); `stash.apply`/`stash.pop` apply them again (pass `index` and `expected`, the id of the stash seen; refused if they would touch files with local changes; with conflicts the stash stays); `stash.drop` drops a stash and always asks for `\"confirm\": true` together with `\"expected\"`, the id of the stash given by the confirmation error (it saves a backup, undoable with `edit.undo`). `merge.start` merges a rev (`\"rev\"`: branch, remote branch, tag or id) into the current branch (fast-forward or merge commit; refused with changes to tracked files): with conflicts the merge stays in progress and the result lists the files; `repo.operation` tells the operation in progress, the conflicted files and the incoming commits; `merge.continue` finishes the merge when no conflicts are left (the resolved files must be staged with `index.stage`); `merge.abort` aborts it, always asks for `\"confirm\": true` and first saves index and worktree in a backup. A finished merge is undone with `edit.undo`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -552,6 +559,25 @@ mod tests {
 
     fn server_without_repos(root: &Path) -> Server {
         Server::new(root, Arc::new(MemoryOpener::new())).unwrap()
+    }
+
+    #[test]
+    fn clone_and_init_are_not_available() {
+        let root = temp_root("clone");
+        let mut server = server(&root);
+        for (id, params) in [
+            ("repo.clone", json!({"url": "/", "path": "/tmp/x"})),
+            ("repo.init", json!({"path": "/tmp/x"})),
+        ] {
+            let r = call(
+                &mut server,
+                "execute_command",
+                json!({"id": id, "params": params}),
+            );
+            assert_eq!(r["isError"], true, "{id}");
+            let text = r["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("not available over MCP"), "{text}");
+        }
     }
 
     #[test]

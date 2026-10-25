@@ -1,6 +1,6 @@
 //! Local branches from the refs column menu (S24): `branch.create`, `branch.checkout`,
-//! `branch.delete`, `branch.rename`; and `tag.create`, from the same name dialog. Data only, no
-//! egui: tested with unit tests.
+//! `branch.delete`, `branch.rename`; and `tag.create`, from the same name dialog, and `tag.delete`
+//! (S47), from the tag menu. Data only, no egui: tested with unit tests.
 //!
 //! The name of a new (or renamed) branch or of a new tag is typed in a small dialog; the only check done
 //! here is that it is not empty: the engine decides whether it is valid, and its error stays in the dialog.
@@ -31,6 +31,8 @@ pub enum Op {
     Rename,
     /// `tag.create`: the name dialog serves tags too.
     CreateTag,
+    /// `tag.delete`: always confirmed, like a branch with unmerged commits.
+    DeleteTag,
 }
 
 impl Op {
@@ -42,6 +44,7 @@ impl Op {
             Op::Delete => "branch.delete",
             Op::Rename => "branch.rename",
             Op::CreateTag => "tag.create",
+            Op::DeleteTag => "tag.delete",
         }
     }
 }
@@ -174,6 +177,19 @@ pub struct DeleteDialog {
     pub phase: Phase,
 }
 
+/// The deletion of a local tag, from the check to the answer: the engine always asks for
+/// confirmation, with the commit and, for an annotated tag, the tag object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteTagDialog {
+    /// The short name.
+    pub name: String,
+    pub phase: Phase,
+    /// The tag value shown in the confirmation (the tag object of an annotated tag, the commit of
+    /// a lightweight one), as the engine gave it: it goes back as `"expected"`, so the confirmation
+    /// holds only for that value.
+    pub expected: Option<String>,
+}
+
 /// The refused checkout: it would overwrite local changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refused {
@@ -188,6 +204,7 @@ pub struct Refused {
 pub enum Dialog {
     Name(NameDialog),
     Delete(DeleteDialog),
+    DeleteTag(DeleteTagDialog),
     Refused(Refused),
 }
 
@@ -234,6 +251,7 @@ impl BranchBox {
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Delete(delete) => matches!(delete.phase, Phase::Confirm { .. }),
+            Dialog::DeleteTag(delete) => matches!(delete.phase, Phase::Confirm { .. }),
             Dialog::Name(_) | Dialog::Refused(_) => true,
         })
     }
@@ -349,11 +367,41 @@ impl BranchBox {
         }))
     }
 
+    /// Starts the deletion of the local tag `name` (short): the parameters of the first submit,
+    /// without `confirm` (the engine answers with what is lost).
+    pub fn start_delete_tag(&mut self, name: String) -> Option<Value> {
+        if self.busy() {
+            return None;
+        }
+        let params = json!({ "name": name });
+        self.dialog = Some(Dialog::DeleteTag(DeleteTagDialog {
+            name,
+            phase: Phase::Checking,
+            expected: None,
+        }));
+        Some(params)
+    }
+
+    /// The user confirmed the tag deletion: the parameters with `"confirm": true` and the value
+    /// seen. `None` if the engine did not give it (nothing can be confirmed).
+    pub fn confirm_delete_tag(&mut self) -> Option<Value> {
+        let Some(Dialog::DeleteTag(delete)) = &mut self.dialog else {
+            return None;
+        };
+        if !matches!(delete.phase, Phase::Confirm { .. }) {
+            return None;
+        }
+        let expected = delete.expected.clone()?;
+        delete.phase = Phase::Sending;
+        Some(json!({ "name": delete.name, "confirm": true, "expected": expected }))
+    }
+
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
             Some(Dialog::Name(dialog)) => !dialog.sending,
             Some(Dialog::Delete(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
+            Some(Dialog::DeleteTag(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             Some(Dialog::Refused(_)) => true,
             None => false,
         };
@@ -369,11 +417,13 @@ impl BranchBox {
         result: Result<Value, String>,
         kind: Option<ErrorKind>,
         detail: Option<String>,
+        expected: Option<String>,
     ) -> Received {
         match op {
             Op::Create | Op::Rename | Op::CreateTag => self.receive_name(op, result),
             Op::Checkout => self.receive_checkout(result, kind, detail),
             Op::Delete => self.receive_delete(result, kind, detail),
+            Op::DeleteTag => self.receive_delete_tag(result, kind, detail, expected),
         }
     }
 
@@ -477,6 +527,48 @@ impl BranchBox {
                 }
             }
             Ok(value) => done(parse::<DeleteResult>(Op::Delete, value).map(DeleteResult::outcome)),
+        }
+    }
+}
+
+impl BranchBox {
+    fn receive_delete_tag(
+        &mut self,
+        result: Result<Value, String>,
+        kind: Option<ErrorKind>,
+        detail: Option<String>,
+        expected: Option<String>,
+    ) -> Received {
+        let Some(Dialog::DeleteTag(delete)) = self.dialog.take() else {
+            return unexpected(Op::DeleteTag);
+        };
+        match result {
+            // The first answer, or the tag changed since the confirmation: (again) the dialog,
+            // with the value to confirm.
+            Err(_) if kind == Some(ErrorKind::ConfirmRequired) => {
+                self.dialog = Some(Dialog::DeleteTag(DeleteTagDialog {
+                    name: delete.name,
+                    phase: Phase::Confirm {
+                        reason: detail.unwrap_or_default(),
+                    },
+                    expected,
+                }));
+                Received::Confirm
+            }
+            Err(e) => {
+                let message = if kind == Some(ErrorKind::NotAllowed) {
+                    tr!("branch-tag-delete-refused", name = &delete.name, error = &e)
+                } else {
+                    tr!("branch-tag-delete-failed", name = &delete.name, error = &e)
+                };
+                Received::Failed {
+                    message,
+                    reload: false,
+                }
+            }
+            Ok(value) => {
+                done(parse::<TagDeleteResult>(Op::DeleteTag, value).map(TagDeleteResult::outcome))
+            }
         }
     }
 }
@@ -688,6 +780,44 @@ impl DeleteResult {
     }
 }
 
+/// Result of `tag.delete`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TagDeleteResult {
+    pub tag: String,
+    pub target: Oid,
+    pub annotated: bool,
+    pub backup: String,
+    pub refs: Option<Vec<RefInfo>>,
+    pub refs_error: Option<String>,
+    #[serde(flatten)]
+    pub history: History,
+}
+
+impl TagDeleteResult {
+    fn outcome(self) -> Outcome {
+        let tag = self.tag.strip_prefix("refs/tags/").unwrap_or(&self.tag);
+        let (id, backup) = (self.target.short(), &self.backup);
+        let notice = if self.annotated {
+            tr!(
+                "branch-tag-deleted-annotated",
+                tag = tag,
+                id = id,
+                backup = backup
+            )
+        } else {
+            tr!("branch-tag-deleted", tag = tag, id = id, backup = backup)
+        };
+        Outcome {
+            op: Op::DeleteTag,
+            notice,
+            refs: self.refs,
+            status: None,
+            warning: self.refs_error.map(refs_warning),
+            history: self.history,
+        }
+    }
+}
+
 /// Result of `branch.rename`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RenameResult {
@@ -825,6 +955,42 @@ impl Tab {
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
+            Action::DeleteTag(name) => {
+                let generation = self.generation;
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                let label = tr!("branch-tag-delete-label", name = &name);
+                if let Some(params) = repo.branch.start_delete_tag(name) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = branch::Op::DeleteTag;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
+            Action::ConfirmDeleteTag => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                let label = match repo.branch.dialog() {
+                    Some(branch::Dialog::DeleteTag(d)) => {
+                        tr!("branch-tag-delete-label", name = &d.name)
+                    }
+                    _ => return,
+                };
+                if let Some(params) = repo.branch.confirm_delete_tag() {
+                    repo.write_label = Some(label);
+                    let op = branch::Op::DeleteTag;
+                    self.submit(op.command(), params, Request::Branch(generation, op));
+                }
+            }
             Action::CloseBranchDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.branch.close();
@@ -842,10 +1008,13 @@ impl Tab {
             return;
         };
         repo.write_label = None;
-        match repo
-            .branch
-            .receive(op, done.result, done.error_kind, done.error_detail)
-        {
+        match repo.branch.receive(
+            op,
+            done.result,
+            done.error_kind,
+            done.error_detail,
+            done.confirm_expected,
+        ) {
             branch::Received::Inline | branch::Received::Confirm | branch::Received::Refused => {
                 self.error.clear();
                 self.notice.clear();
@@ -890,7 +1059,7 @@ impl Tab {
                 } else {
                     // A refused deletion (e.g. the branch is no longer on the seen commit): the
                     // refs are reloaded, so the column shows where it is now.
-                    if op == branch::Op::Delete {
+                    if matches!(op, branch::Op::Delete | branch::Op::DeleteTag) {
                         self.submit("repo.refs", json!({}), Request::Refs(generation));
                     }
                     // The journal is reloaded anyway: it is cheap and stays aligned.
@@ -961,7 +1130,7 @@ mod tests {
         assert_eq!(dialog.name, "  feature/y ");
 
         // The engine error stays in the dialog, which can be fixed and resubmitted.
-        let r = b.receive(Op::Create, Err("invalid name".to_owned()), None, None);
+        let r = b.receive(Op::Create, Err("invalid name".to_owned()), None, None, None);
         assert!(matches!(r, Received::Inline));
         let Some(Dialog::Name(dialog)) = b.dialog() else {
             panic!()
@@ -1004,6 +1173,7 @@ mod tests {
                 .map_err(|e| e.to_string()),
             None,
             None,
+            None,
         ) else {
             panic!()
         };
@@ -1024,6 +1194,7 @@ mod tests {
             op,
             r.run(op.command(), &mut s, params)
                 .map_err(|e| e.to_string()),
+            None,
             None,
             None,
         ) else {
@@ -1056,6 +1227,7 @@ mod tests {
             Err(String::new()),
             Some(ErrorKind::ConfirmRequired),
             Some("2 unmerged commits".to_owned()),
+            None,
         );
         assert!(matches!(r, Received::Confirm));
         let Some(Dialog::Delete(d)) = b.dialog() else {
@@ -1078,6 +1250,7 @@ mod tests {
             Err(String::new()),
             Some(ErrorKind::ConfirmRequired),
             None,
+            None,
         );
         let send = b.confirm_delete().unwrap();
         assert_eq!(
@@ -1094,6 +1267,7 @@ mod tests {
             Err("x".to_owned()),
             Some(ErrorKind::ConfirmRequired),
             None,
+            None,
         );
         assert!(matches!(r, Received::Failed { .. }), "{r:?}");
         assert!(b.dialog().is_none());
@@ -1104,6 +1278,7 @@ mod tests {
             Op::Delete,
             Err("it is the current branch".to_owned()),
             Some(ErrorKind::NotAllowed),
+            None,
             None,
         );
         let Received::Failed { message, reload } = r else {
@@ -1126,6 +1301,7 @@ mod tests {
             Err("refused".to_owned()),
             Some(ErrorKind::CheckoutConflict),
             Some("README.md\nsrc/lib.rs".to_owned()),
+            None,
         );
         assert!(matches!(r, Received::Refused));
         assert_eq!(
@@ -1144,6 +1320,7 @@ mod tests {
             Err("merge in progress".to_owned()),
             Some(ErrorKind::NotAllowed),
             None,
+            None,
         );
         let Received::Failed { message, reload } = r else {
             panic!("{r:?}")
@@ -1155,6 +1332,7 @@ mod tests {
             Op::Checkout,
             Err("git".to_owned()),
             Some(ErrorKind::Git),
+            None,
             None,
         );
         assert!(matches!(r, Received::Failed { reload: true, .. }), "{r:?}");
@@ -1190,12 +1368,13 @@ mod tests {
     /// Sends `params` to `op` and passes the answer to the box, as the UI does.
     fn send(b: &mut BranchBox, r: &Registry, s: &mut Session, op: Op, params: Value) -> Received {
         match r.run(op.command(), s, params) {
-            Ok(value) => b.receive(op, Ok(value), None, None),
+            Ok(value) => b.receive(op, Ok(value), None, None, None),
             Err(e) => b.receive(
                 op,
                 Err(e.text()),
                 Some(ErrorKind::of(&e)),
                 ErrorKind::detail(&e),
+                ErrorKind::expected(&e),
             ),
         }
     }
@@ -1205,6 +1384,86 @@ mod tests {
             Received::Done(outcome) => *outcome,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn delete_tag_confirms_the_value_seen_and_undo_recreates_it() {
+        let (r, mut s) = open(MemoryBackend::sample());
+        let mut b = BranchBox::default();
+        let params = b.start_delete_tag("v0.1.0".to_owned()).unwrap();
+        assert_eq!(params, json!({ "name": "v0.1.0" }));
+        assert!(!b.modal_open(), "no dialog while checking");
+        assert_eq!(b.confirm_delete_tag(), None);
+        let received = send(&mut b, &r, &mut s, Op::DeleteTag, params);
+        assert!(matches!(received, Received::Confirm), "{received:?}");
+        let Some(Dialog::DeleteTag(d)) = b.dialog() else {
+            panic!()
+        };
+        let Phase::Confirm { reason } = &d.phase else {
+            panic!()
+        };
+        assert!(reason.contains("annotated"), "{reason}");
+        let value = d.expected.clone().expect("the engine gives the value");
+        assert!(reason.contains(&value), "{reason}");
+
+        let params = b.confirm_delete_tag().unwrap();
+        assert_eq!(
+            params,
+            json!({ "name": "v0.1.0", "confirm": true, "expected": value })
+        );
+        assert!(
+            b.dialog().is_none(),
+            "during the submit the dialog is closed"
+        );
+        b.close();
+        let outcome = done(send(&mut b, &r, &mut s, Op::DeleteTag, params));
+        assert_eq!(outcome.op, Op::DeleteTag);
+        assert!(
+            outcome
+                .notice
+                .starts_with("Annotated tag “v0.1.0” deleted (was at "),
+            "{}",
+            outcome.notice
+        );
+        assert!(
+            outcome.notice.contains("tag-delete-1"),
+            "{}",
+            outcome.notice
+        );
+        assert!(outcome.history.can_undo);
+        let refs = outcome.refs.unwrap();
+        assert!(!refs.iter().any(|r| r.name == "refs/tags/v0.1.0"));
+        r.run("edit.undo", &mut s, json!({})).unwrap();
+        let refs: Vec<RefInfo> =
+            serde_json::from_value(r.run("repo.refs", &mut s, json!({})).unwrap()).unwrap();
+        assert!(refs.iter().any(|r| r.name == "refs/tags/v0.1.0"));
+
+        // A tag that does not exist: refused, the message names it, the dialog does not open.
+        let params = b.start_delete_tag("nope".to_owned()).unwrap();
+        let received = send(&mut b, &r, &mut s, Op::DeleteTag, params);
+        let Received::Failed { message, reload } = received else {
+            panic!("{received:?}")
+        };
+        assert!(message.starts_with("Cannot delete tag “nope”"), "{message}");
+        assert!(!reload);
+        assert!(b.dialog().is_none());
+    }
+
+    #[test]
+    fn a_tag_confirmation_without_the_value_cannot_be_sent() {
+        let mut b = BranchBox::default();
+        b.start_delete_tag("v1".to_owned()).unwrap();
+        b.receive(
+            Op::DeleteTag,
+            Err(String::new()),
+            Some(ErrorKind::ConfirmRequired),
+            Some("reason".to_owned()),
+            None,
+        );
+        assert!(b.modal_open());
+        assert_eq!(b.confirm_delete_tag(), None);
+        b.close();
+        assert!(b.dialog().is_none());
     }
 
     /// The commit of the local branch `name`, as the refs column shows it.

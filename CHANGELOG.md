@@ -6,6 +6,11 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
+A new look, VS Code and GitKraken style, and a left column that stays fluid with thousands of
+branches and tags.
+
 ### Changed
 
 - **Title bar** in VS Code style: the title and a File menu (open a repository, recent
@@ -26,6 +31,24 @@ All notable changes to BinariGit. The format follows
   author and date before cutting the subject, and the panel headers no longer overlap their
   buttons; the stage area shows a file's button only under the mouse; the status bar shows the
   repo path and the changed files; the commit id in the details is short with a copy icon.
+
+### Packages
+
+- Linux: `BinariGit-0.2.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35).
+- Windows: `BinariGit-0.2.0-x86_64-windows.zip` (Windows 10 or newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The window has no system frame on Windows and Linux: minimize, maximize, drag and resize are
+  the app's own and have not been tried yet with a real window manager.
+- The Windows build is cross-compiled and has not been tested on a Windows PC yet; it is not
+  signed, so SmartScreen warns on first start.
+- No macOS build; no deb or MSI packages yet.
+- The side by side diff cuts long lines at the middle and stages whole hunks only (single lines
+  in the unified view).
+- Edits to worktree files appear when the window regains focus (the refs and the index are
+  watched).
 
 ## [0.1.0] - 2026-10-24
 
@@ -64,5 +87,6 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/releases/tag/v0.1.0

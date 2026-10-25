@@ -4,7 +4,6 @@ details-no-commit = Nessun commit selezionato.
 details-loading-files = Caricamento dei file cambiati…
 details-retry = Riprova
 details-commit = Commit
-details-copy = Copia
 details-copy-hint = Copia l'id completo
 details-parent = Genitore
 details-parents = Genitori

@@ -18,13 +18,28 @@ fn main() -> eframe::Result {
     // `project <path>` opens a repository right away (`repo.open` returns the absolute root, which
     // is what the tabs and the recent repos save).
     let repo = std::env::args().nth(1);
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1200.0, 760.0])
+        .with_min_inner_size([640.0, 400.0])
+        .with_icon(Arc::new(
+            eframe::icon_data::from_png_bytes(ICON).expect("valid PNG icon"),
+        ));
+    // The menus are in the title bar, VS Code style: on macOS over a transparent title bar with
+    // the native buttons, elsewhere without decorations and with the app's own buttons.
+    let (viewport, frame) = if cfg!(target_os = "macos") {
+        let viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false);
+        (viewport, project_ui::WindowFrame::MacOs)
+    } else {
+        (
+            viewport.with_decorations(false),
+            project_ui::WindowFrame::Custom,
+        )
+    };
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 760.0])
-            .with_min_inner_size([640.0, 400.0])
-            .with_icon(Arc::new(
-                eframe::icon_data::from_png_bytes(ICON).expect("valid PNG icon"),
-            )),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -33,7 +48,9 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             // Built here: the dialogs need the window, which exists only now.
             let platform = Arc::new(NativePlatform::new(cc));
-            Ok(Box::new(project_ui::App::new(cc, platform, opener, repo)))
+            Ok(Box::new(
+                project_ui::App::new(cc, platform, opener, repo).with_window_frame(frame),
+            ))
         }),
     )
 }

@@ -34,94 +34,155 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
     ui.label(text).on_hover_text(long);
 }
 
-/// `writing`: a write is in progress, Undo, Redo, Refresh, Fetch, Pull and Push
-/// wait. `network`: the fetch, pull or push in progress with its latest progress.
-/// `recent`: the recent repos, for the "Recent" menu.
+/// The toolbar of the repo shown, GitKraken style: the branch on the left, the icon buttons
+/// at the center. `writing`: a write is in progress, Undo, Redo,
+/// Refresh, Fetch, Pull and Push wait. `network`: the fetch, pull or push in progress with its
+/// latest progress. Open and the recent repos are in the "File" menu of the title bar.
 pub(crate) fn top_bar(
     ui: &mut Ui,
-    repo: Option<&RepoView>,
-    can_pick: bool,
-    recent: &[RecentRepo],
+    repo: &RepoView,
     writing: bool,
     network: Option<Network>,
     actions: &mut Vec<Action>,
 ) {
+    let bar = ui.max_rect();
     ui.horizontal(|ui| {
-        repo_bar(ui, repo, can_pick, recent, writing, network, actions);
+        branch_info(ui, repo);
+        // The width of the buttons is known only after drawing them: the last frame's centers them.
+        let width_id = ui.scope_id().with("tools-width");
+        let width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(0.0);
+        let space = bar.center().x - width / 2.0 - ui.cursor().min.x;
+        ui.add_space(space.max(ui.spacing().item_spacing.x * 2.0));
+        let start = ui.cursor().min.x;
+        let can_write = !writing && !repo.modal_open();
+        undo_buttons(ui, repo, writing, actions);
+        ui.separator();
+        let enabled = can_write && network.is_none();
+        fetch_buttons(ui, repo, enabled, actions);
+        sync_buttons(ui, repo, enabled, actions);
+        ui.separator();
+        stash_push_button(
+            ui,
+            repo,
+            can_write,
+            ToolButton::new(icons::STASH, &tr!("top-bar-stash")),
+            actions,
+        );
+        refresh_button(ui, writing, actions);
+        let width = ui.cursor().min.x - start - ui.spacing().item_spacing.x;
+        ui.data_mut(|d| d.insert_temp(width_id, width));
+        if let Some(network) = network {
+            ui.separator();
+            network_progress(ui, network, actions);
+        }
     });
 }
 
-fn repo_bar(
-    ui: &mut Ui,
-    repo: Option<&RepoView>,
-    can_pick: bool,
-    recent: &[RecentRepo],
-    writing: bool,
-    network: Option<Network>,
-    actions: &mut Vec<Action>,
-) {
-    {
-        if can_pick
-            && ui
-                .button(tr!("top-bar-open"))
-                .on_hover_text(tr!("top-bar-open-hint"))
-                .clicked()
-        {
-            actions.push(Action::PickFolder);
-        }
-        recent_menu(ui, recent, actions);
-        let Some(repo) = repo else {
-            return;
-        };
-        let button = ui
-            .add_enabled(!writing, egui::Button::new(tr!("top-bar-refresh")))
-            .on_hover_text(tr!("top-bar-refresh-hint"))
-            .on_disabled_hover_text(tr!("top-bar-after-operation"));
-        if button.clicked() {
-            actions.push(Action::Refresh);
-        }
-        ui.separator();
-        match network {
-            Some(network) => network_progress(ui, network, actions),
-            None => {
-                let enabled = !writing && !repo.modal_open();
-                fetch_buttons(ui, repo, enabled, actions);
-                sync_buttons(ui, repo, enabled, actions);
-                stash_push_button(ui, repo, enabled, &tr!("top-bar-stash"), actions);
-            }
-        }
-        ui.separator();
-        // With an operation in progress (merge, rebase...) the engine refuses undo and redo.
-        let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
-        for op in [UndoOp::Undo, UndoOp::Redo] {
-            let available = op.available(&repo.history);
-            let enabled = available && !in_operation && !writing && !repo.modal_open();
-            let button = ui.add_enabled(enabled, egui::Button::new(op.label()));
-            let hint = op.hint(&repo.history);
-            let button = if available && in_operation {
-                button.on_disabled_hover_text(tr!("top-bar-undo-in-operation", hint = &hint))
-            } else if available && !enabled {
-                button.on_disabled_hover_text(tr!("top-bar-undo-after-operation", hint = &hint))
-            } else {
-                button.on_hover_text(&hint).on_disabled_hover_text(&hint)
-            };
-            if button.clicked() {
-                actions.push(Action::Undo(op));
-            }
-        }
-        ui.separator();
-        ui.strong(repo_name(&repo.path)).on_hover_text(&repo.path);
-        ui.separator();
-        ui.label(head_text(&repo.head));
-        if let Some(status) = &repo.status {
-            if let Some(upstream) = &status.upstream {
+/// The branch under its caption (the repo is the tab's name).
+fn branch_info(ui: &mut Ui, repo: &RepoView) {
+    ui.add_space(4.0);
+    caption(ui, &tr!("top-bar-branch"), |ui| {
+        ui.horizontal(|ui| {
+            ui.label(head_text(&repo.head));
+            if let Some(upstream) = repo.status.as_ref().and_then(|s| s.upstream.as_ref()) {
                 upstream_label(ui, upstream);
             }
-            let changes = status.entries.len();
-            if changes > 0 {
-                ui.separator();
-                ui.label(tr!("top-bar-changed-files", n = changes));
+        });
+    });
+}
+
+/// `content` with `text` small above it.
+fn caption(ui: &mut Ui, text: &str, content: impl FnOnce(&mut Ui)) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.label(RichText::new(text).small().weak());
+        content(ui);
+    });
+}
+
+/// A GitKraken-style button: the icon above, the name below, flat until the mouse is over it.
+/// Disabled with [`Ui::add_enabled`]: then it is drawn faded.
+pub(super) struct ToolButton<'a> {
+    icon: &'a str,
+    label: &'a str,
+}
+
+impl<'a> ToolButton<'a> {
+    pub(super) fn new(icon: &'a str, label: &'a str) -> Self {
+        Self { icon, label }
+    }
+}
+
+impl egui::Widget for ToolButton<'_> {
+    fn ui(self, ui: &mut Ui) -> egui::Response {
+        let color = ui.visuals().text_color();
+        let icon = ui
+            .painter()
+            .layout_no_wrap(self.icon.to_owned(), icons::font(20.0), color);
+        let font = egui::FontId::proportional(11.0);
+        let label = ui
+            .painter()
+            .layout_no_wrap(self.label.to_owned(), font, color);
+        let width = (label.size().x.max(icon.size().x) + 14.0).max(48.0);
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 46.0), Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), self.label)
+        });
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact(&response);
+            if response.hovered() || response.has_focus() {
+                ui.painter()
+                    .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
             }
+            let top = rect.top() + 5.0;
+            let icon_pos = egui::pos2(rect.center().x - icon.size().x / 2.0, top);
+            let label_pos = egui::pos2(
+                rect.center().x - label.size().x / 2.0,
+                rect.bottom() - 5.0 - label.size().y,
+            );
+            ui.painter().galley(icon_pos, icon, color);
+            ui.painter().galley(label_pos, label, color);
+        }
+        response
+    }
+}
+
+/// "Refresh": refs, status and log again.
+fn refresh_button(ui: &mut Ui, writing: bool, actions: &mut Vec<Action>) {
+    let button = ui
+        .add_enabled(
+            !writing,
+            ToolButton::new(icons::REFRESH, &tr!("top-bar-refresh")),
+        )
+        .on_hover_text(tr!("top-bar-refresh-hint"))
+        .on_disabled_hover_text(tr!("top-bar-after-operation"));
+    if button.clicked() {
+        actions.push(Action::Refresh);
+    }
+}
+
+/// "Undo" and "Redo", with the journal entry they would affect on hover.
+fn undo_buttons(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
+    // With an operation in progress (merge, rebase...) the engine refuses undo and redo.
+    let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
+    for op in [UndoOp::Undo, UndoOp::Redo] {
+        let available = op.available(&repo.history);
+        let enabled = available && !in_operation && !writing && !repo.modal_open();
+        let icon = match op {
+            UndoOp::Undo => icons::UNDO,
+            UndoOp::Redo => icons::REDO,
+        };
+        let button = ui.add_enabled(enabled, ToolButton::new(icon, &op.label()));
+        let hint = op.hint(&repo.history);
+        let button = if available && in_operation {
+            button.on_disabled_hover_text(tr!("top-bar-undo-in-operation", hint = &hint))
+        } else if available && !enabled {
+            button.on_disabled_hover_text(tr!("top-bar-undo-after-operation", hint = &hint))
+        } else {
+            button.on_hover_text(&hint).on_disabled_hover_text(&hint)
+        };
+        if button.clicked() {
+            actions.push(Action::Undo(op));
         }
     }
 }
@@ -135,7 +196,7 @@ pub(crate) struct RecentRepo {
 }
 
 /// The menu of the recent repos: one opens in a tab (or shows the tab where it is open).
-fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<Action>) {
+pub(super) fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<Action>) {
     ui.add_enabled_ui(!recent.is_empty(), |ui| {
         ui.menu_button(tr!("top-bar-recent"), |ui| {
             for repo in recent {
@@ -179,72 +240,13 @@ fn recent_text(repo: &RecentRepo) -> RichText {
     }
 }
 
-/// A tab of the strip, as [`tab_strip`] shows it.
-pub(crate) struct TabLabel {
-    pub(crate) title: String,
-    /// The repo open or opening, on hover.
-    pub(crate) path: Option<String>,
-    /// `repo.open` in progress.
-    pub(crate) opening: bool,
-    /// A write in progress: the tab cannot be closed.
-    pub(crate) writing: bool,
-}
-
-/// The open repos, one tab each, with "×" to close it and "+" to open another.
-pub(crate) fn tab_strip(
-    ui: &mut Ui,
-    tabs: &[TabLabel],
-    active: usize,
-    can_pick: bool,
-    actions: &mut Vec<Action>,
-) {
-    egui::ScrollArea::horizontal().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            for (index, tab) in tabs.iter().enumerate() {
-                if tab.opening {
-                    ui.spinner();
-                }
-                let label = ui.selectable_label(index == active, &tab.title);
-                let label = match &tab.path {
-                    Some(path) => label.on_hover_text(path),
-                    None => label,
-                };
-                if label.clicked() {
-                    actions.push(Action::SwitchTab(index));
-                }
-                let close = ui
-                    .add_enabled(
-                        !tab.writing,
-                        egui::Button::new(tr!("tabs-close")).frame(false).small(),
-                    )
-                    .on_hover_text(tr!("tabs-close-hint"))
-                    .on_disabled_hover_text(tr!("tabs-close-writing"));
-                if close.clicked() {
-                    actions.push(Action::CloseTab(index));
-                }
-                ui.separator();
-            }
-            if can_pick
-                && ui
-                    .button(tr!("tabs-new"))
-                    .on_hover_text(tr!("tabs-new-hint"))
-                    .clicked()
-            {
-                actions.push(Action::PickFolder);
-            }
-        });
-    });
-}
-
 /// The "Fetch" button and, with several remotes, the menu to choose one.
-pub(super) fn fetch_buttons(
-    ui: &mut Ui,
-    repo: &RepoView,
-    enabled: bool,
-    actions: &mut Vec<Action>,
-) {
+fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
     let button = ui
-        .add_enabled(enabled, egui::Button::new(tr!("top-bar-fetch")))
+        .add_enabled(
+            enabled,
+            ToolButton::new(icons::FETCH, &tr!("top-bar-fetch")),
+        )
         .on_hover_text(tr!("top-bar-fetch-hint"))
         .on_disabled_hover_text(wait());
     if button.clicked() {
@@ -253,7 +255,8 @@ pub(super) fn fetch_buttons(
     let remotes = repo.remotes.names();
     if remotes.len() > 1 {
         ui.add_enabled_ui(enabled, |ui| {
-            ui.menu_button(tr!("top-bar-fetch-from-menu"), |ui| {
+            let caret = RichText::new(icons::CARET_DOWN).font(icons::font(12.0));
+            ui.menu_button(caret, |ui| {
                 for remote in remotes {
                     if ui
                         .button(tr!("top-bar-fetch-from", remote = &remote))
@@ -272,7 +275,7 @@ pub(super) fn fetch_buttons(
 
 /// The "Pull" and "Push" buttons of the active branch. Never a forced push from here: force is
 /// offered only in the window of a rejected push.
-pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
+fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
     let branch = match &repo.head {
         Head::Branch {
             name,
@@ -298,7 +301,7 @@ pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions:
     };
     let enabled = enabled && branch.is_some();
     let pull = ui
-        .add_enabled(enabled, egui::Button::new(tr!("top-bar-pull")))
+        .add_enabled(enabled, ToolButton::new(icons::PULL, &tr!("top-bar-pull")))
         .on_hover_text(&pull_hint);
     let pull = if branch.is_some() {
         pull.on_disabled_hover_text(wait())
@@ -309,7 +312,7 @@ pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions:
         actions.push(Action::Pull(None, None));
     }
     let push = ui
-        .add_enabled(enabled, egui::Button::new(tr!("top-bar-push")))
+        .add_enabled(enabled, ToolButton::new(icons::PUSH, &tr!("top-bar-push")))
         .on_hover_text(&push_hint);
     let push = if branch.is_some() {
         push.on_disabled_hover_text(wait())
@@ -323,7 +326,7 @@ pub(super) fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions:
 
 /// The fetch, pull or push in progress: what, phase, bar (if git gives the percentage) and
 /// "Stop".
-pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
+fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
     ui.spinner();
     ui.strong(&network.what);
     let progress = network.progress.as_ref();
@@ -343,7 +346,10 @@ pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<
         );
     }
     let stop = ui
-        .add_enabled(!network.cancelling, egui::Button::new(tr!("top-bar-stop")))
+        .add_enabled(
+            !network.cancelling,
+            ToolButton::new(icons::STOP, &tr!("top-bar-stop")),
+        )
         .on_hover_text(network.stop_hint)
         .on_disabled_hover_text(tr!("top-bar-stopping"));
     if stop.clicked() {
@@ -352,9 +358,11 @@ pub(super) fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<
 }
 
 /// `write` is the write in progress, described: it takes precedence over the other commands. `notice`
-/// is an informational message, shown if there is nothing in progress and no error.
+/// is an informational message, shown if there is nothing in progress and no error. `repo`: the repo
+/// shown, for the changed files and its path on the right.
 pub(crate) fn status_bar(
     ui: &mut Ui,
+    repo: Option<&RepoView>,
     running: &[Job],
     write: Option<&str>,
     error: &str,
@@ -376,8 +384,18 @@ pub(crate) fn status_bar(
         } else if !notice.is_empty() {
             ui.label(notice);
         }
+        // On the right what is always useful: the changed files and where the repo is.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::warn_if_debug_build(ui);
+            let Some(repo) = repo else {
+                return;
+            };
+            let changes = repo.status.as_ref().map_or(0, |s| s.entries.len());
+            if changes > 0 {
+                ui.label(RichText::new(tr!("top-bar-changed-files", n = changes)).small());
+                ui.separator();
+            }
+            ui.add(egui::Label::new(RichText::new(&repo.path).small().weak()).truncate());
         });
     });
 }

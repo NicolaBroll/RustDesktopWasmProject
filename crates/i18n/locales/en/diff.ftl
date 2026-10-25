@@ -29,11 +29,10 @@ diff-stage-selected = Stage selected lines ({ $n })
 diff-unstage-selected = Unstage selected lines ({ $n })
 diff-stage-selected-hint = Stages only the selected lines; the rest of the file stays out
 diff-unstage-selected-hint = Unstages only the selected lines; the working tree does not change
-diff-no-lines-selected = No lines selected: click a + or - line to select it
+diff-no-lines-selected = No lines selected: click a + or - line to select it, Shift+click for a range, drag for more lines
 diff-wait-write = Wait for the current write to finish
 diff-clear = Deselect
 diff-clear-hint = Deselect all lines (Esc)
-diff-select-hint = Click a + or - line to select it, Shift+click for a range, drag for more lines
 diff-stage-hunk = Stage hunk
 diff-unstage-hunk = Unstage hunk
 diff-stage-hunk-hint = Stages all the changed lines of this hunk
@@ -50,3 +49,6 @@ diff-lines-label-unstage-lines = { $n ->
     [one] Unstage 1 line of { $path }
    *[other] Unstage { $n } lines of { $path }
 }
+diff-unified-hint = Unified view: old and new lines one under the other
+diff-split-hint = Side by side view: the old file on the left, the new one on the right
+diff-split-lines-hint = To stage single lines, switch to the unified view

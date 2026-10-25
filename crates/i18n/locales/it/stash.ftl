@@ -44,7 +44,6 @@ stash-section-title-loading = Stash
 stash-none = Nessuno stash
 stash-loading = Lettura degli stash…
 stash-list-error = Stash non letti: { $error }
-stash-new-button = Nuovo stash…
 stash-push-help = Mette da parte le modifiche (in stage e no; a scelta anche i file non tracciati) e riporta i file come l'ultimo commit. «Annulla» le rimette
 stash-no-changes = Nessuna modifica da mettere da parte
 stash-origin-untracked = { $origin } · con non tracciati

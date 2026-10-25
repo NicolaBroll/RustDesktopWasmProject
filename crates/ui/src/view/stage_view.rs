@@ -16,18 +16,20 @@ pub(crate) fn stage_panel(
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
         .show(ui, |ui| commit_box(ui, repo, draft, writing, actions));
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.heading(tr!("stage-heading"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    // In a narrow panel the title is cut, the button stays whole.
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| ui.heading(tr!("stage-heading")),
+        |ui| {
             stash_push_button(
                 ui,
                 repo,
                 !writing && !repo.modal_open(),
-                &tr!("stage-stash-button"),
+                egui::Button::new(tr!("stage-stash-button")),
                 actions,
             );
-        });
-    });
+        },
+    );
     if writing {
         ui.horizontal(|ui| {
             ui.spinner();
@@ -273,9 +275,10 @@ pub(super) fn stage_section(
             tr!("stage-stage-all-help"),
         ),
     };
-    ui.horizontal(|ui| {
-        ui.strong(tr!("stage-section-title", title = &title, n = items.len()));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| ui.strong(tr!("stage-section-title", title = &title, n = items.len())),
+        |ui| {
             let button = ui
                 .add_enabled(
                     enabled && !items.is_empty(),
@@ -301,8 +304,8 @@ pub(super) fn stage_section(
                     actions.push(Action::Discard(paths));
                 }
             }
-        });
-    });
+        },
+    );
     if items.is_empty() {
         let text = match side {
             Side::Staged => tr!("stage-empty-staged"),
@@ -337,10 +340,19 @@ pub(super) fn stage_section(
                     source,
                     path: item.path.clone(),
                 };
-                if open == Some(&target) {
+                let selected = open == Some(&target);
+                // Over the button the row's response is not hovered: the pointer decides.
+                let hovered = ui.rect_contains_pointer(rect);
+                let (text, weak) = if selected {
+                    let color = ui.visuals().selection.stroke.color;
+                    (color, color.gamma_multiply(0.75))
+                } else {
+                    (text, weak)
+                };
+                if selected {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
-                } else if response.hovered() {
+                } else if hovered {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
@@ -349,39 +361,45 @@ pub(super) fn stage_section(
                     egui::pos2(rect.left() + 11.0, rect.center().y),
                     vec2(18.0, 16.0),
                 );
-                painter.rect_filled(badge, 3.0, change_color(item.change));
+                painter.rect_filled(badge, 3.0, theme::change(item.change));
                 painter.text(
                     badge.center(),
                     Align2::CENTER_CENTER,
                     change_letter(item.change),
                     mono.clone(),
-                    Color32::from_gray(20),
+                    theme::ON_BADGE,
                 );
 
-                // On the right the row's button.
-                let button_w = 62.0;
-                let button_rect = egui::Rect::from_min_max(
-                    egui::pos2(rect.right() - button_w, rect.top()),
-                    rect.right_bottom(),
-                );
-                let mut cell = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(button_rect)
-                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                );
-                let button = cell
-                    .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
-                    .on_hover_text(row_action_help(op, item));
+                // On the right the row's button, only under the mouse and on the open file: a
+                // column of buttons on every row is noise.
+                let mut clicked = false;
+                let mut right = rect.right() - 4.0;
+                if hovered || selected {
+                    let button_w = 62.0;
+                    let button_rect = egui::Rect::from_min_max(
+                        egui::pos2(rect.right() - button_w, rect.top()),
+                        rect.right_bottom(),
+                    );
+                    let mut cell = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(button_rect)
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    );
+                    clicked = cell
+                        .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
+                        .on_hover_text(row_action_help(op, item))
+                        .clicked();
+                    right = button_rect.left() - 4.0;
+                }
 
                 let left = badge.right() + 6.0;
-                let right = button_rect.left() - 4.0;
                 let job = stage_path_job(item, &font, text, weak, right - left);
                 let galley = painter.layout_job(job);
                 let top = rect.center().y - galley.size().y / 2.0;
                 painter.galley(egui::pos2(left, top), galley, text);
 
                 let response = response.on_hover_text(stage_tooltip(op, item));
-                if (button.clicked() || response.double_clicked()) && enabled {
+                if (clicked || response.double_clicked()) && enabled {
                     actions.push(Action::Write(op, vec![item.path.clone()]));
                 } else if response.clicked() {
                     actions.push(if item.is_conflict() && op == StageOp::Stage {

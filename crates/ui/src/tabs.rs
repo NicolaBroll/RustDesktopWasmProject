@@ -4,6 +4,7 @@
 //! results of a tab not shown keep landing in it. What is saved (eframe storage): the paths of the
 //! open tabs, the one shown and the recent repos; at startup the tabs reopen.
 
+use crate::clone::{CloneBox, Received};
 use crate::executor::{Executor, Wake};
 use crate::{Action, Tab, view};
 use project_engine::{Platform, Registry, RepoOpener, Session};
@@ -50,9 +51,9 @@ pub struct App {
     platform: Arc<dyn Platform>,
     opener: Arc<dyn RepoOpener>,
     wake: Wake,
-    /// Folder chosen in the dialog: it arrives from a callback, on desktop from another thread
-    /// when the dialog closes.
-    picked: Arc<Mutex<Option<String>>>,
+    /// Folder chosen in the dialog, and what for: it arrives from a callback, on desktop from
+    /// another thread when the dialog closes.
+    picked: Arc<Mutex<Option<(Pick, String)>>>,
     /// A folder dialog is open: a second "Open…" does nothing until it closes.
     picking: Arc<AtomicBool>,
     /// The state last written to the storage: written again only when it changes.
@@ -62,6 +63,20 @@ pub struct App {
     /// Who draws the window frame: with [`view::WindowFrame::Custom`] the menu bar is also the
     /// title bar.
     frame: view::WindowFrame,
+    /// The "Clone…"/"New repository…" dialog.
+    clone: CloneBox,
+    /// The tab, not shown yet, whose session runs `repo.clone`/`repo.init`: it joins the tabs when
+    /// the new repo is open.
+    cloning: Option<Tab>,
+}
+
+/// What the folder chosen in the dialog is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pick {
+    /// "Open…": the repo opens in a tab.
+    Open,
+    /// "Browse…" of the clone dialog: the destination.
+    Destination,
 }
 
 impl App {
@@ -113,6 +128,8 @@ impl App {
             saved: saved.clone(),
             focused: None,
             frame: view::WindowFrame::Native,
+            clone: CloneBox::default(),
+            cloning: None,
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -186,9 +203,12 @@ impl App {
     /// new tab and shows the other one.
     fn receive(&mut self) {
         let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(folder) = folder {
-            self.open(folder);
+        match folder {
+            Some((Pick::Open, folder)) => self.open(folder),
+            Some((Pick::Destination, folder)) => self.clone.set_folder(&folder),
+            None => {}
         }
+        self.receive_clone();
         for tab in &mut self.tabs {
             tab.receive();
             tab.request_operation();
@@ -220,25 +240,78 @@ impl App {
         }
     }
 
+    /// The answer of `repo.clone`/`repo.init`: the new repo, open in the session of the tab that
+    /// ran it, is shown in that tab (in place of the empty tab shown, or as a new one); the loop of
+    /// [`App::receive`] then puts it in the recent list. Failed or cancelled: the tab goes away,
+    /// the dialog shows why.
+    fn receive_clone(&mut self) {
+        let Some(tab) = &mut self.cloning else {
+            return;
+        };
+        tab.receive();
+        let Some(done) = tab.clone_done.take() else {
+            return;
+        };
+        let received =
+            self.clone
+                .receive(done.ticket, done.result, done.error_kind, done.error_detail);
+        let Some(mut tab) = self.cloning.take() else {
+            return;
+        };
+        if let Received::Opened { value, notice } = received {
+            tab.created(value, notice);
+            if self.tabs[self.active].is_empty() {
+                self.tabs[self.active] = tab;
+            } else {
+                self.tabs.push(tab);
+                self.active = self.tabs.len() - 1;
+            }
+        }
+    }
+
+    /// The folder dialog, one at a time: the choice arrives in `picked` with `what`.
+    fn pick_folder(&mut self, ctx: &egui::Context, what: Pick) {
+        if self.picking.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let picked = Arc::clone(&self.picked);
+        // Cleared when the callback is called or dropped (a platform that cannot show
+        // the dialog): "Open…" never stays dead.
+        let picking = Picking(Arc::clone(&self.picking));
+        let ctx = ctx.clone();
+        self.platform.pick_folder(Box::new(move |folder| {
+            if let Some(folder) = folder {
+                *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some((what, folder));
+            }
+            drop(picking);
+            ctx.request_repaint();
+        }));
+    }
+
     fn apply(&mut self, ctx: &egui::Context, action: Action) {
         match action {
-            Action::PickFolder => {
-                if self.picking.swap(true, Ordering::AcqRel) {
+            Action::PickFolder => self.pick_folder(ctx, Pick::Open),
+            Action::OpenClone(kind) => self.clone.open(kind),
+            Action::CloneFields(fields) => self.clone.set_fields(fields),
+            Action::BrowseCloneFolder => self.pick_folder(ctx, Pick::Destination),
+            Action::SubmitClone => {
+                if self.cloning.is_some() {
                     return;
                 }
-                let picked = Arc::clone(&self.picked);
-                // Cleared when the callback is called or dropped (a platform that cannot show
-                // the dialog): "Open…" never stays dead.
-                let picking = Picking(Arc::clone(&self.picking));
-                let ctx = ctx.clone();
-                self.platform.pick_folder(Box::new(move |folder| {
-                    if let Some(folder) = folder {
-                        *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some(folder);
-                    }
-                    drop(picking);
-                    ctx.request_repaint();
-                }));
+                let Some((command, params)) = self.clone.submit() else {
+                    return;
+                };
+                let mut tab = self.new_tab();
+                let ticket = tab.create_repo(command, params);
+                self.clone.started(ticket);
+                self.cloning = Some(tab);
             }
+            Action::CancelClone => {
+                if let (Some(ticket), Some(tab)) = (self.clone.cancel(), &self.cloning) {
+                    tab.executor.cancel(ticket);
+                }
+            }
+            Action::CloseClone => self.clone.close(),
             Action::Open(path) => self.open(path),
             Action::SwitchTab(index) => {
                 if index < self.tabs.len() {
@@ -362,9 +435,20 @@ impl eframe::App for App {
         }
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];
-        let actions = ui
+        let mut actions = ui
             .push_id(("tab", tab.id), |ui| tab.ui(ui, can_pick, &recent))
             .inner;
+        if let Some(dialog) = self.clone.dialog() {
+            // The dialog is modal: the clicks under it are blocked, the tab's keys are dropped.
+            actions.clear();
+            strip.clear();
+            let progress = self
+                .clone
+                .running()
+                .zip(self.cloning.as_ref())
+                .and_then(|(running, tab)| tab.executor.progress(running.ticket));
+            view::clone_dialog(&ctx, dialog, progress.as_ref(), can_pick, &mut actions);
+        }
         for action in actions.into_iter().chain(strip) {
             self.apply(&ctx, action);
         }
@@ -428,6 +512,7 @@ fn twin(paths: &[Option<&str>], index: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clone::Kind;
     use project_engine::{Capabilities, MemoryBackend, MemoryOpener};
 
     /// The job runs inside `spawn`, on the same thread.
@@ -690,6 +775,126 @@ mod tests {
             (saved.tabs.len(), saved.recent),
             (0, vec!["b".into(), "a".into()])
         );
+    }
+
+    /// Keeps the spawned jobs until the test runs them (a clone still in progress).
+    #[derive(Default)]
+    struct Queued {
+        jobs: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    }
+
+    impl Platform for Queued {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities { open_folder: true }
+        }
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(Some("/work".to_owned()));
+        }
+        fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+            self.jobs.lock().unwrap().push(job);
+        }
+    }
+
+    impl Queued {
+        fn run_all(&self) {
+            loop {
+                let jobs = std::mem::take(&mut *self.jobs.lock().unwrap());
+                if jobs.is_empty() {
+                    break;
+                }
+                jobs.into_iter().for_each(|job| job());
+            }
+        }
+    }
+
+    fn clone_fields(url: &str, path: &str) -> Action {
+        Action::CloneFields(crate::clone::Fields {
+            url: url.into(),
+            path: path.into(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_clone_opens_in_the_empty_tab_then_in_new_tabs_and_enters_recent() {
+        let ctx = egui::Context::default();
+        let mut app = app(Saved::default(), None);
+        app.apply(&ctx, Action::OpenClone(Kind::Clone));
+        app.apply(&ctx, clone_fields("a", "copy"));
+        app.apply(&ctx, Action::SubmitClone);
+        app.receive();
+        assert!(app.clone.dialog().is_none());
+        assert_eq!(paths(&app), [Some("copy")]);
+        assert_eq!(app.recent, ["copy"]);
+        assert!(
+            !app.tabs[0].repo.as_ref().unwrap().list.commits().is_empty(),
+            "log read"
+        );
+        // With a repo shown: a new tab, shown.
+        app.apply(&ctx, Action::OpenClone(Kind::Init));
+        app.apply(&ctx, clone_fields("", "fresh"));
+        app.apply(&ctx, Action::SubmitClone);
+        app.receive();
+        assert_eq!(
+            (paths(&app), app.active),
+            (vec![Some("copy"), Some("fresh")], 1)
+        );
+        assert_eq!(app.recent, ["fresh", "copy"]);
+        assert_eq!(app.state().tabs, ["copy", "fresh"]);
+    }
+
+    #[test]
+    fn a_failed_clone_leaves_the_tabs_alone_and_the_dialog_open() {
+        let ctx = egui::Context::default();
+        let mut app = app(Saved::default(), Some("a"));
+        app.apply(&ctx, Action::OpenClone(Kind::Clone));
+        app.apply(&ctx, clone_fields("nowhere", "copy"));
+        app.apply(&ctx, Action::SubmitClone);
+        app.receive();
+        assert_eq!(paths(&app), [Some("a")]);
+        assert!(app.cloning.is_none());
+        let dialog = app.clone.dialog().unwrap();
+        assert!(dialog.failure.is_some() && dialog.can_submit());
+        assert_eq!(app.recent, ["a"]);
+    }
+
+    #[test]
+    fn a_clone_in_progress_shows_no_tab_and_can_be_cancelled() {
+        let platform = Arc::new(Queued::default());
+        let mut opener = MemoryOpener::new();
+        opener.insert("a", MemoryBackend::sample());
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            None,
+        );
+        let ctx = egui::Context::default();
+        app.apply(&ctx, Action::OpenClone(Kind::Clone));
+        app.apply(&ctx, clone_fields("https://host/a.git", ""));
+        // "Browse…": the destination is the chosen folder plus the name.
+        app.apply(&ctx, Action::BrowseCloneFolder);
+        app.receive();
+        let path = app.clone.dialog().unwrap().fields.path.clone();
+        assert_eq!(path, Path::new("/work").join("a").to_string_lossy());
+        app.apply(&ctx, clone_fields("a", "copy"));
+        app.apply(&ctx, Action::SubmitClone);
+        app.receive();
+        assert!(app.clone.running().is_some());
+        assert_eq!(paths(&app), [None], "not among the tabs yet");
+        // Not closed while running; a second submit does nothing.
+        app.apply(&ctx, Action::CloseClone);
+        app.apply(&ctx, Action::SubmitClone);
+        assert!(app.clone.dialog().is_some());
+        app.apply(&ctx, Action::CancelClone);
+        platform.run_all();
+        app.receive();
+        let dialog = app.clone.dialog().unwrap();
+        assert!(dialog.cancelled && dialog.running.is_none());
+        assert!(app.cloning.is_none());
+        assert_eq!(paths(&app), [None]);
+        assert!(app.recent.is_empty());
     }
 
     #[derive(Default)]

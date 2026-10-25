@@ -1,6 +1,7 @@
 //! Catalog of the built-in commands.
 
 mod branch;
+mod clone;
 mod conflict;
 mod file;
 mod merge;
@@ -48,6 +49,18 @@ impl Registry {
             "Open repository",
             r#"{"path": string}"#,
             repo_open,
+        );
+        add(
+            "repo.clone",
+            "Clone a repository into an absent or empty folder and open it",
+            r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
+            clone::repo_clone,
+        );
+        add(
+            "repo.init",
+            "New empty repository in an absent or empty folder, then open it",
+            r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
+            clone::repo_init,
         );
         add("repo.status", "Repository status", "{}", repo_status);
         add("repo.refs", "Branches, tags and stashes", "{}", repo_refs);
@@ -378,6 +391,8 @@ const WRITES: &[&str] = &[
     "remote.pull",
     "remote.push",
     "remote.remove",
+    "repo.clone",
+    "repo.init",
     "repo.optimize",
     "revert.abort",
     "revert.continue",
@@ -415,6 +430,11 @@ fn to_json(value: impl serde::Serialize) -> Value {
 fn repo_open(s: &mut Session, p: Value) -> Out {
     let PathParam { path } = parse_params("repo.open", p)?;
     s.open(&path)?;
+    opened(s, path)
+}
+
+/// The result of `repo.open` for the repo just opened at `path` (also `repo.clone`, `repo.init`).
+fn opened(s: &Session, path: String) -> Out {
     let repo = s.repo()?;
     let path = repo.root().unwrap_or(path);
     let head = repo.head()?;
@@ -920,6 +940,8 @@ mod tests {
                 "remote.pull",
                 "remote.push",
                 "remote.remove",
+                "repo.clone",
+                "repo.init",
                 "repo.log",
                 "repo.open",
                 "repo.operation",
@@ -972,6 +994,8 @@ mod tests {
                 "remote.pull",
                 "remote.push",
                 "remote.remove",
+                "repo.clone",
+                "repo.init",
                 "repo.optimize",
                 "revert.abort",
                 "revert.continue",

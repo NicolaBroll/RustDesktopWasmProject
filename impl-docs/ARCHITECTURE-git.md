@@ -271,6 +271,7 @@ its function (or to a new file in `impl-docs/git/`, listed here).
 | `commit.create` | [git/commit.md](git/commit.md) |
 | `branch.create`, `branch.checkout`, `branch.delete`, `branch.rename` | [git/branch.md](git/branch.md) |
 | `branch.reset`, `branch.reset_preview` | [git/reset.md](git/reset.md) |
+| `repo.clone`, `repo.init` | [git/clone.md](git/clone.md) |
 | `remote.fetch`, `remote.pull`, `remote.push` | [git/sync.md](git/sync.md) |
 | `remote.list`, `remote.add`, `remote.remove` | [git/remotes.md](git/remotes.md) |
 | `stash.list`, `stash.push`, `stash.apply` / `stash.pop`, `stash.drop` | [git/stash.md](git/stash.md) |

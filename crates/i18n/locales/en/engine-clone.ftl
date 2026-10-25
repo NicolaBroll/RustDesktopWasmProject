@@ -1,0 +1,9 @@
+engine-clone-url-empty = `url` is empty: give the address or the path of the repository to clone
+engine-clone-url-invalid = `url` contains a line break or a NUL character
+engine-clone-path-empty = `path` is empty (or contains a NUL character): give the destination folder
+engine-clone-depth-zero = `depth` must be greater than 0 (the number of commits to download)
+engine-clone-not-empty = `{ $path }` already exists and is not empty: choose a folder that does not exist or an empty one; nothing was written
+engine-clone-not-folder = `{ $path }` already exists and is not a folder (a file or a link): nothing was written
+engine-clone-no-parent = the folder that should contain `{ $path }` does not exist: nothing was written
+engine-clone-no-such-branch = `{ $url }` does not have the branch `{ $branch }`, nothing cloned: { $message }
+engine-clone-cleanup-failed = { $error }. In addition `{ $path }` could not be cleaned up ({ $reason }): check it by hand

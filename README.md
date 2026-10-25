@@ -35,6 +35,10 @@ project-cli mcp [--root <dir>]                           # MCP server on stdin/s
 Commands: `repo.open {"path"}` (`{"path", "head", "commit_graph"}`: `commit_graph` false = no
 commit-graph, so `repo.log` is slow on huge histories), `repo.optimize` (writes the commit-graph,
 `git commit-graph write --reachable`: a cache, no `confirm`, nothing to undo; `{"commit_graph"}`),
+`repo.clone {"url", "path", "branch"?, "depth"?}` and `repo.init {"path", "branch"?}` (writes; no
+open repo needed: they create the repo in an absent or empty folder, never over existing files, and
+open it; result as `repo.open`, plus `messages` for the clone; a cancelled or failed clone removes
+the folder it created; not available over MCP),
 `repo.status`, `repo.refs`, `repo.log {"skip"?, "limit"?, "rev"?, "all"?, "stashes"?}`
 (pages of 200 commits if `limit` is missing, with `has_more`; from HEAD, from `rev`, or with
 `"all": true` from all local and remote branches, tags and HEAD, without stashes or backups, and with

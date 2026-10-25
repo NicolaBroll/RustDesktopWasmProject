@@ -1,6 +1,7 @@
 //! [`CliBackend`] and [`CliOpener`]: reading a repository by running `git`.
 
 mod branch;
+mod clone;
 mod commit;
 mod conflict;
 mod discard;
@@ -28,15 +29,16 @@ use project_domain::{
     parse_diff, parse_diff_tree, parse_log, parse_refs, parse_status,
 };
 use project_engine::{
-    BACKUP_PREFIX, BlameQuery, BranchDeleted, CommitGraphState, CommitOutcome, CommitRequest,
-    ConfigEntry, ConflictResolution, ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome,
-    DiscardedFile, EngineError, FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend,
-    HeadState, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
-    MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
-    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
-    RemoteBranchDeleted, RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied,
-    StashApply, StashDrop, StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore,
-    apply_patch, backup_message, line_patch, path_matches, versions_at_risk_hidden,
+    BACKUP_PREFIX, BlameQuery, BranchDeleted, CloneOutcome, CloneRequest, CommitGraphState,
+    CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
+    ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError, FetchOutcome,
+    FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, InitRequest, JobContext,
+    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
+    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
+    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
+    RemoteSnapshot, RepoOpener, RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop,
+    StashDropped, StashEntry, StashPush, UpstreamConfig, WorktreeRestore, apply_patch,
+    backup_message, line_patch, path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -97,8 +99,8 @@ impl CliOpener {
         })
     }
 
-    /// Like [`RepoOpener::open`], but returns the concrete type.
-    pub fn open_cli(&self, path: &str) -> Result<CliBackend, EngineError> {
+    /// [`EngineError::GitTooOld`] if git is older than [`GitVersion::MIN`].
+    fn check_version(&self) -> Result<(), EngineError> {
         let version = self.git_version()?;
         if !version.is_supported() {
             return Err(EngineError::GitTooOld {
@@ -106,6 +108,12 @@ impl CliOpener {
                 required: GitVersion::MIN.to_string(),
             });
         }
+        Ok(())
+    }
+
+    /// Like [`RepoOpener::open`], but returns the concrete type.
+    pub fn open_cli(&self, path: &str) -> Result<CliBackend, EngineError> {
+        self.check_version()?;
         let not_found = |reason: Message| EngineError::RepoNotFound {
             path: path.to_owned(),
             reason,
@@ -254,6 +262,18 @@ fn failure_text(args: &[&str], stdout: &[u8]) -> EngineError {
 impl RepoOpener for CliOpener {
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError> {
         Ok(Box::new(self.open_cli(path)?))
+    }
+
+    fn clone_repo(
+        &self,
+        request: &CloneRequest,
+        job: &JobContext,
+    ) -> Result<CloneOutcome, EngineError> {
+        self.clone_into(request, job)
+    }
+
+    fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError> {
+        self.init_into(request)
     }
 }
 

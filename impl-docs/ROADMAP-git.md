@@ -514,7 +514,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   between confirmation and write) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
 
 ### S46 — Clone and new repository
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `git-scenarios` for the edge cases
+- [x] **Agent:** `git-engine`, then `egui-ui`; `git-scenarios` for the edge cases
 - **Goal:** `repo.clone {"url", "path", "branch"?, "depth"?}` and `repo.init {"path",
   "branch"?}`, commands without an open repo (as `repo.open`) that open the new repo at the end;
   new file `git/clone.md`. Destination absent or an empty directory, never over existing files
@@ -525,6 +525,11 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `git init` (initial branch from `branch` or from `init.defaultBranch`). UI: "Clone…" and
   "New repository…" in the File menu and on the empty screen (URL, folder with the non-blocking
   dialog of S39, optional branch), the repo opens in a new tab and goes in the recent ones.
+- **Status:** engine and backend done (`repo.clone`, `repo.init`, [git/clone.md](git/clone.md):
+  `RepoOpener::clone_repo`/`init_repo`, `Session::clone_repo`/`init_repo`, refused over MCP); UI
+  done (`crates/ui/src/clone.rs`, `view/clone_view.rs`: File menu and empty screen, dialog with
+  "Browse…", progress and "Cancel" in the dialog, the clone runs in a tab's session that joins the
+  tabs and the recent list when the repo is open).
 - **Done when:** tests with a local remote (`file://` and a path), a URL starting with `-`, a
   non-empty destination, a cancel midway (no folder left), `depth`, an empty remote; init with
   and without `branch`; CI green.

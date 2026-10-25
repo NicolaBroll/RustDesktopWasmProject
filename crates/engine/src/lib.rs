@@ -32,6 +32,10 @@ pub use git::{
     blame_missing_worktree, blame_no_commits, is_binary_content,
 };
 pub use git::{
+    CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
+    destination_not_empty, destination_not_folder,
+};
+pub use git::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
 };
 pub use git::{

@@ -63,10 +63,12 @@ for doc in LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md; do
 done
 
 rm -f "$OUT/$NAME" "$OUT/$NAME.zsync"
-# No FUSE in containers: the tool extracts itself instead of mounting.
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$CACHE/appimagetool-${APPIMAGETOOL_VERSION}-x86_64.AppImage" \
+# No FUSE in containers: the tool extracts itself instead of mounting. It runs in $OUT because
+# it writes the .zsync in the working directory.
+(cd "$OUT" && ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 \
+    "$CACHE/appimagetool-${APPIMAGETOOL_VERSION}-x86_64.AppImage" \
     --no-appstream --runtime-file "$CACHE/runtime-${RUNTIME_VERSION}-x86_64" \
-    --updateinformation "$UPDATE_INFO" "$APPDIR" "$OUT/$NAME"
+    --updateinformation "$UPDATE_INFO" "$APPDIR" "$OUT/$NAME")
 [ -f "$OUT/$NAME.zsync" ] || { echo "appimagetool did not write $NAME.zsync" >&2; exit 1; }
 
 (cd "$OUT" && sha256sum "$NAME" > SHA256SUMS.txt)

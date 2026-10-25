@@ -14,6 +14,7 @@ mod remote_admin;
 mod restore;
 mod stash;
 mod sync;
+mod tag;
 
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
@@ -1268,6 +1269,15 @@ impl GitBackend for CliBackend {
 
     fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
         self.create_local_branch(name, target)
+    }
+
+    fn create_tag(
+        &mut self,
+        name: &str,
+        target: &Oid,
+        message: Option<&str>,
+    ) -> Result<Oid, EngineError> {
+        self.create_tag_ref(name, target, message)
     }
 
     fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {

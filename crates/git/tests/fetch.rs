@@ -166,6 +166,67 @@ fn fetch_of_a_single_branch() {
 }
 
 #[test]
+fn prune_removes_the_branches_gone_and_saves_the_commits_only_they_had() {
+    let Setup {
+        remote: _remote,
+        other,
+        work,
+    } = setup();
+    let c1 = other.commit_file("a.txt", "one\n", "first");
+    other.push("origin", "HEAD", "main");
+    other.push("origin", "HEAD", "merged");
+    let c2 = other.commit_file("a.txt", "two\n", "only on gone");
+    other.push("origin", "HEAD", "gone");
+    let (r, mut s) = open(&work);
+    fetch(&r, &mut s, json!({}));
+    other.git(&["push", "--quiet", "origin", ":merged", ":gone"]);
+
+    // Without `prune` (and without `fetch.prune`) the branches stay.
+    let out = fetch(&r, &mut s, json!({}));
+    assert_eq!(out["updated"], json!([]));
+    assert_eq!(work.rev("origin/gone"), c2);
+
+    let out = fetch(&r, &mut s, json!({ "prune": true }));
+    assert_eq!(out["prune"], true);
+    assert_eq!(
+        out["updated"],
+        json!([
+            update("refs/remotes/origin/gone", Some(c2), None),
+            update("refs/remotes/origin/merged", Some(c1), None),
+        ])
+    );
+    // `merged` is on `origin/main`: only the commit of `gone` needs a backup.
+    let backups = out["backups"].as_array().unwrap();
+    assert_eq!(backups.len(), 1, "{backups:?}");
+    let backup = backups[0].as_str().unwrap();
+    assert!(backup.starts_with("refs/project/backup/prune-"), "{backup}");
+    assert_eq!(work.rev(backup), c2);
+    assert_eq!(work.rev("origin/main"), c1);
+    let history = r.run("edit.history", &mut s, json!({})).unwrap();
+    assert_eq!(history["can_undo"], false);
+}
+
+#[test]
+fn prune_keeps_local_tags_even_with_prune_tags() {
+    let Setup {
+        remote: _remote,
+        other,
+        work,
+    } = setup();
+    other.commit_file("a.txt", "one\n", "first");
+    other.push("origin", "HEAD", "main");
+    let (r, mut s) = open(&work);
+    fetch(&r, &mut s, json!({}));
+    work.git(&["config", "fetch.pruneTags", "true"]);
+    let c1 = work.rev("origin/main");
+    work.tag("local-only", &c1.to_string());
+
+    let out = fetch(&r, &mut s, json!({ "prune": true }));
+    assert_eq!(out["updated"], json!([]));
+    assert_eq!(work.rev("local-only"), c1);
+}
+
+#[test]
 fn the_default_remote_follows_the_upstream() {
     let Setup {
         remote,

@@ -149,6 +149,10 @@ enum Action {
     DismissCommitError,
     /// Opens the dialog for a new branch from `start`, with the proposed name.
     NewBranch(Start, String),
+    /// Opens the dialog for a new tag on the commit of `start`.
+    NewTag(Start),
+    /// The text of the tag message changed.
+    TagMessage(String),
     /// Opens the dialog to rename the local branch (short name).
     RenameBranch(String),
     /// The text of the branch name dialog changed.
@@ -806,6 +810,8 @@ impl Tab {
             | Action::CancelCommit
             | Action::DismissCommitError => self.apply_commit(action),
             Action::NewBranch(..)
+            | Action::NewTag(..)
+            | Action::TagMessage(..)
             | Action::RenameBranch(..)
             | Action::BranchName(..)
             | Action::SubmitBranchName

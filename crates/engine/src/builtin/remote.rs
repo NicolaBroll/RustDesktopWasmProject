@@ -20,6 +20,8 @@ struct FetchParams {
     remote: Option<String>,
     #[serde(default)]
     branch: Option<String>,
+    #[serde(default)]
+    prune: bool,
 }
 
 /// A ref changed by the fetch: `before`/`after` `null` = the ref did not exist / no longer exists (a
@@ -86,23 +88,36 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
 /// [`EngineError::NotAllowed`] if there is none); if missing, the one of the active branch's upstream,
 /// otherwise `origin`, otherwise the only remote. It does not touch local branches, index, worktree:
 /// it does not go into the journal of operations (the remote-tracking branches mirror the remote; a fetch after
-/// an undo would bring them back to where they were). No `--prune` from here: the configuration's `fetch.prune` /
-/// `remote.<name>.prune` applies.
+/// an undo would bring them back to where they were). With `prune` (not together with `branch`) it also removes
+/// the remote-tracking branches whose branch the remote no longer has (`--prune`); without it the
+/// configuration's `fetch.prune` / `remote.<name>.prune` applies. A removed remote-tracking branch whose
+/// commits no other ref reaches is first saved in `refs/project/backup/prune-...` (in `backups`).
 ///
 /// Slow command: progress goes to the [`JobContext`](crate::JobContext) of
 /// [`Registry::run_with`](crate::Registry::run_with); cancelled, it gives
 /// [`EngineError::Cancelled`] (the refs already updated by git stay).
 ///
-/// Result: `{"remote", "branch": string | null, "updated": [{"name", "before", "after"}] |
-/// null, "messages": [string], "warnings": [string], "refs": [RefInfo] | null, "refs_error"?}`.
+/// Result: `{"remote", "branch": string | null, "prune": bool, "updated": [{"name", "before",
+/// "after"}] | null, "messages": [string], "warnings": [string], "backups": [string], "refs":
+/// [RefInfo] | null, "refs_error"?}`.
 pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
     const ID: &str = "remote.fetch";
-    let FetchParams { remote, branch } = parse_params(ID, p)?;
+    let FetchParams {
+        remote,
+        branch,
+        prune,
+    } = parse_params(ID, p)?;
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;
     }
     if let Some(branch) = &branch {
         check_branch_name(ID, branch)?;
+        if prune {
+            return Err(EngineError::InvalidParams {
+                id: ID,
+                reason: msg!("engine-remote-fetch-prune-branch"),
+            });
+        }
     }
     let job = s.job().clone();
     let repo = s.repo_mut()?;
@@ -119,12 +134,15 @@ pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
     let request = FetchRequest {
         remote: remote.clone(),
         branch: branch.clone(),
+        prune,
     };
     let outcome = repo.fetch(&request, &job)?;
     let mut out = json!({
         "remote": remote,
         "branch": branch,
+        "prune": prune,
         "messages": outcome.messages,
+        "backups": outcome.backups,
     });
     match repo.refs() {
         Ok(after) => {
@@ -322,7 +340,15 @@ mod tests {
             );
         }
         let err = r
-            .run("remote.fetch", &mut s, json!({ "prune": true }))
+            .run(
+                "remote.fetch",
+                &mut s,
+                json!({ "prune": true, "branch": "main" }),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
+        let err = r
+            .run("remote.fetch", &mut s, json!({ "force": true }))
             .unwrap_err();
         assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
     }

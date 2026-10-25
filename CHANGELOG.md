@@ -6,6 +6,28 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Create tags**: “New tag here…” in the menu of a commit, a local branch, a remote branch or a
+  tag (`tag.create` for CLI and MCP). With a message the tag is annotated, without it is
+  lightweight; “Undo” deletes it.
+- **Fetch removes the branches deleted on the remote** (`remote.fetch` with `"prune": true`), so
+  the column no longer shows them; commits that were only there stay in a backup
+  (`refs/project/backup/prune-…`).
+- **Help → About** with version and license, and the app icon in the title bar.
+
+### Changed
+
+- Tags are listed newest version first (`v0.10.0` before `v0.9.0`).
+
+### Fixed
+
+- After moving the window by its title bar, buttons light up under the mouse again without
+  an extra click.
+- A click on the arrow of a section (Local branches, Remotes, Tags, Stashes) opens and closes it,
+  like a click on its name.
+- The close button of the window was cut by the right edge: its × is centered again.
+
 ## [0.3.0] - 2026-10-25
 
 Branches deleted on the remote from the app, and an AppImage that updates itself from GitHub.

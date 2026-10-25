@@ -195,7 +195,14 @@ impl CliBackend {
         let targets = request.targets();
         let moved: BTreeSet<&str> = request.refs.iter().map(|r| r.name.as_str()).collect();
         let mut candidates = Vec::new();
+        // An annotated tag object (undo of `tag.create`) is always saved: its message and author
+        // exist only there, even when the commit it points to stays reachable.
+        let mut tags = Vec::new();
         for oid in request.abandoned() {
+            if self.is_tag_object(&oid)? {
+                tags.push(oid);
+                continue;
+            }
             let mut kept = false;
             for target in &targets {
                 if self.is_ancestor(&oid, target)? {
@@ -207,9 +214,6 @@ impl CliBackend {
                 candidates.push(oid);
             }
         }
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
         let holders = |oids: &[Oid]| -> Result<bool, EngineError> {
             Ok(self
                 .refs_containing_any(oids)?
@@ -217,7 +221,9 @@ impl CliBackend {
                 .any(|name| !moved.contains(name.as_str())))
         };
         // A single `for-each-ref` for all: usually no other ref contains them.
-        let unprotected: Vec<Oid> = if !holders(&candidates)? {
+        let unprotected: Vec<Oid> = if candidates.is_empty() {
+            Vec::new()
+        } else if !holders(&candidates)? {
             candidates
         } else if candidates.len() == 1 {
             Vec::new()
@@ -231,7 +237,7 @@ impl CliBackend {
             out
         };
         let mut backups = Vec::new();
-        for oid in unprotected {
+        for oid in tags.into_iter().chain(unprotected) {
             let name = self.create_backup_ref(
                 request.backup_kind(),
                 &oid.to_string(),
@@ -240,6 +246,12 @@ impl CliBackend {
             backups.push(name);
         }
         Ok(backups)
+    }
+
+    /// True if `oid` is an annotated tag object (`cat-file -t`).
+    fn is_tag_object(&self, oid: &Oid) -> Result<bool, EngineError> {
+        let out = self.run(&["cat-file", "-t", &oid.to_string()])?;
+        Ok(out.trim_ascii() == b"tag")
     }
 
     /// True if commit `a` is reachable from `b` (or is `b`). Without replace objects

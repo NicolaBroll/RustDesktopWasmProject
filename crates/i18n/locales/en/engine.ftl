@@ -54,6 +54,13 @@ engine-branch-name-full = use the short branch name (without `refs/heads/`)
 engine-branch-name-invalid = not a valid branch name
 engine-branch-name-dash = a branch name cannot start with `-`
 engine-branch-name-reserved = name reserved by git
+engine-tag-name-empty = the tag name is empty
+engine-tag-name-full = use the short tag name (without `refs/tags/`)
+engine-tag-name-dash = a tag name cannot start with `-`
+engine-tag-name-invalid = not a valid tag name
+engine-tag-exists = a tag `{ $name }` already exists, nothing changed (a tag is never overwritten)
+engine-tag-name-taken-git = the tag name `{ $name }` is already taken, nothing changed (a tag is never overwritten): { $stderr }
+engine-tag-unborn-target = the repository has no commits yet: nothing to tag
 # Operation in progress (`check_no_operation`): `$what` is one of the `engine-busy-*`.
 engine-operation-in-progress = { $operation ->
     [merge] a merge

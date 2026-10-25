@@ -12,6 +12,7 @@ mod remote;
 mod remote_branch;
 mod remotes;
 mod stash;
+mod tag;
 
 use crate::commands::parse_params;
 use crate::{
@@ -164,9 +165,15 @@ impl Registry {
             branch::branch_rename,
         );
         add(
+            "tag.create",
+            "Create a tag",
+            r#"{"name": string, "target"?: string (rev, HEAD), "message"?: string (annotated tag; without: lightweight)}"#,
+            tag::tag_create,
+        );
+        add(
             "remote.fetch",
             "Download from the remote (fetch)",
-            r#"{"remote"?: string (configured remote; upstream, origin or the only one), "branch"?: string (only that branch)}"#,
+            r#"{"remote"?: string (configured remote; upstream, origin or the only one), "branch"?: string (only that branch), "prune"?: bool (also remove the remote branches gone from the remote; not with branch)}"#,
             remote::remote_fetch,
         );
         add(
@@ -364,6 +371,7 @@ const WRITES: &[&str] = &[
     "stash.drop",
     "stash.pop",
     "stash.push",
+    "tag.create",
     "worktree.discard",
 ];
 
@@ -909,6 +917,7 @@ mod tests {
                 "stash.list",
                 "stash.pop",
                 "stash.push",
+                "tag.create",
                 "worktree.discard"
             ]
         );
@@ -953,6 +962,7 @@ mod tests {
                 "stash.drop",
                 "stash.pop",
                 "stash.push",
+                "tag.create",
                 "worktree.discard"
             ]
         );

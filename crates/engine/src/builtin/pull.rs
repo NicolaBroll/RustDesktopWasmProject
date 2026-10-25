@@ -170,6 +170,7 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
             &FetchRequest {
                 remote: upstream.remote.clone(),
                 branch: Some(merge_branch.to_owned()),
+                prune: false,
             },
             &job,
         )

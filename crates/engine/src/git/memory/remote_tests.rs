@@ -12,6 +12,7 @@ fn request(remote: &str, branch: Option<&str>) -> FetchRequest {
     FetchRequest {
         remote: remote.to_owned(),
         branch: branch.map(str::to_owned),
+        prune: false,
     }
 }
 
@@ -51,6 +52,36 @@ fn a_branch_removed_from_the_remote_stays_without_prune() {
     repo.fetch(&request("origin", None), &JobContext::new())
         .unwrap();
     assert_eq!(repo.refs["refs/remotes/origin/main"].target, oid(11));
+}
+
+#[test]
+fn prune_removes_the_branches_gone_and_saves_the_commits_only_they_had() {
+    let mut repo = MemoryBackend::sample();
+    repo.fetch(&request("origin", None), &JobContext::new())
+        .unwrap();
+    repo.remove_branch_on_remote("origin", "main");
+    repo.remove_branch_on_remote("origin", "feature/graph");
+    let prune = FetchRequest {
+        prune: true,
+        ..request("origin", None)
+    };
+    let out = repo.fetch(&prune, &JobContext::new()).unwrap();
+    assert!(!repo.refs.contains_key("refs/remotes/origin/main"));
+    assert!(!repo.refs.contains_key("refs/remotes/origin/feature/graph"));
+    // `origin/main` is behind the local `main`: nothing to save. The commit downloaded on
+    // `origin/feature/graph` had no other ref.
+    assert_eq!(out.backups, ["refs/project/backup/prune-1"]);
+    assert_eq!(
+        repo.commit_backups(),
+        [("refs/project/backup/prune-1".to_owned(), oid(13))]
+    );
+    assert!(
+        out.messages
+            .iter()
+            .any(|m| m.contains("[deleted]") && m.contains("origin/main")),
+        "{:?}",
+        out.messages
+    );
 }
 
 #[test]

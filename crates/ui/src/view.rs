@@ -62,7 +62,7 @@ use sync_view::*;
 pub(crate) use sync_view::{failure_window, sync_window};
 pub(crate) use tab_strip::{TabLabel, tab_strip_panel};
 pub use title_bar::WindowFrame;
-pub(crate) use title_bar::{TitleBar, title_bar_panel, window_edges};
+pub(crate) use title_bar::{TitleBar, end_window_move, title_bar_panel, window_edges};
 use top_bar::*;
 pub(crate) use top_bar::{RecentRepo, repo_name, status_bar, top_bar, welcome};
 

@@ -2,6 +2,14 @@
 
 branch-start-commit = commit { $id }
 branch-create-label = Creazione del branch «{ $name }»
+branch-tag-label = Creazione del tag “{ $name }”
+branch-tag-created = Tag “{ $tag }” creato su { $id }. “Annulla” lo elimina
+branch-tag-created-annotated = Tag annotato “{ $tag }” creato su { $id }. “Annulla” lo elimina
+branch-tag-title = Nuovo tag
+branch-tag-button = Crea tag
+branch-tag-text = Il tag punta a { $start } ({ $id }). Con un messaggio è annotato (autore, data e messaggio), senza è leggero. Non viene pubblicato sul remote.
+branch-tag-name-hint = es. v1.0.0
+branch-tag-message-hint = Messaggio (facoltativo: crea un tag annotato)
 branch-rename-label = Rinomina di «{ $name }»
 branch-checkout-label = Checkout di «{ $name }»
 branch-delete-label = Eliminazione di «{ $name }»

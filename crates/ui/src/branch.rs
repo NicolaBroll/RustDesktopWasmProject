@@ -1,7 +1,8 @@
 //! Local branches from the refs column menu (S24): `branch.create`, `branch.checkout`,
-//! `branch.delete`, `branch.rename`. Data only, no egui: tested with unit tests.
+//! `branch.delete`, `branch.rename`; and `tag.create`, from the same name dialog. Data only, no
+//! egui: tested with unit tests.
 //!
-//! The name of a new (or renamed) branch is typed in a small dialog; the only check done
+//! The name of a new (or renamed) branch or of a new tag is typed in a small dialog; the only check done
 //! here is that it is not empty: the engine decides whether it is valid, and its error stays in the dialog.
 //! Deletion happens in two steps like discard: first without `confirm`, which deletes a merged
 //! branch right away or answers `ConfirmRequired`; only after the click in the confirmation
@@ -28,6 +29,8 @@ pub enum Op {
     Checkout,
     Delete,
     Rename,
+    /// `tag.create`: the name dialog serves tags too.
+    CreateTag,
 }
 
 impl Op {
@@ -38,6 +41,7 @@ impl Op {
             Op::Checkout => "branch.checkout",
             Op::Delete => "branch.delete",
             Op::Rename => "branch.rename",
+            Op::CreateTag => "tag.create",
         }
     }
 }
@@ -89,6 +93,8 @@ pub enum NameKind {
     Create(Start),
     /// The current short name.
     Rename(String),
+    /// A new tag on the commit of `Start`.
+    Tag(Start),
 }
 
 /// The dialog to type the name of a branch.
@@ -97,6 +103,8 @@ pub struct NameDialog {
     pub kind: NameKind,
     /// The typed text.
     pub name: String,
+    /// The tag message (only for [`NameKind::Tag`]): with it the tag is annotated.
+    pub message: String,
     /// The engine error from the last submit, shown in the dialog.
     pub error: Option<String>,
     /// True while the command is running.
@@ -116,7 +124,7 @@ impl NameDialog {
         !self.sending
             && !name.is_empty()
             && match &self.kind {
-                NameKind::Create(_) => true,
+                NameKind::Create(_) | NameKind::Tag(_) => true,
                 NameKind::Rename(old) => name != old,
             }
     }
@@ -125,6 +133,7 @@ impl NameDialog {
         match self.kind {
             NameKind::Create(_) => Op::Create,
             NameKind::Rename(_) => Op::Rename,
+            NameKind::Tag(_) => Op::CreateTag,
         }
     }
 
@@ -133,6 +142,14 @@ impl NameDialog {
         match &self.kind {
             NameKind::Create(start) => json!({ "name": name, "start": start.target.to_string() }),
             NameKind::Rename(old) => json!({ "name": old, "new_name": name }),
+            NameKind::Tag(start) => {
+                let mut params = json!({ "name": name, "target": start.target.to_string() });
+                let message = self.message.trim();
+                if !message.is_empty() {
+                    params["message"] = json!(message);
+                }
+                params
+            }
         }
     }
 
@@ -141,6 +158,7 @@ impl NameDialog {
         match &self.kind {
             NameKind::Create(_) => tr!("branch-create-label", name = self.trimmed()),
             NameKind::Rename(old) => tr!("branch-rename-label", name = old),
+            NameKind::Tag(_) => tr!("branch-tag-label", name = self.trimmed()),
         }
     }
 }
@@ -235,6 +253,11 @@ impl BranchBox {
         self.open_name(NameKind::Create(start), name)
     }
 
+    /// Opens the dialog for a new tag on the commit of `start`.
+    pub fn open_tag(&mut self, start: Start) -> bool {
+        self.open_name(NameKind::Tag(start), String::new())
+    }
+
     /// Opens the dialog to rename the branch `name` (short).
     pub fn open_rename(&mut self, name: String) -> bool {
         self.open_name(NameKind::Rename(name.clone()), name)
@@ -247,6 +270,7 @@ impl BranchBox {
         self.dialog = Some(Dialog::Name(NameDialog {
             kind,
             name,
+            message: String::new(),
             error: None,
             sending: false,
         }));
@@ -259,6 +283,15 @@ impl BranchBox {
             && !dialog.sending
         {
             dialog.name = name;
+        }
+    }
+
+    /// The text of the tag message changed.
+    pub fn set_message(&mut self, message: String) {
+        if let Some(Dialog::Name(dialog)) = &mut self.dialog
+            && !dialog.sending
+        {
+            dialog.message = message;
         }
     }
 
@@ -338,7 +371,7 @@ impl BranchBox {
         detail: Option<String>,
     ) -> Received {
         match op {
-            Op::Create | Op::Rename => self.receive_name(op, result),
+            Op::Create | Op::Rename | Op::CreateTag => self.receive_name(op, result),
             Op::Checkout => self.receive_checkout(result, kind, detail),
             Op::Delete => self.receive_delete(result, kind, detail),
         }
@@ -363,6 +396,7 @@ impl BranchBox {
                 self.dialog = None;
                 let outcome = match op {
                     Op::Create => parse::<CreateResult>(op, value).map(CreateResult::outcome),
+                    Op::CreateTag => parse::<TagResult>(op, value).map(TagResult::outcome),
                     _ => parse::<RenameResult>(op, value).map(RenameResult::outcome),
                 };
                 done(outcome)
@@ -503,6 +537,38 @@ impl CreateResult {
                 branch = short(&self.branch),
                 id = self.target.short()
             ),
+            refs: self.refs,
+            status: None,
+            warning: self.refs_error.map(refs_warning),
+            history: self.history,
+        }
+    }
+}
+
+/// Result of `tag.create`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TagResult {
+    pub tag: String,
+    pub target: Oid,
+    pub annotated: bool,
+    pub refs: Option<Vec<RefInfo>>,
+    pub refs_error: Option<String>,
+    #[serde(flatten)]
+    pub history: History,
+}
+
+impl TagResult {
+    fn outcome(self) -> Outcome {
+        let tag = self.tag.strip_prefix("refs/tags/").unwrap_or(&self.tag);
+        let id = self.target.short();
+        let notice = if self.annotated {
+            tr!("branch-tag-created-annotated", tag = tag, id = id)
+        } else {
+            tr!("branch-tag-created", tag = tag, id = id)
+        };
+        Outcome {
+            op: Op::CreateTag,
+            notice,
             refs: self.refs,
             status: None,
             warning: self.refs_error.map(refs_warning),
@@ -666,6 +732,19 @@ impl Tab {
                     && !repo.modal_open()
                 {
                     repo.branch.open_create(start, name);
+                }
+            }
+            Action::NewTag(start) => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.branch.open_tag(start);
+                }
+            }
+            Action::TagMessage(message) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.set_message(message);
                 }
             }
             Action::RenameBranch(name) => {
@@ -899,6 +978,62 @@ mod tests {
         let (op, params, _) = b.submit_name().unwrap();
         assert_eq!(op, Op::Rename);
         assert_eq!(params, json!({ "name": "main", "new_name": "primary" }));
+    }
+
+    #[test]
+    fn the_tag_dialog_sends_the_message_only_if_written() {
+        let mut opener = MemoryOpener::default();
+        opener.insert("r", MemoryBackend::sample());
+        let mut s = Session::new(Arc::new(opener));
+        let r = Registry::builtin();
+        r.run("repo.open", &mut s, json!({ "path": "r" })).unwrap();
+        let head = s.repo().unwrap().head().unwrap().target().unwrap();
+
+        let mut b = BranchBox::default();
+        assert!(b.open_tag(Start::from_commit(head)));
+        assert_eq!(b.submit_name(), None, "no name yet");
+        b.set_name(" v2 ".to_owned());
+        b.set_message("  ".to_owned());
+        let (op, params, label) = b.submit_name().unwrap();
+        assert_eq!(op, Op::CreateTag);
+        assert_eq!(params, json!({ "name": "v2", "target": head.to_string() }));
+        assert_eq!(label, "Creating tag “v2”");
+        let Received::Done(outcome) = b.receive(
+            op,
+            r.run(op.command(), &mut s, params)
+                .map_err(|e| e.to_string()),
+            None,
+            None,
+        ) else {
+            panic!()
+        };
+        assert!(
+            outcome.notice.starts_with("Tag “v2” created"),
+            "{}",
+            outcome.notice
+        );
+        assert!(outcome.history.can_undo);
+        assert!(b.dialog().is_none());
+
+        assert!(b.open_tag(Start::from_commit(head)));
+        b.set_name("v3".to_owned());
+        b.set_message("Release 3\n".to_owned());
+        let (op, params, _) = b.submit_name().unwrap();
+        assert_eq!(params["message"], "Release 3");
+        let Received::Done(outcome) = b.receive(
+            op,
+            r.run(op.command(), &mut s, params)
+                .map_err(|e| e.to_string()),
+            None,
+            None,
+        ) else {
+            panic!()
+        };
+        assert!(
+            outcome.notice.starts_with("Annotated tag “v3”"),
+            "{}",
+            outcome.notice
+        );
     }
 
     #[test]

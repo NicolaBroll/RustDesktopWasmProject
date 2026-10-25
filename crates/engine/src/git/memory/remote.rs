@@ -8,7 +8,7 @@
 //! shape as git's (a `Receiving objects` phase from 0 to 100%).
 
 use super::{MemoryBackend, REMOTES, RefEntry};
-use crate::git::{FetchOutcome, FetchRequest, mask_url, short};
+use crate::git::{BACKUP_PREFIX, FetchOutcome, FetchRequest, mask_url, short};
 use crate::{EngineError, JobContext, Progress};
 use project_domain::{Commit, Oid};
 use std::collections::BTreeMap;
@@ -170,6 +170,43 @@ impl MemoryBackend {
         for commit in new {
             self.commits.insert(commit.id, commit);
         }
+        let mut backups = Vec::new();
+        if request.prune && request.branch.is_none() {
+            let prefix = format!("{REMOTES}{remote_name}/");
+            let gone: Vec<(String, Oid)> = self
+                .refs
+                .iter()
+                .filter_map(|(name, entry)| {
+                    let branch = name.strip_prefix(&prefix)?;
+                    (!branches.iter().any(|(b, _)| b == branch))
+                        .then(|| (name.clone(), entry.target))
+                })
+                .collect();
+            for (name, target) in gone {
+                self.refs.remove(&name);
+                let branch = &name[prefix.len()..];
+                messages.push(format!(
+                    " - [deleted]         (none) -> {remote_name}/{branch}"
+                ));
+                let others = self
+                    .refs
+                    .values()
+                    .map(|e| e.target)
+                    .chain(self.commit_backups.iter().map(|(_, oid)| *oid));
+                if !self.reachable_from(others).contains(&target) {
+                    let backup = format!(
+                        "{BACKUP_PREFIX}prune-{}",
+                        self.commit_backups
+                            .iter()
+                            .filter(|(n, _)| n.starts_with(&format!("{BACKUP_PREFIX}prune-")))
+                            .count()
+                            + 1
+                    );
+                    self.commit_backups.push((backup.clone(), target));
+                    backups.push(backup);
+                }
+            }
+        }
         for (branch, target) in branches {
             let full = format!("{REMOTES}{remote_name}/{branch}");
             let line = match self.refs.get(&full) {
@@ -196,7 +233,7 @@ impl MemoryBackend {
             // Nothing new: git does not even write `From`.
             messages.clear();
         }
-        Ok(FetchOutcome { messages })
+        Ok(FetchOutcome { messages, backups })
     }
 }
 

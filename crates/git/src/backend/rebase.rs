@@ -7,8 +7,10 @@
 //!
 //! `git -c core.fsmonitor=false -c rebase.updateRefs=false -c rebase.abbreviateCommands=false -c
 //! rebase.missingCommitsCheck=error -c rebase.instructionFormat= -c sequence.editor= rebase -i
-//! --no-autostash --no-autosquash --no-update-refs --no-rerere-autoupdate --empty=keep
-//! --keep-empty --end-of-options <base>`
+//! --no-autostash --no-autosquash --no-rerere-autoupdate --empty=keep --keep-empty
+//! --end-of-options <base>`
+//!
+//! (`rebase.updateRefs=false` and not `--no-update-refs`, which git 2.30 does not know).
 //!
 //! with `GIT_EDITOR=:` (git keeps its default messages) and `GIT_REFLOG_ACTION=project: <id>`.
 //! A `reword`, and a group with a message, is followed by a `break`: at each of these stops the
@@ -295,7 +297,6 @@ impl CliBackend {
             "-i",
             "--no-autostash",
             "--no-autosquash",
-            "--no-update-refs",
             "--no-rerere-autoupdate",
             "--empty=keep",
             "--keep-empty",

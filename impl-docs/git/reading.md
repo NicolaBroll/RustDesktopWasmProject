@@ -226,10 +226,11 @@ Parameters: `{"path", "rev"?, "skip"?, "limit"?, "follow"?}` (`limit` 200 if mis
 `TypeChanged`, merges compared with the first parent): `path` is the name of the file in that commit, `old_path` the previous one for a rename
 or copy, so the UI can show the diff of that commit for the right path (`diff.commit` with `path`).
 
-`CliBackend`: `git --literal-pathspecs log <FILE_LOG_ARGS> (--follow --find-renames | --no-follow
+`CliBackend`: `git --literal-pathspecs -c log.diffMerges=separate log <FILE_LOG_ARGS> (--follow --find-renames | --no-follow
 --no-renames) [--skip=<n>] --max-count=<n> --end-of-options <oid> -- <path>` (`LOG_ARGS` plus
-`--name-status --diff-merges=first-parent --root --no-relative`: without `--diff-merges` a merge has
-no entry, without `--root` and with `log.showRoot=false` the root commit is hidden); the explicit
+`--name-status -m --root --no-relative`: without `-m` a merge has no entry; with `-m` it has one
+record per parent, first parent first, and `parse_file_log` keeps the first (`--diff-merges=first-parent`
+exists only from git 2.31, `log.diffMerges=separate` pins `-m` from git 2.33 on); without `--root` and with `log.showRoot=false` the root commit is hidden); the explicit
 follow/renames options make the result independent of `log.follow` and `diff.renames=copies`.
 Merges are kept (git shows a merge only if it changed the file with respect to every parent, like
 `git log -- <path>`). **With `--follow` git applies `--skip` before seeing the renames** (the commits

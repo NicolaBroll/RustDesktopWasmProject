@@ -1,0 +1,90 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+  "ahead": 1,
+  "backup": "refs/project/backup/merge-1",
+  "before": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+  "behind": 1,
+  "branch": "main",
+  "can_redo": false,
+  "can_undo": false,
+  "conflicts": [
+    "a.txt"
+  ],
+  "in_progress": true,
+  "message": "CONFLICT (content): Merge conflict in a.txt\nAutomatic merge failed; fix conflicts and then commit the result.",
+  "next_redo": null,
+  "next_undo": null,
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/ahead",
+      "tag_object": null,
+      "target": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feat",
+      "tag_object": null,
+      "target": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/other",
+      "tag_object": null,
+      "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "upstream": null
+    }
+  ],
+  "rev": "other",
+  "source": {
+    "full": "refs/heads/other",
+    "kind": "branch",
+    "name": "other"
+  },
+  "status": {
+    "entries": [
+      {
+        "index": "Unmerged",
+        "kind": {
+          "Unmerged": {
+            "conflict": "BothModified",
+            "mode_base": 33188,
+            "mode_ours": 33188,
+            "mode_theirs": 33188,
+            "mode_worktree": 33188,
+            "oid_base": "7a610363713f394e6364ccc3901a49931af5d540",
+            "oid_ours": "c01acf5605468fcc55897c4225a0a1af481a44ec",
+            "oid_theirs": "bb24d5d195baf9d07ae20359a1289a12213ae5af",
+            "submodule": null
+          }
+        },
+        "path": "a.txt",
+        "worktree": "Unmerged"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "975835de1c9756cebfc846100bfc1e42987bbcbf"
+      }
+    },
+    "operation": "Merge",
+    "upstream": null
+  },
+  "strategy": "merge",
+  "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+  "warnings": []
+}

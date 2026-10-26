@@ -1,0 +1,15 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commit_graph": false,
+  "head": {
+    "Branch": {
+      "name": "feature/graph",
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5"
+    }
+  },
+  "messages": [],
+  "path": "dest2"
+}

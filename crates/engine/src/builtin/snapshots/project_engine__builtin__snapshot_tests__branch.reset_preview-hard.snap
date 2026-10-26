@@ -1,0 +1,20 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+  "before": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+  "branch": "refs/heads/main",
+  "expected": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+  "files": [
+    "README.md",
+    "docs/guide.md",
+    "src/lib.rs"
+  ],
+  "mode": "hard",
+  "needs_confirm": true,
+  "published": 0,
+  "upstream": null,
+  "warnings": []
+}

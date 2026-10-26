@@ -1,0 +1,98 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commits": [
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700003600
+      },
+      "boundary": false,
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700003600
+      },
+      "id": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "path": "README.md",
+      "previous": null,
+      "summary": "Add the README"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700018000
+      },
+      "boundary": false,
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700018000
+      },
+      "id": "bd64a5d9adefe00072419db23951df990e6c7d03",
+      "path": "README.md",
+      "previous": [
+        "6e73e372e2338acae474c66a4b98b030dbef19fc",
+        "README.md"
+      ],
+      "summary": "Fix a typo in the README"
+    }
+  ],
+  "lines": [
+    {
+      "commit": 0,
+      "orig_line": 1,
+      "text": "README.md"
+    },
+    {
+      "commit": null,
+      "orig_line": 2,
+      "text": "last change: unstaged change"
+    },
+    {
+      "commit": 0,
+      "orig_line": 3,
+      "text": ""
+    },
+    {
+      "commit": 0,
+      "orig_line": 4,
+      "text": "# README"
+    },
+    {
+      "commit": 0,
+      "orig_line": 5,
+      "text": ""
+    },
+    {
+      "commit": 0,
+      "orig_line": 6,
+      "text": "Project documentation."
+    },
+    {
+      "commit": 1,
+      "orig_line": 7,
+      "text": "line added by: commit 6"
+    },
+    {
+      "commit": null,
+      "orig_line": 8,
+      "text": "line added by: staged change"
+    },
+    {
+      "commit": null,
+      "orig_line": 9,
+      "text": "line added by: unstaged change"
+    }
+  ],
+  "path": "README.md",
+  "rev": null
+}

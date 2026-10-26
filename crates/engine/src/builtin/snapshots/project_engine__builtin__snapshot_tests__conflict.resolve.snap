@@ -1,0 +1,35 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/conflict-1",
+  "index_backup": null,
+  "status": {
+    "entries": [
+      {
+        "index": "Modified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "c01acf5605468fcc55897c4225a0a1af481a44ec",
+            "oid_index": "2b57db522afda7b60eab54aa10b1aa05ebcc7c74",
+            "submodule": null
+          }
+        },
+        "path": "a.txt",
+        "worktree": "Unmodified"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "975835de1c9756cebfc846100bfc1e42987bbcbf"
+      }
+    },
+    "operation": "Merge",
+    "upstream": null
+  }
+}

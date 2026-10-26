@@ -1,0 +1,87 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "also_on": [],
+  "backup": null,
+  "branch": "refs/heads/main",
+  "can_redo": false,
+  "can_undo": true,
+  "commit": {
+    "author": {
+      "email": "ada@example.com",
+      "name": "Ada",
+      "offset_min": 0,
+      "time": 1700000420
+    },
+    "body": "",
+    "committer": {
+      "email": "ada@example.com",
+      "name": "Ada",
+      "offset_min": 0,
+      "time": 1700000420
+    },
+    "id": "d37e250a7364e4c55d0cd10e206affeecce300ae",
+    "parents": [
+      "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6"
+    ],
+    "summary": "Merge branch 'other'"
+  },
+  "message": "Merge branch 'other'",
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "after": "d37e250",
+      "before": "975835d",
+      "branch": "main",
+      "source": "other",
+      "strategy": "merge"
+    },
+    "key": "engine-journal-merge",
+    "text": "Merge of other into `main` (merge commit: from 975835d to d37e250)"
+  },
+  "previous": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/ahead",
+      "tag_object": null,
+      "target": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feat",
+      "tag_object": null,
+      "target": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "d37e250a7364e4c55d0cd10e206affeecce300ae",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/other",
+      "tag_object": null,
+      "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "upstream": null
+    }
+  ],
+  "status": {
+    "entries": [],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "d37e250a7364e4c55d0cd10e206affeecce300ae"
+      }
+    },
+    "operation": null,
+    "upstream": null
+  }
+}

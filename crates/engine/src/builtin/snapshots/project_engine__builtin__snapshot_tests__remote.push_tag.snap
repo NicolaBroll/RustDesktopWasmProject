@@ -1,0 +1,55 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "annotated": true,
+  "kind": "new",
+  "messages": [
+    "To https://example.com/project.git"
+  ],
+  "name": "v0.1.0",
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "c4ca37b7f8ad8aff5424e3deaf36a071a202a225",
+      "upstream": {
+        "ahead": null,
+        "behind": null,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    }
+  ],
+  "remote": "origin",
+  "summary": "[new tag]",
+  "tag": "refs/tags/v0.1.0",
+  "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+  "value": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c"
+}

@@ -1,0 +1,47 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commit": {
+    "author": {
+      "email": "ada@example.com",
+      "name": "Ada Rossi",
+      "offset_min": 60,
+      "time": 1700000000
+    },
+    "body": "",
+    "committer": {
+      "email": "ada@example.com",
+      "name": "Ada Rossi",
+      "offset_min": 60,
+      "time": 1700000000
+    },
+    "id": "910a2dec89025cc1beeb8da1658eec67f893a2ee",
+    "parents": [],
+    "summary": "First commit"
+  },
+  "compared_to": null,
+  "files": [
+    {
+      "change": "Added",
+      "new_mode": 33188,
+      "new_oid": "46ca7bfe98b0f60116bcd82553759b0c65da9b83",
+      "old_mode": 0,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "original": null,
+      "path": ".gitignore",
+      "score": null
+    },
+    {
+      "change": "Added",
+      "new_mode": 33188,
+      "new_oid": "4449977628742273dac98444b5e20566ad0bf9d3",
+      "old_mode": 0,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "original": null,
+      "path": ".gitkeep",
+      "score": null
+    }
+  ]
+}

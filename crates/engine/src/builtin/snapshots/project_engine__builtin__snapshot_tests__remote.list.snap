@@ -1,0 +1,23 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "default": "origin",
+  "push_default": null,
+  "remotes": [
+    {
+      "branches": 2,
+      "credentials": false,
+      "default": true,
+      "fetch": [
+        "+refs/heads/*:refs/remotes/origin/*"
+      ],
+      "mirror": false,
+      "name": "origin",
+      "push_default": false,
+      "push_urls": [],
+      "url": "https://example.com/project.git"
+    }
+  ]
+}

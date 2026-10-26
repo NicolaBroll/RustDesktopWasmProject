@@ -1,0 +1,147 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commits": [
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700028800
+      },
+      "body": "",
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700028800
+      },
+      "id": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "parents": [
+        "63cbe1e459320dd7044c3cd7f43c661ce6984080"
+      ],
+      "summary": "Property tests for the lanes"
+    },
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700021600
+      },
+      "body": "A lane that closes becomes available for the next fork.\n\nThis keeps the graph narrow even with many branches.",
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700021600
+      },
+      "id": "63cbe1e459320dd7044c3cd7f43c661ce6984080",
+      "parents": [
+        "63033b0ca389c35ac097314d939736f83b92d3f0"
+      ],
+      "summary": "Lanes: reuse the free columns"
+    },
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700014400
+      },
+      "body": "",
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700014400
+      },
+      "id": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "parents": [
+        "6e73e372e2338acae474c66a4b98b030dbef19fc"
+      ],
+      "summary": "Graph lanes: first version"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700010800
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700010800
+      },
+      "id": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "parents": [
+        "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6"
+      ],
+      "summary": "Log parser"
+    },
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700007200
+      },
+      "body": "crates/ and apps/ folders, Cargo workspace.",
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700007200
+      },
+      "id": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "parents": [
+        "975835de1c9756cebfc846100bfc1e42987bbcbf"
+      ],
+      "summary": "Project structure"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700003600
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700003600
+      },
+      "id": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "parents": [
+        "910a2dec89025cc1beeb8da1658eec67f893a2ee"
+      ],
+      "summary": "Add the README"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700000000
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700000000
+      },
+      "id": "910a2dec89025cc1beeb8da1658eec67f893a2ee",
+      "parents": [],
+      "summary": "First commit"
+    }
+  ],
+  "has_more": false
+}

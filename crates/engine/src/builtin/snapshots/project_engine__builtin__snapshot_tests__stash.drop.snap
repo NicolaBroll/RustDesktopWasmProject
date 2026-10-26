@@ -1,0 +1,31 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/stash-2",
+  "can_redo": false,
+  "can_undo": true,
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "id": "77f310a",
+      "message": "WIP on main: 943ff9f Commit panel",
+      "name": "stash@{0}"
+    },
+    "key": "engine-journal-stash-drop",
+    "text": "Drop stash@{0} (77f310a “WIP on main: 943ff9f Commit panel”)"
+  },
+  "stash": {
+    "base": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+    "branch": "main",
+    "id": "77f310ae32ca422776ceab0ce6b1abade41f4196",
+    "index": 0,
+    "message": "WIP on main: 943ff9f Commit panel",
+    "name": "stash@{0}",
+    "time": 1700039660,
+    "untracked": false
+  },
+  "stashes": [],
+  "warnings": []
+}

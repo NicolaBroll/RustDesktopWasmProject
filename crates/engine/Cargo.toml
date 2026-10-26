@@ -22,6 +22,7 @@ test-support = []
 [dev-dependencies]
 fluent-syntax.workspace = true
 proptest.workspace = true
+insta = { workspace = true, features = ["json"] }
 
 [lints]
 workspace = true

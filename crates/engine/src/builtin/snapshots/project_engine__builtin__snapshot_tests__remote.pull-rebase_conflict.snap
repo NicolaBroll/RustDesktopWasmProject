@@ -1,0 +1,156 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+  "ahead": 1,
+  "backup": "refs/project/backup/pull-1",
+  "before": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+  "behind": 1,
+  "branch": "main",
+  "can_redo": false,
+  "can_undo": false,
+  "conflicts": [
+    "src/bin/app.rs"
+  ],
+  "fetch": {
+    "messages": [
+      "From https://example.com/project.git",
+      "   50f5647..3622599  main -> origin/main"
+    ],
+    "updated": [
+      {
+        "after": "362259904816818c04f73460a7fd64854079d22e",
+        "before": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+        "name": "refs/remotes/origin/main"
+      }
+    ]
+  },
+  "in_progress": true,
+  "message": "CONFLICT (content): Merge conflict in src/bin/app.rs\nerror: could not apply 943ff9f... Commit panel",
+  "next_redo": null,
+  "next_undo": null,
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": {
+        "ahead": 1,
+        "behind": 1,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "362259904816818c04f73460a7fd64854079d22e",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    }
+  ],
+  "remote": "origin",
+  "status": {
+    "entries": [
+      {
+        "index": "Added",
+        "kind": {
+          "Unmerged": {
+            "conflict": "BothAdded",
+            "mode_base": 0,
+            "mode_ours": 33188,
+            "mode_theirs": 33188,
+            "mode_worktree": 33188,
+            "oid_base": "0000000000000000000000000000000000000000",
+            "oid_ours": "1a93f46398c93baae57de5593cb94e087fae377e",
+            "oid_theirs": "dd2e56f8e882f3c361be74de44e3ac6c6fc71113",
+            "submodule": null
+          }
+        },
+        "path": "src/bin/app.rs",
+        "worktree": "Added"
+      },
+      {
+        "index": "Modified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "e85c93593c1b7b0e693eb8bdb77651fe4a0679c2",
+            "oid_index": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "submodule": null
+          }
+        },
+        "path": "src/lib.rs",
+        "worktree": "Unmodified"
+      },
+      {
+        "index": "Deleted",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 0,
+            "mode_worktree": 0,
+            "oid_head": "bd9a24dfb1af55b35a27cad1520c49a22f81031d",
+            "oid_index": "0000000000000000000000000000000000000000",
+            "submodule": null
+          }
+        },
+        "path": "src/main.rs",
+        "worktree": "Unmodified"
+      },
+      {
+        "index": "Added",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 0,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "0000000000000000000000000000000000000000",
+            "oid_index": "436a18cf50168a6ff934e0e36b74cd0b64e17510",
+            "submodule": null
+          }
+        },
+        "path": "src/panel.rs",
+        "worktree": "Unmodified"
+      }
+    ],
+    "head": {
+      "Detached": "362259904816818c04f73460a7fd64854079d22e"
+    },
+    "operation": "Rebase",
+    "upstream": null
+  },
+  "strategy": "rebase",
+  "strategy_source": "config",
+  "upstream": "refs/remotes/origin/main",
+  "warnings": []
+}

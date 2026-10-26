@@ -1,0 +1,82 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "also_on": [],
+  "backup": null,
+  "branch": "refs/heads/main",
+  "commit": {
+    "author": {
+      "email": "ada@example.com",
+      "name": "Ada Rossi",
+      "offset_min": 0,
+      "time": 1700039660
+    },
+    "body": "With a body.",
+    "committer": {
+      "email": "ada@example.com",
+      "name": "Ada Rossi",
+      "offset_min": 0,
+      "time": 1700039660
+    },
+    "id": "5bce047e3b2c39b3fb5bf6d1ac5ad584c90e3098",
+    "parents": [
+      "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+    ],
+    "summary": "Docs guide"
+  },
+  "previous": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+  "status": {
+    "entries": [
+      {
+        "index": "Unmodified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+            "oid_index": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+            "submodule": null
+          }
+        },
+        "path": "README.md",
+        "worktree": "Modified"
+      },
+      {
+        "index": "Unmodified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "oid_index": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "submodule": null
+          }
+        },
+        "path": "src/lib.rs",
+        "worktree": "Modified"
+      },
+      {
+        "index": "Untracked",
+        "kind": "Untracked",
+        "path": "note.txt",
+        "worktree": "Untracked"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "5bce047e3b2c39b3fb5bf6d1ac5ad584c90e3098"
+      }
+    },
+    "operation": null,
+    "upstream": {
+      "ahead": 2,
+      "behind": 0,
+      "name": "origin/main"
+    }
+  }
+}

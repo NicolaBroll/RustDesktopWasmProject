@@ -1,0 +1,30 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "base": {
+    "binary": false,
+    "size": 5,
+    "text": "base\n"
+  },
+  "digest": "d12e1c1bc4fb90cf89080c9f8226ab35",
+  "kind": "BothModified",
+  "marker_size": 7,
+  "ours": {
+    "binary": false,
+    "size": 5,
+    "text": "ours\n"
+  },
+  "path": "a.txt",
+  "theirs": {
+    "binary": false,
+    "size": 7,
+    "text": "theirs\n"
+  },
+  "worktree": {
+    "binary": false,
+    "size": 47,
+    "text": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n"
+  }
+}

@@ -1,0 +1,79 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "annotated": false,
+  "can_redo": false,
+  "can_undo": true,
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "id": "943ff9f",
+      "name": "v0.2.0"
+    },
+    "key": "engine-journal-tag-create",
+    "text": "Create tag `v0.2.0` at 943ff9f"
+  },
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": {
+        "ahead": 1,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/topic",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.2.0",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": null
+    }
+  ],
+  "tag": "refs/tags/v0.2.0",
+  "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+}

@@ -1,0 +1,70 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commits": [
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700039600
+      },
+      "body": "",
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700039600
+      },
+      "id": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "parents": [
+        "50f5647d2380309d432a5cd27a6b13a1a356be30"
+      ],
+      "summary": "Commit panel"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700036000
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700036000
+      },
+      "id": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+      "parents": [
+        "088712be8a582fcabbff7c596e26ce4621876e7a"
+      ],
+      "summary": "Ref parser"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700032400
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700032400
+      },
+      "id": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "parents": [
+        "9e5651b0ef9536369ca8a164477d7801b0643a4e",
+        "aeaf52febe706064c02d8a5e87afea6243ec2be5"
+      ],
+      "summary": "Merge branch 'feature/graph'"
+    }
+  ],
+  "has_more": true
+}

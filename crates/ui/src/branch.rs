@@ -14,6 +14,9 @@ use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, warnings_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
+use project_engine::{
+    BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult, Message,
+};
 use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -440,15 +443,16 @@ impl BranchBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                let outcome = match op {
-                    Op::Create => crate::decode::<CreateResult>(op.command(), value)
-                        .map(CreateResult::outcome),
-                    Op::CreateTag => {
-                        crate::decode::<TagResult>(op.command(), value).map(TagResult::outcome)
-                    }
-                    _ => crate::decode::<RenameResult>(op.command(), value)
-                        .map(RenameResult::outcome),
-                };
+                let outcome =
+                    match op {
+                        Op::Create => crate::decode::<BranchCreateResult>(op.command(), value)
+                            .map(create_outcome),
+                        Op::CreateTag => {
+                            crate::decode::<TagResult>(op.command(), value).map(TagResult::outcome)
+                        }
+                        _ => crate::decode::<BranchRenameResult>(op.command(), value)
+                            .map(rename_outcome),
+                    };
                 done(outcome)
             }
         }
@@ -490,7 +494,8 @@ impl BranchBox {
                 }
             }
             Ok(value) => done(
-                crate::decode::<CheckoutResult>(Op::Checkout.command(), value).map(|r| r.outcome()),
+                crate::decode::<BranchCheckoutResult>(Op::Checkout.command(), value)
+                    .map(checkout_outcome),
             ),
         }
     }
@@ -529,8 +534,8 @@ impl BranchBox {
                 }
             }
             Ok(value) => done(
-                crate::decode::<DeleteResult>(Op::Delete.command(), value)
-                    .map(DeleteResult::outcome),
+                crate::decode::<BranchDeleteResult>(Op::Delete.command(), value)
+                    .map(delete_outcome),
             ),
         }
     }
@@ -597,34 +602,6 @@ fn done(outcome: Result<Outcome, String>) -> Received {
     }
 }
 
-/// Result of `branch.create`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateResult {
-    pub branch: String,
-    pub target: Oid,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl CreateResult {
-    fn outcome(self) -> Outcome {
-        Outcome {
-            op: Op::Create,
-            notice: tr!(
-                "branch-created",
-                branch = branch_short(&self.branch),
-                id = self.target.short()
-            ),
-            refs: self.refs,
-            status: None,
-            warning: self.refs_error.map(refs_warning),
-            history: self.history,
-        }
-    }
-}
-
 /// Result of `tag.create`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TagResult {
@@ -649,117 +626,6 @@ impl TagResult {
         Outcome {
             op: Op::CreateTag,
             notice,
-            refs: self.refs,
-            status: None,
-            warning: self.refs_error.map(refs_warning),
-            history: self.history,
-        }
-    }
-}
-
-/// Result of `branch.checkout`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct CheckoutResult {
-    pub branch: String,
-    pub changed: bool,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub status: Option<Status>,
-    pub status_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl CheckoutResult {
-    fn outcome(self) -> Outcome {
-        let name = branch_short(&self.branch);
-        let notice = if self.changed {
-            tr!("branch-checked-out", branch = name)
-        } else {
-            tr!("branch-already-active", branch = name)
-        };
-        Outcome {
-            op: Op::Checkout,
-            notice: notice + &warnings_text(&self.warnings),
-            refs: None,
-            status: self.status,
-            warning: self
-                .status_error
-                .map(|e| tr!("branch-checkout-status-error", error = e)),
-            history: self.history,
-        }
-    }
-}
-
-/// Result of `branch.delete`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct DeleteResult {
-    pub branch: String,
-    pub target: Oid,
-    pub unmerged: usize,
-    pub backup: String,
-    /// The `branch.<name>.*` configuration removed with the branch (upstream, description):
-    /// undo puts it back.
-    #[serde(default)]
-    pub removed_config: Vec<ConfigEntry>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-/// A configuration entry removed by `branch.delete`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct ConfigEntry {
-    pub key: String,
-    pub value: Option<String>,
-}
-
-impl DeleteResult {
-    /// The warning: with the configuration removed it names the upstream if there was one, otherwise the keys.
-    fn notice(&self) -> String {
-        let branch = branch_short(&self.branch);
-        let id = self.target.short();
-        let (unmerged, backup) = (self.unmerged, &self.backup);
-        let upstream = self
-            .removed_config
-            .iter()
-            .any(|c| c.key.ends_with(".merge") || c.key.ends_with(".remote"));
-        if self.removed_config.is_empty() {
-            tr!(
-                "branch-deleted",
-                branch = branch,
-                id = id,
-                unmerged = unmerged,
-                backup = backup
-            )
-        } else if upstream {
-            tr!(
-                "branch-deleted-upstream",
-                branch = branch,
-                id = id,
-                unmerged = unmerged,
-                backup = backup
-            )
-        } else {
-            let keys: Vec<&str> = self.removed_config.iter().map(|c| c.key.as_str()).collect();
-            tr!(
-                "branch-deleted-config",
-                branch = branch,
-                id = id,
-                unmerged = unmerged,
-                backup = backup,
-                keys = keys.join(", ")
-            )
-        }
-    }
-
-    fn outcome(self) -> Outcome {
-        Outcome {
-            op: Op::Delete,
-            notice: self.notice() + &warnings_text(&self.warnings),
             refs: self.refs,
             status: None,
             warning: self.refs_error.map(refs_warning),
@@ -806,34 +672,113 @@ impl TagDeleteResult {
     }
 }
 
-/// Result of `branch.rename`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RenameResult {
-    pub branch: String,
-    pub previous: String,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
+/// The outcome of `branch.create`.
+fn create_outcome(r: BranchCreateResult) -> Outcome {
+    Outcome {
+        op: Op::Create,
+        notice: tr!(
+            "branch-created",
+            branch = branch_short(&r.branch),
+            id = r.target.short()
+        ),
+        refs: r.refs,
+        status: None,
+        warning: r.refs_error.map(refs_warning),
+        history: r.journal.into(),
+    }
 }
 
-impl RenameResult {
-    fn outcome(self) -> Outcome {
-        Outcome {
-            op: Op::Rename,
-            notice: tr!(
-                "branch-renamed",
-                previous = branch_short(&self.previous),
-                branch = branch_short(&self.branch)
-            ) + &warnings_text(&self.warnings),
-            refs: self.refs,
-            status: None,
-            warning: self.refs_error.map(refs_warning),
-            history: self.history,
-        }
+/// The outcome of `branch.checkout`.
+fn checkout_outcome(r: BranchCheckoutResult) -> Outcome {
+    let name = branch_short(&r.branch);
+    let notice = if r.changed {
+        tr!("branch-checked-out", branch = name)
+    } else {
+        tr!("branch-already-active", branch = name)
+    };
+    Outcome {
+        op: Op::Checkout,
+        notice: notice + &messages_text(&r.warnings),
+        refs: None,
+        status: r.status,
+        warning: r
+            .status_error
+            .map(|e| tr!("branch-checkout-status-error", error = e)),
+        history: r.journal.into(),
     }
+}
+
+/// The notice of `branch.delete`: with the configuration removed it names the upstream if there
+/// was one, otherwise the keys.
+fn delete_notice(r: &BranchDeleteResult) -> String {
+    let branch = branch_short(&r.branch);
+    let id = r.target.short();
+    let (unmerged, backup) = (r.unmerged, &r.backup);
+    let upstream = r
+        .removed_config
+        .iter()
+        .any(|c| c.key.ends_with(".merge") || c.key.ends_with(".remote"));
+    if r.removed_config.is_empty() {
+        tr!(
+            "branch-deleted",
+            branch = branch,
+            id = id,
+            unmerged = unmerged,
+            backup = backup
+        )
+    } else if upstream {
+        tr!(
+            "branch-deleted-upstream",
+            branch = branch,
+            id = id,
+            unmerged = unmerged,
+            backup = backup
+        )
+    } else {
+        let keys: Vec<&str> = r.removed_config.iter().map(|c| c.key.as_str()).collect();
+        tr!(
+            "branch-deleted-config",
+            branch = branch,
+            id = id,
+            unmerged = unmerged,
+            backup = backup,
+            keys = keys.join(", ")
+        )
+    }
+}
+
+/// The outcome of `branch.delete`.
+fn delete_outcome(r: BranchDeleteResult) -> Outcome {
+    Outcome {
+        op: Op::Delete,
+        notice: delete_notice(&r) + &messages_text(&r.warnings),
+        refs: r.refs,
+        status: None,
+        warning: r.refs_error.map(refs_warning),
+        history: r.journal.into(),
+    }
+}
+
+/// The outcome of `branch.rename`.
+fn rename_outcome(r: BranchRenameResult) -> Outcome {
+    Outcome {
+        op: Op::Rename,
+        notice: tr!(
+            "branch-renamed",
+            previous = branch_short(&r.previous),
+            branch = branch_short(&r.branch)
+        ) + &messages_text(&r.warnings),
+        refs: r.refs,
+        status: None,
+        warning: r.refs_error.map(refs_warning),
+        history: r.journal.into(),
+    }
+}
+
+/// The engine warnings as the text appended to a notice.
+fn messages_text(warnings: &[Message]) -> String {
+    let texts: Vec<String> = warnings.iter().map(Message::text).collect();
+    warnings_text(&texts)
 }
 
 fn refs_warning(error: String) -> String {

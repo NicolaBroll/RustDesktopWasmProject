@@ -14,7 +14,10 @@ mod journal;
 mod platform;
 mod session;
 
-pub use builtin::DEFAULT_LOG_LIMIT;
+pub use builtin::branch::{
+    BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
+};
+pub use builtin::{DEFAULT_LOG_LIMIT, JournalState};
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,

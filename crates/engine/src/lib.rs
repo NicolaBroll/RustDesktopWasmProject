@@ -21,6 +21,9 @@ pub use builtin::conflict::{ConflictResolveResult, ConflictShowResult};
 pub use builtin::merge::{MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult};
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullResult};
 pub use builtin::push::{PushRemoteSource, RemotePushResult};
+pub use builtin::rebase::{
+    RebaseContinueResult, RebasePlanResult, RebasePlanStep, RebaseStartResult,
+};
 pub use builtin::remote::{RefUpdate, RemoteFetchResult};
 pub use builtin::remote_branch::RemoteDeleteBranchResult;
 pub use builtin::remote_tag::{RemoteDeleteTagResult, RemotePushTagResult, TagPushKind};

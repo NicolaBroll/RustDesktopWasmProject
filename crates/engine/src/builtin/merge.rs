@@ -194,7 +194,7 @@ pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Resul
 
 /// Adds to `out` the re-read state and refs (`null` with `*_error` if they cannot be re-read:
 /// the operation is done and must not be repeated) and the journal state. For the untyped results
-/// of cherry-pick, revert and rebase.
+/// of cherry-pick, revert and reset.
 pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
     put_journal_state(out, journal);
     put_reread(out, "status", repo.status());

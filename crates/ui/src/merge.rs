@@ -28,6 +28,7 @@ use project_domain::branch_short;
 use project_domain::{Head, Oid, Operation, RefInfo, RepoPath, Status};
 use project_engine::{
     MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult, Message,
+    RebaseContinueResult,
 };
 use project_i18n::tr;
 use serde::Deserialize;
@@ -715,7 +716,7 @@ impl MergeBox {
             Ok(value) if op == Kind::Rebase => {
                 self.dialog = None;
                 match crate::decode::<RebaseContinueResult>(Op::Continue(op).command(), value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome())),
+                    Ok(result) => Received::Done(Box::new(rebase_continue_outcome(result))),
                     Err(message) => Received::Failed {
                         message,
                         reload: true,
@@ -808,7 +809,7 @@ pub(crate) fn reread_warning(
 }
 
 /// The engine warnings as plain texts, for [`reread_warning`].
-fn message_texts(warnings: &[Message]) -> Vec<String> {
+pub(crate) fn message_texts(warnings: &[Message]) -> Vec<String> {
     warnings.iter().map(Message::text).collect()
 }
 
@@ -936,78 +937,53 @@ fn abort_outcome(r: MergeAbortResult, op: Kind) -> Outcome {
     }
 }
 
-/// Result of `rebase.continue`.
-#[derive(Debug, Clone, Deserialize)]
-struct RebaseContinueResult {
-    /// The short name of the rewritten branch.
-    branch: Option<String>,
-    after: Oid,
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    /// Git's text when it stops.
-    #[serde(default)]
-    message: Option<String>,
-    backup: Option<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-impl RebaseContinueResult {
-    /// Concluded, or stopped again on the next commit (conflicts, a hook): the stage area opens
-    /// with the files and the panel stays.
-    fn outcome(self) -> Outcome {
-        let mut warnings = self.warnings;
-        let notice = if self.in_progress {
-            match self.conflicts.len() {
-                0 => {
-                    let message = self.message.as_deref().map(str::trim).unwrap_or_default();
-                    if !message.is_empty() {
-                        warnings.push(message.to_owned());
-                    }
-                    tr!("merge-rebase-stopped-before-commit")
+/// The outcome of `rebase.continue`: concluded, or stopped again on the next commit (conflicts, a
+/// hook): the stage area opens with the files and the panel stays.
+fn rebase_continue_outcome(r: RebaseContinueResult) -> Outcome {
+    let mut warnings = message_texts(&r.warnings);
+    let notice = if r.in_progress {
+        match r.conflicts.len() {
+            0 => {
+                let message = r.message.trim();
+                if !message.is_empty() {
+                    warnings.push(message.to_owned());
                 }
-                n => tr!(
-                    "merge-rebase-stopped",
-                    files = tr!("merge-conflict-files", n = n)
-                ),
+                tr!("merge-rebase-stopped-before-commit")
             }
-        } else {
-            let mut notice = match &self.branch {
-                Some(branch) => tr!(
-                    "merge-rebase-finished-branch",
-                    branch = branch,
-                    id = self.after.short()
-                ),
-                None => tr!("merge-rebase-finished", id = self.after.short()),
-            };
-            if let Some(backup) = &self.backup {
-                notice.push_str(&tr!("merge-rebase-backup", backup = backup));
-            }
-            notice
-        };
-        let what = if self.in_progress {
-            tr!("merge-rebase-stopped-short")
-        } else {
-            tr!("merge-concluded", title = Kind::Rebase.title())
-        };
-        let warning = reread_warning(&what, &warnings, self.status_error, self.refs_error);
-        Outcome {
-            notice,
-            show_changes: self.in_progress && !self.conflicts.is_empty(),
-            status: self.status,
-            refs: self.refs,
-            history: self.history,
-            warning,
-            // HEAD moved in any case (the commits applied, or the branch at the end).
-            moved: true,
+            n => tr!(
+                "merge-rebase-stopped",
+                files = tr!("merge-conflict-files", n = n)
+            ),
         }
+    } else {
+        let mut notice = match &r.branch {
+            Some(branch) => tr!(
+                "merge-rebase-finished-branch",
+                branch = branch,
+                id = r.after.short()
+            ),
+            None => tr!("merge-rebase-finished", id = r.after.short()),
+        };
+        if let Some(backup) = &r.backup {
+            notice.push_str(&tr!("merge-rebase-backup", backup = backup));
+        }
+        notice
+    };
+    let what = if r.in_progress {
+        tr!("merge-rebase-stopped-short")
+    } else {
+        tr!("merge-concluded", title = Kind::Rebase.title())
+    };
+    let warning = reread_warning(&what, &warnings, r.status_error, r.refs_error);
+    Outcome {
+        notice,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        // HEAD moved in any case (the commits applied, or the branch at the end).
+        moved: true,
     }
 }
 

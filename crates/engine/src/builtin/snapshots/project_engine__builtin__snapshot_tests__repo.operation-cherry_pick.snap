@@ -1,0 +1,32 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "abort": "cherry_pick.abort",
+  "conflicts": [
+    "a.txt"
+  ],
+  "continue": "cherry_pick.continue",
+  "head": {
+    "Branch": {
+      "name": "main",
+      "target": "975835de1c9756cebfc846100bfc1e42987bbcbf"
+    }
+  },
+  "incoming": [
+    {
+      "id": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "label": "other",
+      "refs": [
+        "refs/heads/other"
+      ],
+      "summary": "theirs"
+    }
+  ],
+  "message": "theirs",
+  "onto": null,
+  "operation": "CherryPick",
+  "ready": false,
+  "rebase_branch": null
+}

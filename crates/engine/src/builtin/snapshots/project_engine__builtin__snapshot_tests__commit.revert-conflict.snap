@@ -1,0 +1,84 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+  "backup": "refs/project/backup/revert-1",
+  "before": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+  "branch": "main",
+  "can_redo": false,
+  "can_undo": false,
+  "commit": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+  "conflicts": [
+    "a.txt"
+  ],
+  "in_progress": true,
+  "mainline": null,
+  "message": "CONFLICT (content): Merge conflict in a.txt\nerror: could not revert 1d0b14e... theirs",
+  "next_redo": null,
+  "next_undo": null,
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/ahead",
+      "tag_object": null,
+      "target": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feat",
+      "tag_object": null,
+      "target": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/other",
+      "tag_object": null,
+      "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "upstream": null
+    }
+  ],
+  "rev": "other",
+  "status": {
+    "entries": [
+      {
+        "index": "Unmerged",
+        "kind": {
+          "Unmerged": {
+            "conflict": "BothModified",
+            "mode_base": 33188,
+            "mode_ours": 33188,
+            "mode_theirs": 33188,
+            "mode_worktree": 33188,
+            "oid_base": "bb24d5d195baf9d07ae20359a1289a12213ae5af",
+            "oid_ours": "c01acf5605468fcc55897c4225a0a1af481a44ec",
+            "oid_theirs": "7a610363713f394e6364ccc3901a49931af5d540",
+            "submodule": null
+          }
+        },
+        "path": "a.txt",
+        "worktree": "Unmerged"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "975835de1c9756cebfc846100bfc1e42987bbcbf"
+      }
+    },
+    "operation": "Revert",
+    "upstream": null
+  },
+  "summary": "theirs",
+  "warnings": []
+}

@@ -1,0 +1,47 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commits": [
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700003600
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700003600
+      },
+      "id": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "parents": [
+        "910a2dec89025cc1beeb8da1658eec67f893a2ee"
+      ],
+      "summary": "Add the README"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700000000
+      },
+      "body": "",
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700000000
+      },
+      "id": "910a2dec89025cc1beeb8da1658eec67f893a2ee",
+      "parents": [],
+      "summary": "First commit"
+    }
+  ],
+  "has_more": false
+}

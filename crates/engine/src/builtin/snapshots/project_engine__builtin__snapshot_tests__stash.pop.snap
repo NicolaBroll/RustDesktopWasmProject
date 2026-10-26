@@ -1,0 +1,69 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/stash-1",
+  "conflicts": [],
+  "dropped": true,
+  "stash": {
+    "base": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+    "branch": "main",
+    "id": "f84d3d0b7591f442b1fe9b9e25877f7653c19b5d",
+    "index": 0,
+    "message": "On main: Notes",
+    "name": "stash@{0}",
+    "time": 1700039720,
+    "untracked": true
+  },
+  "stashes": [
+    {
+      "base": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "branch": "main",
+      "id": "77f310ae32ca422776ceab0ce6b1abade41f4196",
+      "index": 0,
+      "message": "WIP on main: 943ff9f Commit panel",
+      "name": "stash@{0}",
+      "time": 1700039660,
+      "untracked": false
+    }
+  ],
+  "status": {
+    "entries": [
+      {
+        "index": "Added",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 0,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "0000000000000000000000000000000000000000",
+            "oid_index": "e4d971771b652c20e99ff867dbf682c9382ff84c",
+            "submodule": null
+          }
+        },
+        "path": "docs/guide.md",
+        "worktree": "Unmodified"
+      },
+      {
+        "index": "Untracked",
+        "kind": "Untracked",
+        "path": "note.txt",
+        "worktree": "Untracked"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+      }
+    },
+    "operation": null,
+    "upstream": {
+      "ahead": 1,
+      "behind": 0,
+      "name": "origin/main"
+    }
+  },
+  "warnings": []
+}

@@ -1,0 +1,20 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "abort": "rebase.abort",
+  "conflicts": [
+    "src/bin/app.rs"
+  ],
+  "continue": "rebase.continue",
+  "head": {
+    "Detached": "362259904816818c04f73460a7fd64854079d22e"
+  },
+  "incoming": [],
+  "message": null,
+  "onto": "362259904816818c04f73460a7fd64854079d22e",
+  "operation": "Rebase",
+  "ready": false,
+  "rebase_branch": "refs/heads/main"
+}

@@ -1,0 +1,59 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commits": [
+    {
+      "commit": {
+        "author": {
+          "email": "bruno@example.com",
+          "name": "Bruno Verdi",
+          "offset_min": -300,
+          "time": 1700039600
+        },
+        "body": "",
+        "committer": {
+          "email": "bruno@example.com",
+          "name": "Bruno Verdi",
+          "offset_min": -300,
+          "time": 1700039600
+        },
+        "id": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+        "parents": [
+          "50f5647d2380309d432a5cd27a6b13a1a356be30"
+        ],
+        "summary": "Commit panel"
+      },
+      "old_path": "src/main.rs",
+      "path": "src/bin/app.rs",
+      "status": "Renamed"
+    },
+    {
+      "commit": {
+        "author": {
+          "email": "bruno@example.com",
+          "name": "Bruno Verdi",
+          "offset_min": -300,
+          "time": 1700007200
+        },
+        "body": "crates/ and apps/ folders, Cargo workspace.",
+        "committer": {
+          "email": "bruno@example.com",
+          "name": "Bruno Verdi",
+          "offset_min": -300,
+          "time": 1700007200
+        },
+        "id": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+        "parents": [
+          "975835de1c9756cebfc846100bfc1e42987bbcbf"
+        ],
+        "summary": "Project structure"
+      },
+      "old_path": null,
+      "path": "src/main.rs",
+      "status": "Added"
+    }
+  ],
+  "has_more": false
+}

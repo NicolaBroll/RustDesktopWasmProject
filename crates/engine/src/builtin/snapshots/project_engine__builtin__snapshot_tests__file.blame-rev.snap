@@ -1,0 +1,169 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commits": [
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700007200
+      },
+      "boundary": false,
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700007200
+      },
+      "id": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "path": "src/lib.rs",
+      "previous": null,
+      "summary": "Project structure"
+    },
+    {
+      "author": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700039600
+      },
+      "boundary": false,
+      "committer": {
+        "email": "bruno@example.com",
+        "name": "Bruno Verdi",
+        "offset_min": -300,
+        "time": 1700039600
+      },
+      "id": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "path": "src/lib.rs",
+      "previous": [
+        "50f5647d2380309d432a5cd27a6b13a1a356be30",
+        "src/lib.rs"
+      ],
+      "summary": "Commit panel"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700010800
+      },
+      "boundary": false,
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700010800
+      },
+      "id": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "path": "src/lib.rs",
+      "previous": [
+        "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+        "src/lib.rs"
+      ],
+      "summary": "Log parser"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700025200
+      },
+      "boundary": false,
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700025200
+      },
+      "id": "9e5651b0ef9536369ca8a164477d7801b0643a4e",
+      "path": "src/lib.rs",
+      "previous": [
+        "bd64a5d9adefe00072419db23951df990e6c7d03",
+        "src/lib.rs"
+      ],
+      "summary": "Status parser"
+    },
+    {
+      "author": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700036000
+      },
+      "boundary": false,
+      "committer": {
+        "email": "ada@example.com",
+        "name": "Ada Rossi",
+        "offset_min": 60,
+        "time": 1700036000
+      },
+      "id": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+      "path": "src/lib.rs",
+      "previous": [
+        "088712be8a582fcabbff7c596e26ce4621876e7a",
+        "src/lib.rs"
+      ],
+      "summary": "Ref parser"
+    }
+  ],
+  "lines": [
+    {
+      "commit": 0,
+      "orig_line": 1,
+      "text": "// src/lib.rs"
+    },
+    {
+      "commit": 1,
+      "orig_line": 2,
+      "text": "// last change: commit 12"
+    },
+    {
+      "commit": 0,
+      "orig_line": 3,
+      "text": ""
+    },
+    {
+      "commit": 0,
+      "orig_line": 4,
+      "text": "pub fn lib() -> &'static str {"
+    },
+    {
+      "commit": 0,
+      "orig_line": 5,
+      "text": "    \"src/lib.rs\""
+    },
+    {
+      "commit": 0,
+      "orig_line": 6,
+      "text": "}"
+    },
+    {
+      "commit": 2,
+      "orig_line": 7,
+      "text": "// line added by: commit 4"
+    },
+    {
+      "commit": 3,
+      "orig_line": 8,
+      "text": "// line added by: commit 8"
+    },
+    {
+      "commit": 4,
+      "orig_line": 9,
+      "text": "// line added by: commit 11"
+    },
+    {
+      "commit": 1,
+      "orig_line": 10,
+      "text": "// line added by: commit 12"
+    }
+  ],
+  "path": "src/lib.rs",
+  "rev": "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+}

@@ -1,0 +1,161 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "c4ca37b7f8ad8aff5424e3deaf36a071a202a225",
+  "ahead": 0,
+  "backup": "refs/project/backup/pull-1",
+  "before": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+  "behind": 1,
+  "branch": "feature/graph",
+  "can_redo": false,
+  "can_undo": true,
+  "conflicts": [],
+  "fetch": {
+    "messages": [
+      "From https://example.com/project.git",
+      "   aeaf52f..c4ca37b  feature/graph -> origin/feature/graph"
+    ],
+    "updated": [
+      {
+        "after": "c4ca37b7f8ad8aff5424e3deaf36a071a202a225",
+        "before": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    ]
+  },
+  "in_progress": false,
+  "message": "",
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "after": "c4ca37b",
+      "before": "aeaf52f",
+      "branch": "feature/graph",
+      "how": {
+        "key": "engine-journal-pull-ff",
+        "text": "fast-forward"
+      }
+    },
+    "key": "engine-journal-pull",
+    "text": "Pull of `feature/graph` (fast-forward: from aeaf52f to c4ca37b)"
+  },
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "c4ca37b7f8ad8aff5424e3deaf36a071a202a225",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": {
+        "ahead": 1,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/feature/graph",
+      "tag_object": null,
+      "target": "c4ca37b7f8ad8aff5424e3deaf36a071a202a225",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    }
+  ],
+  "remote": "origin",
+  "status": {
+    "entries": [
+      {
+        "index": "Modified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "01ec15ea7c697801b681b130ce80dd309c16db62",
+            "oid_index": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+            "submodule": null
+          }
+        },
+        "path": "README.md",
+        "worktree": "Modified"
+      },
+      {
+        "index": "Added",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 0,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "0000000000000000000000000000000000000000",
+            "oid_index": "01eab141a7d7a84cf61ca1c5df7291b4aea79d9b",
+            "submodule": null
+          }
+        },
+        "path": "docs/guide.md",
+        "worktree": "Unmodified"
+      },
+      {
+        "index": "Unmodified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "oid_index": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "submodule": null
+          }
+        },
+        "path": "src/lib.rs",
+        "worktree": "Modified"
+      },
+      {
+        "index": "Untracked",
+        "kind": "Untracked",
+        "path": "note.txt",
+        "worktree": "Untracked"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+      }
+    },
+    "operation": null,
+    "upstream": {
+      "ahead": 1,
+      "behind": 0,
+      "name": "origin/main"
+    }
+  },
+  "strategy": "fast_forward",
+  "strategy_source": "default",
+  "upstream": "refs/remotes/origin/feature/graph",
+  "warnings": []
+}

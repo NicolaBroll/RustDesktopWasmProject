@@ -1,0 +1,101 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "files": [
+    {
+      "binary": false,
+      "change": "Modified",
+      "digest": "6b3875dd83b331cda22d0760b5ab3a74",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "README.md",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "last change: staged change",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "last change: unstaged change",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "# README",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            },
+            {
+              "content": "Project documentation.",
+              "kind": "Context",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": 6
+            },
+            {
+              "content": "line added by: commit 6",
+              "kind": "Context",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": 7
+            },
+            {
+              "content": "line added by: staged change",
+              "kind": "Context",
+              "new_line": 8,
+              "no_newline": false,
+              "old_line": 8
+            },
+            {
+              "content": "line added by: unstaged change",
+              "kind": "Added",
+              "new_line": 9,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 9,
+          "new_start": 1,
+          "old_count": 8,
+          "old_start": 1,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "004a51d3710d7e324b6ce82de725abf75ea96f8e",
+      "new_path": "README.md",
+      "old_mode": 33188,
+      "old_oid": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+      "old_path": "README.md",
+      "similarity": null
+    }
+  ]
+}

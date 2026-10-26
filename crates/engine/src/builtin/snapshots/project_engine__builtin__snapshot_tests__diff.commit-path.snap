@@ -1,0 +1,86 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "files": [
+    {
+      "binary": false,
+      "change": "Modified",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "// src/lib.rs",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "// last change: commit 3",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "// last change: commit 4",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "pub fn lib() -> &'static str {",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "    \"src/lib.rs\"",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            },
+            {
+              "content": "}",
+              "kind": "Context",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": 6
+            },
+            {
+              "content": "// line added by: commit 4",
+              "kind": "Added",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 7,
+          "new_start": 1,
+          "old_count": 6,
+          "old_start": 1,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "5e417abad74debd67a77e54a047d7e1df3e1ba20",
+      "new_path": "src/lib.rs",
+      "old_mode": 33188,
+      "old_oid": "272b2a4998c9fbc3cb4f31527ee23d8bd223c782",
+      "old_path": "src/lib.rs",
+      "similarity": null
+    }
+  ]
+}

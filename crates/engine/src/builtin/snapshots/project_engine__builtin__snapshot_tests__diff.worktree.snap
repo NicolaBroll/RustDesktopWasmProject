@@ -1,0 +1,203 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "files": [
+    {
+      "binary": false,
+      "change": "Modified",
+      "digest": "6b3875dd83b331cda22d0760b5ab3a74",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "README.md",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "last change: staged change",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "last change: unstaged change",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "# README",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            },
+            {
+              "content": "Project documentation.",
+              "kind": "Context",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": 6
+            },
+            {
+              "content": "line added by: commit 6",
+              "kind": "Context",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": 7
+            },
+            {
+              "content": "line added by: staged change",
+              "kind": "Context",
+              "new_line": 8,
+              "no_newline": false,
+              "old_line": 8
+            },
+            {
+              "content": "line added by: unstaged change",
+              "kind": "Added",
+              "new_line": 9,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 9,
+          "new_start": 1,
+          "old_count": 8,
+          "old_start": 1,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "004a51d3710d7e324b6ce82de725abf75ea96f8e",
+      "new_path": "README.md",
+      "old_mode": 33188,
+      "old_oid": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+      "old_path": "README.md",
+      "similarity": null
+    },
+    {
+      "binary": false,
+      "change": "Modified",
+      "digest": "c26c57262ed9e2f93f4201279d050101",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "// src/lib.rs",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "// last change: commit 12",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "// last change: unstaged change",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "pub fn lib() -> &'static str {",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "    \"src/lib.rs\"",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            }
+          ],
+          "new_count": 5,
+          "new_start": 1,
+          "old_count": 5,
+          "old_start": 1,
+          "section": ""
+        },
+        {
+          "lines": [
+            {
+              "content": "// line added by: commit 8",
+              "kind": "Context",
+              "new_line": 8,
+              "no_newline": false,
+              "old_line": 8
+            },
+            {
+              "content": "// line added by: commit 11",
+              "kind": "Context",
+              "new_line": 9,
+              "no_newline": false,
+              "old_line": 9
+            },
+            {
+              "content": "// line added by: commit 12",
+              "kind": "Context",
+              "new_line": 10,
+              "no_newline": false,
+              "old_line": 10
+            },
+            {
+              "content": "// line added by: unstaged change",
+              "kind": "Added",
+              "new_line": 11,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 4,
+          "new_start": 8,
+          "old_count": 3,
+          "old_start": 8,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "1c457ee3472b53e89624f3400f3b18310ce3fbe5",
+      "new_path": "src/lib.rs",
+      "old_mode": 33188,
+      "old_oid": "e9c0628467d997c984596f4235c6a7eb0159b975",
+      "old_path": "src/lib.rs",
+      "similarity": null
+    }
+  ]
+}

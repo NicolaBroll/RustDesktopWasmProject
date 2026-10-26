@@ -906,6 +906,10 @@ fn repo_log(s: &mut Session, p: Value) -> Out {
 }
 
 #[cfg(test)]
+#[path = "builtin/snapshot_tests.rs"]
+mod snapshot_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{GitBackend, MemoryBackend, MemoryOpener};

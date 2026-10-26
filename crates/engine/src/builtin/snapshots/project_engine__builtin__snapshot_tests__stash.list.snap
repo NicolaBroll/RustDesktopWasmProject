@@ -1,0 +1,28 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "stashes": [
+    {
+      "base": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "branch": "main",
+      "id": "f84d3d0b7591f442b1fe9b9e25877f7653c19b5d",
+      "index": 0,
+      "message": "On main: Notes",
+      "name": "stash@{0}",
+      "time": 1700039720,
+      "untracked": true
+    },
+    {
+      "base": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "branch": "main",
+      "id": "77f310ae32ca422776ceab0ce6b1abade41f4196",
+      "index": 1,
+      "message": "WIP on main: 943ff9f Commit panel",
+      "name": "stash@{1}",
+      "time": 1700039660,
+      "untracked": false
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "can_redo": false,
+  "can_undo": true,
+  "done": [
+    {
+      "backup": null,
+      "branch_config": [],
+      "command": "commit.create",
+      "description": {
+        "args": {
+          "id": "5bce047",
+          "summary": "Docs guide"
+        },
+        "key": "engine-journal-commit",
+        "text": "Commit 5bce047 “Docs guide”"
+      },
+      "head": {
+        "after": {
+          "branch": "refs/heads/main"
+        },
+        "before": {
+          "branch": "refs/heads/main"
+        }
+      },
+      "id": 1,
+      "refs": [
+        {
+          "after": "5bce047e3b2c39b3fb5bf6d1ac5ad584c90e3098",
+          "before": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+          "name": "refs/heads/main"
+        }
+      ],
+      "remote": null,
+      "stash": null,
+      "undo_backups": [],
+      "worktree": null
+    },
+    {
+      "backup": "refs/project/backup/amend-1",
+      "branch_config": [],
+      "command": "commit.create",
+      "description": {
+        "args": {
+          "id": "3badf33",
+          "old": "5bce047",
+          "summary": "Docs guide, amended"
+        },
+        "key": "engine-journal-amend",
+        "text": "Amend 3badf33 “Docs guide, amended” (was 5bce047)"
+      },
+      "head": {
+        "after": {
+          "branch": "refs/heads/main"
+        },
+        "before": {
+          "branch": "refs/heads/main"
+        }
+      },
+      "id": 2,
+      "refs": [
+        {
+          "after": "3badf334a07248eb2fcfcf5c18b697dba8eb7a43",
+          "before": "5bce047e3b2c39b3fb5bf6d1ac5ad584c90e3098",
+          "name": "refs/heads/main"
+        }
+      ],
+      "remote": null,
+      "stash": null,
+      "undo_backups": [],
+      "worktree": null
+    },
+    {
+      "backup": "refs/project/backup/discard-1",
+      "branch_config": [],
+      "command": "worktree.discard",
+      "description": {
+        "args": {
+          "path": "src/lib.rs"
+        },
+        "key": "engine-journal-discard-one",
+        "text": "Discard changes to “src/lib.rs”"
+      },
+      "head": {
+        "after": {
+          "branch": "refs/heads/main"
+        },
+        "before": {
+          "branch": "refs/heads/main"
+        }
+      },
+      "id": 3,
+      "refs": [],
+      "remote": null,
+      "stash": null,
+      "undo_backups": [],
+      "worktree": {
+        "files": [
+          {
+            "change": "Modified",
+            "mode": 33188,
+            "oid": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "path": "src/lib.rs"
+          }
+        ],
+        "raw": null,
+        "stash": "422a5fa26e4d50bee768d1c9a6910805bc6d81d7"
+      }
+    }
+  ],
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "path": "src/lib.rs"
+    },
+    "key": "engine-journal-discard-one",
+    "text": "Discard changes to “src/lib.rs”"
+  },
+  "undone": []
+}

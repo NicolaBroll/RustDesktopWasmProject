@@ -1,0 +1,60 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commit": {
+    "author": {
+      "email": "ada@example.com",
+      "name": "Ada Rossi",
+      "offset_min": 60,
+      "time": 1700032400
+    },
+    "body": "",
+    "committer": {
+      "email": "ada@example.com",
+      "name": "Ada Rossi",
+      "offset_min": 60,
+      "time": 1700032400
+    },
+    "id": "088712be8a582fcabbff7c596e26ce4621876e7a",
+    "parents": [
+      "9e5651b0ef9536369ca8a164477d7801b0643a4e",
+      "aeaf52febe706064c02d8a5e87afea6243ec2be5"
+    ],
+    "summary": "Merge branch 'feature/graph'"
+  },
+  "compared_to": "9e5651b0ef9536369ca8a164477d7801b0643a4e",
+  "files": [
+    {
+      "change": "Modified",
+      "new_mode": 33188,
+      "new_oid": "140e7341639b6ae03ef280696fca7d09042284ab",
+      "old_mode": 33188,
+      "old_oid": "435fc1707f2dcdda59308d0ecf85507f5c57d038",
+      "original": null,
+      "path": "Cargo.toml",
+      "score": null
+    },
+    {
+      "change": "Added",
+      "new_mode": 33188,
+      "new_oid": "617f9835d8eaea7a839144bbf33efee2c872f52d",
+      "old_mode": 0,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "original": null,
+      "path": "src/graph.rs",
+      "score": null
+    },
+    {
+      "change": "Added",
+      "new_mode": 33188,
+      "new_oid": "48b6e3f0742ef48cdd068a376f8d9fd2dffcd8a1",
+      "old_mode": 0,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "original": null,
+      "path": "tests/graph.rs",
+      "score": null
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "5476121d91975b5b3e3584f1ba37274681816b72",
+  "backup": "refs/project/backup/revert-1",
+  "before": "f27f3551129a7b8c8c04738af0e0374a390889a7",
+  "branch": "main",
+  "can_redo": false,
+  "can_undo": true,
+  "commit": "f27f3551129a7b8c8c04738af0e0374a390889a7",
+  "conflicts": [],
+  "in_progress": false,
+  "mainline": null,
+  "message": "",
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "after": "5476121",
+      "before": "f27f355",
+      "branch": "main",
+      "kind": "revert",
+      "source": "main"
+    },
+    "key": "engine-journal-pick",
+    "text": "Revert of main onto `main` (from f27f355 to 5476121)"
+  },
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/ahead",
+      "tag_object": null,
+      "target": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feat",
+      "tag_object": null,
+      "target": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "5476121d91975b5b3e3584f1ba37274681816b72",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/other",
+      "tag_object": null,
+      "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "upstream": null
+    }
+  ],
+  "rev": "main",
+  "status": {
+    "entries": [],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "5476121d91975b5b3e3584f1ba37274681816b72"
+      }
+    },
+    "operation": null,
+    "upstream": null
+  },
+  "summary": "new",
+  "warnings": []
+}

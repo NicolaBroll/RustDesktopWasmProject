@@ -1,0 +1,92 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backups": [],
+  "can_redo": false,
+  "can_undo": true,
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "path": "src/lib.rs"
+    },
+    "key": "engine-journal-discard-one",
+    "text": "Discard changes to “src/lib.rs”"
+  },
+  "redone": {
+    "backup": "refs/project/backup/discard-1",
+    "branch_config": [],
+    "command": "worktree.discard",
+    "description": {
+      "args": {
+        "path": "src/lib.rs"
+      },
+      "key": "engine-journal-discard-one",
+      "text": "Discard changes to “src/lib.rs”"
+    },
+    "head": {
+      "after": {
+        "branch": "refs/heads/main"
+      },
+      "before": {
+        "branch": "refs/heads/main"
+      }
+    },
+    "id": 3,
+    "refs": [],
+    "remote": null,
+    "stash": null,
+    "undo_backups": [],
+    "worktree": {
+      "files": [
+        {
+          "change": "Modified",
+          "mode": 33188,
+          "oid": "e9c0628467d997c984596f4235c6a7eb0159b975",
+          "path": "src/lib.rs"
+        }
+      ],
+      "raw": null,
+      "stash": "422a5fa26e4d50bee768d1c9a6910805bc6d81d7"
+    }
+  },
+  "status": {
+    "entries": [
+      {
+        "index": "Unmodified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+            "oid_index": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+            "submodule": null
+          }
+        },
+        "path": "README.md",
+        "worktree": "Modified"
+      },
+      {
+        "index": "Untracked",
+        "kind": "Untracked",
+        "path": "note.txt",
+        "worktree": "Untracked"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "3badf334a07248eb2fcfcf5c18b697dba8eb7a43"
+      }
+    },
+    "operation": null,
+    "upstream": {
+      "ahead": 2,
+      "behind": 0,
+      "name": "origin/main"
+    }
+  },
+  "warnings": []
+}

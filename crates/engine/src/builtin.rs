@@ -8,7 +8,7 @@ pub(crate) mod merge;
 mod pick;
 pub(crate) mod pull;
 pub(crate) mod push;
-mod rebase;
+pub(crate) mod rebase;
 pub(crate) mod remote;
 pub(crate) mod remote_branch;
 pub(crate) mod remote_tag;

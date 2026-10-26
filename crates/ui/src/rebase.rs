@@ -10,15 +10,11 @@
 //! Stopped on a conflict, the rebase stays in progress and the panel of the operation (`merge.rs`,
 //! `Kind::Rebase`) finishes or aborts it.
 
-use crate::discard::History;
-use crate::merge::{Outcome, Received, reread_warning};
+use crate::merge::{Outcome, Received, message_texts, reread_warning};
 use crate::{Action, Done, ErrorKind, Request, Tab};
-use project_domain::branch_short;
-use project_domain::{
-    Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep, RefInfo, RepoPath, Status,
-};
+use project_domain::{Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep};
+use project_engine::{RebasePlanResult, RebaseStartResult};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The command that reads the default plan.
@@ -290,21 +286,6 @@ pub struct RebaseBox {
     editor: Option<Editor>,
 }
 
-/// Result of `rebase.plan`.
-#[derive(Debug, Deserialize)]
-struct PlanResult {
-    branch: String,
-    steps: Vec<PlanStep>,
-    #[serde(default)]
-    published: Vec<Oid>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PlanStep {
-    commit: Oid,
-    summary: String,
-}
-
 impl RebaseBox {
     /// The open editor.
     pub fn editor(&self) -> Option<&Editor> {
@@ -340,10 +321,10 @@ impl RebaseBox {
         let Some(editor) = self.editor.as_mut().filter(|e| e.phase == Phase::Loading) else {
             return;
         };
-        let plan = result.and_then(|value| crate::decode::<PlanResult>(PLAN, value));
+        let plan = result.and_then(|value| crate::decode::<RebasePlanResult>(PLAN, value));
         match plan {
             Ok(plan) => {
-                editor.branch = branch_short(&plan.branch).to_owned();
+                editor.branch = plan.branch;
                 editor.original = plan.steps.iter().map(|s| s.commit).collect();
                 editor.rows = plan
                     .steps
@@ -504,8 +485,8 @@ impl RebaseBox {
                 let rows = editor.rows.len();
                 let produced = editor.plan().result().len();
                 self.editor = None;
-                match serde_json::from_value::<StartResult>(value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome(rows, produced))),
+                match serde_json::from_value::<RebaseStartResult>(value) {
+                    Ok(result) => Received::Done(Box::new(start_outcome(result, rows, produced))),
                     Err(e) => Received::Failed {
                         message: crate::unexpected_result(START, e),
                         reload: true,
@@ -516,74 +497,51 @@ impl RebaseBox {
     }
 }
 
-/// Result of `rebase.start`.
-#[derive(Debug, Clone, Deserialize)]
-struct StartResult {
-    branch: String,
-    before: Oid,
-    after: Oid,
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    #[serde(default)]
-    message: Option<String>,
-    backup: String,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-impl StartResult {
-    /// `rows` the commits of the range, `produced` those the plan produces.
-    fn outcome(self, rows: usize, produced: usize) -> Outcome {
-        let branch = branch_short(&self.branch).to_owned();
-        let mut warnings = self.warnings;
-        let notice = if self.in_progress {
-            match self.conflicts.len() {
-                0 => {
-                    let message = self.message.as_deref().map(str::trim).unwrap_or_default();
-                    if !message.is_empty() {
-                        warnings.push(message.to_owned());
-                    }
-                    tr!("rebase-stopped-before-commit", branch = &branch)
+/// The outcome of `rebase.start`: `rows` the commits of the range, `produced` those the plan
+/// produces.
+fn start_outcome(r: RebaseStartResult, rows: usize, produced: usize) -> Outcome {
+    let branch = &r.branch;
+    let mut warnings = message_texts(&r.warnings);
+    let notice = if r.in_progress {
+        match r.conflicts.len() {
+            0 => {
+                let message = r.message.trim();
+                if !message.is_empty() {
+                    warnings.push(message.to_owned());
                 }
-                n => tr!(
-                    "rebase-stopped",
-                    branch = &branch,
-                    files = tr!("merge-conflict-files", n = n)
-                ),
+                tr!("rebase-stopped-before-commit", branch = branch)
             }
-        } else {
-            tr!(
-                "rebase-done",
-                branch = &branch,
-                before = rows,
-                after = produced,
-                id = self.after.short(),
-                backup = &self.backup
-            )
-        };
-        let what = if self.in_progress {
-            tr!("rebase-stopped-short")
-        } else {
-            tr!("merge-done", title = "Rebase")
-        };
-        let warning = reread_warning(&what, &warnings, self.status_error, self.refs_error);
-        Outcome {
-            notice,
-            show_changes: self.in_progress && !self.conflicts.is_empty(),
-            status: self.status,
-            refs: self.refs,
-            history: self.history,
-            warning,
-            // Stopped, HEAD is detached on the commits applied so far.
-            moved: self.in_progress || self.after != self.before,
+            n => tr!(
+                "rebase-stopped",
+                branch = branch,
+                files = tr!("merge-conflict-files", n = n)
+            ),
         }
+    } else {
+        tr!(
+            "rebase-done",
+            branch = branch,
+            before = rows,
+            after = produced,
+            id = r.after.short(),
+            backup = &r.backup
+        )
+    };
+    let what = if r.in_progress {
+        tr!("rebase-stopped-short")
+    } else {
+        tr!("merge-done", title = "Rebase")
+    };
+    let warning = reread_warning(&what, &warnings, r.status_error, r.refs_error);
+    Outcome {
+        notice,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        // Stopped, HEAD is detached on the commits applied so far.
+        moved: r.in_progress || r.after != r.before,
     }
 }
 

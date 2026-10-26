@@ -3,7 +3,7 @@
 //! commits, refusals and a stop on a conflict.
 
 use super::*;
-use project_domain::{Change, ChangedFile, Commit, Signature};
+use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use std::sync::Arc;
 

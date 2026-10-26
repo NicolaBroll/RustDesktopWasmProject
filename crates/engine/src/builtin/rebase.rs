@@ -8,19 +8,124 @@
 //! `"confirm": true` and first saves index and worktree. `rebase.continue` also concludes the
 //! rebase of a stopped `remote.pull`, with the pull's journal entry.
 
-use super::Out;
-use super::merge::{abort_confirm, finish};
+use super::merge::abort_confirm;
+use super::{JournalState, Out, reread, to_json};
 use crate::commands::parse_params;
 use crate::git::check_in_progress;
 use crate::{
-    EngineError, GitBackend, JournalEntry, LogQuery, Message, RebaseRecord, RebaseRequest, Session,
-    branch_ref, check_rebase_state, conflicted_paths, plan_error, quoted_list, rebase_range,
-    rewritten_commits,
+    EngineError, GitBackend, JournalEntry, LogQuery, MergeAbortResult, Message, RebaseRecord,
+    RebaseRequest, Session, branch_ref, check_rebase_state, conflicted_paths, plan_error,
+    quoted_list, rebase_range, rewritten_commits,
 };
-use project_domain::{Head, Oid, Operation, RebasePlan, RebaseStep, RefKind};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{
+    Head, Oid, Operation, RebaseAction, RebasePlan, RebaseStep, RefInfo, RefKind, RepoPath, Status,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashSet;
+
+/// One step of the default plan of `rebase.plan`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebasePlanStep {
+    /// Always [`RebaseAction::Pick`] in the default plan.
+    pub action: RebaseAction,
+    /// The commit of the range.
+    pub commit: Oid,
+    /// The first line of its message.
+    pub summary: String,
+}
+
+/// Result of `rebase.plan`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebasePlanResult {
+    /// The rev `base` resolved to a commit.
+    pub base: Oid,
+    /// The active branch (short name).
+    pub branch: String,
+    /// The commits of `base..HEAD`, oldest first, every one `pick`.
+    pub steps: Vec<RebasePlanStep>,
+    /// The commits of the range reachable from a remote-tracking branch.
+    pub published: Vec<Oid>,
+}
+
+/// Result of `rebase.start`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RebaseStartResult {
+    /// The rev `base` resolved to a commit.
+    pub base: Oid,
+    /// The rewritten branch (short name).
+    pub branch: String,
+    /// The branch before the rebase.
+    pub before: Oid,
+    /// The branch after the rebase (where it stopped, if `in_progress`).
+    pub after: Oid,
+    /// The rebase stopped (conflicts, a hook, signing) and stays in progress.
+    pub in_progress: bool,
+    /// The conflicted files of the stopped rebase (empty otherwise).
+    pub conflicts: Vec<RepoPath>,
+    /// The git text of the stopped rebase (empty otherwise).
+    pub message: String,
+    /// The backup ref of the branch before the rebase (`refs/project/backup/rebase-...`).
+    pub backup: String,
+    /// Warnings after the rebase (e.g. a commit count different from the plan's).
+    pub warnings: Vec<Message>,
+    /// The status re-read after the rebase; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the rebase; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `rebase.continue`. `command`, `before` and `backup` are `null` for a rebase started
+/// from the terminal (no record of the client).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RebaseContinueResult {
+    /// The command that started the rebase: `rebase.start` or `remote.pull` (kept as text: it is
+    /// read back from the record saved in the git folder).
+    pub command: Option<String>,
+    /// The commit the branch is rebuilt on; `null` if unknown.
+    pub base: Option<Oid>,
+    /// The rewritten branch (short name); `null` if unknown.
+    pub branch: Option<String>,
+    /// The branch before the rebase.
+    pub before: Option<Oid>,
+    /// The branch after this step (where it stopped again, if `in_progress`).
+    pub after: Oid,
+    /// The rebase stopped again and stays in progress.
+    pub in_progress: bool,
+    /// The conflicted files of the stopped rebase (empty otherwise).
+    pub conflicts: Vec<RepoPath>,
+    /// The git text of the stopped rebase (empty otherwise).
+    pub message: String,
+    /// The backup ref of the branch before the rebase (`refs/project/backup/rebase-...` or
+    /// `pull-...`).
+    pub backup: Option<String>,
+    /// Warnings after the step (e.g. a step resolved to nothing and dropped).
+    pub warnings: Vec<Message>,
+    /// The status re-read after the step; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the step; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
 
 /// Parameters of `rebase.plan`.
 #[derive(Deserialize)]
@@ -117,8 +222,7 @@ fn published(
 /// ([`EngineError::NotAllowed`]): detached HEAD, `base` not an ancestor of HEAD or equal to it,
 /// merge commits in the range; `base` that does not exist → [`EngineError::UnknownRev`].
 ///
-/// Result: `{"base", "branch", "steps": [{"action": "pick", "commit", "summary"}],
-/// "published": [oid]}`.
+/// Result: [`RebasePlanResult`].
 pub(super) fn rebase_plan(s: &mut Session, p: Value) -> Out {
     const ID: &str = "rebase.plan";
     let PlanParams { base } = parse_params(ID, p)?;
@@ -128,15 +232,19 @@ pub(super) fn rebase_plan(s: &mut Session, p: Value) -> Out {
     let commits = rebase_range(repo, ID, &head, &base)?;
     let ids: Vec<Oid> = commits.iter().map(|c| c.id).collect();
     let published = published(repo, &head, &base, &ids)?;
-    let steps: Vec<Value> = commits
-        .iter()
-        .map(|c| json!({"action": "pick", "commit": c.id.to_string(), "summary": c.summary}))
+    let steps = commits
+        .into_iter()
+        .map(|c| RebasePlanStep {
+            action: RebaseAction::Pick,
+            commit: c.id,
+            summary: c.summary,
+        })
         .collect();
-    Ok(json!({
-        "base": base.to_string(),
-        "branch": branch,
-        "steps": steps,
-        "published": published,
+    Ok(to_json(RebasePlanResult {
+        base,
+        branch,
+        steps,
+        published,
     }))
 }
 
@@ -186,8 +294,7 @@ fn check_result(repo: &dyn GitBackend, record: &RebaseRecord, after: &Oid) -> Ve
 /// nothing in the journal. Concluded it enters the journal: `edit.undo` brings the branch, with index
 /// and worktree, back to where it was.
 ///
-/// Result: `{"base", "branch", "before", "after", "in_progress", "conflicts", "message",
-/// "backup", "warnings", "status", "refs", "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`RebaseStartResult`].
 pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
     const ID: &str = "rebase.start";
     let StartParams {
@@ -253,19 +360,24 @@ pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
             ));
         }
     }
-    let mut out = json!({
-        "base": base.to_string(),
-        "branch": branch,
-        "before": before.to_string(),
-        "after": outcome.after.to_string(),
-        "in_progress": outcome.in_progress,
-        "conflicts": outcome.conflicts,
-        "message": outcome.message,
-        "backup": outcome.backup,
-        "warnings": warnings,
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(RebaseStartResult {
+        base,
+        branch,
+        before,
+        after: outcome.after,
+        in_progress: outcome.in_progress,
+        conflicts: outcome.conflicts,
+        message: outcome.message,
+        backup: outcome.backup,
+        warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Goes on with the rebase in progress after the conflicts are resolved and staged (`git rebase
@@ -275,10 +387,8 @@ pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
 /// again → `in_progress`. Concluded → journal entry: the rebase's, or the pull's for a stopped
 /// `remote.pull`; a rebase started from the terminal concludes without a journal entry (warning).
 ///
-/// Result: `{"command": "rebase.start" | "remote.pull" | null, "base", "branch", "before",
-/// "after", "in_progress", "conflicts", "message", "backup", "warnings", "status", "refs",
-/// "can_undo", "can_redo", "next_undo", "next_redo"}` (`before`/`backup` `null` for a rebase
-/// started from the terminal).
+/// Result: [`RebaseContinueResult`] (`command`/`before`/`backup` `null` for a rebase started from
+/// the terminal).
 pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
     const ID: &str = "rebase.continue";
     let NoParams {} = parse_params(ID, p)?;
@@ -342,20 +452,25 @@ pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
             .as_deref()
             .map(|b| crate::branch_short(b).to_owned()),
     };
-    let mut out = json!({
-        "command": record.as_ref().map(|r| r.command.clone()),
-        "base": record.as_ref().map(|r| r.onto).or(state.onto).map(|o| o.to_string()),
-        "branch": branch,
-        "before": record.as_ref().map(|r| r.before.to_string()),
-        "after": outcome.after.to_string(),
-        "in_progress": outcome.in_progress,
-        "conflicts": outcome.conflicts,
-        "message": outcome.message,
-        "backup": record.as_ref().map(|r| r.backup.clone()),
-        "warnings": warnings,
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(RebaseContinueResult {
+        command: record.as_ref().map(|r| r.command.clone()),
+        base: record.as_ref().map(|r| r.onto).or(state.onto),
+        branch,
+        before: record.as_ref().map(|r| r.before),
+        after: outcome.after,
+        in_progress: outcome.in_progress,
+        conflicts: outcome.conflicts,
+        message: outcome.message,
+        backup: record.map(|r| r.backup),
+        warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Aborts the rebase in progress (`git rebase --abort`): the branch, index and worktree go back to
@@ -365,8 +480,7 @@ pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
 /// (like a stash, on the commit the rebase had reached). Without a rebase in progress →
 /// [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
-/// Result: `{"backup", "files": [path], "warnings", "status", "refs", "can_undo", "can_redo",
-/// "next_undo", "next_redo"}`.
+/// Result: [`MergeAbortResult`] (the same shape as `merge.abort`).
 pub(super) fn rebase_abort(s: &mut Session, p: Value) -> Out {
     const ID: &str = "rebase.abort";
     let AbortParams { confirm } = parse_params(ID, p)?;
@@ -377,13 +491,18 @@ pub(super) fn rebase_abort(s: &mut Session, p: Value) -> Out {
         return Err(abort_confirm(ID, &status, "rebase", "rebase"));
     }
     let aborted = repo.rebase_abort()?;
-    let mut out = json!({
-        "backup": aborted.backup,
-        "files": aborted.files,
-        "warnings": aborted.warnings,
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeAbortResult {
+        backup: aborted.backup,
+        files: aborted.files,
+        warnings: aborted.warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]

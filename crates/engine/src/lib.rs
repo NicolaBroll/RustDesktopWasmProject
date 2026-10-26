@@ -19,6 +19,7 @@ pub use builtin::branch::{
 };
 pub use builtin::conflict::{ConflictResolveResult, ConflictShowResult};
 pub use builtin::merge::{MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult};
+pub use builtin::pick::PickStartResult;
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullResult};
 pub use builtin::push::{PushRemoteSource, RemotePushResult};
 pub use builtin::rebase::{

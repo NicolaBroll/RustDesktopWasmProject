@@ -5,7 +5,7 @@ mod clone;
 pub(crate) mod conflict;
 mod file;
 pub(crate) mod merge;
-mod pick;
+pub(crate) mod pick;
 pub(crate) mod pull;
 pub(crate) mod push;
 pub(crate) mod rebase;

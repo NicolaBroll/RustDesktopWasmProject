@@ -3,15 +3,15 @@
 //! under lock are in the backends ([`GitBackend`](crate::GitBackend)). Every successful command that changes
 //! something enters the journal: `edit.undo` undoes it (§7).
 
-use super::{Out, journal_state, put_reread, to_json};
+use super::{JournalState, Out, reread, to_json};
 use crate::commands::parse_params;
 use crate::{
-    EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Session, branch_ref,
-    check_branch_name, check_new_branch_name, check_no_operation,
+    ConfigEntry, EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Message, Session,
+    branch_ref, check_branch_name, check_new_branch_name, check_no_operation,
 };
-use project_domain::{Head, Oid, RefInfo};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Head, Oid, RefInfo, Status};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Parameters of `branch.create`.
 #[derive(Deserialize)]
@@ -49,6 +49,98 @@ struct RenameParams {
     new_name: String,
 }
 
+/// Result of `branch.create`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchCreateResult {
+    /// The full name of the new branch, `refs/heads/<name>`.
+    pub branch: String,
+    /// The commit the branch points to.
+    pub target: Oid,
+    /// The refs re-read after the creation; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `branch.checkout`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchCheckoutResult {
+    /// The full name of the branch now active, `refs/heads/<name>`.
+    pub branch: String,
+    /// HEAD before the command.
+    pub previous: HeadState,
+    /// `false` if the branch was already active (nothing done, nothing in the journal).
+    pub changed: bool,
+    /// Something unexpected found after the successful checkout (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The state re-read after the checkout; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the state could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `branch.delete`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchDeleteResult {
+    /// The full name of the deleted branch, `refs/heads/<name>`.
+    pub branch: String,
+    /// The commit the branch pointed to.
+    pub target: Oid,
+    /// The commits of the branch that were neither in HEAD nor in its upstream.
+    pub unmerged: usize,
+    /// The backup ref that keeps the commit (`refs/project/backup/delete-...`).
+    pub backup: String,
+    /// The `branch.<name>.*` configuration removed with the branch (upstream, description):
+    /// `edit.undo` puts it back.
+    #[serde(default)]
+    pub removed_config: Vec<ConfigEntry>,
+    /// Something unexpected found after the successful deletion (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The refs re-read after the deletion; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `branch.rename`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchRenameResult {
+    /// The new full name, `refs/heads/<new_name>`.
+    pub branch: String,
+    /// The old full name, `refs/heads/<name>`.
+    pub previous: String,
+    /// The commit the branch points to.
+    pub target: Oid,
+    /// The renamed branch was the active one (HEAD follows it).
+    pub head: bool,
+    /// Something unexpected found after the successful rename (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The refs re-read after the rename; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
 /// The local branch `full` among the refs, `None` if there is none.
 fn find<'a>(refs: &'a [RefInfo], full: &str) -> Option<&'a RefInfo> {
     refs.iter().find(|r| r.name == full)
@@ -68,8 +160,7 @@ fn taken(name: &str) -> EngineError {
 /// overwritten. The operation goes into the journal: `edit.undo` deletes the branch, only if in the
 /// meantime it was not moved.
 ///
-/// Result: `{"branch": "refs/heads/<name>", "target": oid, "refs": [RefInfo], "can_undo",
-/// "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`BranchCreateResult`].
 pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
     const ID: &str = "branch.create";
     let CreateParams { name, start } = parse_params(ID, p)?;
@@ -98,11 +189,14 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
         target,
         HeadState::from_head(&head),
     ));
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(full);
-    out["target"] = Value::String(target.to_string());
-    put_reread(&mut out, "refs", repo.refs());
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchCreateResult {
+        branch: full,
+        target,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Switches to the local branch `name` (`git switch`, see
@@ -118,9 +212,7 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
 /// emptying the index): `edit.undo` returns to the previous HEAD (branch or detached commit) with another
 /// equally safe checkout, only if HEAD is still on the branch.
 ///
-/// Result: `{"branch": "refs/heads/<name>", "previous": HeadState, "changed": bool,
-/// "warnings": [string], "status": Status | null, "can_undo", "can_redo", "next_undo",
-/// "next_redo"}`.
+/// Result: [`BranchCheckoutResult`].
 pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
     const ID: &str = "branch.checkout";
     let NameParams { name } = parse_params(ID, p)?;
@@ -145,13 +237,16 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
             journal.record(JournalEntry::checkout(before.clone(), target));
         }
     }
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(full);
-    out["previous"] = to_json(&before);
-    out["changed"] = Value::Bool(changed);
-    out["warnings"] = to_json(warnings);
-    put_reread(&mut out, "status", repo.status());
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    Ok(to_json(BranchCheckoutResult {
+        branch: full,
+        previous: before,
+        changed,
+        warnings,
+        status,
+        status_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Deletes the local branch `name` (see
@@ -168,9 +263,7 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
 /// (upstream, description, ...) is removed as with `git branch -d`, but stays in the journal
 /// entry: undo rewrites it (if a new one has not appeared in the meantime), redo removes it.
 ///
-/// Result: `{"branch": "refs/heads/<name>", "target": oid, "unmerged": n, "backup": string,
-/// "removed_config": [{"key", "value"}], "warnings": [string], "refs": [RefInfo], "can_undo", "can_redo", "next_undo",
-/// "next_redo"}`.
+/// Result: [`BranchDeleteResult`].
 pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
     const ID: &str = "branch.delete";
     let DeleteParams {
@@ -255,15 +348,18 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
         deleted.backup.clone(),
         deleted.config.clone(),
     ));
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(full);
-    out["target"] = Value::String(target.to_string());
-    out["unmerged"] = json!(unmerged);
-    out["backup"] = Value::String(deleted.backup);
-    out["removed_config"] = to_json(deleted.config);
-    out["warnings"] = to_json(deleted.warnings);
-    put_reread(&mut out, "refs", repo.refs());
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchDeleteResult {
+        branch: full,
+        target,
+        unmerged,
+        backup: deleted.backup,
+        removed_config: deleted.config,
+        warnings: deleted.warnings,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Renames the local branch `name` to `new_name` (see
@@ -272,9 +368,7 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
 /// an operation in progress. It goes into the journal: `edit.undo` renames back, only if in the meantime
 /// nobody touched the two names.
 ///
-/// Result: `{"branch": "refs/heads/<new_name>", "previous": "refs/heads/<name>", "target":
-/// oid, "head": bool (it was the active branch), "warnings": [string], "refs": [RefInfo],
-/// "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`BranchRenameResult`].
 pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
     const ID: &str = "branch.rename";
     let RenameParams { name, new_name } = parse_params(ID, p)?;
@@ -309,14 +403,17 @@ pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
         target,
         HeadChange { before, after },
     ));
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(to);
-    out["previous"] = Value::String(from);
-    out["target"] = Value::String(target.to_string());
-    out["head"] = Value::Bool(is_head);
-    out["warnings"] = to_json(outcome.warnings);
-    put_reread(&mut out, "refs", repo.refs());
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchRenameResult {
+        branch: to,
+        previous: from,
+        target,
+        head: is_head,
+        warnings: outcome.warnings,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]
@@ -866,5 +963,60 @@ mod tests {
             let err = r.run(id, &mut s, params).unwrap_err();
             assert!(matches!(err, EngineError::NoRepo), "{id}: {err}");
         }
+    }
+
+    /// The typed results read back the JSON of the commands and give the same JSON again: the
+    /// UI deserializes into them.
+    #[test]
+    fn results_round_trip() {
+        use super::{
+            BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
+        };
+        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
+            let typed: T = serde_json::from_value(out.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        }
+        let (r, mut s) = open(clean_sample());
+        let out = run(&r, &mut s, "branch.create", json!({ "name": "x" }));
+        assert!(out.get("refs_error").is_none());
+        same::<BranchCreateResult>(out);
+        let out = run(&r, &mut s, "branch.checkout", json!({ "name": "x" }));
+        assert!(out.get("status_error").is_none());
+        same::<BranchCheckoutResult>(out);
+        let out = run(&r, &mut s, "branch.checkout", json!({ "name": "main" }));
+        same::<BranchCheckoutResult>(out);
+        let out = run(
+            &r,
+            &mut s,
+            "branch.rename",
+            json!({ "name": "x", "new_name": "y" }),
+        );
+        same::<BranchRenameResult>(out);
+        let out = run(
+            &r,
+            &mut s,
+            "branch.delete",
+            json!({ "name": "feature/graph", "confirm": true }),
+        );
+        same::<BranchDeleteResult>(out);
+    }
+
+    /// A re-read that fails gives `null` and `<key>_error`; one that works has no `<key>_error`.
+    #[test]
+    fn reread_error_fields() {
+        use super::{BranchCreateResult, JournalState, reread};
+        let (refs, refs_error) = reread::<Vec<project_domain::RefInfo>>(Err(EngineError::NoRepo));
+        let result = BranchCreateResult {
+            branch: "refs/heads/x".into(),
+            target: Oid::from_bytes([1; 20]),
+            refs,
+            refs_error,
+            journal: JournalState::default(),
+        };
+        let out = serde_json::to_value(&result).unwrap();
+        assert_eq!(out["refs"], Value::Null);
+        assert_eq!(out["refs_error"], EngineError::NoRepo.to_string());
+        let back: BranchCreateResult = serde_json::from_value(out).unwrap();
+        assert_eq!(back, result);
     }
 }

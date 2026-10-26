@@ -1,6 +1,6 @@
 //! Catalog of the built-in commands.
 
-mod branch;
+pub(crate) mod branch;
 mod clone;
 mod conflict;
 mod file;
@@ -21,11 +21,11 @@ mod tag;
 use crate::commands::parse_params;
 use crate::{
     CommandSpec, CommitRequest, DiffSpec, EngineError, GitBackend, HeadState, Journal,
-    JournalEntry, LineSelection, LogQuery, Registry, RestoreOutcome, Session,
+    JournalEntry, LineSelection, LogQuery, Message, Registry, RestoreOutcome, Session,
     commit_graph_disabled, commit_graph_replaced, commit_graph_shallow, discard_plan, file_digest,
 };
 use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// Commits returned by `repo.log` when `limit` is missing.
@@ -445,7 +445,7 @@ struct PathParam {
     path: String,
 }
 
-fn to_json(value: impl serde::Serialize) -> Value {
+fn to_json(value: impl Serialize) -> Value {
     serde_json::to_value(value).expect("the domain types are serializable")
 }
 
@@ -809,15 +809,49 @@ fn worktree_discard(s: &mut Session, p: Value) -> Out {
     Ok(out)
 }
 
-/// `{"can_undo", "can_redo", "next_undo", "next_redo"}`: whether `edit.undo`/`edit.redo` have
-/// anything to do and the description of the entry they would touch (`null` if none).
+/// The state of the operation journal after a command, flattened into the results of the
+/// commands that write (`#[serde(flatten)]`): whether `edit.undo`/`edit.redo` have anything to do
+/// and the description of the entry they would touch.
+///
+/// JSON: `{"can_undo", "can_redo", "next_undo": Message | null, "next_redo": Message | null}`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct JournalState {
+    /// `edit.undo` has an entry to undo.
+    pub can_undo: bool,
+    /// `edit.redo` has an entry to redo.
+    pub can_redo: bool,
+    /// The description of the entry `edit.undo` would undo (`null` if none).
+    #[serde(default)]
+    pub next_undo: Option<Message>,
+    /// The description of the entry `edit.redo` would redo (`null` if none).
+    #[serde(default)]
+    pub next_redo: Option<Message>,
+}
+
+impl JournalState {
+    /// The state of `journal`.
+    pub(crate) fn of(journal: &Journal) -> Self {
+        Self {
+            can_undo: journal.can_undo(),
+            can_redo: journal.can_redo(),
+            next_undo: journal.done().last().map(|e| e.description.clone()),
+            next_redo: journal.undone().last().map(|e| e.description.clone()),
+        }
+    }
+}
+
+/// `{"can_undo", "can_redo", "next_undo", "next_redo"}`: see [`JournalState`].
 fn journal_state(journal: &Journal) -> Value {
-    json!({
-        "can_undo": journal.can_undo(),
-        "can_redo": journal.can_redo(),
-        "next_undo": journal.done().last().map(|e| e.description.clone()),
-        "next_redo": journal.undone().last().map(|e| e.description.clone()),
-    })
+    to_json(JournalState::of(journal))
+}
+
+/// What a command re-reads after a successful write, as the pair of fields `<key>` and
+/// `<key>_error` of a typed result (see [`put_reread`]): the value, or `None` and the error text.
+fn reread<T>(result: Result<T, EngineError>) -> (Option<T>, Option<String>) {
+    match result {
+        Ok(value) => (Some(value), None),
+        Err(e) => (None, Some(e.to_string())),
+    }
 }
 
 /// Adds the fields of [`journal_state`] to `out`.
@@ -832,7 +866,7 @@ fn put_journal_state(out: &mut Value, journal: &Journal) {
 /// Puts what a command re-reads after a successful write at `out[key]` (`refs`, `status`...);
 /// if it cannot be re-read, `null` and the error at `out["<key>_error"]`: the operation is done
 /// anyway and must not look failed (or be repeated).
-fn put_reread<T: serde::Serialize>(out: &mut Value, key: &str, result: Result<T, EngineError>) {
+fn put_reread<T: Serialize>(out: &mut Value, key: &str, result: Result<T, EngineError>) {
     match result {
         Ok(value) => out[key] = to_json(value),
         Err(e) => {

@@ -245,6 +245,17 @@ pub struct History {
     pub next_redo: Option<String>,
 }
 
+impl From<project_engine::JournalState> for History {
+    fn from(j: project_engine::JournalState) -> Self {
+        History {
+            can_undo: j.can_undo,
+            can_redo: j.can_redo,
+            next_undo: j.next_undo.as_ref().map(project_engine::Message::text),
+            next_redo: j.next_redo.as_ref().map(project_engine::Message::text),
+        }
+    }
+}
+
 /// Undo or Redo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UndoOp {

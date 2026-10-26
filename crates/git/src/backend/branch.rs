@@ -53,6 +53,20 @@ impl CliBackend {
         }
     }
 
+    /// The ref `full` points to if it is a symbolic ref, also to a ref that does not exist
+    /// (`git symbolic-ref -q`: exit 1 for a ref that is not symbolic or does not exist).
+    fn symbolic_target(&self, full: &str) -> Result<Option<String>, EngineError> {
+        let args = ["symbolic-ref", "-q", full];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        match out.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&out.stdout).trim_end().to_owned(),
+            )),
+            Some(1) => Ok(None),
+            _ => Err(failure(&args, &out)),
+        }
+    }
+
     /// The worktree (other than this one) in which the branch `full` is the HEAD branch, if any
     /// (`git worktree list --porcelain`).
     pub(super) fn checked_out_elsewhere(&self, full: &str) -> Result<Option<PathBuf>, EngineError> {
@@ -121,6 +135,15 @@ impl CliBackend {
         let full = branch_ref(name);
         let oid = target.to_string();
         let reflog = format!("project: branch.create {name} at {oid}");
+        // Older git (2.43 does) overwrites a symbolic ref that points nowhere even with `--no-deref`
+        // and an empty old value: refused here first.
+        if let Some(target) = self.symbolic_target(&full)? {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-name-taken-git",
+                name = name.escape_debug(),
+                stderr = format!("`{full}` is a symbolic ref to `{target}`")
+            )));
+        }
         // Empty old value: the ref is created only if it does not exist. `--no-deref`: a symbolic
         // ref `refs/heads/<name>` (even to a ref that does not exist) is not followed, so
         // exactly `refs/heads/<name>` is created or refused.

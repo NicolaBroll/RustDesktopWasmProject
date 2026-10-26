@@ -691,13 +691,15 @@ impl CliBackend {
         self.check_assume_unchanged(&Some(expected), &target)?;
         let backups = self.protect(request)?;
         let env = [("GIT_REFLOG_ACTION", OsStr::new(&request.reflog))];
+        // No `--end-of-options`: `git reset` refuses it before the commit up to git 2.43 at
+        // least ("must come before non-option arguments"), and `to` is a full hex id, which
+        // never starts with `-`.
         let args = [
             "-c",
             "core.fsmonitor=false",
             "reset",
             "--keep",
             "--quiet",
-            "--end-of-options",
             &to,
         ];
         let out = self

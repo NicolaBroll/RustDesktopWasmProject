@@ -25,10 +25,12 @@ use crate::discard::History;
 use crate::fetch::{self, Failure};
 use crate::{Action, Done, Tab};
 use project_domain::remote_short;
-use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
-use project_engine::{PullOperation, PushRejection};
+use project_domain::{Head, Oid, RefInfo, Status};
+use project_engine::{
+    PullApplied, PullOperation, PushKind, PushRejection, PushRemoteSource, RemotePullResult,
+    RemotePushResult, RemotePushTagResult, StrategySource, TagPushKind,
+};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The Registry command ids.
@@ -415,14 +417,10 @@ impl SyncBox {
         let error = match result {
             Ok(value) => {
                 let outcome = match request.op {
-                    Op::Pull => {
-                        serde_json::from_value::<PullResult>(value).map(PullResult::outcome)
-                    }
-                    Op::Push => {
-                        serde_json::from_value::<PushResult>(value).map(PushResult::outcome)
-                    }
+                    Op::Pull => serde_json::from_value::<RemotePullResult>(value).map(pull_outcome),
+                    Op::Push => serde_json::from_value::<RemotePushResult>(value).map(push_outcome),
                     Op::PushTag => {
-                        serde_json::from_value::<PushTagResult>(value).map(PushTagResult::outcome)
+                        serde_json::from_value::<RemotePushTagResult>(value).map(push_tag_outcome)
                     }
                 };
                 return match outcome {
@@ -569,282 +567,197 @@ fn rejection_short(reason: PushRejection) -> String {
     }
 }
 
-/// The `fetch` part in the pull result.
-#[derive(Debug, Clone, Deserialize)]
-struct PullFetch {
-    #[serde(default)]
-    messages: Vec<String>,
-}
-
-/// Result of `remote.pull`.
-#[derive(Debug, Clone, Deserialize)]
-struct PullResult {
-    branch: String,
-    upstream: String,
-    strategy: String,
-    strategy_source: String,
-    before: Oid,
-    after: Oid,
-    ahead: u64,
-    behind: u64,
-    /// The merge stopped (conflicts, hook, signature) and stays in progress.
-    #[serde(default)]
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    backup: Option<String>,
-    fetch: Option<PullFetch>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-impl PullResult {
-    fn outcome(self) -> Outcome {
-        for line in self.fetch.iter().flat_map(|f| &f.messages) {
-            log::info!("{PULL}: {line}");
-        }
-        let upstream = remote_short(&self.upstream);
-        let what = tr!("sync-label-pull-branch", branch = &self.branch);
-        let range = format!("{} → {}", self.before.short(), self.after.short());
-        let mut notice = match self.strategy.as_str() {
-            // The merge or rebase of the pull stays in progress: the panel finishes or aborts it.
-            "rebase" if self.in_progress => match self.conflicts.len() {
-                0 => tr!("sync-pull-stopped-rebase", what = what, upstream = upstream),
-                n => tr!(
-                    "sync-pull-stopped-conflicts-rebase",
-                    what = what,
-                    upstream = upstream,
-                    n = n
-                ),
-            },
-            _ if self.in_progress => match self.conflicts.len() {
-                0 => tr!("sync-pull-stopped", what = what, upstream = upstream),
-                n => tr!(
-                    "sync-pull-stopped-conflicts",
-                    what = what,
-                    upstream = upstream,
-                    n = n
-                ),
-            },
-            "up_to_date" if self.ahead > 0 => tr!(
-                "sync-pull-up-to-date-ahead",
+/// The outcome of `remote.pull`.
+fn pull_outcome(r: RemotePullResult) -> Outcome {
+    for line in &r.fetch.messages {
+        log::info!("{PULL}: {line}");
+    }
+    let upstream = remote_short(&r.upstream);
+    let what = tr!("sync-label-pull-branch", branch = &r.branch);
+    let range = format!("{} → {}", r.before.short(), r.after.short());
+    let mut notice = match r.strategy {
+        // The merge or rebase of the pull stays in progress: the panel finishes or aborts it.
+        PullApplied::Rebase if r.in_progress => match r.conflicts.len() {
+            0 => tr!("sync-pull-stopped-rebase", what = what, upstream = upstream),
+            n => tr!(
+                "sync-pull-stopped-conflicts-rebase",
                 what = what,
                 upstream = upstream,
-                n = self.ahead
+                n = n
             ),
-            "up_to_date" => tr!("sync-pull-up-to-date", what = what, upstream = upstream),
-            "fast_forward" => tr!(
-                "sync-pull-fast-forward",
+        },
+        _ if r.in_progress => match r.conflicts.len() {
+            0 => tr!("sync-pull-stopped", what = what, upstream = upstream),
+            n => tr!(
+                "sync-pull-stopped-conflicts",
                 what = what,
                 upstream = upstream,
-                range = range,
-                n = self.behind
+                n = n
             ),
-            "merge" => tr!(
-                "sync-pull-merge",
-                what = what,
-                upstream = upstream,
-                range = range
-            ),
-            "rebase" => tr!(
-                "sync-pull-rebase",
-                what = what,
-                upstream = upstream,
-                range = range,
-                n = self.ahead
-            ),
-            other => tr!("sync-pull-other", what = what, kind = other, range = range),
-        };
-        if self.strategy == "merge" && self.strategy_source == "default" {
-            notice.push_str(&tr!("sync-pull-merge-default"));
+        },
+        PullApplied::UpToDate if r.ahead > 0 => tr!(
+            "sync-pull-up-to-date-ahead",
+            what = what,
+            upstream = upstream,
+            n = r.ahead
+        ),
+        PullApplied::UpToDate => tr!("sync-pull-up-to-date", what = what, upstream = upstream),
+        PullApplied::FastForward => tr!(
+            "sync-pull-fast-forward",
+            what = what,
+            upstream = upstream,
+            range = range,
+            n = r.behind
+        ),
+        PullApplied::Merge => tr!(
+            "sync-pull-merge",
+            what = what,
+            upstream = upstream,
+            range = range
+        ),
+        PullApplied::Rebase => tr!(
+            "sync-pull-rebase",
+            what = what,
+            upstream = upstream,
+            range = range,
+            n = r.ahead
+        ),
+    };
+    if r.strategy == PullApplied::Merge && r.strategy_source == StrategySource::Default {
+        notice.push_str(&tr!("sync-pull-merge-default"));
+    }
+    match &r.backup {
+        Some(backup) if r.in_progress => {
+            notice.push_str(&tr!("sync-pull-backup-in-progress", backup = backup));
         }
-        match &self.backup {
-            Some(backup) if self.in_progress => {
-                notice.push_str(&tr!("sync-pull-backup-in-progress", backup = backup));
-            }
-            Some(backup) => notice.push_str(&tr!("sync-pull-backup", backup = backup)),
-            None => {}
-        }
-        notice.push_str(&crate::warnings_text(&self.warnings));
-        let moved_head = self.after != self.before
-            && self.status.as_ref().is_some_and(
-                |s| matches!(&s.head, Head::Branch { name, .. } if *name == self.branch),
-            );
-        let warning = match (self.status_error, self.refs_error) {
-            (Some(e), _) => Some(tr!("sync-pull-status-not-reread", error = e)),
-            (None, Some(e)) => Some(tr!("sync-pull-refs-not-reread", error = e)),
-            (None, None) => None,
-        };
-        Outcome {
-            notice,
-            refs: self.refs,
-            status: self.status,
-            history: Some(self.history),
-            moved_head,
-            show_changes: self.in_progress && !self.conflicts.is_empty(),
-            warning,
-        }
+        Some(backup) => notice.push_str(&tr!("sync-pull-backup", backup = backup)),
+        None => {}
+    }
+    notice.push_str(&crate::messages_text(&r.warnings));
+    let moved_head = r.after != r.before
+        && r.status
+            .as_ref()
+            .is_some_and(|s| matches!(&s.head, Head::Branch { name, .. } if *name == r.branch));
+    let warning = match (r.status_error, r.refs_error) {
+        (Some(e), _) => Some(tr!("sync-pull-status-not-reread", error = e)),
+        (None, Some(e)) => Some(tr!("sync-pull-refs-not-reread", error = e)),
+        (None, None) => None,
+    };
+    Outcome {
+        notice,
+        refs: r.refs,
+        status: r.status,
+        history: Some(r.journal.into()),
+        moved_head,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        warning,
     }
 }
 
-/// Result of `remote.push`.
-#[derive(Debug, Clone, Deserialize)]
-struct PushResult {
-    remote: String,
-    /// Where the remote comes from: `param`, `push_remote`, `push_default`, `upstream`, `origin`,
-    /// `only`.
-    #[serde(default)]
-    remote_source: Option<String>,
-    branch: String,
-    remote_branch: String,
-    kind: String,
-    #[serde(default)]
-    summary: String,
-    set_upstream: bool,
-    #[serde(default)]
-    lost: Vec<Commit>,
-    backup: Option<String>,
-    #[serde(default)]
-    messages: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-}
-
-impl PushResult {
-    fn outcome(self) -> Outcome {
-        for line in &self.messages {
-            log::info!("{PUSH}: {line}");
+/// The outcome of `remote.push`.
+fn push_outcome(r: RemotePushResult) -> Outcome {
+    for line in &r.messages {
+        log::info!("{PUSH}: {line}");
+    }
+    let target = format!("{}/{}", r.remote, r.remote_branch);
+    let summary = if r.summary.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", r.summary)
+    };
+    let branch = &r.branch;
+    let mut notice = match r.kind {
+        PushKind::New => tr!(
+            "sync-push-new",
+            branch = branch,
+            target = &target,
+            summary = &summary
+        ),
+        PushKind::FastForward => tr!(
+            "sync-push-fast-forward",
+            branch = branch,
+            target = &target,
+            summary = &summary
+        ),
+        PushKind::Forced => tr!(
+            "sync-push-forced",
+            branch = branch,
+            target = &target,
+            summary = &summary,
+            n = r.lost.len()
+        ),
+        PushKind::UpToDate => tr!("sync-push-up-to-date", branch = branch, target = &target),
+    };
+    // A remote chosen by the push configuration is not what one expects: it is
+    // said.
+    match r.remote_source {
+        PushRemoteSource::PushRemote => notice.push_str(&tr!(
+            "sync-push-to-push-remote",
+            remote = &r.remote,
+            branch = &r.branch
+        )),
+        PushRemoteSource::PushDefault => {
+            notice.push_str(&tr!("sync-push-to-push-default", remote = &r.remote));
         }
-        let target = format!("{}/{}", self.remote, self.remote_branch);
-        let summary = if self.summary.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", self.summary)
-        };
-        let branch = &self.branch;
-        let mut notice = match self.kind.as_str() {
-            "new" => tr!(
-                "sync-push-new",
-                branch = branch,
-                target = &target,
-                summary = &summary
-            ),
-            "fast_forward" => tr!(
-                "sync-push-fast-forward",
-                branch = branch,
-                target = &target,
-                summary = &summary
-            ),
-            "forced" => tr!(
-                "sync-push-forced",
-                branch = branch,
-                target = &target,
-                summary = &summary,
-                n = self.lost.len()
-            ),
-            "up_to_date" => tr!("sync-push-up-to-date", branch = branch, target = &target),
-            other => tr!(
-                "sync-push-other",
-                branch = branch,
-                target = &target,
-                kind = other
-            ),
-        };
-        // A remote chosen by the push configuration is not what one expects: it is
-        // said.
-        match self.remote_source.as_deref() {
-            Some("push_remote") => notice.push_str(&tr!(
-                "sync-push-to-push-remote",
-                remote = &self.remote,
-                branch = &self.branch
-            )),
-            Some("push_default") => {
-                notice.push_str(&tr!("sync-push-to-push-default", remote = &self.remote));
-            }
-            _ => {}
-        }
-        if let Some(backup) = &self.backup {
-            notice.push_str(&tr!("sync-push-backup", backup = backup));
-        }
-        if self.set_upstream {
-            notice.push_str(&tr!("sync-push-set-upstream", target = &target));
-        }
-        notice.push_str(&crate::warnings_text(&self.warnings));
-        let warning = match (self.status_error, self.refs_error) {
-            (Some(e), _) => Some(tr!("sync-push-status-not-reread", error = e)),
-            (None, Some(e)) => Some(tr!("sync-push-refs-not-reread", error = e)),
-            (None, None) => None,
-        };
-        Outcome {
-            notice,
-            refs: self.refs,
-            status: self.status,
-            history: None,
-            moved_head: false,
-            show_changes: false,
-            warning,
-        }
+        PushRemoteSource::Param
+        | PushRemoteSource::Upstream
+        | PushRemoteSource::Origin
+        | PushRemoteSource::Only => {}
+    }
+    if let Some(backup) = &r.backup {
+        notice.push_str(&tr!("sync-push-backup", backup = backup));
+    }
+    if r.set_upstream {
+        notice.push_str(&tr!("sync-push-set-upstream", target = &target));
+    }
+    notice.push_str(&crate::messages_text(&r.warnings));
+    let warning = match (r.status_error, r.refs_error) {
+        (Some(e), _) => Some(tr!("sync-push-status-not-reread", error = e)),
+        (None, Some(e)) => Some(tr!("sync-push-refs-not-reread", error = e)),
+        (None, None) => None,
+    };
+    Outcome {
+        notice,
+        refs: r.refs,
+        status: r.status,
+        history: None,
+        moved_head: false,
+        show_changes: false,
+        warning,
     }
 }
 
-/// Result of `remote.push_tag`.
-#[derive(Debug, Clone, Deserialize)]
-struct PushTagResult {
-    remote: String,
-    name: String,
-    target: Oid,
-    annotated: bool,
-    kind: String,
-    #[serde(default)]
-    summary: String,
-    #[serde(default)]
-    messages: Vec<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-}
-
-impl PushTagResult {
-    fn outcome(self) -> Outcome {
-        for line in &self.messages {
-            log::info!("{PUSH_TAG}: {line}");
-        }
-        let (tag, remote, id) = (&self.name, &self.remote, self.target.short());
-        let notice = match (self.kind.as_str(), self.annotated) {
-            ("up_to_date", _) => tr!("sync-push-tag-up-to-date", tag = tag, remote = remote),
-            (_, true) => tr!(
-                "sync-push-tag-new-annotated",
-                tag = tag,
-                remote = remote,
-                id = id
-            ),
-            (_, false) => tr!("sync-push-tag-new", tag = tag, remote = remote, id = id),
-        };
-        let notice = if self.summary.is_empty() {
-            notice
-        } else {
-            format!("{notice} ({})", self.summary)
-        };
-        Outcome {
-            notice,
-            refs: self.refs,
-            status: None,
-            history: None,
-            moved_head: false,
-            show_changes: false,
-            warning: self
-                .refs_error
-                .map(|e| tr!("sync-push-refs-not-reread", error = e)),
-        }
+/// The outcome of `remote.push_tag`.
+fn push_tag_outcome(r: RemotePushTagResult) -> Outcome {
+    for line in &r.messages {
+        log::info!("{PUSH_TAG}: {line}");
+    }
+    let (tag, remote, id) = (&r.name, &r.remote, r.target.short());
+    let notice = match (r.kind, r.annotated) {
+        (TagPushKind::UpToDate, _) => tr!("sync-push-tag-up-to-date", tag = tag, remote = remote),
+        (TagPushKind::New, true) => tr!(
+            "sync-push-tag-new-annotated",
+            tag = tag,
+            remote = remote,
+            id = id
+        ),
+        (TagPushKind::New, false) => tr!("sync-push-tag-new", tag = tag, remote = remote, id = id),
+    };
+    let notice = if r.summary.is_empty() {
+        notice
+    } else {
+        format!("{notice} ({})", r.summary)
+    };
+    Outcome {
+        notice,
+        refs: r.refs,
+        status: None,
+        history: None,
+        moved_head: false,
+        show_changes: false,
+        warning: r
+            .refs_error
+            .map(|e| tr!("sync-push-refs-not-reread", error = e)),
     }
 }
 
@@ -990,7 +903,7 @@ impl Tab {
 mod tests {
     use super::*;
     use crate::Ticket;
-    use project_domain::{Change, ChangedFile, RepoPath, Signature};
+    use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
 
@@ -1487,9 +1400,7 @@ mod tests {
             "forced": false, "lost": [], "backup": null, "updated": [], "messages": [],
             "warnings": [], "status": null, "refs": null
         });
-        let outcome = serde_json::from_value::<PushResult>(value)
-            .unwrap()
-            .outcome();
+        let outcome = push_outcome(serde_json::from_value(value).unwrap());
         assert!(
             outcome.notice.contains("to “fork” (remote.pushDefault)"),
             "{}",

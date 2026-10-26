@@ -785,3 +785,167 @@ fn delete_branch_on_the_remote() {
         oid(9).to_string()
     );
 }
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use crate::{
+        PullApplied, RemoteDeleteBranchResult, RemoteDeleteTagResult, RemoteFetchResult,
+        RemotePullResult, RemotePushResult, RemotePushTagResult,
+    };
+    use serde_json::Value;
+    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+        let typed: T = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        typed
+    }
+    fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
+        let out = r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"));
+        assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());
+        out
+    }
+    let (r, mut s) = opened_with(MemoryBackend::sample());
+    let out = run(&r, &mut s, "remote.fetch", json!({}));
+    assert_eq!(out["branch"], Value::Null);
+    same::<RemoteFetchResult>(out);
+    same::<RemoteFetchResult>(run(
+        &r,
+        &mut s,
+        "remote.fetch",
+        json!({ "remote": "origin", "branch": "main" }),
+    ));
+    let pull: RemotePullResult = same(run(
+        &r,
+        &mut s,
+        "remote.pull",
+        json!({ "branch": "feature/graph" }),
+    ));
+    assert_eq!(pull.strategy, PullApplied::FastForward);
+    let pull: RemotePullResult = same(run(&r, &mut s, "remote.pull", json!({})));
+    assert_eq!(pull.strategy, PullApplied::UpToDate);
+    assert_eq!(pull.backup, None);
+    same::<RemotePushResult>(run(&r, &mut s, "remote.push", json!({})));
+    same::<RemoteDeleteBranchResult>(run(
+        &r,
+        &mut s,
+        "remote.delete_branch",
+        json!({
+            "remote": "origin",
+            "branch": "feature/graph",
+            "confirm": true,
+            "expected": oid(13).to_string(),
+        }),
+    ));
+    same::<RemotePushTagResult>(run(
+        &r,
+        &mut s,
+        "remote.push_tag",
+        json!({ "remote": "origin", "name": "v0.1.0" }),
+    ));
+    same::<RemoteDeleteTagResult>(run(
+        &r,
+        &mut s,
+        "remote.delete_tag",
+        json!({
+            "remote": "origin",
+            "name": "v0.1.0",
+            "confirm": true,
+            "expected": oid(1_000).to_string(),
+        }),
+    ));
+    // A pull that stops on a rebase conflict.
+    let (r, mut s) = rebase_conflict();
+    let pull: RemotePullResult = same(run(&r, &mut s, "remote.pull", json!({})));
+    assert_eq!(pull.strategy, PullApplied::Rebase);
+    assert!(pull.in_progress && !pull.conflicts.is_empty());
+}
+
+/// Refs that cannot be re-read give `updated: null`, `refs: null` and `refs_error`, keeping the
+/// warnings given; a status that cannot be re-read gives `null` and `status_error`.
+#[test]
+fn reread_error_fields() {
+    use super::super::remote::RefsAfter;
+    use super::super::reread;
+    use crate::{
+        Message, PushKind, PushRemoteSource, RemoteDeleteTagResult, RemotePushResult,
+        RemotePushTagResult, TagPushKind,
+    };
+    use project_domain::{RefInfo, Status};
+    use serde_json::Value;
+    let error = EngineError::NoRepo.to_string();
+    let after = RefsAfter::new(&[], Err(EngineError::NoRepo), vec![Message::plain("w")]);
+    assert_eq!(after.updated, None);
+    assert_eq!(after.refs, None);
+    assert_eq!(after.warnings, vec![Message::plain("w")]);
+    let (status, status_error) = reread::<Status>(Err(EngineError::NoRepo));
+    let result = RemotePushResult {
+        remote: "origin".into(),
+        remote_source: PushRemoteSource::PushDefault,
+        branch: "main".into(),
+        remote_branch: "main".into(),
+        kind: PushKind::Forced,
+        summary: String::new(),
+        before: None,
+        after: oid(1),
+        set_upstream: false,
+        forced: true,
+        lost: vec![],
+        backup: None,
+        updated: after.updated,
+        messages: vec![],
+        warnings: after.warnings,
+        status,
+        status_error,
+        refs: after.refs,
+        refs_error: after.refs_error,
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    for key in ["updated", "refs", "status", "before", "backup"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["refs_error"], error.as_str());
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["remote_source"], "push_default");
+    assert_eq!(out["kind"], "forced");
+    let back: RemotePushResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+
+    let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+    let result = RemotePushTagResult {
+        remote: "origin".into(),
+        tag: "refs/tags/v1".into(),
+        name: "v1".into(),
+        target: oid(1),
+        annotated: false,
+        value: oid(1),
+        kind: TagPushKind::UpToDate,
+        summary: String::new(),
+        messages: vec![],
+        refs: refs.clone(),
+        refs_error: refs_error.clone(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    assert_eq!(out["kind"], "up_to_date");
+    assert_eq!(out["refs"], Value::Null);
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: RemotePushTagResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+    let result = RemoteDeleteTagResult {
+        remote: "origin".into(),
+        tag: "refs/tags/v1".into(),
+        name: "v1".into(),
+        deleted: oid(1),
+        backup: "refs/project/backup/push-delete-1".into(),
+        summary: "[deleted]".into(),
+        messages: vec![],
+        incomplete: true,
+        warnings: vec![Message::plain("w")],
+        refs,
+        refs_error,
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: RemoteDeleteTagResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+}

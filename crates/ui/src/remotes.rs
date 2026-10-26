@@ -19,13 +19,16 @@
 //! confirm is the one the engine read from the remote.
 
 use crate::discard::{History, Phase};
-use crate::fetch::{self, Failure, FetchResult, RefUpdate};
-use crate::warnings_text;
+use crate::fetch::{self, Failure};
 use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, Ticket};
+use crate::{messages_text, warnings_text};
 use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
-use project_engine::mask_url;
+use project_engine::{
+    Message, RefUpdate, RemoteDeleteBranchResult, RemoteDeleteTagResult, RemoteFetchResult,
+    mask_url,
+};
 use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -743,11 +746,11 @@ impl RemotesBox {
             }
             Ok(value) => {
                 let outcome = if delete.tag {
-                    crate::decode::<DeleteTagResult>(op.command(), value)
-                        .map(DeleteTagResult::outcome)
+                    crate::decode::<RemoteDeleteTagResult>(op.command(), value)
+                        .map(delete_tag_outcome)
                 } else {
-                    crate::decode::<DeleteBranchResult>(op.command(), value)
-                        .map(DeleteBranchResult::outcome)
+                    crate::decode::<RemoteDeleteBranchResult>(op.command(), value)
+                        .map(delete_branch_outcome)
                 };
                 match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
@@ -761,75 +764,41 @@ impl RemotesBox {
     }
 }
 
-/// Result of `remote.delete_branch`.
-#[derive(Debug, Clone, Deserialize)]
-struct DeleteBranchResult {
-    remote: String,
-    branch: String,
-    backup: String,
-    #[serde(default)]
-    only_here: usize,
-    #[serde(default)]
-    upstream_of: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-}
-
-impl DeleteBranchResult {
-    fn outcome(self) -> Outcome {
-        let name = format!("{}/{}", self.remote, self.branch);
-        let mut notice = tr!("remotes-branch-deleted", name = &name);
-        if self.only_here > 0 {
-            notice.push_str(&tr!("remotes-branch-deleted-only-here", n = self.only_here));
-        }
-        notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &self.backup));
-        if !self.upstream_of.is_empty() {
-            notice.push_str(&tr!(
-                "remotes-branch-deleted-upstreams",
-                names = quoted(&self.upstream_of)
-            ));
-        }
-        notice.push_str(&warnings_text(&self.warnings));
-        Outcome {
-            notice,
-            refs: self.refs,
-            remotes: None,
-            warning: reread_warning(&tr!("remotes-branch-deleted-short"), self.refs_error, None),
-            history: None,
-        }
+/// The outcome of `remote.delete_branch`.
+fn delete_branch_outcome(r: RemoteDeleteBranchResult) -> Outcome {
+    let name = format!("{}/{}", r.remote, r.branch);
+    let mut notice = tr!("remotes-branch-deleted", name = &name);
+    if r.only_here > 0 {
+        notice.push_str(&tr!("remotes-branch-deleted-only-here", n = r.only_here));
+    }
+    notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &r.backup));
+    if !r.upstream_of.is_empty() {
+        notice.push_str(&tr!(
+            "remotes-branch-deleted-upstreams",
+            names = quoted(&r.upstream_of)
+        ));
+    }
+    notice.push_str(&messages_text(&r.warnings));
+    Outcome {
+        notice,
+        refs: r.refs,
+        remotes: None,
+        warning: reread_warning(&tr!("remotes-branch-deleted-short"), r.refs_error, None),
+        history: None,
     }
 }
 
-/// Result of `remote.delete_tag`.
-#[derive(Debug, Clone, Deserialize)]
-struct DeleteTagResult {
-    remote: String,
-    name: String,
-    backup: String,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-}
-
-impl DeleteTagResult {
-    fn outcome(self) -> Outcome {
-        let mut notice = tr!(
-            "remotes-tag-deleted",
-            name = &self.name,
-            remote = &self.remote
-        );
-        notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &self.backup));
-        notice.push_str(&warnings_text(&self.warnings));
-        Outcome {
-            notice,
-            refs: self.refs,
-            remotes: None,
-            warning: reread_warning(&tr!("remotes-tag-deleted-short"), self.refs_error, None),
-            history: None,
-        }
+/// The outcome of `remote.delete_tag`.
+fn delete_tag_outcome(r: RemoteDeleteTagResult) -> Outcome {
+    let mut notice = tr!("remotes-tag-deleted", name = &r.name, remote = &r.remote);
+    notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &r.backup));
+    notice.push_str(&messages_text(&r.warnings));
+    Outcome {
+        notice,
+        refs: r.refs,
+        remotes: None,
+        warning: reread_warning(&tr!("remotes-tag-deleted-short"), r.refs_error, None),
+        history: None,
     }
 }
 
@@ -864,8 +833,8 @@ struct FetchPart {
     updated: Option<Vec<RefUpdate>>,
     #[serde(default)]
     messages: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
+    #[serde(default)]
+    warnings: Vec<Message>,
 }
 
 /// The failed fetch after the add.
@@ -903,17 +872,17 @@ impl AddResult {
         let mut notice = tr!("remotes-added", name = name, url = &self.url);
         let mut failure = None;
         if let Some(fetch) = self.fetch {
-            let summary = FetchResult {
+            let summary = fetch::outcome(RemoteFetchResult {
                 remote: name.clone(),
                 branch: None,
+                prune: false,
                 updated: fetch.updated,
                 messages: fetch.messages,
                 warnings: fetch.warnings,
+                backups: Vec::new(),
                 refs: None,
                 refs_error: None,
-                backups: Vec::new(),
-            }
-            .outcome()
+            })
             .notice;
             notice.push_str(&format!("; {}", crate::lowercase_first(&summary)));
         }

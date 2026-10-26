@@ -8,11 +8,10 @@
 
 use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, Ticket};
-use project_domain::{Oid, RefInfo};
+use project_domain::RefInfo;
 use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
-use project_engine::Progress;
+use project_engine::{Progress, RefUpdate, RemoteFetchResult};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The id of the Registry command.
@@ -161,8 +160,8 @@ impl FetchBox {
         let label = label(remote.as_deref());
         let error = match result {
             Ok(value) => {
-                return match serde_json::from_value::<FetchResult>(value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome())),
+                return match serde_json::from_value::<RemoteFetchResult>(value) {
+                    Ok(result) => Received::Done(Box::new(outcome(result))),
                     Err(e) => Received::Failed {
                         message: crate::unexpected_result(COMMAND, e),
                         reload: true,
@@ -256,31 +255,6 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
     }
 }
 
-/// A ref changed by the fetch.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct RefUpdate {
-    pub name: String,
-    pub before: Option<Oid>,
-    pub after: Option<Oid>,
-}
-
-/// Result of `remote.fetch`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct FetchResult {
-    pub remote: String,
-    pub branch: Option<String>,
-    pub updated: Option<Vec<RefUpdate>>,
-    #[serde(default)]
-    pub messages: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    /// The backups of the remote-tracking branches removed by `prune`.
-    #[serde(default)]
-    pub backups: Vec<String>,
-}
-
 /// How many ref names to list in the notice before "and N more".
 const NAMES_SHOWN: usize = 3;
 
@@ -295,65 +269,63 @@ fn ref_text(name: &str) -> String {
     }
 }
 
-impl FetchResult {
-    /// The notice for the status bar (also for the fetch of `remote.add`).
-    pub(crate) fn outcome(self) -> Outcome {
-        // git's lines (`From ...`, `* [new branch] ...`) go only in the log.
-        for line in &self.messages {
-            log::info!("{COMMAND}: {line}");
-        }
-        let what = match &self.branch {
-            Some(branch) => tr!("fetch-what-branch", branch = branch, remote = &self.remote),
-            None => tr!("fetch-label-remote", remote = &self.remote),
-        };
-        let summary = match &self.updated {
-            None => tr!("fetch-done", what = what),
-            Some(updated) if updated.is_empty() => tr!("fetch-nothing-new", what = what),
-            Some(updated) => {
-                let mut names: Vec<String> = updated
-                    .iter()
-                    .take(NAMES_SHOWN)
-                    .map(|u| {
-                        let name = ref_text(&u.name);
-                        match (u.before, u.after) {
-                            (None, Some(_)) => tr!("fetch-ref-new", name = name),
-                            (Some(_), None) => tr!("fetch-ref-removed", name = name),
-                            _ => name,
-                        }
-                    })
-                    .collect();
-                if updated.len() > NAMES_SHOWN {
-                    names.push(tr!("fetch-and-more", n = updated.len() - NAMES_SHOWN));
-                }
-                tr!(
-                    "fetch-updated",
-                    what = what,
-                    n = updated.len(),
-                    names = names.join(", ")
-                )
-            }
-        };
-        let warnings = crate::warnings_text(&self.warnings);
-        let backups = if self.backups.is_empty() {
-            String::new()
-        } else {
-            tr!("fetch-pruned-backups", n = self.backups.len())
-        };
-        Outcome {
-            notice: summary + &backups + &warnings,
-            changed: self.updated.as_ref().is_none_or(|u| !u.is_empty()),
-            moved: self
-                .updated
+/// The notice for the status bar (also for the fetch of `remote.add`).
+pub(crate) fn outcome(r: RemoteFetchResult) -> Outcome {
+    // git's lines (`From ...`, `* [new branch] ...`) go only in the log.
+    for line in &r.messages {
+        log::info!("{COMMAND}: {line}");
+    }
+    let what = match &r.branch {
+        Some(branch) => tr!("fetch-what-branch", branch = branch, remote = &r.remote),
+        None => tr!("fetch-label-remote", remote = &r.remote),
+    };
+    let summary = match &r.updated {
+        None => tr!("fetch-done", what = what),
+        Some(updated) if updated.is_empty() => tr!("fetch-nothing-new", what = what),
+        Some(updated) => {
+            let mut names: Vec<String> = updated
                 .iter()
-                .flatten()
-                .filter(|u| u.name.starts_with(REMOTES_PREFIX))
-                .cloned()
-                .collect(),
-            refs: self.refs,
-            warning: self
-                .refs_error
-                .map(|e| tr!("fetch-refs-not-reread", error = e)),
+                .take(NAMES_SHOWN)
+                .map(|u| {
+                    let name = ref_text(&u.name);
+                    match (u.before, u.after) {
+                        (None, Some(_)) => tr!("fetch-ref-new", name = name),
+                        (Some(_), None) => tr!("fetch-ref-removed", name = name),
+                        _ => name,
+                    }
+                })
+                .collect();
+            if updated.len() > NAMES_SHOWN {
+                names.push(tr!("fetch-and-more", n = updated.len() - NAMES_SHOWN));
+            }
+            tr!(
+                "fetch-updated",
+                what = what,
+                n = updated.len(),
+                names = names.join(", ")
+            )
         }
+    };
+    let warnings = crate::messages_text(&r.warnings);
+    let backups = if r.backups.is_empty() {
+        String::new()
+    } else {
+        tr!("fetch-pruned-backups", n = r.backups.len())
+    };
+    Outcome {
+        notice: summary + &backups + &warnings,
+        changed: r.updated.as_ref().is_none_or(|u| !u.is_empty()),
+        moved: r
+            .updated
+            .iter()
+            .flatten()
+            .filter(|u| u.name.starts_with(REMOTES_PREFIX))
+            .cloned()
+            .collect(),
+        refs: r.refs,
+        warning: r
+            .refs_error
+            .map(|e| tr!("fetch-refs-not-reread", error = e)),
     }
 }
 

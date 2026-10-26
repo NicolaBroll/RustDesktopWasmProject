@@ -45,7 +45,6 @@ sync-pull-rebase = { $what }: rebase di { $n ->
     [one] 1 commit locale
    *[other] { $n } commit locali
 } su { $upstream } ({ $range })
-sync-pull-other = { $what }: { $kind } ({ $range })
 sync-pull-merge-default = ; merge perché pull.rebase non è configurato (git config pull.rebase true per il rebase)
 sync-pull-backup-in-progress = ; il branch com'era è in { $backup }
 sync-pull-backup = ; backup in { $backup }, «Annulla» lo riporta indietro
@@ -59,7 +58,6 @@ sync-push-forced = Push forzato di «{ $branch }» su { $target }{ $summary }: {
    *[other] { $n } commit tolti
 } dal remoto
 sync-push-up-to-date = Push di «{ $branch }»: { $target } è già aggiornato
-sync-push-other = Push di «{ $branch }» su { $target }: { $kind }
 sync-push-to-push-remote = ; su «{ $remote }» (branch.{ $branch }.pushRemote)
 sync-push-to-push-default = ; su «{ $remote }» (remote.pushDefault)
 sync-push-backup = ; il remoto com'era è salvato in { $backup }

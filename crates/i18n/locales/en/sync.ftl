@@ -51,7 +51,6 @@ sync-pull-rebase = { $what }: rebase of { $n ->
     [one] 1 local commit
    *[other] { $n } local commits
 } onto { $upstream } ({ $range })
-sync-pull-other = { $what }: { $kind } ({ $range })
 sync-pull-merge-default = ; merge because pull.rebase is not configured (git config pull.rebase true to rebase)
 sync-pull-backup-in-progress = ; the branch as it was is in { $backup }
 sync-pull-backup = ; backup in { $backup }, “Undo” reverts it
@@ -65,7 +64,6 @@ sync-push-forced = Force push of “{ $branch }” to { $target }{ $summary }: {
    *[other] { $n } commits
 } removed from the remote
 sync-push-up-to-date = Push of “{ $branch }”: { $target } is already up to date
-sync-push-other = Push of “{ $branch }” to { $target }: { $kind }
 sync-push-to-push-remote = ; to “{ $remote }” (branch.{ $branch }.pushRemote)
 sync-push-to-push-default = ; to “{ $remote }” (remote.pushDefault)
 sync-push-backup = ; the remote as it was is saved in { $backup }

@@ -6,17 +6,62 @@
 //! `edit.undo` undoes it with `reset --keep`; stopped on a conflict it **stays in progress** and does not enter
 //! the journal; `*.abort` always asks for `"confirm": true` and first saves index and worktree.
 
-use super::merge::{abort_confirm, check_message, finish, label};
-use super::{Out, to_json};
+use super::merge::{abort_confirm, check_message, label};
+use super::{JournalState, Out, reread, to_json};
 use crate::commands::parse_params;
 use crate::{
-    CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, PickKind, PickRequest, Session,
-    branch_ref, check_pick_state, check_picking, clean_merge_message, conflicted_paths,
-    pick_message, pick_parent,
+    CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeAbortResult,
+    MergeContinueResult, Message, PickKind, PickRequest, Session, branch_ref, check_pick_state,
+    check_picking, clean_merge_message, conflicted_paths, pick_message, pick_parent,
 };
-use project_domain::Head;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Result of `commit.cherry_pick` and `commit.revert`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PickStartResult {
+    /// The rev given in the parameters, as given.
+    pub rev: String,
+    /// The commit `rev` resolved to.
+    pub commit: Oid,
+    /// The first line of its message.
+    pub summary: String,
+    /// The parent (from 1) of a merge commit, as given; `null` if not given.
+    pub mainline: Option<usize>,
+    /// The active branch (short name).
+    pub branch: String,
+    /// The branch before the operation.
+    pub before: Oid,
+    /// The branch after the operation (the previous one, if `in_progress`).
+    pub after: Oid,
+    /// The operation stopped (conflicts, a hook) and stays in progress.
+    pub in_progress: bool,
+    /// The conflicted files of the stopped operation (empty otherwise).
+    pub conflicts: Vec<RepoPath>,
+    /// The git text of the stopped operation (empty otherwise).
+    pub message: String,
+    /// The backup ref of the branch before the operation
+    /// (`refs/project/backup/<cherry-pick|revert>-...`).
+    pub backup: String,
+    /// Warnings after the operation (e.g. a result that is not a new commit on the branch).
+    pub warnings: Vec<Message>,
+    /// The status re-read after the operation; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the operation; `null` if they could not be re-read (see
+    /// `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
 
 /// Parameters of `commit.cherry_pick` and `commit.revert`.
 #[derive(Deserialize)]
@@ -85,9 +130,7 @@ pub(super) fn revert_abort(s: &mut Session, p: Value) -> Out {
 /// `*.continue` or aborted with `*.abort`; nothing in the journal. Once concluded it enters the journal:
 /// `edit.undo` brings the branch, with index and worktree, back to where it was.
 ///
-/// Result: `{"rev", "commit", "summary", "mainline", "branch", "before", "after",
-/// "in_progress", "conflicts", "message", "backup", "warnings", "status", "refs", "can_undo",
-/// "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`PickStartResult`].
 fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
     let id = kind.command();
     let StartParams { rev, mainline } = parse_params(id, p)?;
@@ -166,22 +209,27 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
             Some(outcome.backup.clone()),
         ));
     }
-    let mut out = json!({
-        "rev": rev,
-        "commit": commit.id.to_string(),
-        "summary": commit.summary,
-        "mainline": mainline,
-        "branch": branch,
-        "before": before.to_string(),
-        "after": outcome.after.to_string(),
-        "in_progress": outcome.in_progress,
-        "conflicts": outcome.conflicts,
-        "message": outcome.message,
-        "backup": outcome.backup,
-        "warnings": warnings,
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(PickStartResult {
+        rev,
+        commit: commit.id,
+        summary: commit.summary,
+        mainline,
+        branch,
+        before,
+        after: outcome.after,
+        in_progress: outcome.in_progress,
+        conflicts: outcome.conflicts,
+        message: outcome.message,
+        backup: outcome.backup,
+        warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Concludes the cherry-pick or revert in progress with the commit (`git commit` like
@@ -192,8 +240,7 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
 /// conflicted files remain. It enters the journal like the concluded operation; with detached HEAD
 /// (started from a terminal) as a commit.
 ///
-/// Result: `{"commit": Commit, "previous", "branch", "backup", "also_on", "message",
-/// "status", "refs", "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`MergeContinueResult`] (the same shape as `merge.continue`).
 fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
     let id = kind.continue_command();
     let ContinueParams { message } = parse_params(id, p)?;
@@ -264,10 +311,21 @@ fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
             None => 0,
         },
     };
-    let mut out = to_json(&outcome);
-    out["message"] = json!(message);
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeContinueResult {
+        commit: outcome.commit,
+        previous: outcome.previous,
+        branch: outcome.branch,
+        backup: outcome.backup,
+        also_on: outcome.also_on,
+        message,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Aborts the cherry-pick or revert in progress (`git cherry-pick --abort`, `git revert
@@ -277,8 +335,7 @@ fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
 /// (like a stash). Without the operation `kind` in progress, or with a sequence of several commits started
 /// from a terminal → [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
-/// Result: `{"backup", "files": [path], "warnings", "status", "refs", "can_undo",
-/// "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`MergeAbortResult`] (the same shape as `merge.abort`).
 fn pick_abort(s: &mut Session, p: Value, kind: PickKind) -> Out {
     let id = kind.abort_command();
     let AbortParams { confirm } = parse_params(id, p)?;
@@ -290,13 +347,18 @@ fn pick_abort(s: &mut Session, p: Value, kind: PickKind) -> Out {
         return Err(abort_confirm(id, &status, kind.git(), kind.git()));
     }
     let aborted = repo.pick_abort(kind)?;
-    let mut out = json!({
-        "backup": aborted.backup,
-        "files": aborted.files,
-        "warnings": aborted.warnings,
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeAbortResult {
+        backup: aborted.backup,
+        files: aborted.files,
+        warnings: aborted.warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]

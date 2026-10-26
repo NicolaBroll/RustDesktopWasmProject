@@ -4,7 +4,7 @@
 use super::super::{Dialog, Kind, OPERATION};
 use super::*;
 use crate::discard::Phase;
-use project_domain::{Change, ChangedFile, Commit, Operation, Signature};
+use project_domain::{Change, ChangedFile, Commit, Operation, RepoPath, Signature, Status};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use std::sync::Arc;
 
@@ -55,12 +55,19 @@ fn commit(repo: &mut MemoryBackend, n: u64, parent: Option<u64>, text: &str) {
 /// `main` on `c2` and `other` on `c3`, both from `c1` and different on `a.txt`: the cherry-pick
 /// of `c3` on `main` stops on a conflict; the revert of `c2` succeeds.
 fn opened() -> (Registry, Session) {
+    opened_on(2)
+}
+
+/// Like [`opened`], with `main` on `c<tip>`; `c4` (on `c2`) changes `a.txt` again, so on it the
+/// revert of `c2` stops on a conflict.
+fn opened_on(tip: u64) -> (Registry, Session) {
     let mut repo = MemoryBackend::new();
     repo.set_identity("Ada", "ada@example.com");
     commit(&mut repo, 1, None, "base\n");
     commit(&mut repo, 2, Some(1), "ours\n");
     commit(&mut repo, 3, Some(1), "theirs\n");
-    repo.set_branch("main", oid(2));
+    commit(&mut repo, 4, Some(2), "later\n");
+    repo.set_branch("main", oid(tip));
     repo.set_branch("other", oid(3));
     repo.set_head_branch("main");
     let mut opener = MemoryOpener::new();
@@ -233,6 +240,72 @@ fn cherry_pick_abort_takes_two_steps() {
         outcome
             .notice
             .contains("refs/project/backup/cherry-pick-abort-"),
+        "{}",
+        outcome.notice
+    );
+    assert!(!outcome.moved);
+    refresh(&r, &mut s, &mut b, 2);
+    assert!(b.info().is_none());
+}
+
+#[test]
+fn conflicted_revert_is_finished_from_the_panel() {
+    let (r, mut s) = opened_on(4);
+    let mut b = MergeBox::default();
+    let params = start(&mut b, Pick::Revert, 2);
+    let outcome = done(run(&r, &mut s, &mut b, Op::Pick(Pick::Revert), params));
+    assert!(!outcome.moved);
+    assert!(outcome.show_changes);
+    assert!(
+        outcome.notice.contains("“Continue revert…”"),
+        "{}",
+        outcome.notice
+    );
+    refresh(&r, &mut s, &mut b, 1);
+    let info = b.info().expect("revert in progress");
+    assert_eq!(info.operation, Some(Operation::Revert));
+    assert_eq!(info.continue_command.as_deref(), Some("revert.continue"));
+    assert_eq!(info.abort_command.as_deref(), Some("revert.abort"));
+
+    r.run("index.stage", &mut s, json!({ "paths": ["a.txt"] }))
+        .unwrap();
+    refresh(&r, &mut s, &mut b, 2);
+    assert!(b.open_continue());
+    let (op, params, label) = b.submit_continue().unwrap();
+    assert_eq!(op, Op::Continue(Kind::Revert));
+    assert_eq!(label, "Finishing the revert");
+    let outcome = done(run(&r, &mut s, &mut b, op, params));
+    assert!(outcome.moved);
+    assert!(outcome.history.can_undo);
+    assert!(
+        outcome.notice.starts_with("Revert finished: commit "),
+        "{}",
+        outcome.notice
+    );
+    refresh(&r, &mut s, &mut b, 3);
+    assert!(b.info().is_none());
+}
+
+#[test]
+fn revert_abort_takes_two_steps() {
+    let (r, mut s) = opened_on(4);
+    let mut b = MergeBox::default();
+    let params = start(&mut b, Pick::Revert, 2);
+    done(run(&r, &mut s, &mut b, Op::Pick(Pick::Revert), params));
+    refresh(&r, &mut s, &mut b, 1);
+
+    let (op, params, _) = b.start_abort().unwrap();
+    assert_eq!(op, Op::Abort(Kind::Revert));
+    assert!(matches!(
+        run(&r, &mut s, &mut b, op, params),
+        Received::Confirm
+    ));
+    let (op, params, label) = b.confirm_abort().unwrap();
+    assert_eq!(params, json!({ "confirm": true }));
+    assert_eq!(label, "Aborting the revert");
+    let outcome = done(run(&r, &mut s, &mut b, op, params));
+    assert!(
+        outcome.notice.contains("refs/project/backup/revert-abort-"),
         "{}",
         outcome.notice
     );

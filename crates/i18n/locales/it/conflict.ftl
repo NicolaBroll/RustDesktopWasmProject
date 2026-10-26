@@ -3,7 +3,6 @@
 
 conflict-worktree-not-text = il file del worktree non è testo o non c'è
 conflict-no-blocks = il risultato non ha blocchi da scegliere
-conflict-unexpected-result = { $command }: risultato inatteso: { $error }
 conflict-label-use-ours = Risoluzione di { $path } con la versione nostra
 conflict-label-use-theirs = Risoluzione di { $path } con la versione loro
 conflict-label-delete = Eliminazione di { $path } per risolvere il conflitto

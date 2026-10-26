@@ -151,7 +151,7 @@ impl FetchBox {
             other => {
                 self.running = other;
                 return Received::Failed {
-                    message: tr!("fetch-unexpected-response", command = COMMAND),
+                    message: tr!("common-unexpected-response", command = COMMAND),
                     reload: true,
                 };
             }
@@ -163,11 +163,7 @@ impl FetchBox {
                 return match serde_json::from_value::<FetchResult>(value) {
                     Ok(result) => Received::Done(Box::new(result.outcome())),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "fetch-unexpected-result",
-                            command = COMMAND,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(COMMAND, e),
                         reload: true,
                     },
                 };
@@ -206,7 +202,7 @@ impl FetchBox {
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
-                    message: tr!("fetch-failed", label = label, error = error),
+                    message: tr!("common-failed", label = label, error = error),
                     reload: true,
                 }
             }
@@ -336,11 +332,7 @@ impl FetchResult {
                 )
             }
         };
-        let warnings: String = self
-            .warnings
-            .iter()
-            .map(|w| tr!("fetch-warning", warning = w))
-            .collect();
+        let warnings = crate::warnings_text(&self.warnings);
         let backups = if self.backups.is_empty() {
             String::new()
         } else {

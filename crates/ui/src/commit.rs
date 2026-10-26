@@ -483,15 +483,9 @@ impl Tab {
     /// Result of `commit.create`: state from the answer, log and refs reread; or the error
     /// (or the confirmation) in the box, with the written message kept.
     pub(crate) fn receive_commit(&mut self, generation: u64, done: Done) {
-        let result = done.result.and_then(|value| {
-            serde_json::from_value::<CommitResult>(value).map_err(|e| {
-                tr!(
-                    "commit-unexpected-result",
-                    command = &done.command,
-                    error = e.to_string()
-                )
-            })
-        });
+        let result = done
+            .result
+            .and_then(|value| crate::decode::<CommitResult>(&done.command, value));
         let Some(repo) = self.current(generation) else {
             return;
         };

@@ -4,13 +4,10 @@
 fetch-label = Fetch
 fetch-label-remote = Fetch from “{ $remote }”
 fetch-what-branch = Fetch of “{ $branch }” from “{ $remote }”
-fetch-unexpected-response = unexpected response from `{ $command }`
-fetch-unexpected-result = { $command }: unexpected result: { $error }
 fetch-cancelled = { $label } cancelled: remote-tracking branches already updated stay, no local branch or file was touched
 fetch-failed-auth = { $label } failed: authentication rejected or required
 fetch-failed-unreachable = { $label } failed: remote unreachable
 fetch-not-possible = { $label } not possible: { $error }
-fetch-failed = { $label } failed: { $error }
 fetch-failed-title = Fetch failed
 fetch-who = The remote
 fetch-who-remote = The remote “{ $remote }”
@@ -33,7 +30,6 @@ fetch-pruned-backups = ; { $n ->
     [one] the commits only on a deleted branch are kept in a backup
    *[other] the commits only on { $n } deleted branches are kept in backups
 } (refs/project/backup/prune-…)
-fetch-warning = ; warning: { $warning }
 fetch-refs-not-reread = Fetch done, but the refs could not be reread: { $error }
 fetch-progress-remote = remote: { $phase }
 fetch-phase-enumerating = Enumerating objects

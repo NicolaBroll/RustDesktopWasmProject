@@ -339,15 +339,7 @@ impl RebaseBox {
         let Some(editor) = self.editor.as_mut().filter(|e| e.phase == Phase::Loading) else {
             return;
         };
-        let plan = result.and_then(|value| {
-            serde_json::from_value::<PlanResult>(value).map_err(|e| {
-                tr!(
-                    "common-unexpected-result",
-                    command = PLAN,
-                    error = e.to_string()
-                )
-            })
-        });
+        let plan = result.and_then(|value| crate::decode::<PlanResult>(PLAN, value));
         match plan {
             Ok(plan) => {
                 editor.branch = plan
@@ -476,7 +468,7 @@ impl RebaseBox {
     ) -> Received {
         let Some(editor) = self.editor.as_mut().filter(|e| e.phase == Phase::Sending) else {
             return Received::Failed {
-                message: tr!("merge-unexpected-response", command = START),
+                message: tr!("common-unexpected-response", command = START),
                 reload: true,
             };
         };
@@ -518,11 +510,7 @@ impl RebaseBox {
                 match serde_json::from_value::<StartResult>(value) {
                     Ok(result) => Received::Done(Box::new(result.outcome(rows, produced))),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "common-unexpected-result",
-                            command = START,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(START, e),
                         reload: true,
                     },
                 }

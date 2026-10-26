@@ -165,7 +165,7 @@ impl DiscardBox {
     ) -> Received {
         let Some(discard) = self.current.take() else {
             return Received::Failed {
-                message: tr!("discard-unexpected-response", command = COMMAND),
+                message: tr!("common-unexpected-response", command = COMMAND),
                 reload: true,
             };
         };
@@ -187,17 +187,13 @@ impl DiscardBox {
                 reload: false,
             },
             Err(e) => Received::Failed {
-                message: tr!("discard-failed", label = &label, error = e),
+                message: tr!("common-failed", label = &label, error = e),
                 reload: false,
             },
             Ok(value) => match serde_json::from_value::<DiscardResult>(value) {
                 Ok(result) => Received::Done(Box::new(result)),
                 Err(e) => Received::Failed {
-                    message: tr!(
-                        "discard-unexpected-result",
-                        command = COMMAND,
-                        error = e.to_string()
-                    ),
+                    message: crate::unexpected_result(COMMAND, e),
                     reload: true,
                 },
             },
@@ -332,9 +328,7 @@ impl UndoResult {
         if !self.backups.is_empty() {
             text.push_str(&tr!("undo-backups", refs = self.backups.join(", ")));
         }
-        for warning in &self.warnings {
-            text.push_str(&tr!("undo-warning", warning = warning));
-        }
+        text.push_str(&crate::warnings_text(&self.warnings));
         text
     }
 }
@@ -440,15 +434,9 @@ impl Tab {
     /// Response of `edit.undo`/`edit.redo`: the updated journal, then everything is reread (an
     /// undo may move branches or put files back).
     pub(crate) fn receive_undo(&mut self, generation: u64, done: Done) {
-        let result = done.result.and_then(|value| {
-            serde_json::from_value::<UndoResult>(value).map_err(|e| {
-                tr!(
-                    "common-unexpected-result",
-                    command = &done.command,
-                    error = e.to_string()
-                )
-            })
-        });
+        let result = done
+            .result
+            .and_then(|value| crate::decode::<UndoResult>(&done.command, value));
         let Some(repo) = self.current(generation) else {
             return;
         };

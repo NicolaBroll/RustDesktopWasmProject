@@ -8,7 +8,7 @@
 //! panel with `cherry_pick.continue`/`revert.continue` and `*.abort`, like the merge.
 
 use super::{
-    Dialog, ErrorKind, Failure, History, Kind, MergeBox, Op, Outcome, Received, Starting, parse,
+    Dialog, ErrorKind, Failure, History, Kind, MergeBox, Op, Outcome, Received, Starting,
     reread_warning, unexpected,
 };
 use project_domain::{Oid, RefInfo, RepoPath, Status};
@@ -182,7 +182,7 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<PickResult>(Op::Pick(pick), value) {
+            Ok(value) => match crate::decode::<PickResult>(Op::Pick(pick).command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("merge-done", title = title),

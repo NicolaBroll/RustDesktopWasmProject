@@ -203,11 +203,7 @@ impl ResetBox {
         dialog.phase = match result {
             Ok(value) => match serde_json::from_value::<Preview>(value) {
                 Ok(preview) => Phase::Ready(preview),
-                Err(e) => Phase::Refused(tr!(
-                    "common-unexpected-result",
-                    command = PREVIEW,
-                    error = e.to_string()
-                )),
+                Err(e) => Phase::Refused(crate::unexpected_result(PREVIEW, e)),
             },
             Err(e) => Phase::Refused(e),
         };
@@ -254,7 +250,7 @@ impl ResetBox {
             .as_mut()
             .filter(|d| matches!(d.phase, Phase::Sending(_)))
         else {
-            let message = tr!("merge-unexpected-response", command = COMMAND);
+            let message = tr!("common-unexpected-response", command = COMMAND);
             return (
                 Received::Failed {
                     message,
@@ -281,7 +277,7 @@ impl ResetBox {
                 (Received::Inline, self.reload())
             }
             Err(e) => {
-                let mut message = tr!("reset-failed", label = dialog.label(), error = &e);
+                let mut message = tr!("common-failed", label = dialog.label(), error = &e);
                 if let Some(detail) = detail.filter(|d| !d.trim().is_empty()) {
                     message.push_str(&format!(" ({})", detail.trim()));
                 }
@@ -299,11 +295,7 @@ impl ResetBox {
                 let received = match serde_json::from_value::<ResetResult>(value) {
                     Ok(result) => Received::Done(Box::new(result.outcome(&dialog))),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "common-unexpected-result",
-                            command = COMMAND,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(COMMAND, e),
                         reload: true,
                     },
                 };
@@ -363,9 +355,7 @@ impl ResetResult {
         }
         // The warnings (commits already published: the next push needs the lease) stay in the
         // notice: the error line is cleared by the reads that follow (log, refs).
-        for warning in &self.warnings {
-            notice.push_str(&tr!("reset-done-warning", warning = warning));
-        }
+        notice.push_str(&crate::warnings_text(&self.warnings));
         let warning = reread_warning(
             &tr!("reset-done-short"),
             &[],

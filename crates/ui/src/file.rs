@@ -367,11 +367,8 @@ impl FileBox {
         };
         if view.blame_job.is_some_and(|j| j.seq == seq) {
             view.blame_job = None;
-            let doc = result.and_then(|value| {
-                serde_json::from_value::<Blame>(value)
-                    .map(BlameDoc::new)
-                    .map_err(|e| unexpected(BLAME, &e))
-            });
+            let doc =
+                result.and_then(|value| crate::decode::<Blame>(BLAME, value).map(BlameDoc::new));
             view.blame = Some(doc);
             return true;
         }
@@ -380,9 +377,7 @@ impl FileBox {
         {
             view.log_job = None;
             let history = &mut view.history;
-            match result.and_then(|value| {
-                serde_json::from_value::<LogPage>(value).map_err(|e| unexpected(LOG, &e))
-            }) {
+            match result.and_then(|value| crate::decode::<LogPage>(LOG, value)) {
                 Ok(page) => {
                     history.entries.truncate(skip);
                     history.entries.extend(page.commits);
@@ -402,14 +397,6 @@ impl FileBox {
 struct LogPage {
     commits: Vec<FileLogEntry>,
     has_more: bool,
-}
-
-fn unexpected(command: &str, e: &serde_json::Error) -> String {
-    tr!(
-        "common-unexpected-result",
-        command = command,
-        error = e.to_string()
-    )
 }
 
 /// The name of the file in `entry` when it is not `current` (the file shown).

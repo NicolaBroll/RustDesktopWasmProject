@@ -20,6 +20,7 @@
 
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
+use crate::warnings_text;
 use crate::{Action, Done, Request, Tab, remotes};
 use crate::{ErrorKind, Ticket};
 use project_domain::{RefInfo, Upstream};
@@ -340,15 +341,7 @@ impl RemotesBox {
 
     /// The answer of `remote.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
-        match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value).map_err(|e| {
-                tr!(
-                    "remotes-unexpected-result",
-                    command = LIST,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<ListResult>(LIST, value)) {
             Ok(list) => {
                 self.list = Some(list.remotes);
                 self.list_error = None;
@@ -627,7 +620,7 @@ impl RemotesBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<AddResult>(Op::Add, value) {
+                match crate::decode::<AddResult>(Op::Add.command(), value) {
                     Ok(result) => {
                         let (outcome, failure) = result.outcome();
                         self.failure = failure;
@@ -675,7 +668,7 @@ impl RemotesBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<RemoveResult>(Op::Remove, value) {
+            Ok(value) => match crate::decode::<RemoveResult>(Op::Remove.command(), value) {
                 Ok(result) => Received::Done(Box::new(result.outcome())),
                 Err(message) => Received::Failed {
                     message,
@@ -749,9 +742,11 @@ impl RemotesBox {
             }
             Ok(value) => {
                 let outcome = if delete.tag {
-                    parse::<DeleteTagResult>(op, value).map(DeleteTagResult::outcome)
+                    crate::decode::<DeleteTagResult>(op.command(), value)
+                        .map(DeleteTagResult::outcome)
                 } else {
-                    parse::<DeleteBranchResult>(op, value).map(DeleteBranchResult::outcome)
+                    crate::decode::<DeleteBranchResult>(op.command(), value)
+                        .map(DeleteBranchResult::outcome)
                 };
                 match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
@@ -839,27 +834,9 @@ impl DeleteTagResult {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("remotes-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "remotes-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
-}
-
-/// `; warning: ...` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("remotes-warning", warning = w))
-        .collect()
 }
 
 /// The problem after a successful operation: refs or remotes not reread.

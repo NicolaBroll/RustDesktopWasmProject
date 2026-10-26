@@ -428,11 +428,7 @@ impl SyncBox {
                 return match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "sync-unexpected-result",
-                            command = command,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(command, e),
                         reload: true,
                     },
                 };
@@ -541,7 +537,7 @@ impl SyncBox {
                     git: detail,
                 }));
                 Received::Failed {
-                    message: tr!("sync-failed", label = &label, error = error),
+                    message: tr!("common-failed", label = &label, error = error),
                     reload: true,
                 }
             }
@@ -680,9 +676,7 @@ impl PullResult {
             Some(backup) => notice.push_str(&tr!("sync-pull-backup", backup = backup)),
             None => {}
         }
-        for warning in &self.warnings {
-            notice.push_str(&tr!("sync-warning", warning = warning));
-        }
+        notice.push_str(&crate::warnings_text(&self.warnings));
         let moved_head = self.after != self.before
             && self.status.as_ref().is_some_and(
                 |s| matches!(&s.head, Head::Branch { name, .. } if *name == self.branch),
@@ -790,9 +784,7 @@ impl PushResult {
         if self.set_upstream {
             notice.push_str(&tr!("sync-push-set-upstream", target = &target));
         }
-        for warning in &self.warnings {
-            notice.push_str(&tr!("sync-warning", warning = warning));
-        }
+        notice.push_str(&crate::warnings_text(&self.warnings));
         let warning = match (self.status_error, self.refs_error) {
             (Some(e), _) => Some(tr!("sync-push-status-not-reread", error = e)),
             (None, Some(e)) => Some(tr!("sync-push-refs-not-reread", error = e)),

@@ -21,7 +21,6 @@ commit-also-on = ; il commit precedente resta su { $refs }
 commit-git-failed = git commit non riuscito: un hook (pre-commit, commit-msg…), la firma o l'identità (user.name, user.email) hanno fermato il commit. Il messaggio scritto è conservato. Output di git:
 commit-no-output = (nessun output)
 commit-failed-kept = Commit non riuscito: { $error } Il messaggio scritto è conservato.
-commit-unexpected-result = { $command }: risultato inatteso: { $error }
 commit-failed = Commit non riuscito: { $error }
 
 # Commit list and commit menu (view/commits.rs).

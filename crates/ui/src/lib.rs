@@ -782,11 +782,7 @@ impl Tab {
         match self.store(Request::Open, value) {
             Ok(()) => self.notice = notice,
             Err(e) => {
-                self.error = tr!(
-                    "common-unexpected-result",
-                    command = "repo.clone",
-                    error = e.to_string()
-                );
+                self.error = crate::unexpected_result("repo.clone", e);
             }
         }
     }
@@ -1271,15 +1267,9 @@ impl Tab {
             }
             // Details have their own state, errors included: the panel shows them.
             if let Request::Show(generation, id) = request {
-                let result = done.result.and_then(|value| {
-                    serde_json::from_value::<CommitDetails>(value).map_err(|e| {
-                        tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        )
-                    })
-                });
+                let result = done
+                    .result
+                    .and_then(|value| crate::decode::<CommitDetails>(&done.command, value));
                 if let Some(repo) = self.current(generation) {
                     repo.details.receive(id, result);
                 }
@@ -1287,15 +1277,9 @@ impl Tab {
             }
             // Writes: the new status, or the error in the stage area.
             if let Request::Write(generation) = request {
-                let result = done.result.and_then(|value| {
-                    serde_json::from_value::<WriteResult>(value).map_err(|e| {
-                        tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        )
-                    })
-                });
+                let result = done
+                    .result
+                    .and_then(|value| crate::decode::<WriteResult>(&done.command, value));
                 let Some(repo) = self.current(generation) else {
                     continue;
                 };
@@ -1463,15 +1447,9 @@ impl Tab {
             }
             // The diff too: errors in its view, old answers discarded.
             if let Request::Diff(generation, seq) = request {
-                let result = done.result.and_then(|value| {
-                    serde_json::from_value::<Diff>(value).map_err(|e| {
-                        tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        )
-                    })
-                });
+                let result = done
+                    .result
+                    .and_then(|value| crate::decode::<Diff>(&done.command, value));
                 if let Some(repo) = self.current(generation) {
                     repo.diff.receive(seq, result);
                 }
@@ -1488,11 +1466,7 @@ impl Tab {
                 Ok(value) => {
                     if let Err(e) = self.store(request, value) {
                         log::error!("{}: unexpected result: {e}", done.command);
-                        self.error = tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        );
+                        self.error = crate::unexpected_result(&done.command, e);
                     } else {
                         self.error.clear();
                     }
@@ -1915,4 +1889,26 @@ fn lowercase_first(text: &str) -> String {
         Some(first) => first.to_lowercase().chain(chars).collect(),
         None => String::new(),
     }
+}
+
+/// The message for a result of `command` that does not have the expected shape.
+fn unexpected_result(command: &str, error: impl std::fmt::Display) -> String {
+    tr!(
+        "common-unexpected-result",
+        command = command,
+        error = error.to_string()
+    )
+}
+
+/// The result of `command` read as `T`; if it does not match, the message for the status bar.
+fn decode<T: serde::de::DeserializeOwned>(command: &str, value: Value) -> Result<T, String> {
+    serde_json::from_value(value).map_err(|e| unexpected_result(command, e))
+}
+
+/// `; warning: ...` for each warning, to append to a message.
+fn warnings_text(warnings: &[String]) -> String {
+    warnings
+        .iter()
+        .map(|w| tr!("common-warning", warning = w))
+        .collect()
 }

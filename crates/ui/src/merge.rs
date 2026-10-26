@@ -424,15 +424,7 @@ impl MergeBox {
     /// The response of `repo.operation`.
     pub fn receive_info(&mut self, result: Result<Value, String>) {
         self.reading = false;
-        match result.and_then(|value| {
-            serde_json::from_value::<OperationInfo>(value).map_err(|e| {
-                tr!(
-                    "merge-unexpected-result",
-                    command = OPERATION,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<OperationInfo>(OPERATION, value)) {
             Ok(info) => {
                 self.info = info.operation.is_some().then_some(info);
                 self.info_error = None;
@@ -677,7 +669,7 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<StartResult>(Op::Start, value) {
+            Ok(value) => match crate::decode::<StartResult>(Op::Start.command(), value) {
                 Ok(result) => {
                     let notice = result.notice(&starting);
                     let warning = reread_warning(
@@ -738,7 +730,7 @@ impl MergeBox {
             }
             Ok(value) if op == Kind::Rebase => {
                 self.dialog = None;
-                match parse::<RebaseContinueResult>(Op::Continue(op), value) {
+                match crate::decode::<RebaseContinueResult>(Op::Continue(op).command(), value) {
                     Ok(result) => Received::Done(Box::new(result.outcome())),
                     Err(message) => Received::Failed {
                         message,
@@ -748,7 +740,7 @@ impl MergeBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<ContinueResult>(Op::Continue(op), value) {
+                match crate::decode::<ContinueResult>(Op::Continue(op).command(), value) {
                     Ok(result) => {
                         let warning = reread_warning(
                             &tr!("merge-concluded", title = title),
@@ -837,7 +829,7 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<AbortResult>(Op::Abort(op), value) {
+            Ok(value) => match crate::decode::<AbortResult>(Op::Abort(op).command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("merge-aborted", title = title),
@@ -873,19 +865,9 @@ impl MergeBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("merge-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "merge-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
 }
 
 /// The git warnings and the problem after a successful operation: status or refs not reread.

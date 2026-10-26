@@ -17,6 +17,7 @@
 //!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
+use crate::warnings_text;
 use crate::{Action, Done, Request, Tab, stash};
 use crate::{ErrorKind, format};
 use project_domain::{Oid, Signature, Status};
@@ -268,15 +269,7 @@ impl StashBox {
 
     /// The response of `stash.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
-        match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value).map_err(|e| {
-                tr!(
-                    "stash-unexpected-result",
-                    command = LIST,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<ListResult>(LIST, value)) {
             Ok(list) => self.set_list(list.stashes),
             Err(e) => self.list_error = Some(e),
         }
@@ -486,7 +479,7 @@ impl StashBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<PushResult>(Op::Push, value) {
+                match crate::decode::<PushResult>(Op::Push.command(), value) {
                     Ok(result) => {
                         let warning = reread_warning(
                             &tr!("stash-push-done-what"),
@@ -550,7 +543,7 @@ impl StashBox {
                 message: tr!("stash-op-failed", label = &what, error = e),
                 reload: true,
             },
-            Ok(value) => match parse::<ApplyResult>(op, value) {
+            Ok(value) => match crate::decode::<ApplyResult>(op.command(), value) {
                 Ok(result) => {
                     let mut warning = reread_warning(
                         &tr!("stash-op-done-what", label = &what),
@@ -631,7 +624,7 @@ impl StashBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<DropResult>(Op::Drop, value) {
+            Ok(value) => match crate::decode::<DropResult>(Op::Drop.command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("stash-drop-done-what"),
@@ -668,27 +661,9 @@ impl StashBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("stash-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "stash-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
-}
-
-/// `; warning: …` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("stash-warning", warning = w))
-        .collect()
 }
 
 /// The problem after a successful operation: list or status not reread.

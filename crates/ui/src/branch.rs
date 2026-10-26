@@ -9,9 +9,9 @@
 //! dialog, `"confirm": true`. A checkout refused because it would overwrite local changes
 //! opens a dialog with the files.
 
-use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::{Action, Done, Request, Tab, branch};
+use crate::{ErrorKind, warnings_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -445,9 +445,13 @@ impl BranchBox {
             Ok(value) => {
                 self.dialog = None;
                 let outcome = match op {
-                    Op::Create => parse::<CreateResult>(op, value).map(CreateResult::outcome),
-                    Op::CreateTag => parse::<TagResult>(op, value).map(TagResult::outcome),
-                    _ => parse::<RenameResult>(op, value).map(RenameResult::outcome),
+                    Op::Create => crate::decode::<CreateResult>(op.command(), value)
+                        .map(CreateResult::outcome),
+                    Op::CreateTag => {
+                        crate::decode::<TagResult>(op.command(), value).map(TagResult::outcome)
+                    }
+                    _ => crate::decode::<RenameResult>(op.command(), value)
+                        .map(RenameResult::outcome),
                 };
                 done(outcome)
             }
@@ -489,7 +493,9 @@ impl BranchBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => done(parse::<CheckoutResult>(Op::Checkout, value).map(|r| r.outcome())),
+            Ok(value) => done(
+                crate::decode::<CheckoutResult>(Op::Checkout.command(), value).map(|r| r.outcome()),
+            ),
         }
     }
 
@@ -526,7 +532,10 @@ impl BranchBox {
                     reload: false,
                 }
             }
-            Ok(value) => done(parse::<DeleteResult>(Op::Delete, value).map(DeleteResult::outcome)),
+            Ok(value) => done(
+                crate::decode::<DeleteResult>(Op::Delete.command(), value)
+                    .map(DeleteResult::outcome),
+            ),
         }
     }
 }
@@ -566,28 +575,19 @@ impl BranchBox {
                     reload: false,
                 }
             }
-            Ok(value) => {
-                done(parse::<TagDeleteResult>(Op::DeleteTag, value).map(TagDeleteResult::outcome))
-            }
+            Ok(value) => done(
+                crate::decode::<TagDeleteResult>(Op::DeleteTag.command(), value)
+                    .map(TagDeleteResult::outcome),
+            ),
         }
     }
 }
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("branch-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "branch-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
 }
 
 /// A result that cannot be read: the operation is probably done, everything is reloaded.
@@ -599,14 +599,6 @@ fn done(outcome: Result<Outcome, String>) -> Received {
             reload: true,
         },
     }
-}
-
-/// `; warning: ...` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("branch-warning", warning = w))
-        .collect()
 }
 
 /// Result of `branch.create`.

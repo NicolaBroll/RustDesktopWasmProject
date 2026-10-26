@@ -21,7 +21,6 @@
 
 use crate::{Action, Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
-use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -222,15 +221,7 @@ impl SearchBox {
     /// query, or the match "next" was waiting for. A stale answer is discarded.
     pub fn receive(&mut self, seq: u64, result: Result<Value, String>) -> Option<Oid> {
         let job = self.job.take_if(|j| j.seq == seq)?;
-        let page = result.and_then(|value| {
-            serde_json::from_value::<Page>(value).map_err(|e| {
-                tr!(
-                    "common-unexpected-result",
-                    command = COMMAND,
-                    error = e.to_string()
-                )
-            })
-        });
+        let page = result.and_then(|value| crate::decode::<Page>(COMMAND, value));
         if job.skip == 0 {
             let previous = self.found.take();
             let mut found = Found {

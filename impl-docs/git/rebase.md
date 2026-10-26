@@ -177,10 +177,10 @@ Plan written to `<git dir>/project-rebase-todo` and copied by the sequence edito
 
 `git -c core.fsmonitor=false -c rebase.updateRefs=false -c rebase.abbreviateCommands=false -c
 rebase.missingCommitsCheck=error -c rebase.instructionFormat= -c sequence.editor= rebase -i
---no-autostash --no-autosquash --no-update-refs --no-rerere-autoupdate --empty=keep --keep-empty
+--no-autostash --no-autosquash --no-rerere-autoupdate --empty=keep --keep-empty
 --end-of-options <base oid>`
 
-(`--empty=keep`: a commit that becomes empty is kept, never dropped silently). At each `break` stop:
+(`rebase.updateRefs=false` and not `--no-update-refs`, which exists only from git 2.38; `--empty=keep`: a commit that becomes empty is kept, never dropped silently). At each `break` stop:
 `git commit --amend --only --cleanup=whitespace -F -` with the message on stdin (`#` lines kept whatever `commit.cleanup` says) (hooks and signing according to
 configuration), then `git rebase --continue`. Which message: the `break` lines already executed
 are counted in `rebase-merge/done`; the stop is the `n`-th, and `messages[n-1]` is applied if

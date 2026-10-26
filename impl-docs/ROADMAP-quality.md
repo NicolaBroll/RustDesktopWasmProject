@@ -73,13 +73,19 @@ Rules that apply to every step:
 ## Phase Q1 — Contracts between the layers
 
 ### Q10 — git versions in CI
-- [ ] **Agent:** `git-engine`
+- [x] **Agent:** `git-engine`
 - **Goal:** Q06 shows that the integration tests only ran with one git version. A GitHub Actions
   job runs `cargo test -p project-git -p project-cli` with git 2.30 (the minimum,
   `GitVersion::MIN`) and with the latest release, on Linux (a container image or git built from
   source, cached). The existing job is unchanged.
 - **Done when:** the matrix runs on pull requests; a deliberately broken flag (try locally)
   fails on the old git; CI green.
+- **Done:** `.github/workflows/git-versions.yml` (`git min` = latest 2.30.x, `git latest`; git
+  built by `.github/scripts/build-git.sh`, cached by version). Git 2.30 found two real flags
+  it refuses: `--diff-merges=first-parent` (2.31) in `file.log`, now `-m` with the first record
+  of a merge kept, and `--no-update-refs` (2.38) in `rebase.start`, now only
+  `rebase.updateRefs=false`; the tests no longer rely on `GIT_CONFIG_COUNT`/`GIT_CONFIG_GLOBAL`
+  alone (2.31/2.32).
 
 ### Q11 — Typed command results shared by engine and UI
 - [ ] **Agent:** `git-engine`, then `egui-ui`

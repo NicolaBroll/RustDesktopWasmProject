@@ -1,0 +1,47 @@
+name: git-versions
+
+# The integration tests of project-git and project-cli with the oldest supported git
+# (`GitVersion::MIN`) and with the latest release, built from source and cached.
+# The `ci` job keeps using the git of the runner.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+jobs:
+  git-versions:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # `min`: the last patch release of the 2.30 series (GitVersion::MIN in crates/git/src/version.rs).
+        git: [min, latest]
+    name: git ${{ matrix.git }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Resolve the git version
+        id: version
+        run: |
+          if [ "${{ matrix.git }}" = min ]; then pattern='v2.30.*'; else pattern='v2.*'; fi
+          version="$(git ls-remote --tags --refs https://github.com/git/git "$pattern" \
+            | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prefix=$HOME/git-$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ${{ steps.version.outputs.prefix }}
+          key: git-${{ steps.version.outputs.version }}-${{ runner.os }}-${{ hashFiles('.github/scripts/build-git.sh') }}
+      - name: Build git ${{ steps.version.outputs.version }}
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends zlib1g-dev
+          .github/scripts/build-git.sh "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.prefix }}"
+      - run: echo "${{ steps.version.outputs.prefix }}/bin" >> "$GITHUB_PATH"
+      - run: git --version
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --no-fail-fast -p project-git -p project-cli

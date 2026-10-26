@@ -6,8 +6,12 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 /// Deterministic environment for git, both for the test repos and for the CLI.
+/// `GIT_CONFIG_GLOBAL` exists from git 2.32: with older git `HOME` and `XDG_CONFIG_HOME` keep
+/// the user's configuration out.
 const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("HOME", "/dev/null"),
+    ("XDG_CONFIG_HOME", "/dev/null"),
     ("GIT_CONFIG_NOSYSTEM", "1"),
     ("GIT_AUTHOR_NAME", "Ada"),
     ("GIT_AUTHOR_EMAIL", "ada@example.com"),

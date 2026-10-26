@@ -20,8 +20,10 @@
 
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
-use crate::{Action, Done, Request, Tab, remotes};
+use crate::warnings_text;
+use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, Ticket};
+use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
 use project_engine::mask_url;
 use project_i18n::tr;
@@ -340,15 +342,7 @@ impl RemotesBox {
 
     /// The answer of `remote.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
-        match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value).map_err(|e| {
-                tr!(
-                    "remotes-unexpected-result",
-                    command = LIST,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<ListResult>(LIST, value)) {
             Ok(list) => {
                 self.list = Some(list.remotes);
                 self.list_error = None;
@@ -627,7 +621,7 @@ impl RemotesBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<AddResult>(Op::Add, value) {
+                match crate::decode::<AddResult>(Op::Add.command(), value) {
                     Ok(result) => {
                         let (outcome, failure) = result.outcome();
                         self.failure = failure;
@@ -675,7 +669,7 @@ impl RemotesBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<RemoveResult>(Op::Remove, value) {
+            Ok(value) => match crate::decode::<RemoveResult>(Op::Remove.command(), value) {
                 Ok(result) => Received::Done(Box::new(result.outcome())),
                 Err(message) => Received::Failed {
                     message,
@@ -749,9 +743,11 @@ impl RemotesBox {
             }
             Ok(value) => {
                 let outcome = if delete.tag {
-                    parse::<DeleteTagResult>(op, value).map(DeleteTagResult::outcome)
+                    crate::decode::<DeleteTagResult>(op.command(), value)
+                        .map(DeleteTagResult::outcome)
                 } else {
-                    parse::<DeleteBranchResult>(op, value).map(DeleteBranchResult::outcome)
+                    crate::decode::<DeleteBranchResult>(op.command(), value)
+                        .map(DeleteBranchResult::outcome)
                 };
                 match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
@@ -839,27 +835,9 @@ impl DeleteTagResult {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("remotes-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "remotes-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
-}
-
-/// `; warning: ...` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("remotes-warning", warning = w))
-        .collect()
 }
 
 /// The problem after a successful operation: refs or remotes not reread.
@@ -1069,10 +1047,7 @@ impl RemoveResult {
 
 /// The short name of the upstream: `origin/main`.
 pub fn upstream_name(upstream: &Upstream) -> &str {
-    upstream
-        .name
-        .strip_prefix("refs/remotes/")
-        .unwrap_or(&upstream.name)
+    remote_short(&upstream.name)
 }
 
 /// Ahead and behind relative to the upstream, next to a branch: the short text (`↑2 ↓1`,
@@ -1140,7 +1115,7 @@ impl Tab {
                 };
                 repo.write_error = None;
                 repo.write_label = Some(label);
-                let op = remotes::Op::Add;
+                let op = Op::Add;
                 let ticket = self.executor.submit(op.command(), params);
                 self.pending.insert(ticket, Request::Remote(generation, op));
                 if let Some(repo) = &mut self.repo {
@@ -1164,7 +1139,7 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_remove(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::Remove;
+                    let op = Op::Remove;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1178,7 +1153,7 @@ impl Tab {
                 };
                 if let Some((params, label)) = repo.remotes.confirm_remove() {
                     repo.write_label = Some(label);
-                    let op = remotes::Op::Remove;
+                    let op = Op::Remove;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1197,7 +1172,7 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_delete_branch(remote, branch) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteBranch;
+                    let op = Op::DeleteBranch;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1217,7 +1192,7 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_delete_tag(remote, name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1251,7 +1226,7 @@ impl Tab {
     /// Answer of `remote.add`/`remote.remove`: list of remotes, refs and journal from the
     /// answer, then the status and log reread (fetched or removed remote branches change the
     /// graph and the upstream of the current branch). A refused name or URL stays in the dialog.
-    pub(crate) fn receive_remote(&mut self, generation: u64, op: remotes::Op, done: Done) {
+    pub(crate) fn receive_remote(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1263,11 +1238,11 @@ impl Tab {
             done.error_detail,
             done.confirm_expected,
         ) {
-            remotes::Received::Inline | remotes::Received::Confirm => {
+            Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            remotes::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 if let Some(history) = &outcome.history {
                     repo.history = history.clone();
@@ -1288,7 +1263,7 @@ impl Tab {
                 }
                 self.reload_after_fetch(generation);
             }
-            remotes::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();

@@ -168,7 +168,7 @@ impl OptimizeBox {
             Some(running) if running.ticket == ticket => {}
             other => {
                 self.running = other;
-                return Received::Failed(tr!("optimize-unexpected-response", command = COMMAND));
+                return Received::Failed(tr!("common-unexpected-response", command = COMMAND));
             }
         }
         let error = match result {
@@ -179,11 +179,7 @@ impl OptimizeBox {
                     self.dismissed = true;
                     return Received::Done;
                 }
-                Err(e) => tr!(
-                    "common-unexpected-result",
-                    command = COMMAND,
-                    error = e.to_string()
-                ),
+                Err(e) => crate::unexpected_result(COMMAND, e),
             },
             Err(_) if kind == Some(ErrorKind::Cancelled) => return Received::Cancelled,
             Err(error) => match detail {

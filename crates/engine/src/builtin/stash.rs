@@ -2,7 +2,7 @@
 //! `stash.drop`. Types, checks common to the backends and choices in `git/stash.rs`; here the commands.
 //! `stash.push` and `stash.drop` enter the journal, `stash.apply` and `stash.pop` do not (§7).
 
-use super::{Out, check_path_list, journal_state, to_json};
+use super::{Out, check_path_list, journal_state, put_reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, Session, StashEntry, StashPush,
@@ -40,28 +40,6 @@ struct DropParams {
     expected: Option<String>,
     #[serde(default)]
     confirm: bool,
-}
-
-/// The list as JSON, or `null` with `stashes_error` if it cannot be re-read (the operation is done).
-fn with_stashes(out: &mut Value, repo: &dyn GitBackend) {
-    match repo.stashes() {
-        Ok(list) => out["stashes"] = to_json(list),
-        Err(e) => {
-            out["stashes"] = Value::Null;
-            out["stashes_error"] = Value::String(e.to_string());
-        }
-    }
-}
-
-/// The state as JSON, or `null` with `status_error` if it cannot be re-read.
-fn with_status(out: &mut Value, repo: &dyn GitBackend) {
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
 }
 
 /// `expected` as a full id (40 digits), or [`EngineError::InvalidParams`].
@@ -118,11 +96,11 @@ fn pick(
 /// [`StashEntry`]: `index`, `name`, `id`, `base`, `message`, `branch`, `time`, `untracked`).
 pub(super) fn stash_list(s: &mut Session, p: Value) -> Out {
     let ListParams {} = parse_params("stash.list", p)?;
-    Ok(json!({ "stashes": to_json(s.repo()?.stashes()?) }))
+    Ok(json!({ "stashes": s.repo()?.stashes()? }))
 }
 
 /// Sets changes aside in a new stash (see
-/// [`GitBackend::stash_push`](crate::GitBackend::stash_push) and
+/// [`GitBackend::stash_push`] and
 /// [`check_stash_push`](crate::check_stash_push)): nothing is lost, the changes are in the
 /// stash. It goes into the journal: `edit.undo` reapplies it (with the index) and removes it from the list, only
 /// if HEAD has not moved.
@@ -142,8 +120,8 @@ pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
     journal.record(JournalEntry::stash_push(&stash, head, request));
     let mut out = journal_state(journal);
     out["stash"] = to_json(stash);
-    with_stashes(&mut out, repo);
-    with_status(&mut out, repo);
+    put_reread(&mut out, "stashes", repo.stashes());
+    put_reread(&mut out, "status", repo.status());
     Ok(out)
 }
 
@@ -186,19 +164,19 @@ fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
     let backup = dropped.as_ref().and_then(|d| d.backup.clone());
     warnings.extend(dropped.into_iter().flat_map(|d| d.warnings));
     let mut out = json!({
-        "stash": to_json(&entry),
-        "conflicts": to_json(&applied.conflicts),
+        "stash": entry,
+        "conflicts": applied.conflicts,
         "dropped": was_dropped,
         "backup": backup,
         "warnings": warnings,
     });
-    with_stashes(&mut out, repo);
-    with_status(&mut out, repo);
+    put_reread(&mut out, "stashes", repo.stashes());
+    put_reread(&mut out, "status", repo.status());
     Ok(out)
 }
 
 /// Applies a stash to index and worktree without removing it from the list (see
-/// [`GitBackend::stash_apply`](crate::GitBackend::stash_apply)): never over local changes to the
+/// [`GitBackend::stash_apply`]): never over local changes to the
 /// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
 /// Result: `{"stash": StashEntry, "conflicts": [string], "dropped": false, "backup": null,
@@ -272,7 +250,7 @@ pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
     out["stash"] = to_json(&entry);
     out["backup"] = to_json(&dropped.backup);
     out["warnings"] = to_json(&dropped.warnings);
-    with_stashes(&mut out, repo);
+    put_reread(&mut out, "stashes", repo.stashes());
     Ok(out)
 }
 

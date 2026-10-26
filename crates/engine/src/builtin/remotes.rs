@@ -3,7 +3,7 @@
 //! restoration of a remote) are in `git/remote_admin.rs`; here the commands.
 
 use super::remote::{changes, unexpected};
-use super::{Out, journal_state, to_json};
+use super::{Out, journal_state, put_reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, FetchRequest, GitBackend, HeadState, JobContext, JournalEntry, Message,
@@ -11,7 +11,7 @@ use crate::{
     check_remote_name, check_remote_url, default_remote, ensure_remote_gone, mask_url, owned_by,
     remove_remote,
 };
-use project_domain::{RefInfo, RefKind};
+use project_domain::RefKind;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -102,24 +102,11 @@ fn remote_items(repo: &dyn GitBackend) -> Result<Value, EngineError> {
     }))
 }
 
-fn with_refs(out: &mut Value, refs: Result<Vec<RefInfo>, EngineError>) {
-    match refs {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-}
-
-fn with_remotes(out: &mut Value, repo: &dyn GitBackend) {
-    match remote_items(repo) {
-        Ok(list) => out["remotes"] = list["remotes"].clone(),
-        Err(e) => {
-            out["remotes"] = Value::Null;
-            out["remotes_error"] = Value::String(e.to_string());
-        }
-    }
+/// Adds the re-read remotes and refs to `out` (see [`put_reread`]).
+fn with_remotes_and_refs(out: &mut Value, repo: &dyn GitBackend) {
+    let remotes = remote_items(repo).map(|mut list| list["remotes"].take());
+    put_reread(out, "remotes", remotes);
+    put_reread(out, "refs", repo.refs());
 }
 
 /// The configured remotes, in name order (read-only).
@@ -186,14 +173,14 @@ fn fetch_all(
     let updated = changes(&before, &after);
     let warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
     Ok(json!({
-        "updated": to_json(updated),
+        "updated": updated,
         "messages": outcome.messages,
         "warnings": warnings,
     }))
 }
 
 /// Adds the remote `name` with `url` (see
-/// [`GitBackend::create_remote`](crate::GitBackend::create_remote): `git remote add`, default
+/// [`GitBackend::create_remote`]: `git remote add`, default
 /// refspec) and, with `"fetch": true`, then fetches from there like `remote.fetch` (slow: progress
 /// and cancellation from the [`JobContext`]).
 ///
@@ -268,8 +255,7 @@ pub(super) fn remote_add(s: &mut Session, p: Value) -> Out {
     out["fetch"] = fetch_out;
     out["fetch_error"] = fetch_error;
     out["warnings"] = to_json(warnings);
-    with_remotes(&mut out, repo);
-    with_refs(&mut out, repo.refs());
+    with_remotes_and_refs(&mut out, repo);
     Ok(out)
 }
 
@@ -423,8 +409,7 @@ pub(super) fn remote_remove(s: &mut Session, p: Value) -> Out {
     out["push_default_removed"] = Value::Bool(push_default);
     out["backups"] = to_json(outcome.backups);
     out["warnings"] = to_json(outcome.warnings);
-    with_remotes(&mut out, repo);
-    with_refs(&mut out, repo.refs());
+    with_remotes_and_refs(&mut out, repo);
     Ok(out)
 }
 

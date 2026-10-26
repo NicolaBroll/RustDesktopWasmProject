@@ -1,6 +1,7 @@
 use super::*;
 use crate::ref_tree::{self, Row};
 use egui::{Rect, UiBuilder};
+use project_domain::{HEADS_PREFIX, remote_short};
 use std::collections::HashSet;
 
 /// Height of a row of the column: all equal, so only the rows in view are drawn.
@@ -70,7 +71,7 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
         return;
     };
     let current = match &repo.head {
-        Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
+        Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
         Head::Detached(_) => None,
     };
     let column = Column {
@@ -599,13 +600,10 @@ pub(super) fn ref_menu(
     ui.separator();
     let pull_hint = match (&info.upstream, is_head) {
         (None, _) => tr!("refs-pull-no-upstream", name = name),
-        (Some(up), true) => tr!(
-            "refs-pull-head-hint",
-            upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
-        ),
+        (Some(up), true) => tr!("refs-pull-head-hint", upstream = remote_short(&up.name)),
         (Some(up), false) => tr!(
             "refs-pull-other-hint",
-            upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name),
+            upstream = remote_short(&up.name),
             name = name
         ),
     };
@@ -623,7 +621,7 @@ pub(super) fn ref_menu(
         .on_disabled_hover_text(if info.upstream.is_some() {
             wait()
         } else {
-            pull_hint.clone()
+            pull_hint
         });
     if button.clicked() {
         actions.push(Action::Pull(Some(name.to_owned()), None));
@@ -635,7 +633,7 @@ pub(super) fn ref_menu(
             Some(up) => tr!(
                 "refs-push-hint",
                 name = name,
-                upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+                upstream = remote_short(&up.name)
             ),
             None => tr!("refs-push-first-hint", name = name),
         })
@@ -668,8 +666,8 @@ pub(super) fn ref_menu(
     }
 }
 
-/// The entries of a tag: "Push to “<remote>”" for each remote, "Delete…" (only here) and
-/// "Delete from “<remote>”…" for each remote. All of them ask the engine, which confirms the deletions.
+/// The entries of a tag: "Push to “`<remote>`”" for each remote, "Delete…" (only here) and
+/// "Delete from “`<remote>`”…" for each remote. All of them ask the engine, which confirms the deletions.
 fn tag_items(
     ui: &mut Ui,
     name: &str,
@@ -733,7 +731,7 @@ fn tag_items(
     }
 }
 
-/// The "Merge into <branch>" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for
+/// The "Merge into `<branch>`" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for
 /// `rev`, shown as `what`; disabled with the reason if the current branch does not allow it.
 pub(super) fn merge_items(
     ui: &mut Ui,

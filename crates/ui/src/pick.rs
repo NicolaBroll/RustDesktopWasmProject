@@ -8,9 +8,10 @@
 //! panel with `cherry_pick.continue`/`revert.continue` and `*.abort`, like the merge.
 
 use super::{
-    Dialog, ErrorKind, Failure, History, Kind, MergeBox, Op, Outcome, Received, Starting, parse,
+    Dialog, ErrorKind, Failure, History, Kind, MergeBox, Op, Outcome, Received, Starting,
     reread_warning, unexpected,
 };
+use project_domain::branch_short;
 use project_domain::{Oid, RefInfo, RepoPath, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -182,7 +183,7 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<PickResult>(Op::Pick(pick), value) {
+            Ok(value) => match crate::decode::<PickResult>(Op::Pick(pick).command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("merge-done", title = title),
@@ -235,10 +236,7 @@ impl PickResult {
         let title = kind.title();
         let name = kind.name();
         let what = &starting.what;
-        let branch = self
-            .branch
-            .strip_prefix("refs/heads/")
-            .unwrap_or(&self.branch);
+        let branch = branch_short(&self.branch);
         if self.in_progress {
             return match self.conflicts.len() {
                 0 => tr!(

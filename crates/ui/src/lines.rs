@@ -8,7 +8,7 @@
 //! reload or another file). Only added and removed lines can be selected, never context.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
-use crate::{Action, Drag, Request, Tab, lines};
+use crate::{Action, Drag, Request, Tab};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
 use project_i18n::tr;
 use std::collections::BTreeSet;
@@ -332,7 +332,7 @@ impl Tab {
             Action::WriteHunk(h) => {
                 let write = self.repo.as_ref().and_then(|r| {
                     let (target, doc, _) = r.diff.loaded()?;
-                    lines::plan(doc, target, Pick::Hunk(h))
+                    plan(doc, target, Pick::Hunk(h))
                 });
                 if let Some(write) = write {
                     self.send_line_write(write);
@@ -341,7 +341,7 @@ impl Tab {
             Action::WriteSelectedLines => {
                 let write = self.repo.as_ref().and_then(|r| {
                     let (target, doc, selection) = r.diff.loaded()?;
-                    lines::plan(doc, target, Pick::Selected(selection))
+                    plan(doc, target, Pick::Selected(selection))
                 });
                 if let Some(write) = write {
                     self.send_line_write(write);

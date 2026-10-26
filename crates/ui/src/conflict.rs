@@ -345,15 +345,7 @@ impl ConflictBox {
         let Some(editor) = self.editor.as_mut().filter(|e| e.seq == seq) else {
             return;
         };
-        editor.load = match result.and_then(|value| {
-            serde_json::from_value::<Shown>(value).map_err(|e| {
-                tr!(
-                    "conflict-unexpected-result",
-                    command = SHOW,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        editor.load = match result.and_then(|value| crate::decode::<Shown>(SHOW, value)) {
             Ok(shown) => Load::Ready(Box::new(Loaded::new(shown))),
             Err(e) => Load::Failed(e),
         };
@@ -519,15 +511,7 @@ impl ConflictBox {
             editor.sending = false;
         }
         let path = self.editor.as_ref().map(|e| e.path.to_string());
-        let result = result.and_then(|value| {
-            serde_json::from_value::<Resolved>(value).map_err(|e| {
-                tr!(
-                    "conflict-unexpected-result",
-                    command = RESOLVE,
-                    error = e.to_string()
-                )
-            })
-        });
+        let result = result.and_then(|value| crate::decode::<Resolved>(RESOLVE, value));
         match result {
             Ok(resolved) => {
                 self.editor = None;

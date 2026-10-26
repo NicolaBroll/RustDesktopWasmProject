@@ -1,7 +1,7 @@
 //! L6 — egui interface of the desktop app.
 //!
 //! Rule: graphical callbacks do not modify the repository directly, they produce
-//! an [`Action`]; commands go through the [`Executor`], which runs them with
+//! an `Action`; commands go through the [`Executor`], which runs them with
 //! [`Registry::run`](project_engine::Registry::run) off the UI thread.
 //!
 //! Layout (`impl-docs/ARCHITECTURE-git.md` §8): one tab per open repo (`tabs`), top bar, refs on the left, commits in the
@@ -62,6 +62,7 @@ use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
 use optimize::OptimizeBox;
+use project_domain::HEADS_PREFIX;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 
@@ -782,11 +783,7 @@ impl Tab {
         match self.store(Request::Open, value) {
             Ok(()) => self.notice = notice,
             Err(e) => {
-                self.error = tr!(
-                    "common-unexpected-result",
-                    command = "repo.clone",
-                    error = e.to_string()
-                );
+                self.error = unexpected_result("repo.clone", e);
             }
         }
     }
@@ -1256,250 +1253,182 @@ impl Tab {
 
     fn receive(&mut self) {
         for done in self.executor.poll() {
-            let Some(request) = self.pending.remove(&done.ticket) else {
-                continue;
-            };
-            if matches!(request, Request::Clone) {
-                self.clone_done = Some(done);
-                continue;
+            if let Some(request) = self.pending.remove(&done.ticket) {
+                self.receive_one(request, done);
             }
-            if matches!(request, Request::Open) {
+        }
+    }
+
+    /// The answer `done` to `request`: each area takes its own, the reads of the view are
+    /// stored by [`Tab::store`].
+    fn receive_one(&mut self, request: Request, done: Done) {
+        match request {
+            Request::Clone => self.clone_done = Some(done),
+            // Details have their own state, errors included: the panel shows them.
+            Request::Show(generation, id) => {
+                let result = done
+                    .result
+                    .and_then(|value| decode::<CommitDetails>(&done.command, value));
+                if let Some(repo) = self.current(generation) {
+                    repo.details.receive(id, result);
+                }
+            }
+            Request::Write(generation) => self.receive_write(generation, done),
+            Request::Commit(generation) => self.receive_commit(generation, done),
+            Request::Discard(generation) => self.receive_discard(generation, done),
+            Request::Undo(generation) => self.receive_undo(generation, done),
+            Request::ResetPreview(generation, seq) => {
+                self.receive_reset_preview(generation, seq, done);
+            }
+            Request::Reset(generation) => self.receive_reset(generation, done),
+            Request::Branch(generation, op) => self.receive_branch(generation, op, done),
+            Request::Fetch(generation) => self.receive_fetch(generation, done),
+            Request::Sync(generation) => self.receive_sync(generation, done),
+            Request::Optimize(generation) => self.receive_optimize(generation, done),
+            // The remotes list has its own error, shown in its section.
+            Request::Remotes(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.remotes.receive_list(done.result);
+                }
+            }
+            Request::Remote(generation, op) => self.receive_remote(generation, op, done),
+            // The stash list also has its own error, in its section.
+            Request::Stashes(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.stash.receive_list(done.result);
+                    repo.update_labels();
+                }
+            }
+            Request::Stash(generation, op) => self.receive_stash(generation, op, done),
+            // The operation in progress also has its own error, in the panel.
+            Request::Operation(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.merge.receive_info(done.result);
+                }
+            }
+            Request::Merge(generation, op) => self.receive_merge(generation, op, done),
+            // The plan's errors are shown in the editor.
+            Request::RebasePlan(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.rebase.receive_plan(done.result);
+                }
+            }
+            Request::Rebase(generation) => self.receive_rebase(generation, done),
+            // The conflict editor shows read errors by itself.
+            Request::ConflictShow(generation, seq) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.conflict.receive_show(seq, done.result);
+                }
+            }
+            Request::ConflictResolve(generation) => self.receive_conflict(generation, done),
+            // Blame and history show their errors in their view.
+            Request::File(generation, seq) => self.receive_file(generation, seq, done),
+            // The search shows its errors in its bar.
+            Request::Search(generation, seq) => self.receive_search(generation, seq, done),
+            // The diff too: errors in its view, old answers discarded.
+            Request::Diff(generation, seq) => {
+                let result = done
+                    .result
+                    .and_then(|value| decode::<Diff>(&done.command, value));
+                if let Some(repo) = self.current(generation) {
+                    repo.diff.receive(seq, result);
+                }
+            }
+            Request::Open
+            | Request::Refs(_)
+            | Request::Status(_)
+            | Request::AutoStatus(_)
+            | Request::AutoRefs(_)
+            | Request::Log(..)
+            | Request::HeadMessage(_)
+            | Request::History(_) => self.receive_read(request, done),
+        }
+    }
+
+    /// The reads of the view (open, status, log, refs...): stored, errors in the status bar.
+    fn receive_read(&mut self, request: Request, done: Done) {
+        match request {
+            Request::Open => {
                 let path = self.requested.take();
                 if done.error_kind == Some(ErrorKind::RepoNotFound) {
                     self.not_found = path;
                 }
             }
-            // Details have their own state, errors included: the panel shows them.
-            if let Request::Show(generation, id) = request {
-                let result = done.result.and_then(|value| {
-                    serde_json::from_value::<CommitDetails>(value).map_err(|e| {
-                        tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        )
-                    })
-                });
+            Request::Log(generation, page) => {
                 if let Some(repo) = self.current(generation) {
-                    repo.details.receive(id, result);
+                    let now = std::time::Instant::now();
+                    repo.optimize
+                        .log_received(done.ticket, now, done.result.is_ok());
+                    // A page that did not arrive can be asked for again.
+                    if done.result.is_err() {
+                        repo.list.failed(page);
+                    }
                 }
-                continue;
             }
-            // Writes: the new status, or the error in the stage area.
-            if let Request::Write(generation) = request {
-                let result = done.result.and_then(|value| {
-                    serde_json::from_value::<WriteResult>(value).map_err(|e| {
-                        tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        )
-                    })
-                });
-                let Some(repo) = self.current(generation) else {
-                    continue;
+            _ => {}
+        }
+        match done.result {
+            Ok(value) => {
+                if let Err(e) = self.store(request, value) {
+                    log::error!("{}: unexpected result: {e}", done.command);
+                    self.error = unexpected_result(&done.command, e);
+                } else {
+                    self.error.clear();
+                }
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", done.command);
+                self.error = e;
+            }
+        }
+    }
+
+    /// Writes (stage, unstage, lines): the new status, or the error in the stage area.
+    fn receive_write(&mut self, generation: u64, done: Done) {
+        let result = done
+            .result
+            .and_then(|value| decode::<WriteResult>(&done.command, value));
+        let Some(repo) = self.current(generation) else {
+            return;
+        };
+        let label = repo
+            .write_label
+            .take()
+            .unwrap_or_else(|| done.command.clone());
+        match result {
+            Ok(WriteResult { status, backup }) => {
+                repo.set_status(status);
+                self.error.clear();
+                // Staged versions that existed only in the index: saved before
+                // writing, this is said in the status bar.
+                self.notice = backup
+                    .map(|r| tr!("app-index-backup", backup = r))
+                    .unwrap_or_default();
+                self.follow_diff();
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", done.command);
+                let stale = done.error_kind == Some(ErrorKind::StaleDiff);
+                let message = if stale {
+                    tr!("app-write-stale", label = &label)
+                } else {
+                    tr!("common-failed", label = &label, error = &e)
                 };
-                let label = repo
-                    .write_label
-                    .take()
-                    .unwrap_or_else(|| done.command.clone());
-                match result {
-                    Ok(WriteResult { status, backup }) => {
-                        repo.set_status(status);
-                        self.error.clear();
-                        // Staged versions that existed only in the index: saved before
-                        // writing, this is said in the status bar.
-                        self.notice = backup
-                            .map(|r| tr!("app-index-backup", backup = r))
-                            .unwrap_or_default();
-                        self.follow_diff();
-                    }
-                    Err(e) => {
-                        log::warn!("{}: {e}", done.command);
-                        let stale = done.error_kind == Some(ErrorKind::StaleDiff);
-                        let message = if stale {
-                            tr!("app-write-stale", label = &label)
-                        } else {
-                            tr!("common-failed", label = &label, error = &e)
-                        };
-                        repo.write_error = Some(message.clone());
-                        // The diff seen is no longer the current one: status and diff are re-read
-                        // (the diff follows the status) and the selection is cleared.
-                        if stale && let Some((_, _, selection)) = repo.diff.loaded_mut() {
-                            selection.clear();
-                        }
-                        self.error = message;
-                        self.notice.clear();
-                        if stale {
-                            self.submit("repo.status", json!({}), Request::Status(generation));
-                        }
-                    }
+                repo.write_error = Some(message.clone());
+                // The diff seen is no longer the current one: status and diff are re-read
+                // (the diff follows the status) and the selection is cleared.
+                if stale && let Some((_, _, selection)) = repo.diff.loaded_mut() {
+                    selection.clear();
                 }
-                continue;
-            }
-            if let Request::Commit(generation) = request {
-                self.receive_commit(generation, done);
-                continue;
-            }
-            if let Request::Discard(generation) = request {
-                self.receive_discard(generation, done);
-                continue;
-            }
-            if let Request::Undo(generation) = request {
-                self.receive_undo(generation, done);
-                continue;
-            }
-            if let Request::ResetPreview(generation, seq) = request {
-                self.receive_reset_preview(generation, seq, done);
-                continue;
-            }
-            if let Request::Reset(generation) = request {
-                self.receive_reset(generation, done);
-                continue;
-            }
-            if let Request::Branch(generation, op) = request {
-                self.receive_branch(generation, op, done);
-                continue;
-            }
-            if let Request::Fetch(generation) = request {
-                self.receive_fetch(generation, done);
-                continue;
-            }
-            if let Request::Sync(generation) = request {
-                self.receive_sync(generation, done);
-                continue;
-            }
-            if let Request::Optimize(generation) = request {
-                self.receive_optimize(generation, done);
-                continue;
-            }
-            if let Request::Log(generation, _) = request
-                && let Some(repo) = self.current(generation)
-            {
-                let now = std::time::Instant::now();
-                repo.optimize
-                    .log_received(done.ticket, now, done.result.is_ok());
-            }
-            // The remotes list has its own error, shown in its section.
-            if let Request::Remotes(generation) = request {
-                if let Some(repo) = self.current(generation) {
-                    if let Err(e) = &done.result {
-                        log::warn!("{}: {e}", done.command);
-                    }
-                    repo.remotes.receive_list(done.result);
-                }
-                continue;
-            }
-            if let Request::Remote(generation, op) = request {
-                self.receive_remote(generation, op, done);
-                continue;
-            }
-            // The stash list also has its own error, in its section.
-            if let Request::Stashes(generation) = request {
-                if let Some(repo) = self.current(generation) {
-                    if let Err(e) = &done.result {
-                        log::warn!("{}: {e}", done.command);
-                    }
-                    repo.stash.receive_list(done.result);
-                    repo.update_labels();
-                }
-                continue;
-            }
-            if let Request::Stash(generation, op) = request {
-                self.receive_stash(generation, op, done);
-                continue;
-            }
-            // The operation in progress also has its own error, in the panel.
-            if let Request::Operation(generation) = request {
-                if let Some(repo) = self.current(generation) {
-                    if let Err(e) = &done.result {
-                        log::warn!("{}: {e}", done.command);
-                    }
-                    repo.merge.receive_info(done.result);
-                }
-                continue;
-            }
-            if let Request::Merge(generation, op) = request {
-                self.receive_merge(generation, op, done);
-                continue;
-            }
-            // The plan's errors are shown in the editor.
-            if let Request::RebasePlan(generation) = request {
-                if let Some(repo) = self.current(generation) {
-                    if let Err(e) = &done.result {
-                        log::warn!("{}: {e}", done.command);
-                    }
-                    repo.rebase.receive_plan(done.result);
-                }
-                continue;
-            }
-            if let Request::Rebase(generation) = request {
-                self.receive_rebase(generation, done);
-                continue;
-            }
-            // The conflict editor shows read errors by itself.
-            if let Request::ConflictShow(generation, seq) = request {
-                if let Some(repo) = self.current(generation) {
-                    if let Err(e) = &done.result {
-                        log::warn!("{}: {e}", done.command);
-                    }
-                    repo.conflict.receive_show(seq, done.result);
-                }
-                continue;
-            }
-            if let Request::ConflictResolve(generation) = request {
-                self.receive_conflict(generation, done);
-                continue;
-            }
-            // Blame and history show their errors in their view.
-            if let Request::File(generation, seq) = request {
-                self.receive_file(generation, seq, done);
-                continue;
-            }
-            // The search shows its errors in its bar.
-            if let Request::Search(generation, seq) = request {
-                self.receive_search(generation, seq, done);
-                continue;
-            }
-            // The diff too: errors in its view, old answers discarded.
-            if let Request::Diff(generation, seq) = request {
-                let result = done.result.and_then(|value| {
-                    serde_json::from_value::<Diff>(value).map_err(|e| {
-                        tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        )
-                    })
-                });
-                if let Some(repo) = self.current(generation) {
-                    repo.diff.receive(seq, result);
-                }
-                continue;
-            }
-            // A page that did not arrive can be asked for again.
-            if done.result.is_err()
-                && let Request::Log(generation, page) = request
-                && let Some(repo) = self.current(generation)
-            {
-                repo.list.failed(page);
-            }
-            match done.result {
-                Ok(value) => {
-                    if let Err(e) = self.store(request, value) {
-                        log::error!("{}: unexpected result: {e}", done.command);
-                        self.error = tr!(
-                            "common-unexpected-result",
-                            command = &done.command,
-                            error = e.to_string()
-                        );
-                    } else {
-                        self.error.clear();
-                    }
-                }
-                Err(e) => {
-                    log::warn!("{}: {e}", done.command);
-                    self.error = e;
+                self.error = message;
+                self.notice.clear();
+                if stale {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
                 }
             }
         }
@@ -1819,7 +1748,7 @@ impl Tab {
                 }
                 if let Some(confirm) = repo.commit.confirm() {
                     let branch = match &repo.head {
-                        Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
+                        Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
                         Head::Detached(_) => None,
                     };
                     let left_behind =
@@ -1914,5 +1843,34 @@ fn lowercase_first(text: &str) -> String {
     match chars.next() {
         Some(first) => first.to_lowercase().chain(chars).collect(),
         None => String::new(),
+    }
+}
+
+/// The message for a result of `command` that does not have the expected shape.
+fn unexpected_result(command: &str, error: impl std::fmt::Display) -> String {
+    tr!(
+        "common-unexpected-result",
+        command = command,
+        error = error.to_string()
+    )
+}
+
+/// The result of `command` read as `T`; if it does not match, the message for the status bar.
+fn decode<T: serde::de::DeserializeOwned>(command: &str, value: Value) -> Result<T, String> {
+    serde_json::from_value(value).map_err(|e| unexpected_result(command, e))
+}
+
+/// `; warning: ...` for each warning, to append to a message.
+fn warnings_text(warnings: &[String]) -> String {
+    warnings
+        .iter()
+        .map(|w| tr!("common-warning", warning = w))
+        .collect()
+}
+
+/// Logs the failure of a command whose area shows the error by itself.
+fn log_failure(done: &Done) {
+    if let Err(e) = &done.result {
+        log::warn!("{}: {e}", done.command);
     }
 }

@@ -7,13 +7,14 @@
 //! **stays in progress** and does not enter the journal (the branch has not moved); `merge.abort` always asks
 //! for `"confirm": true` and first saves index and worktree in a backup.
 
-use super::{Out, journal_state, to_json};
+use super::{Out, put_journal_state, put_reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     CommitRequest, EngineError, GitBackend, HeadState, JournalEntry, LogQuery, MergeMode,
     MergeRequest, MessageArg, Session, branch_ref, check_merge_state, check_merging,
     clean_merge_message, conflicted_paths, merge_source,
 };
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use project_domain::{Head, Oid, Operation, RefInfo, RefKind, RepoPath};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -69,39 +70,24 @@ pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Resul
 /// Adds to `out` the re-read state and refs (`null` with `*_error` if they cannot be re-read:
 /// the operation is done and must not be repeated) and the journal state.
 pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
-    let state = journal_state(journal);
-    for key in ["can_undo", "can_redo", "next_undo", "next_redo"] {
-        out[key] = state[key].clone();
-    }
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
-    match repo.refs() {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
+    put_journal_state(out, journal);
+    put_reread(out, "status", repo.status());
+    put_reread(out, "refs", repo.refs());
 }
 
 /// The short name of the first local branch, remote branch or tag that points to `oid` (in
 /// this order), otherwise the abbreviated id: to describe an incoming commit.
 pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
     for (kind, prefix) in [
-        (RefKind::LocalBranch, "refs/heads/"),
-        (RefKind::RemoteBranch, "refs/remotes/"),
-        (RefKind::Tag, "refs/tags/"),
+        (RefKind::LocalBranch, HEADS_PREFIX),
+        (RefKind::RemoteBranch, REMOTES_PREFIX),
+        (RefKind::Tag, TAGS_PREFIX),
     ] {
         if let Some(r) = refs.iter().find(|r| r.kind == kind && r.target == *oid) {
             return r.name.strip_prefix(prefix).unwrap_or(&r.name).to_owned();
         }
     }
-    crate::git::short(oid)
+    oid.short()
 }
 
 /// Merges `rev` into the active branch (`git merge`): fast-forward if the branch has no commits that
@@ -175,7 +161,7 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     let ahead = repo.unmerged_count(&before, &[target])?;
     let mut out = json!({
         "rev": rev,
-        "source": to_json(&source),
+        "source": source,
         "target": target.to_string(),
         "branch": branch,
         "before": before.to_string(),
@@ -245,7 +231,7 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
             before,
             outcome.after,
             HeadState::from_head(&status.head),
-            mode.name(),
+            (&mode).into(),
             &source.name,
             Some(outcome.backup.clone()),
         ));
@@ -283,8 +269,8 @@ pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
     let aborted = repo.merge_abort()?;
     let mut out = json!({
         "backup": aborted.backup,
-        "files": to_json(&aborted.files),
-        "warnings": to_json(&aborted.warnings),
+        "files": aborted.files,
+        "warnings": aborted.warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)
@@ -392,7 +378,7 @@ pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
             previous,
             outcome.commit.id,
             HeadState::from_head(&status.head),
-            "merge",
+            crate::Integration::Merge,
             &if sources.is_empty() {
                 "MERGE_HEAD".to_owned()
             } else {
@@ -466,9 +452,9 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
         None => (None, None),
     };
     Ok(json!({
-        "operation": to_json(operation),
-        "head": to_json(&status.head),
-        "conflicts": to_json(&conflicts),
+        "operation": operation,
+        "head": status.head,
+        "conflicts": conflicts,
         "incoming": incoming,
         "message": state.message.as_deref().map(clean_merge_message),
         "onto": state.onto.map(|o| o.to_string()),

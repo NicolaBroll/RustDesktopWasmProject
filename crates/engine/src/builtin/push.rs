@@ -1,9 +1,8 @@
 //! `remote.push` (S26): publishes a local branch to the remote (`impl-docs/git/sync.md`).
 
 use super::remote::{changes, unexpected};
-use super::{Out, to_json};
+use super::{Out, put_reread, to_json};
 use crate::commands::parse_params;
-use crate::git::short;
 use crate::{
     EngineError, Message, MessageArg, PushRequest, Session, branch_ref, check_branch_name,
     check_remote_name, default_remote, tracking_ref, unknown_remote,
@@ -167,7 +166,7 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
                     None => {
                         let without = project_domain::Status {
                             upstream: None,
-                            ..status.clone()
+                            ..status
                         };
                         let r = default_remote(ID, &without, &remotes)?;
                         let source = if r == "origin" { "origin" } else { "only" };
@@ -263,7 +262,7 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
             .map(|c| {
                 msg!(
                     "engine-push-lost-commit",
-                    id = short(&c.id),
+                    id = c.id.short(),
                     summary = c.summary
                 )
             })
@@ -341,13 +340,13 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
         "remote_source": remote_source,
         "branch": branch,
         "remote_branch": remote_branch,
-        "kind": to_json(outcome.kind),
+        "kind": outcome.kind,
         "summary": outcome.summary,
         "before": remote_value.map(|o| o.to_string()),
         "after": local.to_string(),
         "set_upstream": set_upstream,
         "forced": force,
-        "lost": to_json(&lost),
+        "lost": lost,
         "backup": outcome.backup,
         "messages": outcome.messages,
     });
@@ -366,12 +365,6 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
             out["refs_error"] = Value::String(e.to_string());
         }
     }
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(&mut out, "status", repo.status());
     Ok(out)
 }

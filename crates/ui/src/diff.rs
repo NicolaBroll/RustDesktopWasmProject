@@ -207,7 +207,7 @@ pub struct DiffDoc {
     /// Text columns of the widest row (after tabs and any cut).
     pub max_cols: usize,
     /// The changed parts of the paired removed and added lines, in columns, by
-    /// `(file, hunk, line)` (see [`word_diff`](crate::word_diff)).
+    /// `(file, hunk, line)` (see [`word_diff`]).
     pub emphasis: HashMap<(usize, usize, usize), Vec<Range<usize>>>,
     /// The rows of the side by side view.
     pub split: Vec<SplitRow>,
@@ -654,7 +654,7 @@ mod tests {
         // The engine also returns the copy that starts from `a.rs`.
         let copy = file(Change::Copied, "a.rs", "b.rs", vec![hunk()]);
         let modified = file(Change::Modified, "a.rs", "a.rs", vec![hunk()]);
-        let doc = DiffDoc::new(diff(vec![modified.clone(), copy.clone()]), &"a.rs".into());
+        let doc = DiffDoc::new(diff(vec![modified.clone(), copy]), &"a.rs".into());
         assert_eq!(doc.diff.files, vec![modified]);
         // A type change: two files on the same path, kept separate.
         let deleted = file(Change::Deleted, "l", "l", Vec::new());

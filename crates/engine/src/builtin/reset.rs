@@ -2,13 +2,14 @@
 //! `branch.reset_preview`. Types and checks shared by the backends in `git/reset.rs`; contract in
 //! `impl-docs/git/reset.md`.
 
+use super::Out;
 use super::merge::finish;
-use super::{Out, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, LogQuery, Message, RefMove, RefRestore,
     ResetMode, ResetRequest, Session, branch_short, check_no_operation, reset_files,
 };
+use project_domain::remote_short;
 use project_domain::{Head, Oid, RepoPath, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -147,7 +148,7 @@ fn published_warning(plan: &Plan) -> Option<Message> {
         "engine-reset-published",
         n = *n,
         branch = branch_short(plan.branch.as_deref().unwrap_or_default()),
-        upstream = upstream.strip_prefix("refs/remotes/").unwrap_or(upstream)
+        upstream = remote_short(upstream)
     ))
 }
 
@@ -178,17 +179,17 @@ pub(super) fn branch_reset_preview(s: &mut Session, p: Value) -> Out {
         "branch": plan.branch,
         "before": plan.before.to_string(),
         "after": plan.after.to_string(),
-        "files": to_json(&plan.files),
+        "files": plan.files,
         "needs_confirm": plan.needs_confirm(mode),
         "expected": plan.before.to_string(),
         "published": plan.published.as_ref().map_or(0, |(_, n)| *n),
         "upstream": plan.published.as_ref().map(|(u, _)| u.clone()),
-        "warnings": to_json(published_warning(&plan).into_iter().collect::<Vec<_>>()),
+        "warnings": published_warning(&plan).into_iter().collect::<Vec<_>>(),
     }))
 }
 
 /// Moves the branch of HEAD (or a detached HEAD) to `target`, like `git reset --<mode>` (see
-/// [`GitBackend::reset`](crate::GitBackend::reset) and `impl-docs/git/reset.md`): `soft` only the
+/// [`GitBackend::reset`] and `impl-docs/git/reset.md`): `soft` only the
 /// ref, `mixed` also the index (the staged versions that exist only there first saved in
 /// `refs/project/backup/index-...`), `hard` also the worktree of the tracked files. Untracked
 /// and ignored files are never touched.
@@ -253,7 +254,7 @@ pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
                 "engine-reset-confirm",
                 n = plan.files.len(),
                 files = file_list(&plan.files),
-                after = crate::git::short(&plan.after)
+                after = plan.after.short()
             ),
             expected: Some(plan.before.to_string()),
         });
@@ -307,13 +308,13 @@ pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
         "branch": plan.branch,
         "before": plan.before.to_string(),
         "after": plan.after.to_string(),
-        "files": to_json(&outcome.files),
+        "files": outcome.files,
         "backup": outcome.backup,
         "stash": outcome.stash.map(|o| o.to_string()),
         "index_backup": outcome.index_backup,
         "backups": outcome.backups,
         "published": plan.published.as_ref().map_or(0, |(_, n)| *n),
-        "warnings": to_json(&warnings),
+        "warnings": warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)

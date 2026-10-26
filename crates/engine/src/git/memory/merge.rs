@@ -16,7 +16,7 @@ use super::write::{TreeEntry, ZERO, entry_order, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend};
 use crate::git::{
     BACKUP_PREFIX, GitBackend, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState,
-    PickKind, check_merge_state, check_merging, check_picking, short, split_message,
+    PickKind, check_merge_state, check_merging, check_picking, split_message,
 };
 use crate::{EngineError, Message};
 use project_domain::{
@@ -377,7 +377,12 @@ impl MemoryBackend {
             "project: backup of index and worktree before {command} (of {})",
             self.merge_state
                 .as_ref()
-                .map(|m| m.heads.iter().map(short).collect::<Vec<_>>().join(", "))
+                .map(|m| m
+                    .heads
+                    .iter()
+                    .map(Oid::short)
+                    .collect::<Vec<_>>()
+                    .join(", "))
                 .unwrap_or_default()
         );
         let backup_sig = Signature {

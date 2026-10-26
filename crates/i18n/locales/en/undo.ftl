@@ -10,4 +10,3 @@ undo-undone = Undone: { $description }
 undo-redone = Redone: { $description }
 undo-done = Done
 undo-backups = ; backup in { $refs }
-undo-warning = ; warning: { $warning }

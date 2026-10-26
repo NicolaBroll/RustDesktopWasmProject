@@ -9,6 +9,7 @@
 //! reject the same cases with the same errors.
 
 use crate::{EngineError, Message, MessageArg, ToArg};
+use project_domain::HEADS_PREFIX;
 use project_domain::{Oid, Operation};
 
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ impl HeadState {
                 HeadState::Branch(name.clone())
             }
             project_domain::Head::Branch { name, .. } => {
-                HeadState::Branch(format!("refs/heads/{name}"))
+                HeadState::Branch(format!("{HEADS_PREFIX}{name}"))
             }
             project_domain::Head::Detached(oid) => HeadState::Detached(*oid),
         }
@@ -45,7 +46,7 @@ impl HeadState {
     pub fn message(&self) -> Message {
         match self {
             HeadState::Branch(name) => msg!("engine-head-branch", name = name),
-            HeadState::Detached(oid) => msg!("engine-head-detached", id = short(oid)),
+            HeadState::Detached(oid) => msg!("engine-head-detached", id = oid.short()),
         }
     }
 }
@@ -60,7 +61,7 @@ impl std::fmt::Display for HeadState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HeadState::Branch(name) => write!(f, "on branch `{name}`"),
-            HeadState::Detached(oid) => write!(f, "detached at {}", short(oid)),
+            HeadState::Detached(oid) => write!(f, "detached at {}", oid.short()),
         }
     }
 }
@@ -253,15 +254,9 @@ pub fn valid_ref_name(name: &str) -> bool {
         .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
 }
 
-/// The first 7 digits of an id, like `git log --oneline`.
-pub(crate) fn short(oid: &Oid) -> String {
-    let hex = oid.to_string();
-    hex[..7.min(hex.len())].to_owned()
-}
-
 fn describe(value: Option<Oid>) -> Message {
     match value {
-        Some(oid) => msg!("engine-ref-value", id = short(&oid)),
+        Some(oid) => msg!("engine-ref-value", id = oid.short()),
         None => msg!("engine-ref-missing"),
     }
 }

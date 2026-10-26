@@ -15,9 +15,8 @@
 use super::{HEADS_PREFIX, REMOTES_PREFIX, check_no_operation};
 use crate::{EngineError, Message};
 use project_domain::{EntryKind, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
+use project_domain::{TAGS_PREFIX, branch_short, remote_short, tag_short};
 use serde::{Deserialize, Serialize};
-
-const TAGS_PREFIX: &str = "refs/tags/";
 
 /// How to integrate the commit into HEAD ([`GitBackend::merge`](super::GitBackend::merge)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,18 +178,9 @@ pub fn merge_source(rev: &str, refs: &[RefInfo], target: &Oid) -> MergeSource {
             break;
         }
         let (kind, short) = match r.kind {
-            RefKind::LocalBranch => (
-                MergeSourceKind::Branch,
-                name.strip_prefix(HEADS_PREFIX).unwrap_or(name),
-            ),
-            RefKind::RemoteBranch => (
-                MergeSourceKind::RemoteBranch,
-                name.strip_prefix(REMOTES_PREFIX).unwrap_or(name),
-            ),
-            RefKind::Tag => (
-                MergeSourceKind::Tag,
-                name.strip_prefix(TAGS_PREFIX).unwrap_or(name),
-            ),
+            RefKind::LocalBranch => (MergeSourceKind::Branch, branch_short(name)),
+            RefKind::RemoteBranch => (MergeSourceKind::RemoteBranch, remote_short(name)),
+            RefKind::Tag => (MergeSourceKind::Tag, tag_short(name)),
             RefKind::Stash => break,
         };
         return MergeSource {

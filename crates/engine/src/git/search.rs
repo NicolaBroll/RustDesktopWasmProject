@@ -69,26 +69,9 @@ pub fn id_prefix_matches(text: &str, id: &Oid) -> bool {
         && id.to_string().starts_with(&text.to_ascii_lowercase())
 }
 
-/// True if `needle` appears in `haystack` as is, ignoring the case of ASCII letters (what
-/// `git log --fixed-strings --regexp-ignore-case` does with `LC_ALL=C`).
-pub fn contains_literal(haystack: &[u8], needle: &[u8]) -> bool {
-    needle.is_empty()
-        || haystack
-            .windows(needle.len())
-            .any(|w| w.eq_ignore_ascii_case(needle))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn literal_matching() {
-        assert!(contains_literal(b"Fix a.b*[ here", b"A.B*["));
-        assert!(!contains_literal(b"Fix aXb here", b"a.b"));
-        assert!(contains_literal(b"caf\xe9 needle", b"NEEDLE"));
-        assert!(!contains_literal(b"short", b"longer than it"));
-    }
 
     #[test]
     fn id_prefix() {

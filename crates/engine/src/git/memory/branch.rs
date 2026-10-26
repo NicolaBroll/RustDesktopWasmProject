@@ -13,7 +13,7 @@ use super::write::TreeEntry;
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES};
 use crate::git::{
     BACKUP_PREFIX, BranchDeleted, ConfigEntry, HeadState, RestoreOutcome, check_new_branch_name,
-    check_new_tag_name, check_no_operation, short, tag_ref,
+    check_new_tag_name, check_no_operation, tag_ref,
 };
 use crate::{EngineError, Message};
 use project_domain::{EntryKind, Oid, RepoPath};
@@ -45,8 +45,8 @@ impl MemoryBackend {
             Some(entry) => Err(EngineError::NotAllowed(msg!(
                 "engine-branch-changed",
                 full = full,
-                expected = short(expected),
-                now = short(&entry.target)
+                expected = expected.short(),
+                now = entry.target.short()
             ))),
             None => Err(EngineError::NotAllowed(msg!(
                 "engine-branch-missing",

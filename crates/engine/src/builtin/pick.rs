@@ -175,10 +175,10 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
         "before": before.to_string(),
         "after": outcome.after.to_string(),
         "in_progress": outcome.in_progress,
-        "conflicts": to_json(&outcome.conflicts),
+        "conflicts": outcome.conflicts,
         "message": outcome.message,
         "backup": outcome.backup,
-        "warnings": to_json(&warnings),
+        "warnings": warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)
@@ -292,8 +292,8 @@ fn pick_abort(s: &mut Session, p: Value, kind: PickKind) -> Out {
     let aborted = repo.pick_abort(kind)?;
     let mut out = json!({
         "backup": aborted.backup,
-        "files": to_json(&aborted.files),
-        "warnings": to_json(&aborted.warnings),
+        "files": aborted.files,
+        "warnings": aborted.warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)

@@ -8,6 +8,7 @@ use crate::{
     default_remote, unknown_remote,
 };
 use project_domain::{Oid, RefInfo};
+use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -63,8 +64,7 @@ pub(super) fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
 /// with a refspec configured on purpose (e.g. a mirror to `refs/heads/`). The previous value
 /// stays in that ref's reflog.
 pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
-    let expected =
-        update.name.starts_with("refs/remotes/") || update.name.starts_with("refs/tags/");
+    let expected = update.name.starts_with(REMOTES_PREFIX) || update.name.starts_with(TAGS_PREFIX);
     if expected {
         return None;
     }

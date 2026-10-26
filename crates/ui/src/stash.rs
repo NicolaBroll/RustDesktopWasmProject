@@ -17,7 +17,8 @@
 //!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
-use crate::{Action, Done, Request, Tab, stash};
+use crate::warnings_text;
+use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, format};
 use project_domain::{Oid, Signature, Status};
 use project_i18n::tr;
@@ -268,15 +269,7 @@ impl StashBox {
 
     /// The response of `stash.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
-        match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value).map_err(|e| {
-                tr!(
-                    "stash-unexpected-result",
-                    command = LIST,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<ListResult>(LIST, value)) {
             Ok(list) => self.set_list(list.stashes),
             Err(e) => self.list_error = Some(e),
         }
@@ -486,7 +479,7 @@ impl StashBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<PushResult>(Op::Push, value) {
+                match crate::decode::<PushResult>(Op::Push.command(), value) {
                     Ok(result) => {
                         let warning = reread_warning(
                             &tr!("stash-push-done-what"),
@@ -550,7 +543,7 @@ impl StashBox {
                 message: tr!("stash-op-failed", label = &what, error = e),
                 reload: true,
             },
-            Ok(value) => match parse::<ApplyResult>(op, value) {
+            Ok(value) => match crate::decode::<ApplyResult>(op.command(), value) {
                 Ok(result) => {
                     let mut warning = reread_warning(
                         &tr!("stash-op-done-what", label = &what),
@@ -631,7 +624,7 @@ impl StashBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<DropResult>(Op::Drop, value) {
+            Ok(value) => match crate::decode::<DropResult>(Op::Drop.command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("stash-drop-done-what"),
@@ -668,27 +661,9 @@ impl StashBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("stash-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "stash-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
-}
-
-/// `; warning: …` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("stash-warning", warning = w))
-        .collect()
 }
 
 /// The problem after a successful operation: list or status not reread.
@@ -799,7 +774,7 @@ impl Tab {
                 if let Some((params, label)) = repo.stash.submit_push() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = stash::Op::Push;
+                    let op = Op::Push;
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
@@ -828,11 +803,7 @@ impl Tab {
                 if let Some((params, label)) = repo.stash.start_apply(id, pop) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = if pop {
-                        stash::Op::Pop
-                    } else {
-                        stash::Op::Apply
-                    };
+                    let op = if pop { Op::Pop } else { Op::Apply };
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
@@ -852,7 +823,7 @@ impl Tab {
                 if let Some((params, label)) = repo.stash.start_drop(id) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = stash::Op::Drop;
+                    let op = Op::Drop;
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
@@ -866,7 +837,7 @@ impl Tab {
                 };
                 if let Some((params, label)) = repo.stash.confirm_drop() {
                     repo.write_label = Some(label);
-                    let op = stash::Op::Drop;
+                    let op = Op::Drop;
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
@@ -887,7 +858,7 @@ impl Tab {
     /// Response of `stash.*`: list, status and journal from the response, the stash labels
     /// in the graph redone and, if the bases changed, the log reread. A refused push stays
     /// in its dialog; the conflicts of apply and pop open their window.
-    pub(crate) fn receive_stash(&mut self, generation: u64, op: stash::Op, done: Done) {
+    pub(crate) fn receive_stash(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -896,11 +867,11 @@ impl Tab {
             .stash
             .receive(op, done.result, done.error_kind, done.error_detail)
         {
-            stash::Received::Inline | stash::Received::Confirm => {
+            Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            stash::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 repo.update_labels();
                 if let Some(history) = outcome.history {
@@ -915,7 +886,7 @@ impl Tab {
                 self.follow_diff();
                 // The drop does not touch files; the others do, and if the status did not arrive it is
                 // reread.
-                if !status_read && outcome.op != stash::Op::Drop {
+                if !status_read && outcome.op != Op::Drop {
                     self.submit("repo.status", json!({}), Request::Status(generation));
                 }
                 if outcome.reload_log
@@ -925,7 +896,7 @@ impl Tab {
                     self.request_page(first);
                 }
             }
-            stash::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();
@@ -933,7 +904,7 @@ impl Tab {
                     self.load();
                 } else {
                     // The list may have changed (the stash seen moved): it is reread.
-                    self.submit(stash::LIST, json!({}), Request::Stashes(generation));
+                    self.submit(LIST, json!({}), Request::Stashes(generation));
                     self.submit("edit.history", json!({}), Request::History(generation));
                 }
             }
@@ -1025,14 +996,14 @@ mod tests {
         b.set_list(vec![stash.clone()]);
         let (_, _) = b.start_apply(stash.id, true).unwrap();
         let value = json!({
-            "stash": stash.clone(),
+            "stash": stash,
             "conflicts": [],
             "dropped": false,
             "backup": null,
             "warnings": ["stash `stash@{0}` was applied but not removed from the list (broken): \
                           the changes are in the files; drop it with `stash.drop` (do not repeat \
                           the pop)"],
-            "stashes": [stash.clone()],
+            "stashes": [stash],
             "status": null,
             "status_error": "x",
         });

@@ -3,7 +3,7 @@
 //! under lock are in the backends ([`GitBackend`](crate::GitBackend)). Every successful command that changes
 //! something enters the journal: `edit.undo` undoes it (§7).
 
-use super::{Out, journal_state, to_json};
+use super::{Out, journal_state, put_reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Session, branch_ref,
@@ -62,18 +62,6 @@ fn taken(name: &str) -> EngineError {
     EngineError::NotAllowed(msg!("engine-branch-exists", name = name.escape_debug()))
 }
 
-/// Adds to `out` the updated refs (as `repo.refs`) or, if they cannot be re-read, `refs: null`
-/// and `refs_error`: the operation is done anyway.
-fn with_refs(out: &mut Value, refs: Result<Vec<RefInfo>, EngineError>) {
-    match refs {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-}
-
 /// Creates the branch `name` at `start` (a rev: id, also abbreviated, branch or tag name;
 /// HEAD if missing), without switching branch (see
 /// [`GitBackend::create_branch`](crate::GitBackend::create_branch)). An existing branch is never
@@ -113,7 +101,7 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
     let mut out = journal_state(journal);
     out["branch"] = Value::String(full);
     out["target"] = Value::String(target.to_string());
-    with_refs(&mut out, repo.refs());
+    put_reread(&mut out, "refs", repo.refs());
     Ok(out)
 }
 
@@ -162,13 +150,7 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
     out["previous"] = to_json(&before);
     out["changed"] = Value::Bool(changed);
     out["warnings"] = to_json(warnings);
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
+    put_reread(&mut out, "status", repo.status());
     Ok(out)
 }
 
@@ -259,7 +241,7 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
                 "engine-branch-unmerged",
                 name = name.escape_debug(),
                 unmerged = unmerged,
-                tip = crate::git::short(&target),
+                tip = target.short(),
                 reference = reference
             ),
             expected: None,
@@ -280,7 +262,7 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
     out["backup"] = Value::String(deleted.backup);
     out["removed_config"] = to_json(deleted.config);
     out["warnings"] = to_json(deleted.warnings);
-    with_refs(&mut out, repo.refs());
+    put_reread(&mut out, "refs", repo.refs());
     Ok(out)
 }
 
@@ -333,7 +315,7 @@ pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
     out["target"] = Value::String(target.to_string());
     out["head"] = Value::Bool(is_head);
     out["warnings"] = to_json(outcome.warnings);
-    with_refs(&mut out, repo.refs());
+    put_reread(&mut out, "refs", repo.refs());
     Ok(out)
 }
 

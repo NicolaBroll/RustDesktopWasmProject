@@ -40,6 +40,7 @@
 
 use super::CliBackend;
 use crate::command::{failure, os_from_bytes};
+use project_domain::remote_short;
 use project_domain::{Commit, EntryKind, LOG_ARGS, Oid, Operation, RepoPath, parse_log};
 use project_engine::{
     EngineError, HeadState, Message, PullMode, PullOperation, PullOutcome, PullRequest,
@@ -371,13 +372,7 @@ impl CliBackend {
                         applied: 0,
                         commits: self.count_unmerged(&request.expected, &[request.upstream])?,
                         produces: None,
-                        upstream: Some(
-                            request
-                                .upstream_name
-                                .strip_prefix("refs/remotes/")
-                                .unwrap_or(&request.upstream_name)
-                                .to_owned(),
-                        ),
+                        upstream: Some(remote_short(&request.upstream_name).to_owned()),
                     };
                     if let Err(error) = self.write_rebase_record(&record) {
                         warnings.push(msg!(
@@ -691,14 +686,17 @@ impl CliBackend {
         self.check_assume_unchanged(&Some(expected), &target)?;
         let backups = self.protect(request)?;
         let env = [("GIT_REFLOG_ACTION", OsStr::new(&request.reflog))];
+        // No `--end-of-options`: `git reset` refuses it before the commit up to git 2.43 at
+        // least ("must come before non-option arguments"), and `to` is a full hex id, which
+        // never starts with `-`. The final `--`: `to` is a commit even if a file has that name.
         let args = [
             "-c",
             "core.fsmonitor=false",
             "reset",
             "--keep",
             "--quiet",
-            "--end-of-options",
             &to,
+            "--",
         ];
         let out = self
             .git

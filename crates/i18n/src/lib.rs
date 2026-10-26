@@ -35,7 +35,7 @@ pub enum Lang {
 impl Lang {
     pub const ALL: [Lang; 2] = [Lang::It, Lang::En];
 
-    /// Il codice ISO 639-1: `it`, `en`.
+    /// The ISO 639-1 code: `it`, `en`.
     pub fn code(self) -> &'static str {
         match self {
             Lang::It => "it",
@@ -43,11 +43,15 @@ impl Lang {
         }
     }
 
-    fn index(self) -> usize {
-        match self {
-            Lang::It => 0,
-            Lang::En => 1,
-        }
+    const fn index(self) -> u8 {
+        self as u8
+    }
+
+    fn from_index(index: u8) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|lang| lang.index() == index)
+            .unwrap_or_default()
     }
 
     /// The language's `.ftl` files: (area, content).
@@ -161,26 +165,24 @@ impl I18n {
     }
 }
 
-/// The active language, as an index of [`Lang`]. English at startup.
-static CURRENT: AtomicU8 = AtomicU8::new(1);
+/// The active language, as an index of [`Lang`] (its position in [`Lang::ALL`]). English (the
+/// default) at startup.
+static CURRENT: AtomicU8 = AtomicU8::new(Lang::En.index());
 
 /// Changes the language of the whole app, at once.
 pub fn set_lang(lang: Lang) {
-    CURRENT.store(lang.index() as u8, Ordering::Relaxed);
+    CURRENT.store(lang.index(), Ordering::Relaxed);
 }
 
-/// La lingua attiva.
+/// The active language.
 pub fn lang() -> Lang {
-    match CURRENT.load(Ordering::Relaxed) {
-        0 => Lang::It,
-        _ => Lang::En,
-    }
+    Lang::from_index(CURRENT.load(Ordering::Relaxed))
 }
 
 /// The texts of `lang`, loaded on first request.
 pub fn get(lang: Lang) -> &'static I18n {
     static ALL: OnceLock<[I18n; 2]> = OnceLock::new();
-    &ALL.get_or_init(|| Lang::ALL.map(I18n::new))[lang.index()]
+    &ALL.get_or_init(|| Lang::ALL.map(I18n::new))[usize::from(lang.index())]
 }
 
 /// The texts of the active language.

@@ -22,6 +22,7 @@ mod tag;
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
 use project_domain::EntryKind;
+use project_domain::branch_short;
 use project_domain::{
     Change, Commit, CommitDetails, Diff, FileLogEntry, Head, RefInfo, RepoPath, Status,
 };
@@ -487,7 +488,7 @@ impl CliBackend {
     }
 
     /// Before rewriting the index for `operation` on `paths`: if there are staged versions
-    /// that exist only in the index ([`versions_at_risk`]) saves them with [`Self::save_backup`]
+    /// that exist only in the index ([`versions_at_risk_hidden`]) saves them with [`Self::save_backup`]
     /// and returns the ref; `None` if nothing is at risk.
     fn backup(
         &self,
@@ -1016,7 +1017,7 @@ impl GitBackend for CliBackend {
         if out.status.success() {
             let full = out.stdout.strip_suffix(b"\n").unwrap_or(&out.stdout);
             let full = String::from_utf8_lossy(full);
-            let name = full.strip_prefix("refs/heads/").unwrap_or(&full).to_owned();
+            let name = branch_short(&full).to_owned();
             return Ok(Head::Branch {
                 name,
                 target: self.resolve("HEAD")?,

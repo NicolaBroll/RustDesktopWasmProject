@@ -465,7 +465,7 @@ mod tests {
         };
         assert!(check_stash_push(&status, &with_untracked).is_ok());
 
-        let mut busy = status.clone();
+        let mut busy = status;
         busy.operation = Some(project_domain::Operation::Rebase);
         assert!(matches!(
             check_stash_push(&busy, &StashPush::default()),

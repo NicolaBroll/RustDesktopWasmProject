@@ -69,11 +69,12 @@ pub fn blame_binary(path: &RepoPath) -> EngineError {
 }
 
 /// True if `content` is binary for git: a NUL in the first 8000 bytes.
+#[cfg(any(test, feature = "test-support"))]
 pub fn is_binary_content(content: &[u8]) -> bool {
     content.iter().take(8000).any(|&b| b == 0)
 }
 
-/// True if the file the blame describes is binary ([`is_binary_content`] on its lines).
+/// True if the file the blame describes is binary (`is_binary_content` on its lines).
 pub fn blame_is_binary(blame: &Blame) -> bool {
     let mut seen = 0usize;
     for line in &blame.lines {

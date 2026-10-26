@@ -6,9 +6,10 @@
 //! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
 //! network errors are explained in a window with git's text.
 
-use crate::{Action, Done, Request, Tab, fetch};
+use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, Ticket};
 use project_domain::{Oid, RefInfo};
+use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
 use project_engine::Progress;
 use project_i18n::tr;
 use serde::Deserialize;
@@ -151,7 +152,7 @@ impl FetchBox {
             other => {
                 self.running = other;
                 return Received::Failed {
-                    message: tr!("fetch-unexpected-response", command = COMMAND),
+                    message: tr!("common-unexpected-response", command = COMMAND),
                     reload: true,
                 };
             }
@@ -163,11 +164,7 @@ impl FetchBox {
                 return match serde_json::from_value::<FetchResult>(value) {
                     Ok(result) => Received::Done(Box::new(result.outcome())),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "fetch-unexpected-result",
-                            command = COMMAND,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(COMMAND, e),
                         reload: true,
                     },
                 };
@@ -206,7 +203,7 @@ impl FetchBox {
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
-                    message: tr!("fetch-failed", label = label, error = error),
+                    message: tr!("common-failed", label = label, error = error),
                     reload: true,
                 }
             }
@@ -289,9 +286,9 @@ const NAMES_SHOWN: usize = 3;
 
 /// The name of a ref for the notice: `origin/main`, `tag v1`.
 fn ref_text(name: &str) -> String {
-    if let Some(remote) = name.strip_prefix("refs/remotes/") {
+    if let Some(remote) = name.strip_prefix(REMOTES_PREFIX) {
         remote.to_owned()
-    } else if let Some(tag) = name.strip_prefix("refs/tags/") {
+    } else if let Some(tag) = name.strip_prefix(TAGS_PREFIX) {
         tr!("fetch-ref-tag", tag = tag)
     } else {
         name.to_owned()
@@ -336,11 +333,7 @@ impl FetchResult {
                 )
             }
         };
-        let warnings: String = self
-            .warnings
-            .iter()
-            .map(|w| tr!("fetch-warning", warning = w))
-            .collect();
+        let warnings = crate::warnings_text(&self.warnings);
         let backups = if self.backups.is_empty() {
             String::new()
         } else {
@@ -353,7 +346,7 @@ impl FetchResult {
                 .updated
                 .iter()
                 .flatten()
-                .filter(|u| u.name.starts_with("refs/remotes/"))
+                .filter(|u| u.name.starts_with(REMOTES_PREFIX))
                 .cloned()
                 .collect(),
             refs: self.refs,
@@ -443,9 +436,9 @@ impl Tab {
         repo.write_label = Some(if auto {
             tr!("fetch-auto-label")
         } else {
-            fetch::label(remote.as_deref())
+            label(remote.as_deref())
         });
-        let ticket = self.executor.submit(fetch::COMMAND, params);
+        let ticket = self.executor.submit(COMMAND, params);
         self.pending.insert(ticket, Request::Fetch(generation));
         if let Some(repo) = &mut self.repo {
             repo.auto_fetch.started();
@@ -481,7 +474,7 @@ impl Tab {
             repo.fetch
                 .receive(done.ticket, done.result, done.error_kind, done.error_detail);
         match received {
-            fetch::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 let refs_read = outcome.refs.is_some();
                 // The remote answers: the automatic fetch starts again if it had stopped.
@@ -499,14 +492,14 @@ impl Tab {
                     self.reload_after_fetch(generation);
                 }
             }
-            fetch::Received::Cancelled { notice } => {
+            Received::Cancelled { notice } => {
                 self.notice = notice;
                 self.error.clear();
                 // Some remote branch may already be updated.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
                 self.reload_after_fetch(generation);
             }
-            fetch::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();

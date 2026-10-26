@@ -22,8 +22,9 @@
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
-use crate::{Action, Done, Request, Tab, merge};
+use crate::{Action, Done, Request, Tab};
 pub use pick::{MainlineDialog, Pick};
+use project_domain::branch_short;
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -236,10 +237,7 @@ impl OperationInfo {
         let name = operation_name(operation);
         match operation {
             Operation::Rebase => {
-                let branch = self
-                    .rebase_branch
-                    .as_deref()
-                    .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
+                let branch = self.rebase_branch.as_deref().map(branch_short);
                 match (branch, self.onto.map(|o| o.short())) {
                     (Some(branch), Some(onto)) => tr!(
                         "merge-title-rebase-branch-onto",
@@ -424,15 +422,7 @@ impl MergeBox {
     /// The response of `repo.operation`.
     pub fn receive_info(&mut self, result: Result<Value, String>) {
         self.reading = false;
-        match result.and_then(|value| {
-            serde_json::from_value::<OperationInfo>(value).map_err(|e| {
-                tr!(
-                    "merge-unexpected-result",
-                    command = OPERATION,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<OperationInfo>(OPERATION, value)) {
             Ok(info) => {
                 self.info = info.operation.is_some().then_some(info);
                 self.info_error = None;
@@ -677,7 +667,7 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<StartResult>(Op::Start, value) {
+            Ok(value) => match crate::decode::<StartResult>(Op::Start.command(), value) {
                 Ok(result) => {
                     let notice = result.notice(&starting);
                     let warning = reread_warning(
@@ -738,7 +728,7 @@ impl MergeBox {
             }
             Ok(value) if op == Kind::Rebase => {
                 self.dialog = None;
-                match parse::<RebaseContinueResult>(Op::Continue(op), value) {
+                match crate::decode::<RebaseContinueResult>(Op::Continue(op).command(), value) {
                     Ok(result) => Received::Done(Box::new(result.outcome())),
                     Err(message) => Received::Failed {
                         message,
@@ -748,7 +738,7 @@ impl MergeBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<ContinueResult>(Op::Continue(op), value) {
+                match crate::decode::<ContinueResult>(Op::Continue(op).command(), value) {
                     Ok(result) => {
                         let warning = reread_warning(
                             &tr!("merge-concluded", title = title),
@@ -758,11 +748,7 @@ impl MergeBox {
                         );
                         let noun = op.commit_noun();
                         let id = result.commit.id.short();
-                        let notice = match result
-                            .branch
-                            .as_deref()
-                            .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b))
-                        {
+                        let notice = match result.branch.as_deref().map(branch_short) {
                             Some(branch) => tr!(
                                 "merge-concluded-notice-branch",
                                 title = title,
@@ -837,7 +823,7 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<AbortResult>(Op::Abort(op), value) {
+            Ok(value) => match crate::decode::<AbortResult>(Op::Abort(op).command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("merge-aborted", title = title),
@@ -873,19 +859,9 @@ impl MergeBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("merge-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "merge-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
 }
 
 /// The git warnings and the problem after a successful operation: status or refs not reread.
@@ -1103,14 +1079,13 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
-                else {
+                let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
                     return;
                 };
                 if let Some((params, label)) = repo.merge.start(rev, what, into, no_ff) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = merge::Op::Start;
+                    let op = Op::Start;
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
@@ -1181,15 +1156,14 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
-                else {
+                let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
                     return;
                 };
                 // The parents of a merge commit, with the name and subject if known.
                 let parents = parents
                     .into_iter()
                     .map(|id| {
-                        let name = merge::commit_name(id, &repo.refs);
+                        let name = commit_name(id, &repo.refs);
                         let summary = repo
                             .list
                             .commits()
@@ -1203,7 +1177,7 @@ impl Tab {
                 {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = merge::Op::Pick(pick);
+                    let op = Op::Pick(pick);
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
@@ -1244,7 +1218,7 @@ impl Tab {
     /// new status), then the log reread if the branch moved, with the new HEAD
     /// selected. A merge stopped on conflicts opens the stage area; a refused start opens
     /// its window, a refusal of "Continue" stays in the dialog.
-    pub(crate) fn receive_merge(&mut self, generation: u64, op: merge::Op, done: Done) {
+    pub(crate) fn receive_merge(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1257,21 +1231,16 @@ impl Tab {
 
     /// What came back from a merge, cherry-pick, revert or rebase command: the notice, status,
     /// refs and journal from the response, the log reread if the branch moved.
-    pub(crate) fn apply_received(
-        &mut self,
-        generation: u64,
-        command: &str,
-        received: merge::Received,
-    ) {
+    pub(crate) fn apply_received(&mut self, generation: u64, command: &str, received: Received) {
         let Some(repo) = self.current(generation) else {
             return;
         };
         match received {
-            merge::Received::Inline | merge::Received::Confirm => {
+            Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            merge::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{command}: {}", outcome.notice);
                 repo.history = outcome.history.clone();
                 let refs_read = outcome.refs.is_some();
@@ -1305,7 +1274,7 @@ impl Tab {
                     self.request_page(first);
                 }
             }
-            merge::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{command}: {message}");
                 self.error = message;
                 self.notice.clear();

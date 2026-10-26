@@ -8,6 +8,7 @@
 
 use super::valid_ref_name;
 use crate::EngineError;
+use project_domain::REMOTES_PREFIX;
 use project_domain::Status;
 use serde::{Deserialize, Serialize};
 
@@ -48,7 +49,7 @@ pub fn check_remote_name(id: &'static str, name: &str) -> Result<(), EngineError
         Some(msg!("engine-remote-name-empty"))
     } else if name.chars().any(char::is_control) {
         Some(msg!("engine-remote-name-control"))
-    } else if !valid_ref_name(&format!("refs/remotes/{name}/x")) {
+    } else if !valid_ref_name(&format!("{REMOTES_PREFIX}{name}/x")) {
         Some(msg!("engine-remote-name-invalid"))
     } else {
         None

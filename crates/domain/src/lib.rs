@@ -9,14 +9,15 @@ pub mod git;
 pub use git::{
     APPLY_ARGS, Blame, BlameCommit, BlameLine, ByteText, Change, ChangedFile, Choice, Commit,
     CommitDetails, Conflict, ConflictBlock, ConflictText, DIFF_ARGS, DIFF_TREE_ARGS, Diff,
-    EntryKind, FILE_LOG_ARGS, FileDiff, FileLogEntry, GraphLayout, GraphRow, GraphSegment, Head,
-    Hunk, LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Line, LineKind, LineRef, NO_NEWLINE_MARKER, Oid,
-    Operation, PatchDirection, PlanError, PlanErrorReason, REFS_ARGS, REFS_FIELDS, REFS_FORMAT,
-    RebaseAction, RebasePlan, RebaseStep, RebaseTodo, RebasedCommit, RefInfo, RefKind, RepoPath,
-    STATUS_ARGS, Segment, Signature, Status, StatusEntry, SubmoduleStatus, TrackedInfo,
-    UnmergedInfo, Upstream, build_patch, layout_graph, layout_graph_nodes, parse_blame,
-    parse_conflicts, parse_diff, parse_diff_tree, parse_file_log, parse_log, parse_refs,
-    parse_status, resolve_all, resolve_block,
+    EntryKind, FILE_LOG_ARGS, FileDiff, FileLogEntry, GraphLayout, GraphRow, GraphSegment,
+    HEADS_PREFIX, Head, Hunk, LOG_ARGS, LOG_FIELDS, LOG_FORMAT, Line, LineKind, LineRef,
+    NO_NEWLINE_MARKER, Oid, Operation, PatchDirection, PlanError, PlanErrorReason, REFS_ARGS,
+    REFS_FIELDS, REFS_FORMAT, REMOTES_PREFIX, RebaseAction, RebasePlan, RebaseStep, RebaseTodo,
+    RebasedCommit, RefInfo, RefKind, RepoPath, STATUS_ARGS, Segment, Signature, Status,
+    StatusEntry, SubmoduleStatus, TAGS_PREFIX, TrackedInfo, UnmergedInfo, Upstream, branch_short,
+    build_patch, layout_graph, layout_graph_nodes, parse_blame, parse_conflicts, parse_diff,
+    parse_diff_tree, parse_file_log, parse_log, parse_refs, parse_status, remote_short,
+    resolve_all, resolve_block, tag_short,
 };
 
 /// Domain errors.

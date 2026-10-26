@@ -9,18 +9,14 @@
 //! dialog, `"confirm": true`. A checkout refused because it would overwrite local changes
 //! opens a dialog with the files.
 
-use crate::ErrorKind;
 use crate::discard::{History, Phase};
-use crate::{Action, Done, Request, Tab, branch};
+use crate::{Action, Done, Request, Tab};
+use crate::{ErrorKind, warnings_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
+use project_domain::{branch_short, tag_short};
 use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-/// The short name of a local branch: without `refs/heads/`.
-pub fn short(full: &str) -> &str {
-    full.strip_prefix("refs/heads/").unwrap_or(full)
-}
 
 /// A command on branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -445,9 +441,13 @@ impl BranchBox {
             Ok(value) => {
                 self.dialog = None;
                 let outcome = match op {
-                    Op::Create => parse::<CreateResult>(op, value).map(CreateResult::outcome),
-                    Op::CreateTag => parse::<TagResult>(op, value).map(TagResult::outcome),
-                    _ => parse::<RenameResult>(op, value).map(RenameResult::outcome),
+                    Op::Create => crate::decode::<CreateResult>(op.command(), value)
+                        .map(CreateResult::outcome),
+                    Op::CreateTag => {
+                        crate::decode::<TagResult>(op.command(), value).map(TagResult::outcome)
+                    }
+                    _ => crate::decode::<RenameResult>(op.command(), value)
+                        .map(RenameResult::outcome),
                 };
                 done(outcome)
             }
@@ -489,7 +489,9 @@ impl BranchBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => done(parse::<CheckoutResult>(Op::Checkout, value).map(|r| r.outcome())),
+            Ok(value) => done(
+                crate::decode::<CheckoutResult>(Op::Checkout.command(), value).map(|r| r.outcome()),
+            ),
         }
     }
 
@@ -526,7 +528,10 @@ impl BranchBox {
                     reload: false,
                 }
             }
-            Ok(value) => done(parse::<DeleteResult>(Op::Delete, value).map(DeleteResult::outcome)),
+            Ok(value) => done(
+                crate::decode::<DeleteResult>(Op::Delete.command(), value)
+                    .map(DeleteResult::outcome),
+            ),
         }
     }
 }
@@ -566,28 +571,19 @@ impl BranchBox {
                     reload: false,
                 }
             }
-            Ok(value) => {
-                done(parse::<TagDeleteResult>(Op::DeleteTag, value).map(TagDeleteResult::outcome))
-            }
+            Ok(value) => done(
+                crate::decode::<TagDeleteResult>(Op::DeleteTag.command(), value)
+                    .map(TagDeleteResult::outcome),
+            ),
         }
     }
 }
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("branch-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "branch-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
 }
 
 /// A result that cannot be read: the operation is probably done, everything is reloaded.
@@ -599,14 +595,6 @@ fn done(outcome: Result<Outcome, String>) -> Received {
             reload: true,
         },
     }
-}
-
-/// `; warning: ...` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("branch-warning", warning = w))
-        .collect()
 }
 
 /// Result of `branch.create`.
@@ -626,7 +614,7 @@ impl CreateResult {
             op: Op::Create,
             notice: tr!(
                 "branch-created",
-                branch = short(&self.branch),
+                branch = branch_short(&self.branch),
                 id = self.target.short()
             ),
             refs: self.refs,
@@ -651,7 +639,7 @@ pub struct TagResult {
 
 impl TagResult {
     fn outcome(self) -> Outcome {
-        let tag = self.tag.strip_prefix("refs/tags/").unwrap_or(&self.tag);
+        let tag = tag_short(&self.tag);
         let id = self.target.short();
         let notice = if self.annotated {
             tr!("branch-tag-created-annotated", tag = tag, id = id)
@@ -684,7 +672,7 @@ pub struct CheckoutResult {
 
 impl CheckoutResult {
     fn outcome(self) -> Outcome {
-        let name = short(&self.branch);
+        let name = branch_short(&self.branch);
         let notice = if self.changed {
             tr!("branch-checked-out", branch = name)
         } else {
@@ -732,7 +720,7 @@ pub struct ConfigEntry {
 impl DeleteResult {
     /// The warning: with the configuration removed it names the upstream if there was one, otherwise the keys.
     fn notice(&self) -> String {
-        let branch = short(&self.branch);
+        let branch = branch_short(&self.branch);
         let id = self.target.short();
         let (unmerged, backup) = (self.unmerged, &self.backup);
         let upstream = self
@@ -795,7 +783,7 @@ pub struct TagDeleteResult {
 
 impl TagDeleteResult {
     fn outcome(self) -> Outcome {
-        let tag = self.tag.strip_prefix("refs/tags/").unwrap_or(&self.tag);
+        let tag = tag_short(&self.tag);
         let (id, backup) = (self.target.short(), &self.backup);
         let notice = if self.annotated {
             tr!(
@@ -837,8 +825,8 @@ impl RenameResult {
             op: Op::Rename,
             notice: tr!(
                 "branch-renamed",
-                previous = short(&self.previous),
-                branch = short(&self.branch)
+                previous = branch_short(&self.previous),
+                branch = branch_short(&self.branch)
             ) + &warnings_text(&self.warnings),
             refs: self.refs,
             status: None,
@@ -916,7 +904,7 @@ impl Tab {
                 if let Some(params) = repo.branch.start_checkout(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = branch::Op::Checkout;
+                    let op = Op::Checkout;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -932,7 +920,7 @@ impl Tab {
                 if let Some(params) = repo.branch.start_delete(name, target) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = branch::Op::Delete;
+                    let op = Op::Delete;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -945,13 +933,13 @@ impl Tab {
                     return;
                 };
                 let label = match repo.branch.dialog() {
-                    Some(branch::Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
+                    Some(Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
 
                     _ => return,
                 };
                 if let Some(params) = repo.branch.confirm_delete() {
                     repo.write_label = Some(label);
-                    let op = branch::Op::Delete;
+                    let op = Op::Delete;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -967,7 +955,7 @@ impl Tab {
                 if let Some(params) = repo.branch.start_delete_tag(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = branch::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -980,14 +968,14 @@ impl Tab {
                     return;
                 };
                 let label = match repo.branch.dialog() {
-                    Some(branch::Dialog::DeleteTag(d)) => {
+                    Some(Dialog::DeleteTag(d)) => {
                         tr!("branch-tag-delete-label", name = &d.name)
                     }
                     _ => return,
                 };
                 if let Some(params) = repo.branch.confirm_delete_tag() {
                     repo.write_label = Some(label);
-                    let op = branch::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -1003,7 +991,7 @@ impl Tab {
     /// Answer of `branch.*`: refs and journal from the answer, then the log reloaded (a deleted
     /// branch can take some commits with it); after a checkout everything is reloaded (HEAD, graph,
     /// stage area). A refused name stays in its dialog.
-    pub(crate) fn receive_branch(&mut self, generation: u64, op: branch::Op, done: Done) {
+    pub(crate) fn receive_branch(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1015,11 +1003,11 @@ impl Tab {
             done.error_detail,
             done.confirm_expected,
         ) {
-            branch::Received::Inline | branch::Received::Confirm | branch::Received::Refused => {
+            Received::Inline | Received::Confirm | Received::Refused => {
                 self.error.clear();
                 self.notice.clear();
             }
-            branch::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 repo.history = outcome.history.clone();
                 let refs_read = outcome.refs.is_some();
                 if let Some(refs) = outcome.refs {
@@ -1029,7 +1017,7 @@ impl Tab {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                let checkout = outcome.op == branch::Op::Checkout;
+                let checkout = outcome.op == Op::Checkout;
                 // After a checkout the new HEAD is selected as soon as the log arrives.
                 if checkout && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
@@ -1050,7 +1038,7 @@ impl Tab {
                     }
                 }
             }
-            branch::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();
@@ -1059,7 +1047,7 @@ impl Tab {
                 } else {
                     // A refused deletion (e.g. the branch is no longer on the seen commit): the
                     // refs are reloaded, so the column shows where it is now.
-                    if matches!(op, branch::Op::Delete | branch::Op::DeleteTag) {
+                    if matches!(op, Op::Delete | Op::DeleteTag) {
                         self.submit("repo.refs", json!({}), Request::Refs(generation));
                     }
                     // The journal is reloaded anyway: it is cheap and stays aligned.
@@ -1107,7 +1095,7 @@ mod tests {
     fn the_name_dialog_sends_only_a_written_name() {
         let mut b = BranchBox::default();
         let start = Start::from_commit(Oid::from_bytes([3; 20]));
-        assert!(b.open_create(start.clone(), String::new()));
+        assert!(b.open_create(start, String::new()));
         // One dialog at a time.
         assert!(!b.open_rename("main".to_owned()));
         assert!(b.modal_open());

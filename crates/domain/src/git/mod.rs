@@ -64,7 +64,10 @@ pub use path::RepoPath;
 pub use rebase::{
     PlanError, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep, RebaseTodo, RebasedCommit,
 };
-pub use refs::{REFS_ARGS, REFS_FIELDS, REFS_FORMAT, parse_refs};
+pub use refs::{
+    HEADS_PREFIX, REFS_ARGS, REFS_FIELDS, REFS_FORMAT, REMOTES_PREFIX, TAGS_PREFIX, branch_short,
+    parse_refs, remote_short, tag_short,
+};
 pub use status::{STATUS_ARGS, parse_status};
 pub use text::ByteText;
 
@@ -152,9 +155,9 @@ impl RefInfo {
     /// If the prefix is absent it returns the full name.
     pub fn short_name(&self) -> &str {
         let prefix = match self.kind {
-            RefKind::LocalBranch => "refs/heads/",
-            RefKind::RemoteBranch => "refs/remotes/",
-            RefKind::Tag => "refs/tags/",
+            RefKind::LocalBranch => HEADS_PREFIX,
+            RefKind::RemoteBranch => REMOTES_PREFIX,
+            RefKind::Tag => TAGS_PREFIX,
             RefKind::Stash => "refs/",
         };
         self.name.strip_prefix(prefix).unwrap_or(&self.name)

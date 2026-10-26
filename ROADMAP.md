@@ -19,3 +19,13 @@
 - [ ] UI control for agents (off by default, loopback only, token): S44, only if still needed.
 
 Steps and order in [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md), phase 6.
+
+## Code quality
+
+- [x] Review cleanups (Q00–Q06): `MemoryBackend` only in tests, dead code, `cargo doc` in CI,
+  shared helpers in engine and UI, ref prefixes in the domain, git 2.43 fixes.
+- [ ] Contracts between the layers (Q10–Q14): git versions in CI, typed results and parameters,
+  parameter schema for MCP, `GitBackend` by area.
+- [ ] UI structure (Q20–Q22) and optional lints (Q30–Q31).
+
+Steps in [impl-docs/ROADMAP-quality.md](impl-docs/ROADMAP-quality.md).

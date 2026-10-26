@@ -8,8 +8,8 @@
 //! `"confirm": true` and first saves index and worktree. `rebase.continue` also concludes the
 //! rebase of a stopped `remote.pull`, with the pull's journal entry.
 
+use super::Out;
 use super::merge::{abort_confirm, finish};
-use super::{Out, to_json};
 use crate::commands::parse_params;
 use crate::git::check_in_progress;
 use crate::{
@@ -136,7 +136,7 @@ pub(super) fn rebase_plan(s: &mut Session, p: Value) -> Out {
         "base": base.to_string(),
         "branch": branch,
         "steps": steps,
-        "published": to_json(&published),
+        "published": published,
     }))
 }
 
@@ -214,7 +214,7 @@ pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
         let at_risk: Vec<String> = published(repo, &before, &base, &commits)?
             .iter()
             .filter(|c| rewritten.contains(c))
-            .map(crate::git::short)
+            .map(Oid::short)
             .collect();
         if !at_risk.is_empty() {
             return Err(EngineError::ConfirmRequired {
@@ -259,10 +259,10 @@ pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
         "before": before.to_string(),
         "after": outcome.after.to_string(),
         "in_progress": outcome.in_progress,
-        "conflicts": to_json(&outcome.conflicts),
+        "conflicts": outcome.conflicts,
         "message": outcome.message,
         "backup": outcome.backup,
-        "warnings": to_json(&warnings),
+        "warnings": warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)
@@ -310,7 +310,7 @@ pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
                             record.before,
                             outcome.after,
                             crate::HeadState::Branch(full.clone()),
-                            "rebase",
+                            crate::Integration::Rebase,
                             upstream,
                             record.backup.clone(),
                         ),
@@ -349,10 +349,10 @@ pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
         "before": record.as_ref().map(|r| r.before.to_string()),
         "after": outcome.after.to_string(),
         "in_progress": outcome.in_progress,
-        "conflicts": to_json(&outcome.conflicts),
+        "conflicts": outcome.conflicts,
         "message": outcome.message,
         "backup": record.as_ref().map(|r| r.backup.clone()),
-        "warnings": to_json(&warnings),
+        "warnings": warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)
@@ -379,8 +379,8 @@ pub(super) fn rebase_abort(s: &mut Session, p: Value) -> Out {
     let aborted = repo.rebase_abort()?;
     let mut out = json!({
         "backup": aborted.backup,
-        "files": to_json(&aborted.files),
-        "warnings": to_json(&aborted.warnings),
+        "files": aborted.files,
+        "warnings": aborted.warnings,
     });
     finish(&mut out, repo, journal);
     Ok(out)

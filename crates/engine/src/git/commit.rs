@@ -8,6 +8,7 @@
 
 use crate::EngineError;
 use project_domain::{Commit, EntryKind, Oid, Operation, Status};
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use serde::{Deserialize, Serialize};
 
 /// Id of the command, used in parameter errors.
@@ -127,14 +128,14 @@ pub struct CommitOutcome {
 pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>, Vec<String>) {
     let published = containing
         .iter()
-        .filter(|n| n.starts_with("refs/remotes/") || n.starts_with("refs/tags/"))
+        .filter(|n| n.starts_with(REMOTES_PREFIX) || n.starts_with(TAGS_PREFIX))
         .cloned()
         .collect();
     let also_on = containing
         .iter()
         .filter(|n| {
-            (n.starts_with("refs/heads/") && Some(n.as_str()) != branch)
-                || n.starts_with("refs/tags/")
+            (n.starts_with(HEADS_PREFIX) && Some(n.as_str()) != branch)
+                || n.starts_with(TAGS_PREFIX)
         })
         .cloned()
         .collect();
@@ -232,6 +233,7 @@ pub fn check_amend_published(
 /// trailing spaces on lines removed, leading and trailing blank lines removed, consecutive blank lines
 /// reduced to one, a final newline. Comment lines stay. Used by the
 /// `MemoryBackend`, which has no git; the `CliBackend` leaves it to git.
+#[cfg(any(test, feature = "test-support"))]
 pub fn cleanup_message(message: &str) -> String {
     let mut out = String::new();
     let mut blank = false;
@@ -254,6 +256,7 @@ pub fn cleanup_message(message: &str) -> String {
 /// `(subject, body)` of a cleaned message, like git's `%s` and `%b`: the subject is the first
 /// paragraph with its lines joined by a space, the body the rest after the blank lines, without
 /// trailing newlines.
+#[cfg(any(test, feature = "test-support"))]
 pub fn split_message(message: &str) -> (String, String) {
     let mut lines = message.lines();
     let mut summary = Vec::new();
@@ -364,7 +367,7 @@ mod tests {
         let status = status_with(sample.entries.clone(), Some(Operation::Bisect));
         check_commit_state(&status, true, &CommitRequest::new("m")).unwrap();
         // A conflict blocks everything.
-        let mut entries = sample.entries.clone();
+        let mut entries = sample.entries;
         entries.push(StatusEntry {
             path: RepoPath::from("c.txt"),
             index: Change::Unmerged,

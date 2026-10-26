@@ -23,8 +23,7 @@ use project_domain::Oid;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeSet;
 
-/// Prefix of remote branches.
-pub const REMOTES_PREFIX: &str = "refs/remotes/";
+pub use project_domain::REMOTES_PREFIX;
 
 /// A remote branch of a remote: full name and commit.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

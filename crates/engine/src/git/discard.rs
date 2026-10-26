@@ -414,7 +414,7 @@ mod tests {
             Err(EngineError::NotAllowed(m)) if m.contains("intent-to-add")
         ));
 
-        let mut sub = status.clone();
+        let mut sub = status;
         let mut sub_info = info();
         sub_info.submodule = Some(project_domain::SubmoduleStatus {
             commit_changed: true,

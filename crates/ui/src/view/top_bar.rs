@@ -120,7 +120,7 @@ impl egui::Widget for ToolButton<'_> {
         let icon = ui
             .painter()
             .layout_no_wrap(self.icon.to_owned(), icons::font(20.0), color);
-        let font = egui::FontId::proportional(11.0);
+        let font = FontId::proportional(11.0);
         let label = ui
             .painter()
             .layout_no_wrap(self.label.to_owned(), font, color);

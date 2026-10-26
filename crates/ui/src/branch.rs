@@ -16,9 +16,9 @@ use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
 use project_engine::{
     BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult, Message,
+    TagCreateResult, TagDeleteResult,
 };
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// A command on branches.
@@ -447,9 +447,8 @@ impl BranchBox {
                     match op {
                         Op::Create => crate::decode::<BranchCreateResult>(op.command(), value)
                             .map(create_outcome),
-                        Op::CreateTag => {
-                            crate::decode::<TagResult>(op.command(), value).map(TagResult::outcome)
-                        }
+                        Op::CreateTag => crate::decode::<TagCreateResult>(op.command(), value)
+                            .map(tag_create_outcome),
                         _ => crate::decode::<BranchRenameResult>(op.command(), value)
                             .map(rename_outcome),
                     };
@@ -578,7 +577,7 @@ impl BranchBox {
             }
             Ok(value) => done(
                 crate::decode::<TagDeleteResult>(Op::DeleteTag.command(), value)
-                    .map(TagDeleteResult::outcome),
+                    .map(tag_delete_outcome),
             ),
         }
     }
@@ -602,73 +601,46 @@ fn done(outcome: Result<Outcome, String>) -> Received {
     }
 }
 
-/// Result of `tag.create`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TagResult {
-    pub tag: String,
-    pub target: Oid,
-    pub annotated: bool,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl TagResult {
-    fn outcome(self) -> Outcome {
-        let tag = tag_short(&self.tag);
-        let id = self.target.short();
-        let notice = if self.annotated {
-            tr!("branch-tag-created-annotated", tag = tag, id = id)
-        } else {
-            tr!("branch-tag-created", tag = tag, id = id)
-        };
-        Outcome {
-            op: Op::CreateTag,
-            notice,
-            refs: self.refs,
-            status: None,
-            warning: self.refs_error.map(refs_warning),
-            history: self.history,
-        }
+/// The outcome of `tag.create`.
+fn tag_create_outcome(r: TagCreateResult) -> Outcome {
+    let tag = tag_short(&r.tag);
+    let id = r.target.short();
+    let notice = if r.annotated {
+        tr!("branch-tag-created-annotated", tag = tag, id = id)
+    } else {
+        tr!("branch-tag-created", tag = tag, id = id)
+    };
+    Outcome {
+        op: Op::CreateTag,
+        notice,
+        refs: r.refs,
+        status: None,
+        warning: r.refs_error.map(refs_warning),
+        history: r.journal.into(),
     }
 }
 
-/// Result of `tag.delete`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TagDeleteResult {
-    pub tag: String,
-    pub target: Oid,
-    pub annotated: bool,
-    pub backup: String,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl TagDeleteResult {
-    fn outcome(self) -> Outcome {
-        let tag = tag_short(&self.tag);
-        let (id, backup) = (self.target.short(), &self.backup);
-        let notice = if self.annotated {
-            tr!(
-                "branch-tag-deleted-annotated",
-                tag = tag,
-                id = id,
-                backup = backup
-            )
-        } else {
-            tr!("branch-tag-deleted", tag = tag, id = id, backup = backup)
-        };
-        Outcome {
-            op: Op::DeleteTag,
-            notice,
-            refs: self.refs,
-            status: None,
-            warning: self.refs_error.map(refs_warning),
-            history: self.history,
-        }
+/// The outcome of `tag.delete`.
+fn tag_delete_outcome(r: TagDeleteResult) -> Outcome {
+    let tag = tag_short(&r.tag);
+    let (id, backup) = (r.target.short(), &r.backup);
+    let notice = if r.annotated {
+        tr!(
+            "branch-tag-deleted-annotated",
+            tag = tag,
+            id = id,
+            backup = backup
+        )
+    } else {
+        tr!("branch-tag-deleted", tag = tag, id = id, backup = backup)
+    };
+    Outcome {
+        op: Op::DeleteTag,
+        notice,
+        refs: r.refs,
+        status: None,
+        warning: r.refs_error.map(refs_warning),
+        history: r.journal.into(),
     }
 }
 

@@ -24,6 +24,7 @@
 use super::CliBackend;
 use crate::command::{failure, stderr_text};
 use project_domain::{Commit, LOG_ARGS, Oid, parse_log};
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use project_engine::{
     CommitOutcome, CommitRequest, EngineError, Message, amend_impact, check_amend_published,
     check_commit_state,
@@ -244,9 +245,9 @@ impl CliBackend {
             "--format=%(refname)%00%(symref)",
             "--contains",
             &id,
-            "refs/heads/",
-            "refs/remotes/",
-            "refs/tags/",
+            HEADS_PREFIX,
+            REMOTES_PREFIX,
+            TAGS_PREFIX,
         ];
         let out = self.run(&args)?;
         Ok(out

@@ -190,7 +190,7 @@ impl MemoryBackend {
                     .get(&head)
                     .map(|c| c.summary.clone())
                     .unwrap_or_default();
-                format!("WIP on {branch}: {} {summary}", crate::git::short(&head))
+                format!("WIP on {branch}: {} {summary}", head.short())
             }
         };
         let time = self.next_time();

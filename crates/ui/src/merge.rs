@@ -24,6 +24,7 @@ use crate::discard::{History, Phase};
 use crate::fetch::Failure;
 use crate::{Action, Done, Request, Tab, merge};
 pub use pick::{MainlineDialog, Pick};
+use project_domain::branch_short;
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -236,10 +237,7 @@ impl OperationInfo {
         let name = operation_name(operation);
         match operation {
             Operation::Rebase => {
-                let branch = self
-                    .rebase_branch
-                    .as_deref()
-                    .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
+                let branch = self.rebase_branch.as_deref().map(|b| branch_short(b));
                 match (branch, self.onto.map(|o| o.short())) {
                     (Some(branch), Some(onto)) => tr!(
                         "merge-title-rebase-branch-onto",
@@ -750,11 +748,7 @@ impl MergeBox {
                         );
                         let noun = op.commit_noun();
                         let id = result.commit.id.short();
-                        let notice = match result
-                            .branch
-                            .as_deref()
-                            .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b))
-                        {
+                        let notice = match result.branch.as_deref().map(|b| branch_short(b)) {
                             Some(branch) => tr!(
                                 "merge-concluded-notice-branch",
                                 title = title,

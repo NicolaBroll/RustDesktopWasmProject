@@ -23,6 +23,7 @@ use crate::fetch::{self, Failure, FetchResult, RefUpdate};
 use crate::warnings_text;
 use crate::{Action, Done, Request, Tab, remotes};
 use crate::{ErrorKind, Ticket};
+use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
 use project_engine::mask_url;
 use project_i18n::tr;
@@ -1046,10 +1047,7 @@ impl RemoveResult {
 
 /// The short name of the upstream: `origin/main`.
 pub fn upstream_name(upstream: &Upstream) -> &str {
-    upstream
-        .name
-        .strip_prefix("refs/remotes/")
-        .unwrap_or(&upstream.name)
+    remote_short(&upstream.name)
 }
 
 /// Ahead and behind relative to the upstream, next to a branch: the short text (`↑2 ↓1`,

@@ -9,6 +9,7 @@ use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, LogQuery, Message, RefMove, RefRestore,
     ResetMode, ResetRequest, Session, branch_short, check_no_operation, reset_files,
 };
+use project_domain::remote_short;
 use project_domain::{Head, Oid, RepoPath, Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -147,7 +148,7 @@ fn published_warning(plan: &Plan) -> Option<Message> {
         "engine-reset-published",
         n = *n,
         branch = branch_short(plan.branch.as_deref().unwrap_or_default()),
-        upstream = upstream.strip_prefix("refs/remotes/").unwrap_or(upstream)
+        upstream = remote_short(upstream)
     ))
 }
 
@@ -253,7 +254,7 @@ pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
                 "engine-reset-confirm",
                 n = plan.files.len(),
                 files = file_list(&plan.files),
-                after = crate::git::short(&plan.after)
+                after = plan.after.short()
             ),
             expected: Some(plan.before.to_string()),
         });

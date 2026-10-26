@@ -128,17 +128,17 @@ pub fn pick_parent(
         (0 | 1, None) => Ok(commit.parents.first().copied()),
         (0 | 1, Some(_)) => Err(invalid(msg!(
             "engine-pick-mainline-not-merge",
-            commit = super::short(&commit.id)
+            commit = commit.id.short()
         ))),
         (n, None) => Err(invalid(msg!(
             "engine-pick-mainline-needed",
-            commit = super::short(&commit.id),
+            commit = commit.id.short(),
             n = n
         ))),
         (n, Some(m)) if m == 0 || m > n => Err(invalid(msg!(
             "engine-pick-mainline-range",
             n = n,
-            commit = super::short(&commit.id),
+            commit = commit.id.short(),
             m = m
         ))),
         (_, Some(m)) => Ok(Some(commit.parents[m - 1])),
@@ -252,7 +252,7 @@ pub fn pick_empty_error(kind: PickKind, commit: &Oid) -> EngineError {
     EngineError::NotAllowed(msg!(
         "engine-pick-empty",
         command = kind.command(),
-        commit = super::short(commit),
+        commit = commit.short(),
         what = what
     ))
 }

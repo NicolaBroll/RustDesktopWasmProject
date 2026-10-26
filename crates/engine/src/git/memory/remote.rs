@@ -8,7 +8,7 @@
 //! shape as git's (a `Receiving objects` phase from 0 to 100%).
 
 use super::{MemoryBackend, REMOTES, RefEntry};
-use crate::git::{BACKUP_PREFIX, FetchOutcome, FetchRequest, mask_url, short};
+use crate::git::{BACKUP_PREFIX, FetchOutcome, FetchRequest, mask_url};
 use crate::{EngineError, JobContext, Progress};
 use project_domain::{Commit, Oid};
 use std::collections::BTreeMap;
@@ -242,8 +242,8 @@ impl MemoryBackend {
                 )),
                 Some(entry) if entry.target != target => Some(format!(
                     "   {}..{}  {branch} -> {remote_name}/{branch}",
-                    short(&entry.target),
-                    short(&target)
+                    entry.target.short(),
+                    target.short()
                 )),
                 Some(_) => None,
             };

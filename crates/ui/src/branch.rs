@@ -13,14 +13,10 @@ use crate::discard::{History, Phase};
 use crate::{Action, Done, Request, Tab, branch};
 use crate::{ErrorKind, warnings_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
+use project_domain::{branch_short, tag_short};
 use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-/// The short name of a local branch: without `refs/heads/`.
-pub fn short(full: &str) -> &str {
-    full.strip_prefix("refs/heads/").unwrap_or(full)
-}
 
 /// A command on branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -618,7 +614,7 @@ impl CreateResult {
             op: Op::Create,
             notice: tr!(
                 "branch-created",
-                branch = short(&self.branch),
+                branch = branch_short(&self.branch),
                 id = self.target.short()
             ),
             refs: self.refs,
@@ -643,7 +639,7 @@ pub struct TagResult {
 
 impl TagResult {
     fn outcome(self) -> Outcome {
-        let tag = self.tag.strip_prefix("refs/tags/").unwrap_or(&self.tag);
+        let tag = tag_short(&self.tag);
         let id = self.target.short();
         let notice = if self.annotated {
             tr!("branch-tag-created-annotated", tag = tag, id = id)
@@ -676,7 +672,7 @@ pub struct CheckoutResult {
 
 impl CheckoutResult {
     fn outcome(self) -> Outcome {
-        let name = short(&self.branch);
+        let name = branch_short(&self.branch);
         let notice = if self.changed {
             tr!("branch-checked-out", branch = name)
         } else {
@@ -724,7 +720,7 @@ pub struct ConfigEntry {
 impl DeleteResult {
     /// The warning: with the configuration removed it names the upstream if there was one, otherwise the keys.
     fn notice(&self) -> String {
-        let branch = short(&self.branch);
+        let branch = branch_short(&self.branch);
         let id = self.target.short();
         let (unmerged, backup) = (self.unmerged, &self.backup);
         let upstream = self
@@ -787,7 +783,7 @@ pub struct TagDeleteResult {
 
 impl TagDeleteResult {
     fn outcome(self) -> Outcome {
-        let tag = self.tag.strip_prefix("refs/tags/").unwrap_or(&self.tag);
+        let tag = tag_short(&self.tag);
         let (id, backup) = (self.target.short(), &self.backup);
         let notice = if self.annotated {
             tr!(
@@ -829,8 +825,8 @@ impl RenameResult {
             op: Op::Rename,
             notice: tr!(
                 "branch-renamed",
-                previous = short(&self.previous),
-                branch = short(&self.branch)
+                previous = branch_short(&self.previous),
+                branch = branch_short(&self.branch)
             ) + &warnings_text(&self.warnings),
             refs: self.refs,
             status: None,

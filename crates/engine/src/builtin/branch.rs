@@ -241,7 +241,7 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
                 "engine-branch-unmerged",
                 name = name.escape_debug(),
                 unmerged = unmerged,
-                tip = crate::git::short(&target),
+                tip = target.short(),
                 reference = reference
             ),
             expected: None,

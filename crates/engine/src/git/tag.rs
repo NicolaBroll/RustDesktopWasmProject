@@ -6,8 +6,7 @@
 use super::valid_ref_name;
 use crate::{EngineError, Message};
 
-/// Prefix of tags.
-pub const TAGS_PREFIX: &str = "refs/tags/";
+pub use project_domain::TAGS_PREFIX;
 
 /// The full name of the tag `name` (`refs/tags/<name>`).
 pub fn tag_ref(name: &str) -> String {

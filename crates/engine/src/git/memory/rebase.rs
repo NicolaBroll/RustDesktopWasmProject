@@ -16,7 +16,7 @@ use super::{HEADS, HeadRef, MemoryBackend};
 use crate::EngineError;
 use crate::git::{
     BACKUP_PREFIX, GitBackend, MergeAborted, MergeOutcome, PickKind, RebaseRecord, RebaseRequest,
-    check_rebase_request, check_rebase_state, cleanup_message, pick_message, short, split_message,
+    check_rebase_request, check_rebase_state, cleanup_message, pick_message, split_message,
 };
 use project_domain::{Commit, Oid, Operation, RebaseAction, RebasePlan, Signature};
 
@@ -234,7 +234,7 @@ impl MemoryBackend {
             if !conflicts.is_empty() {
                 let (differing, _) = self.switch_plan(&merged);
                 let index = self.switch_index(&differing, &merged);
-                let label = format!("{} ({})", short(&op.source), picked.summary);
+                let label = format!("{} ({})", op.source.short(), picked.summary);
                 let mut text = Vec::new();
                 for c in &conflicts {
                     self.add_conflict(c, &label);
@@ -244,7 +244,7 @@ impl MemoryBackend {
                 self.rebase_entries(&index);
                 text.push(format!(
                     "error: could not apply {}... {}",
-                    short(&op.source),
+                    op.source.short(),
                     picked.summary
                 ));
                 self.operation = Some(Operation::Rebase);
@@ -345,7 +345,7 @@ impl MemoryBackend {
                     .unwrap_or(tip);
                 warnings.push(msg!(
                     "engine-rebase-dropped-empty",
-                    commit = short(&op.source)
+                    commit = op.source.short()
                 ));
             } else {
                 let commit = work.rebase_commit(&mut state, &op, &tree, &picked)?;

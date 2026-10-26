@@ -15,7 +15,7 @@ use super::{HEADS, HeadRef, MemoryBackend, REMOTES, RefEntry};
 use crate::git::{
     BACKUP_PREFIX, LogQuery, PullMode, PullOutcome, PullRequest, PullSettings, PushKind,
     PushOutcome, PushRejection, PushRequest, RebaseRecord, RefRestore, RemoteBranchDelete,
-    RemoteBranchDeleted, RestoreOutcome, UpstreamConfig, check_pull_state, short,
+    RemoteBranchDeleted, RestoreOutcome, UpstreamConfig, check_pull_state,
 };
 use crate::{EngineError, FetchFailure, GitBackend, JobContext, Progress};
 use project_domain::{Commit, Oid, Signature};
@@ -353,7 +353,7 @@ impl MemoryBackend {
                 "engine-pull-undo-overwrite",
                 command = request.command,
                 moved = moved,
-                target = short(&target),
+                target = target.short(),
                 files = files.join(", ")
             )));
         }
@@ -483,9 +483,9 @@ impl MemoryBackend {
             (PushKind::New, _) => "[new branch]".to_owned(),
             (PushKind::UpToDate, _) => "[up to date]".to_owned(),
             (PushKind::Forced, Some(t)) => {
-                format!("{}...{} (forced update)", short(&t), short(&local))
+                format!("{}...{} (forced update)", t.short(), local.short())
             }
-            (_, Some(t)) => format!("{}..{}", short(&t), short(&local)),
+            (_, Some(t)) => format!("{}..{}", t.short(), local.short()),
             (_, None) => String::new(),
         };
         let mut messages = vec![format!("To {url}")];

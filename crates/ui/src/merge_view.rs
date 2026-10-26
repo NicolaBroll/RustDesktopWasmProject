@@ -6,6 +6,7 @@ use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog, Operation
 use crate::view::git_text;
 use crate::{Action, RepoView};
 use egui::{RichText, Ui};
+use project_domain::branch_short;
 use project_domain::{Operation, RepoPath};
 use project_i18n::tr;
 
@@ -309,7 +310,7 @@ fn rebase_continue_dialog(
         .merge
         .info()
         .and_then(|info| info.rebase_branch.as_deref())
-        .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
+        .map(|b| branch_short(b));
     let text = match branch {
         Some(branch) => tr!("merge-rebase-continue-text-branch", branch = branch),
         None => tr!("merge-rebase-continue-text"),

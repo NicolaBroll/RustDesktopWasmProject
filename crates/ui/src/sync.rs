@@ -24,6 +24,7 @@ use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
 use crate::{Action, Done, Tab, sync};
+use project_domain::remote_short;
 use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{PullOperation, PushRejection};
 use project_i18n::tr;
@@ -567,11 +568,6 @@ fn rejection_short(reason: PushRejection) -> String {
         PushRejection::TagExists => tr!("sync-rejection-short-tag-exists"),
         PushRejection::Other => tr!("sync-rejection-short-other"),
     }
-}
-
-/// `refs/remotes/origin/main` → `origin/main`.
-fn remote_short(name: &str) -> &str {
-    name.strip_prefix("refs/remotes/").unwrap_or(name)
 }
 
 /// The `fetch` part in the pull result.

@@ -14,6 +14,7 @@ use crate::{
     MergeRequest, MessageArg, Session, branch_ref, check_merge_state, check_merging,
     clean_merge_message, conflicted_paths, merge_source,
 };
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use project_domain::{Head, Oid, Operation, RefInfo, RefKind, RepoPath};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -78,15 +79,15 @@ pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Jo
 /// this order), otherwise the abbreviated id: to describe an incoming commit.
 pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
     for (kind, prefix) in [
-        (RefKind::LocalBranch, "refs/heads/"),
-        (RefKind::RemoteBranch, "refs/remotes/"),
-        (RefKind::Tag, "refs/tags/"),
+        (RefKind::LocalBranch, HEADS_PREFIX),
+        (RefKind::RemoteBranch, REMOTES_PREFIX),
+        (RefKind::Tag, TAGS_PREFIX),
     ] {
         if let Some(r) = refs.iter().find(|r| r.kind == kind && r.target == *oid) {
             return r.name.strip_prefix(prefix).unwrap_or(&r.name).to_owned();
         }
     }
-    crate::git::short(oid)
+    oid.short()
 }
 
 /// Merges `rev` into the active branch (`git merge`): fast-forward if the branch has no commits that

@@ -9,7 +9,7 @@
 //! value before, backup, messages still to apply) is the [`RebaseRecord`], kept by the backend
 //! next to git's own data and removed with it. The pull with rebase uses the same record.
 
-use super::{GitBackend, check_no_operation, conflicted_paths, short};
+use super::{GitBackend, check_no_operation, conflicted_paths};
 use crate::{EngineError, Message, quoted_list};
 use project_domain::{Commit, EntryKind, Oid, PlanError, PlanErrorReason, RebasePlan, Status};
 use serde::{Deserialize, Serialize};
@@ -201,14 +201,14 @@ pub fn rebase_range(
     if head == base {
         return Err(EngineError::NotAllowed(msg!(
             "engine-rebase-base-is-head",
-            base = short(base),
+            base = base.short(),
             id = id
         )));
     }
     let not_ancestor = || {
         EngineError::NotAllowed(msg!(
             "engine-rebase-not-ancestor",
-            base = short(base),
+            base = base.short(),
             id = id
         ))
     };
@@ -226,7 +226,7 @@ pub fn rebase_range(
     let merges: Vec<String> = found
         .iter()
         .filter(|c| c.parents.len() > 1)
-        .map(|c| short(&c.id))
+        .map(|c| c.id.short())
         .collect();
     if !merges.is_empty() {
         return Err(EngineError::NotAllowed(msg!(
@@ -267,13 +267,13 @@ pub fn rewritten_commits<'a>(plan: &RebasePlan, commits: &'a [Oid]) -> &'a [Oid]
 pub fn plan_error(id: &'static str, error: &PlanError) -> EngineError {
     let reason = match &error.reason {
         PlanErrorReason::UnknownCommit(c) => {
-            msg!("engine-rebase-plan-unknown-commit", commit = short(c))
+            msg!("engine-rebase-plan-unknown-commit", commit = c.short())
         }
         PlanErrorReason::DuplicateCommit(c) => {
-            msg!("engine-rebase-plan-duplicate-commit", commit = short(c))
+            msg!("engine-rebase-plan-duplicate-commit", commit = c.short())
         }
         PlanErrorReason::MissingCommit(c) => {
-            msg!("engine-rebase-plan-missing-commit", commit = short(c))
+            msg!("engine-rebase-plan-missing-commit", commit = c.short())
         }
         PlanErrorReason::AllDropped => msg!("engine-rebase-plan-all-dropped"),
         PlanErrorReason::NothingToCombine => msg!("engine-rebase-plan-nothing-to-combine"),

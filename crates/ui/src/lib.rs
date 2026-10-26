@@ -62,6 +62,7 @@ use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
 use optimize::OptimizeBox;
+use project_domain::HEADS_PREFIX;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
 
@@ -1747,7 +1748,7 @@ impl Tab {
                 }
                 if let Some(confirm) = repo.commit.confirm() {
                     let branch = match &repo.head {
-                        Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
+                        Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
                         Head::Detached(_) => None,
                     };
                     let left_behind =

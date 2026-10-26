@@ -10,6 +10,7 @@
 
 use super::{HEADS_PREFIX, check_no_operation};
 use crate::{EngineError, Message};
+use project_domain::remote_short;
 use project_domain::{EntryKind, Oid, RepoPath, Status};
 use serde::{Deserialize, Serialize};
 
@@ -284,7 +285,7 @@ pub fn check_pull_state(status: &Status, mode: &PullMode) -> Result<(), EngineEr
 /// (`Merge remote-tracking branch 'origin/main'`), with ` into <branch>` if the branch is not
 /// `main` or `master` (as git does with the default `merge.suppressDest`).
 pub fn merge_message(upstream: &str, branch: &str) -> String {
-    let short = upstream.strip_prefix("refs/remotes/").unwrap_or(upstream);
+    let short = remote_short(upstream);
     let mut message = format!("Merge remote-tracking branch '{short}'");
     if branch != "main" && branch != "master" {
         message.push_str(&format!(" into {branch}"));

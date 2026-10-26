@@ -107,7 +107,6 @@ pub use reset::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
 };
-pub(crate) use restore::short;
 pub use restore::{HeadState, RefMove, RefRestore, RestoreOutcome, valid_ref_name};
 pub use search::{SearchField, SearchQuery};
 pub use stash::{

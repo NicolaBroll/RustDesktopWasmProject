@@ -9,6 +9,7 @@
 use crate::{Action, Done, Request, Tab, fetch};
 use crate::{ErrorKind, Ticket};
 use project_domain::{Oid, RefInfo};
+use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
 use project_engine::Progress;
 use project_i18n::tr;
 use serde::Deserialize;
@@ -285,9 +286,9 @@ const NAMES_SHOWN: usize = 3;
 
 /// The name of a ref for the notice: `origin/main`, `tag v1`.
 fn ref_text(name: &str) -> String {
-    if let Some(remote) = name.strip_prefix("refs/remotes/") {
+    if let Some(remote) = name.strip_prefix(REMOTES_PREFIX) {
         remote.to_owned()
-    } else if let Some(tag) = name.strip_prefix("refs/tags/") {
+    } else if let Some(tag) = name.strip_prefix(TAGS_PREFIX) {
         tr!("fetch-ref-tag", tag = tag)
     } else {
         name.to_owned()
@@ -345,7 +346,7 @@ impl FetchResult {
                 .updated
                 .iter()
                 .flatten()
-                .filter(|u| u.name.starts_with("refs/remotes/"))
+                .filter(|u| u.name.starts_with(REMOTES_PREFIX))
                 .cloned()
                 .collect(),
             refs: self.refs,

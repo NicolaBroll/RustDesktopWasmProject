@@ -14,7 +14,7 @@ use super::{HEADS, HeadRef, MemoryBackend};
 use crate::EngineError;
 use crate::git::GitBackend;
 use crate::git::{
-    BACKUP_PREFIX, MergeOutcome, PickKind, PickRequest, check_pick_state, pick_empty_error, short,
+    BACKUP_PREFIX, MergeOutcome, PickKind, PickRequest, check_pick_state, pick_empty_error,
     split_message,
 };
 
@@ -91,7 +91,7 @@ impl MemoryBackend {
         } else {
             // The marker labels like git: `<id> (<subject>)`, `parent of ...` for the
             // revert.
-            let label = format!("{} ({})", short(&request.commit), picked.summary);
+            let label = format!("{} ({})", request.commit.short(), picked.summary);
             let label = match kind {
                 PickKind::CherryPick => label,
                 PickKind::Revert => format!("parent of {label}"),
@@ -116,7 +116,7 @@ impl MemoryBackend {
                     PickKind::CherryPick => "apply",
                     PickKind::Revert => "revert",
                 },
-                short(&request.commit),
+                request.commit.short(),
                 picked.summary
             ));
             outcome.in_progress = true;

@@ -54,7 +54,6 @@
 //!   `refs/project/backup/undo-...` (§7); if the backup fails the undo is not done.
 //! - The journal keeps at most [`Journal::MAX_ENTRIES`] entries: the oldest drop out.
 
-use crate::git::short;
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
     MergeMode, Message, PullMode, RefMove, RefRestore, RemoteSnapshot, ResetMode, ResetRecord,
@@ -205,11 +204,11 @@ impl JournalEntry {
         let description = match (amend, outcome.previous) {
             (true, Some(old)) => msg!(
                 "engine-journal-amend",
-                id = short(&new),
+                id = new.short(),
                 summary = summary,
-                old = short(&old)
+                old = old.short()
             ),
-            _ => msg!("engine-journal-commit", id = short(&new), summary = summary),
+            _ => msg!("engine-journal-commit", id = new.short(), summary = summary),
         };
         Some(Self {
             id: 0,
@@ -261,7 +260,7 @@ impl JournalEntry {
             msg!(
                 "engine-journal-branch-create",
                 name = branch_short(branch),
-                id = short(&target)
+                id = target.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -286,7 +285,7 @@ impl JournalEntry {
             msg!(
                 "engine-journal-tag-create",
                 name = tag.strip_prefix(crate::TAGS_PREFIX).unwrap_or(tag),
-                id = short(&target)
+                id = target.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -311,7 +310,7 @@ impl JournalEntry {
             msg!(
                 "engine-journal-tag-delete",
                 name = tag.strip_prefix(crate::TAGS_PREFIX).unwrap_or(tag),
-                id = short(&target)
+                id = target.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -342,7 +341,7 @@ impl JournalEntry {
             msg!(
                 "engine-journal-branch-delete",
                 name = branch_short(branch),
-                id = short(&target)
+                id = target.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -393,7 +392,7 @@ impl JournalEntry {
     pub fn checkout(before: HeadState, after: HeadState) -> Self {
         let name = |h: &HeadState| match h {
             HeadState::Branch(b) => msg!("engine-journal-head-branch", name = branch_short(b)),
-            HeadState::Detached(oid) => msg!("engine-journal-head-detached", id = short(oid)),
+            HeadState::Detached(oid) => msg!("engine-journal-head-detached", id = oid.short()),
         };
         Self::branch_entry(
             "branch.checkout",
@@ -434,8 +433,8 @@ impl JournalEntry {
                 "engine-journal-pull",
                 branch = branch_short(branch),
                 how = how,
-                before = short(&before),
-                after = short(&after)
+                before = before.short(),
+                after = after.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -478,8 +477,8 @@ impl JournalEntry {
                 source = source,
                 branch = branch_short(branch),
                 strategy = strategy,
-                before = short(&before),
-                after = short(&after)
+                before = before.short(),
+                after = after.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -520,8 +519,8 @@ impl JournalEntry {
                 },
                 source = source,
                 branch = branch_short(branch),
-                before = short(&before),
-                after = short(&after)
+                before = before.short(),
+                after = after.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -555,8 +554,8 @@ impl JournalEntry {
                 "engine-journal-rebase",
                 branch = branch_short(branch),
                 n = commits,
-                before = short(&before),
-                after = short(&after)
+                before = before.short(),
+                after = after.short()
             ),
             HeadChange {
                 before: head.clone(),
@@ -613,8 +612,8 @@ impl JournalEntry {
                 "engine-journal-reset",
                 branch = name,
                 mode = mode.as_str(),
-                before = short(&before),
-                after = short(&after)
+                before = before.short(),
+                after = after.short()
             ),
             head,
             refs,
@@ -728,7 +727,7 @@ impl JournalEntry {
             "stash.push",
             msg!(
                 "engine-journal-stash-push",
-                id = short(&stash.id),
+                id = stash.id.short(),
                 message = stash.message
             ),
             HeadChange {
@@ -755,7 +754,7 @@ impl JournalEntry {
             msg!(
                 "engine-journal-stash-drop",
                 name = stash.name,
-                id = short(&stash.id),
+                id = stash.id.short(),
                 message = stash.message
             ),
             HeadChange {
@@ -794,7 +793,7 @@ impl JournalEntry {
             refs: vec![what],
         };
         let present = find_stash(&repo.stashes()?, &record.id).is_some();
-        let short_id = short(&record.id);
+        let short_id = record.id.short();
         if self.command == "stash.drop" {
             if redo {
                 if !present {
@@ -847,14 +846,14 @@ impl JournalEntry {
             &self.head.after
         };
         if state != *expected || head.target() != Some(record.base) {
-            let base = short(&record.base);
+            let base = record.base.short();
             return Err(conflict(match head.target() {
                 Some(t) => msg!(
                     "engine-undo-stash-head",
                     expected = expected,
                     base = base,
                     now = state,
-                    commit = short(&t)
+                    commit = t.short()
                 ),
                 None => msg!(
                     "engine-undo-stash-head-unborn",
@@ -1290,7 +1289,7 @@ mod tests {
         assert_eq!(e.command, "commit.create");
         assert_eq!(
             e.description.to_string(),
-            format!("Commit {} “Aggiorna”", short(&out.commit.id))
+            format!("Commit {} “Aggiorna”", out.commit.id.short())
         );
         assert_eq!(
             e.refs,
@@ -1314,7 +1313,7 @@ mod tests {
             .unwrap();
         let e = JournalEntry::commit(&amend, true).unwrap();
         assert!(e.description.starts_with("Amend "), "{}", e.description);
-        assert!(e.description.contains(&short(&out.commit.id)));
+        assert!(e.description.contains(&out.commit.id.short()));
         assert_eq!(e.backup, amend.backup);
 
         // An `amend` that changes nothing does not go into the journal.

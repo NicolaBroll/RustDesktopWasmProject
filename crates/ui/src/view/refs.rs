@@ -1,6 +1,7 @@
 use super::*;
 use crate::ref_tree::{self, Row};
 use egui::{Rect, UiBuilder};
+use project_domain::{HEADS_PREFIX, remote_short};
 use std::collections::HashSet;
 
 /// Height of a row of the column: all equal, so only the rows in view are drawn.
@@ -70,7 +71,7 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
         return;
     };
     let current = match &repo.head {
-        Head::Branch { name, .. } => Some(format!("refs/heads/{name}")),
+        Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
         Head::Detached(_) => None,
     };
     let column = Column {
@@ -599,13 +600,10 @@ pub(super) fn ref_menu(
     ui.separator();
     let pull_hint = match (&info.upstream, is_head) {
         (None, _) => tr!("refs-pull-no-upstream", name = name),
-        (Some(up), true) => tr!(
-            "refs-pull-head-hint",
-            upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
-        ),
+        (Some(up), true) => tr!("refs-pull-head-hint", upstream = remote_short(&up.name)),
         (Some(up), false) => tr!(
             "refs-pull-other-hint",
-            upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name),
+            upstream = remote_short(&up.name),
             name = name
         ),
     };
@@ -635,7 +633,7 @@ pub(super) fn ref_menu(
             Some(up) => tr!(
                 "refs-push-hint",
                 name = name,
-                upstream = up.name.strip_prefix("refs/remotes/").unwrap_or(&up.name)
+                upstream = remote_short(&up.name)
             ),
             None => tr!("refs-push-first-hint", name = name),
         })

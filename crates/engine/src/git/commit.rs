@@ -8,6 +8,7 @@
 
 use crate::EngineError;
 use project_domain::{Commit, EntryKind, Oid, Operation, Status};
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use serde::{Deserialize, Serialize};
 
 /// Id of the command, used in parameter errors.
@@ -127,14 +128,14 @@ pub struct CommitOutcome {
 pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>, Vec<String>) {
     let published = containing
         .iter()
-        .filter(|n| n.starts_with("refs/remotes/") || n.starts_with("refs/tags/"))
+        .filter(|n| n.starts_with(REMOTES_PREFIX) || n.starts_with(TAGS_PREFIX))
         .cloned()
         .collect();
     let also_on = containing
         .iter()
         .filter(|n| {
-            (n.starts_with("refs/heads/") && Some(n.as_str()) != branch)
-                || n.starts_with("refs/tags/")
+            (n.starts_with(HEADS_PREFIX) && Some(n.as_str()) != branch)
+                || n.starts_with(TAGS_PREFIX)
         })
         .cloned()
         .collect();

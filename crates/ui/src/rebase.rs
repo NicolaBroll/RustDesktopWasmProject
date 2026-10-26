@@ -13,6 +13,7 @@
 use crate::discard::History;
 use crate::merge::{Outcome, Received, reread_warning};
 use crate::{Action, Done, ErrorKind, Request, Tab};
+use project_domain::branch_short;
 use project_domain::{
     Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep, RefInfo, RepoPath, Status,
 };
@@ -342,11 +343,7 @@ impl RebaseBox {
         let plan = result.and_then(|value| crate::decode::<PlanResult>(PLAN, value));
         match plan {
             Ok(plan) => {
-                editor.branch = plan
-                    .branch
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(&plan.branch)
-                    .to_owned();
+                editor.branch = branch_short(&plan.branch).to_owned();
                 editor.original = plan.steps.iter().map(|s| s.commit).collect();
                 editor.rows = plan
                     .steps
@@ -544,11 +541,7 @@ struct StartResult {
 impl StartResult {
     /// `rows` the commits of the range, `produced` those the plan produces.
     fn outcome(self, rows: usize, produced: usize) -> Outcome {
-        let branch = self
-            .branch
-            .strip_prefix("refs/heads/")
-            .unwrap_or(&self.branch)
-            .to_owned();
+        let branch = branch_short(&self.branch).to_owned();
         let mut warnings = self.warnings;
         let notice = if self.in_progress {
             match self.conflicts.len() {

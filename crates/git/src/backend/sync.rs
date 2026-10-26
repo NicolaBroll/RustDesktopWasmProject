@@ -40,6 +40,7 @@
 
 use super::CliBackend;
 use crate::command::{failure, os_from_bytes};
+use project_domain::remote_short;
 use project_domain::{Commit, EntryKind, LOG_ARGS, Oid, Operation, RepoPath, parse_log};
 use project_engine::{
     EngineError, HeadState, Message, PullMode, PullOperation, PullOutcome, PullRequest,
@@ -371,13 +372,7 @@ impl CliBackend {
                         applied: 0,
                         commits: self.count_unmerged(&request.expected, &[request.upstream])?,
                         produces: None,
-                        upstream: Some(
-                            request
-                                .upstream_name
-                                .strip_prefix("refs/remotes/")
-                                .unwrap_or(&request.upstream_name)
-                                .to_owned(),
-                        ),
+                        upstream: Some(remote_short(&request.upstream_name).to_owned()),
                     };
                     if let Err(error) = self.write_rebase_record(&record) {
                         warnings.push(msg!(

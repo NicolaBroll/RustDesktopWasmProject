@@ -214,7 +214,7 @@ pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
         let at_risk: Vec<String> = published(repo, &before, &base, &commits)?
             .iter()
             .filter(|c| rewritten.contains(c))
-            .map(crate::git::short)
+            .map(Oid::short)
             .collect();
         if !at_risk.is_empty() {
             return Err(EngineError::ConfirmRequired {

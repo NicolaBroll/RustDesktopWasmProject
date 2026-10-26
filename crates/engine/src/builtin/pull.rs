@@ -15,6 +15,7 @@ use crate::{
     check_remote_name, merge_message, pull_mode, unknown_remote,
 };
 use project_domain::Head;
+use project_domain::remote_short;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -235,7 +236,7 @@ pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
                     outcome.after,
                     HeadState::from_head(&status.head),
                     (&mode).into(),
-                    tracking.strip_prefix("refs/remotes/").unwrap_or(&tracking),
+                    remote_short(&tracking),
                     outcome.backup.clone(),
                 ));
             }

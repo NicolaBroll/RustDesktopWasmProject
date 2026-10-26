@@ -45,6 +45,7 @@ use super::CliBackend;
 use crate::command::{Segment, Streamed, failure};
 use crate::progress::{parse_progress, remote_error};
 use project_domain::Oid;
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX};
 use project_engine::{
     EngineError, FetchOutcome, FetchRequest, JobContext, PushKind, PushOutcome, PushRejection,
     PushRequest, RemoteBranchDelete, RemoteBranchDeleted, RemoteTagDelete, TagPush, TagPushed,
@@ -73,7 +74,10 @@ impl CliBackend {
         request: &FetchRequest,
         job: &JobContext,
     ) -> Result<FetchOutcome, EngineError> {
-        let refspec = request.branch.as_ref().map(|b| format!("refs/heads/{b}"));
+        let refspec = request
+            .branch
+            .as_ref()
+            .map(|b| format!("{HEADS_PREFIX}{b}"));
         let prune = request.prune && request.branch.is_none();
         let before = if prune {
             self.ref_values("refs/")?
@@ -176,7 +180,7 @@ impl CliBackend {
     /// branch only if some of its commits are no longer reachable from any ref; any other ref always.
     fn save_pruned(&self, name: &str, oid: &str) -> Result<Option<String>, EngineError> {
         let reflog = format!("project: backup of {name} removed by fetch --prune");
-        if !name.starts_with("refs/remotes/") {
+        if !name.starts_with(REMOTES_PREFIX) {
             return self.create_backup_ref("prune", oid, &reflog).map(Some);
         }
         let out = self.run(&["rev-list", "--count", oid, "--not", "--all"])?;
@@ -195,8 +199,8 @@ impl CliBackend {
         request: &PushRequest,
         job: &JobContext,
     ) -> Result<PushOutcome, EngineError> {
-        let dst = format!("refs/heads/{}", request.remote_branch);
-        let refspec = format!("refs/heads/{}:{dst}", request.branch);
+        let dst = format!("{HEADS_PREFIX}{}", request.remote_branch);
+        let refspec = format!("{HEADS_PREFIX}{}:{dst}", request.branch);
         let lease = request.lease.map(|expected| {
             format!(
                 "--force-with-lease={dst}:{}",
@@ -357,7 +361,7 @@ impl CliBackend {
         self.delete_on_remote(
             "remote.delete_branch",
             &request.remote,
-            &format!("refs/heads/{}", request.branch),
+            &format!("{HEADS_PREFIX}{}", request.branch),
             &request.branch,
             &expected,
             backup,

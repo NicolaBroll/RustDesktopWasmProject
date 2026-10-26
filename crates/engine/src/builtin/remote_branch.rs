@@ -3,7 +3,6 @@
 use super::remote::{changes, unexpected};
 use super::{Out, put_reread, to_json};
 use crate::commands::parse_params;
-use crate::git::short;
 use crate::{
     EngineError, Message, MessageArg, RemoteBranchDelete, Session, branch_ref, check_branch_name,
     check_remote_name, tracking_ref, unknown_remote,
@@ -153,7 +152,7 @@ pub(super) fn remote_delete_branch(s: &mut Session, p: Value) -> Out {
                 .map(|c| {
                     msg!(
                         "engine-push-lost-commit",
-                        id = short(&c.id),
+                        id = c.id.short(),
                         summary = c.summary
                     )
                 })

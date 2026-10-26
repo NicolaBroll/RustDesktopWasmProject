@@ -450,7 +450,7 @@ fn to_json(value: impl serde::Serialize) -> Value {
 }
 
 /// `{"path", "head", "commit_graph"}` of the repo just opened. `path`: the worktree root,
-/// absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same repo opened from a
+/// absolute ([`GitBackend::root`]), so the same repo opened from a
 /// subfolder or a relative path gives the same path; the given path if the backend has none.
 /// `commit_graph`: git reads a
 /// commit-graph for the repo ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log` is slow on
@@ -653,7 +653,7 @@ fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPat
     Ok(out)
 }
 
-/// Stages `paths` (see [`GitBackend::stage`](crate::GitBackend::stage)).
+/// Stages `paths` (see [`GitBackend::stage`]).
 /// Result: `{"status": Status, "backup": string | null}`, with the new
 /// [`Status`](project_domain::Status) (the caller updates the view without a second command) and
 /// the index backup ref, if before writing staged versions
@@ -662,7 +662,7 @@ fn index_stage(s: &mut Session, p: Value) -> Out {
     index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
 }
 
-/// Unstages `paths` (see [`GitBackend::unstage`](crate::GitBackend::unstage)),
+/// Unstages `paths` (see [`GitBackend::unstage`]),
 /// without touching the worktree. Result like `index.stage`.
 fn index_unstage(s: &mut Session, p: Value) -> Out {
     index_paths("index.unstage", s, p, |repo, paths| repo.unstage(paths))
@@ -689,7 +689,7 @@ struct LinesParams {
 }
 
 /// The `lines` of file `path` staged or unstaged, with the diff seen identified by
-/// `digest` (see [`GitBackend::apply_lines`](crate::GitBackend::apply_lines)). An empty
+/// `digest` (see [`GitBackend::apply_lines`]). An empty
 /// selection is an error, not a no-op: it is almost always a mistake by the
 /// caller. Result like `index.stage`.
 fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: Value) -> Out {
@@ -726,7 +726,7 @@ fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
 }
 
 /// Creates a commit with what is staged, or with `amend` rewrites the last one (see
-/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` is needed only for `amend` of a
+/// [`GitBackend::commit`]). `confirm` is needed only for `amend` of a
 /// commit already published.
 ///
 /// Result: `{"commit": Commit, "previous": string | null, "branch": string | null, "backup":
@@ -766,7 +766,7 @@ struct DiscardParams {
 
 /// Discards the unstaged changes of the files `paths` (files or folders): the worktree goes back
 /// to the index, the index is not touched (see
-/// [`GitBackend::discard`](crate::GitBackend::discard) and [`discard_plan`]: untracked files are
+/// [`GitBackend::discard`] and [`discard_plan`]: untracked files are
 /// never touched). Needs `"confirm": true`: without it, [`EngineError::ConfirmRequired`] with the files
 /// that would be lost and nothing changes (the refusals of [`discard_plan`] come first). Before
 /// writing, the worktree is saved with `git stash create` in `refs/project/backup/discard-...`;

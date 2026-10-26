@@ -13,7 +13,7 @@ pub(crate) mod remote;
 pub(crate) mod remote_branch;
 pub(crate) mod remote_tag;
 mod remotes;
-mod reset;
+pub(crate) mod reset;
 mod search;
 pub(crate) mod stash;
 pub(crate) mod tag;
@@ -851,15 +851,6 @@ fn reread<T>(result: Result<T, EngineError>) -> (Option<T>, Option<String>) {
     match result {
         Ok(value) => (Some(value), None),
         Err(e) => (None, Some(e.to_string())),
-    }
-}
-
-/// Adds the fields of [`journal_state`] to `out`.
-fn put_journal_state(out: &mut Value, journal: &Journal) {
-    if let Value::Object(state) = journal_state(journal) {
-        for (key, value) in state {
-            out[key] = value;
-        }
     }
 }
 

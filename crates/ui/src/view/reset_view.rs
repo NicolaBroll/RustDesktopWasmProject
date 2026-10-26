@@ -2,7 +2,8 @@
 //! (files a `hard` overwrites, commits already published) and "Reset".
 
 use super::*;
-use crate::reset::{self, Mode, Phase, ResetDialog};
+use crate::reset::{Mode, Phase, ResetDialog};
+use project_engine::ResetPreviewResult;
 
 /// Maximum height of the list of overwritten files; beyond it, it scrolls.
 const FILES_HEIGHT: f32 = 160.0;
@@ -114,7 +115,7 @@ pub(crate) fn reset_dialog(ctx: &egui::Context, dialog: &ResetDialog, actions: &
 }
 
 /// What the chosen mode does here: the move, the files overwritten, the warnings.
-fn plan(ui: &mut Ui, dialog: &ResetDialog, preview: &reset::Preview) {
+fn plan(ui: &mut Ui, dialog: &ResetDialog, preview: &ResetPreviewResult) {
     let body = if preview.before == preview.after {
         tr!(
             "reset-plan-same",
@@ -155,7 +156,7 @@ fn plan(ui: &mut Ui, dialog: &ResetDialog, preview: &reset::Preview) {
         ui.add_space(6.0);
         ui.add(
             egui::Label::new(
-                RichText::new(tr!("reset-warning", warning = warning))
+                RichText::new(tr!("reset-warning", warning = warning.text()))
                     .color(ui.visuals().warn_fg_color),
             )
             .wrap(),

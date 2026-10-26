@@ -5,12 +5,11 @@
 //! `"confirm": true` only when the plan shown needs it (a `hard` that overwrites local changes).
 //! Data only, no egui. Command contract in `impl-docs/git/reset.md`.
 
-use crate::discard::History;
 use crate::merge::{Outcome, Received, reread_warning};
 use crate::{Action, Done, ErrorKind, Request, Tab};
-use project_domain::{Oid, RefInfo, RepoPath, Status};
+use project_domain::Oid;
+use project_engine::{ResetPreviewResult, ResetResult};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The read-only plan for the dialog.
@@ -52,40 +51,21 @@ impl Mode {
     }
 }
 
-/// The plan of `branch.reset_preview`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Preview {
-    pub before: Oid,
-    pub after: Oid,
-    /// The files whose local changes a `hard` overwrites (empty for `soft`/`mixed`).
-    #[serde(default)]
-    pub files: Vec<RepoPath>,
-    pub needs_confirm: bool,
-    /// The commit HEAD is on: repeated in `branch.reset`.
-    pub expected: Oid,
-    /// How many commits that leave the branch are already on its upstream.
-    #[serde(default)]
-    pub published: usize,
-    pub upstream: Option<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-}
-
 /// Where the dialog stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Phase {
     /// `branch.reset_preview` sent for the chosen mode.
     Loading,
     /// The plan is shown: "Reset" sends it.
-    Ready(Preview),
+    Ready(ResetPreviewResult),
     /// The engine refuses this reset (operation in progress, files in the way, ...): the reason.
     Refused(String),
     /// `branch.reset` sent.
-    Sending(Preview),
+    Sending(ResetPreviewResult),
 }
 
 /// The reset dialog.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResetDialog {
     /// The commit to reset to.
     pub target: Oid,
@@ -201,9 +181,9 @@ impl ResetBox {
             return;
         }
         dialog.phase = match result {
-            Ok(value) => match serde_json::from_value::<Preview>(value) {
+            Ok(value) => match crate::decode::<ResetPreviewResult>(PREVIEW, value) {
                 Ok(preview) => Phase::Ready(preview),
-                Err(e) => Phase::Refused(crate::unexpected_result(PREVIEW, e)),
+                Err(message) => Phase::Refused(message),
             },
             Err(e) => Phase::Refused(e),
         };
@@ -292,10 +272,10 @@ impl ResetBox {
             }
             Ok(value) => {
                 let dialog = self.dialog.take().expect("checked above");
-                let received = match serde_json::from_value::<ResetResult>(value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome(&dialog))),
-                    Err(e) => Received::Failed {
-                        message: crate::unexpected_result(COMMAND, e),
+                let received = match crate::decode::<ResetResult>(COMMAND, value) {
+                    Ok(result) => Received::Done(Box::new(outcome(result, &dialog))),
+                    Err(message) => Received::Failed {
+                        message,
                         reload: true,
                     },
                 };
@@ -305,72 +285,44 @@ impl ResetBox {
     }
 }
 
-/// Result of `branch.reset`.
-#[derive(Debug, Clone, Deserialize)]
-struct ResetResult {
-    before: Oid,
-    after: Oid,
-    #[serde(default)]
-    files: Vec<RepoPath>,
-    backup: Option<String>,
-    stash: Option<Oid>,
-    index_backup: Option<String>,
-    #[serde(default)]
-    backups: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-impl ResetResult {
-    fn outcome(self, dialog: &ResetDialog) -> Outcome {
-        let mut notice = tr!(
-            "reset-done",
-            mode = dialog.mode.param(),
-            moving = dialog.moving(),
-            id = self.after.short()
-        );
-        if let Some(backup) = &self.backup {
-            let stash = self.stash.map(|s| s.short()).unwrap_or_default();
-            notice.push_str(&tr!(
-                "reset-done-backup",
-                n = self.files.len(),
-                backup = backup,
-                stash = stash
-            ));
-        }
-        if let Some(backup) = &self.index_backup {
-            notice.push_str(&tr!("reset-done-index-backup", backup = backup));
-        }
-        if !self.backups.is_empty() {
-            notice.push_str(&tr!(
-                "reset-done-commit-backups",
-                refs = self.backups.join(", ")
-            ));
-        }
-        // The warnings (commits already published: the next push needs the lease) stay in the
-        // notice: the error line is cleared by the reads that follow (log, refs).
-        notice.push_str(&crate::warnings_text(&self.warnings));
-        let warning = reread_warning(
-            &tr!("reset-done-short"),
-            &[],
-            self.status_error,
-            self.refs_error,
-        );
-        Outcome {
-            notice,
-            status: self.status,
-            refs: self.refs,
-            history: self.history,
-            warning,
-            moved: self.after != self.before,
-            show_changes: false,
-        }
+/// The outcome of `branch.reset`.
+fn outcome(r: ResetResult, dialog: &ResetDialog) -> Outcome {
+    let mut notice = tr!(
+        "reset-done",
+        mode = dialog.mode.param(),
+        moving = dialog.moving(),
+        id = r.after.short()
+    );
+    if let Some(backup) = &r.backup {
+        let stash = r.stash.map(|s| s.short()).unwrap_or_default();
+        notice.push_str(&tr!(
+            "reset-done-backup",
+            n = r.files.len(),
+            backup = backup,
+            stash = stash
+        ));
+    }
+    if let Some(backup) = &r.index_backup {
+        notice.push_str(&tr!("reset-done-index-backup", backup = backup));
+    }
+    if !r.backups.is_empty() {
+        notice.push_str(&tr!(
+            "reset-done-commit-backups",
+            refs = r.backups.join(", ")
+        ));
+    }
+    // The warnings (commits already published: the next push needs the lease) stay in the
+    // notice: the error line is cleared by the reads that follow (log, refs).
+    notice.push_str(&crate::messages_text(&r.warnings));
+    let warning = reread_warning(&tr!("reset-done-short"), &[], r.status_error, r.refs_error);
+    Outcome {
+        notice,
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        moved: r.after != r.before,
+        show_changes: false,
     }
 }
 

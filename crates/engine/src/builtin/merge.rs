@@ -7,12 +7,12 @@
 //! **stays in progress** and does not enter the journal (the branch has not moved); `merge.abort` always asks
 //! for `"confirm": true` and first saves index and worktree in a backup.
 
-use super::{JournalState, Out, put_journal_state, put_reread, reread, to_json};
+use super::{JournalState, Out, reread, to_json};
 use crate::commands::parse_params;
 use crate::{
-    CommitRequest, EngineError, GitBackend, HeadState, JournalEntry, LogQuery, MergeMode,
-    MergeRequest, MergeSource, Message, MessageArg, Session, branch_ref, check_merge_state,
-    check_merging, clean_merge_message, conflicted_paths, merge_source,
+    CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeMode, MergeRequest,
+    MergeSource, Message, MessageArg, Session, branch_ref, check_merge_state, check_merging,
+    clean_merge_message, conflicted_paths, merge_source,
 };
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
@@ -190,15 +190,6 @@ pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Resul
             EngineError::InvalidParams { reason, .. } => EngineError::InvalidParams { id, reason },
             other => other,
         })
-}
-
-/// Adds to `out` the re-read state and refs (`null` with `*_error` if they cannot be re-read:
-/// the operation is done and must not be repeated) and the journal state. For the untyped results
-/// of reset.
-pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
-    put_journal_state(out, journal);
-    put_reread(out, "status", repo.status());
-    put_reread(out, "refs", repo.refs());
 }
 
 /// The short name of the first local branch, remote branch or tag that points to `oid` (in

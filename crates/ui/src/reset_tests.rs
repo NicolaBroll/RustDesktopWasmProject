@@ -51,7 +51,7 @@ fn reset(
     b.receive(result, kind, detail)
 }
 
-fn ready(b: &ResetBox) -> &Preview {
+fn ready(b: &ResetBox) -> &ResetPreviewResult {
     match &b.dialog().unwrap().phase {
         Phase::Ready(preview) => preview,
         other => panic!("not ready: {other:?}"),
@@ -145,7 +145,11 @@ fn mixed_without_confirm_and_the_published_warning() {
     assert_eq!(plan.published, 1);
     assert_eq!(plan.upstream.as_deref(), Some("refs/remotes/origin/main"));
     assert_eq!(plan.warnings.len(), 1);
-    assert!(plan.warnings[0].contains("lease"), "{:?}", plan.warnings);
+    assert!(
+        plan.warnings[0].text().contains("lease"),
+        "{:?}",
+        plan.warnings
+    );
     let (params, _) = b.submit().unwrap();
     assert_eq!(params.get("confirm"), None);
     let (received, _) = reset(&r, &mut s, &mut b, params);

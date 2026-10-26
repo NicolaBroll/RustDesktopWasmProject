@@ -688,7 +688,7 @@ impl CliBackend {
         let env = [("GIT_REFLOG_ACTION", OsStr::new(&request.reflog))];
         // No `--end-of-options`: `git reset` refuses it before the commit up to git 2.43 at
         // least ("must come before non-option arguments"), and `to` is a full hex id, which
-        // never starts with `-`.
+        // never starts with `-`. The final `--`: `to` is a commit even if a file has that name.
         let args = [
             "-c",
             "core.fsmonitor=false",
@@ -696,6 +696,7 @@ impl CliBackend {
             "--keep",
             "--quiet",
             &to,
+            "--",
         ];
         let out = self
             .git

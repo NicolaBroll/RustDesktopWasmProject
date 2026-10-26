@@ -16,7 +16,7 @@ mod remotes;
 mod reset;
 mod search;
 mod stash;
-mod tag;
+pub(crate) mod tag;
 
 use crate::commands::parse_params;
 use crate::{

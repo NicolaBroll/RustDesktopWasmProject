@@ -17,6 +17,7 @@ mod session;
 pub use builtin::branch::{
     BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
 };
+pub use builtin::tag::{TagCreateResult, TagDeleteResult};
 pub use builtin::{DEFAULT_LOG_LIMIT, JournalState};
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{

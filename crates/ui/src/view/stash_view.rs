@@ -101,7 +101,7 @@ pub(super) fn stash_push_button(
 
 /// A row of the "Stash" section.
 pub(super) struct StashRow<'a> {
-    stash: &'a Stash,
+    stash: &'a StashEntry,
     selected: bool,
     can_write: bool,
     restore_index: bool,
@@ -159,7 +159,7 @@ pub(super) struct StashFlags {
 
 pub(super) fn stash_actions(
     ui: &mut Ui,
-    stash: &Stash,
+    stash: &StashEntry,
     flags: StashFlags,
     actions: &mut Vec<Action>,
 ) {
@@ -236,7 +236,7 @@ pub(super) fn stash_actions(
 pub(crate) fn stash_panel(
     ui: &mut Ui,
     repo: &RepoView,
-    stash: &Stash,
+    stash: &StashEntry,
     writing: bool,
     actions: &mut Vec<Action>,
 ) {

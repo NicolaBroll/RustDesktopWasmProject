@@ -712,3 +712,99 @@ fn stash_commands_need_an_open_repo() {
         assert!(matches!(err, EngineError::NoRepo), "{id}: {err}");
     }
 }
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use super::{StashApplyResult, StashDropResult, StashListResult, StashPushResult};
+    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
+        let typed: T = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+    }
+    let (r, mut s) = opened();
+    same::<StashListResult>(run(&r, &mut s, "stash.list", json!({})));
+    let out = run(
+        &r,
+        &mut s,
+        "stash.push",
+        json!({ "include_untracked": true }),
+    );
+    assert!(out.get("stashes_error").is_none() && out.get("status_error").is_none());
+    same::<StashPushResult>(out);
+    let out = run(&r, &mut s, "stash.apply", json!({ "index": 0 }));
+    assert_eq!(out["dropped"], json!(false));
+    same::<StashApplyResult>(out);
+    same::<StashListResult>(run(&r, &mut s, "stash.list", json!({})));
+    let out = run(
+        &r,
+        &mut s,
+        "stash.push",
+        json!({ "include_untracked": true }),
+    );
+    same::<StashPushResult>(out);
+    let out = run(&r, &mut s, "stash.pop", json!({ "index": 0 }));
+    assert_eq!(out["dropped"], json!(true));
+    same::<StashApplyResult>(out);
+    let list = run(&r, &mut s, "stash.list", json!({}));
+    let expected = list["stashes"][0]["id"].clone();
+    let out = run(
+        &r,
+        &mut s,
+        "stash.drop",
+        json!({ "index": 0, "expected": expected, "confirm": true }),
+    );
+    same::<StashDropResult>(out);
+}
+
+/// A re-read that fails gives `null` and `<key>_error`.
+#[test]
+fn reread_error_fields() {
+    use super::super::{JournalState, reread};
+    use super::{StashApplyResult, StashDropResult};
+    use crate::StashEntry;
+    use project_domain::{Oid, Status};
+    let stash = StashEntry {
+        index: 0,
+        name: "stash@{0}".into(),
+        id: Oid::from_bytes([1; 20]),
+        base: Oid::from_bytes([2; 20]),
+        message: "On main: x".into(),
+        branch: None,
+        time: 0,
+        untracked: false,
+    };
+    let (stashes, stashes_error) = reread::<Vec<StashEntry>>(Err(EngineError::NoRepo));
+    let (status, status_error) = reread::<Status>(Err(EngineError::NoRepo));
+    let result = StashApplyResult {
+        stash: stash.clone(),
+        conflicts: vec![],
+        dropped: false,
+        backup: None,
+        warnings: vec![],
+        stashes: stashes.clone(),
+        stashes_error: stashes_error.clone(),
+        status,
+        status_error,
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    assert_eq!(out["stashes"], Value::Null);
+    assert_eq!(out["status"], Value::Null);
+    assert_eq!(out["backup"], Value::Null);
+    assert_eq!(out["status_error"], EngineError::NoRepo.to_string());
+    assert_eq!(out["stashes_error"], EngineError::NoRepo.to_string());
+    let back: StashApplyResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+    let result = StashDropResult {
+        stash,
+        backup: Some("refs/project/backup/stash-1".into()),
+        warnings: vec![],
+        stashes,
+        stashes_error,
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    assert_eq!(out["stashes_error"], EngineError::NoRepo.to_string());
+    let back: StashDropResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+}

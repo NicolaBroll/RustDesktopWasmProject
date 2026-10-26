@@ -14,7 +14,7 @@ use crate::merge;
 use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, Remote, RemoveDialog};
 use crate::search::{SearchBox, State as SearchState};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
-use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
+use crate::stash::{self, DropDialog, PushDialog, PushFields, StashText};
 use crate::sync::{self, Window};
 use crate::{Action, Job, ListViewport, RepoView};
 use crate::{icons, theme};
@@ -22,7 +22,7 @@ use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
-use project_engine::Progress;
+use project_engine::{Progress, StashEntry};
 use project_i18n::tr;
 
 mod auto_fetch_view;

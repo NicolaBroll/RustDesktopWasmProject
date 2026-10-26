@@ -11,11 +11,11 @@
 
 use crate::discard::{History, Phase};
 use crate::{Action, Done, Request, Tab};
-use crate::{ErrorKind, warnings_text};
+use crate::{ErrorKind, messages_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
 use project_engine::{
-    BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult, Message,
+    BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
     TagCreateResult, TagDeleteResult,
 };
 use project_i18n::tr;
@@ -745,12 +745,6 @@ fn rename_outcome(r: BranchRenameResult) -> Outcome {
         warning: r.refs_error.map(refs_warning),
         history: r.journal.into(),
     }
-}
-
-/// The engine warnings as the text appended to a notice.
-fn messages_text(warnings: &[Message]) -> String {
-    let texts: Vec<String> = warnings.iter().map(Message::text).collect();
-    warnings_text(&texts)
 }
 
 fn refs_warning(error: String) -> String {

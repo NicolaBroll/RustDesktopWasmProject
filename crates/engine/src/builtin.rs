@@ -15,7 +15,7 @@ mod remote_tag;
 mod remotes;
 mod reset;
 mod search;
-mod stash;
+pub(crate) mod stash;
 pub(crate) mod tag;
 
 use crate::commands::parse_params;

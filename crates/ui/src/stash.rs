@@ -17,12 +17,14 @@
 //!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
-use crate::warnings_text;
+use crate::messages_text;
 use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, format};
 use project_domain::{Oid, Signature, Status};
+use project_engine::{
+    Message, StashApplyResult, StashDropResult, StashEntry, StashListResult, StashPushResult,
+};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The id of the command that lists the stashes.
@@ -49,29 +51,21 @@ impl Op {
     }
 }
 
-/// A stash, as given by `stash.list`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
-pub struct Stash {
-    /// `n` of `stash@{n}`, 0 the most recent.
-    pub index: usize,
-    /// `stash@{n}`.
-    pub name: String,
-    /// The stash commit: `commit.show`/`diff.commit` on this id give the tracked files.
-    pub id: Oid,
-    /// The commit it was created on.
-    pub base: Oid,
-    /// The message as in `git stash list`.
-    pub message: String,
-    pub branch: Option<String>,
-    pub time: i64,
-    /// Also contains untracked files (which `commit.show` does not show).
-    pub untracked: bool,
-}
-
-impl Stash {
+/// The texts of a stash ([`StashEntry`], as given by `stash.list`) shown by the UI.
+pub trait StashText {
     /// The message without the `On <branch>: ` / `WIP on <branch>: ` prefix, which the row
     /// shows separately.
-    pub fn title(&self) -> &str {
+    fn title(&self) -> &str;
+    /// Date of the stash, e.g. `2026-10-23 09:12` (UTC).
+    fn date(&self) -> String;
+    /// Branch and base: `on main · 1a2b3c4`, `detached HEAD · 1a2b3c4`.
+    fn origin(&self) -> String;
+    /// The text of the row tooltip.
+    fn tooltip(&self) -> String;
+}
+
+impl StashText for StashEntry {
+    fn title(&self) -> &str {
         let message = self.message.as_str();
         for prefix in ["On ", "WIP on "] {
             if let Some(rest) = message.strip_prefix(prefix)
@@ -83,8 +77,7 @@ impl Stash {
         message
     }
 
-    /// Date of the stash, e.g. `2026-10-23 09:12` (UTC).
-    pub fn date(&self) -> String {
+    fn date(&self) -> String {
         format::date_time(&Signature {
             name: String::new(),
             email: String::new(),
@@ -93,8 +86,7 @@ impl Stash {
         })
     }
 
-    /// Branch and base: `on main · 1a2b3c4`, `detached HEAD · 1a2b3c4`.
-    pub fn origin(&self) -> String {
+    fn origin(&self) -> String {
         match &self.branch {
             Some(branch) => tr!(
                 "stash-origin-branch",
@@ -105,8 +97,7 @@ impl Stash {
         }
     }
 
-    /// The text of the row tooltip.
-    pub fn tooltip(&self) -> String {
+    fn tooltip(&self) -> String {
         let created = tr!(
             "stash-tooltip-created",
             base = self.base.to_string(),
@@ -125,12 +116,6 @@ impl Stash {
         lines.push(tr!("stash-tooltip-right"));
         lines.join("\n")
     }
-}
-
-/// Result of `stash.list`.
-#[derive(Debug, Clone, Deserialize)]
-struct ListResult {
-    stashes: Vec<Stash>,
 }
 
 /// The fields of the "Stash" dialog.
@@ -184,7 +169,7 @@ impl PushDialog {
 /// The drop of a stash, from the check to the response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropDialog {
-    pub stash: Stash,
+    pub stash: StashEntry,
     pub phase: Phase,
 }
 
@@ -208,7 +193,7 @@ pub struct Conflicts {
 #[derive(Debug, Default)]
 pub struct StashBox {
     /// The last list read; `None` until it arrives.
-    list: Option<Vec<Stash>>,
+    list: Option<Vec<StashEntry>>,
     /// The error of the last list read.
     list_error: Option<String>,
     /// The stash shown on the right in place of the commit details (by id: the position
@@ -216,7 +201,7 @@ pub struct StashBox {
     selected: Option<Oid>,
     dialog: Option<Dialog>,
     /// The apply or pop in progress (the stash seen), for the messages.
-    applying: Option<(Op, Stash)>,
+    applying: Option<(Op, StashEntry)>,
     /// "Restore the index too" for apply and pop (`restore_index`).
     pub restore_index: bool,
     /// The conflicts window after apply or pop.
@@ -258,7 +243,7 @@ pub struct Outcome {
 
 impl StashBox {
     /// The stash list, if it arrived.
-    pub fn list(&self) -> Option<&[Stash]> {
+    pub fn list(&self) -> Option<&[StashEntry]> {
         self.list.as_deref()
     }
 
@@ -269,14 +254,14 @@ impl StashBox {
 
     /// The response of `stash.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
-        match result.and_then(|value| crate::decode::<ListResult>(LIST, value)) {
+        match result.and_then(|value| crate::decode::<StashListResult>(LIST, value)) {
             Ok(list) => self.set_list(list.stashes),
             Err(e) => self.list_error = Some(e),
         }
     }
 
     /// A new list: a selected stash that is no longer there is deselected.
-    fn set_list(&mut self, stashes: Vec<Stash>) {
+    fn set_list(&mut self, stashes: Vec<StashEntry>) {
         if let Some(id) = self.selected
             && !stashes.iter().any(|s| s.id == id)
         {
@@ -294,7 +279,7 @@ impl StashBox {
     }
 
     /// The selected stash, if it is still in the list.
-    pub fn selected(&self) -> Option<&Stash> {
+    pub fn selected(&self) -> Option<&StashEntry> {
         let id = self.selected?;
         self.list.iter().flatten().find(|s| s.id == id)
     }
@@ -305,7 +290,7 @@ impl StashBox {
     }
 
     /// The stash from the list with this id (the position may have changed).
-    pub fn find(&self, id: Oid) -> Option<&Stash> {
+    pub fn find(&self, id: Oid) -> Option<&StashEntry> {
         self.list.iter().flatten().find(|s| s.id == id)
     }
 
@@ -479,7 +464,7 @@ impl StashBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match crate::decode::<PushResult>(Op::Push.command(), value) {
+                match crate::decode::<StashPushResult>(Op::Push.command(), value) {
                     Ok(result) => {
                         let warning = reread_warning(
                             &tr!("stash-push-done-what"),
@@ -500,7 +485,7 @@ impl StashBox {
                             op: Op::Push,
                             notice,
                             status: result.status,
-                            history: Some(result.history),
+                            history: Some(result.journal.into()),
                             warning,
                             reload_log: true,
                         }))
@@ -543,7 +528,7 @@ impl StashBox {
                 message: tr!("stash-op-failed", label = &what, error = e),
                 reload: true,
             },
-            Ok(value) => match crate::decode::<ApplyResult>(op.command(), value) {
+            Ok(value) => match crate::decode::<StashApplyResult>(op.command(), value) {
                 Ok(result) => {
                     let mut warning = reread_warning(
                         &tr!("stash-op-done-what", label = &what),
@@ -557,7 +542,7 @@ impl StashBox {
                             self.popped.push(stash.id);
                         }
                         let text = tr!("stash-pop-not-dropped-warning", name = &stash.name)
-                            + &warnings_text(&result.warnings);
+                            + &messages_text(&result.warnings);
                         warning = Some(match warning {
                             Some(w) => format!("{text}; {w}"),
                             None => text,
@@ -573,7 +558,7 @@ impl StashBox {
                             files: result.conflicts.clone(),
                         });
                     }
-                    let notice = result.notice(op, &stash);
+                    let notice = apply_notice(&result, op, &stash);
                     Received::Done(Box::new(Outcome {
                         op,
                         notice,
@@ -624,7 +609,7 @@ impl StashBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match crate::decode::<DropResult>(Op::Drop.command(), value) {
+            Ok(value) => match crate::decode::<StashDropResult>(Op::Drop.command(), value) {
                 Ok(result) => {
                     let warning = reread_warning(
                         &tr!("stash-drop-done-what"),
@@ -638,14 +623,14 @@ impl StashBox {
                         "stash-drop-done",
                         name = &result.stash.name,
                         title = result.stash.title(),
-                        backup = &result.backup
+                        backup = result.backup.as_deref().unwrap_or_default()
                     );
-                    notice.push_str(&warnings_text(&result.warnings));
+                    notice.push_str(&messages_text(&result.warnings));
                     Received::Done(Box::new(Outcome {
                         op: Op::Drop,
                         notice,
                         status: None,
-                        history: Some(result.history),
+                        history: Some(result.journal.into()),
                         warning,
                         reload_log: true,
                     }))
@@ -678,72 +663,29 @@ fn reread_warning(what: &str, stashes: Option<String>, status: Option<String>) -
     (!parts.is_empty()).then(|| tr!("stash-reread-but", what = what, problems = parts.join("; ")))
 }
 
-/// Result of `stash.push`.
-#[derive(Debug, Clone, Deserialize)]
-struct PushResult {
-    stash: Stash,
-    stashes: Option<Vec<Stash>>,
-    stashes_error: Option<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-/// Result of `stash.apply`/`stash.pop`.
-#[derive(Debug, Clone, Deserialize)]
-struct ApplyResult {
-    #[serde(default)]
-    conflicts: Vec<String>,
-    #[serde(default)]
-    dropped: bool,
-    backup: Option<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    stashes: Option<Vec<Stash>>,
-    stashes_error: Option<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-}
-
-impl ApplyResult {
-    /// The message for the status bar. Apply and pop do not enter the journal: it is never
-    /// said that "Undo" undoes them (it would undo the previous operation).
-    fn notice(&self, op: Op, stash: &Stash) -> String {
-        let name = &stash.name;
-        let mut notice = match (op, self.conflicts.len(), self.dropped) {
-            (Op::Pop, 0, true) => match &self.backup {
-                Some(backup) => tr!("stash-pop-done-backup", name = name, backup = backup),
-                None => tr!("stash-pop-done", name = name),
-            },
-            (Op::Pop, 0, false) => tr!("stash-pop-not-dropped", name = name),
-            (_, 0, _) => tr!("stash-apply-done", name = name),
-            (_, n, _) => tr!("stash-apply-conflicts", name = name, n = n),
-        };
-        notice.push_str(&tr!("stash-not-undoable"));
-        // The engine warning about a pop with conflicts repeats what the window explains.
-        let warnings: Vec<String> = self
-            .warnings
-            .iter()
-            .filter(|w| !(!self.conflicts.is_empty() && w.contains("stays in the list")))
-            .cloned()
-            .collect();
-        notice.push_str(&warnings_text(&warnings));
-        notice
-    }
-}
-
-/// Result of `stash.drop`.
-#[derive(Debug, Clone, Deserialize)]
-struct DropResult {
-    stash: Stash,
-    backup: String,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    stashes: Option<Vec<Stash>>,
-    stashes_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
+/// The message for the status bar after `stash.apply`/`stash.pop`. They do not enter the
+/// journal: it is never said that "Undo" undoes them (it would undo the previous operation).
+fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
+    let name = &stash.name;
+    let mut notice = match (op, r.conflicts.len(), r.dropped) {
+        (Op::Pop, 0, true) => match &r.backup {
+            Some(backup) => tr!("stash-pop-done-backup", name = name, backup = backup),
+            None => tr!("stash-pop-done", name = name),
+        },
+        (Op::Pop, 0, false) => tr!("stash-pop-not-dropped", name = name),
+        (_, 0, _) => tr!("stash-apply-done", name = name),
+        (_, n, _) => tr!("stash-apply-conflicts", name = name, n = n),
+    };
+    notice.push_str(&tr!("stash-not-undoable"));
+    // The engine warning about a pop with conflicts repeats what the window explains.
+    let warnings: Vec<Message> = r
+        .warnings
+        .iter()
+        .filter(|w| !(!r.conflicts.is_empty() && w.key() == "engine-stash-kept-conflicts"))
+        .cloned()
+        .collect();
+    notice.push_str(&messages_text(&warnings));
+    notice
 }
 
 impl Tab {
@@ -959,7 +901,7 @@ mod tests {
 
     #[test]
     fn title_and_origin() {
-        let stash = |message: &str, branch: Option<&str>| Stash {
+        let stash = |message: &str, branch: Option<&str>| StashEntry {
             index: 0,
             name: "stash@{0}".into(),
             id: Oid::from_bytes([1; 20]),
@@ -982,7 +924,7 @@ mod tests {
 
     #[test]
     fn a_pop_that_could_not_drop_is_not_offered_again() {
-        let stash = Stash {
+        let stash = StashEntry {
             index: 0,
             name: "stash@{0}".into(),
             id: Oid::from_bytes([1; 20]),

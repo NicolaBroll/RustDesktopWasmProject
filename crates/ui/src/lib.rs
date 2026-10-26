@@ -1868,6 +1868,12 @@ fn warnings_text(warnings: &[String]) -> String {
         .collect()
 }
 
+/// The engine warnings as the text appended to a notice.
+fn messages_text(warnings: &[project_engine::Message]) -> String {
+    let texts: Vec<String> = warnings.iter().map(project_engine::Message::text).collect();
+    warnings_text(&texts)
+}
+
 /// Logs the failure of a command whose area shows the error by itself.
 fn log_failure(done: &Done) {
     if let Err(e) = &done.result {

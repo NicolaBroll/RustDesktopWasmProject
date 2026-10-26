@@ -1,15 +1,60 @@
 //! `remote.delete_branch`: deletes a branch from the remote (`impl-docs/git/sync.md`).
 
-use super::remote::{changes, unexpected};
-use super::{Out, put_reread, to_json};
+use super::remote::{RefUpdate, RefsAfter};
+use super::{Out, reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, Message, MessageArg, RemoteBranchDelete, Session, branch_ref, check_branch_name,
     check_remote_name, tracking_ref, unknown_remote,
 };
-use project_domain::{Oid, RefKind};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Commit, Oid, RefInfo, RefKind, Status};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Result of `remote.delete_branch`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteDeleteBranchResult {
+    /// The remote the branch was deleted from.
+    pub remote: String,
+    /// The branch on the remote (short name).
+    pub branch: String,
+    /// The local remote-tracking branch (`refs/remotes/origin/<branch>`).
+    pub tracking: String,
+    /// The commit the branch had (the value of the remote-tracking branch confirmed).
+    pub deleted: Oid,
+    /// How many commits of the deleted branch no other ref here reaches (only the backup keeps
+    /// them).
+    pub only_here: usize,
+    /// Those commits (at most 10).
+    pub lost: Vec<Commit>,
+    /// The local branches that have the deleted branch as upstream.
+    pub upstream_of: Vec<String>,
+    /// The backup ref on the deleted commit (`refs/project/backup/push-delete-...`).
+    pub backup: String,
+    /// The git summary (`[deleted]`).
+    pub summary: String,
+    /// The git lines that are not progress (`To <url>`, warnings, hook output).
+    pub messages: Vec<String>,
+    /// Deleted only on some of the push URLs: the branch may still be on the remote.
+    pub incomplete: bool,
+    /// The local refs changed (the remote-tracking branch removed), in name order; `null` if the
+    /// refs could not be re-read (see `refs_error`).
+    pub updated: Option<Vec<RefUpdate>>,
+    /// The warning of an incomplete deletion, then unexpected refs moved.
+    pub warnings: Vec<Message>,
+    /// The status re-read after the deletion; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the deletion; `null` if they could not be re-read (see
+    /// `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+}
 
 const ID: &str = "remote.delete_branch";
 
@@ -48,11 +93,9 @@ struct DeleteParams {
 /// branch back, push the backup again. The upstream of the local branches stays configured (git
 /// shows it as gone). Slow command like the push.
 ///
-/// Result: `{"remote", "branch", "tracking", "deleted": oid, "only_here": n, "lost": [Commit],
-/// "upstream_of": [branch], "backup", "summary", "messages": [string], "incomplete": bool, "updated": [{"name",
-/// "before", "after"}] | null, "warnings": [string], "status": Status | null, "refs": [RefInfo] |
-/// null}`: `only_here` and `lost` are the commits of the deleted branch that no other ref here
-/// reaches (only the backup keeps them), `upstream_of` the local branches with it as upstream.
+/// Result: [`RemoteDeleteBranchResult`]: `only_here` and `lost` are the commits of the deleted branch
+/// that no other ref here reaches (only the backup keeps them), `upstream_of` the local branches
+/// with it as upstream.
 pub(super) fn remote_delete_branch(s: &mut Session, p: Value) -> Out {
     let DeleteParams {
         remote,
@@ -230,19 +273,6 @@ pub(super) fn remote_delete_branch(s: &mut Session, p: Value) -> Out {
         expected: theirs,
     };
     let deleted = repo.delete_remote_branch(&request, &job)?;
-    let mut out = json!({
-        "remote": remote,
-        "branch": branch,
-        "tracking": tracking,
-        "deleted": theirs.to_string(),
-        "only_here": only_here,
-        "lost": lost,
-        "upstream_of": upstream_of,
-        "backup": deleted.backup,
-        "summary": deleted.summary,
-        "messages": deleted.messages,
-        "incomplete": deleted.incomplete,
-    });
     let incomplete = deleted.incomplete.then(|| {
         msg!(
             "engine-remote-branch-incomplete",
@@ -251,24 +281,25 @@ pub(super) fn remote_delete_branch(s: &mut Session, p: Value) -> Out {
             backup = deleted.backup.as_str()
         )
     });
-    match repo.refs() {
-        Ok(after) => {
-            let updated = changes(&refs_before, &after);
-            let warnings: Vec<Message> = incomplete
-                .into_iter()
-                .chain(updated.iter().filter_map(unexpected))
-                .collect();
-            out["updated"] = to_json(updated);
-            out["warnings"] = to_json(warnings);
-            out["refs"] = to_json(after);
-        }
-        Err(e) => {
-            out["updated"] = Value::Null;
-            out["warnings"] = to_json(incomplete.into_iter().collect::<Vec<_>>());
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-    put_reread(&mut out, "status", repo.status());
-    Ok(out)
+    let after = RefsAfter::new(&refs_before, repo.refs(), incomplete.into_iter().collect());
+    let (status, status_error) = reread(repo.status());
+    Ok(to_json(RemoteDeleteBranchResult {
+        remote,
+        branch,
+        tracking,
+        deleted: theirs,
+        only_here,
+        lost,
+        upstream_of,
+        backup: deleted.backup,
+        summary: deleted.summary,
+        messages: deleted.messages,
+        incomplete: deleted.incomplete,
+        updated: after.updated,
+        warnings: after.warnings,
+        status,
+        status_error,
+        refs: after.refs,
+        refs_error: after.refs_error,
+    }))
 }

@@ -3,15 +3,82 @@
 //! Like `remote.push` and `remote.delete_branch` they are slow, write (to the remote) and do not go
 //! into the journal: the remote belongs to others.
 
-use super::{Out, put_reread};
+use super::{Out, reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     EngineError, Message, RemoteTagDelete, Session, TagPush, check_remote_name, check_tag_name,
     tag_ref, unknown_remote,
 };
-use project_domain::Oid;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Oid, RefInfo};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// How `remote.push_tag` updated the remote (`kind` of [`RemotePushTagResult`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TagPushKind {
+    /// The remote did not have the tag: created.
+    New,
+    /// The remote already had the tag with the same value: nothing published.
+    UpToDate,
+}
+
+/// Result of `remote.push_tag`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemotePushTagResult {
+    /// The remote pushed to.
+    pub remote: String,
+    /// The full name of the tag (`refs/tags/<name>`).
+    pub tag: String,
+    /// The tag name.
+    pub name: String,
+    /// The commit the tag points to.
+    pub target: Oid,
+    /// The tag is annotated.
+    pub annotated: bool,
+    /// The value as stored: the tag object of an annotated tag, otherwise the commit.
+    pub value: Oid,
+    /// What changed on the remote.
+    pub kind: TagPushKind,
+    /// The git summary (`[new tag]`, ...).
+    pub summary: String,
+    /// The git lines that are not progress (`To <url>`, warnings, hook output).
+    pub messages: Vec<String>,
+    /// The refs re-read after the push; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+}
+
+/// Result of `remote.delete_tag`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteDeleteTagResult {
+    /// The remote the tag was deleted from.
+    pub remote: String,
+    /// The full name of the tag (`refs/tags/<name>`).
+    pub tag: String,
+    /// The tag name.
+    pub name: String,
+    /// The value the tag had on the remote (the tag object of an annotated tag).
+    pub deleted: Oid,
+    /// The backup ref that keeps the value (`refs/project/backup/push-delete-...`).
+    pub backup: String,
+    /// The git summary (`[deleted]`).
+    pub summary: String,
+    /// The git lines that are not progress (`To <url>`, warnings, hook output).
+    pub messages: Vec<String>,
+    /// Deleted only on some of the push URLs: the tag may still be on the remote.
+    pub incomplete: bool,
+    /// The warning of an incomplete deletion.
+    pub warnings: Vec<Message>,
+    /// The refs re-read after the deletion; `null` if they could not be re-read (see
+    /// `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+}
 
 /// The remote `remote` must be configured and not a mirror (`remote.<r>.mirror=true`: git
 /// refuses an explicit refspec toward a mirror, which publishes all the refs together).
@@ -39,9 +106,9 @@ fn check_push_remote(s: &mut Session, remote: &str) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Adds `refs` (or `refs_error`) to the result.
-fn with_refs(s: &mut Session, out: &mut Value) {
-    put_reread(out, "refs", s.repo().and_then(|repo| repo.refs()));
+/// The refs re-read after the command, as `refs` and `refs_error`.
+fn refs(s: &Session) -> (Option<Vec<RefInfo>>, Option<String>) {
+    reread(s.repo().and_then(|repo| repo.refs()))
 }
 
 /// Parameters of `remote.push_tag`.
@@ -60,9 +127,7 @@ struct PushParams {
 /// command). The local tag must exist ([`EngineError::NotAllowed`] otherwise). Errors as
 /// `remote.push`. Slow, does not go into the journal.
 ///
-/// Result: `{"remote", "tag": "refs/tags/<name>", "name", "target": oid (the commit), "annotated":
-/// bool, "value": oid (as stored: the tag object of an annotated tag), "kind": "new" |
-/// "up_to_date", "summary", "messages": [string], "refs": [RefInfo] | null}`.
+/// Result: [`RemotePushTagResult`].
 pub(super) fn remote_push_tag(s: &mut Session, p: Value) -> Out {
     const ID: &str = "remote.push_tag";
     let PushParams { remote, name } = parse_params(ID, p)?;
@@ -89,19 +154,24 @@ pub(super) fn remote_push_tag(s: &mut Session, p: Value) -> Out {
         },
         &job,
     )?;
-    let mut out = json!({
-        "remote": remote,
-        "tag": full,
-        "name": name,
-        "target": tag.target.to_string(),
-        "annotated": tag.tag_object.is_some(),
-        "value": tag.tag_object.unwrap_or(tag.target).to_string(),
-        "kind": if pushed.up_to_date { "up_to_date" } else { "new" },
-        "summary": pushed.summary,
-        "messages": pushed.messages,
-    });
-    with_refs(s, &mut out);
-    Ok(out)
+    let (refs, refs_error) = refs(s);
+    Ok(to_json(RemotePushTagResult {
+        remote,
+        tag: full,
+        name,
+        target: tag.target,
+        annotated: tag.tag_object.is_some(),
+        value: tag.tag_object.unwrap_or(tag.target),
+        kind: if pushed.up_to_date {
+            TagPushKind::UpToDate
+        } else {
+            TagPushKind::New
+        },
+        summary: pushed.summary,
+        messages: pushed.messages,
+        refs,
+        refs_error,
+    }))
 }
 
 /// Parameters of `remote.delete_tag`.
@@ -131,8 +201,7 @@ struct DeleteParams {
 /// `remote.delete_branch` (see
 /// [`GitBackend::delete_remote_tag`](crate::GitBackend::delete_remote_tag)). Slow, not in the journal.
 ///
-/// Result: `{"remote", "tag": "refs/tags/<name>", "name", "deleted": oid, "backup", "summary",
-/// "messages": [string], "incomplete": bool, "warnings": [string], "refs": [RefInfo] | null}`.
+/// Result: [`RemoteDeleteTagResult`].
 pub(super) fn remote_delete_tag(s: &mut Session, p: Value) -> Out {
     const ID: &str = "remote.delete_tag";
     let DeleteParams {
@@ -241,19 +310,20 @@ pub(super) fn remote_delete_tag(s: &mut Session, p: Value) -> Out {
         })
         .into_iter()
         .collect();
-    let mut out = json!({
-        "remote": remote,
-        "tag": full,
-        "name": name,
-        "deleted": theirs.to_string(),
-        "backup": deleted.backup,
-        "summary": deleted.summary,
-        "messages": deleted.messages,
-        "incomplete": deleted.incomplete,
-        "warnings": warnings,
-    });
-    with_refs(s, &mut out);
-    Ok(out)
+    let (refs, refs_error) = refs(s);
+    Ok(to_json(RemoteDeleteTagResult {
+        remote,
+        tag: full,
+        name,
+        deleted: theirs,
+        backup: deleted.backup,
+        summary: deleted.summary,
+        messages: deleted.messages,
+        incomplete: deleted.incomplete,
+        warnings,
+        refs,
+        refs_error,
+    }))
 }
 
 #[cfg(test)]

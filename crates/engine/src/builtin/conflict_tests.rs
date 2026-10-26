@@ -378,3 +378,72 @@ fn submodule_and_link_are_refused() {
         assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     }
 }
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use crate::{ConflictResolveResult, ConflictShowResult, VersionText};
+    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+        let typed: T = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        typed
+    }
+    let (r, mut s) = merging("other");
+    let shown: ConflictShowResult =
+        same(run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" })));
+    assert_eq!(shown.kind, Conflict::BothModified);
+    assert_eq!(
+        shown.base,
+        Some(VersionText {
+            text: Some("base\n".into()),
+            binary: false,
+            size: 5,
+        })
+    );
+    let resolved: ConflictResolveResult = same(run(
+        &r,
+        &mut s,
+        "conflict.resolve",
+        json!({ "path": "a.txt", "digest": shown.digest, "content": "unita\n" }),
+    ));
+    assert_eq!(
+        resolved.backup.as_deref(),
+        Some("refs/project/backup/conflict-1")
+    );
+    assert_eq!(resolved.index_backup, None);
+
+    // Binary and missing versions.
+    let mut repo = repo();
+    let base = blob(&mut repo, b"base\n");
+    let theirs = blob(&mut repo, &[0xff, 0xfe, 0x00]);
+    repo.set_entries(vec![StatusEntry {
+        path: RepoPath::from("a.txt"),
+        index: Change::Deleted,
+        worktree: Change::Unmerged,
+        kind: EntryKind::Unmerged(UnmergedInfo {
+            conflict: Conflict::DeletedByUs,
+            submodule: None,
+            mode_base: 0o100644,
+            mode_ours: 0,
+            mode_theirs: 0o100644,
+            mode_worktree: 0,
+            oid_base: base,
+            oid_ours: ZERO,
+            oid_theirs: theirs,
+        }),
+    }]);
+    let (r, mut s) = opened_with(repo);
+    let shown: ConflictShowResult =
+        same(run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" })));
+    assert_eq!(shown.ours, None);
+    assert_eq!(shown.worktree, None);
+    assert_eq!(
+        shown.theirs,
+        Some(VersionText {
+            text: None,
+            binary: true,
+            size: 3,
+        })
+    );
+}

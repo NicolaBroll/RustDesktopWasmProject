@@ -9,7 +9,7 @@
 
 use crate::EngineError;
 use project_domain::{Conflict, EntryKind, RepoPath, Status, UnmergedInfo};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Size of the conflict markers if the `conflict-marker-size` attribute is not set.
 pub const DEFAULT_MARKER_SIZE: usize = 7;
@@ -35,10 +35,13 @@ pub struct ConflictVersions {
 
 /// A version for `conflict.show`: `text` if the bytes are valid UTF-8 without NUL, otherwise
 /// `None` and `binary`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionText {
+    /// The content, if it is valid UTF-8 without NUL.
     pub text: Option<String>,
+    /// The content is not text (`text` is `None`).
     pub binary: bool,
+    /// The size in bytes.
     pub size: usize,
 }
 

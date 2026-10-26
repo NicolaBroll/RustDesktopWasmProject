@@ -8,9 +8,45 @@
 use super::{Out, check_path, to_json};
 use crate::commands::parse_params;
 use crate::{ConflictResolution, EngineError, Session, VersionText, worktree_digest};
-use project_domain::RepoPath;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Conflict, RepoPath, Status};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Result of `conflict.show`: the versions of the conflicted file (see
+/// [`GitBackend::conflict_versions`](crate::GitBackend::conflict_versions)).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConflictShowResult {
+    /// The conflicted file.
+    pub path: RepoPath,
+    /// The kind of conflict.
+    pub kind: Conflict,
+    /// The common ancestor's version (stage 1); `null` if missing.
+    pub base: Option<VersionText>,
+    /// Our version (stage 2); `null` if missing.
+    pub ours: Option<VersionText>,
+    /// Their version (stage 3); `null` if missing.
+    pub theirs: Option<VersionText>,
+    /// The worktree file; `null` if missing.
+    pub worktree: Option<VersionText>,
+    /// The length of the conflict markers (`conflict-marker-size` attribute).
+    pub marker_size: usize,
+    /// The digest of the worktree file ([`worktree_digest`]), to pass again to
+    /// `conflict.resolve`.
+    pub digest: String,
+}
+
+/// Result of `conflict.resolve`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConflictResolveResult {
+    /// The status after the resolution (a status that cannot be re-read is an error of the
+    /// command).
+    pub status: Status,
+    /// The backup ref of the worktree bytes (`refs/project/backup/conflict-...`); `null` if the
+    /// file was not there.
+    pub backup: Option<String>,
+    /// The backup ref of the index from `index.stage`, if there was one.
+    pub index_backup: Option<String>,
+}
 
 /// Parameters of `conflict.show`.
 #[derive(Deserialize)]
@@ -31,31 +67,28 @@ struct ResolveParams {
     delete: bool,
 }
 
-/// `{"path", "kind", "base", "ours", "theirs", "worktree", "marker_size", "digest"}`: the
-/// versions of the conflicted file (see
-/// [`GitBackend::conflict_versions`](crate::GitBackend::conflict_versions)), each
-/// `{"text", "binary", "size"}` or `null`, and the worktree digest to pass again to
-/// `conflict.resolve`.
+/// The versions of the conflicted file `path`, each `{"text", "binary", "size"}` or `null`, and
+/// the worktree digest to pass again to `conflict.resolve`. Result: [`ConflictShowResult`].
 pub(super) fn conflict_show(s: &mut Session, p: Value) -> Out {
     let ShowParams { path } = parse_params("conflict.show", p)?;
     let path = check_path("conflict.show", path)?;
     let v = s.repo()?.conflict_versions(&path)?;
-    let version = |b: &Option<Vec<u8>>| to_json(b.as_deref().map(VersionText::of));
-    Ok(json!({
-        "path": v.path,
-        "kind": v.kind,
-        "base": version(&v.base),
-        "ours": version(&v.ours),
-        "theirs": version(&v.theirs),
-        "worktree": version(&v.worktree),
-        "marker_size": v.marker_size,
-        "digest": worktree_digest(v.worktree.as_deref()),
+    let version = |b: &Option<Vec<u8>>| b.as_deref().map(VersionText::of);
+    Ok(to_json(ConflictShowResult {
+        base: version(&v.base),
+        ours: version(&v.ours),
+        theirs: version(&v.theirs),
+        worktree: version(&v.worktree),
+        digest: worktree_digest(v.worktree.as_deref()),
+        path: v.path,
+        kind: v.kind,
+        marker_size: v.marker_size,
     }))
 }
 
 /// Resolves the conflict of `path` with `content` or `delete` (see
 /// [`GitBackend::resolve_conflict`](crate::GitBackend::resolve_conflict)). Result:
-/// `{"status", "backup", "index_backup"}`.
+/// [`ConflictResolveResult`].
 pub(super) fn conflict_resolve(s: &mut Session, p: Value) -> Out {
     const ID: &str = "conflict.resolve";
     let ResolveParams {
@@ -81,10 +114,10 @@ pub(super) fn conflict_resolve(s: &mut Session, p: Value) -> Out {
         digest,
         content,
     })?;
-    Ok(json!({
-        "status": repo.status()?,
-        "backup": resolved.backup,
-        "index_backup": resolved.index_backup,
+    Ok(to_json(ConflictResolveResult {
+        status: repo.status()?,
+        backup: resolved.backup,
+        index_backup: resolved.index_backup,
     }))
 }
 

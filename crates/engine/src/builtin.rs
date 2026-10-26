@@ -2,9 +2,9 @@
 
 pub(crate) mod branch;
 mod clone;
-mod conflict;
+pub(crate) mod conflict;
 mod file;
-mod merge;
+pub(crate) mod merge;
 mod pick;
 pub(crate) mod pull;
 pub(crate) mod push;

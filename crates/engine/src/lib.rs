@@ -17,6 +17,8 @@ mod session;
 pub use builtin::branch::{
     BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
 };
+pub use builtin::conflict::{ConflictResolveResult, ConflictShowResult};
+pub use builtin::merge::{MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult};
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullResult};
 pub use builtin::push::{PushRemoteSource, RemotePushResult};
 pub use builtin::remote::{RefUpdate, RemoteFetchResult};

@@ -7,17 +7,142 @@
 //! **stays in progress** and does not enter the journal (the branch has not moved); `merge.abort` always asks
 //! for `"confirm": true` and first saves index and worktree in a backup.
 
-use super::{Out, put_journal_state, put_reread, to_json};
+use super::{JournalState, Out, put_journal_state, put_reread, reread, to_json};
 use crate::commands::parse_params;
 use crate::{
     CommitRequest, EngineError, GitBackend, HeadState, JournalEntry, LogQuery, MergeMode,
-    MergeRequest, MessageArg, Session, branch_ref, check_merge_state, check_merging,
-    clean_merge_message, conflicted_paths, merge_source,
+    MergeRequest, MergeSource, Message, MessageArg, Session, branch_ref, check_merge_state,
+    check_merging, clean_merge_message, conflicted_paths, merge_source,
 };
+use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
-use project_domain::{Head, Oid, Operation, RefInfo, RefKind, RepoPath};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+/// How `merge.start` integrated the rev (`strategy` of [`MergeStartResult`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeApplied {
+    /// The branch already contained the rev: nothing done.
+    UpToDate,
+    /// The branch advanced to the rev.
+    FastForward,
+    /// A merge commit (or a merge stopped before it, see `in_progress`).
+    Merge,
+}
+
+impl From<&MergeMode> for MergeApplied {
+    fn from(mode: &MergeMode) -> Self {
+        match mode {
+            MergeMode::FastForward => Self::FastForward,
+            MergeMode::Merge { .. } => Self::Merge,
+        }
+    }
+}
+
+/// Result of `merge.start`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeStartResult {
+    /// The rev given.
+    pub rev: String,
+    /// What the rev is (branch, remote branch, tag or commit) and its name.
+    pub source: MergeSource,
+    /// The commit merged (the rev resolved).
+    pub target: Oid,
+    /// The active branch (short name).
+    pub branch: String,
+    /// How the rev was integrated.
+    pub strategy: MergeApplied,
+    /// The branch before the merge.
+    pub before: Oid,
+    /// The branch after the merge (the one from before if up to date or stopped).
+    pub after: Oid,
+    /// The branch's commits the rev does not have.
+    pub ahead: usize,
+    /// The rev's commits the branch does not have.
+    pub behind: usize,
+    /// The merge stopped (conflicts, a hook) and stays in progress.
+    pub in_progress: bool,
+    /// The conflicted files of the stopped merge (empty otherwise).
+    pub conflicts: Vec<RepoPath>,
+    /// The git text of the stopped merge (empty otherwise).
+    pub message: String,
+    /// The backup ref of the branch before the merge (`refs/project/backup/merge-...`);
+    /// `null` when up to date.
+    pub backup: Option<String>,
+    /// Warnings after the merge (e.g. a branch moved by a hook).
+    pub warnings: Vec<Message>,
+    /// The status re-read after the merge; `null` if it could not be re-read (see `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the merge; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `merge.continue`: the merge commit created (the fields of
+/// [`CommitOutcome`](crate::CommitOutcome)) and the message used.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeContinueResult {
+    /// The merge commit, as in `repo.log`.
+    pub commit: Commit,
+    /// HEAD before the commit.
+    pub previous: Option<Oid>,
+    /// The moved branch, full name (`refs/heads/main`); `null` with detached HEAD.
+    pub branch: Option<String>,
+    /// Always `null` (only `commit.create` with `amend` saves a backup).
+    pub backup: Option<String>,
+    /// Always empty (only `commit.create` with `amend` fills it).
+    #[serde(default)]
+    pub also_on: Vec<String>,
+    /// The message of the merge commit.
+    pub message: String,
+    /// The status re-read after the commit; `null` if it could not be re-read (see `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the commit; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `merge.abort`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeAbortResult {
+    /// The backup ref of index and worktree before the abort
+    /// (`refs/project/backup/merge-abort-...`, like a stash).
+    pub backup: String,
+    /// The files saved in the backup because they differed from HEAD.
+    pub files: Vec<RepoPath>,
+    /// Warnings after the abort.
+    pub warnings: Vec<Message>,
+    /// The status re-read after the abort; `null` if it could not be re-read (see `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the abort; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
 
 /// Parameters of `merge.start`.
 #[derive(Deserialize)]
@@ -68,7 +193,8 @@ pub(super) fn check_message(id: &'static str, message: &Option<String>) -> Resul
 }
 
 /// Adds to `out` the re-read state and refs (`null` with `*_error` if they cannot be re-read:
-/// the operation is done and must not be repeated) and the journal state.
+/// the operation is done and must not be repeated) and the journal state. For the untyped results
+/// of cherry-pick, revert and rebase.
 pub(super) fn finish(out: &mut Value, repo: &dyn GitBackend, journal: &crate::Journal) {
     put_journal_state(out, journal);
     put_reread(out, "status", repo.status());
@@ -106,10 +232,7 @@ pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
 /// nothing in the journal. A concluded merge enters the journal: `edit.undo` brings the branch, with
 /// index and worktree, back to where it was.
 ///
-/// Result: `{"rev", "source": {"kind", "name", "full"}, "target", "branch", "strategy":
-/// "fast_forward" | "merge" | "up_to_date", "before", "after", "ahead", "behind",
-/// "in_progress", "conflicts": [path], "message", "backup": string | null, "warnings",
-/// "status", "refs", "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`MergeStartResult`].
 pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     const ID: &str = "merge.start";
     let StartParams {
@@ -159,25 +282,30 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
     let source = merge_source(&rev, &refs, &target);
     let behind = repo.unmerged_count(&target, &[before])?;
     let ahead = repo.unmerged_count(&before, &[target])?;
-    let mut out = json!({
-        "rev": rev,
-        "source": source,
-        "target": target.to_string(),
-        "branch": branch,
-        "before": before.to_string(),
-        "ahead": ahead,
-        "behind": behind,
-        "in_progress": false,
-        "conflicts": [],
-        "message": "",
-        "warnings": [],
-    });
     if behind == 0 {
-        out["strategy"] = json!("up_to_date");
-        out["after"] = json!(before.to_string());
-        out["backup"] = Value::Null;
-        finish(&mut out, repo, journal);
-        return Ok(out);
+        let (status, status_error) = reread(repo.status());
+        let (refs, refs_error) = reread(repo.refs());
+        return Ok(to_json(MergeStartResult {
+            rev,
+            source,
+            target,
+            branch,
+            strategy: MergeApplied::UpToDate,
+            before,
+            after: before,
+            ahead,
+            behind,
+            in_progress: false,
+            conflicts: vec![],
+            message: String::new(),
+            backup: None,
+            warnings: vec![],
+            status,
+            status_error,
+            refs,
+            refs_error,
+            journal: JournalState::of(journal),
+        }));
     }
     let mode = if ahead == 0 && !no_ff {
         MergeMode::FastForward
@@ -236,15 +364,29 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
             Some(outcome.backup.clone()),
         ));
     }
-    out["strategy"] = json!(mode.name());
-    out["after"] = json!(outcome.after.to_string());
-    out["backup"] = json!(outcome.backup);
-    out["in_progress"] = json!(outcome.in_progress);
-    out["conflicts"] = to_json(&outcome.conflicts);
-    out["message"] = json!(outcome.message);
-    out["warnings"] = to_json(&warnings);
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeStartResult {
+        rev,
+        source,
+        target,
+        branch,
+        strategy: (&mode).into(),
+        before,
+        after: outcome.after,
+        ahead,
+        behind,
+        in_progress: outcome.in_progress,
+        conflicts: outcome.conflicts,
+        message: outcome.message,
+        backup: Some(outcome.backup),
+        warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Aborts the merge in progress (`git merge --abort`): index and worktree go back to HEAD for the
@@ -255,8 +397,7 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
 /// apply <ref>` puts them back). Without a merge in progress → [`EngineError::NotAllowed`]. It does not enter
 /// the journal (recovery is the backup).
 ///
-/// Result: `{"backup", "files": [path], "warnings", "status", "refs", "can_undo",
-/// "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`MergeAbortResult`].
 pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
     const ID: &str = "merge.abort";
     let AbortParams { confirm } = parse_params(ID, p)?;
@@ -267,13 +408,18 @@ pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
         return Err(abort_confirm(ID, &status, "merge", "merge"));
     }
     let aborted = repo.merge_abort()?;
-    let mut out = json!({
-        "backup": aborted.backup,
-        "files": aborted.files,
-        "warnings": aborted.warnings,
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeAbortResult {
+        backup: aborted.backup,
+        files: aborted.files,
+        warnings: aborted.warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// The [`EngineError::ConfirmRequired`] error of `merge.abort`, `cherry_pick.abort` and
@@ -282,7 +428,7 @@ pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
 /// `what` is the name of the operation (`merge`, `cherry-pick`, `revert`).
 pub(super) fn abort_confirm(
     id: &'static str,
-    status: &project_domain::Status,
+    status: &Status,
     what: &str,
     backup: &str,
 ) -> EngineError {
@@ -328,8 +474,7 @@ pub(super) fn abort_confirm(
 /// remain (listed: they must be resolved and staged with `index.stage`). It enters the journal as
 /// a concluded merge; with detached HEAD (a merge started from a terminal) as a commit.
 ///
-/// Result: `{"commit": Commit, "previous", "branch", "message", "status", "refs",
-/// "can_undo", "can_redo", "next_undo", "next_redo"}`.
+/// Result: [`MergeContinueResult`].
 pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
     const ID: &str = "merge.continue";
     let ContinueParams { message } = parse_params(ID, p)?;
@@ -391,10 +536,21 @@ pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
             None => 0,
         },
     };
-    let mut out = to_json(&outcome);
-    out["message"] = json!(message);
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeContinueResult {
+        commit: outcome.commit,
+        previous: outcome.previous,
+        branch: outcome.branch,
+        backup: outcome.backup,
+        also_on: outcome.also_on,
+        message,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// The operation in progress, for the UI banner: `{"operation": "Merge" | "Rebase" |

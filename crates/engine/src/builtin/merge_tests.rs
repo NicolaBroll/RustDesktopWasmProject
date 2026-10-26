@@ -403,3 +403,156 @@ fn refusals() {
 fn oid_of_b(repo: &mut MemoryBackend) -> Oid {
     blob(repo, "b\n")
 }
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use crate::{
+        MergeAbortResult, MergeApplied, MergeContinueResult, MergeSourceKind, MergeStartResult,
+    };
+    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+        let typed: T = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        typed
+    }
+    fn start(r: &Registry, s: &mut Session, params: Value) -> MergeStartResult {
+        let out = run(r, s, "merge.start", params);
+        assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());
+        same(out)
+    }
+    // Up to date: no backup.
+    let (r, mut s) = opened_with(repo());
+    let up = start(&r, &mut s, json!({ "rev": "main" }));
+    assert_eq!(up.strategy, MergeApplied::UpToDate);
+    assert_eq!(up.backup, None);
+    assert_eq!(up.after, up.before);
+    // Fast-forward.
+    let ff = start(&r, &mut s, json!({ "rev": "ahead" }));
+    assert_eq!(ff.strategy, MergeApplied::FastForward);
+    assert_eq!(ff.source.kind, MergeSourceKind::Branch);
+    assert!(ff.journal.can_undo);
+    // Merge commit.
+    let (r, mut s) = opened_with(repo());
+    let merged = start(&r, &mut s, json!({ "rev": "feat" }));
+    assert_eq!(merged.strategy, MergeApplied::Merge);
+    assert!(!merged.in_progress && merged.backup.is_some());
+    // Stopped on a conflict, then continue.
+    let (r, mut s) = opened_with(repo());
+    let stopped = start(&r, &mut s, json!({ "rev": "other" }));
+    assert_eq!(stopped.strategy, MergeApplied::Merge);
+    assert!(stopped.in_progress);
+    assert_eq!(stopped.conflicts, vec![RepoPath::from("a.txt")]);
+    let shown = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
+    run(
+        &r,
+        &mut s,
+        "conflict.resolve",
+        json!({ "path": "a.txt", "digest": shown["digest"], "content": "both\n" }),
+    );
+    let out = run(&r, &mut s, "merge.continue", json!({}));
+    let done: MergeContinueResult = same(out);
+    assert_eq!(done.message, "Merge branch 'other'");
+    assert_eq!(done.branch.as_deref(), Some("refs/heads/main"));
+    assert_eq!(done.backup, None);
+    assert!(done.journal.can_undo);
+    // Stopped, then abort.
+    let (r, mut s) = opened_with(repo());
+    start(&r, &mut s, json!({ "rev": "other" }));
+    let aborted: MergeAbortResult =
+        same(run(&r, &mut s, "merge.abort", json!({ "confirm": true })));
+    assert_eq!(aborted.backup, "refs/project/backup/merge-abort-1");
+    assert_eq!(aborted.files, vec![RepoPath::from("a.txt")]);
+}
+
+/// A re-read that fails gives `null` and `<key>_error`.
+#[test]
+fn reread_error_fields() {
+    use super::super::{JournalState, reread};
+    use crate::{
+        MergeAbortResult, MergeApplied, MergeContinueResult, MergeSource, MergeSourceKind,
+        MergeStartResult, Message,
+    };
+    use project_domain::{RefInfo, Status};
+    let error = EngineError::NoRepo.to_string();
+    let (status, status_error) = reread::<Status>(Err(EngineError::NoRepo));
+    let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+    let result = MergeStartResult {
+        rev: "other".into(),
+        source: MergeSource {
+            kind: MergeSourceKind::Commit,
+            name: oid(3).to_string(),
+            full: None,
+        },
+        target: oid(3),
+        branch: "main".into(),
+        strategy: MergeApplied::UpToDate,
+        before: oid(2),
+        after: oid(2),
+        ahead: 1,
+        behind: 0,
+        in_progress: false,
+        conflicts: vec![],
+        message: String::new(),
+        backup: None,
+        warnings: vec![Message::plain("w")],
+        status: status.clone(),
+        status_error: status_error.clone(),
+        refs: refs.clone(),
+        refs_error: refs_error.clone(),
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    for key in ["status", "refs", "backup", "next_undo"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    assert_eq!(out["strategy"], "up_to_date");
+    assert_eq!(out["source"]["kind"], "commit");
+    let back: MergeStartResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+
+    let result = MergeContinueResult {
+        commit: Commit {
+            id: oid(9),
+            parents: vec![oid(2), oid(3)],
+            author: sig(9),
+            committer: sig(9),
+            summary: "Merge".into(),
+            body: String::new(),
+        },
+        previous: Some(oid(2)),
+        branch: None,
+        backup: None,
+        also_on: vec![],
+        message: "Merge".into(),
+        status: status.clone(),
+        status_error: status_error.clone(),
+        refs: refs.clone(),
+        refs_error: refs_error.clone(),
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    assert_eq!(out["branch"], Value::Null);
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: MergeContinueResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+
+    let result = MergeAbortResult {
+        backup: "refs/project/backup/merge-abort-1".into(),
+        files: vec![],
+        warnings: vec![],
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    assert_eq!(out["status"], Value::Null);
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: MergeAbortResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+}

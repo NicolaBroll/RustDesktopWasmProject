@@ -18,38 +18,14 @@ use crate::{Action, Done, Request, Tab};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
 };
+use project_engine::{ConflictResolveResult, ConflictShowResult, VersionText};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The id of the command that reads the versions of the conflicted file.
 pub const SHOW: &str = "conflict.show";
 /// The id of the command that resolves the conflict of a file.
 pub const RESOLVE: &str = "conflict.resolve";
-
-/// A version of the file (`base`, `ours`, `theirs` or `worktree` of `conflict.show`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Version {
-    /// The content, if it is valid UTF-8 without NUL.
-    pub text: Option<String>,
-    #[serde(default)]
-    pub binary: bool,
-    #[serde(default)]
-    pub size: u64,
-}
-
-/// Result of `conflict.show`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Shown {
-    pub path: RepoPath,
-    pub kind: Conflict,
-    pub base: Option<Version>,
-    pub ours: Option<Version>,
-    pub theirs: Option<Version>,
-    pub worktree: Option<Version>,
-    pub marker_size: usize,
-    pub digest: String,
-}
 
 /// One of the three columns on top, already split into lines (the view shows them virtualized).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,15 +34,15 @@ pub enum Column {
     Text(Vec<String>),
     /// The stage is missing (the file was not there on that side).
     Missing,
-    /// The content is not text.
-    Binary(u64),
+    /// The content is not text: its size in bytes.
+    Binary(usize),
 }
 
 impl Column {
-    fn of(version: Option<&Version>) -> Self {
+    fn of(version: Option<&VersionText>) -> Self {
         match version {
             None => Column::Missing,
-            Some(Version {
+            Some(VersionText {
                 text: Some(text), ..
             }) => Column::Text(text.lines().map(str::to_owned).collect()),
             Some(v) => Column::Binary(v.size),
@@ -104,7 +80,7 @@ pub enum Pending {
 /// The versions read and the result being worked on.
 #[derive(Debug, Clone)]
 pub struct Loaded {
-    pub shown: Shown,
+    pub shown: ConflictShowResult,
     pub base: Column,
     pub ours: Column,
     pub theirs: Column,
@@ -120,7 +96,7 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    fn new(shown: Shown) -> Self {
+    fn new(shown: ConflictShowResult) -> Self {
         let worktree_text = shown.worktree.as_ref().and_then(|v| v.text.clone());
         let parsed_worktree = worktree_text
             .as_deref()
@@ -273,14 +249,6 @@ pub enum Received {
     },
 }
 
-/// Result of `conflict.resolve`.
-#[derive(Deserialize)]
-struct Resolved {
-    status: Status,
-    backup: Option<String>,
-    index_backup: Option<String>,
-}
-
 /// State of the conflict editor: at most one open file.
 #[derive(Debug, Default)]
 pub struct ConflictBox {
@@ -345,10 +313,11 @@ impl ConflictBox {
         let Some(editor) = self.editor.as_mut().filter(|e| e.seq == seq) else {
             return;
         };
-        editor.load = match result.and_then(|value| crate::decode::<Shown>(SHOW, value)) {
-            Ok(shown) => Load::Ready(Box::new(Loaded::new(shown))),
-            Err(e) => Load::Failed(e),
-        };
+        editor.load =
+            match result.and_then(|value| crate::decode::<ConflictShowResult>(SHOW, value)) {
+                Ok(shown) => Load::Ready(Box::new(Loaded::new(shown))),
+                Err(e) => Load::Failed(e),
+            };
     }
 
     /// A new state: if the open file is no longer conflicted (resolved elsewhere, merge
@@ -511,7 +480,8 @@ impl ConflictBox {
             editor.sending = false;
         }
         let path = self.editor.as_ref().map(|e| e.path.to_string());
-        let result = result.and_then(|value| crate::decode::<Resolved>(RESOLVE, value));
+        let result =
+            result.and_then(|value| crate::decode::<ConflictResolveResult>(RESOLVE, value));
         match result {
             Ok(resolved) => {
                 self.editor = None;

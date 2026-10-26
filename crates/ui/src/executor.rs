@@ -143,14 +143,14 @@ impl ErrorKind {
     /// line), git's text of a rejected push.
     pub fn detail(error: &EngineError) -> Option<String> {
         match error {
-            EngineError::ConfirmRequired { reason, .. } => Some(reason.text()),
+            EngineError::ConfirmRequired { reason, .. }
+            | EngineError::GitWithReason { reason, .. } => Some(reason.text()),
             EngineError::Git { stderr, .. } => Some(stderr.clone()),
-            EngineError::GitWithReason { reason, .. } => Some(reason.text()),
             EngineError::Auth { message, .. }
             | EngineError::RemoteUnreachable { message, .. }
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
-            EngineError::PullConflict { files, .. } => Some(files.join("\n")),
-            EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
+            EngineError::PullConflict { files, .. }
+            | EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
             _ => None,
         }
     }

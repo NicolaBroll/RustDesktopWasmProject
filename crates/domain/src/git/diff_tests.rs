@@ -797,7 +797,7 @@ fn file_strategy() -> impl Strategy<Value = FileDiff> {
                         .iter()
                         .map(|&b| if b == b'\n' { b'_' } else { b })
                         .collect();
-                    f = super::diff::unmerged_file(RepoPath::from(path));
+                    f = diff::unmerged_file(RepoPath::from(path));
                 }
                 f
             },

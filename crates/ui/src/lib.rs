@@ -783,7 +783,7 @@ impl Tab {
         match self.store(Request::Open, value) {
             Ok(()) => self.notice = notice,
             Err(e) => {
-                self.error = crate::unexpected_result("repo.clone", e);
+                self.error = unexpected_result("repo.clone", e);
             }
         }
     }
@@ -1268,7 +1268,7 @@ impl Tab {
             Request::Show(generation, id) => {
                 let result = done
                     .result
-                    .and_then(|value| crate::decode::<CommitDetails>(&done.command, value));
+                    .and_then(|value| decode::<CommitDetails>(&done.command, value));
                 if let Some(repo) = self.current(generation) {
                     repo.details.receive(id, result);
                 }
@@ -1334,7 +1334,7 @@ impl Tab {
             Request::Diff(generation, seq) => {
                 let result = done
                     .result
-                    .and_then(|value| crate::decode::<Diff>(&done.command, value));
+                    .and_then(|value| decode::<Diff>(&done.command, value));
                 if let Some(repo) = self.current(generation) {
                     repo.diff.receive(seq, result);
                 }
@@ -1376,7 +1376,7 @@ impl Tab {
             Ok(value) => {
                 if let Err(e) = self.store(request, value) {
                     log::error!("{}: unexpected result: {e}", done.command);
-                    self.error = crate::unexpected_result(&done.command, e);
+                    self.error = unexpected_result(&done.command, e);
                 } else {
                     self.error.clear();
                 }
@@ -1392,7 +1392,7 @@ impl Tab {
     fn receive_write(&mut self, generation: u64, done: Done) {
         let result = done
             .result
-            .and_then(|value| crate::decode::<WriteResult>(&done.command, value));
+            .and_then(|value| decode::<WriteResult>(&done.command, value));
         let Some(repo) = self.current(generation) else {
             return;
         };

@@ -2,7 +2,7 @@
 //! to send to `index.stage`/`index.unstage` and what to do with the open diff after a write.
 //! Data only, no egui: tested with unit tests.
 
-use crate::{Action, Request, Tab, stage};
+use crate::{Action, Request, Tab};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
 use project_i18n::tr;
 use serde_json::json;
@@ -242,7 +242,7 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                if let Some(write) = stage::plan_write(&repo.stage, op, paths) {
+                if let Some(write) = plan_write(&repo.stage, op, paths) {
                     if write.needs_confirm() {
                         repo.confirm = Some(write);
                     } else {

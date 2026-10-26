@@ -23,7 +23,7 @@
 use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
-use crate::{Action, Done, Tab, sync};
+use crate::{Action, Done, Tab};
 use project_domain::remote_short;
 use project_domain::{Commit, Head, Oid, RefInfo, RepoPath, Status};
 use project_engine::{PullOperation, PushRejection};
@@ -169,10 +169,9 @@ impl Request {
             (Op::Pull, _, Some(branch)) => tr!("sync-label-pull-branch", branch = branch),
             (Op::Pull, _, None) => tr!("sync-label-pull"),
             (Op::Push, false, Some(branch)) => tr!("sync-label-push-branch", branch = branch),
-            (Op::Push, false, None) => tr!("sync-label-push"),
+            (Op::Push, false, None) | (Op::PushTag, ..) => tr!("sync-label-push"),
             (Op::Push, true, Some(branch)) => tr!("sync-label-force-branch", branch = branch),
             (Op::Push, true, None) => tr!("sync-label-force"),
-            (Op::PushTag, ..) => tr!("sync-label-push"),
         }
     }
 }
@@ -854,11 +853,11 @@ impl Tab {
     pub(crate) fn apply_sync(&mut self, action: Action) {
         match action {
             Action::Pull(branch, strategy) => {
-                self.send_sync(sync::Request::pull(branch, strategy), false);
+                self.send_sync(Request::pull(branch, strategy), false);
             }
-            Action::Push(branch) => self.send_sync(sync::Request::push(branch), false),
+            Action::Push(branch) => self.send_sync(Request::push(branch), false),
             Action::PushTag(remote, name) => {
-                self.send_sync(sync::Request::push_tag(remote, name), false);
+                self.send_sync(Request::push_tag(remote, name), false);
             }
             Action::ForcePush => {
                 if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.force()) {
@@ -887,7 +886,7 @@ impl Tab {
     /// Sends a pull or push, if there is no other write in progress (fetch included: one network
     /// operation at a time) nor an open dialog; `confirmed`: it is the click in the
     /// force confirmation, which is itself the open dialog.
-    pub(crate) fn send_sync(&mut self, request: sync::Request, confirmed: bool) {
+    pub(crate) fn send_sync(&mut self, request: Request, confirmed: bool) {
         let generation = self.generation;
         let Some(repo) = &mut self.repo else {
             return;
@@ -929,7 +928,7 @@ impl Tab {
             done.confirm_expected,
         );
         match received {
-            sync::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 if let Some(history) = outcome.history {
                     repo.history = history;
@@ -964,18 +963,18 @@ impl Tab {
                     self.request_page(first);
                 }
             }
-            sync::Received::Confirm => {
+            Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            sync::Received::Cancelled { notice, reload } => {
+            Received::Cancelled { notice, reload } => {
                 self.notice = notice;
                 self.error.clear();
                 if reload {
                     self.load();
                 }
             }
-            sync::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();

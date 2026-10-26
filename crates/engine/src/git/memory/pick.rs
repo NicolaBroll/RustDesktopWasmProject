@@ -80,7 +80,7 @@ impl MemoryBackend {
         };
         if conflicts.is_empty() {
             let author = match kind {
-                PickKind::CherryPick => Some(picked.author.clone()),
+                PickKind::CherryPick => Some(picked.author),
                 PickKind::Revert => None,
             };
             let (summary, body) = split_message(&request.message);

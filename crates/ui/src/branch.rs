@@ -10,7 +10,7 @@
 //! opens a dialog with the files.
 
 use crate::discard::{History, Phase};
-use crate::{Action, Done, Request, Tab, branch};
+use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, warnings_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
@@ -904,7 +904,7 @@ impl Tab {
                 if let Some(params) = repo.branch.start_checkout(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = branch::Op::Checkout;
+                    let op = Op::Checkout;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -920,7 +920,7 @@ impl Tab {
                 if let Some(params) = repo.branch.start_delete(name, target) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = branch::Op::Delete;
+                    let op = Op::Delete;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -933,13 +933,13 @@ impl Tab {
                     return;
                 };
                 let label = match repo.branch.dialog() {
-                    Some(branch::Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
+                    Some(Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
 
                     _ => return,
                 };
                 if let Some(params) = repo.branch.confirm_delete() {
                     repo.write_label = Some(label);
-                    let op = branch::Op::Delete;
+                    let op = Op::Delete;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -955,7 +955,7 @@ impl Tab {
                 if let Some(params) = repo.branch.start_delete_tag(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = branch::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -968,14 +968,14 @@ impl Tab {
                     return;
                 };
                 let label = match repo.branch.dialog() {
-                    Some(branch::Dialog::DeleteTag(d)) => {
+                    Some(Dialog::DeleteTag(d)) => {
                         tr!("branch-tag-delete-label", name = &d.name)
                     }
                     _ => return,
                 };
                 if let Some(params) = repo.branch.confirm_delete_tag() {
                     repo.write_label = Some(label);
-                    let op = branch::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
@@ -991,7 +991,7 @@ impl Tab {
     /// Answer of `branch.*`: refs and journal from the answer, then the log reloaded (a deleted
     /// branch can take some commits with it); after a checkout everything is reloaded (HEAD, graph,
     /// stage area). A refused name stays in its dialog.
-    pub(crate) fn receive_branch(&mut self, generation: u64, op: branch::Op, done: Done) {
+    pub(crate) fn receive_branch(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1003,11 +1003,11 @@ impl Tab {
             done.error_detail,
             done.confirm_expected,
         ) {
-            branch::Received::Inline | branch::Received::Confirm | branch::Received::Refused => {
+            Received::Inline | Received::Confirm | Received::Refused => {
                 self.error.clear();
                 self.notice.clear();
             }
-            branch::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 repo.history = outcome.history.clone();
                 let refs_read = outcome.refs.is_some();
                 if let Some(refs) = outcome.refs {
@@ -1017,7 +1017,7 @@ impl Tab {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                let checkout = outcome.op == branch::Op::Checkout;
+                let checkout = outcome.op == Op::Checkout;
                 // After a checkout the new HEAD is selected as soon as the log arrives.
                 if checkout && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
@@ -1038,7 +1038,7 @@ impl Tab {
                     }
                 }
             }
-            branch::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();
@@ -1047,7 +1047,7 @@ impl Tab {
                 } else {
                     // A refused deletion (e.g. the branch is no longer on the seen commit): the
                     // refs are reloaded, so the column shows where it is now.
-                    if matches!(op, branch::Op::Delete | branch::Op::DeleteTag) {
+                    if matches!(op, Op::Delete | Op::DeleteTag) {
                         self.submit("repo.refs", json!({}), Request::Refs(generation));
                     }
                     // The journal is reloaded anyway: it is cheap and stays aligned.
@@ -1095,7 +1095,7 @@ mod tests {
     fn the_name_dialog_sends_only_a_written_name() {
         let mut b = BranchBox::default();
         let start = Start::from_commit(Oid::from_bytes([3; 20]));
-        assert!(b.open_create(start.clone(), String::new()));
+        assert!(b.open_create(start, String::new()));
         // One dialog at a time.
         assert!(!b.open_rename("main".to_owned()));
         assert!(b.modal_open());

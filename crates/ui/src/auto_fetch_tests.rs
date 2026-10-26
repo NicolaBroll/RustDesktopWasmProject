@@ -154,7 +154,7 @@ fn the_interval_starts_a_fetch_with_the_parameters_of_the_button() {
         "one in progress"
     );
     assert_eq!(
-        crate::fetch::FetchBox::default().request(None),
+        fetch::FetchBox::default().request(None),
         Some(serde_json::json!({ "prune": true }))
     );
     let seen = settle(&mut tab);

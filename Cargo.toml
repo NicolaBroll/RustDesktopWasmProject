@@ -12,8 +12,13 @@ rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 publish = false
 
+[workspace.lints.rust]
+unused_qualifications = "warn"
+
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# From the nursery/pedantic groups, the ones without false positives here.
+redundant_clone = "warn"
 
 [workspace.dependencies]
 # Internal layers

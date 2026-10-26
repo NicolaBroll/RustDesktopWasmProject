@@ -375,7 +375,7 @@ impl MemoryBackend {
             work.entries.retain(|e| !tree.contains_key(&e.path));
             let (differing, _) = work.switch_plan(&tree);
             let index = work.switch_index(&differing, &tree);
-            work.head = HeadRef::Branch(state.record.branch.clone());
+            work.head = HeadRef::Branch(state.record.branch);
             work.rebase_entries(&index);
         }
         *self = work;

@@ -310,7 +310,7 @@ fn rebase_continue_dialog(
         .merge
         .info()
         .and_then(|info| info.rebase_branch.as_deref())
-        .map(|b| branch_short(b));
+        .map(branch_short);
     let text = match branch {
         Some(branch) => tr!("merge-rebase-continue-text-branch", branch = branch),
         None => tr!("merge-rebase-continue-text"),

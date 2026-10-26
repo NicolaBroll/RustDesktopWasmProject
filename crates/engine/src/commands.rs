@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::panic::{self, AssertUnwindSafe};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandSpec {
@@ -59,7 +60,8 @@ impl Registry {
     /// Like [`Registry::run`], with `job` for progress and cancellation (§6): the command
     /// finds it in [`Session::job`] for its whole duration. Slow commands (`remote.fetch`)
     /// send progress to `job` and stop if it is cancelled; the others ignore it. After
-    /// the command the session goes back to an empty context.
+    /// the command the session goes back to an empty context, also if the command panics (the
+    /// panic then continues: a session reused afterwards must not see a stale cancellation).
     pub fn run_with(
         &self,
         id: &str,
@@ -77,9 +79,9 @@ impl Registry {
             params
         };
         session.set_job(job);
-        let result = handler(session, params);
+        let result = panic::catch_unwind(AssertUnwindSafe(|| handler(&mut *session, params)));
         session.set_job(JobContext::new());
-        result
+        result.unwrap_or_else(|payload| panic::resume_unwind(payload))
     }
 }
 
@@ -92,4 +94,38 @@ pub(crate) fn parse_params<T: DeserializeOwned>(
         id,
         reason: msg!("engine-params", error = e.to_string()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CancelToken, MemoryOpener};
+    use std::sync::Arc;
+
+    fn boom(_: &mut Session, _: Value) -> Result<Value, EngineError> {
+        panic!("boom");
+    }
+
+    #[test]
+    fn a_panicking_command_leaves_an_empty_job_context() {
+        let mut r = Registry::default();
+        r.register(
+            CommandSpec {
+                id: "test.boom",
+                title: "Panics",
+                params_help: "{}",
+                writes: false,
+            },
+            boom,
+        );
+        let mut s = Session::new(Arc::new(MemoryOpener::new()));
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let job = JobContext::new().with_cancel(cancel);
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            r.run_with("test.boom", &mut s, Value::Null, job)
+        }));
+        assert!(outcome.is_err());
+        assert!(!s.job().is_cancelled());
+    }
 }

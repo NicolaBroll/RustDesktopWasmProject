@@ -621,7 +621,7 @@ pub(super) fn ref_menu(
         .on_disabled_hover_text(if info.upstream.is_some() {
             wait()
         } else {
-            pull_hint.clone()
+            pull_hint
         });
     if button.clicked() {
         actions.push(Action::Pull(Some(name.to_owned()), None));

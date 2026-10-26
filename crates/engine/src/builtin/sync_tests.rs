@@ -722,9 +722,7 @@ fn delete_branch_on_the_remote() {
     repo.set_branch_on_remote("origin", "feature/graph", oid(9));
     let (r, mut s) = opened_with(repo);
     let params = json!({ "remote": "origin", "branch": "feature/graph" });
-    let err = r
-        .run("remote.delete_branch", &mut s, params.clone())
-        .unwrap_err();
+    let err = r.run("remote.delete_branch", &mut s, params).unwrap_err();
     let EngineError::ConfirmRequired {
         reason, expected, ..
     } = &err

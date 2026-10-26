@@ -386,7 +386,7 @@ impl CliBackend {
         self.check_index_unlocked()?;
         let state = self.read_operation_state();
         let mut record = state.rebase.clone();
-        let branch = state.rebase_branch.clone();
+        let branch = state.rebase_branch;
         let (last, _, breaks) = self.rebase_done();
         let pending = record
             .as_ref()

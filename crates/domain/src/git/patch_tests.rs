@@ -397,7 +397,7 @@ fn unsuitable_files_rejected() {
     let f = file(FILE, b"renamed-modified.txt");
     assert!(unsupported(&f, Stage).contains("rename"));
     assert!(build_patch(&f, &f.line_refs(), Unstage).is_ok());
-    let mut copy = f.clone();
+    let mut copy = f;
     copy.change = Change::Copied;
     assert!(unsupported(&copy, Unstage).contains("copy"));
 }

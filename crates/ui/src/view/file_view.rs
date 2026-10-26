@@ -266,7 +266,7 @@ fn info_job(commit: Option<&BlameCommit>, style: &Style, width: f32) -> egui::te
     match commit {
         Some(c) => {
             job.append(&c.id.short(), 0.0, format(&style.mono, style.accent));
-            let date = format::date_time(&c.author);
+            let date = date_time(&c.author);
             let date = date.split(' ').next().unwrap_or_default();
             job.append(date, 2.0 * PAD, format(&style.small, style.weak));
             job.append(&c.author.name, 2.0 * PAD, format(&style.small, style.weak));
@@ -292,14 +292,14 @@ fn commit_tooltip(c: &BlameCommit) -> String {
         tr!(
             "file-tooltip-author",
             author = signer(&c.author),
-            date = format::date_time_zone(&c.author)
+            date = date_time_zone(&c.author)
         ),
     ];
     if c.committer.name != c.author.name || c.committer.email != c.author.email {
         lines.push(tr!(
             "file-tooltip-committer",
             committer = signer(&c.committer),
-            date = format::date_time_zone(&c.committer)
+            date = date_time_zone(&c.committer)
         ));
     }
     if c.boundary {
@@ -377,7 +377,7 @@ fn history(
 fn history_list(
     ui: &mut Ui,
     view: &FileView,
-    open: Option<&crate::diff::DiffTarget>,
+    open: Option<&DiffTarget>,
     actions: &mut Vec<Action>,
 ) {
     let history = &view.history;
@@ -420,7 +420,7 @@ fn history_list(
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
                 let painter = ui.painter_at(rect);
-                let badge = egui::Rect::from_center_size(
+                let badge = Rect::from_center_size(
                     pos2(rect.left() + 11.0, rect.top() + 11.0),
                     vec2(18.0, 16.0),
                 );
@@ -513,7 +513,7 @@ fn entry_jobs(
     let small = FontId::proportional(12.0);
     let mut bottom = egui::text::LayoutJob::default();
     bottom.append(&c.id.short(), 0.0, format(mono, weak));
-    bottom.append(&format::date_time(&c.author), PAD, format(&small, weak));
+    bottom.append(&date_time(&c.author), PAD, format(&small, weak));
     bottom.append(&c.author.name, PAD, format(&small, weak));
     (one_line(top), one_line(bottom))
 }
@@ -526,7 +526,7 @@ fn entry_tooltip(entry: &FileLogEntry) -> String {
         tr!(
             "file-tooltip-author",
             author = signer(&c.author),
-            date = format::date_time_zone(&c.author)
+            date = date_time_zone(&c.author)
         ),
         format!(
             "{} ({})",

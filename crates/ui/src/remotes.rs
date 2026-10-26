@@ -21,7 +21,7 @@
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure, FetchResult, RefUpdate};
 use crate::warnings_text;
-use crate::{Action, Done, Request, Tab, remotes};
+use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, Ticket};
 use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
@@ -1115,7 +1115,7 @@ impl Tab {
                 };
                 repo.write_error = None;
                 repo.write_label = Some(label);
-                let op = remotes::Op::Add;
+                let op = Op::Add;
                 let ticket = self.executor.submit(op.command(), params);
                 self.pending.insert(ticket, Request::Remote(generation, op));
                 if let Some(repo) = &mut self.repo {
@@ -1139,7 +1139,7 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_remove(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::Remove;
+                    let op = Op::Remove;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1153,7 +1153,7 @@ impl Tab {
                 };
                 if let Some((params, label)) = repo.remotes.confirm_remove() {
                     repo.write_label = Some(label);
-                    let op = remotes::Op::Remove;
+                    let op = Op::Remove;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1172,7 +1172,7 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_delete_branch(remote, branch) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteBranch;
+                    let op = Op::DeleteBranch;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1192,7 +1192,7 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_delete_tag(remote, name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
@@ -1226,7 +1226,7 @@ impl Tab {
     /// Answer of `remote.add`/`remote.remove`: list of remotes, refs and journal from the
     /// answer, then the status and log reread (fetched or removed remote branches change the
     /// graph and the upstream of the current branch). A refused name or URL stays in the dialog.
-    pub(crate) fn receive_remote(&mut self, generation: u64, op: remotes::Op, done: Done) {
+    pub(crate) fn receive_remote(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1238,11 +1238,11 @@ impl Tab {
             done.error_detail,
             done.confirm_expected,
         ) {
-            remotes::Received::Inline | remotes::Received::Confirm => {
+            Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            remotes::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 if let Some(history) = &outcome.history {
                     repo.history = history.clone();
@@ -1263,7 +1263,7 @@ impl Tab {
                 }
                 self.reload_after_fetch(generation);
             }
-            remotes::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();

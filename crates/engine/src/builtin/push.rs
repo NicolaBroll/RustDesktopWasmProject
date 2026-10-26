@@ -166,7 +166,7 @@ pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
                     None => {
                         let without = project_domain::Status {
                             upstream: None,
-                            ..status.clone()
+                            ..status
                         };
                         let r = default_remote(ID, &without, &remotes)?;
                         let source = if r == "origin" { "origin" } else { "only" };

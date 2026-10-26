@@ -290,7 +290,7 @@ mod tests {
             files: Vec::new(),
             strict: false,
         };
-        assert_eq!(request.shape().unwrap(), (Some(main.clone()), a, b));
+        assert_eq!(request.shape().unwrap(), (Some(main), a, b));
         request.refs.refs[0].name = "refs/heads/other".to_owned();
         assert!(request.shape().is_err());
         request.refs.refs.clear();

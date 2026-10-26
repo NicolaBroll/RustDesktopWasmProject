@@ -703,7 +703,7 @@ mod tests {
             Err(Blocked::Operation(Operation::Merge))
         );
 
-        let mut amend = ready.clone();
+        let mut amend = ready;
         amend.set_amend(true, None);
         assert_eq!(gate(&amend, &clean, 0, false), Ok(()));
         assert_eq!(

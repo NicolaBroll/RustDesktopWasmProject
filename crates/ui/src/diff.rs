@@ -654,7 +654,7 @@ mod tests {
         // The engine also returns the copy that starts from `a.rs`.
         let copy = file(Change::Copied, "a.rs", "b.rs", vec![hunk()]);
         let modified = file(Change::Modified, "a.rs", "a.rs", vec![hunk()]);
-        let doc = DiffDoc::new(diff(vec![modified.clone(), copy.clone()]), &"a.rs".into());
+        let doc = DiffDoc::new(diff(vec![modified.clone(), copy]), &"a.rs".into());
         assert_eq!(doc.diff.files, vec![modified]);
         // A type change: two files on the same path, kept separate.
         let deleted = file(Change::Deleted, "l", "l", Vec::new());

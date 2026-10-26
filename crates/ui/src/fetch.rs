@@ -6,7 +6,7 @@
 //! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
 //! network errors are explained in a window with git's text.
 
-use crate::{Action, Done, Request, Tab, fetch};
+use crate::{Action, Done, Request, Tab};
 use crate::{ErrorKind, Ticket};
 use project_domain::{Oid, RefInfo};
 use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
@@ -436,9 +436,9 @@ impl Tab {
         repo.write_label = Some(if auto {
             tr!("fetch-auto-label")
         } else {
-            fetch::label(remote.as_deref())
+            label(remote.as_deref())
         });
-        let ticket = self.executor.submit(fetch::COMMAND, params);
+        let ticket = self.executor.submit(COMMAND, params);
         self.pending.insert(ticket, Request::Fetch(generation));
         if let Some(repo) = &mut self.repo {
             repo.auto_fetch.started();
@@ -474,7 +474,7 @@ impl Tab {
             repo.fetch
                 .receive(done.ticket, done.result, done.error_kind, done.error_detail);
         match received {
-            fetch::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 let refs_read = outcome.refs.is_some();
                 // The remote answers: the automatic fetch starts again if it had stopped.
@@ -492,14 +492,14 @@ impl Tab {
                     self.reload_after_fetch(generation);
                 }
             }
-            fetch::Received::Cancelled { notice } => {
+            Received::Cancelled { notice } => {
                 self.notice = notice;
                 self.error.clear();
                 // Some remote branch may already be updated.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
                 self.reload_after_fetch(generation);
             }
-            fetch::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();

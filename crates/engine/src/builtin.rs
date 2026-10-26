@@ -668,13 +668,11 @@ fn index_unstage(s: &mut Session, p: Value) -> Out {
     index_paths("index.unstage", s, p, |repo, paths| repo.unstage(paths))
 }
 
+/// The write of `index.stage`/`index.unstage`: the index backup ref, if one was saved.
+type IndexWrite = fn(&mut dyn GitBackend, &[RepoPath]) -> Result<Option<String>, EngineError>;
+
 /// `index.stage`/`index.unstage`: `write` on the validated paths, then the new status.
-fn index_paths(
-    id: &'static str,
-    s: &mut Session,
-    p: Value,
-    write: fn(&mut dyn GitBackend, &[RepoPath]) -> Result<Option<String>, EngineError>,
-) -> Out {
+fn index_paths(id: &'static str, s: &mut Session, p: Value, write: IndexWrite) -> Out {
     let paths = check_paths(id, p)?;
     let repo = s.repo_mut()?;
     let backup = write(repo, &paths)?;

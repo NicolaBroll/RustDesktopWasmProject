@@ -756,8 +756,9 @@ impl DiffSpec {
     /// The file the diff is limited to, if any.
     pub fn path(&self) -> Option<&RepoPath> {
         match self {
-            DiffSpec::Worktree { path } | DiffSpec::Index { path } => path.as_ref(),
-            DiffSpec::Commit { path, .. } => path.as_ref(),
+            DiffSpec::Worktree { path }
+            | DiffSpec::Index { path }
+            | DiffSpec::Commit { path, .. } => path.as_ref(),
         }
     }
 }

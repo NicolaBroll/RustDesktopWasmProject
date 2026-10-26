@@ -336,7 +336,7 @@ fn cancel_midway_leaves_the_destination_as_it_was() {
     let tmp = tempfile::tempdir().unwrap();
     let existing = tmp.path().join("existing");
     std::fs::create_dir(&existing).unwrap();
-    for (dest, created) in [(tmp.path().join("new"), true), (existing.clone(), false)] {
+    for (dest, created) in [(tmp.path().join("new"), true), (existing, false)] {
         let token = CancelToken::new();
         let canceller = token.clone();
         let start = Instant::now();

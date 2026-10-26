@@ -1317,7 +1317,7 @@ mod tests {
         assert_eq!(e.backup, amend.backup);
 
         // An `amend` that changes nothing does not go into the journal.
-        let mut same = amend.clone();
+        let mut same = amend;
         same.previous = Some(same.commit.id);
         assert_eq!(JournalEntry::commit(&same, true), None);
 

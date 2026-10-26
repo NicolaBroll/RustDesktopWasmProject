@@ -7,7 +7,7 @@
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
-use crate::{Action, Done, Request, Tab, discard};
+use crate::{Action, Done, Request, Tab};
 use project_domain::{Change, RepoPath, Status};
 use project_i18n::tr;
 use serde::Deserialize;
@@ -345,11 +345,11 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let label = discard::describe_check(&paths);
+                let label = describe_check(&paths);
                 if let Some(params) = repo.discard.start(paths) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                    self.submit(COMMAND, params, Request::Discard(generation));
                 }
             }
             Action::ConfirmDiscard => {
@@ -360,10 +360,10 @@ impl Tab {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                let label = repo.discard.confirm().map(|d| discard::describe(&d.paths));
+                let label = repo.discard.confirm().map(|d| describe(&d.paths));
                 if let Some(params) = repo.discard.confirmed() {
                     repo.write_label = label;
-                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                    self.submit(COMMAND, params, Request::Discard(generation));
                 }
             }
             Action::CancelDiscard => {

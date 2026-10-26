@@ -137,7 +137,7 @@ mod tests {
         assert!(!job.is_cancelled());
         token.cancel();
         assert!(job.is_cancelled());
-        assert!(job.clone().is_cancelled());
+        assert!(job.is_cancelled());
 
         // The empty context receives nothing and cannot be cancelled.
         let empty = JobContext::new();

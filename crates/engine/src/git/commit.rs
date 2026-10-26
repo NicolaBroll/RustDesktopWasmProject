@@ -367,7 +367,7 @@ mod tests {
         let status = status_with(sample.entries.clone(), Some(Operation::Bisect));
         check_commit_state(&status, true, &CommitRequest::new("m")).unwrap();
         // A conflict blocks everything.
-        let mut entries = sample.entries.clone();
+        let mut entries = sample.entries;
         entries.push(StatusEntry {
             path: RepoPath::from("c.txt"),
             index: Change::Unmerged,

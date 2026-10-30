@@ -15,7 +15,8 @@ mod platform;
 mod session;
 
 pub use builtin::branch::{
-    BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
+    BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
+    BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
 };
 pub use builtin::clone::RepoCloneResult;
 pub use builtin::commit::CommitCreateResult;

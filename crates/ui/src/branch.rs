@@ -10,12 +10,13 @@
 //! opens a dialog with the files.
 
 use crate::discard::{History, Phase};
-use crate::{Action, Done, Request, Tab};
+use crate::{Action, Done, Request, Tab, params};
 use crate::{ErrorKind, messages_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
 use project_engine::{
-    BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
+    BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
+    BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
     TagCreateResult, TagDeleteResult,
 };
 use project_i18n::tr;
@@ -142,8 +143,14 @@ impl NameDialog {
     fn params(&self) -> Value {
         let name = self.trimmed();
         match &self.kind {
-            NameKind::Create(start) => json!({ "name": name, "start": start.target.to_string() }),
-            NameKind::Rename(old) => json!({ "name": old, "new_name": name }),
+            NameKind::Create(start) => params(BranchCreateParams {
+                name: name.to_owned(),
+                start: Some(start.target.to_string()),
+            }),
+            NameKind::Rename(old) => params(BranchRenameParams {
+                name: old.clone(),
+                new_name: name.to_owned(),
+            }),
             NameKind::Tag(start) => {
                 let mut params = json!({ "name": name, "target": start.target.to_string() });
                 let message = self.message.trim();
@@ -330,7 +337,7 @@ impl BranchBox {
         if self.busy() {
             return None;
         }
-        let params = json!({ "name": name });
+        let params = params(BranchCheckoutParams { name: name.clone() });
         self.checkout = Some(name);
         Some(params)
     }
@@ -341,7 +348,11 @@ impl BranchBox {
         if self.busy() {
             return None;
         }
-        let params = json!({ "name": name, "expected": target.to_string() });
+        let params = params(BranchDeleteParams {
+            name: name.clone(),
+            confirm: false,
+            expected: Some(target.to_string()),
+        });
         self.dialog = Some(Dialog::Delete(DeleteDialog {
             name,
             target,
@@ -359,10 +370,10 @@ impl BranchBox {
             return None;
         }
         delete.phase = Phase::Sending;
-        Some(json!({
-            "name": delete.name,
-            "confirm": true,
-            "expected": delete.target.to_string(),
+        Some(params(BranchDeleteParams {
+            name: delete.name.clone(),
+            confirm: true,
+            expected: Some(delete.target.to_string()),
         }))
     }
 

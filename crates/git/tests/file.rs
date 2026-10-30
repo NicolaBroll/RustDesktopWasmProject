@@ -8,8 +8,8 @@ use common::{
 };
 use project_domain::{Change, FileLogEntry, Oid, RepoPath};
 use project_engine::{
-    BlameQuery, CancelToken, EngineError, FileBlame, FileLogQuery, GitBackend, JobContext,
-    Registry, Session,
+    BlameQuery, CancelToken, EngineError, FileBlame, FileLogQuery, GitRead, JobContext, Registry,
+    Session,
 };
 use serde_json::json;
 use std::sync::Arc;

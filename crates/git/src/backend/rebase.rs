@@ -233,7 +233,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::rebase`](project_engine::GitBackend::rebase).
+    /// [`GitOperations::rebase`](project_engine::GitOperations::rebase).
     pub(super) fn rebase_onto_base(
         &mut self,
         request: &RebaseRequest,
@@ -373,7 +373,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::rebase_continue`](project_engine::GitBackend::rebase_continue).
+    /// [`GitOperations::rebase_continue`](project_engine::GitOperations::rebase_continue).
     pub(super) fn rebase_go_on(&mut self) -> Result<MergeOutcome, EngineError> {
         let status = self.status_for_write()?;
         project_engine::check_rebasing("rebase.continue", &status)?;
@@ -457,7 +457,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::rebase_abort`](project_engine::GitBackend::rebase_abort).
+    /// [`GitOperations::rebase_abort`](project_engine::GitOperations::rebase_abort).
     pub(super) fn abort_rebase(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         project_engine::check_rebasing("rebase.abort", &status)?;

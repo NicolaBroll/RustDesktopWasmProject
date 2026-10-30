@@ -1,7 +1,7 @@
 //! Undo and redo tests (`restore_refs`) on the `MemoryBackend`, through the journal.
 
 use super::*;
-use crate::{CommitRequest, GitBackend, Journal, JournalEntry, LogQuery};
+use crate::{CommitRequest, GitIndex, GitRead, Journal, JournalEntry, LogQuery};
 use project_domain::{Head, Operation};
 
 /// Commit (or `amend`) with the given message, recorded in the journal.

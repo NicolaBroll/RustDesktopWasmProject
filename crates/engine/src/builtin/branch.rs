@@ -162,7 +162,7 @@ fn taken(name: &str) -> EngineError {
 
 /// Creates the branch `name` at `start` (a rev: id, also abbreviated, branch or tag name;
 /// HEAD if missing), without switching branch (see
-/// [`GitBackend::create_branch`](crate::GitBackend::create_branch)). An existing branch is never
+/// [`GitRefs::create_branch`](crate::GitRefs::create_branch)). An existing branch is never
 /// overwritten. The operation goes into the journal: `edit.undo` deletes the branch, only if in the
 /// meantime it was not moved.
 ///
@@ -208,7 +208,7 @@ pub(super) fn branch_create(
 }
 
 /// Switches to the local branch `name` (`git switch`, see
-/// [`GitBackend::checkout`](crate::GitBackend::checkout)): index and worktree become those
+/// [`GitRefs::checkout`](crate::GitRefs::checkout)): index and worktree become those
 /// of the branch, local changes that do not touch the differing files stay. It never forces: if
 /// a local change (or an untracked or ignored file) would be overwritten,
 /// [`EngineError::CheckoutConflict`] with the files and nothing changes. Refused
@@ -260,7 +260,7 @@ pub(super) fn branch_checkout(
 }
 
 /// Deletes the local branch `name` (see
-/// [`GitBackend::delete_branch`](crate::GitBackend::delete_branch)). Refused
+/// [`GitRefs::delete_branch`](crate::GitRefs::delete_branch)). Refused
 /// ([`EngineError::NotAllowed`]) for the branch of HEAD, a branch open in another worktree and
 /// during an operation in progress. If the branch has commits that are neither in HEAD nor in its
 /// upstream (if any), i.e. it is not merged, `"confirm": true` is needed. With `expected` (full id of the
@@ -375,7 +375,7 @@ pub(super) fn branch_delete(
 }
 
 /// Renames the local branch `name` to `new_name` (see
-/// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch)): never over an
+/// [`GitRefs::rename_branch`](crate::GitRefs::rename_branch)): never over an
 /// existing branch; reflog, upstream and HEAD (if it was the active branch) follow. Refused during
 /// an operation in progress. It goes into the journal: `edit.undo` renames back, only if in the meantime
 /// nobody touched the two names.
@@ -433,7 +433,7 @@ pub(super) fn branch_rename(
 #[cfg(test)]
 mod tests {
     use crate::{
-        EngineError, GitBackend, HeadState, MemoryBackend, MemoryOpener, Registry, Session,
+        EngineError, GitIndex, GitRead, HeadState, MemoryBackend, MemoryOpener, Registry, Session,
     };
     use project_domain::{Change, EntryKind, Head, Oid, RepoPath, StatusEntry};
     use serde_json::{Value, json};

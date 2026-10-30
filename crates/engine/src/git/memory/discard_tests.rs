@@ -1,6 +1,7 @@
 //! Tests of `worktree.discard` and its undo/redo on the `MemoryBackend`, through the journal.
 
 use super::*;
+use crate::GitIndex;
 use crate::{Journal, JournalEntry, discard_plan};
 
 /// The discard as `worktree.discard` does it: the plan read first and then the backend.

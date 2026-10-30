@@ -31,7 +31,7 @@ fn says_empty(text: &str) -> bool {
 }
 
 impl CliBackend {
-    /// [`GitBackend::pick`](project_engine::GitBackend::pick).
+    /// [`GitOperations::pick`](project_engine::GitOperations::pick).
     pub(super) fn pick_onto_head(
         &mut self,
         request: &PickRequest,

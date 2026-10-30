@@ -37,7 +37,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 impl CliBackend {
-    /// [`GitBackend::stashes`](project_engine::GitBackend::stashes).
+    /// [`GitStash::stashes`](project_engine::GitStash::stashes).
     pub(super) fn stash_entries(&self) -> Result<Vec<StashEntry>, EngineError> {
         if self.ref_value(STASH_REF)?.is_none() {
             return Ok(Vec::new());
@@ -90,7 +90,7 @@ impl CliBackend {
         Ok(list)
     }
 
-    /// [`GitBackend::stash_push`](project_engine::GitBackend::stash_push).
+    /// [`GitStash::stash_push`](project_engine::GitStash::stash_push).
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
         // `git stash push` does not see changes to `--assume-unchanged` files (it does not save them) and
         // then resets the worktree to HEAD: it would lose them. Always refused among the
@@ -287,7 +287,7 @@ impl CliBackend {
         false
     }
 
-    /// [`GitBackend::stash_apply`](project_engine::GitBackend::stash_apply).
+    /// [`GitStash::stash_apply`](project_engine::GitStash::stash_apply).
     pub(super) fn apply_stash(
         &mut self,
         request: &StashApply,
@@ -450,7 +450,7 @@ impl CliBackend {
         Err(failure(&args, &out))
     }
 
-    /// [`GitBackend::stash_drop`](project_engine::GitBackend::stash_drop).
+    /// [`GitStash::stash_drop`](project_engine::GitStash::stash_drop).
     pub(super) fn drop_stash(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
         let command = request.command;
         let list = self.stash_entries()?;
@@ -516,7 +516,7 @@ impl CliBackend {
         Ok(StashDropped { backup, warnings })
     }
 
-    /// [`GitBackend::stash_store`](project_engine::GitBackend::stash_store).
+    /// [`GitStash::stash_store`](project_engine::GitStash::stash_store).
     pub(super) fn store_stash(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         let hex = id.to_string();
         let message = format!("--message={message}");

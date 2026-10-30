@@ -61,7 +61,7 @@ pub struct ResetRecord {
 }
 
 /// What `branch.reset` (or the undo/redo of one) asks of
-/// [`GitBackend::reset`](crate::GitBackend::reset).
+/// [`GitRefs::reset`](crate::GitRefs::reset).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResetRequest {
     pub mode: ResetMode,
@@ -106,7 +106,7 @@ impl ResetRequest {
     }
 }
 
-/// Outcome of [`GitBackend::reset`](crate::GitBackend::reset).
+/// Outcome of [`GitRefs::reset`](crate::GitRefs::reset).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResetOutcome {
     /// `hard`: the files whose local changes were overwritten (and saved in `backup`).
@@ -245,7 +245,7 @@ fn list(paths: &[RepoPath]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, HeadState, MemoryBackend, RefMove};
+    use crate::{GitRead, HeadState, MemoryBackend, RefMove};
 
     #[test]
     fn files_of_the_sample_and_json() {

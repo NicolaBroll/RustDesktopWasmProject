@@ -316,7 +316,7 @@ fn refusals() {
 }
 
 fn repo_entries(repo: &MemoryBackend) -> Vec<StatusEntry> {
-    use crate::GitBackend;
+    use crate::GitRead;
     repo.status().unwrap().entries
 }
 

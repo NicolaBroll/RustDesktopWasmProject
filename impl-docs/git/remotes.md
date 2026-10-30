@@ -56,7 +56,7 @@ Parameters: `{"name", "confirm"?}`.
 Writes (`writes`), goes into the journal (§7). `name`: a configured remote (`check_remote_name`, leading
 `-` allowed; otherwise `NotAllowed` with the list). Refused (`NotAllowed`, nothing changes): a
 remote defined **even partly** outside the repo file
-(`GitBackend::remote_config_elsewhere`: global or system configuration, `include`,
+(`GitRemotes::remote_config_elsewhere`: global or system configuration, `include`,
 `config.worktree`, `.git/remotes/`; the error lists key, scope and file), because a
 part that git still sees would remain; the promisor remote of a partial clone (`remote.<name>.promisor` true or
 `extensions.partialClone` = `<name>`: without it, missing objects could no longer be downloaded and
@@ -131,7 +131,7 @@ display only. Two engine operations, the same for the backends:
   otherwise `UndoConflict` (a remote recreated with the same name is not overwritten). First the
   remote branches (`restore_refs`, created only if they do not exist), then the configuration
   (`write_remote_config`). For `remote.remove` also the upstreams, but **only** for the branches that
-  still exist and have not in the meantime another upstream (`GitBackend::upstream`) or another
+  still exist and have not in the meantime another upstream (`GitRemotes::upstream`) or another
   `pushRemote`, and `remote.pushDefault` only if there is none now: the others stay as they are,
   with a warning in `warnings`. The journal entry is updated with what was actually
   put back, so the redo compares and removes only that (an upstream reset elsewhere stays).

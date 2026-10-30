@@ -104,7 +104,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::unmerged_count`](project_engine::GitBackend::unmerged_count):
+    /// [`GitRead::unmerged_count`](project_engine::GitRead::unmerged_count):
     /// `rev-list --count <tip> ^<into>...`, without replace objects (counts the real history).
     pub(super) fn count_unmerged(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
         let revs: Vec<String> = std::iter::once(tip.to_string())
@@ -125,7 +125,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::create_branch`](project_engine::GitBackend::create_branch).
+    /// [`GitRefs::create_branch`](project_engine::GitRefs::create_branch).
     pub(super) fn create_local_branch(
         &mut self,
         name: &str,
@@ -169,7 +169,7 @@ impl CliBackend {
         Err(failure(&args, &out))
     }
 
-    /// [`GitBackend::checkout`](project_engine::GitBackend::checkout) with `git switch`.
+    /// [`GitRefs::checkout`](project_engine::GitRefs::checkout) with `git switch`.
     pub(super) fn switch_to(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
         check_no_operation(
             "branch.checkout",
@@ -320,7 +320,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::delete_branch`](project_engine::GitBackend::delete_branch).
+    /// [`GitRefs::delete_branch`](project_engine::GitRefs::delete_branch).
     pub(super) fn delete_local_branch(
         &mut self,
         name: &str,
@@ -377,7 +377,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::rename_branch`](project_engine::GitBackend::rename_branch) with `git
+    /// [`GitRefs::rename_branch`](project_engine::GitRefs::rename_branch) with `git
     /// branch -m` (never `-M`).
     pub(super) fn rename_local_branch(
         &mut self,
@@ -480,7 +480,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::restore_branch_config`](project_engine::GitBackend::restore_branch_config).
+    /// [`GitRefs::restore_branch_config`](project_engine::GitRefs::restore_branch_config).
     pub(super) fn set_branch_config(
         &mut self,
         name: &str,

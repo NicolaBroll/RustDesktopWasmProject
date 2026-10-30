@@ -135,12 +135,12 @@ fn no_upstream(branch: &str) -> EngineError {
 /// 1. detached HEAD without `branch`, branch without commits, operation in progress, conflicted
 ///    files, branch without upstream (or with local upstream `.`), `remote` different from the
 ///    upstream's, invalid configuration → [`EngineError::NotAllowed`], nothing fetched;
-/// 2. fetch of only the upstream's branch ([`GitBackend::fetch`](crate::GitBackend::fetch):
+/// 2. fetch of only the upstream's branch ([`GitRemotes::fetch`](crate::GitRemotes::fetch):
 ///    progress and cancellation from the [`JobContext`](crate::JobContext), errors `Auth`,
 ///    `RemoteUnreachable`, `Cancelled`); a cancellation requested during the fetch stops the
 ///    command even if the fetch finished, before integrating;
 /// 3. the strategy ([`pull_mode`]): nothing to do if the branch already contains the upstream;
-/// 4. the integration ([`GitBackend::pull`](crate::GitBackend::pull)): state checks
+/// 4. the integration ([`GitRemotes::pull`](crate::GitRemotes::pull)): state checks
 ///    ([`check_pull_state`]), branch backup, then merge/rebase. A stopped **merge**
 ///    (conflicts, hooks, signing) **stays in progress** as with `merge.start`: it is not an error, the
 ///    result has `in_progress: true` and the files in `conflicts`, the branch has not moved, the

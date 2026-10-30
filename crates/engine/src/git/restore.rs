@@ -26,7 +26,7 @@ pub enum HeadState {
 }
 
 impl HeadState {
-    /// HEAD as read from [`GitBackend::head`](crate::GitBackend::head): the branch with its full
+    /// HEAD as read from [`GitRead::head`](crate::GitRead::head): the branch with its full
     /// name (`refs/heads/<name>`), or detached.
     pub fn from_head(head: &project_domain::Head) -> Self {
         match head {
@@ -76,10 +76,10 @@ pub struct RefMove {
     pub target: Option<Oid>,
 }
 
-/// What `edit.undo`/`edit.redo` ask of the backend ([`GitBackend::restore_refs`]): HEAD and the
+/// What `edit.undo`/`edit.redo` ask of the backend ([`GitRefs::restore_refs`]): HEAD and the
 /// refs must now equal `expected`, and must be moved to `target` all together or none.
 ///
-/// [`GitBackend::restore_refs`]: crate::GitBackend::restore_refs
+/// [`GitRefs::restore_refs`]: crate::GitRefs::restore_refs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefRestore {
     /// `edit.undo` or `edit.redo`: in errors and in the name of the backup refs.
@@ -89,8 +89,8 @@ pub struct RefRestore {
     /// HEAD as it must become: only the same branch as `head_expected` (HEAD is not touched)
     /// or another commit with detached HEAD. A branch change does not go through here: undo and redo
     /// of `branch.checkout` and `branch.rename` use
-    /// [`GitBackend::checkout`](crate::GitBackend::checkout) and
-    /// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch), which also update the
+    /// [`GitRefs::checkout`](crate::GitRefs::checkout) and
+    /// [`GitRefs::rename_branch`](crate::GitRefs::rename_branch), which also update the
     /// worktree, reflog and configuration.
     pub head_target: HeadState,
     pub refs: Vec<RefMove>,
@@ -220,7 +220,7 @@ impl RefRestore {
     }
 }
 
-/// Outcome of [`GitBackend::restore_refs`](crate::GitBackend::restore_refs).
+/// Outcome of [`GitRefs::restore_refs`](crate::GitRefs::restore_refs).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreOutcome {
     /// The backup refs created for the commits that would no longer be reachable.

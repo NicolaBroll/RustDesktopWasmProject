@@ -9,7 +9,7 @@
 use super::write::file_type;
 use super::{MemoryBackend, line_diff};
 use crate::git::{
-    BlameQuery, FileBlame, FileLogQuery, GitBackend, LogQuery, blame_binary, blame_missing_at,
+    BlameQuery, FileBlame, FileLogQuery, GitRead, LogQuery, blame_binary, blame_missing_at,
     blame_missing_worktree, blame_no_commits, is_binary_content,
 };
 use crate::{EngineError, JobContext};

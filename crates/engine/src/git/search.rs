@@ -25,7 +25,7 @@ impl SearchField {
     pub const ALL: [SearchField; 3] = [Self::Message, Self::Author, Self::Id];
 }
 
-/// What [`GitBackend::search`](super::GitBackend::search) looks for: `text` taken literally
+/// What [`GitRead::search`](super::GitRead::search) looks for: `text` taken literally
 /// (never a regex), case-insensitive for ASCII letters, in any of `fields` (OR), optionally only
 /// in the commits that touch `path`, over the same commits as `repo.log` with `all`/`stashes`.
 #[derive(Debug, Clone, PartialEq, Eq)]

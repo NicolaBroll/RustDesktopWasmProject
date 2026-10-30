@@ -2,6 +2,8 @@
 //! `builtin/sync_tests.rs`).
 
 use super::*;
+use crate::GitRefs;
+use crate::GitRemotes;
 use crate::git::memory::merge::merge_partial;
 use crate::git::{HeadState, RefMove};
 use project_domain::RepoPath;

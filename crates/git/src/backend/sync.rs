@@ -1,6 +1,6 @@
 //! Pull on the [`CliBackend`] (`remote.pull`, S26) and its undo/redo, following §5 and §7.
 //!
-//! The fetch is done by the command beforehand, with [`GitBackend::fetch`](project_engine::GitBackend::fetch);
+//! The fetch is done by the command beforehand, with [`GitRemotes::fetch`](project_engine::GitRemotes::fetch);
 //! only the local integration is here, which is not cancelled halfway:
 //!
 //! - fast-forward of the active branch: `git -c core.fsmonitor=false merge --ff-only
@@ -65,7 +65,7 @@ impl Drop for TempFile {
 const REFLOG_ACTION: &str = "project: remote.pull";
 
 impl CliBackend {
-    /// [`GitBackend::upstream`](project_engine::GitBackend::upstream) with `for-each-ref`:
+    /// [`GitRemotes::upstream`](project_engine::GitRemotes::upstream) with `for-each-ref`:
     /// `%(upstream:remotename)` and `%(upstream:remoteref)` are `branch.<name>.remote` and
     /// `.merge`, `%(upstream)` the local remote branch according to the remote's refspec.
     pub(super) fn upstream_of(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
@@ -114,7 +114,7 @@ impl CliBackend {
         Ok(Some(String::from_utf8_lossy(value).into_owned()))
     }
 
-    /// [`GitBackend::config_values`](project_engine::GitBackend::config_values): `git config
+    /// [`GitRead::config_values`](project_engine::GitRead::config_values): `git config
     /// -z --get-all`, non-UTF-8 values converted with `from_utf8_lossy`.
     pub(super) fn config_all(&self, key: &str) -> Result<Vec<String>, EngineError> {
         let args = ["config", "-z", "--get-all", "--end-of-options", key];
@@ -241,7 +241,7 @@ impl CliBackend {
         )))
     }
 
-    /// [`GitBackend::pull_settings`](project_engine::GitBackend::pull_settings).
+    /// [`GitRemotes::pull_settings`](project_engine::GitRemotes::pull_settings).
     pub(super) fn read_pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError> {
         let rebase = match self.config_value(&format!("branch.{branch}.rebase"))? {
             Some(value) => Some(value),
@@ -253,7 +253,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::missing_commits`](project_engine::GitBackend::missing_commits).
+    /// [`GitRemotes::missing_commits`](project_engine::GitRemotes::missing_commits).
     pub(super) fn commits_missing(
         &self,
         tip: &Oid,
@@ -283,7 +283,7 @@ impl CliBackend {
             .output(Some(&self.workdir), &["update-ref", "-d", name, &oid]);
     }
 
-    /// [`GitBackend::pull`](project_engine::GitBackend::pull).
+    /// [`GitRemotes::pull`](project_engine::GitRemotes::pull).
     pub(super) fn pull_upstream(
         &mut self,
         request: &PullRequest,
@@ -641,7 +641,7 @@ impl CliBackend {
         files
     }
 
-    /// [`GitBackend::reset_branch`](project_engine::GitBackend::reset_branch).
+    /// [`GitRefs::reset_branch`](project_engine::GitRefs::reset_branch).
     pub(super) fn reset_keep(
         &mut self,
         request: &RefRestore,

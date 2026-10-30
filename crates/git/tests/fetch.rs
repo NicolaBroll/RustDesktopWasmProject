@@ -456,7 +456,7 @@ fn cancel_stops_the_fetch() {
 
 #[test]
 fn backend_lists_remotes() {
-    use project_engine::GitBackend as _;
+    use project_engine::GitRemotes as _;
     let Setup { remote, work, .. } = setup();
     work.add_remote("b-second", &remote);
     assert_eq!(work.open().remotes().unwrap(), ["b-second", "origin"]);

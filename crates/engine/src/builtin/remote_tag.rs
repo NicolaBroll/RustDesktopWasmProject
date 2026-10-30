@@ -121,7 +121,7 @@ pub struct RemotePushTagParams {
 }
 
 /// Publishes the local tag `name` to the remote `remote`: only
-/// `refs/tags/<name>:refs/tags/<name>` (see [`GitBackend::push_tag`](crate::GitBackend::push_tag)),
+/// `refs/tags/<name>:refs/tags/<name>` (see [`GitRemotes::push_tag`](crate::GitRemotes::push_tag)),
 /// never forced. The remote already having the same value is a success (`"kind": "up_to_date"`);
 /// a tag already on the remote with another value is [`EngineError::PushRejected`] with
 /// `tag_exists` (nothing changes: deleting it from the remote first is a separate, confirmed
@@ -206,7 +206,7 @@ pub struct RemoteDeleteTagParams {
 /// `--force-with-lease=refs/tags/<name>:<expected>`: if the tag moved on the remote in the meantime
 /// git rejects it ([`EngineError::PushRejected`] with `stale_lease`). Backup and errors as
 /// `remote.delete_branch` (see
-/// [`GitBackend::delete_remote_tag`](crate::GitBackend::delete_remote_tag)). Slow, not in the journal.
+/// [`GitRemotes::delete_remote_tag`](crate::GitRemotes::delete_remote_tag)). Slow, not in the journal.
 ///
 /// Result: [`RemoteDeleteTagResult`].
 pub(super) fn remote_delete_tag(

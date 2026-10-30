@@ -18,7 +18,7 @@ pub struct CommitCreateResult {
 }
 
 /// Creates a commit with what is staged, or with `amend` rewrites the last one (see
-/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` is needed only for `amend` of a
+/// [`GitIndex::commit`](crate::GitIndex::commit)). `confirm` is needed only for `amend` of a
 /// commit already published. An error after a successful commit is
 /// [`EngineError::PostCommit`].
 ///

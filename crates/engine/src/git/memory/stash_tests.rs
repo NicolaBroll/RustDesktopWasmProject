@@ -1,7 +1,7 @@
 //! Stash tests of the `MemoryBackend` (the commands are in `builtin/stash_tests.rs`).
 
 use super::*;
-use crate::{GitBackend, StashPush};
+use crate::{GitRead, GitStash, StashPush};
 
 #[test]
 fn push_keeps_refs_stash_on_the_top_and_drop_backs_it_up() {

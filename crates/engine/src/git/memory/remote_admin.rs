@@ -30,7 +30,7 @@ impl MemoryBackend {
     }
 
     /// Simulates `remote.<name>.*` entries defined outside the repo file (global configuration,
-    /// `include`): [`GitBackend::remote_config_elsewhere`](crate::GitBackend) returns them.
+    /// `include`): [`GitRemotes::remote_config_elsewhere`](crate::GitRemotes::remote_config_elsewhere) returns them.
     pub fn set_remote_elsewhere(&mut self, name: &str, entries: &[&str]) {
         self.remote_elsewhere.insert(
             name.to_owned(),

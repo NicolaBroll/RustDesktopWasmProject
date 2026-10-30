@@ -2,14 +2,14 @@
 //! (`repo.operation`): types and checks shared by the backends (`impl-docs/git/merge.md`).
 //!
 //! The command resolves the rev, decides between fast-forward and merge commit (with
-//! [`GitBackend::unmerged_count`](super::GitBackend::unmerged_count)), checks the state
+//! [`GitRead::unmerged_count`](super::GitRead::unmerged_count)), checks the state
 //! ([`check_merge_state`]) and writes the default message ([`merge_source`],
-//! [`MergeSource::message`]); the backend executes ([`GitBackend::merge`](super::GitBackend::merge)).
+//! [`MergeSource::message`]); the backend executes ([`GitOperations::merge`](super::GitOperations::merge)).
 //! **A merge stopped on conflict stays in progress** (like pull in merge mode; pull in rebase mode
 //! is instead aborted): it is
-//! concluded with `merge.continue` (which uses [`GitBackend::commit`](super::GitBackend::commit),
+//! concluded with `merge.continue` (which uses [`GitIndex::commit`](super::GitIndex::commit),
 //! with `MERGE_HEAD` git creates the merge commit) or aborted with `merge.abort`
-//! ([`GitBackend::merge_abort`](super::GitBackend::merge_abort), with a backup of index and
+//! ([`GitOperations::merge_abort`](super::GitOperations::merge_abort), with a backup of index and
 //! worktree first).
 
 use super::{HEADS_PREFIX, REMOTES_PREFIX, check_no_operation};
@@ -18,7 +18,7 @@ use project_domain::{EntryKind, Oid, Operation, RefInfo, RefKind, RepoPath, Stat
 use project_domain::{TAGS_PREFIX, branch_short, remote_short, tag_short};
 use serde::{Deserialize, Serialize};
 
-/// How to integrate the commit into HEAD ([`GitBackend::merge`](super::GitBackend::merge)).
+/// How to integrate the commit into HEAD ([`GitOperations::merge`](super::GitOperations::merge)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MergeMode {
@@ -55,7 +55,7 @@ pub struct MergeRequest {
     pub message: String,
 }
 
-/// Outcome of [`GitBackend::merge`](super::GitBackend::merge).
+/// Outcome of [`GitOperations::merge`](super::GitOperations::merge).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeOutcome {
     /// The value of the branch afterwards: the merge commit, the fast-forward commit or, if the merge
@@ -76,7 +76,7 @@ pub struct MergeOutcome {
     pub warnings: Vec<Message>,
 }
 
-/// Outcome of [`GitBackend::merge_abort`](super::GitBackend::merge_abort).
+/// Outcome of [`GitOperations::merge_abort`](super::GitOperations::merge_abort).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeAborted {
     /// The backup ref of index and worktree before the abort

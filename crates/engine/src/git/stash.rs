@@ -274,7 +274,7 @@ pub fn stash_blocked(command: &str, stash: &str, files: &[String]) -> EngineErro
     ))
 }
 
-/// Request to [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
+/// Request to [`GitStash::stash_apply`](crate::GitStash::stash_apply).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashApply {
     /// The command, for messages (`stash.apply`, `stash.pop`, `edit.undo`).
@@ -286,7 +286,7 @@ pub struct StashApply {
     pub restore_index: bool,
 }
 
-/// Outcome of [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
+/// Outcome of [`GitStash::stash_apply`](crate::GitStash::stash_apply).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashApplied {
     /// The files left in conflict (the merge of the stash with HEAD stopped): empty if the
@@ -296,7 +296,7 @@ pub struct StashApplied {
     pub warnings: Vec<Message>,
 }
 
-/// Request to [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
+/// Request to [`GitStash::stash_drop`](crate::GitStash::stash_drop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashDrop {
     /// The command, for messages and the backup's reflog.
@@ -308,7 +308,7 @@ pub struct StashDrop {
     pub backup: Option<&'static str>,
 }
 
-/// Outcome of [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
+/// Outcome of [`GitStash::stash_drop`](crate::GitStash::stash_drop).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashDropped {
     /// The backup ref on the stash commit, if created.
@@ -420,7 +420,7 @@ fn paths_where(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
 
     #[test]
     fn branch_from_message() {

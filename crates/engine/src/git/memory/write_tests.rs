@@ -1,7 +1,7 @@
 //! Stage and unstage tests on the `MemoryBackend`.
 
 use super::*;
-use crate::{DiffSpec, GitBackend};
+use crate::{DiffSpec, GitIndex, GitRead};
 use project_domain::{Conflict, Diff, LineKind};
 
 fn p(path: &str) -> RepoPath {

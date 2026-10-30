@@ -88,7 +88,7 @@ pub fn backup_message(operation: &str, versions: &[StagedVersion]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
 
     #[test]
     fn only_staged_versions_missing_from_head_and_worktree() {

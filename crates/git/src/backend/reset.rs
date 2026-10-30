@@ -36,7 +36,7 @@ use project_engine::{
 const STASH_MESSAGE: &str = "project: backup of the worktree before branch.reset";
 
 impl CliBackend {
-    /// [`GitBackend::reset`](project_engine::GitBackend::reset).
+    /// [`GitRefs::reset`](project_engine::GitRefs::reset).
     pub(super) fn reset_head(
         &mut self,
         request: &ResetRequest,

@@ -10,8 +10,8 @@ mod common;
 use common::{Repo, repo_with_merge_conflict};
 use project_domain::RepoPath;
 use project_engine::{
-    EngineError, GitBackend, HeadState, RefMove, RefRestore, Registry, ResetMode, ResetRequest,
-    Session, reset_files,
+    EngineError, GitRead, GitRefs, HeadState, RefMove, RefRestore, Registry, ResetMode,
+    ResetRequest, Session, reset_files,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;

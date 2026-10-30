@@ -7,7 +7,7 @@ mod common;
 
 use common::{Repo, repo_detached_head, repo_with_history, repo_with_merge_conflict};
 use project_domain::{Head, Operation, RepoPath};
-use project_engine::{CommitRequest, EngineError, GitBackend, Registry, Session};
+use project_engine::{CommitRequest, EngineError, GitIndex, GitRead, Registry, Session};
 use project_git::CliOpener;
 use serde_json::{Value, json};
 use std::sync::Arc;

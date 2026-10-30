@@ -5,10 +5,10 @@
 //! The model is the S29 merge ([`super::merge`]): the command resolves the rev, picks the
 //! parent (`mainline` for a merge commit) and checks the state ([`check_pick_state`]); the
 //! backend saves the branch in a backup and executes
-//! ([`GitBackend::pick`](super::GitBackend::pick)). **A conflict leaves the operation in
+//! ([`GitOperations::pick`](super::GitOperations::pick)). **A conflict leaves the operation in
 //! progress** (`CHERRY_PICK_HEAD`/`REVERT_HEAD`): it is concluded with `*.continue` (a commit with
 //! [`CommitRequest::concluding`](super::CommitRequest::concluding)) or aborted with
-//! `*.abort` ([`GitBackend::pick_abort`](super::GitBackend::pick_abort)), with a backup of
+//! `*.abort` ([`GitOperations::pick_abort`](super::GitOperations::pick_abort)), with a backup of
 //! index and worktree first. An empty result (commit already applied) leaves nothing in
 //! progress.
 

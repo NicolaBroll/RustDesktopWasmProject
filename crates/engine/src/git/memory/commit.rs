@@ -10,7 +10,7 @@ use super::write::{TreeEntry, ZERO, entry_order, file_type, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend, REMOTES, TAGS, content_oid};
 use crate::EngineError;
 use crate::git::{
-    BACKUP_PREFIX, CommitOutcome, CommitRequest, GitBackend, amend_impact, check_amend_published,
+    BACKUP_PREFIX, CommitOutcome, CommitRequest, GitRead, amend_impact, check_amend_published,
     check_commit_state, cleanup_message, split_message,
 };
 use project_domain::{
@@ -26,7 +26,7 @@ const STEP: i64 = 60;
 pub(super) type Tree = BTreeMap<RepoPath, TreeEntry>;
 
 impl MemoryBackend {
-    /// [`GitBackend::commit`] on the status entries. An error changes nothing.
+    /// [`GitIndex::commit`] on the status entries. An error changes nothing.
     pub(super) fn create_commit(
         &mut self,
         request: &CommitRequest,

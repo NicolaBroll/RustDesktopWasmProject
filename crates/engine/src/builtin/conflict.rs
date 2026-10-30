@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `conflict.show`: the versions of the conflicted file (see
-/// [`GitBackend::conflict_versions`](crate::GitBackend::conflict_versions)).
+/// [`GitOperations::conflict_versions`](crate::GitOperations::conflict_versions)).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConflictShowResult {
     /// The conflicted file.
@@ -93,7 +93,7 @@ pub(super) fn conflict_show(
 }
 
 /// Resolves the conflict of `path` with `content` or `delete` (see
-/// [`GitBackend::resolve_conflict`](crate::GitBackend::resolve_conflict)). Result:
+/// [`GitOperations::resolve_conflict`](crate::GitOperations::resolve_conflict)). Result:
 /// [`ConflictResolveResult`].
 pub(super) fn conflict_resolve(
     s: &mut Session,

@@ -2,7 +2,7 @@
 //! `builtin/remote.rs`).
 
 use super::*;
-use crate::{CancelToken, GitBackend, LogQuery};
+use crate::{CancelToken, GitRead, GitRemotes, LogQuery};
 
 fn oid(n: u64) -> Oid {
     MemoryBackend::fake_oid(n)

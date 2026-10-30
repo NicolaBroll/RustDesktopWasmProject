@@ -2,8 +2,8 @@
 //! (`impl-docs/git/sync.md`).
 //!
 //! The pull is driven by the engine in two steps: first the fetch of only the upstream's branch
-//! ([`GitBackend::fetch`](super::GitBackend::fetch), slow and cancellable), then the local
-//! integration ([`GitBackend::pull`](super::GitBackend::pull): fast-forward, merge or rebase), which
+//! ([`GitRemotes::fetch`](super::GitRemotes::fetch), slow and cancellable), then the local
+//! integration ([`GitRemotes::pull`](super::GitRemotes::pull): fast-forward, merge or rebase), which
 //! cannot be cancelled midway. So the command knows what arrived before writing, decides the
 //! strategy ([`PullSettings::policy`], [`pull_mode`]), checks the repo state
 //! ([`check_pull_state`]) and records the branch move in the journal.
@@ -165,7 +165,7 @@ impl PullSettings {
     }
 }
 
-/// How to integrate the upstream into the branch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// How to integrate the upstream into the branch ([`GitRemotes::pull`](super::GitRemotes::pull)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullMode {
     /// The branch advances to the upstream (`git merge --ff-only`, or `update-ref` for a branch that
@@ -294,7 +294,7 @@ pub fn merge_message(upstream: &str, branch: &str) -> String {
     message
 }
 
-/// What `remote.pull` asks of the backend after the fetch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// What `remote.pull` asks of the backend after the fetch ([`GitRemotes::pull`](super::GitRemotes::pull)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequest {
     /// The local branch (short name).
@@ -313,7 +313,7 @@ pub struct PullRequest {
     pub message: String,
 }
 
-/// Outcome of [`GitBackend::pull`](super::GitBackend::pull).
+/// Outcome of [`GitRemotes::pull`](super::GitRemotes::pull).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullOutcome {
     /// The value of the branch afterwards; if the merge is stopped ([`PullOutcome::in_progress`]) the one

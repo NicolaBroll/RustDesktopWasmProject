@@ -1,6 +1,6 @@
-//! Tests of `GitBackend::diff` on `MemoryBackend`.
+//! Tests of `GitRead::diff` on `MemoryBackend`.
 
-use super::{DiffSpec, GitBackend, LogQuery, MemoryBackend};
+use super::{DiffSpec, GitRead, LogQuery, MemoryBackend};
 use crate::EngineError;
 use project_domain::{
     Change, Diff, EntryKind, FileDiff, LineKind, Oid, RepoPath, StatusEntry, TrackedInfo,

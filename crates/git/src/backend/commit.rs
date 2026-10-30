@@ -32,7 +32,7 @@ use project_engine::{
 use std::ffi::OsStr;
 
 impl CliBackend {
-    /// [`GitBackend::commit`](project_engine::GitBackend::commit).
+    /// [`GitIndex::commit`](project_engine::GitIndex::commit).
     pub(super) fn create_commit(
         &mut self,
         request: &CommitRequest,

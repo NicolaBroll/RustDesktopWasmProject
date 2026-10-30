@@ -12,7 +12,8 @@
 //!   `remote.pushDefault`, always from the repo file.
 //!
 //! Removing a remote ([`remove_remote`]) removes the remote branches with a single transaction
-//! (`GitBackend::restore_refs`, with the expected values and the backups of the commits that would no longer be
+//! (`GitRefs::restore_refs`, with the expected values and the backups of the commits that would no
+//! longer be
 //! reachable), then the configuration; restoring it ([`restore_remote`]) does the opposite,
 //! only if in the meantime nobody recreated a remote with that name.
 
@@ -386,7 +387,7 @@ pub fn mask_url(url: &str) -> (String, bool) {
 /// other commands, and nothing changes). With `dependents` it also removes the saved upstream, `pushRemote` and
 /// `remote.pushDefault` (for `remote.add` not: it did not create them).
 ///
-/// The remote branches are removed with [`GitBackend::restore_refs`] (a transaction with the expected
+/// The remote branches are removed with [`GitRefs::restore_refs`](crate::GitRefs::restore_refs) (a transaction with the expected
 /// values; the commits that would no longer be reachable from other refs go first in
 /// `refs/project/backup/<remote|undo|redo>-...`, in the result), then the configuration: a
 /// problem there is a warning, because the refs are already removed.

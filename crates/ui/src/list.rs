@@ -570,9 +570,7 @@ mod tests {
     mod sample {
         use super::super::*;
         use project_domain::RefInfo;
-        use project_engine::{
-            GitBackend, LogQuery, MemoryBackend, MemoryOpener, Registry, Session,
-        };
+        use project_engine::{GitRead, LogQuery, MemoryBackend, MemoryOpener, Registry, Session};
         use serde_json::json;
         use std::sync::Arc;
 

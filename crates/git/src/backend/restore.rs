@@ -55,7 +55,7 @@ use project_engine::{EngineError, HeadState, RefMove, RefRestore, RestoreOutcome
 use std::collections::BTreeSet;
 
 impl CliBackend {
-    /// [`GitBackend::restore_refs`](project_engine::GitBackend::restore_refs).
+    /// [`GitRefs::restore_refs`](project_engine::GitRefs::restore_refs).
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         request.check(self.operation())?;
         // A branch open in another worktree is not deleted (e.g. redo of `branch.delete`).

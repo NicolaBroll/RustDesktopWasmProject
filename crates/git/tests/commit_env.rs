@@ -7,7 +7,7 @@
 mod common;
 
 use common::Repo;
-use project_engine::{CommitRequest, GitBackend};
+use project_engine::{CommitRequest, GitIndex};
 
 #[test]
 fn inherited_environment_does_not_change_the_commit() {

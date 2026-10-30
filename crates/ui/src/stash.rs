@@ -861,7 +861,9 @@ impl Tab {
 mod tests {
     use super::*;
     use project_domain::{Change, ChangedFile, Commit, EntryKind, RepoPath};
-    use project_engine::{GitBackend, MemoryBackend, MemoryOpener, Registry, Session, StashPush};
+    use project_engine::{
+        GitRead, GitStash, MemoryBackend, MemoryOpener, Registry, Session, StashPush,
+    };
     use std::sync::Arc;
 
     fn opened(repo: MemoryBackend) -> (Registry, Session) {

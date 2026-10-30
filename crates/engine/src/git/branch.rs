@@ -100,7 +100,7 @@ pub fn check_no_operation(
     )))
 }
 
-/// Outcome of [`GitBackend::delete_branch`](crate::GitBackend::delete_branch).
+/// Outcome of [`GitRefs::delete_branch`](crate::GitRefs::delete_branch).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchDeleted {
     /// The backup ref on the branch's commit (`refs/project/backup/delete-...`), created before

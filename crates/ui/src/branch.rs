@@ -991,7 +991,7 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_engine::{GitBackend, LogQuery, MemoryBackend, MemoryOpener, Registry, Session};
+    use project_engine::{GitRead, LogQuery, MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
 
     fn remote(name: &str) -> RefInfo {

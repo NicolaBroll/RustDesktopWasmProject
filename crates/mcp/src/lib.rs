@@ -466,7 +466,7 @@ mod tests {
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let mut sample = MemoryBackend::sample();
-        let head = project_engine::GitBackend::head(&sample)
+        let head = project_engine::GitRead::head(&sample)
             .unwrap()
             .target()
             .unwrap();

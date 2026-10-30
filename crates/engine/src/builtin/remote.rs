@@ -154,7 +154,7 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
     ))
 }
 
-/// Fetches from the remote `remote` (see [`GitBackend::fetch`](crate::GitBackend::fetch)): new
+/// Fetches from the remote `remote` (see [`GitRemotes::fetch`](crate::GitRemotes::fetch)): new
 /// commits, remote-tracking branches and tags as the configuration says; with `branch` only that branch of the
 /// remote. `remote` is the name of a **configured** remote (never a URL or a path:
 /// [`EngineError::NotAllowed`] if there is none); if missing, the one of the active branch's upstream,

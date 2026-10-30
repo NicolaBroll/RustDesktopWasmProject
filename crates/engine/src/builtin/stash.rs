@@ -184,7 +184,7 @@ pub(super) fn stash_list(s: &mut Session, ListParams {}: ListParams) -> Out {
 }
 
 /// Sets changes aside in a new stash (see
-/// [`GitBackend::stash_push`] and
+/// [`GitStash::stash_push`](crate::GitStash::stash_push) and
 /// [`check_stash_push`](crate::check_stash_push)): nothing is lost, the changes are in the
 /// stash. It goes into the journal: `edit.undo` reapplies it (with the index) and removes it from the list, only
 /// if HEAD has not moved.
@@ -270,7 +270,7 @@ fn apply(
 }
 
 /// Applies a stash to index and worktree without removing it from the list (see
-/// [`GitBackend::stash_apply`]): never over local changes to the
+/// [`GitStash::stash_apply`](crate::GitStash::stash_apply)): never over local changes to the
 /// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
 /// Result: [`StashApplyResult`] (`dropped: false`, `backup: null`).

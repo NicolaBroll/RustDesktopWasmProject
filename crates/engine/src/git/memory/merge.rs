@@ -6,7 +6,7 @@
 //! (unlike the pull in rebase mode, which is aborted), **a conflict leaves the merge in progress**: files merged without conflicts are staged, those
 //! in conflict become `u` entries of the status (with markers in the worktree if the contents
 //! are known), `MERGE_HEAD` and `MERGE_MSG` are kept in [`MemoryMerge`]. The commit
-//! ([`GitBackend::commit`](crate::GitBackend::commit)) with a merge in progress creates the merge
+//! ([`GitIndex::commit`](crate::GitIndex::commit)) with a merge in progress creates the merge
 //! commit; the abort saves index and worktree in a stash-shaped backup commit and brings all the tracked
 //! files back to HEAD (stricter than `git merge --abort`, which keeps the unstaged changes of the
 //! files the merge did not touch: here they end up only in the backup).
@@ -15,7 +15,7 @@ use super::commit::Tree;
 use super::write::{TreeEntry, ZERO, entry_order, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend};
 use crate::git::{
-    BACKUP_PREFIX, GitBackend, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState,
+    BACKUP_PREFIX, GitRead, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState,
     PickKind, check_merge_state, check_merging, check_picking, split_message,
 };
 use crate::{EngineError, Message};
@@ -74,7 +74,7 @@ pub(super) fn merge_partial(base: &Tree, ours: &Tree, theirs: &Tree) -> (Tree, V
 }
 
 impl MemoryBackend {
-    /// [`GitBackend::merge`].
+    /// [`GitOperations::merge`].
     pub(super) fn merge_commit(
         &mut self,
         request: &MergeRequest,
@@ -302,13 +302,13 @@ impl MemoryBackend {
         });
     }
 
-    /// [`GitBackend::merge_abort`].
+    /// [`GitOperations::merge_abort`].
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         check_merging("merge.abort", &self.status()?)?;
         self.abort_operation("merge", "merge.abort")
     }
 
-    /// [`GitBackend::pick_abort`](crate::GitBackend::pick_abort).
+    /// [`GitOperations::pick_abort`](crate::GitOperations::pick_abort).
     pub(super) fn abort_pick(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
         check_picking(
             kind.abort_command(),
@@ -448,7 +448,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::operation_state`].
+    /// [`GitOperations::operation_state`].
     pub(super) fn operation_info(&self) -> OperationState {
         let merge = self.merge_state.as_ref().filter(|_| {
             matches!(

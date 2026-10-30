@@ -193,7 +193,7 @@ impl CliBackend {
 }
 
 impl CliBackend {
-    /// [`GitBackend::push`](project_engine::GitBackend::push).
+    /// [`GitRemotes::push`](project_engine::GitRemotes::push).
     pub(super) fn push_branch(
         &self,
         request: &PushRequest,
@@ -342,7 +342,7 @@ impl CliBackend {
 }
 
 impl CliBackend {
-    /// [`GitBackend::delete_remote_branch`](project_engine::GitBackend::delete_remote_branch).
+    /// [`GitRemotes::delete_remote_branch`](project_engine::GitRemotes::delete_remote_branch).
     pub(super) fn delete_branch_on_remote(
         &self,
         request: &RemoteBranchDelete,
@@ -369,7 +369,7 @@ impl CliBackend {
         )
     }
 
-    /// [`GitBackend::remote_tag`](project_engine::GitBackend::remote_tag): `git ls-remote --tags
+    /// [`GitRemotes::remote_tag`](project_engine::GitRemotes::remote_tag): `git ls-remote --tags
     /// --refs --end-of-options <remote> refs/tags/<name>`. `--refs` leaves out the peeled lines
     /// (`^{}`), so the value is the one the remote stores (the tag object of an annotated tag);
     /// the pattern matches the tail of the names, so only the line with exactly `refs/tags/<name>`
@@ -413,7 +413,7 @@ impl CliBackend {
         Ok(None)
     }
 
-    /// [`GitBackend::push_tag`](project_engine::GitBackend::push_tag): `git push --porcelain
+    /// [`GitRemotes::push_tag`](project_engine::GitRemotes::push_tag): `git push --porcelain
     /// --progress --no-follow-tags --recurse-submodules=check --end-of-options <remote>
     /// refs/tags/<name>:refs/tags/<name>`, never `--force`.
     pub(super) fn push_tag_to_remote(
@@ -505,7 +505,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::delete_remote_tag`](project_engine::GitBackend::delete_remote_tag).
+    /// [`GitRemotes::delete_remote_tag`](project_engine::GitRemotes::delete_remote_tag).
     pub(super) fn delete_tag_on_remote(
         &self,
         request: &RemoteTagDelete,

@@ -1,7 +1,7 @@
 //! `repo.search` on the [`MemoryBackend`]: the same rules as the `CliBackend`, in memory.
 
 use super::MemoryBackend;
-use crate::git::{GitBackend, SearchField, SearchQuery, path_matches};
+use crate::git::{GitRead, SearchField, SearchQuery, path_matches};
 use crate::{EngineError, JobContext};
 use project_domain::{Commit, Oid, RepoPath};
 use std::collections::BTreeMap;

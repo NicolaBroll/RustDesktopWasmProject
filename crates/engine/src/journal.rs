@@ -4,7 +4,7 @@
 //! `branch.*` commands; later merge, rebase, reset) leaves a [`JournalEntry`] with HEAD and the refs involved before and after.
 //! `edit.undo` brings the refs back to the "before" values and `edit.redo` to the "after" values, **only** if
 //! they still hold what the operation (or the undo) left them with: the backend checks it
-//! atomically ([`GitBackend::restore_refs`]) and otherwise gives
+//! atomically ([`GitRefs::restore_refs`](crate::GitRefs::restore_refs)) and otherwise gives
 //! [`EngineError::UndoConflict`] without touching anything; the entry stays in the journal.
 //!
 //! Choices:
@@ -18,15 +18,15 @@
 //!   move is in git's reflog (`project: undo ...`).
 //! - **`worktree.discard` enters the journal** even though it moves no refs: the entry has the worktree
 //!   backup ([`JournalEntry::worktree`], the `git stash create` commit) and `edit.undo` puts
-//!   the files back as they were ([`GitBackend::restore_worktree`]), only if in the meantime they have not
+//!   the files back as they were ([`GitIndex::restore_worktree`](crate::GitIndex::restore_worktree)), only if in the meantime they have not
 //!   changed; `edit.redo` discards them again, only if they are still as the undo left them.
 //! - **Branches.** `branch.create` and `branch.delete` are undone by moving the ref (deleted or
 //!   recreated on the previous commit, only if nobody touched it). `branch.checkout` and
-//!   `branch.rename`, instead, are undone with another checkout ([`GitBackend::checkout`]: never
+//!   `branch.rename`, instead, are undone with another checkout ([`GitRefs::checkout`](crate::GitRefs::checkout): never
 //!   forced, refused if it would overwrite changes) and another rename
-//!   ([`GitBackend::rename_branch`]), which also update worktree, reflog and configuration.
+//!   ([`GitRefs::rename_branch`](crate::GitRefs::rename_branch)), which also update worktree, reflog and configuration.
 //! - **`remote.pull` enters the journal** when it moves the branch ([`JournalEntry::pull`]): for the
-//!   active branch undo and redo go through [`GitBackend::reset_branch`] (like `git reset --keep`:
+//!   active branch undo and redo go through [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (like `git reset --keep`:
 //!   they update index and worktree, refuse if a file to restore has local changes), for
 //!   another branch they only move the ref. The fetch and the push do not.
 //! - **`merge.start` and `merge.continue` enter the journal** when the merge concludes
@@ -166,7 +166,7 @@ pub struct JournalEntry {
     #[serde(default)]
     pub stash: Option<StashRecord>,
     /// Only for `branch.reset`: the mode and the stash of a `hard` ([`ResetRecord`]). Undo and redo
-    /// go through [`GitBackend::reset`] with the same mode, strict (nothing may need a backup).
+    /// go through [`GitRefs::reset`](crate::GitRefs::reset) with the same mode, strict (nothing may need a backup).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<ResetRecord>,
 }
@@ -360,7 +360,7 @@ impl JournalEntry {
 
     /// The entry of a successful `branch.rename`: `from` became `to` (full names) on
     /// `target`; HEAD before and after (changes if it was the HEAD branch). Undo and redo rename
-    /// again ([`GitBackend::rename_branch`]), so reflog and configuration follow the branch.
+    /// again ([`GitRefs::rename_branch`](crate::GitRefs::rename_branch)), so reflog and configuration follow the branch.
     pub fn branch_rename(from: &str, to: &str, target: Oid, head: HeadChange) -> Self {
         Self::branch_entry(
             "branch.rename",
@@ -387,7 +387,7 @@ impl JournalEntry {
     }
 
     /// The entry of a successful `branch.checkout`: HEAD from `before` to `after`, no ref
-    /// moved. Undo and redo redo a safe checkout ([`GitBackend::checkout`]), which never
+    /// moved. Undo and redo redo a safe checkout ([`GitRefs::checkout`](crate::GitRefs::checkout)), which never
     /// overwrites local changes.
     pub fn checkout(before: HeadState, after: HeadState) -> Self {
         let name = |h: &HeadState| match h {
@@ -411,8 +411,8 @@ impl JournalEntry {
     /// from `before` to `after`; `head` is HEAD (same before and after: the branch itself if it was the
     /// active branch), `strategy` `fast_forward`/`merge`/`rebase`, `upstream` the remote-tracking branch
     /// (short name), `backup` the ref of the branch before the pull. Undo and redo of the active branch
-    /// go through [`GitBackend::reset_branch`] (they also update index and worktree, like
-    /// `git reset --keep`); of another branch through [`GitBackend::restore_refs`].
+    /// go through [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (they also update index and worktree, like
+    /// `git reset --keep`); of another branch through [`GitRefs::restore_refs`](crate::GitRefs::restore_refs).
     pub fn pull(
         branch: &str,
         before: Oid,
@@ -454,7 +454,7 @@ impl JournalEntry {
     /// the fast-forward one), HEAD same before and after; `strategy` `fast_forward`/`merge`,
     /// `source` the name of what was merged (`feature`, `origin/x`, an id), `backup` the ref
     /// of the branch before the merge (if saved). Undo and redo as for a pull of the active branch:
-    /// [`GitBackend::reset_branch`] (like `git reset --keep`).
+    /// [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (like `git reset --keep`).
     #[allow(clippy::too_many_arguments)]
     pub fn merge(
         command: &str,
@@ -497,7 +497,7 @@ impl JournalEntry {
     /// `cherry_pick.continue`, `revert.continue`): the branch `branch` (full name) from
     /// `before` to `after` (a new commit on top of `before`), HEAD same before and after; `source`
     /// the commit applied or undone, `backup` the ref of the branch before (if saved). Undo and
-    /// redo like the merge: [`GitBackend::reset_branch`] (like `git reset --keep`).
+    /// redo like the merge: [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (like `git reset --keep`).
     #[allow(clippy::too_many_arguments)]
     pub fn pick(
         command: &str,
@@ -538,7 +538,7 @@ impl JournalEntry {
     /// The entry of a concluded interactive rebase (`rebase.start`, or `rebase.continue`,
     /// `command`): the branch `branch` (full name) from `before` to `after`, HEAD same before and
     /// after; `commits` the commits of the range rewritten, `backup` the ref of the branch before.
-    /// Undo and redo like the merge: [`GitBackend::reset_branch`] (like `git reset --keep`).
+    /// Undo and redo like the merge: [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (like `git reset --keep`).
     pub fn rebase(
         command: &str,
         branch: &str,
@@ -573,7 +573,7 @@ impl JournalEntry {
     /// The entry of a successful `branch.reset`: HEAD (`head`, the same branch before and after,
     /// or detached from `before` to `after`) and, on a branch, the branch moved; `backup` the ref of
     /// the local changes saved by a `hard` (with `stash`, the `git stash create` commit). Undo and
-    /// redo go through [`GitBackend::reset`] with the same `mode`: index and worktree (for `mixed`
+    /// redo go through [`GitRefs::reset`](crate::GitRefs::reset) with the same `mode`: index and worktree (for `mixed`
     /// and `hard`) follow the ref, but only if nothing would need a new backup; the local
     /// changes overwritten by a `hard` stay in the backup (the undo says so).
     pub fn reset(
@@ -625,7 +625,7 @@ impl JournalEntry {
 
     /// True if the entry moves the HEAD branch with index and worktree (a pull of the active
     /// branch, a merge, a cherry-pick or revert): undo and redo use
-    /// [`GitBackend::reset_branch`].
+    /// [`GitRefs::reset_branch`](crate::GitRefs::reset_branch).
     fn moves_worktree(&self) -> bool {
         WORKTREE_COMMANDS.contains(&self.command.as_str())
             && matches!(&self.head.after, HeadState::Branch(b) if self.refs.len() == 1 && self.refs[0].name == *b)
@@ -1072,7 +1072,7 @@ impl JournalEntry {
     }
 
     /// For undo and redo of checkout and rename, which do not go through
-    /// [`GitBackend::restore_refs`]: the same checks ([`check_no_operation`], HEAD and the refs
+    /// [`GitRefs::restore_refs`](crate::GitRefs::restore_refs): the same checks ([`check_no_operation`], HEAD and the refs
     /// as the operation left them, otherwise [`EngineError::UndoConflict`]) before
     /// calling the backend, which re-checks the refs right before writing.
     fn check_unchanged(
@@ -1241,6 +1241,7 @@ impl Journal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::GitIndex;
     use crate::{CommitRequest, MemoryBackend};
 
     fn entry(n: u64) -> JournalEntry {

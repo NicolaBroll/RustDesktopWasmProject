@@ -15,7 +15,7 @@ use super::merge::merge_partial;
 use super::{HEADS, HeadRef, MemoryBackend};
 use crate::EngineError;
 use crate::git::{
-    BACKUP_PREFIX, GitBackend, MergeAborted, MergeOutcome, PickKind, RebaseRecord, RebaseRequest,
+    BACKUP_PREFIX, GitRead, MergeAborted, MergeOutcome, PickKind, RebaseRecord, RebaseRequest,
     check_rebase_request, check_rebase_state, cleanup_message, pick_message, split_message,
 };
 use project_domain::{Commit, Oid, Operation, RebaseAction, RebasePlan, Signature};
@@ -121,7 +121,7 @@ impl MemoryBackend {
         hit
     }
 
-    /// [`GitBackend::rebase`].
+    /// [`GitOperations::rebase`].
     pub(super) fn rebase_start(
         &mut self,
         request: &RebaseRequest,
@@ -308,7 +308,7 @@ impl MemoryBackend {
         tip
     }
 
-    /// [`GitBackend::rebase_continue`].
+    /// [`GitOperations::rebase_continue`].
     pub(super) fn rebase_go_on(&mut self) -> Result<MergeOutcome, EngineError> {
         let status = self.status()?;
         crate::git::merge::check_in_progress("rebase.continue", Operation::Rebase, &status)?;
@@ -362,7 +362,7 @@ impl MemoryBackend {
         Ok(outcome)
     }
 
-    /// [`GitBackend::rebase_abort`].
+    /// [`GitOperations::rebase_abort`].
     pub(super) fn rebase_stop(&mut self) -> Result<MergeAborted, EngineError> {
         crate::git::merge::check_in_progress("rebase.abort", Operation::Rebase, &self.status()?)?;
         let state = self.rebase_state.clone();

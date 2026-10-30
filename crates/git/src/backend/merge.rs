@@ -73,7 +73,7 @@ pub(super) fn oids(bytes: &[u8]) -> Vec<Oid> {
 }
 
 impl CliBackend {
-    /// [`GitBackend::merge`](project_engine::GitBackend::merge).
+    /// [`GitOperations::merge`](project_engine::GitOperations::merge).
     pub(super) fn merge_into_head(
         &mut self,
         request: &MergeRequest,
@@ -240,14 +240,14 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::merge_abort`](project_engine::GitBackend::merge_abort).
+    /// [`GitOperations::merge_abort`](project_engine::GitOperations::merge_abort).
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_merging("merge.abort", &status)?;
         self.abort_operation(&status, AbortTarget::MERGE, &[])
     }
 
-    /// [`GitBackend::pick_abort`](project_engine::GitBackend::pick_abort).
+    /// [`GitOperations::pick_abort`](project_engine::GitOperations::pick_abort).
     pub(super) fn abort_pick(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_picking(
@@ -493,7 +493,7 @@ impl CliBackend {
         )
     }
 
-    /// [`GitBackend::operation_state`](project_engine::GitBackend::operation_state): from the files
+    /// [`GitOperations::operation_state`](project_engine::GitOperations::operation_state): from the files
     /// of the git folder (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_MSG`,
     /// `rebase-merge/` or `rebase-apply/` with `onto` and `head-name`).
     pub(super) fn read_operation_state(&self) -> OperationState {

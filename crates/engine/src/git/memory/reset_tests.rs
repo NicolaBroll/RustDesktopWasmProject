@@ -1,9 +1,9 @@
-//! [`GitBackend::reset`] on the [`MemoryBackend`]: the checks between the command and the write
+//! [`GitRefs::reset`] on the [`MemoryBackend`]: the checks between the command and the write
 //! and the undo/redo refusals (the command flow is in `builtin/reset_tests.rs`).
 
 use crate::{
-    EngineError, GitBackend, HeadState, Journal, JournalEntry, MemoryBackend, RefMove, RefRestore,
-    ResetMode, ResetRequest, reset_files,
+    EngineError, GitIndex, GitRead, GitRefs, HeadState, Journal, JournalEntry, MemoryBackend,
+    RefMove, RefRestore, ResetMode, ResetRequest, reset_files,
 };
 use project_domain::{Change, Conflict, EntryKind, Oid, RepoPath, StatusEntry, UnmergedInfo};
 

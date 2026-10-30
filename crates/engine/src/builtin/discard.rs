@@ -40,7 +40,7 @@ pub struct DiscardParams {
 
 /// Discards the unstaged changes of the files `paths` (files or folders): the worktree goes back
 /// to the index, the index is not touched (see
-/// [`GitBackend::discard`](crate::GitBackend::discard) and [`discard_plan`]: untracked files are
+/// [`GitIndex::discard`](crate::GitIndex::discard) and [`discard_plan`]: untracked files are
 /// never touched). Needs `"confirm": true`: without it, [`EngineError::ConfirmRequired`] with the files
 /// that would be lost and nothing changes (the refusals of [`discard_plan`] come first). Before
 /// writing, the worktree is saved with `git stash create` in `refs/project/backup/discard-...`;

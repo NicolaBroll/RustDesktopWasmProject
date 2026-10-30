@@ -1,7 +1,7 @@
 //! Commands of the local tags: `tag.create`, `tag.delete`. The checks that do not depend on the
 //! backend are here; the writes are in the backends
-//! ([`GitBackend::create_tag`](crate::GitBackend::create_tag),
-//! [`GitBackend::delete_tag`](crate::GitBackend::delete_tag)). Both enter the journal: `edit.undo`
+//! ([`GitRefs::create_tag`](crate::GitRefs::create_tag),
+//! [`GitRefs::delete_tag`](crate::GitRefs::delete_tag)). Both enter the journal: `edit.undo`
 //! deletes the created tag or recreates the deleted one on the same value (§7).
 
 use super::{JournalState, Out, reread, to_json};
@@ -71,7 +71,7 @@ pub struct TagDeleteResult {
 
 /// Creates the tag `name` on `target` (a rev: id, also abbreviated, branch, remote branch or tag;
 /// HEAD if missing): annotated with `message` (not empty after trimming), lightweight without (see
-/// [`GitBackend::create_tag`](crate::GitBackend::create_tag)). An existing tag is never
+/// [`GitRefs::create_tag`](crate::GitRefs::create_tag)). An existing tag is never
 /// overwritten. The operation goes into the journal: `edit.undo` deletes the tag, only if in the
 /// meantime it was not moved.
 ///
@@ -147,7 +147,7 @@ pub struct TagDeleteParams {
 /// [`EngineError::NotAllowed`] and nothing changes. Before deleting, the value as git stores
 /// it (the tag object of an annotated tag, the commit of a lightweight one) is saved in
 /// `refs/project/backup/tag-delete-...`; if the backup fails nothing is deleted (see
-/// [`GitBackend::delete_tag`](crate::GitBackend::delete_tag)). The remote is not touched. The
+/// [`GitRefs::delete_tag`](crate::GitRefs::delete_tag)). The remote is not touched. The
 /// operation goes into the journal: `edit.undo` recreates the tag on the same value, only if in the
 /// meantime nobody created one with that name.
 ///

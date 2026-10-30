@@ -483,7 +483,7 @@ fn to_json(value: impl Serialize) -> Value {
 /// opened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepoOpenResult {
-    /// The worktree root, absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same
+    /// The worktree root, absolute ([`GitRead::root`](crate::GitRead::root)), so the same
     /// repo opened from a subfolder or a relative path gives the same path; the given path if
     /// the backend has none.
     pub path: String,
@@ -783,7 +783,7 @@ mod snapshot_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend, MemoryOpener};
+    use crate::{GitRead, MemoryBackend, MemoryOpener};
     use project_domain::{CommitDetails, RefInfo, Status};
     use serde_json::json;
     use std::sync::Arc;

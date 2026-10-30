@@ -17,7 +17,7 @@ use crate::git::{
     PushOutcome, PushRejection, PushRequest, RebaseRecord, RefRestore, RemoteBranchDelete,
     RemoteBranchDeleted, RestoreOutcome, UpstreamConfig, check_pull_state,
 };
-use crate::{EngineError, FetchFailure, GitBackend, JobContext, Progress};
+use crate::{EngineError, FetchFailure, GitRead, JobContext, Progress};
 use project_domain::{Commit, Oid, Signature};
 use std::collections::BTreeSet;
 
@@ -40,7 +40,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::config_values`]: the keys set with [`MemoryBackend::set_config`];
+    /// [`GitRead::config_values`]: the keys set with [`MemoryBackend::set_config`];
     /// `remote.<name>.url` is the URL of the remote ([`MemoryBackend::add_remote`]) and
     /// `remote.<name>.fetch` of a remote without values has the default refspec
     /// (`+refs/heads/*:refs/remotes/<name>/*`).
@@ -320,7 +320,7 @@ impl MemoryBackend {
         backup
     }
 
-    /// [`GitBackend::reset_branch`]: undo and redo of a pull of the active branch.
+    /// [`GitRefs::reset_branch`]: undo and redo of a pull of the active branch.
     pub(super) fn reset_keep(
         &mut self,
         request: &RefRestore,
@@ -503,7 +503,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::delete_remote_branch`]: with the same lease as the `CliBackend` (a branch
+    /// [`GitRemotes::delete_remote_branch`]: with the same lease as the `CliBackend` (a branch
     /// moved or already gone on the remote → `stale info`), the backup first and the local
     /// remote-tracking branch removed after.
     pub(super) fn delete_branch_on_remote(

@@ -91,7 +91,7 @@ impl CommitRequest {
     }
 }
 
-/// Result of [`GitBackend::commit`](crate::GitBackend::commit). `commit.create` adds the
+/// Result of [`GitIndex::commit`](crate::GitIndex::commit). `commit.create` adds the
 /// state (`status`).
 ///
 /// It has the before and after values needed by the operation journal (§7): the moved ref
@@ -278,7 +278,7 @@ pub fn split_message(message: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
     use project_domain::{Change, RepoPath, StatusEntry};
 
     #[test]

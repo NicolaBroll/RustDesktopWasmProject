@@ -9,7 +9,7 @@ mod common;
 use common::Repo;
 use project_domain::Oid;
 use project_engine::{
-    EngineError, GitBackend, JobContext, PushRejection, Registry, RemoteTagDelete, Session,
+    EngineError, GitRemotes, JobContext, PushRejection, Registry, RemoteTagDelete, Session,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;

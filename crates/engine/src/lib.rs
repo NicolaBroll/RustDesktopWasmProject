@@ -63,7 +63,8 @@ pub use builtin::{
 pub use commands::{Access, CommandSpec, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HEADS_PREFIX, HeadState,
+    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
+    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
     LinePatch, LineSelection, LogQuery, RefMove, RefRestore, RepoOpener, RestoreOutcome,
     SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore, amend_impact,
     apply_patch, backup_message, branch_ref, branch_short, check_amend_published,

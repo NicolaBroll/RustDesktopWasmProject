@@ -12,14 +12,14 @@
 use super::merge::{MemoryMerge, merge_partial};
 use super::{HEADS, HeadRef, MemoryBackend};
 use crate::EngineError;
-use crate::git::GitBackend;
+use crate::git::GitRead;
 use crate::git::{
     BACKUP_PREFIX, MergeOutcome, PickKind, PickRequest, check_pick_state, pick_empty_error,
     split_message,
 };
 
 impl MemoryBackend {
-    /// [`GitBackend::pick`](crate::GitBackend::pick).
+    /// [`GitOperations::pick`](crate::GitOperations::pick).
     pub(super) fn pick_commit(
         &mut self,
         request: &PickRequest,

@@ -123,10 +123,10 @@ use project_domain::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// An open repository: reads and, one step at a time, writes (stage and unstage for now).
+/// Reading: refs, history, status, diffs, blame, configuration. Never writes. Part of
 ///
-/// `Send` because the session may move it to a worker thread for slow commands (§6).
-pub trait GitBackend: Send {
+/// [`GitBackend`].
+pub trait GitRead {
     /// Where HEAD points.
     fn head(&self) -> Result<Head, EngineError>;
 
@@ -144,7 +144,7 @@ pub trait GitBackend: Send {
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
 
     /// All the commits that match `query` (`repo.search`), in the order of
-    /// [`GitBackend::log`] over [`SearchQuery::range`]: the text literally in any of the fields
+    /// [`GitRead::log`] over [`SearchQuery::range`]: the text literally in any of the fields
     /// (OR), only among the commits that touch `query.path` if given. Slow on long histories:
     /// `job` cancels it ([`EngineError::Cancelled`]). HEAD without commits (without `all`) →
     /// empty.
@@ -154,7 +154,7 @@ pub trait GitBackend: Send {
     fn status(&self) -> Result<Status, EngineError>;
 
     /// Metadata and changed files of the commit `rev` leads to (an id, also abbreviated, or
-    /// any rev accepted by [`GitBackend::log`]). The files are compared with the **first
+    /// any rev accepted by [`GitRead::log`]). The files are compared with the **first
     /// parent**, also for merges (the files the merge brought into the branch); a root commit is
     /// compared with the empty tree. Renames are detected. A `rev` that does not
     /// resolve to a commit gives [`EngineError::UnknownRev`].
@@ -169,7 +169,7 @@ pub trait GitBackend: Send {
     ///
     /// There is no size limit: the diff of a huge commit is all in memory. For
     /// large commits it is better to ask for one file at a time (the list comes from
-    /// [`GitBackend::show_commit`]). For [`DiffSpec::Commit`] a `rev` that does not resolve to
+    /// [`GitRead::show_commit`]). For [`DiffSpec::Commit`] a `rev` that does not resolve to
     /// a commit gives [`EngineError::UnknownRev`].
     fn diff(&self, spec: &DiffSpec) -> Result<Diff, EngineError>;
 
@@ -198,20 +198,24 @@ pub trait GitBackend: Send {
         None
     }
 
-    /// Whether the repo has a commit-graph git reads (`repo.open`, `repo.optimize`): a graph in
-    /// the object directory or in an alternate, and `core.commitGraph`. Cheap (no walk).
-    fn commit_graph(&self) -> Result<CommitGraphState, EngineError>;
+    /// How many commits reachable from `tip` are reachable from none of `into` (`git rev-list
+    /// --count <tip> ^<into>...`): 0 means `tip` is merged. A read, for the confirmation of
+    /// `branch.delete`.
+    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError>;
 
-    /// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`,
-    /// `repo.optimize`) into the repo's own object directory, replacing the one there. A cache
-    /// derived from the objects: no ref, index or worktree changes. Slow on huge repos (~19 s
-    /// on the Linux kernel): progress goes to `job`, a cancelled `job` stops git
-    /// ([`EngineError::Cancelled`]).
-    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError>;
+    /// All the values of the configuration key `key` (all sources, as git reads it:
+    /// `git config --get-all`), in order; empty if none. A read. The keys are
+    /// built by the engine from already checked names (e.g. `branch.<name>.pushRemote`,
+    /// `remote.<name>.fetch`).
+    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError>;
+}
 
-    // --- Writes: they change the repo. They take `&mut self` because the `MemoryBackend` holds the
-    // state itself; a read done afterwards always sees the new state.
-    //
+/// Index and worktree: stage, unstage, commit, discard and their restores. Part of
+/// [`GitBackend`].
+///
+/// Writes (here and in the other traits) take `&mut self` because the `MemoryBackend` holds the
+/// state itself; a read done afterwards always sees the new state.
+pub trait GitIndex {
     // Stage and unstage return the name of the backup ref (`refs/project/backup/...`) if
     // before writing they saved staged versions that existed only in the index
     // ([`versions_at_risk`]); if the backup fails the index is not touched and the result is
@@ -247,9 +251,9 @@ pub trait GitBackend: Send {
     /// added file becomes untracked again), like `git restore --staged`. On a branch without
     /// commits the index becomes empty for those paths. **Never touches the worktree.**
     ///
-    /// - Literal paths, folders included, as in [`GitBackend::stage`].
+    /// - Literal paths, folders included, as in [`GitIndex::stage`].
     /// - A conflicted file gives [`EngineError::NotAllowed`]: removing the conflict stages
-    ///   from the index would lose their versions; it is resolved with [`GitBackend::stage`].
+    ///   from the index would lose their versions; it is resolved with [`GitIndex::stage`].
     /// - A path unknown to git (neither in HEAD nor in the index) gives an error and nothing changes.
     /// - Empty `paths` does nothing.
     fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
@@ -287,24 +291,6 @@ pub trait GitBackend: Send {
     /// no invented name.
     fn commit(&mut self, request: &CommitRequest) -> Result<CommitOutcome, EngineError>;
 
-    /// Moves HEAD and the refs as `request` asks (`edit.undo` and `edit.redo`, §7): all together
-    /// or none, and **only** if `expected` holds now. Index and worktree are not touched.
-    /// Returns the backup refs created.
-    ///
-    /// Before writing: [`RefRestore::check`] (operations in progress, names, unsupported
-    /// HEAD changes); then HEAD and the current refs compared with `expected`
-    /// ([`RefRestore::conflicts`]): if something changed from outside,
-    /// [`EngineError::UndoConflict`] and nothing changes. Every commit of
-    /// [`RefRestore::abandoned`] that afterwards would no longer be reachable from the new values
-    /// or from other refs (backups included) is saved in `refs/project/backup/<undo|redo>-...`;
-    /// if the backup fails nothing is moved. The `CliBackend` writes with a single
-    /// `git update-ref --stdin` transaction (`start`, `update`/`create`/`delete` with the old
-    /// value, `commit`) and the message `request.reflog`; if the transaction fails because
-    /// a ref changed in the meantime, again [`EngineError::UndoConflict`]. A problem
-    /// found after a successful transaction (HEAD changed by another process at exactly
-    /// that instant) goes in [`RestoreOutcome::warnings`].
-    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
-
     /// Discards the unstaged changes of the files `paths` (`worktree.discard`, §7): the worktree
     /// goes back as the index, like `git restore --worktree`. **The index is not touched.**
     ///
@@ -338,16 +324,33 @@ pub trait GitBackend: Send {
         &mut self,
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
+}
 
-    // --- Branches (S24). Names are short (`feature/x`), already checked by the command with
-    // [`check_branch_name`] / [`check_new_branch_name`]; backends receive them only as
-    // `refs/heads/<name>` or after `--end-of-options`, so a name starting with `-` does not
-    // become an option.
-
-    /// How many commits reachable from `tip` are reachable from none of `into` (`git rev-list
-    /// --count <tip> ^<into>...`): 0 means `tip` is merged. A read, for the confirmation of
-    /// `branch.delete`.
-    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError>;
+/// Refs and journal: branches, tags, checkout, reset, and the ref restores of undo/redo. Part
+/// of [`GitBackend`].
+///
+/// Branch names are short (`feature/x`), already checked by the command with
+/// [`check_branch_name`] / [`check_new_branch_name`]; backends receive them only as
+/// `refs/heads/<name>` or after `--end-of-options`, so a name starting with `-` does not become an
+/// option.
+pub trait GitRefs {
+    /// Moves HEAD and the refs as `request` asks (`edit.undo` and `edit.redo`, §7): all together
+    /// or none, and **only** if `expected` holds now. Index and worktree are not touched.
+    /// Returns the backup refs created.
+    ///
+    /// Before writing: [`RefRestore::check`] (operations in progress, names, unsupported
+    /// HEAD changes); then HEAD and the current refs compared with `expected`
+    /// ([`RefRestore::conflicts`]): if something changed from outside,
+    /// [`EngineError::UndoConflict`] and nothing changes. Every commit of
+    /// [`RefRestore::abandoned`] that afterwards would no longer be reachable from the new values
+    /// or from other refs (backups included) is saved in `refs/project/backup/<undo|redo>-...`;
+    /// if the backup fails nothing is moved. The `CliBackend` writes with a single
+    /// `git update-ref --stdin` transaction (`start`, `update`/`create`/`delete` with the old
+    /// value, `commit`) and the message `request.reflog`; if the transaction fails because
+    /// a ref changed in the meantime, again [`EngineError::UndoConflict`]. A problem
+    /// found after a successful transaction (HEAD changed by another process at exactly
+    /// that instant) goes in [`RestoreOutcome::warnings`].
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
 
     /// Creates the local branch `name` on commit `target` (`branch.create`), **only if it does not
     /// exist** (`update-ref refs/heads/<name> <id> ""`: an existing ref is never
@@ -396,7 +399,7 @@ pub trait GitBackend: Send {
     /// configuration (upstream, ...), like `git branch -d`. Rejected
     /// ([`EngineError::NotAllowed`], nothing changes) if it is the branch of HEAD or if it is open in
     /// another worktree, or if `expected` no longer holds. The "merged or not" check is done by the command
-    /// ([`GitBackend::unmerged_count`]).
+    /// ([`GitRead::unmerged_count`]).
     fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError>;
 
     /// Renames the local branch `from` to `to` (`branch.rename` and its undo/redo), only if
@@ -412,6 +415,7 @@ pub trait GitBackend: Send {
         to: &str,
         expected: &Oid,
     ) -> Result<RestoreOutcome, EngineError>;
+
     /// The repo's `branch.<name>.*` configuration for undo and redo of `branch.delete`, after
     /// the ref was recreated or deleted. `remove == false` (undo): writes `entries` back,
     /// only if the repo has no `branch.<name>.*` entries yet (otherwise it writes nothing and says so
@@ -426,6 +430,35 @@ pub trait GitBackend: Send {
         remove: bool,
     ) -> Vec<Message>;
 
+    /// Undo and redo of a pull on the active branch: like [`GitRefs::restore_refs`] (a single ref,
+    /// the branch of HEAD, from `expected` to `target`, with the same checks and the backups of
+    /// abandoned commits), but it also updates index and worktree like `git reset --keep`: the
+    /// files that differ between the two commits go back as in `target`, only if they have no local
+    /// changes (otherwise [`EngineError::NotAllowed`] and nothing changes); the other changes
+    /// stay. It never overwrites an untracked or ignored file.
+    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
+
+    // --- Reset (S45, `impl-docs/git/reset.md`).
+
+    /// Moves the branch of HEAD (or a detached HEAD) like `git reset --<mode>`
+    /// (`branch.reset`, and its undo and redo). Before writing, without changing anything:
+    /// no operation in progress, the target is a commit, HEAD and the branch still hold the
+    /// expected values of `request.refs` ([`EngineError::UndoConflict`] for undo/redo,
+    /// [`EngineError::NotAllowed`] for `branch.reset`); for `hard` the plan
+    /// ([`reset_files`]) is the confirmed one and no untracked or ignored file is where the
+    /// target puts a file. Then the backups: `mixed` the staged versions that exist only in the
+    /// index (`refs/project/backup/index-...`), `hard` the local changes (`git stash create` and
+    /// byte for byte, `refs/project/backup/reset-...`); the commits no longer reachable as for
+    /// [`GitRefs::restore_refs`]. If a backup fails nothing is written. The ref moves with
+    /// the old value checked by git; then index (`mixed`, `hard`) and worktree (`hard`). An
+    /// error after the ref move names the backups. With `request.strict` (undo/redo) nothing may
+    /// need an index or worktree backup ([`strict_conflicts`]).
+    fn reset(&mut self, request: &ResetRequest) -> Result<ResetOutcome, EngineError>;
+}
+
+/// Remotes: fetch, pull, push, remote branches and tags, remote configuration. Part of
+/// [`GitBackend`].
+pub trait GitRemotes {
     /// The names of the configured remotes (`git remote`), in name order. A read.
     fn remotes(&self) -> Result<Vec<String>, EngineError>;
 
@@ -457,12 +490,6 @@ pub trait GitBackend: Send {
     /// or `pull.rebase`, `pull.ff`), with the values as written. A read.
     fn pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError>;
 
-    /// All the values of the configuration key `key` (all sources, as git reads it:
-    /// `git config --get-all`), in order; empty if none. A read. The keys are
-    /// built by the engine from already checked names (e.g. `branch.<name>.pushRemote`,
-    /// `remote.<name>.fetch`).
-    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError>;
-
     /// At most `limit` commits reachable from `tip` but from none of `exclude`, most recent first
     /// (`git log <tip> --not <exclude>...`). A read: for the confirmation of a force push (the
     /// commits the remote would lose).
@@ -481,20 +508,12 @@ pub trait GitBackend: Send {
     /// active branch: `git merge --ff-only`, which does not overwrite local changes
     /// ([`EngineError::NotAllowed`] with the files, nothing changes); of another branch:
     /// `update-ref` with the old value. Merge and rebase: never `--autostash`. A **merge**
-    /// that stops (conflicts, hooks, signing) **stays in progress** as with [`GitBackend::merge`]:
+    /// that stops (conflicts, hooks, signing) **stays in progress** as with [`GitOperations::merge`]:
     /// [`PullOutcome::in_progress`] with the conflicted files, the branch as it was and the backup
     /// kept. A **rebase** that stops stays in progress too, with its [`RebaseRecord`] (command
     /// `remote.pull`): `rebase.continue` concludes it with the pull's journal entry. It is not
     /// cancelled midway: the fetch, which can be cancelled, is already done.
     fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError>;
-
-    /// Undo and redo of a pull on the active branch: like [`GitBackend::restore_refs`] (a single ref,
-    /// the branch of HEAD, from `expected` to `target`, with the same checks and the backups of
-    /// abandoned commits), but it also updates index and worktree like `git reset --keep`: the
-    /// files that differ between the two commits go back as in `target`, only if they have no local
-    /// changes (otherwise [`EngineError::NotAllowed`] and nothing changes); the other changes
-    /// stay. It never overwrites an untracked or ignored file.
-    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError>;
 
     /// Publishes the branch to the remote (`remote.push`, slow like the fetch: progress and
     /// cancellation from `job`): only `refs/heads/<branch>:refs/heads/<remote_branch>`, never tags
@@ -513,7 +532,7 @@ pub trait GitBackend: Send {
     /// `--mirror`). Before the push it saves `request.expected` in a backup ref
     /// `refs/project/backup/push-delete-...` (removed if the push is rejected or fails before
     /// starting); git then removes the local remote-tracking branch. Errors as
-    /// [`GitBackend::push`]: rejected (lease, `pre-push` hook, remote, branch already gone) →
+    /// [`GitRemotes::push`]: rejected (lease, `pre-push` hook, remote, branch already gone) →
     /// [`EngineError::PushRejected`]; credentials → [`EngineError::Auth`]; remote not
     /// reachable → [`EngineError::RemoteUnreachable`]; cancelled → [`EngineError::Cancelled`]
     /// (the backup stays: the remote may have already deleted the branch).
@@ -526,7 +545,7 @@ pub trait GitBackend: Send {
     /// The value of `refs/tags/<name>` on the remote `remote` (`git ls-remote`, slow: it contacts
     /// the remote; cancellation from `job`), as the remote stores it: the tag object of an annotated
     /// tag, not the peeled commit. `None` if the remote does not have it. Errors as
-    /// [`GitBackend::fetch`]: [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
+    /// [`GitRemotes::fetch`]: [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
     /// [`EngineError::Cancelled`]. A read.
     fn remote_tag(
         &self,
@@ -539,17 +558,17 @@ pub trait GitBackend: Send {
     /// push): only `refs/tags/<name>:refs/tags/<name>`, never `--force` (a tag already on the
     /// remote with another value → [`EngineError::PushRejected`] with
     /// [`PushRejection::TagExists`]); the same value already there is a success with
-    /// `up_to_date`. Other errors as [`GitBackend::push`].
+    /// `up_to_date`. Other errors as [`GitRemotes::push`].
     fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError>;
 
     /// Deletes the tag `request.name` from the remote (`remote.delete_tag`), like
-    /// [`GitBackend::delete_remote_branch`]: always with
+    /// [`GitRemotes::delete_remote_branch`]: always with
     /// `--force-with-lease=refs/tags/<name>:<expected>`, after saving `request.expected` in a backup ref
     /// `refs/project/backup/push-delete-...`. If the object is not here it is first fetched from the
     /// remote straight into the backup ref (only that ref: no tags, no `FETCH_HEAD`), which must then
     /// equal `expected` (otherwise [`EngineError::PushRejected`] with
     /// [`PushRejection::StaleLease`], nothing deleted). If the backup cannot be made nothing is
-    /// deleted. Backup removal and errors as [`GitBackend::delete_remote_branch`].
+    /// deleted. Backup removal and errors as [`GitRemotes::delete_remote_branch`].
     fn delete_remote_tag(
         &mut self,
         request: &RemoteTagDelete,
@@ -580,7 +599,7 @@ pub trait GitBackend: Send {
     /// removed, so a problem here is not an error of the operation.
     fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message>;
 
-    /// The opposite of [`GitBackend::remove_remote_config`] (after [`restore_remote`] put the
+    /// The opposite of [`GitRemotes::remove_remote_config`] (after [`restore_remote`] put the
     /// remote branches back): writes back `snapshot.config`, the symbolic ref, the entries of
     /// `snapshot.upstreams` and `remote.pushDefault` if `snapshot.push_default`. Returns the
     /// warnings.
@@ -591,7 +610,10 @@ pub trait GitBackend: Send {
     /// origin: `remote.remove` rejects them, because it would remove only part of the remote.
     /// A read.
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError>;
+}
 
+/// Stash: list, push, apply, drop, store. Part of [`GitBackend`].
+pub trait GitStash {
     // --- Stash (S28). A stash always arrives as an id: the position `stash@{n}` changes on every
     // push and drop, and the backend recomputes it right before writing.
 
@@ -624,7 +646,11 @@ pub trait GitBackend: Send {
     /// Puts commit `id` back at the top of the stash list with the message `message`
     /// (`git stash store`): the undo of `stash.drop`. Index and worktree are not touched.
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError>;
+}
 
+/// Operations in progress: merge, cherry-pick, revert, rebase and the conflict editor. Part of
+/// [`GitBackend`].
+pub trait GitOperations {
     // --- Merge (S29). The command resolves the rev, picks the mode and checks the state
     // ([`check_merge_state`]); the backend rechecks before writing.
 
@@ -665,7 +691,7 @@ pub trait GitBackend: Send {
     fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError>;
 
     /// Aborts the cherry-pick or revert in progress (`git cherry-pick --abort`, `git revert
-    /// --abort`) like [`GitBackend::merge_abort`]: first it saves index and worktree in a new
+    /// --abort`) like [`GitOperations::merge_abort`]: first it saves index and worktree in a new
     /// ref `refs/project/backup/<cherry-pick|revert>-abort-...`; if the backup fails nothing
     /// is aborted. It rejects ([`check_picking`]) another operation or a sequence of several
     /// commits started from the terminal. The command asks for confirmation.
@@ -709,7 +735,7 @@ pub trait GitBackend: Send {
 
     /// Resolves the conflict of `request.path` (`conflict.resolve`): writes `request.content`
     /// to the worktree (or deletes the file if `None`) and stages it like
-    /// [`GitBackend::stage`] of that single path. Before writing, without changing anything:
+    /// [`GitIndex::stage`] of that single path. Before writing, without changing anything:
     /// [`check_conflict`], [`check_digest`] on the worktree bytes read now
     /// ([`EngineError::StaleDiff`]), locked index ([`EngineError::IndexLocked`]); then the
     /// backup of the worktree bytes (if the file exists) in `refs/project/backup/conflict-...`: if it
@@ -718,26 +744,48 @@ pub trait GitBackend: Send {
         &mut self,
         request: &ConflictResolution,
     ) -> Result<ConflictResolved, EngineError>;
-
-    // --- Reset (S45, `impl-docs/git/reset.md`).
-
-    /// Moves the branch of HEAD (or a detached HEAD) like `git reset --<mode>`
-    /// (`branch.reset`, and its undo and redo). Before writing, without changing anything:
-    /// no operation in progress, the target is a commit, HEAD and the branch still hold the
-    /// expected values of `request.refs` ([`EngineError::UndoConflict`] for undo/redo,
-    /// [`EngineError::NotAllowed`] for `branch.reset`); for `hard` the plan
-    /// ([`reset_files`]) is the confirmed one and no untracked or ignored file is where the
-    /// target puts a file. Then the backups: `mixed` the staged versions that exist only in the
-    /// index (`refs/project/backup/index-...`), `hard` the local changes (`git stash create` and
-    /// byte for byte, `refs/project/backup/reset-...`); the commits no longer reachable as for
-    /// [`GitBackend::restore_refs`]. If a backup fails nothing is written. The ref moves with
-    /// the old value checked by git; then index (`mixed`, `hard`) and worktree (`hard`). An
-    /// error after the ref move names the backups. With `request.strict` (undo/redo) nothing may
-    /// need an index or worktree backup ([`strict_conflicts`]).
-    fn reset(&mut self, request: &ResetRequest) -> Result<ResetOutcome, EngineError>;
 }
 
-/// What to compare in [`GitBackend::diff`]: parameters of `diff.worktree`, `diff.index` and
+/// Maintenance: the commit-graph. Part of [`GitBackend`].
+pub trait GitMaintenance {
+    /// Whether the repo has a commit-graph git reads (`repo.open`, `repo.optimize`): a graph in
+    /// the object directory or in an alternate, and `core.commitGraph`. Cheap (no walk).
+    fn commit_graph(&self) -> Result<CommitGraphState, EngineError>;
+
+    /// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`,
+    /// `repo.optimize`) into the repo's own object directory, replacing the one there. A cache
+    /// derived from the objects: no ref, index or worktree changes. Slow on huge repos (~19 s
+    /// on the Linux kernel): progress goes to `job`, a cancelled `job` stops git
+    /// ([`EngineError::Cancelled`]).
+    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError>;
+}
+
+/// An open repository: the union of the traits by area ([`GitRead`], [`GitIndex`], [`GitRefs`],
+/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`]). Every type that
+/// implements all of them is a `GitBackend` (blanket impl); `Session` and the commands hold a
+/// `Box<dyn GitBackend>`. A caller with a concrete backend (`MemoryBackend`, `CliBackend`)
+/// imports the traits of the methods it calls.
+///
+/// `Send` because the session may move it to a worker thread for slow commands (§6).
+pub trait GitBackend:
+    GitRead + GitIndex + GitRefs + GitRemotes + GitStash + GitOperations + GitMaintenance + Send
+{
+}
+
+impl<T> GitBackend for T where
+    T: GitRead
+        + GitIndex
+        + GitRefs
+        + GitRemotes
+        + GitStash
+        + GitOperations
+        + GitMaintenance
+        + Send
+        + ?Sized
+{
+}
+
+/// What to compare in [`GitRead::diff`]: parameters of `diff.worktree`, `diff.index` and
 /// `diff.commit` (§4). `path`, if present, limits the diff to that file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffSpec {
@@ -749,7 +797,7 @@ pub enum DiffSpec {
     Index { path: Option<RepoPath> },
     /// The commit `rev` leads to relative to the **first parent**, also for merges; a
     /// root commit relative to the empty tree. The same files as
-    /// [`GitBackend::show_commit`].
+    /// [`GitRead::show_commit`].
     Commit { rev: String, path: Option<RepoPath> },
 }
 

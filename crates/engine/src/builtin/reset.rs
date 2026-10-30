@@ -261,7 +261,7 @@ pub(super) fn branch_reset_preview(
 }
 
 /// Moves the branch of HEAD (or a detached HEAD) to `target`, like `git reset --<mode>` (see
-/// [`GitBackend::reset`] and `impl-docs/git/reset.md`): `soft` only the
+/// [`GitRefs::reset`](crate::GitRefs::reset) and `impl-docs/git/reset.md`): `soft` only the
 /// ref, `mixed` also the index (the staged versions that exist only there first saved in
 /// `refs/project/backup/index-...`), `hard` also the worktree of the tracked files. Untracked
 /// and ignored files are never touched.

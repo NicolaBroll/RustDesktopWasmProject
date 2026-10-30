@@ -6,7 +6,7 @@ mod common;
 
 use common::Repo;
 use project_domain::RepoPath;
-use project_engine::GitBackend;
+use project_engine::{GitIndex, GitRead};
 
 #[test]
 fn inherited_config_cannot_redirect_writes() {

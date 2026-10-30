@@ -129,7 +129,7 @@ branch called `--force` or `-d` never becomes an option (tests with such names).
   would be refused until one goes back to the branch by hand. The entry has no refs (no ref
   moves), only HEAD before and after. The undo does **not** use `update-ref` (`RefRestore::check`
   keeps refusing a change of HEAD's branch: it would leave the worktree of the
-  previous branch), but another equally safe checkout (`GitBackend::checkout` toward HEAD before,
+  previous branch), but another equally safe checkout (`GitRefs::checkout` toward HEAD before,
   branch or detached commit), only if HEAD is still the one left by the checkout
   (`UndoConflict` otherwise); if local changes would prevent it, `CheckoutConflict` and the
   entry stays. The redo likewise. A checkout that leaves a branch without
@@ -172,7 +172,7 @@ branch called `--force` or `-d` never becomes an option (tests with such names).
   `update-ref`, `git branch -m` also moves the reflog and the `branch.<name>` section and updates HEAD
   (also of other worktrees). Entry: old from `<id>` to absent, new from absent to `<id>`, HEAD
   before and after (changes if it was the active branch). Undo and redo do not go through `restore_refs` but
-  through `GitBackend::rename_branch` in reverse, after the same checks (operation in progress,
+  through `GitRefs::rename_branch` in reverse, after the same checks (operation in progress,
   HEAD and the two refs as the operation left them, otherwise `UndoConflict`). Limit: the undo
   of the rename of a branch with a name git no longer accepts (e.g. `-x` → `y`) is refused,
   because the undo's new name (`-x`) does not pass the new-name check.

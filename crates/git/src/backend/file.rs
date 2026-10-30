@@ -60,7 +60,7 @@ impl CliBackend {
         Ok(Err((output, error)))
     }
 
-    /// [`GitBackend::blame`](project_engine::GitBackend::blame).
+    /// [`GitRead::blame`](project_engine::GitRead::blame).
     pub(super) fn blame_file(
         &self,
         query: &BlameQuery,
@@ -113,7 +113,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::file_log`](project_engine::GitBackend::file_log).
+    /// [`GitRead::file_log`](project_engine::GitRead::file_log).
     pub(super) fn log_file(
         &self,
         query: &FileLogQuery,

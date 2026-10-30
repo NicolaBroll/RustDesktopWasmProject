@@ -46,8 +46,8 @@ pub(super) fn repo_init(s: &mut Session, request: InitRequest) -> Out {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CancelToken, EngineError, GitBackend as _, JobContext, LogQuery, MemoryBackend,
-        MemoryOpener, Registry, Session,
+        CancelToken, EngineError, GitRead as _, JobContext, LogQuery, MemoryBackend, MemoryOpener,
+        Registry, Session,
     };
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};

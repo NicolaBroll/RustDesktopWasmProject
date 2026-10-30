@@ -1,6 +1,6 @@
 //! Index writes: `index.stage`, `index.unstage`, `index.stage_lines`, `index.unstage_lines`.
-//! The backends save the index backup before writing ([`GitBackend::stage`],
-//! [`GitBackend::apply_lines`]); contract in `impl-docs/git/stage.md`.
+//! The backends save the index backup before writing ([`GitIndex::stage`](crate::GitIndex::stage),
+//! [`GitIndex::apply_lines`](crate::GitIndex::apply_lines)); contract in `impl-docs/git/stage.md`.
 
 use super::{Out, check_path, check_path_list, to_json};
 use crate::{EngineError, GitBackend, LineSelection, Session};
@@ -26,14 +26,14 @@ pub struct IndexPathsParams {
     pub paths: Vec<RepoPath>,
 }
 
-/// Stages `paths` (see [`GitBackend::stage`]).
+/// Stages `paths` (see [`GitIndex::stage`](crate::GitIndex::stage)).
 ///
 /// Result: [`IndexWriteResult`].
 pub(super) fn index_stage(s: &mut Session, p: IndexPathsParams) -> Out {
     index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
 }
 
-/// Unstages `paths` (see [`GitBackend::unstage`]), without touching the worktree.
+/// Unstages `paths` (see [`GitIndex::unstage`](crate::GitIndex::unstage)), without touching the worktree.
 ///
 /// Result: [`IndexWriteResult`].
 pub(super) fn index_unstage(s: &mut Session, p: IndexPathsParams) -> Out {
@@ -73,7 +73,7 @@ pub struct IndexLinesParams {
 }
 
 /// The `lines` of file `path` staged or unstaged, with the diff seen identified by
-/// `digest` (see [`GitBackend::apply_lines`]). An empty
+/// `digest` (see [`GitIndex::apply_lines`](crate::GitIndex::apply_lines)). An empty
 /// selection is an error, not a no-op: it is almost always a mistake by the
 /// caller. Result: [`IndexWriteResult`].
 fn index_lines(

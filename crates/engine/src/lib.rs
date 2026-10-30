@@ -34,7 +34,8 @@ pub use builtin::pick::PickStartResult;
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullParams, RemotePullResult};
 pub use builtin::push::{PushRemoteSource, RemotePushParams, RemotePushResult};
 pub use builtin::rebase::{
-    RebaseContinueResult, RebasePlanResult, RebasePlanStep, RebaseStartResult,
+    RebaseContinueResult, RebasePlanParams, RebasePlanResult, RebasePlanStep, RebaseStartParams,
+    RebaseStartResult,
 };
 pub use builtin::remote::{RefUpdate, RemoteFetchParams, RemoteFetchResult};
 pub use builtin::remote_branch::{RemoteDeleteBranchParams, RemoteDeleteBranchResult};

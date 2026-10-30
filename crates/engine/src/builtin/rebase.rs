@@ -126,21 +126,24 @@ pub struct RebaseContinueResult {
 }
 
 /// Parameters of `rebase.plan`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PlanParams {
+pub struct RebasePlanParams {
     /// The commit the branch is rebuilt on (excluded): an id, a branch, a tag or another rev.
-    base: String,
+    pub base: String,
 }
 
 /// Parameters of `rebase.start`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct StartParams {
-    base: String,
-    steps: Vec<RebaseStep>,
-    #[serde(default)]
-    confirm: bool,
+pub struct RebaseStartParams {
+    /// The commit the branch is rebuilt on (excluded), as in `rebase.plan`.
+    pub base: String,
+    /// The plan: oldest first, every commit of `base..HEAD` once.
+    pub steps: Vec<RebaseStep>,
+    /// Rewrite also published commits.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 
 #[derive(Deserialize)]
@@ -213,7 +216,7 @@ fn published(
 /// merge commits in the range; `base` that does not exist → [`EngineError::UnknownRev`].
 ///
 /// Result: [`RebasePlanResult`].
-pub(super) fn rebase_plan(s: &mut Session, PlanParams { base }: PlanParams) -> Out {
+pub(super) fn rebase_plan(s: &mut Session, RebasePlanParams { base }: RebasePlanParams) -> Out {
     const ID: &str = "rebase.plan";
     let repo = s.repo()?;
     let (branch, head) = head_branch(ID, &repo.head()?)?;
@@ -286,11 +289,11 @@ fn check_result(repo: &dyn GitBackend, record: &RebaseRecord, after: &Oid) -> Ve
 /// Result: [`RebaseStartResult`].
 pub(super) fn rebase_start(
     s: &mut Session,
-    StartParams {
+    RebaseStartParams {
         base,
         steps,
         confirm,
-    }: StartParams,
+    }: RebaseStartParams,
 ) -> Out {
     const ID: &str = "rebase.start";
     let (repo, journal) = s.repo_and_journal()?;

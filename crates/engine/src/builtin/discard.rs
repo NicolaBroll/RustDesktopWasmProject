@@ -27,12 +27,14 @@ pub struct DiscardResult {
 }
 
 /// Parameters of `worktree.discard`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DiscardParams {
-    paths: Vec<RepoPath>,
-    #[serde(default)]
-    confirm: bool,
+pub struct DiscardParams {
+    /// The files or folders.
+    pub paths: Vec<RepoPath>,
+    /// Always required to discard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 
 /// Discards the unstaged changes of the files `paths` (files or folders): the worktree goes back

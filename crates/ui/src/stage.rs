@@ -4,8 +4,8 @@
 
 use crate::{Action, Request, Tab};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
+use project_engine::IndexPathsParams;
 use project_i18n::tr;
-use serde_json::json;
 
 /// One of the two lists of the stage area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -280,7 +280,7 @@ impl Tab {
         };
         repo.write_error = None;
         repo.write_label = Some(write.op.describe(&write.paths));
-        let params = json!({ "paths": write.paths });
+        let params = crate::params(IndexPathsParams { paths: write.paths });
         self.submit(write.op.command(), params, Request::Write(generation));
     }
 }

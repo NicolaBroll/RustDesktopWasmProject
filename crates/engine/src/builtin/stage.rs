@@ -18,23 +18,24 @@ pub struct IndexWriteResult {
 }
 
 /// Parameters of `index.stage` and `index.unstage`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PathsParams {
-    paths: Vec<RepoPath>,
+pub struct IndexPathsParams {
+    /// The files or folders.
+    pub paths: Vec<RepoPath>,
 }
 
 /// Stages `paths` (see [`GitBackend::stage`]).
 ///
 /// Result: [`IndexWriteResult`].
-pub(super) fn index_stage(s: &mut Session, p: PathsParams) -> Out {
+pub(super) fn index_stage(s: &mut Session, p: IndexPathsParams) -> Out {
     index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
 }
 
 /// Unstages `paths` (see [`GitBackend::unstage`]), without touching the worktree.
 ///
 /// Result: [`IndexWriteResult`].
-pub(super) fn index_unstage(s: &mut Session, p: PathsParams) -> Out {
+pub(super) fn index_unstage(s: &mut Session, p: IndexPathsParams) -> Out {
     index_paths("index.unstage", s, p, |repo, paths| repo.unstage(paths))
 }
 
@@ -45,7 +46,7 @@ type IndexWrite = fn(&mut dyn GitBackend, &[RepoPath]) -> Result<Option<String>,
 fn index_paths(
     id: &'static str,
     s: &mut Session,
-    PathsParams { paths }: PathsParams,
+    IndexPathsParams { paths }: IndexPathsParams,
     write: IndexWrite,
 ) -> Out {
     let paths = check_path_list(id, paths)?;
@@ -58,12 +59,16 @@ fn index_paths(
 }
 
 /// Parameters of `index.stage_lines` and `index.unstage_lines`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct LinesParams {
-    path: RepoPath,
-    lines: Vec<LineRef>,
-    digest: String,
+pub struct IndexLinesParams {
+    /// The file.
+    pub path: RepoPath,
+    /// The chosen lines, by their number on the old or the new side.
+    pub lines: Vec<LineRef>,
+    /// The digest of the file in the diff seen (`diff.worktree` to stage, `diff.index` to
+    /// unstage).
+    pub digest: String,
 }
 
 /// The `lines` of file `path` staged or unstaged, with the diff seen identified by
@@ -74,11 +79,11 @@ fn index_lines(
     id: &'static str,
     direction: PatchDirection,
     s: &mut Session,
-    LinesParams {
+    IndexLinesParams {
         path,
         lines,
         digest,
-    }: LinesParams,
+    }: IndexLinesParams,
 ) -> Out {
     let path = check_path(id, path)?;
     if lines.is_empty() {
@@ -101,12 +106,12 @@ fn index_lines(
 }
 
 /// Stages the chosen lines of the worktree diff.
-pub(super) fn index_stage_lines(s: &mut Session, p: LinesParams) -> Out {
+pub(super) fn index_stage_lines(s: &mut Session, p: IndexLinesParams) -> Out {
     index_lines("index.stage_lines", PatchDirection::Stage, s, p)
 }
 
 /// Unstages the chosen lines of the index diff.
-pub(super) fn index_unstage_lines(s: &mut Session, p: LinesParams) -> Out {
+pub(super) fn index_unstage_lines(s: &mut Session, p: IndexLinesParams) -> Out {
     index_lines("index.unstage_lines", PatchDirection::Unstage, s, p)
 }
 

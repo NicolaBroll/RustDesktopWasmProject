@@ -9,6 +9,7 @@ use crate::{
     tag_ref, unknown_remote,
 };
 use project_domain::{Oid, RefInfo};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// How `remote.push_tag` updated the remote (`kind` of [`RemotePushTagResult`]).
@@ -110,7 +111,7 @@ fn refs(s: &Session) -> (Option<Vec<RefInfo>>, Option<String>) {
 }
 
 /// Parameters of `remote.push_tag`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemotePushTagParams {
     /// The remote.
@@ -177,7 +178,7 @@ pub(super) fn remote_push_tag(
 }
 
 /// Parameters of `remote.delete_tag`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteDeleteTagParams {
     /// The remote.

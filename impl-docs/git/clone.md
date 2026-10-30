@@ -90,6 +90,6 @@ init is left to the user.
 ## MCP
 
 `repo.clone` and `repo.init` take arbitrary paths and URLs (a local path outside the root is a
-URL): through `execute_command` they are refused, like `repo.open` (the server is confined to its
-root). The CLI runs them as any command: `project-cli run --cmd 'repo.clone={...}'` without
+URL): they are registered with `CommandSpec::outside_repo` and `execute_command` refuses them,
+like `repo.open` (the server is confined to its root). The CLI runs them as any command: `project-cli run --cmd 'repo.clone={...}'` without
 `--repo`, with progress on stderr.

@@ -27,6 +27,7 @@
 use super::branch::check_no_operation;
 use crate::{EngineError, Message};
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The stash ref: it points to the most recent stash, its reflog is the list.
@@ -103,7 +104,7 @@ pub fn find_stash<'a>(list: &'a [StashEntry], id: &Oid) -> Option<&'a StashEntry
 
 /// Parameters of `stash.push`: `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}`.
 /// The journal entry keeps them too, for the redo.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct StashPush {
     /// The message (one line); without it, git writes `WIP on <branch>: <id> <subject>`.

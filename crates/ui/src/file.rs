@@ -15,9 +15,9 @@
 use crate::diff::{DiffTarget, MAX_LINE_COLS, number_width};
 use crate::{Action, Done, Request, Tab, Ticket};
 use project_domain::{Blame, BlameLine, Change, FileLogEntry, Oid, RepoPath};
-use project_engine::FileLogResult;
+use project_engine::{FileBlameParams, FileLogParams, FileLogResult};
 use project_i18n::tr;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// The id of the command that reads the blame.
 pub const BLAME: &str = "file.blame";
@@ -288,7 +288,7 @@ impl FileBox {
     /// Called on every frame.
     pub fn want(&mut self) -> Option<Want> {
         let view = self.view.as_mut()?;
-        let path = serde_json::to_value(&view.path).unwrap_or_default();
+        let path = view.path.clone();
         let rev = view.rev.map(|id| id.to_string());
         let seq = self.next;
         let want = match view.mode {
@@ -297,10 +297,7 @@ impl FileBox {
                     return None;
                 }
                 view.blame_job = Some(Job { seq, ticket: None });
-                let mut params = json!({ "path": path });
-                if let Some(rev) = rev {
-                    params["rev"] = json!(rev);
-                }
+                let params = crate::params(FileBlameParams { path, rev });
                 Want {
                     command: BLAME,
                     params,
@@ -316,15 +313,13 @@ impl FileBox {
                 history.more = false;
                 let skip = history.entries.len();
                 view.log_job = Some((Job { seq, ticket: None }, skip));
-                let mut params = json!({
-                    "path": path,
-                    "skip": skip,
-                    "limit": PAGE,
-                    "follow": view.follow,
+                let params = crate::params(FileLogParams {
+                    path,
+                    rev,
+                    skip,
+                    limit: Some(PAGE),
+                    follow: view.follow,
                 });
-                if let Some(rev) = rev {
-                    params["rev"] = json!(rev);
-                }
                 Want {
                     command: LOG,
                     params,

@@ -9,13 +9,14 @@
 use crate::EngineError;
 use project_domain::{Commit, EntryKind, Oid, Operation, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Id of the command, used in parameter errors.
 const COMMAND: &str = "commit.create";
 
 /// Parameters of `commit.create`: `{"message": string, "amend"?: bool, "confirm"?: bool}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitRequest {
     /// The message, passed to git as is (via stdin, `git commit -F -`). Cleanup is done by git

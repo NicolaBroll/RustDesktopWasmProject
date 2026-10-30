@@ -21,8 +21,8 @@
 
 use crate::{Action, Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
-use project_engine::RepoSearchResult;
-use serde_json::{Value, json};
+use project_engine::{RepoSearchParams, RepoSearchResult};
+use serde_json::Value;
 use std::collections::HashSet;
 
 /// The id of the command.
@@ -180,12 +180,14 @@ impl SearchBox {
         };
         let seq = self.next;
         self.next += 1;
-        let params = json!({
-            "query": query,
-            "all": true,
-            "stashes": true,
-            "skip": skip,
-            "limit": PAGE,
+        let params = crate::params(RepoSearchParams {
+            query: query.clone(),
+            fields: None,
+            path: None,
+            all: true,
+            stashes: true,
+            skip,
+            limit: Some(PAGE),
         });
         self.job = Some(Job {
             seq,

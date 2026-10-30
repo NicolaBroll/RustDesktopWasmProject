@@ -5,6 +5,8 @@ invocation or MCP session). Full contracts are in the per-function files in this
 
 ```sh
 cargo run -p project-cli -- commands
+# the same catalog as JSON, with the JSON Schema of each command's parameters ("params")
+cargo run -p project-cli -- commands --search branch. --json
 cargo run -p project-cli -- --repo . run --cmd repo.status --cmd 'repo.log={"limit":5}'
 # graph of all branches (local and remote), tags and HEAD; without stashes and backups
 cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}'

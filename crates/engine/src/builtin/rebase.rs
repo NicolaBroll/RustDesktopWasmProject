@@ -19,6 +19,7 @@ use crate::{
 use project_domain::{
     Head, Oid, Operation, RebaseAction, RebasePlan, RebaseStep, RefInfo, RefKind, RepoPath, Status,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -126,7 +127,7 @@ pub struct RebaseContinueResult {
 }
 
 /// Parameters of `rebase.plan`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RebasePlanParams {
     /// The commit the branch is rebuilt on (excluded): an id, a branch, a tag or another rev.
@@ -134,7 +135,7 @@ pub struct RebasePlanParams {
 }
 
 /// Parameters of `rebase.start`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RebaseStartParams {
     /// The commit the branch is rebuilt on (excluded), as in `rebase.plan`.
@@ -146,7 +147,7 @@ pub struct RebaseStartParams {
     pub confirm: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoParams {}
 

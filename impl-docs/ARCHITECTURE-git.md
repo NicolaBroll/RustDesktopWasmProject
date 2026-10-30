@@ -320,6 +320,12 @@ Rules for every call to git:
 - Fetch, pull and push: [git/sync.md](git/sync.md); remotes: [git/remotes.md](git/remotes.md); stash: [git/stash.md](git/stash.md); merge: [git/merge.md](git/merge.md).
 - A command that modifies the repo is marked in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), so the UI disables it during a job and an agent knows what it writes.
+- `CommandSpec::params` is the JSON Schema of the parameters, derived (`schemars`) from the type
+  the handler receives, with subschemas inline: CLI `commands --json` and MCP `list_commands`
+  show it, and the description of the MCP `execute_command` tool keeps only the general rules
+  (`writes`, `confirm`, `expected`, network commands). `CommandSpec::outside_repo` marks the
+  commands that take paths outside the open repo (`repo.open`, `repo.clone`, `repo.init`): the
+  MCP server refuses them.
 - When the repo is opened the git version is checked (minimum 2.30) and a clear error is given if it
   is older.
 - git errors become variants of `EngineError` with the stderr text, so UI and agents

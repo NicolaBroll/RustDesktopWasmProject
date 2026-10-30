@@ -12,6 +12,10 @@ All notable changes to BinariGit. The format follows
   current user only (no administrator rights) in `%LOCALAPPDATA%\Programs\BinariGit`, adds
   BinariGit to the Start menu and is removed from “Installed apps”; a newer MSI replaces the
   installed version. It is not signed yet and has not been tested on a Windows PC yet.
+- **Parameter schema for CLI and MCP**: `project-cli commands --json` and the MCP `list_commands`
+  give the JSON Schema of every command's parameters (`params`) and flag the commands not
+  available over MCP (`outside_repo`); the description of `execute_command` keeps only the
+  general rules and no longer misses commands.
 
 ## [0.5.0] - 2026-10-25
 

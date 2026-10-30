@@ -5,6 +5,7 @@
 use super::{Out, check_path, check_path_list, to_json};
 use crate::{EngineError, GitBackend, LineSelection, Session};
 use project_domain::{LineRef, PatchDirection, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `index.stage`, `index.unstage`, `index.stage_lines` and `index.unstage_lines`.
@@ -18,7 +19,7 @@ pub struct IndexWriteResult {
 }
 
 /// Parameters of `index.stage` and `index.unstage`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IndexPathsParams {
     /// The files or folders.
@@ -59,7 +60,7 @@ fn index_paths(
 }
 
 /// Parameters of `index.stage_lines` and `index.unstage_lines`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IndexLinesParams {
     /// The file.

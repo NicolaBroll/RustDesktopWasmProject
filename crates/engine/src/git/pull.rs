@@ -12,6 +12,7 @@ use super::{HEADS_PREFIX, check_no_operation};
 use crate::{EngineError, Message};
 use project_domain::remote_short;
 use project_domain::{EntryKind, Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The configured upstream of a local branch (`branch.<name>.remote` and `branch.<name>.merge`).
@@ -46,7 +47,7 @@ pub struct PullSettings {
 
 /// The strategy requested with the `strategy` parameter of `remote.pull`, which replaces the
 /// configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PullStrategy {
     /// Fast-forward if possible, otherwise a merge commit.

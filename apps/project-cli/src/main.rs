@@ -25,6 +25,9 @@ enum Command {
         /// Filters by text in the id or title.
         #[arg(long)]
         search: Option<String>,
+        /// Prints the catalog as JSON, with the JSON Schema of the parameters (`params`).
+        #[arg(long)]
+        json: bool,
     },
     /// Runs a sequence of commands and prints the results (JSON, one per line).
     Run {
@@ -45,9 +48,15 @@ enum Command {
 fn main() -> anyhow::Result<()> {
     let Cli { repo, command } = Cli::parse();
     match command {
-        Command::Commands { search } => {
+        Command::Commands { search, json } => {
             let registry = Registry::builtin();
-            for spec in registry.search(search.as_deref().unwrap_or_default()) {
+            let specs = registry.search(search.as_deref().unwrap_or_default());
+            if json {
+                let specs: Vec<_> = specs.collect();
+                println!("{}", serde_json::to_string_pretty(&specs)?);
+                return Ok(());
+            }
+            for spec in specs {
                 let writes = if spec.writes { "  [writes]" } else { "" };
                 println!(
                     "{:<20} {:<34} {}{writes}",

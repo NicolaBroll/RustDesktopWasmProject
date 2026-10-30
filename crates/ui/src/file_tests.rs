@@ -8,6 +8,7 @@
 use super::*;
 use project_domain::{Change, ChangedFile, Commit, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
+use serde_json::json;
 use std::sync::Arc;
 
 const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);

@@ -9,10 +9,11 @@ use crate::{
     branch_ref, check_branch_name, check_new_branch_name, check_no_operation,
 };
 use project_domain::{Head, Oid, RefInfo, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Parameters of `branch.create`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BranchCreateParams {
     /// The short name of the new branch.
@@ -23,7 +24,7 @@ pub struct BranchCreateParams {
 }
 
 /// Parameters of `branch.checkout`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BranchCheckoutParams {
     /// The short name of the branch.
@@ -31,7 +32,7 @@ pub struct BranchCheckoutParams {
 }
 
 /// Parameters of `branch.delete`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BranchDeleteParams {
     /// The short name of the branch.
@@ -45,7 +46,7 @@ pub struct BranchDeleteParams {
 }
 
 /// Parameters of `branch.rename`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BranchRenameParams {
     /// The current short name.

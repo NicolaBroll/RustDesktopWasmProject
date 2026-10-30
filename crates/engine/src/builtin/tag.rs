@@ -10,10 +10,11 @@ use crate::{
     tag_ref,
 };
 use project_domain::{Oid, RefInfo};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Parameters of `tag.create`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TagCreateParams {
     /// The short name of the new tag.
@@ -126,7 +127,7 @@ pub(super) fn tag_create(
 }
 
 /// Parameters of `tag.delete`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TagDeleteParams {
     /// The short name of the tag.

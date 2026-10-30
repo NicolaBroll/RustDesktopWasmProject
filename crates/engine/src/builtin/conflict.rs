@@ -8,6 +8,7 @@
 use super::{Out, check_path, to_json};
 use crate::{ConflictResolution, EngineError, Session, VersionText, worktree_digest};
 use project_domain::{Conflict, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `conflict.show`: the versions of the conflicted file (see
@@ -47,7 +48,7 @@ pub struct ConflictResolveResult {
 }
 
 /// Parameters of `conflict.show`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConflictShowParams {
     /// The conflicted file.
@@ -55,7 +56,7 @@ pub struct ConflictShowParams {
 }
 
 /// Parameters of `conflict.resolve`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConflictResolveParams {
     /// The conflicted file.

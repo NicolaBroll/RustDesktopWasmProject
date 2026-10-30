@@ -33,6 +33,8 @@ project-git    = { path = "crates/git" }
 # Common
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# JSON Schema of the command parameters (catalog of CLI and MCP).
+schemars = "1"
 thiserror = "2"
 log = "0.4"
 libc = "0.2"

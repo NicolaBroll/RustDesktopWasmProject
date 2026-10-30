@@ -11,6 +11,7 @@ use crate::format::change_name;
 use crate::lines::LineSelection;
 use crate::word_diff;
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
+use project_engine::{DiffCommitParams, DiffParams};
 use project_i18n::tr;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -44,14 +45,17 @@ impl DiffTarget {
 
     /// The command and parameters that request this diff.
     pub fn request(&self) -> (&'static str, serde_json::Value) {
-        let path = serde_json::to_value(&self.path).unwrap_or_default();
+        let path = Some(self.path.clone());
         match self.source {
             DiffSource::Commit(id) => (
                 "diff.commit",
-                serde_json::json!({ "id": id.to_string(), "path": path }),
+                crate::params(DiffCommitParams {
+                    id: id.to_string(),
+                    path,
+                }),
             ),
-            DiffSource::Worktree => ("diff.worktree", serde_json::json!({ "path": path })),
-            DiffSource::Index => ("diff.index", serde_json::json!({ "path": path })),
+            DiffSource::Worktree => ("diff.worktree", crate::params(DiffParams { path })),
+            DiffSource::Index => ("diff.index", crate::params(DiffParams { path })),
         }
     }
 }

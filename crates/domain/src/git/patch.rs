@@ -79,6 +79,7 @@
 
 use super::{Change, FileDiff, Hunk, Line, LineKind, RepoPath};
 use crate::DomainError;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -123,7 +124,9 @@ pub enum PatchDirection {
 /// A changed line of a diff, indicated by the line number on the side where it exists.
 ///
 /// In JSON: `{"old": <n>}` or `{"new": <n>}`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum LineRef {
     /// A removed line, with its number in the old file ([`Line::old_line`]).

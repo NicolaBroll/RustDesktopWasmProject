@@ -5,6 +5,7 @@ use super::*;
 use project_engine::{
     CancelToken, EngineError, JobContext, MemoryBackend, MemoryOpener, Registry, Session,
 };
+use serde_json::json;
 use std::sync::Arc;
 
 fn session() -> (Registry, Session) {

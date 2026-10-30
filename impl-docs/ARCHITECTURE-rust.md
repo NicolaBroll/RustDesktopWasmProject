@@ -178,6 +178,7 @@ JSON and an invalid parameter is an `InvalidParams` error with the command's id.
 ```rust
 // crates/engine/src/commands.rs
 use crate::{EngineError, Session};
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -186,6 +187,8 @@ pub struct CommandSpec {
     pub id: &'static str,
     pub title: &'static str,
     pub params_help: &'static str,
+    /// JSON Schema of `P`, for CLI and MCP.
+    pub params: Value,
     pub writes: bool,
 }
 
@@ -199,7 +202,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn add<P: DeserializeOwned + 'static>(
+    pub fn add<P: DeserializeOwned + JsonSchema + 'static>(
         &mut self,
         id: &'static str,
         title: &'static str,
@@ -207,7 +210,8 @@ impl Registry {
         access: Access,
         handler: fn(&mut Session, P) -> Result<Value, EngineError>,
     ) {
-        let spec = CommandSpec { id, title, params_help, writes: matches!(access, Access::Write) };
+        let params = schemars::schema_for!(P).into();
+        let spec = CommandSpec { id, title, params_help, params, writes: matches!(access, Access::Write) };
         let run: Handler = Box::new(move |session, params| {
             let params = serde_json::from_value(params)
                 .map_err(|e| EngineError::InvalidParams { id, reason: e.to_string() })?;

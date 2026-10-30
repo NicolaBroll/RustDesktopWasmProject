@@ -28,6 +28,7 @@ use crate::{
     commit_graph_replaced, commit_graph_shallow, file_digest,
 };
 use project_domain::{Commit, Diff, FileDiff, Head, RepoPath};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -44,21 +45,24 @@ impl Registry {
             r#"{"path": string}"#,
             Read,
             repo_open,
-        );
+        )
+        .takes_paths_outside_repo();
         r.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
             r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
             Write,
             clone::repo_clone,
-        );
+        )
+        .takes_paths_outside_repo();
         r.add(
             "repo.init",
             "New empty repository in an absent or empty folder, then open it",
             r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
             Write,
             clone::repo_init,
-        );
+        )
+        .takes_paths_outside_repo();
         r.add("repo.status", "Repository status", "{}", Read, repo_status);
         r.add(
             "repo.refs",
@@ -459,14 +463,16 @@ impl Registry {
 
 type Out = Result<Value, EngineError>;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoParams {}
 
-#[derive(Deserialize)]
+/// Parameters of `repo.open`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct PathParam {
-    path: String,
+pub struct RepoOpenParams {
+    /// The folder of the repo (also a subfolder of the worktree).
+    pub path: String,
 }
 
 fn to_json(value: impl Serialize) -> Value {
@@ -526,7 +532,7 @@ pub struct FileDiffWithDigest {
 }
 
 /// The repo at `path`, opened: [`RepoOpenResult`].
-fn repo_open(s: &mut Session, PathParam { path }: PathParam) -> Out {
+fn repo_open(s: &mut Session, RepoOpenParams { path }: RepoOpenParams) -> Out {
     s.open(&path)?;
     Ok(to_json(opened(s, path)?))
 }
@@ -590,34 +596,39 @@ fn repo_refs(s: &mut Session, NoParams {}: NoParams) -> Out {
     Ok(to_json(s.repo()?.refs()?))
 }
 
-#[derive(Deserialize)]
+/// Parameters of `commit.show`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct IdParam {
-    id: String,
+pub struct CommitShowParams {
+    /// The commit: an id (also abbreviated) or a ref name.
+    pub id: String,
 }
 
 /// The [`CommitDetails`](project_domain::CommitDetails) of commit `id` (also abbreviated, or a
 /// ref name): `{"commit", "compared_to", "files"}`, with the files compared to the first
 /// parent.
-fn commit_show(s: &mut Session, IdParam { id }: IdParam) -> Out {
+fn commit_show(s: &mut Session, CommitShowParams { id }: CommitShowParams) -> Out {
     Ok(to_json(s.repo()?.show_commit(&id)?))
 }
 
 /// Parameters of `diff.worktree` and `diff.index`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DiffParams {
-    #[serde(default)]
-    path: Option<RepoPath>,
+pub struct DiffParams {
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
 }
 
 /// Parameters of `diff.commit`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CommitDiffParams {
-    id: String,
-    #[serde(default)]
-    path: Option<RepoPath>,
+pub struct DiffCommitParams {
+    /// The commit, as in `commit.show`.
+    pub id: String,
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
 }
 
 /// Like [`check_path`], for an optional path.
@@ -681,7 +692,7 @@ fn diff_index(s: &mut Session, DiffParams { path }: DiffParams) -> Out {
 
 /// The [`Diff`] of commit `id` against the first parent (like
 /// `commit.show`).
-fn diff_commit(s: &mut Session, CommitDiffParams { id, path }: CommitDiffParams) -> Out {
+fn diff_commit(s: &mut Session, DiffCommitParams { id, path }: DiffCommitParams) -> Out {
     let path = check_opt_path("diff.commit", path)?;
     Ok(to_json(
         s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,
@@ -920,6 +931,27 @@ mod tests {
                 "worktree.discard"
             ]
         );
+        let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();
+        assert_eq!(outside, ["repo.clone", "repo.init", "repo.open"]);
+    }
+
+    #[test]
+    fn every_command_has_a_self_contained_parameter_schema() {
+        let r = Registry::builtin();
+        for spec in r.list() {
+            let schema = &spec.params;
+            assert_eq!(schema["type"], "object", "{}", spec.id);
+            assert_eq!(schema["additionalProperties"], false, "{}", spec.id);
+            let text = schema.to_string();
+            assert!(
+                !text.contains("$ref") && !text.contains("$schema"),
+                "{}: {text}",
+                spec.id
+            );
+        }
+        let open = &r.get("repo.open").unwrap().params;
+        assert_eq!(open["required"], serde_json::json!(["path"]));
+        assert_eq!(open["properties"]["path"]["type"], "string");
     }
 
     #[test]

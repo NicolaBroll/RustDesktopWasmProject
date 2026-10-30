@@ -8,6 +8,7 @@ use crate::{
     check_stash_apply, pop_stash,
 };
 use project_domain::{Oid, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `stash.list`.
@@ -88,12 +89,12 @@ pub struct StashDropResult {
     pub journal: JournalState,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ListParams {}
 
 /// Parameters of `stash.apply` and `stash.pop`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StashApplyParams {
     /// The position: `n` of `stash@{n}` (0 if missing).
@@ -108,7 +109,7 @@ pub struct StashApplyParams {
 }
 
 /// Parameters of `stash.drop`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StashDropParams {
     /// The position: `n` of `stash@{n}` (0 if missing).

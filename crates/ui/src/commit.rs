@@ -9,7 +9,7 @@
 use crate::executor::ErrorKind;
 use crate::{Action, Done, Request, Tab};
 use project_domain::{Commit, Oid, Operation, Status};
-use project_engine::{CommitCreateResult, CommitOutcome};
+use project_engine::{CommitCreateResult, CommitOutcome, CommitRequest};
 use project_i18n::tr;
 use serde_json::{Value, json};
 
@@ -215,14 +215,11 @@ impl CommitSend {
 
     /// The parameters of `commit.create`; `confirm` only after the user's confirmation.
     pub fn params(&self, confirm: bool) -> Value {
-        let mut params = json!({ "message": self.message });
-        if self.amend {
-            params["amend"] = json!(true);
-        }
-        if confirm {
-            params["confirm"] = json!(true);
-        }
-        params
+        crate::params(CommitRequest {
+            amend: self.amend,
+            confirm,
+            ..CommitRequest::new(self.message.clone())
+        })
     }
 
     /// Name of the operation for the status bar: "Committing…".

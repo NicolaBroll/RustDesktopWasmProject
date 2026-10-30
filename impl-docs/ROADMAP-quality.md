@@ -125,7 +125,7 @@ Rules that apply to every step:
   the UI parameters with them (`crate::params`) instead of `json!`. Absent optional fields are
   not serialized (`skip_serializing_if`), so the JSON sent stays the same. Done: branch, tag, stash, sync, merge (with
   conflict; `MergeContinueParams`/`MergeAbortParams` also serve cherry-pick, revert and rebase), rebase, pick, reset, remotes, discard
-  (with stage and lines).
+  (with stage and lines), commit (`CommitRequest`, already public).
 
 ### Q13 — Parameter schema for CLI and MCP
 - [ ] **Agent:** `git-engine`

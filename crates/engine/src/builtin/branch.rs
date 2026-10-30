@@ -12,39 +12,46 @@ use project_domain::{Head, Oid, RefInfo, Status};
 use serde::{Deserialize, Serialize};
 
 /// Parameters of `branch.create`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CreateParams {
-    name: String,
-    #[serde(default)]
-    start: Option<String>,
+pub struct BranchCreateParams {
+    /// The short name of the new branch.
+    pub name: String,
+    /// Where the branch starts (rev); without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
 }
 
 /// Parameters of `branch.checkout`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NameParams {
-    name: String,
+pub struct BranchCheckoutParams {
+    /// The short name of the branch.
+    pub name: String,
 }
 
 /// Parameters of `branch.delete`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DeleteParams {
-    name: String,
-    #[serde(default)]
-    confirm: bool,
+pub struct BranchDeleteParams {
+    /// The short name of the branch.
+    pub name: String,
+    /// Delete also an unmerged branch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
     /// The full id of the commit on which the caller saw the branch.
-    #[serde(default)]
-    expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Parameters of `branch.rename`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RenameParams {
-    name: String,
-    new_name: String,
+pub struct BranchRenameParams {
+    /// The current short name.
+    pub name: String,
+    /// The new short name.
+    pub new_name: String,
 }
 
 /// Result of `branch.create`.
@@ -159,7 +166,10 @@ fn taken(name: &str) -> EngineError {
 /// meantime it was not moved.
 ///
 /// Result: [`BranchCreateResult`].
-pub(super) fn branch_create(s: &mut Session, CreateParams { name, start }: CreateParams) -> Out {
+pub(super) fn branch_create(
+    s: &mut Session,
+    BranchCreateParams { name, start }: BranchCreateParams,
+) -> Out {
     const ID: &str = "branch.create";
     check_new_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
@@ -210,7 +220,10 @@ pub(super) fn branch_create(s: &mut Session, CreateParams { name, start }: Creat
 /// equally safe checkout, only if HEAD is still on the branch.
 ///
 /// Result: [`BranchCheckoutResult`].
-pub(super) fn branch_checkout(s: &mut Session, NameParams { name }: NameParams) -> Out {
+pub(super) fn branch_checkout(
+    s: &mut Session,
+    BranchCheckoutParams { name }: BranchCheckoutParams,
+) -> Out {
     const ID: &str = "branch.checkout";
     check_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
@@ -262,11 +275,11 @@ pub(super) fn branch_checkout(s: &mut Session, NameParams { name }: NameParams) 
 /// Result: [`BranchDeleteResult`].
 pub(super) fn branch_delete(
     s: &mut Session,
-    DeleteParams {
+    BranchDeleteParams {
         name,
         confirm,
         expected,
-    }: DeleteParams,
+    }: BranchDeleteParams,
 ) -> Out {
     const ID: &str = "branch.delete";
     check_branch_name(ID, &name)?;
@@ -367,7 +380,10 @@ pub(super) fn branch_delete(
 /// nobody touched the two names.
 ///
 /// Result: [`BranchRenameResult`].
-pub(super) fn branch_rename(s: &mut Session, RenameParams { name, new_name }: RenameParams) -> Out {
+pub(super) fn branch_rename(
+    s: &mut Session,
+    BranchRenameParams { name, new_name }: BranchRenameParams,
+) -> Out {
     const ID: &str = "branch.rename";
     check_branch_name(ID, &name)?;
     check_new_branch_name(ID, &new_name)?;

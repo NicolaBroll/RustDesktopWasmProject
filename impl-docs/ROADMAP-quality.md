@@ -122,7 +122,8 @@ Rules that apply to every step:
   struct; `register`, `parse_params` and `WRITES` are gone, the catalog is unchanged. The
   parameter structs are `pub(crate)` for now: still to do, one function per pull request, make
   them `pub` + `Serialize` (exported with a unique name, e.g. `BranchCreateParams`) and build
-  the UI parameters with them instead of `json!`.
+  the UI parameters with them (`crate::params`) instead of `json!`. Absent optional fields are
+  not serialized (`skip_serializing_if`), so the JSON sent stays the same. Done: branch.
 
 ### Q13 — Parameter schema for CLI and MCP
 - [ ] **Agent:** `git-engine`

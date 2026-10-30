@@ -1833,6 +1833,12 @@ fn unexpected_result(command: &str, error: impl std::fmt::Display) -> String {
     )
 }
 
+/// The JSON parameters of a command from its engine type (e.g.
+/// [`BranchCreateParams`](project_engine::BranchCreateParams)).
+fn params(params: impl serde::Serialize) -> Value {
+    serde_json::to_value(params).expect("the parameter types are serializable")
+}
+
 /// The result of `command` read as `T`; if it does not match, the message for the status bar.
 fn decode<T: serde::de::DeserializeOwned>(command: &str, value: Value) -> Result<T, String> {
     serde_json::from_value(value).map_err(|e| unexpected_result(command, e))

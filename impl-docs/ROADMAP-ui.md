@@ -53,7 +53,7 @@ Rules that apply to every step:
   minimum. On Xvfb 1200 → 760 → 1200 gives back 320 px, a dragged width survives the same round.
 
 ### U11 — Headers without overlaps
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** in a narrow center the diff header draws "in commit c13e0f9" / "unstaged" under the
   `+n -m` counters, the "Stage hunk" button covers the `@@ … @@` text and the split-view hint is
   cut at the right edge. The counters and the view toggles keep their place on the right and the
@@ -61,6 +61,10 @@ Rules that apply to every step:
   button; the hint wraps.
 - **Done when:** at 760x520 no text overlaps another in the diff of a commit, of an unstaged
   file and in the split view; CI green.
+- **Done:** the diff bar lays out the toggles and the counters first, from the right; the path
+  is truncated in the room left and the description ("in commit …", "unstaged") is shown whole
+  or not at all (it is also in the path's tooltip). "Stage hunk" sits on an opaque strip of the
+  hunk color, so the header text stops before it; the split-view hint wraps.
 
 ### U12 — Stage panel: titles before buttons, no jump with a dialog open
 - [ ] **Agent:** `egui-ui`

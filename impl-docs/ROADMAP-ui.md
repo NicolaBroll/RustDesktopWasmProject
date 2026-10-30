@@ -18,7 +18,7 @@ Rules that apply to every step:
 ## Phase U0 — Behavior
 
 ### U00 — The open diff stays during the automatic refresh
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** when the window gets focus back (also while it is resized, on Windows and GNOME) the
   automatic refresh re-reads the status, `follow_diff` calls `DiffPane::reload` and that drops
   the loaded diff (`answer = None`) and the line selection: the view flashes "Loading the
@@ -28,6 +28,11 @@ Rules that apply to every step:
 - **Done when:** unit test on `DiffPane` (reload keeps the answer, same diff keeps the
   selection, different diff clears it); on Xvfb focus lost and regained with an unstaged diff
   open shows no loading state; CI green.
+- **Done:** `DiffState::reload` keeps a loaded diff (`reloading`) and `receive` keeps document
+  and selection when the same diff comes back; after an error it still shows the loading state.
+  Stage hunk / selected lines wait while `is_reloading()` (the engine refuses a stale diff
+  anyway). The status bar shows a read only after 400 ms (`Job::started`), a write at once: the
+  refresh on focus no longer flashes "repo.status in progress…".
 
 ## Phase U1 — Layout and resizing
 

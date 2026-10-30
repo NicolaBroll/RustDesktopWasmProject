@@ -38,6 +38,8 @@ pub struct Job {
     pub command: String,
     /// True if the command modifies the repository ([`CommandSpec::writes`](project_engine::CommandSpec::writes)).
     pub writes: bool,
+    /// When it was sent: the status bar shows a read only once it takes a while.
+    pub started: std::time::Instant,
 }
 
 /// A finished command.
@@ -230,6 +232,7 @@ impl Executor {
             ticket,
             command: command.to_owned(),
             writes,
+            started: std::time::Instant::now(),
         });
 
         // Before starting the job: a platform may run the command (and send progress) inside

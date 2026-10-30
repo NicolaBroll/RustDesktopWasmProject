@@ -29,3 +29,10 @@ Steps and order in [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md), phase 6
 - [ ] UI structure (Q20–Q22) and optional lints (Q30–Q31).
 
 Steps in [impl-docs/ROADMAP-quality.md](impl-docs/ROADMAP-quality.md).
+
+## UI and UX
+
+- [x] Review of 2026-10-30 (U00–U21): open diff kept during the automatic refresh, side panels
+  that follow the window, headers without overlaps, a type scale, wording.
+
+Steps in [impl-docs/ROADMAP-ui.md](impl-docs/ROADMAP-ui.md).

@@ -56,7 +56,8 @@ The project is becoming a graphical git client: architecture in
 [impl-docs/git/](impl-docs/git/) (one file per function: command contract, `CliBackend`, undo
 and backup; a new command goes in the file of its function), steps in
 [impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md); code-quality steps (no new features) in
-[impl-docs/ROADMAP-quality.md](impl-docs/ROADMAP-quality.md). Each step names the agent to use
+[impl-docs/ROADMAP-quality.md](impl-docs/ROADMAP-quality.md); UI and UX fixes in
+[impl-docs/ROADMAP-ui.md](impl-docs/ROADMAP-ui.md). Each step names the agent to use
 (`.claude/agents/`): `git-domain`, `git-engine`, `egui-ui`, `git-scenarios`; steps that
 write to the user's repo also go through `safety-reviewer`.
 

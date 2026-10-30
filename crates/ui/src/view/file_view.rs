@@ -162,11 +162,11 @@ struct Style {
 }
 
 fn blame_rows(ui: &mut Ui, doc: &BlameDoc, actions: &mut Vec<Action>) {
-    let mono = FontId::monospace(12.5);
+    let mono = theme::mono();
     let char_w = ui.ctx().fonts_mut(|f| f.glyph_width(&mono, '0'));
     let numbers_w = (doc.number_width as f32) * char_w + 2.0 * PAD;
     let style = Style {
-        small: FontId::proportional(12.5),
+        small: theme::small(),
         char_w,
         text: ui.visuals().text_color(),
         weak: ui.visuals().weak_text_color(),
@@ -398,8 +398,8 @@ fn history_list(
     }
     let tail = history.has_more || history.error.is_some() || view.log_loading();
     let count = history.entries.len() + usize::from(tail);
-    let font = FontId::proportional(13.0);
-    let mono = FontId::monospace(12.0);
+    let font = theme::body();
+    let mono = theme::mono();
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     egui::ScrollArea::vertical()
@@ -512,7 +512,7 @@ fn entry_jobs(
     if !notes.is_empty() {
         top.append(&format!("({})", notes.join(", ")), PAD, format(font, weak));
     }
-    let small = FontId::proportional(12.0);
+    let small = theme::small();
     let mut bottom = egui::text::LayoutJob::default();
     bottom.append(&c.id.short(), 0.0, format(mono, weak));
     bottom.append(&date_time(&c.author), PAD, format(&small, weak));

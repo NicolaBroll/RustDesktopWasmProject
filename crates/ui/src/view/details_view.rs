@@ -160,8 +160,8 @@ pub(super) fn changed_files(
 ) {
     ui.strong(tr!("details-files-changed", n = files.len()));
     ui.add_space(2.0);
-    let font = FontId::proportional(13.0);
-    let mono = FontId::monospace(12.0);
+    let font = theme::body();
+    let mono = theme::mono();
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     egui::ScrollArea::vertical()

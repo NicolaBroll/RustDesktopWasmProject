@@ -40,6 +40,7 @@ mod reset;
 mod running;
 mod search;
 mod settings;
+mod side_panel;
 mod stage;
 mod stash;
 mod sync;
@@ -1388,19 +1389,22 @@ fn side_panels(
     writing: bool,
     actions: &mut Vec<Action>,
 ) {
-    // Side panels do not exceed a third of the window: the content wraps.
-    let side_max = (ui.available_width() / 3.0).max(200.0);
+    // The center keeps a share of the window: the side panels shrink first, the content wraps;
+    // when the window grows again they get back the width chosen by the user.
+    let available = ui.available_width();
+    let refs = egui::Rangef::new(140.0, side_panel::max_width(available, 140.0));
+    let details = egui::Rangef::new(200.0, side_panel::max_width(available, 200.0));
+    side_panel::prepare(ui, "ref", 220.0, refs);
+    side_panel::prepare(ui, "details", 320.0, details);
     egui::Panel::left("ref")
         .resizable(true)
         .default_size(220.0)
-        .min_size(140.0)
-        .max_size(side_max)
+        .size_range(refs)
         .show(ui, |ui| view::refs_panel(ui, repo, writing, actions));
     egui::Panel::right("details")
         .resizable(true)
         .default_size(320.0)
-        .min_size(200.0)
-        .max_size(side_max)
+        .size_range(details)
         .show(ui, |ui| {
             if repo.worktree_selected {
                 view::stage_panel(ui, repo, draft, writing, actions);

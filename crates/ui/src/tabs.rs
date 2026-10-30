@@ -113,6 +113,7 @@ impl App {
         repo: Option<String>,
     ) -> Self {
         crate::icons::install(&cc.egui_ctx);
+        crate::theme::install_text_styles(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let wake: Wake = Arc::new(move || ctx.request_repaint());
         let saved = cc

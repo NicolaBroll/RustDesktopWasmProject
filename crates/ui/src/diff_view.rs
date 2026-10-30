@@ -2,8 +2,8 @@
 //! Reads the state of [`crate::diff`] and produces [`Action`]; changes nothing directly.
 
 use crate::diff::{
-    self, DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_summary,
-    file_title, line_number, line_prefix,
+    self, DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_kind,
+    file_summary, file_title, line_number, line_prefix,
 };
 use crate::icons;
 use crate::lines::{self, LineButtons, LineSelection, Partial};
@@ -68,7 +68,10 @@ pub(crate) fn diff_panel(
         if split {
             // The rows are selected in the unified view: here the hunks only.
             if state.buttons.is_some() {
-                ui.weak(tr!("diff-split-lines-hint"));
+                ui.add(
+                    egui::Label::new(egui::RichText::new(tr!("diff-split-lines-hint")).weak())
+                        .wrap(),
+                );
             }
         } else {
             lines_bar(ui, state, actions);
@@ -113,7 +116,8 @@ pub(crate) fn diff_panel(
     }
 }
 
-/// Close, path and commit, rows added and removed.
+/// Close, path and commit, rows added and removed. The counters and the view toggles keep
+/// their place on the right; path and description are cut before them.
 fn toolbar(
     ui: &mut Ui,
     target: &DiffTarget,
@@ -132,21 +136,6 @@ fn toolbar(
                 actions.push(Action::Diff(diff::Action::Close));
             }
             ui.separator();
-        }
-        ui.strong(target.path.to_string_lossy());
-        match target.source {
-            DiffSource::Commit(id) => {
-                ui.weak(tr!("diff-in-commit", id = id.short()))
-                    .on_hover_text(id.to_string());
-            }
-            DiffSource::Worktree => {
-                ui.weak(tr!("diff-unstaged"))
-                    .on_hover_text(tr!("diff-unstaged-hint"));
-            }
-            DiffSource::Index => {
-                ui.weak(tr!("diff-staged"))
-                    .on_hover_text(tr!("diff-staged-hint"));
-            }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let layouts = [
@@ -169,6 +158,29 @@ fn toolbar(
                 ui.colored_label(removed_text(ui), format!("-{removed}"));
                 ui.colored_label(added_text(ui), format!("+{added}"));
             }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let (text, hint) = match target.source {
+                    DiffSource::Commit(id) => {
+                        (tr!("diff-in-commit", id = id.short()), id.to_string())
+                    }
+                    DiffSource::Worktree => (tr!("diff-unstaged"), tr!("diff-unstaged-hint")),
+                    DiffSource::Index => (tr!("diff-staged"), tr!("diff-staged-hint")),
+                };
+                let path = target.path.to_string_lossy();
+                ui.add(egui::Label::new(egui::RichText::new(path.as_ref()).strong()).truncate())
+                    .on_hover_text(format!("{path} {text}"));
+                // The description whole or not at all: a lone "…" says nothing.
+                let description = egui::WidgetText::from(egui::RichText::new(text).weak())
+                    .into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Body,
+                    );
+                if description.size().x <= ui.available_width() {
+                    ui.label(description).on_hover_text(hint);
+                }
+            });
         });
     });
 }
@@ -265,7 +277,7 @@ struct Style {
 
 impl Style {
     fn new(ui: &Ui, doc: &DiffDoc) -> Self {
-        let mono = FontId::monospace(12.5);
+        let mono = crate::theme::mono();
         let char_w = ui.ctx().fonts_mut(|f| f.glyph_width(&mono, '0'));
         let dark = ui.visuals().dark_mode;
         let alpha = |r, g, b, a| Color32::from_rgba_unmultiplied(r, g, b, a);
@@ -289,7 +301,7 @@ impl Style {
         let gutter_w = (2 * number_w + 2) as f32 * char_w + 4.0 * PAD;
         Self {
             mono,
-            title: FontId::proportional(13.5),
+            title: crate::theme::body(),
             char_w,
             text: ui.visuals().text_color(),
             weak: ui.visuals().weak_text_color(),
@@ -386,7 +398,7 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
                     }
                 }
                 if let (Row::Hunk(_, h), Some(b)) = (row, buttons) {
-                    hunk_button(ui, rect, *h, b, actions);
+                    hunk_button(ui, rect, *h, b, style.hunk_bg, actions);
                 }
             }
         });
@@ -400,8 +412,17 @@ enum Mark {
     Selected,
 }
 
-/// "Stage hunk"/"Unstage hunk" on the right of the header, in the visible part.
-fn hunk_button(ui: &mut Ui, rect: Rect, hunk: usize, b: LineButtons, actions: &mut Vec<Action>) {
+/// "Stage hunk"/"Unstage hunk" on the right of the header, in the visible part, over a strip
+/// of `background` that cuts the header text before it.
+fn hunk_button(
+    ui: &mut Ui,
+    rect: Rect,
+    hunk: usize,
+    b: LineButtons,
+    background: Color32,
+    actions: &mut Vec<Action>,
+) {
+    let behind = ui.painter().add(egui::Shape::Noop);
     let right = rect.right().min(ui.clip_rect().right()) - PAD;
     let cell = Rect::from_min_max(pos2(right - 140.0, rect.top()), pos2(right, rect.bottom()));
     let mut cell = ui.new_child(
@@ -421,6 +442,12 @@ fn hunk_button(ui: &mut Ui, rect: Rect, hunk: usize, b: LineButtons, actions: &m
         .add_enabled(b.hunks, egui::Button::new(label).small())
         .on_hover_text(help)
         .on_disabled_hover_text(tr!("diff-wait-write"));
+    let strip = Rect::from_x_y_ranges(button.rect.left() - 2.0 * PAD..=right + PAD, rect.y_range());
+    // The hunk color is translucent: on the panel color, so the text under it is hidden.
+    let under = egui::Shape::rect_filled(strip, 0.0, ui.visuals().panel_fill);
+    let over = egui::Shape::rect_filled(strip, 0.0, background);
+    ui.painter()
+        .set(behind, egui::Shape::Vec(vec![under, over]));
     if button.clicked() {
         actions.push(Action::Lines(lines::Action::Hunk(hunk)));
     }
@@ -445,10 +472,22 @@ fn paint_row(
             painter.rect_filled(rect, 0.0, style.file_bg);
             // The title stays visible while scrolling: it starts from the left edge of the view.
             let left = gutter.left() + PAD;
+            let title = file_title(file);
+            // One file, not renamed: the bar above already shows its path and counters.
+            if doc.diff.files.len() == 1 && title == file.path().to_string_lossy() {
+                painter.text(
+                    pos2(left, mid),
+                    Align2::LEFT_CENTER,
+                    file_kind(file),
+                    style.title.clone(),
+                    style.weak,
+                );
+                return;
+            }
             let title = painter.text(
                 pos2(left, mid),
                 Align2::LEFT_CENTER,
-                file_title(file),
+                title,
                 style.title.clone(),
                 style.strong,
             );
@@ -642,7 +681,7 @@ fn split_view(ui: &mut Ui, doc: &DiffDoc, buttons: Option<LineButtons>, actions:
                 match row {
                     SplitRow::Hunk(_, h) => {
                         if let Some(b) = buttons {
-                            hunk_button(ui, rect, *h, b, actions);
+                            hunk_button(ui, rect, *h, b, style.hunk_bg, actions);
                         }
                     }
                     SplitRow::Lines(f, h, old, new) => {

@@ -348,6 +348,9 @@ impl Tab {
             }
             Action::Hunk(h) => {
                 let write = self.repo.as_ref().and_then(|r| {
+                    if r.diff.is_reloading() {
+                        return None;
+                    }
                     let (target, doc, _) = r.diff.loaded()?;
                     plan(doc, target, Pick::Hunk(h))
                 });
@@ -357,6 +360,9 @@ impl Tab {
             }
             Action::Selected => {
                 let write = self.repo.as_ref().and_then(|r| {
+                    if r.diff.is_reloading() {
+                        return None;
+                    }
                     let (target, doc, selection) = r.diff.loaded()?;
                     plan(doc, target, Pick::Selected(selection))
                 });

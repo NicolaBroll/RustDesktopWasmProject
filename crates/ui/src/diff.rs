@@ -86,8 +86,10 @@ struct Open {
     seq: u64,
     target: DiffTarget,
     answer: Option<Result<DiffDoc, String>>,
-    /// Selected lines of the loaded document; cleared on every new response.
+    /// Selected lines of the loaded document; cleared when a response brings a different diff.
     selection: LineSelection,
+    /// Request `seq` re-reads the loaded diff: until it answers the old one stays on screen.
+    reloading: bool,
 }
 
 #[derive(Debug, Default)]
@@ -113,6 +115,7 @@ impl DiffState {
             target,
             answer: None,
             selection: LineSelection::default(),
+            reloading: false,
         });
         Some(seq)
     }
@@ -125,15 +128,25 @@ impl DiffState {
             .flatten()
     }
 
-    /// Requests the open diff even if it is already loaded (the file changed): returns the
-    /// number of the new request. Until the response arrives the view shows the loading state.
+    /// Requests the open diff even if it is already loaded (the file may have changed): returns
+    /// the number of the new request. A loaded diff and its selection stay on screen until the
+    /// response arrives (the automatic refresh on focus must not blank the view); after an
+    /// error the view shows the loading state.
     pub fn reload(&mut self) -> Option<u64> {
         let open = self.open.as_mut()?;
         open.seq = self.next;
-        open.answer = None;
-        open.selection.clear();
+        open.reloading = matches!(open.answer, Some(Ok(_)));
+        if !open.reloading {
+            open.answer = None;
+        }
         self.next += 1;
         Some(open.seq)
+    }
+
+    /// A loaded diff is on screen while a newer one is on its way: the lines must not be
+    /// written from it.
+    pub fn is_reloading(&self) -> bool {
+        self.open.as_ref().is_some_and(|o| o.reloading)
     }
 
     /// Closes the view: incoming responses will be discarded.
@@ -151,8 +164,15 @@ impl DiffState {
         let Some(open) = &mut self.open else {
             return false;
         };
-        if open.seq != seq || open.answer.is_some() {
+        if open.seq != seq || (open.answer.is_some() && !open.reloading) {
             return false;
+        }
+        open.reloading = false;
+        // The same diff again: document, selection and scroll stay as they are.
+        if let (Some(Ok(doc)), Ok(diff)) = (&open.answer, &result)
+            && doc.diff == *diff
+        {
+            return true;
         }
         open.answer = Some(result.map(|diff| DiffDoc::new(diff, &open.target.path)));
         open.selection.clear();
@@ -371,16 +391,22 @@ pub fn file_title(file: &FileDiff) -> String {
 
 /// Kind of change, similarity and changed lines, e.g. `renamed 92%  +1 -1`.
 pub fn file_summary(file: &FileDiff) -> String {
+    let mut summary = file_kind(file);
+    let (added, removed) = file.line_counts();
+    if added + removed > 0 {
+        summary.push_str(&format!("  +{added} -{removed}"));
+    }
+    summary
+}
+
+/// Kind of change and similarity, e.g. `renamed  92%`.
+pub fn file_kind(file: &FileDiff) -> String {
     let mut parts = vec![change_name(file.change)];
     if let Some(similarity) = file.similarity {
         parts.push(format!("{similarity}%"));
     }
     if file.is_submodule() {
         parts.push(tr!("diff-submodule-badge"));
-    }
-    let (added, removed) = file.line_counts();
-    if added + removed > 0 {
-        parts.push(format!("+{added} -{removed}"));
     }
     parts.join("  ")
 }
@@ -722,6 +748,7 @@ mod tests {
         renamed.similarity = Some(92);
         assert_eq!(file_title(&renamed), "src/main.rs -> src/bin/app.rs");
         assert_eq!(file_summary(&renamed), "renamed  92%  +2 -1");
+        assert_eq!(file_kind(&renamed), "renamed  92%");
         assert!(file_notes(&renamed).is_empty());
 
         renamed.hunks.clear();
@@ -831,11 +858,26 @@ mod tests {
         assert!(state.receive(first, Ok(Diff { files: Vec::new() })));
         let second = state.reload().unwrap();
         assert_ne!(first, second);
-        assert!(matches!(state.pane(), Pane::Loading(_)));
+        assert!(
+            matches!(state.pane(), Pane::Loaded(..)),
+            "the old diff stays"
+        );
+        assert!(state.is_reloading());
         // The response of the old request no longer counts.
         assert!(!state.receive(first, Ok(Diff { files: Vec::new() })));
         assert!(state.receive(second, Ok(Diff { files: Vec::new() })));
         assert!(matches!(state.pane(), Pane::Loaded(..)));
+        assert!(!state.is_reloading());
+    }
+
+    #[test]
+    fn reload_after_an_error_shows_the_loading_state() {
+        let mut state = DiffState::default();
+        let first = state.open(target(1, "a")).unwrap();
+        assert!(state.receive(first, Err("boom".into())));
+        state.reload().unwrap();
+        assert!(matches!(state.pane(), Pane::Loading(_)));
+        assert!(!state.is_reloading());
     }
 
     #[test]
@@ -854,11 +896,24 @@ mod tests {
         selection.click(&doc, 3, false);
         assert_eq!(state.selection().map(LineSelection::len), Some(1));
         let again = state.reload().unwrap();
-        assert!(
-            state.selection().unwrap().is_empty(),
-            "reload: selection cleared"
+        assert_eq!(
+            state.selection().map(LineSelection::len),
+            Some(1),
+            "reload: the selection stays while the old diff is shown"
         );
         assert!(state.receive(again, Ok(one())));
+        assert_eq!(
+            state.selection().map(LineSelection::len),
+            Some(1),
+            "same diff: selection kept"
+        );
+        let changed = state.reload().unwrap();
+        let two = diff(vec![file(Change::Added, "a.rs", "a.rs", vec![hunk()])]);
+        assert!(state.receive(changed, Ok(two)));
+        assert!(
+            state.selection().unwrap().is_empty(),
+            "different diff: selection cleared"
+        );
         let (_, doc, selection) = state.loaded_mut().unwrap();
         let doc = doc.clone();
         selection.click(&doc, 3, false);

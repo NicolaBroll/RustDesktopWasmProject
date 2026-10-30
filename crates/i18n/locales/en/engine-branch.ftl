@@ -34,3 +34,7 @@ engine-branch-config-exists = a `branch.{ $name }.*` configuration already exist
 engine-branch-memory-no-upstream = `branch.{ $name }.*` configuration without upstream: not rewritten in the in-memory repo
 engine-branch-config-partly = the `branch.{ $name }.*` configuration was only partly rewritten: { $error } (saved values: { $entries })
 engine-branch-config-not-written = configuration not rewritten: { $error }
+engine-branch-track-no-start = `track` needs `start`: the remote branch to follow (e.g. `origin/main`)
+engine-branch-track-ambiguous = `{ $start }` is also `{ $other }`, which git would take first: give the remote branch in full (`refs/remotes/{ $start }`)
+engine-branch-track-rolled-back = the upstream of `{ $name }` could not be written ({ $error }): the branch just created was deleted again, nothing changed
+engine-branch-track-not-rolled-back = the upstream of `{ $name }` could not be written ({ $error }) and the branch just created could not be deleted again ({ $rollback }): the branch exists without upstream

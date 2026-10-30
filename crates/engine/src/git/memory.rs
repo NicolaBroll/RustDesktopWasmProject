@@ -127,6 +127,9 @@ pub struct MemoryBackend {
     /// If set, every `stash_drop` fails with this message
     /// ([`MemoryBackend::fail_stash_drop`]).
     stash_drop_failure: Option<String>,
+    /// If set, every write of the upstream configuration fails with this message
+    /// ([`MemoryBackend::fail_config_writes`]).
+    config_write_failure: Option<String>,
     /// The merge in progress (`MERGE_HEAD`, `MERGE_MSG`), with `operation` = `Merge`.
     merge_state: Option<MemoryMerge>,
     /// The rebase in progress, with `operation` = `Rebase`.
@@ -173,6 +176,7 @@ impl MemoryBackend {
             stashes: Vec::new(),
             dropped_stashes: BTreeMap::new(),
             stash_drop_failure: None,
+            config_write_failure: None,
             merge_state: None,
             rebase_state: None,
             commit_graph: false,
@@ -827,6 +831,10 @@ impl GitRead for MemoryBackend {
     fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError> {
         Ok(self.merge_base(*a, *b))
     }
+
+    fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
+        Ok(self.upstream_entries(name))
+    }
 }
 
 impl GitIndex for MemoryBackend {
@@ -929,6 +937,15 @@ impl GitRefs for MemoryBackend {
         remove: bool,
     ) -> Vec<Message> {
         self.set_branch_config(name, entries, remove)
+    }
+
+    fn write_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError> {
+        self.replace_upstream(name, expected, entries)
     }
 }
 

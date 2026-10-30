@@ -214,9 +214,16 @@ impl Registry {
         self.add(
             "branch.create",
             "Create a branch",
-            r#"{"name": string, "start"?: string (rev, HEAD)}"#,
+            r#"{"name": string, "start"?: string (rev, HEAD), "track"?: bool (start is a remote branch: take it as upstream)}"#,
             Write,
             branch::branch_create,
+        );
+        self.add(
+            "branch.set_upstream",
+            "Set or remove the upstream of a branch",
+            r#"{"name": string, "upstream": "<remote>/<branch>" | null}"#,
+            Write,
+            branch::branch_set_upstream,
         );
         self.add(
             "branch.checkout",
@@ -951,6 +958,7 @@ mod tests {
                 "branch.rename",
                 "branch.reset",
                 "branch.reset_preview",
+                "branch.set_upstream",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
                 "commit.cherry_pick",
@@ -1020,6 +1028,7 @@ mod tests {
                 "branch.delete",
                 "branch.rename",
                 "branch.reset",
+                "branch.set_upstream",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
                 "commit.cherry_pick",

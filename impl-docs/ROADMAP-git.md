@@ -599,6 +599,36 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   authentication error and Retry, hidden tab); by hand on Xvfb: a commit pushed to a local
   remote from a terminal shows up in the graph without pressing Fetch; CI green.
 
+### S51 — Tracking branches and upstream
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** today a remote branch (`origin/feature`) cannot become a local branch that pulls from
+  it: `branch.checkout` uses `--no-guess`, `branch.create` never sets an upstream, and
+  `remote.pull` then refuses ("set the upstream"). Add:
+  - `branch.create` gains `"track"?: bool`: allowed only when `start` resolves to a
+    remote-tracking branch `refs/remotes/<remote>/<branch>` of a configured remote (otherwise
+    `InvalidParams`); after creating the ref it writes `branch.<name>.remote` and
+    `branch.<name>.merge = refs/heads/<branch>` (like `git branch --track`). If the config write
+    fails the ref is removed again (nothing half-done). The journal entry also carries the config
+    so `edit.undo` removes branch AND config, redo recreates both (reuse the `branch_config`
+    mechanism of `branch.delete` in [git/branch.md](git/branch.md)).
+  - `branch.set_upstream {"name", "upstream": "<remote>/<branch>" | null}` (`Access::Write`):
+    sets or removes the upstream of a local branch; upstream must be an existing remote-tracking
+    branch of a configured remote (a remote whose name contains `/` must resolve unambiguously).
+    Only `--local` config. Journal entry with the upstream before/after; undo/redo only if the
+    config is still the value left by the command (`UndoConflict` otherwise). Result:
+    `{"branch", "upstream", "previous", "refs", ...journal}`.
+  - Docs in [git/branch.md](git/branch.md), CLI examples in [git/cli.md](git/cli.md), README
+    command list.
+  - UI (later, `egui-ui`): "Check out" on a remote branch row → local branch with the same name
+    tracking it (or the existing local branch that already tracks it), name prompted if taken;
+    "Set upstream…"/"Unset upstream" in the local branch menu.
+- **Done when:** integration tests (track from `origin/x`, remote name with `/`, `track` with a
+  local start refused, name starting with `-`, set/unset upstream, undo/redo of both, config
+  changed from outside before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI
+  green.
+- **Status:** engine part done (`branch.create` `track`, `branch.set_upstream`, journal field
+  `upstream`, `GitRead::local_upstream`, `GitRefs::write_upstream`); UI missing.
+
 ### S53 — Compare two revisions
 - [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** `diff.commit` only compares a commit with its parent. Add the read-only `diff.range

@@ -178,6 +178,7 @@ impl NameDialog {
             NameKind::Create(start) => params(BranchCreateParams {
                 name: name.to_owned(),
                 start: Some(start.target.to_string()),
+                track: false,
             }),
             NameKind::Rename(old) => params(BranchRenameParams {
                 name: old.clone(),

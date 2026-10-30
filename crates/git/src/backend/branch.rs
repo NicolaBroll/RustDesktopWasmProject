@@ -26,7 +26,7 @@ use project_domain::{EntryKind, Oid, RepoPath};
 use project_engine::Message;
 use project_engine::{
     BranchDeleted, ConfigEntry, EngineError, HEADS_PREFIX, HeadState, RestoreOutcome, branch_ref,
-    check_new_branch_name, check_no_operation,
+    check_new_branch_name, check_no_operation, upstream_label,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -548,6 +548,120 @@ impl CliBackend {
             }
         }
         Vec::new()
+    }
+}
+
+impl CliBackend {
+    /// [`GitRead::local_upstream`](project_engine::GitRead::local_upstream): `git config --local
+    /// -z --get-regexp '^branch\.<name>\.(remote|merge)$'` (only the repo file).
+    pub(super) fn read_upstream_config(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
+        self.local_config(&format!(
+            "^branch\\.{}\\.(remote|merge)$",
+            regex_escape(name)
+        ))
+    }
+
+    /// [`GitRefs::write_upstream`](project_engine::GitRefs::write_upstream): compared with
+    /// `expected` right before writing, then one `git config --local` per key; if a write fails
+    /// `expected` is written back.
+    pub(super) fn replace_upstream_config(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError> {
+        let label = |e: &[ConfigEntry]| upstream_label(e).unwrap_or_else(|| "-".to_owned());
+        let current = self.read_upstream_config(name)?;
+        if current != expected {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-upstream-changed",
+                name = name.escape_debug(),
+                expected = label(expected),
+                now = label(&current)
+            )));
+        }
+        if let Err(error) = self.write_upstream_keys(name, entries) {
+            let reason = match self.write_upstream_keys(name, expected) {
+                Ok(()) => msg!(
+                    "engine-upstream-not-written",
+                    name = name.escape_debug(),
+                    error = error
+                ),
+                Err(restore) => msg!(
+                    "engine-upstream-partly-written",
+                    name = name.escape_debug(),
+                    error = error,
+                    restore = restore,
+                    entries = describe(expected)
+                ),
+            };
+            return Err(EngineError::GitWithReason {
+                command: "config".to_owned(),
+                reason,
+            });
+        }
+        // Another process may have written the configuration at the same time.
+        Ok(match self.read_upstream_config(name) {
+            Ok(now) if now == entries => Vec::new(),
+            Ok(now) => vec![msg!(
+                "engine-upstream-reread-differs",
+                name = name.escape_debug(),
+                expected = label(entries),
+                now = label(&now)
+            )],
+            Err(e) => vec![msg!(
+                "engine-upstream-reread-failed",
+                name = name.escape_debug(),
+                error = e
+            )],
+        })
+    }
+
+    /// `branch.<name>.remote` and `branch.<name>.merge` set to the values of `entries`: one
+    /// value with `--replace-all` (a single write of the file), none with `--unset-all`, more
+    /// than one with `--unset-all` and `--add`. The key reaches git after `--end-of-options`.
+    fn write_upstream_keys(&self, name: &str, entries: &[ConfigEntry]) -> Result<(), EngineError> {
+        for suffix in ["remote", "merge"] {
+            let key = format!("branch.{name}.{suffix}");
+            // A key without a value means `true`.
+            let values: Vec<&str> = entries
+                .iter()
+                .filter(|e| e.key == key)
+                .map(|e| e.value.as_deref().unwrap_or("true"))
+                .collect();
+            if let [value] = values.as_slice() {
+                self.config_call(
+                    &[
+                        "config",
+                        "--local",
+                        "--replace-all",
+                        "--end-of-options",
+                        &key,
+                        value,
+                    ],
+                    &[],
+                )?;
+                continue;
+            }
+            self.config_call(
+                &["config", "--local", "--unset-all", "--end-of-options", &key],
+                &[],
+            )?;
+            for value in values {
+                self.config_call(
+                    &[
+                        "config",
+                        "--local",
+                        "--add",
+                        "--end-of-options",
+                        &key,
+                        value,
+                    ],
+                    &[],
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 

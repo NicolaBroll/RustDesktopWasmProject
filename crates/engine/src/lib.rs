@@ -17,6 +17,7 @@ mod session;
 pub use builtin::branch::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
     BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
+    BranchSetUpstreamParams, BranchSetUpstreamResult,
 };
 pub use builtin::clone::RepoCloneResult;
 pub use builtin::commit::CommitCreateResult;
@@ -129,6 +130,7 @@ pub use git::{
     reset_moved, status_paths, strict_conflicts,
 };
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
+pub use git::{TrackingBranch, UpstreamChange, resolve_tracking, upstream_label};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{BranchMove, HeadChange, Integration, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};

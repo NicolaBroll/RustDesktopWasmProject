@@ -258,21 +258,79 @@ impl MemoryBackend {
     /// The `branch.<name>.*` "configuration" of the in-memory repo: the upstream, as git
     /// would write it (`remote` and `merge`).
     fn branch_config(&self, name: &str) -> Vec<ConfigEntry> {
-        let Some(upstream) = self.upstreams.get(&format!("{HEADS}{name}")) else {
+        self.upstream_entries(name)
+    }
+
+    /// [`GitRead::local_upstream`](crate::GitRead::local_upstream): the upstream as git would
+    /// write it (`remote` and `merge`; a remote with `/` in the name is recognized).
+    pub(super) fn upstream_entries(&self, name: &str) -> Vec<ConfigEntry> {
+        let Some(upstream) = self.upstream_config(name) else {
             return Vec::new();
         };
-        let rest = upstream.strip_prefix(REMOTES).unwrap_or(upstream);
-        let (remote, branch) = rest.split_once('/').unwrap_or((rest, ""));
         vec![
             ConfigEntry {
                 key: format!("branch.{name}.remote"),
-                value: Some(remote.to_owned()),
+                value: Some(upstream.remote),
             },
             ConfigEntry {
                 key: format!("branch.{name}.merge"),
-                value: Some(format!("{HEADS}{branch}")),
+                value: Some(upstream.merge),
             },
         ]
+    }
+
+    /// Every write of the upstream configuration fails with `message` (`None`: they succeed
+    /// again), as `git config` does with a locked or read-only `.git/config`.
+    pub fn fail_config_writes(&mut self, message: Option<&str>) {
+        self.config_write_failure = message.map(str::to_owned);
+    }
+
+    /// [`GitRefs::write_upstream`](crate::GitRefs::write_upstream): the in-memory repo stores
+    /// only a complete upstream (`remote` + a branch in `merge`) or none.
+    pub(super) fn replace_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError> {
+        let current = self.upstream_entries(name);
+        if current != expected {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-upstream-changed",
+                name = name.escape_debug(),
+                expected = crate::upstream_label(expected).unwrap_or_default(),
+                now = crate::upstream_label(&current).unwrap_or_default()
+            )));
+        }
+        if let Some(message) = &self.config_write_failure {
+            return Err(EngineError::Git {
+                command: "config".to_owned(),
+                stderr: message.clone(),
+            });
+        }
+        let full = format!("{HEADS}{name}");
+        if entries.is_empty() {
+            self.upstreams.remove(&full);
+            return Ok(Vec::new());
+        }
+        let value = |suffix: &str| {
+            entries
+                .iter()
+                .find(|e| e.key == format!("branch.{name}.{suffix}"))
+                .and_then(|e| e.value.clone())
+        };
+        match (value("remote"), value("merge")) {
+            (Some(remote), Some(merge)) if merge.starts_with(HEADS) => {
+                let branch = &merge[HEADS.len()..];
+                self.upstreams
+                    .insert(full, format!("{REMOTES}{remote}/{branch}"));
+                Ok(Vec::new())
+            }
+            _ => Err(EngineError::NotAllowed(msg!(
+                "engine-branch-memory-no-upstream",
+                name = name
+            ))),
+        }
     }
 
     pub(super) fn set_branch_config(

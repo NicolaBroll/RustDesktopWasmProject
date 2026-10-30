@@ -10,8 +10,8 @@
 
 use super::valid_ref_name;
 use crate::{EngineError, Message};
-use project_domain::Operation;
 pub use project_domain::{HEADS_PREFIX, branch_short};
+use project_domain::{Oid, Operation, REMOTES_PREFIX, RefInfo, RefKind};
 use serde::{Deserialize, Serialize};
 
 /// The full name of the local branch `name` (`refs/heads/<name>`).
@@ -120,6 +120,132 @@ pub struct BranchDeleted {
 pub struct ConfigEntry {
     pub key: String,
     pub value: Option<String>,
+}
+
+/// A remote-tracking branch `refs/remotes/<remote>/<branch>` of a configured remote, which a
+/// local branch can take as upstream (`branch.create` with `track`, `branch.set_upstream`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackingBranch {
+    /// The configured remote (may contain `/`).
+    pub remote: String,
+    /// The branch on the remote, short name (`branch.<name>.merge` is `refs/heads/<branch>`).
+    pub branch: String,
+    /// The full name of the remote-tracking branch.
+    pub full: String,
+    /// The commit it points to.
+    pub target: Oid,
+}
+
+impl TrackingBranch {
+    /// `<remote>/<branch>`, as the UI and the results show it.
+    pub fn label(&self) -> String {
+        format!("{}/{}", self.remote, self.branch)
+    }
+
+    /// The `branch.<local>.remote` and `branch.<local>.merge` entries that make it the upstream
+    /// of the local branch `local` (what `git branch --track` writes).
+    pub fn entries(&self, local: &str) -> Vec<ConfigEntry> {
+        vec![
+            ConfigEntry {
+                key: format!("branch.{local}.remote"),
+                value: Some(self.remote.clone()),
+            },
+            ConfigEntry {
+                key: format!("branch.{local}.merge"),
+                value: Some(branch_ref(&self.branch)),
+            },
+        ]
+    }
+}
+
+/// The remote-tracking branch `spec` (`<remote>/<branch>` or `refs/remotes/<remote>/<branch>`)
+/// among `refs`: it must exist (not a symbolic ref like `origin/HEAD`) and belong to exactly one
+/// of the configured `remotes`. With remotes `a` and `a/b`, `a/b/c` could be the branch `b/c` of
+/// `a` or `c` of `a/b`: refused as ambiguous (git refuses it too). Otherwise
+/// [`EngineError::InvalidParams`].
+pub fn resolve_tracking(
+    id: &'static str,
+    spec: &str,
+    refs: &[RefInfo],
+    remotes: &[String],
+) -> Result<TrackingBranch, EngineError> {
+    let invalid = |reason: Message| EngineError::InvalidParams { id, reason };
+    let full = if spec.starts_with("refs/") {
+        spec.to_owned()
+    } else {
+        format!("{REMOTES_PREFIX}{spec}")
+    };
+    let Some(found) = refs
+        .iter()
+        .find(|r| r.name == full && r.kind == RefKind::RemoteBranch)
+    else {
+        return Err(invalid(msg!(
+            "engine-upstream-not-remote-branch",
+            spec = spec.escape_debug()
+        )));
+    };
+    let rest = &full[REMOTES_PREFIX.len()..];
+    let owners: Vec<(&String, &str)> = remotes
+        .iter()
+        .filter_map(|r| {
+            let branch = rest.strip_prefix(r.as_str())?.strip_prefix('/')?;
+            (!branch.is_empty() && branch != "HEAD").then_some((r, branch))
+        })
+        .collect();
+    match owners.as_slice() {
+        [(remote, branch)] => Ok(TrackingBranch {
+            remote: (*remote).clone(),
+            branch: (*branch).to_owned(),
+            full: full.clone(),
+            target: found.target,
+        }),
+        [] => Err(invalid(msg!(
+            "engine-upstream-no-remote",
+            spec = spec.escape_debug()
+        ))),
+        many => Err(invalid(msg!(
+            "engine-upstream-ambiguous",
+            spec = spec.escape_debug(),
+            remotes = many
+                .iter()
+                .map(|(r, _)| format!("`{r}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+/// The upstream of a local branch as the repo file stores it (`branch.<name>.remote` and
+/// `branch.<name>.merge`), shown as `<remote>/<branch>` (`<remote>:<merge>` if `merge` is not
+/// a branch); `None` without entries.
+pub fn upstream_label(entries: &[ConfigEntry]) -> Option<String> {
+    let value = |suffix: &str| {
+        entries
+            .iter()
+            .find(|e| e.key.ends_with(suffix))
+            .map(|e| e.value.clone().unwrap_or_default())
+    };
+    match (value(".remote"), value(".merge")) {
+        (None, None) => None,
+        (Some(remote), Some(merge)) => Some(match merge.strip_prefix(HEADS_PREFIX) {
+            Some(branch) => format!("{remote}/{branch}"),
+            None => format!("{remote}:{merge}"),
+        }),
+        (Some(remote), None) => Some(remote),
+        (None, Some(merge)) => Some(merge),
+    }
+}
+
+/// The upstream configuration of a local branch changed by `branch.create` (with `track`) or
+/// `branch.set_upstream`: the `branch.<name>.remote` / `branch.<name>.merge` entries of the repo
+/// file before and after, in file order. Undo writes `before` back, redo `after`, only if the
+/// repo still has the other one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpstreamChange {
+    /// The local branch, short name.
+    pub branch: String,
+    pub before: Vec<ConfigEntry>,
+    pub after: Vec<ConfigEntry>,
 }
 
 #[cfg(test)]

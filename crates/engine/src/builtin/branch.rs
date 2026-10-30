@@ -5,8 +5,9 @@
 
 use super::{JournalState, Out, reread, to_json};
 use crate::{
-    ConfigEntry, EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Message, Session,
-    branch_ref, check_branch_name, check_new_branch_name, check_no_operation,
+    ConfigEntry, EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Message, RefMove,
+    RefRestore, Session, TrackingBranch, UpstreamChange, branch_ref, branch_short,
+    check_branch_name, check_new_branch_name, check_no_operation, resolve_tracking, upstream_label,
 };
 use project_domain::{Head, Oid, RefInfo, Status};
 use schemars::JsonSchema;
@@ -21,6 +22,29 @@ pub struct BranchCreateParams {
     /// Where the branch starts (rev); without: HEAD.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
+    /// Take `start` (a remote-tracking branch `<remote>/<branch>` of a configured remote) as
+    /// upstream, like `git branch --track`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub track: bool,
+}
+
+/// Parameters of `branch.set_upstream`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BranchSetUpstreamParams {
+    /// The short name of the local branch.
+    pub name: String,
+    /// The new upstream, a remote-tracking branch `<remote>/<branch>` (or
+    /// `refs/remotes/<remote>/<branch>`); `null` removes it. Required: a missing field is an error,
+    /// so a forgotten parameter never removes the upstream.
+    #[serde(deserialize_with = "required_nullable")]
+    #[schemars(required)]
+    pub upstream: Option<String>,
+}
+
+/// An `Option` field that must be present in the JSON, possibly `null`.
+fn required_nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(d)
 }
 
 /// Parameters of `branch.checkout`.
@@ -62,6 +86,11 @@ pub struct BranchCreateResult {
     pub branch: String,
     /// The commit the branch points to.
     pub target: Oid,
+    /// With `track`: the upstream written, `<remote>/<branch>`; otherwise `null`.
+    pub upstream: Option<String>,
+    /// Something unexpected found after the successful creation (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
     /// The refs re-read after the creation; `null` if they could not be re-read (see `refs_error`).
     pub refs: Option<Vec<RefInfo>>,
     /// Why the refs could not be re-read; absent when they were.
@@ -147,6 +176,31 @@ pub struct BranchRenameResult {
     pub journal: JournalState,
 }
 
+/// Result of `branch.set_upstream`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchSetUpstreamResult {
+    /// The full name of the branch, `refs/heads/<name>`.
+    pub branch: String,
+    /// The upstream now, `<remote>/<branch>`; `null` if removed.
+    pub upstream: Option<String>,
+    /// The upstream before (of the repo file), `<remote>/<branch>`; `null` if there was none.
+    pub previous: Option<String>,
+    /// `false` if the upstream was already that one (nothing written, nothing in the journal).
+    pub changed: bool,
+    /// Something unexpected found after the successful write (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The refs re-read after the command (with the new upstream); `null` if they could not be
+    /// re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
 /// The local branch `full` among the refs, `None` if there is none.
 fn find<'a>(refs: &'a [RefInfo], full: &str) -> Option<&'a RefInfo> {
     refs.iter().find(|r| r.name == full)
@@ -169,38 +223,206 @@ fn taken(name: &str) -> EngineError {
 /// Result: [`BranchCreateResult`].
 pub(super) fn branch_create(
     s: &mut Session,
-    BranchCreateParams { name, start }: BranchCreateParams,
+    BranchCreateParams { name, start, track }: BranchCreateParams,
 ) -> Out {
     const ID: &str = "branch.create";
     check_new_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let head = repo.head()?;
-    let target: Oid = match &start {
-        Some(rev) => {
+    let refs = repo.refs()?;
+    let tracking = match (track, &start) {
+        (false, _) => None,
+        (true, None) => {
+            return Err(EngineError::InvalidParams {
+                id: ID,
+                reason: msg!("engine-branch-track-no-start"),
+            });
+        }
+        (true, Some(rev)) => Some(tracked_start(ID, rev, &refs, &repo.remotes()?)?),
+    };
+    let target: Oid = match (&tracking, &start) {
+        (Some(t), _) => t.target,
+        (None, Some(rev)) => {
             let commits = repo.log(&LogQuery::page(0, 1).from_rev(rev.clone()))?;
             commits
                 .first()
                 .map(|c| c.id)
                 .ok_or_else(|| EngineError::UnknownRev(rev.clone()))?
         }
-        None => head
+        (None, None) => head
             .target()
             .ok_or_else(|| EngineError::NotAllowed(msg!("engine-branch-unborn-start")))?,
     };
     let full = branch_ref(&name);
-    if find(&repo.refs()?, &full).is_some() {
+    if find(&refs, &full).is_some() {
         return Err(taken(&name));
     }
+    // The upstream entries the repo file has now (a leftover of a branch deleted with
+    // `update-ref`): undo puts them back.
+    let change = match &tracking {
+        Some(t) => Some(UpstreamChange {
+            branch: name.clone(),
+            before: repo.local_upstream(&name)?,
+            after: t.entries(&name),
+        }),
+        None => None,
+    };
+    let head = HeadState::from_head(&head);
     repo.create_branch(&name, &target)?;
-    journal.record(JournalEntry::branch_create(
-        &full,
-        target,
-        HeadState::from_head(&head),
-    ));
+    let mut warnings = Vec::new();
+    if let Some(change) = &change {
+        match repo.write_upstream(&name, &change.before, &change.after) {
+            Ok(w) => warnings = w,
+            Err(e) => return Err(roll_back_create(repo, &full, target, &head, e)),
+        }
+    }
+    let upstream = tracking.as_ref().map(TrackingBranch::label);
+    journal.record(match change {
+        Some(change) => JournalEntry::branch_create_tracking(&full, target, head, change),
+        None => JournalEntry::branch_create(&full, target, head),
+    });
     let (refs, refs_error) = reread(repo.refs());
     Ok(to_json(BranchCreateResult {
         branch: full,
         target,
+        upstream,
+        warnings,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
+}
+
+/// The remote-tracking branch `rev` that `branch.create` with `track` starts from
+/// ([`resolve_tracking`]). A short `rev` that git would resolve to a tag or a local branch first
+/// (`refs/tags/<rev>`, `refs/heads/<rev>`) is ambiguous: [`EngineError::InvalidParams`].
+fn tracked_start(
+    id: &'static str,
+    rev: &str,
+    refs: &[RefInfo],
+    remotes: &[String],
+) -> Result<TrackingBranch, EngineError> {
+    let remote_ref = format!("{}{rev}", crate::REMOTES_PREFIX);
+    if !rev.starts_with("refs/") && find(refs, &remote_ref).is_some() {
+        let shadow = [crate::TAGS_PREFIX, crate::HEADS_PREFIX]
+            .iter()
+            .map(|prefix| format!("{prefix}{rev}"))
+            .find(|full| find(refs, full).is_some());
+        if let Some(shadow) = shadow {
+            return Err(EngineError::InvalidParams {
+                id,
+                reason: msg!(
+                    "engine-branch-track-ambiguous",
+                    start = rev.escape_debug(),
+                    other = shadow
+                ),
+            });
+        }
+    }
+    resolve_tracking(id, rev, refs, remotes)
+}
+
+/// After the upstream of a new tracking branch could not be written (`error`): the branch just
+/// created is deleted again (only if it is still at `target`), so nothing is left half-done.
+/// The error says whether the deletion succeeded.
+fn roll_back_create(
+    repo: &mut dyn crate::GitBackend,
+    full: &str,
+    target: Oid,
+    head: &HeadState,
+    error: EngineError,
+) -> EngineError {
+    let request = RefRestore {
+        command: "branch.create",
+        head_expected: head.clone(),
+        head_target: head.clone(),
+        refs: vec![RefMove {
+            name: full.to_owned(),
+            expected: Some(target),
+            target: None,
+        }],
+        reflog: format!("project: branch.create {full} rolled back"),
+    };
+    let reason = match repo.restore_refs(&request) {
+        Ok(_) => msg!(
+            "engine-branch-track-rolled-back",
+            name = branch_short(full).escape_debug(),
+            error = error
+        ),
+        Err(e) => msg!(
+            "engine-branch-track-not-rolled-back",
+            name = branch_short(full).escape_debug(),
+            error = error,
+            rollback = e
+        ),
+    };
+    EngineError::GitWithReason {
+        command: "config".to_owned(),
+        reason,
+    }
+}
+
+/// Sets or removes the upstream of the local branch `name` (see
+/// [`GitRefs::write_upstream`](crate::GitRefs::write_upstream)): `upstream` must be an existing
+/// remote-tracking branch of a configured remote ([`resolve_tracking`]); `null` removes it. Only
+/// `branch.<name>.remote` and `branch.<name>.merge` of the repo file are written (`git config
+/// --local`); other keys of the branch stay. Allowed with detached HEAD and during an operation:
+/// the configuration does not touch refs, index or worktree. The same upstream: nothing
+/// changes (`changed: false`). It goes into the journal: `edit.undo` puts the previous upstream
+/// back, only if the configuration is still the one written ([`EngineError::UndoConflict`]
+/// otherwise).
+///
+/// Result: [`BranchSetUpstreamResult`].
+pub(super) fn branch_set_upstream(
+    s: &mut Session,
+    BranchSetUpstreamParams { name, upstream }: BranchSetUpstreamParams,
+) -> Out {
+    const ID: &str = "branch.set_upstream";
+    check_branch_name(ID, &name)?;
+    if upstream.as_deref() == Some("") {
+        return Err(EngineError::InvalidParams {
+            id: ID,
+            reason: msg!("engine-upstream-empty"),
+        });
+    }
+    let (repo, journal) = s.repo_and_journal()?;
+    let refs = repo.refs()?;
+    let full = branch_ref(&name);
+    if find(&refs, &full).is_none() {
+        return Err(missing(&name));
+    }
+    let tracking = match &upstream {
+        Some(spec) => Some(resolve_tracking(ID, spec, &refs, &repo.remotes()?)?),
+        None => None,
+    };
+    let before = repo.local_upstream(&name)?;
+    let after = tracking
+        .as_ref()
+        .map(|t| t.entries(&name))
+        .unwrap_or_default();
+    let previous = upstream_label(&before);
+    let changed = before != after;
+    let mut warnings = Vec::new();
+    if changed {
+        warnings = repo.write_upstream(&name, &before, &after)?;
+        let head = HeadState::from_head(&repo.head()?);
+        journal.record(JournalEntry::set_upstream(
+            &full,
+            head,
+            UpstreamChange {
+                branch: name.clone(),
+                before,
+                after,
+            },
+        ));
+    }
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchSetUpstreamResult {
+        branch: full,
+        upstream: tracking.as_ref().map(TrackingBranch::label),
+        previous,
+        changed,
+        warnings,
         refs,
         refs_error,
         journal: JournalState::of(journal),
@@ -1023,6 +1245,8 @@ mod tests {
         let result = BranchCreateResult {
             branch: "refs/heads/x".into(),
             target: Oid::from_bytes([1; 20]),
+            upstream: None,
+            warnings: Vec::new(),
             refs,
             refs_error,
             journal: JournalState::default(),
@@ -1034,3 +1258,7 @@ mod tests {
         assert_eq!(back, result);
     }
 }
+
+#[cfg(test)]
+#[path = "upstream_tests.rs"]
+mod upstream_tests;

@@ -47,27 +47,35 @@ pub struct ConflictResolveResult {
 }
 
 /// Parameters of `conflict.show`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ShowParams {
-    path: RepoPath,
+pub struct ConflictShowParams {
+    /// The conflicted file.
+    pub path: RepoPath,
 }
 
 /// Parameters of `conflict.resolve`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ResolveParams {
-    path: RepoPath,
-    digest: String,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    delete: bool,
+pub struct ConflictResolveParams {
+    /// The conflicted file.
+    pub path: RepoPath,
+    /// The worktree digest from `conflict.show`.
+    pub digest: String,
+    /// The resolved text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Delete the file instead of writing `content`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delete: bool,
 }
 
 /// The versions of the conflicted file `path`, each `{"text", "binary", "size"}` or `null`, and
 /// the worktree digest to pass again to `conflict.resolve`. Result: [`ConflictShowResult`].
-pub(super) fn conflict_show(s: &mut Session, ShowParams { path }: ShowParams) -> Out {
+pub(super) fn conflict_show(
+    s: &mut Session,
+    ConflictShowParams { path }: ConflictShowParams,
+) -> Out {
     let path = check_path("conflict.show", path)?;
     let v = s.repo()?.conflict_versions(&path)?;
     let version = |b: &Option<Vec<u8>>| b.as_deref().map(VersionText::of);
@@ -88,12 +96,12 @@ pub(super) fn conflict_show(s: &mut Session, ShowParams { path }: ShowParams) ->
 /// [`ConflictResolveResult`].
 pub(super) fn conflict_resolve(
     s: &mut Session,
-    ResolveParams {
+    ConflictResolveParams {
         path,
         digest,
         content,
         delete,
-    }: ResolveParams,
+    }: ConflictResolveParams,
 ) -> Out {
     const ID: &str = "conflict.resolve";
     let path = check_path(ID, path)?;

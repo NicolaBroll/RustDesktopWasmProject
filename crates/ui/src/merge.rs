@@ -22,13 +22,13 @@
 use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
-use crate::{Action, Done, Request, Tab};
+use crate::{Action, Done, Request, Tab, params};
 pub use pick::{MainlineDialog, Pick};
 use project_domain::branch_short;
 use project_domain::{Head, Oid, Operation, RefInfo, Status};
 use project_engine::{
-    MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult, Message,
-    RebaseContinueResult, RepoOperationResult,
+    MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams, MergeContinueResult,
+    MergeStartParams, MergeStartResult, Message, RebaseContinueResult, RepoOperationResult,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -451,10 +451,12 @@ impl MergeBox {
         if self.busy() || self.dialog.is_some() {
             return None;
         }
-        let mut params = json!({ "rev": rev });
-        if no_ff {
-            params["no_ff"] = json!(true);
-        }
+        let params = params(MergeStartParams {
+            rev,
+            no_ff,
+            ff_only: false,
+            message: None,
+        });
         let label = tr!("merge-start-label", what = &what, into = &into);
         self.failure = None;
         self.starting = Some(Starting { what, into });
@@ -514,11 +516,12 @@ impl MergeBox {
         dialog.sending = true;
         dialog.error = None;
         dialog.git = None;
-        let params = if dialog.kind.has_message() {
-            json!({ "message": dialog.message.trim_end() })
-        } else {
-            json!({})
-        };
+        let params = params(MergeContinueParams {
+            message: dialog
+                .kind
+                .has_message()
+                .then(|| dialog.message.trim_end().to_owned()),
+        });
         Some((
             Op::Continue(dialog.kind),
             params,
@@ -538,7 +541,7 @@ impl MergeBox {
         self.dialog = Some(Dialog::Abort(kind, Phase::Checking));
         Some((
             Op::Abort(kind),
-            json!({}),
+            params(MergeAbortParams { confirm: false }),
             tr!("merge-abort-check-label", name = kind.name()),
         ))
     }
@@ -554,7 +557,7 @@ impl MergeBox {
         *phase = Phase::Sending;
         Some((
             Op::Abort(*kind),
-            json!({ "confirm": true }),
+            params(MergeAbortParams { confirm: true }),
             tr!("merge-abort-label", name = kind.name()),
         ))
     }

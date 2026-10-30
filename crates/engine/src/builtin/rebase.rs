@@ -8,7 +8,7 @@
 //! `"confirm": true` and first saves index and worktree. `rebase.continue` also concludes the
 //! rebase of a stopped `remote.pull`, with the pull's journal entry.
 
-use super::merge::abort_confirm;
+use super::merge::{MergeAbortParams, abort_confirm};
 use super::{JournalState, Out, reread, to_json};
 use crate::git::check_in_progress;
 use crate::{
@@ -146,14 +146,6 @@ pub(crate) struct StartParams {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoParams {}
-
-/// Parameters of `rebase.abort`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AbortParams {
-    #[serde(default)]
-    confirm: bool,
-}
 
 /// The branch of HEAD (short name) and its commit; detached HEAD or a branch without commits →
 /// [`EngineError::NotAllowed`].
@@ -479,7 +471,7 @@ pub(super) fn rebase_continue(s: &mut Session, NoParams {}: NoParams) -> Out {
 /// [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
 /// Result: [`MergeAbortResult`] (the same shape as `merge.abort`).
-pub(super) fn rebase_abort(s: &mut Session, AbortParams { confirm }: AbortParams) -> Out {
+pub(super) fn rebase_abort(s: &mut Session, MergeAbortParams { confirm }: MergeAbortParams) -> Out {
     const ID: &str = "rebase.abort";
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;

@@ -20,13 +20,15 @@ pub use builtin::branch::{
 };
 pub use builtin::clone::RepoCloneResult;
 pub use builtin::commit::CommitCreateResult;
-pub use builtin::conflict::{ConflictResolveResult, ConflictShowResult};
+pub use builtin::conflict::{
+    ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
+};
 pub use builtin::discard::DiscardResult;
 pub use builtin::edit::{HistoryResult, UndoResult};
 pub use builtin::file::FileLogResult;
 pub use builtin::merge::{
-    IncomingCommit, MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult,
-    RepoOperationResult,
+    IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
+    MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
 };
 pub use builtin::pick::PickStartResult;
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullParams, RemotePullResult};

@@ -6,7 +6,7 @@
 //! `edit.undo` undoes it with `reset --keep`; stopped on a conflict it **stays in progress** and does not enter
 //! the journal; `*.abort` always asks for `"confirm": true` and first saves index and worktree.
 
-use super::merge::{abort_confirm, check_message, label};
+use super::merge::{MergeAbortParams, MergeContinueParams, abort_confirm, check_message, label};
 use super::{JournalState, Out, reread, to_json};
 use crate::{
     CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeAbortResult,
@@ -72,22 +72,6 @@ pub(crate) struct StartParams {
     mainline: Option<usize>,
 }
 
-/// Parameters of `*.continue`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ContinueParams {
-    #[serde(default)]
-    message: Option<String>,
-}
-
-/// Parameters of `*.abort`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AbortParams {
-    #[serde(default)]
-    confirm: bool,
-}
-
 pub(super) fn commit_cherry_pick(s: &mut Session, p: StartParams) -> Out {
     pick_start(s, p, PickKind::CherryPick)
 }
@@ -96,19 +80,19 @@ pub(super) fn commit_revert(s: &mut Session, p: StartParams) -> Out {
     pick_start(s, p, PickKind::Revert)
 }
 
-pub(super) fn cherry_pick_continue(s: &mut Session, p: ContinueParams) -> Out {
+pub(super) fn cherry_pick_continue(s: &mut Session, p: MergeContinueParams) -> Out {
     pick_continue(s, p, PickKind::CherryPick)
 }
 
-pub(super) fn revert_continue(s: &mut Session, p: ContinueParams) -> Out {
+pub(super) fn revert_continue(s: &mut Session, p: MergeContinueParams) -> Out {
     pick_continue(s, p, PickKind::Revert)
 }
 
-pub(super) fn cherry_pick_abort(s: &mut Session, p: AbortParams) -> Out {
+pub(super) fn cherry_pick_abort(s: &mut Session, p: MergeAbortParams) -> Out {
     pick_abort(s, p, PickKind::CherryPick)
 }
 
-pub(super) fn revert_abort(s: &mut Session, p: AbortParams) -> Out {
+pub(super) fn revert_abort(s: &mut Session, p: MergeAbortParams) -> Out {
     pick_abort(s, p, PickKind::Revert)
 }
 
@@ -240,7 +224,7 @@ fn pick_start(s: &mut Session, StartParams { rev, mainline }: StartParams, kind:
 /// Result: [`MergeContinueResult`] (the same shape as `merge.continue`).
 fn pick_continue(
     s: &mut Session,
-    ContinueParams { message }: ContinueParams,
+    MergeContinueParams { message }: MergeContinueParams,
     kind: PickKind,
 ) -> Out {
     let id = kind.continue_command();
@@ -336,7 +320,11 @@ fn pick_continue(
 /// from a terminal → [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
 /// Result: [`MergeAbortResult`] (the same shape as `merge.abort`).
-fn pick_abort(s: &mut Session, AbortParams { confirm }: AbortParams, kind: PickKind) -> Out {
+fn pick_abort(
+    s: &mut Session,
+    MergeAbortParams { confirm }: MergeAbortParams,
+    kind: PickKind,
+) -> Out {
     let id = kind.abort_command();
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;

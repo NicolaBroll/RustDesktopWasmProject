@@ -14,11 +14,14 @@
 //!   `StaleDiff` (the file changed after reading) rereads the file.
 
 use crate::ErrorKind;
-use crate::{Action, Done, Request, Tab};
+use crate::{Action, Done, Request, Tab, params};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
 };
-use project_engine::{ConflictResolveResult, ConflictShowResult, VersionText};
+use project_engine::{
+    ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
+    VersionText,
+};
 use project_i18n::tr;
 use serde_json::{Value, json};
 
@@ -288,7 +291,7 @@ impl ConflictBox {
             sending: false,
             error: None,
         });
-        Some((json!({ "path": path }), self.seq))
+        Some((params(ConflictShowParams { path }), self.seq))
     }
 
     /// "Start over": rereads the file, the choices and edits made here are lost.
@@ -298,7 +301,8 @@ impl ConflictBox {
         editor.seq = self.seq;
         editor.load = Load::Loading;
         editor.pending = None;
-        Some((json!({ "path": editor.path }), self.seq))
+        let path = editor.path.clone();
+        Some((params(ConflictShowParams { path }), self.seq))
     }
 
     /// Closes the editor; not during a send.
@@ -407,10 +411,11 @@ impl ConflictBox {
             Pick::Ours => tr!("conflict-label-use-ours", path = path),
             Pick::Theirs => tr!("conflict-label-use-theirs", path = path),
         };
-        let params = json!({
-            "path": editor.path,
-            "digest": loaded.shown.digest,
-            "content": content,
+        let params = params(ConflictResolveParams {
+            path: editor.path.clone(),
+            digest: loaded.shown.digest.clone(),
+            content: Some(content),
+            delete: false,
         });
         Some(self.sending(params, label))
     }
@@ -431,10 +436,11 @@ impl ConflictBox {
             Pending::Markers(_) => self.send_result(),
             Pending::Delete => {
                 let loaded = editor.loaded()?;
-                let params = json!({
-                    "path": editor.path,
-                    "digest": loaded.shown.digest,
-                    "delete": true,
+                let params = params(ConflictResolveParams {
+                    path: editor.path.clone(),
+                    digest: loaded.shown.digest.clone(),
+                    content: None,
+                    delete: true,
                 });
                 let label = tr!("conflict-label-delete", path = editor.path.to_string());
                 Some(self.sending(params, label))
@@ -452,10 +458,11 @@ impl ConflictBox {
     fn send_result(&mut self) -> Option<(Value, String)> {
         let editor = self.editor.as_ref()?;
         let loaded = editor.loaded()?;
-        let params = json!({
-            "path": editor.path,
-            "digest": loaded.shown.digest,
-            "content": loaded.result.as_ref()?,
+        let params = params(ConflictResolveParams {
+            path: editor.path.clone(),
+            digest: loaded.shown.digest.clone(),
+            content: Some(loaded.result.clone()?),
+            delete: false,
         });
         let label = tr!("conflict-label-resolve", path = editor.path.to_string());
         Some(self.sending(params, label))

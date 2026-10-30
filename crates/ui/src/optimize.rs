@@ -5,6 +5,7 @@
 //! `repo.optimize` is a write ([`CommandSpec::writes`](project_engine::CommandSpec)): while it
 //! runs the other writes and "Refresh" are disabled; it is not offered while another write runs.
 
+use crate::running::Running;
 use crate::{Action, Done, ErrorKind, Request, Tab, Ticket};
 use project_engine::RepoOptimizeResult;
 use project_i18n::tr;
@@ -34,14 +35,6 @@ enum FirstPage {
         since: Instant,
     },
     Took(Duration),
-}
-
-/// `repo.optimize` in progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: Ticket,
-    /// True after "Stop", until the command answers.
-    pub cancelling: bool,
 }
 
 /// The offer of `repo.optimize` for the repo of the tab.
@@ -138,17 +131,12 @@ impl OptimizeBox {
     /// The command requested with [`OptimizeBox::request`] started with `ticket`.
     pub fn started(&mut self, ticket: Ticket) {
         self.error = None;
-        self.running = Some(Running {
-            ticket,
-            cancelling: false,
-        });
+        self.running = Some(Running::new(ticket));
     }
 
     /// "Stop": the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
-        let running = self.running.as_mut().filter(|r| !r.cancelling)?;
-        running.cancelling = true;
-        Some(running.ticket)
+        self.running.as_mut()?.cancel()
     }
 
     /// The response of `repo.optimize` for `ticket`; `detail`: git's text, if any.

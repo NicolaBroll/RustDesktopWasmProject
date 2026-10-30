@@ -18,8 +18,9 @@
 
 use crate::discard::{History, Phase};
 use crate::messages_text;
+use crate::running::Running;
 use crate::{Action, Done, Request, Tab, params};
-use crate::{ErrorKind, format};
+use crate::{ErrorKind, Ticket, format};
 use project_domain::{Oid, Signature, Status};
 use project_engine::{
     Message, StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashEntry,
@@ -135,8 +136,8 @@ pub struct PushDialog {
     pub fields: PushFields,
     /// The engine error at the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// True while the command is running.
-    pub sending: bool,
+    /// The running command.
+    pub running: Option<Running>,
 }
 
 impl PushDialog {
@@ -324,7 +325,7 @@ impl StashBox {
         self.dialog = Some(Dialog::Push(PushDialog {
             fields: PushFields::default(),
             error: None,
-            sending: false,
+            running: None,
         }));
         true
     }
@@ -332,7 +333,7 @@ impl StashBox {
     /// The fields of the "Stash" dialog changed.
     pub fn set_fields(&mut self, fields: PushFields) {
         if let Some(Dialog::Push(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.fields = fields;
         }
@@ -343,12 +344,18 @@ impl StashBox {
         let Some(Dialog::Push(dialog)) = &mut self.dialog else {
             return None;
         };
-        if dialog.sending {
+        if dialog.running.is_some() {
             return None;
         }
-        dialog.sending = true;
         dialog.error = None;
         Some((dialog.params(), tr!("stash-push-label")))
+    }
+
+    /// The command of [`StashBox::submit_push`] started with `ticket`.
+    pub fn push_started(&mut self, ticket: Ticket) {
+        if let Some(Dialog::Push(dialog)) = &mut self.dialog {
+            dialog.running = Some(Running::new(ticket));
+        }
     }
 
     /// Starts the apply (`pop`: false) or the pop of the stash `id`: parameters and description.
@@ -418,7 +425,7 @@ impl StashBox {
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
-            Some(Dialog::Push(dialog)) => !dialog.sending,
+            Some(Dialog::Push(dialog)) => dialog.running.is_none(),
             Some(Dialog::Drop(drop)) => matches!(drop.phase, Phase::Confirm { .. }),
             None => false,
         };
@@ -446,14 +453,14 @@ impl StashBox {
         let Some(Dialog::Push(dialog)) = &mut self.dialog else {
             return unexpected(Op::Push);
         };
-        if !dialog.sending {
+        if dialog.running.is_none() {
             return unexpected(Op::Push);
         }
         match result {
             // Nothing to stash, conflicts, invalid message: nothing changed,
             // it is fixed in the dialog.
             Err(e) if matches!(kind, Some(ErrorKind::InvalidParams | ErrorKind::NotAllowed)) => {
-                dialog.sending = false;
+                dialog.running = None;
                 dialog.error = Some(e);
                 Received::Inline
             }
@@ -720,7 +727,10 @@ impl Tab {
                     repo.write_error = None;
                     repo.write_label = Some(label);
                     let op = Op::Push;
-                    self.submit(op.command(), params, Request::Stash(generation, op));
+                    let ticket = self.submit(op.command(), params, Request::Stash(generation, op));
+                    if let Some(repo) = &mut self.repo {
+                        repo.stash.push_started(ticket);
+                    }
                 }
             }
             Action::SelectStash(id) => {
@@ -900,6 +910,7 @@ mod tests {
         assert!(b.open_push());
         b.set_fields(fields);
         let (params, _) = b.submit_push().unwrap();
+        b.push_started(Ticket::for_test(1));
         let r = run(registry, session, b, Op::Push, params);
         assert!(matches!(r, Received::Done(_)), "{r:?}");
     }
@@ -985,7 +996,7 @@ mod tests {
                 keep_index: false,
             },
             error: None,
-            sending: false,
+            running: None,
         };
         assert_eq!(
             d.params(),
@@ -1022,6 +1033,7 @@ mod tests {
             keep_index: false,
         });
         let (params, label) = b.submit_push().unwrap();
+        b.push_started(Ticket::for_test(1));
         assert_eq!(label, "Stashing changes");
         assert_eq!(b.submit_push(), None, "only once");
         b.close();
@@ -1083,13 +1095,14 @@ mod tests {
         // Only the untracked files remain: without "include untracked" there is nothing.
         b.open_push();
         let (params, _) = b.submit_push().unwrap();
+        b.push_started(Ticket::for_test(1));
         let r = run(&registry, &mut session, &mut b, Op::Push, params);
         assert!(matches!(r, Received::Inline), "{r:?}");
         let Some(Dialog::Push(dialog)) = b.dialog() else {
             panic!()
         };
         assert!(dialog.error.is_some());
-        assert!(!dialog.sending);
+        assert!(dialog.running.is_none());
         b.close();
         assert!(b.dialog().is_none());
     }

@@ -259,9 +259,9 @@ fn continue_dialog(
             .desired_rows(5)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace)
-            .interactive(!dialog.sending),
+            .interactive(dialog.running.is_none()),
     );
-    if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+    if dialog.running.is_none() && ui.memory(|m| m.focused().is_none()) {
         edit.request_focus();
     }
     if edit.changed() {
@@ -274,13 +274,13 @@ fn continue_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let enabled = !dialog.sending && !dialog.is_blank();
+        let enabled = dialog.running.is_none() && !dialog.is_blank();
         let button = ui
             .add_enabled(
                 enabled,
                 egui::Button::new(tr!("merge-create-button", noun = &noun)),
             )
-            .on_disabled_hover_text(if dialog.sending {
+            .on_disabled_hover_text(if dialog.running.is_some() {
                 tr!("merge-committing-hint")
             } else {
                 tr!("merge-write-message")
@@ -289,12 +289,15 @@ fn continue_dialog(
             actions.push(Action::SubmitContinueMerge);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("merge-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("merge-close")),
+            )
             .clicked()
         {
             actions.push(Action::CloseMergeDialog);
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
             ui.label(tr!("merge-committing"));
         }
@@ -331,7 +334,7 @@ fn rebase_continue_dialog(
     ui.horizontal(|ui| {
         let button = ui
             .add_enabled(
-                !dialog.sending,
+                dialog.running.is_none(),
                 egui::Button::new(
                     RichText::new(tr!("merge-rebase-continue-button", name = name)).strong(),
                 ),
@@ -341,12 +344,15 @@ fn rebase_continue_dialog(
             actions.push(Action::SubmitContinueMerge);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("merge-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("merge-close")),
+            )
             .clicked()
         {
             actions.push(Action::CloseMergeDialog);
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
             ui.label(tr!("merge-continuing"));
         }

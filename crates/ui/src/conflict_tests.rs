@@ -133,6 +133,7 @@ fn conflict_resolved_from_the_ui_and_merge_ready() {
     assert!(loaded(&b).blocks().is_empty());
 
     let (params, label) = b.resolve().expect("without markers it is sent right away");
+    b.started(Ticket::for_test(1));
     assert_eq!(params["content"], "ours\ntheirs\nend\n");
     assert_eq!(label, "Resolving the conflict in a.txt");
     assert!(b.busy());
@@ -159,6 +160,7 @@ fn file_changed_after_reading_is_reread() {
     open(&r, &mut s, &mut b, "a.txt");
     assert!(b.choose(0, Choice::Theirs));
     let (mut params, _) = b.resolve().unwrap();
+    b.started(Ticket::for_test(1));
     params["digest"] = json!("0".repeat(32));
     let Received::Failed { reread, .. } = send(&r, &mut s, &mut b, params) else {
         panic!("StaleDiff");
@@ -194,6 +196,7 @@ fn remaining_markers_ask_for_two_step_confirmation() {
     // Second step: the text with the markers is sent.
     assert!(b.resolve().is_none());
     let (params, _) = b.confirm().expect("confirmed");
+    b.started(Ticket::for_test(1));
     assert!(params["content"].as_str().unwrap().contains("<<<<<<< HEAD"));
     assert_eq!(params["digest"], "d");
     assert!(b.busy());
@@ -213,6 +216,7 @@ fn unparsable_text_has_no_per_block_buttons() {
     assert!(b.editor().unwrap().error.is_some());
     // Without parsed blocks it is sent without confirmation (the warning is about the markers found).
     assert!(b.resolve().is_some());
+    b.started(Ticket::for_test(1));
 
     // The worktree file already broken: no editable result, only whole sides.
     let mut b = with_text("<<<<<<< HEAD\nonly ours\n");
@@ -221,6 +225,7 @@ fn unparsable_text_has_no_per_block_buttons() {
     assert!(l.blocks().is_empty());
     assert!(b.resolve().is_none());
     let (params, label) = b.use_side(Pick::Theirs).unwrap();
+    b.started(Ticket::for_test(1));
     assert_eq!(params["content"], "t\n");
     assert!(label.contains("their"), "{label}");
 }
@@ -256,6 +261,7 @@ fn deletion_asks_for_confirmation() {
     b.delete();
     assert_eq!(b.editor().unwrap().pending, Some(Pending::Delete));
     let (params, _) = b.confirm().unwrap();
+    b.started(Ticket::for_test(1));
     assert_eq!(
         params,
         json!({ "path": "f.txt", "digest": "d", "delete": true })

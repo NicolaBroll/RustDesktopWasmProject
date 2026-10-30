@@ -67,10 +67,10 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             _ => tr!("branch-name-hint"),
         })
         .desired_width(f32::INFINITY)
-        .interactive(!dialog.sending);
+        .interactive(dialog.running.is_none());
     let response = ui.add(edit);
     // The field takes the keyboard on open.
-    if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+    if dialog.running.is_none() && ui.memory(|m| m.focused().is_none()) {
         response.request_focus();
     }
     if response.changed() {
@@ -83,7 +83,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             .hint_text(tr!("branch-tag-message-hint"))
             .desired_rows(3)
             .desired_width(f32::INFINITY)
-            .interactive(!dialog.sending);
+            .interactive(dialog.running.is_none());
         if ui.add(edit).changed() {
             actions.push(Action::TagMessage(message));
         }
@@ -101,12 +101,15 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             actions.push(Action::SubmitBranchName);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("branch-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("branch-close")),
+            )
             .clicked()
         {
             actions.push(Action::CloseBranchDialog);
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
         }
     });

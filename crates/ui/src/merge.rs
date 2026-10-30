@@ -19,10 +19,11 @@
 //! - **Rebase** (S32): `rebase.continue` (no message: the commit it stopped on keeps its own; it
 //!   may stop again on the next conflict, and the panel stays) and `rebase.abort` like the others.
 
-use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
+use crate::running::Running;
 use crate::{Action, Done, Request, Tab, params};
+use crate::{ErrorKind, Ticket};
 pub use pick::{MainlineDialog, Pick};
 use project_domain::branch_short;
 use project_domain::{Head, Oid, Operation, RefInfo, Status};
@@ -282,8 +283,8 @@ pub struct ContinueDialog {
     pub error: Option<String>,
     /// The git text of the error, if any.
     pub git: Option<String>,
-    /// True while the command is running.
-    pub sending: bool,
+    /// The running command.
+    pub running: Option<Running>,
 }
 
 impl ContinueDialog {
@@ -369,7 +370,7 @@ impl MergeBox {
             self.info_error = None;
             self.asked_for = Some(seq);
             // Without an operation there is no Continue or Abort to show.
-            if matches!(self.dialog, Some(Dialog::Continue(ref d)) if !d.sending)
+            if matches!(self.dialog, Some(Dialog::Continue(ref d)) if d.running.is_none())
                 || matches!(self.dialog, Some(Dialog::Abort(_, Phase::Confirm { .. })))
             {
                 self.dialog = None;
@@ -433,7 +434,7 @@ impl MergeBox {
     pub fn busy(&self) -> bool {
         self.starting.is_some()
             || match &self.dialog {
-                Some(Dialog::Continue(d)) => d.sending,
+                Some(Dialog::Continue(d)) => d.running.is_some(),
                 Some(Dialog::Abort(_, phase)) => !matches!(phase, Phase::Confirm { .. }),
                 Some(Dialog::Mainline(_)) | None => false,
             }
@@ -490,7 +491,7 @@ impl MergeBox {
             message: message.trim_end().to_owned(),
             error: None,
             git: None,
-            sending: false,
+            running: None,
         }));
         true
     }
@@ -498,7 +499,7 @@ impl MergeBox {
     /// The message of the "Continue" dialog changed.
     pub fn set_message(&mut self, message: String) {
         if let Some(Dialog::Continue(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.message = message;
         }
@@ -510,10 +511,9 @@ impl MergeBox {
         let Some(Dialog::Continue(dialog)) = &mut self.dialog else {
             return None;
         };
-        if dialog.sending || dialog.is_blank() {
+        if dialog.running.is_some() || dialog.is_blank() {
             return None;
         }
-        dialog.sending = true;
         dialog.error = None;
         dialog.git = None;
         let params = params(MergeContinueParams {
@@ -527,6 +527,13 @@ impl MergeBox {
             params,
             tr!("merge-continue-label", name = dialog.kind.name()),
         ))
+    }
+
+    /// The command of [`MergeBox::submit_continue`] started with `ticket`.
+    pub fn continue_started(&mut self, ticket: Ticket) {
+        if let Some(Dialog::Continue(dialog)) = &mut self.dialog {
+            dialog.running = Some(Running::new(ticket));
+        }
     }
 
     /// Starts the abort: command and parameters of the first submit, without `confirm` (the
@@ -565,7 +572,7 @@ impl MergeBox {
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
-            Some(Dialog::Continue(dialog)) => !dialog.sending,
+            Some(Dialog::Continue(dialog)) => dialog.running.is_none(),
             Some(Dialog::Abort(_, phase)) => matches!(phase, Phase::Confirm { .. }),
             Some(Dialog::Mainline(_)) => true,
             None => false,
@@ -655,7 +662,7 @@ impl MergeBox {
         let Some(Dialog::Continue(dialog)) = &mut self.dialog else {
             return unexpected(Op::Continue(op));
         };
-        if !dialog.sending || dialog.kind != op {
+        if dialog.running.is_none() || dialog.kind != op {
             return unexpected(Op::Continue(op));
         }
         let title = op.title();
@@ -671,7 +678,7 @@ impl MergeBox {
             // Conflicts remain, no merge in progress, invalid message, a hook that
             // refuses, nothing to commit: nothing is committed, it is fixed in the dialog.
             Err(e) => {
-                dialog.sending = false;
+                dialog.running = None;
                 dialog.git =
                     detail.filter(|d| kind == Some(ErrorKind::Git) && !d.trim().is_empty());
                 dialog.error = Some(e);
@@ -1009,7 +1016,10 @@ impl Tab {
                 if let Some((op, params, label)) = repo.merge.submit_continue() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    self.submit(op.command(), params, Request::Merge(generation, op));
+                    let ticket = self.submit(op.command(), params, Request::Merge(generation, op));
+                    if let Some(repo) = &mut self.repo {
+                        repo.merge.continue_started(ticket);
+                    }
                 }
             }
             Action::AbortMerge => {
@@ -1341,6 +1351,7 @@ mod tests {
             dialog.message
         );
         let (_, params, _) = b.submit_continue().unwrap();
+        b.continue_started(Ticket::for_test(1));
         assert!(matches!(
             run(&r, &mut s, &mut b, Op::Continue(Kind::Merge), params),
             Received::Inline
@@ -1362,6 +1373,7 @@ mod tests {
         assert!(b.open_continue());
         b.set_message("Merge other\n\nWith our version".into());
         let (op, params, label) = b.submit_continue().unwrap();
+        b.continue_started(Ticket::for_test(1));
         assert_eq!(op, Op::Continue(Kind::Merge));
         assert_eq!(params["message"], "Merge other\n\nWith our version");
         assert_eq!(label, "Finishing the merge");

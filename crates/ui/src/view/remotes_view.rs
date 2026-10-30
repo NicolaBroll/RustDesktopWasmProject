@@ -133,9 +133,9 @@ pub(super) fn add_remote_dialog(
                     .id(ui.make_persistent_id("remote-name"))
                     .hint_text(tr!("remotes-add-name-hint"))
                     .desired_width(320.0)
-                    .interactive(!dialog.sending),
+                    .interactive(dialog.running.is_none()),
             );
-            if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+            if dialog.running.is_none() && ui.memory(|m| m.focused().is_none()) {
                 name.request_focus();
             }
             changed |= name.changed();
@@ -156,7 +156,7 @@ pub(super) fn add_remote_dialog(
                         .id(ui.make_persistent_id("remote-url"))
                         .hint_text(tr!("remotes-add-url-hint"))
                         .desired_width(320.0)
-                        .interactive(!dialog.sending),
+                        .interactive(dialog.running.is_none()),
                 );
                 changed |= url.changed();
             }
@@ -165,7 +165,7 @@ pub(super) fn add_remote_dialog(
     if let Some(warning) = dialog.credentials_warning() {
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(warning).color(ui.visuals().warn_fg_color)).wrap());
-        if !dialog.sending {
+        if dialog.running.is_none() {
             let (label, hint) = if dialog.hide_url {
                 (tr!("remotes-show-url"), tr!("remotes-show-url-hint"))
             } else {
@@ -182,7 +182,7 @@ pub(super) fn add_remote_dialog(
     ui.add_space(4.0);
     let check = ui
         .add_enabled(
-            !dialog.sending,
+            dialog.running.is_none(),
             egui::Checkbox::new(&mut fields.fetch, tr!("remotes-add-fetch")),
         )
         .on_hover_text(tr!("remotes-add-fetch-hint"));
@@ -206,19 +206,22 @@ pub(super) fn add_remote_dialog(
             actions.push(Action::SubmitAddRemote);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("remotes-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("remotes-close")),
+            )
             .clicked()
         {
             actions.push(Action::CloseRemoteDialog);
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
-            if !dialog.fetching {
+            if !dialog.fetching() {
                 ui.label(tr!("remotes-adding"));
             }
         }
     });
-    if dialog.sending && dialog.fetching {
+    if let Some(running) = dialog.running.filter(|_| dialog.fetching()) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let (text, fraction) = match progress {
@@ -234,7 +237,10 @@ pub(super) fn add_remote_dialog(
                 );
             }
             let stop = ui
-                .add_enabled(!dialog.cancelling, egui::Button::new(tr!("remotes-cancel")))
+                .add_enabled(
+                    !running.cancelling,
+                    egui::Button::new(tr!("remotes-cancel")),
+                )
                 .on_hover_text(tr!("remotes-cancel-hint"))
                 .on_disabled_hover_text(tr!("remotes-cancelling"));
             if stop.clicked() {

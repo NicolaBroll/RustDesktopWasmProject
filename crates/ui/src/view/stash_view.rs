@@ -377,9 +377,9 @@ pub(super) fn push_stash_dialog(
                 .id(ui.make_persistent_id("stash-message"))
                 .hint_text(tr!("stash-dialog-message-hint"))
                 .desired_width(320.0)
-                .interactive(!dialog.sending),
+                .interactive(dialog.running.is_none()),
         );
-        if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+        if dialog.running.is_none() && ui.memory(|m| m.focused().is_none()) {
             message.request_focus();
         }
         changed |= message.changed();
@@ -391,14 +391,14 @@ pub(super) fn push_stash_dialog(
     };
     let check = ui
         .add_enabled(
-            !dialog.sending,
+            dialog.running.is_none(),
             egui::Checkbox::new(&mut fields.include_untracked, label),
         )
         .on_hover_text(tr!("stash-include-untracked-help"));
     changed |= check.changed();
     let check = ui
         .add_enabled(
-            !dialog.sending,
+            dialog.running.is_none(),
             egui::Checkbox::new(&mut fields.keep_index, tr!("stash-keep-index")),
         )
         .on_hover_text(tr!("stash-keep-index-help"));
@@ -413,18 +413,24 @@ pub(super) fn push_stash_dialog(
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let clicked = ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("stash-submit")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("stash-submit")),
+            )
             .clicked();
-        if (clicked || enter) && !dialog.sending {
+        if (clicked || enter) && dialog.running.is_none() {
             actions.push(Action::SubmitStash);
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("stash-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("stash-close")),
+            )
             .clicked()
         {
             actions.push(Action::CloseStashDialog);
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
             ui.label(tr!("stash-sending"));
         }

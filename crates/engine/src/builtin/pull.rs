@@ -103,15 +103,18 @@ pub struct RemotePullResult {
 const ID: &str = "remote.pull";
 
 /// Parameters of `remote.pull`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PullParams {
-    #[serde(default)]
-    remote: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    strategy: Option<PullStrategy>,
+pub struct RemotePullParams {
+    /// The remote; without: the upstream's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    /// The local branch; without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// The strategy instead of the configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<PullStrategy>,
 }
 
 /// [`EngineError::NotAllowed`] for a branch without upstream, with how to set it.
@@ -151,11 +154,11 @@ fn no_upstream(branch: &str) -> EngineError {
 /// Result: [`RemotePullResult`].
 pub(super) fn remote_pull(
     s: &mut Session,
-    PullParams {
+    RemotePullParams {
         remote,
         branch,
         strategy,
-    }: PullParams,
+    }: RemotePullParams,
 ) -> Out {
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;

@@ -79,19 +79,24 @@ const ID: &str = "remote.push";
 const LOST_LIMIT: usize = 10;
 
 /// Parameters of `remote.push`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PushParams {
-    #[serde(default)]
-    remote: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    force: bool,
-    #[serde(default)]
-    confirm: bool,
-    #[serde(default)]
-    expected: Option<String>,
+pub struct RemotePushParams {
+    /// The remote; without: upstream, `origin` or the only one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    /// The local branch; without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Forced push (always with lease).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    /// A forced push that removes commits from the remote.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
+    /// The full id of the remote-tracking branch seen in the confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// A true boolean value of git config.
@@ -134,13 +139,13 @@ fn config_true(value: &str) -> bool {
 /// local refs changed (the local remote-tracking branch).
 pub(super) fn remote_push(
     s: &mut Session,
-    PushParams {
+    RemotePushParams {
         remote,
         branch,
         force,
         confirm,
         expected,
-    }: PushParams,
+    }: RemotePushParams,
 ) -> Out {
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;

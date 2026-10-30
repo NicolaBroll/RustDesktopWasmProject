@@ -23,12 +23,13 @@
 use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
-use crate::{Action, Done, Tab};
+use crate::{Action, Done, Tab, params};
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, Status};
 use project_engine::{
-    PullApplied, PullOperation, PushKind, PushRejection, PushRemoteSource, RemotePullResult,
-    RemotePushResult, RemotePushTagResult, StrategySource, TagPushKind,
+    PullApplied, PullOperation, PullStrategy, PushKind, PushRejection, PushRemoteSource,
+    RemotePullParams, RemotePullResult, RemotePushParams, RemotePushResult, RemotePushTagParams,
+    RemotePushTagResult, StrategySource, TagPushKind,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -65,10 +66,10 @@ pub enum Strategy {
 }
 
 impl Strategy {
-    fn param(self) -> &'static str {
+    fn engine(self) -> PullStrategy {
         match self {
-            Strategy::Merge => "merge",
-            Strategy::Rebase => "rebase",
+            Strategy::Merge => PullStrategy::Merge,
+            Strategy::Rebase => PullStrategy::Rebase,
         }
     }
 
@@ -81,7 +82,10 @@ impl Strategy {
     }
 
     pub fn name(self) -> &'static str {
-        self.param()
+        match self {
+            Strategy::Merge => "merge",
+            Strategy::Rebase => "rebase",
+        }
     }
 }
 
@@ -141,25 +145,25 @@ impl Request {
     /// The command parameters.
     pub fn params(&self) -> Value {
         if let Some((remote, name)) = &self.tag {
-            return json!({ "remote": remote, "name": name });
+            return params(RemotePushTagParams {
+                remote: remote.clone(),
+                name: name.clone(),
+            });
         }
-        let mut params = json!({});
-        if let Some(branch) = &self.branch {
-            params["branch"] = json!(branch);
+        match self.op {
+            Op::Pull => params(RemotePullParams {
+                remote: None,
+                branch: self.branch.clone(),
+                strategy: self.strategy.map(Strategy::engine),
+            }),
+            Op::Push | Op::PushTag => params(RemotePushParams {
+                remote: None,
+                branch: self.branch.clone(),
+                force: self.force,
+                confirm: self.confirm,
+                expected: self.expected.map(|oid| oid.to_string()),
+            }),
         }
-        if let Some(strategy) = self.strategy {
-            params["strategy"] = json!(strategy.param());
-        }
-        if self.force {
-            params["force"] = json!(true);
-        }
-        if self.confirm {
-            params["confirm"] = json!(true);
-        }
-        if let Some(expected) = self.expected {
-            params["expected"] = json!(expected.to_string());
-        }
-        params
     }
 
     /// The description for the bar: `Pull of «main»`, `Forced push of «main»`, `Pull`.

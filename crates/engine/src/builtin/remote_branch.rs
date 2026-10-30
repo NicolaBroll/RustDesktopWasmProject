@@ -60,15 +60,19 @@ const ID: &str = "remote.delete_branch";
 const LOST_LIMIT: usize = 10;
 
 /// Parameters of `remote.delete_branch`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DeleteParams {
-    remote: String,
-    branch: String,
-    #[serde(default)]
-    confirm: bool,
-    #[serde(default)]
-    expected: Option<String>,
+pub struct RemoteDeleteBranchParams {
+    /// The remote.
+    pub remote: String,
+    /// The name of the branch on the remote.
+    pub branch: String,
+    /// Always required to delete.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
+    /// The full id of the remote-tracking branch shown in the confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Deletes the branch `branch` from the remote `remote` (`git push <remote> :refs/heads/<branch>`):
@@ -96,12 +100,12 @@ pub(crate) struct DeleteParams {
 /// with it as upstream.
 pub(super) fn remote_delete_branch(
     s: &mut Session,
-    DeleteParams {
+    RemoteDeleteBranchParams {
         remote,
         branch,
         confirm,
         expected,
-    }: DeleteParams,
+    }: RemoteDeleteBranchParams,
 ) -> Out {
     check_remote_name(ID, &remote)?;
     check_branch_name(ID, &branch)?;

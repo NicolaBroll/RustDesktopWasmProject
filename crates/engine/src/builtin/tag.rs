@@ -141,8 +141,7 @@ pub struct TagDeleteParams {
 }
 
 /// Deletes the local tag `name` (any existing name, even `-x`): **always** needs `"confirm":
-/// true`, otherwise [`EngineError::ConfirmRequired`] with the commit and the kind of tag
-/// (annotated:
+/// true`, otherwise [`EngineError::ConfirmRequired`] with the commit and the kind of tag (annotated:
 /// its message and author exist only in the tag object) and the value in `expected`. With
 /// `expected` (full id of the value seen) a tag that now has another value is
 /// [`EngineError::NotAllowed`] and nothing changes. Before deleting, the value as git stores
@@ -351,8 +350,7 @@ mod tests {
         assert_eq!(expected.as_deref(), Some(object.as_str()));
         assert_eq!(refs(&r, &mut s), before);
 
-        // An `expected` that is not the value now (the tag moved since it was seen): nothing
-        // deleted.
+        // An `expected` that is not the value now (the tag moved since it was seen): nothing deleted.
         let moved = MemoryBackend::fake_oid(12).to_string();
         let err = r
             .run(

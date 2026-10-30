@@ -250,8 +250,7 @@ impl CliBackend {
 
     /// The files of `paths` whose worktree is not the backup's: the content that `git
     /// restore --source=<stash>` would recreate (with the `smudge` filters and line-ending
-    /// conversions), or the bytes saved in `raw`, and the same mode (`git diff <stash>`). A file
-    /// that is not
+    /// conversions), or the bytes saved in `raw`, and the same mode (`git diff <stash>`). A file that is not
     /// in the backup must not exist.
     pub(super) fn not_as_in_backup(
         &self,
@@ -380,12 +379,9 @@ impl CliBackend {
     }
 
     /// If for some regular file the worktree bytes are not the ones `git restore`
-    /// would recreate from `stash` (e.g. CRLF with `core.autocrlf=input`, which the `clean` filter
-    /// removes
-    /// and `smudge` does not put back), saves them without filters (`hash-object -w --no-filters`)
-    /// in a
-    /// commit with only those files and parent `stash`, which undo uses to rewrite them
-    /// identically.
+    /// would recreate from `stash` (e.g. CRLF with `core.autocrlf=input`, which the `clean` filter removes
+    /// and `smudge` does not put back), saves them without filters (`hash-object -w --no-filters`) in a
+    /// commit with only those files and parent `stash`, which undo uses to rewrite them identically.
     /// `None` if not needed. A link or a file type different from the backup is an error: the
     /// backup does not represent it.
     pub(super) fn save_raw(

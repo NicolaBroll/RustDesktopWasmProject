@@ -10,8 +10,7 @@
 use crate::EngineError;
 use serde::{Deserialize, Serialize};
 
-/// Whether git reads a commit-graph for the repo
-/// ([`GitMaintenance::commit_graph`](super::GitMaintenance::commit_graph)).
+/// Whether git reads a commit-graph for the repo ([`GitMaintenance::commit_graph`](super::GitMaintenance::commit_graph)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitGraphState {
     /// There is a commit-graph (`objects/info/commit-graph` or a split chain

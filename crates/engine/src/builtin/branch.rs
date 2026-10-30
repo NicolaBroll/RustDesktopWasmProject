@@ -1,7 +1,6 @@
 //! Commands of the local branches (S24): `branch.create`, `branch.checkout`, `branch.delete`,
 //! `branch.rename`. The checks that do not depend on the backend are here; writes and checks
-//! under lock are in the backends ([`GitBackend`](crate::GitBackend)). Every successful command
-//! that changes
+//! under lock are in the backends ([`GitBackend`](crate::GitBackend)). Every successful command that changes
 //! something enters the journal: `edit.undo` undoes it (§7).
 
 use super::{JournalState, Out, reread, to_json};
@@ -217,10 +216,8 @@ pub(super) fn branch_create(
 /// and with conflicted files. The branch already active: no change (`changed: false`), nothing
 /// in the journal.
 ///
-/// It goes into the journal (except when leaving a branch without commits, where going back would
-/// mean
-/// emptying the index): `edit.undo` returns to the previous HEAD (branch or detached commit) with
-/// another
+/// It goes into the journal (except when leaving a branch without commits, where going back would mean
+/// emptying the index): `edit.undo` returns to the previous HEAD (branch or detached commit) with another
 /// equally safe checkout, only if HEAD is still on the branch.
 ///
 /// Result: [`BranchCheckoutResult`].
@@ -244,8 +241,7 @@ pub(super) fn branch_checkout(
     if changed {
         let outcome = repo.checkout(&target)?;
         warnings = outcome.warnings;
-        // There is no going back from a branch without commits without emptying the index: no
-        // entry.
+        // There is no going back from a branch without commits without emptying the index: no entry.
         let unborn = matches!(status.head, Head::Branch { target: None, .. });
         if !unborn {
             journal.record(JournalEntry::checkout(before.clone(), target));
@@ -267,14 +263,12 @@ pub(super) fn branch_checkout(
 /// [`GitRefs::delete_branch`](crate::GitRefs::delete_branch)). Refused
 /// ([`EngineError::NotAllowed`]) for the branch of HEAD, a branch open in another worktree and
 /// during an operation in progress. If the branch has commits that are neither in HEAD nor in its
-/// upstream (if any), i.e. it is not merged, `"confirm": true` is needed. With `expected` (full id
-/// of the
+/// upstream (if any), i.e. it is not merged, `"confirm": true` is needed. With `expected` (full id of the
 /// commit on which the branch was shown) the branch must still point there, checked before
 /// the confirmation and the deletion: otherwise [`EngineError::NotAllowed`] and nothing changes,
 /// so a confirmation holds only for the commit seen: without it,
 /// [`EngineError::ConfirmRequired`] with the number of commits and nothing changes. Before deleting
-/// it always saves the commit in `refs/project/backup/delete-...`; the operation goes into the
-/// journal and
+/// it always saves the commit in `refs/project/backup/delete-...`; the operation goes into the journal and
 /// `edit.undo` recreates the branch on the same commit. The `branch.<name>.*` configuration
 /// (upstream, description, ...) is removed as with `git branch -d`, but stays in the journal
 /// entry: undo rewrites it (if a new one has not appeared in the meantime), redo removes it.
@@ -383,8 +377,7 @@ pub(super) fn branch_delete(
 /// Renames the local branch `name` to `new_name` (see
 /// [`GitRefs::rename_branch`](crate::GitRefs::rename_branch)): never over an
 /// existing branch; reflog, upstream and HEAD (if it was the active branch) follow. Refused during
-/// an operation in progress. It goes into the journal: `edit.undo` renames back, only if in the
-/// meantime
+/// an operation in progress. It goes into the journal: `edit.undo` renames back, only if in the meantime
 /// nobody touched the two names.
 ///
 /// Result: [`BranchRenameResult`].

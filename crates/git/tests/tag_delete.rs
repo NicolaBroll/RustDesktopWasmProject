@@ -1,8 +1,6 @@
-//! Integration tests of `tag.delete` with the `CliBackend` on real repos: always confirmed, the
-//! value
+//! Integration tests of `tag.delete` with the `CliBackend` on real repos: always confirmed, the value
 //! (tag object or commit) saved in a backup before deleting, undo that puts back the same tag
-//! object and redo, conflicts with tags changed from outside, names that look like options, a
-//! backup
+//! object and redo, conflicts with tags changed from outside, names that look like options, a backup
 //! that cannot be made.
 
 mod common;

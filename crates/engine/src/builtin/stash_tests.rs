@@ -120,8 +120,7 @@ fn push_list_undo_and_redo() {
         "{err}"
     );
 
-    // Undo: the stash goes back into the files (also the split between staged and not) and
-    // disappears
+    // Undo: the stash goes back into the files (also the split between staged and not) and disappears
     // from the list, with the commit in a backup.
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["undone"]["command"], "stash.push");

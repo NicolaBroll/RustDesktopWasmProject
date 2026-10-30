@@ -5,8 +5,7 @@
 //! full name is built by [`branch_ref`]. A new name (creation, rename) must be a
 //! branch name valid for git ([`check_new_branch_name`]: no leading `-`, no `HEAD`,
 //! the rules of `git check-ref-format`); an existing branch can be named even if the name
-//! would no longer be accepted today (e.g. `-x`, created with `update-ref`), as long as it is a
-//! valid ref name
+//! would no longer be accepted today (e.g. `-x`, created with `update-ref`), as long as it is a valid ref name
 //! ([`check_branch_name`]): so it can still be renamed or deleted.
 
 use super::valid_ref_name;
@@ -22,8 +21,7 @@ pub fn branch_ref(name: &str) -> String {
 
 /// The name of an existing branch (`branch.checkout`, `branch.delete`, the `name` of
 /// `branch.rename`): a short name that gives a valid ref name ([`valid_ref_name`]). A name
-/// starting with `-` is accepted (it may exist, created with `update-ref`): backends always receive
-/// it
+/// starting with `-` is accepted (it may exist, created with `update-ref`): backends always receive it
 /// after `--end-of-options` or as `refs/heads/<name>`. Otherwise
 /// [`EngineError::InvalidParams`].
 pub fn check_branch_name(id: &'static str, name: &str) -> Result<(), EngineError> {
@@ -51,8 +49,7 @@ pub fn check_branch_name(id: &'static str, name: &str) -> Result<(), EngineError
 
 /// The name of a **new** branch (`branch.create`, the `new_name` of `branch.rename`): like
 /// [`check_branch_name`] plus the rules of `git check-ref-format --branch`, which git
-/// applies to new names: it does not start with `-`, and is not `HEAD` or `@`. The `CliBackend`
-/// also has
+/// applies to new names: it does not start with `-`, and is not `HEAD` or `@`. The `CliBackend` also has
 /// git verify it before writing. Otherwise [`EngineError::InvalidParams`].
 pub fn check_new_branch_name(id: &'static str, name: &str) -> Result<(), EngineError> {
     check_branch_name(id, name)?;
@@ -77,8 +74,7 @@ pub fn check_new_branch_name(id: &'static str, name: &str) -> Result<(), EngineE
 }
 
 /// [`EngineError::NotAllowed`] if an operation is in progress (merge, rebase, cherry-pick, revert,
-/// bisect, `git am`): `command` `what` (e.g. msg!("engine-busy-checkout")) in the middle of the
-/// operation.
+/// bisect, `git am`): `command` `what` (e.g. msg!("engine-busy-checkout")) in the middle of the operation.
 pub fn check_no_operation(
     command: &str,
     what: Message,

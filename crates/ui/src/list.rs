@@ -26,8 +26,7 @@ pub struct PageRequest {
 }
 
 impl PageRequest {
-    /// The parameters of `repo.log`: the graph starts from all refs (local and remote branches,
-    /// tags,
+    /// The parameters of `repo.log`: the graph starts from all refs (local and remote branches, tags,
     /// HEAD), so unmerged and just-fetched branches show up too, and from the bases
     /// of the stashes, so every stash has its row even if no branch contains it anymore.
     pub fn params(&self) -> Value {
@@ -187,8 +186,7 @@ impl CommitList {
 
     /// Selects commit `id` (click on a ref) and brings it into view. If it is not loaded yet
     /// and there are more pages, it searches by requesting them one after the other, up to
-    /// [`SEEK_LIMIT`] commits: whoever receives a page calls `seek` again with
-    /// [`CommitList::seeking`].
+    /// [`SEEK_LIMIT`] commits: whoever receives a page calls `seek` again with [`CommitList::seeking`].
     pub fn seek(&mut self, id: Oid) -> Seek {
         self.seeking = None;
         if let Some(index) = self.position(id) {

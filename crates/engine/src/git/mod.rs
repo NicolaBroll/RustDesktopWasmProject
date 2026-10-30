@@ -124,6 +124,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Reading: refs, history, status, diffs, blame, configuration. Never writes. Part of
+///
 /// [`GitBackend`].
 pub trait GitRead {
     /// Where HEAD points.
@@ -137,8 +138,7 @@ pub trait GitRead {
     /// Commits reachable from `query.rev` (HEAD if missing), children always before parents and,
     /// on ties, the most recent by committer date first. On a branch without commits and without
     /// `rev` the result is empty; a `rev` that does not resolve gives
-    /// [`EngineError::UnknownRev`]. With `query.all` it starts from all local and remote branches,
-    /// the
+    /// [`EngineError::UnknownRev`]. With `query.all` it starts from all local and remote branches, the
     /// tags and HEAD (a HEAD without commits is skipped); `rev` and `all` together give
     /// [`EngineError::InvalidParams`] ([`LogQuery::check`]).
     fn log(&self, query: &LogQuery) -> Result<Vec<Commit>, EngineError>;
@@ -241,8 +241,7 @@ pub trait GitIndex {
     ///   does nothing.
     /// - A conflicted file that is staged is **resolved** with the worktree content (like
     ///   `git add`): the conflict stages disappear from the index (git keeps their versions
-    ///   in the REUC extension, from which `git checkout -m` recreates the conflict). Only if
-    /// requested by
+    ///   in the REUC extension, from which `git checkout -m` recreates the conflict). Only if requested by
     ///   name: a conflicted file inside a requested folder gives
     ///   [`EngineError::NotAllowed`] and nothing changes.
     /// - Empty `paths` does nothing (it does not mean "everything").
@@ -255,8 +254,7 @@ pub trait GitIndex {
     /// - Literal paths, folders included, as in [`GitIndex::stage`].
     /// - A conflicted file gives [`EngineError::NotAllowed`]: removing the conflict stages
     ///   from the index would lose their versions; it is resolved with [`GitIndex::stage`].
-    /// - A path unknown to git (neither in HEAD nor in the index) gives an error and nothing
-    /// changes.
+    /// - A path unknown to git (neither in HEAD nor in the index) gives an error and nothing changes.
     /// - Empty `paths` does nothing.
     fn unstage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError>;
 
@@ -266,8 +264,7 @@ pub trait GitIndex {
     /// touches the worktree.**
     ///
     /// Rereads the file's diff ([`LineSelection::diff_spec`]), checks that it is the one seen
-    /// (`selection.digest`) and builds the patch with [`line_patch`] (see there for the errors),
-    /// then
+    /// (`selection.digest`) and builds the patch with [`line_patch`] (see there for the errors), then
     /// computes the new staged content with [`apply_patch`] (strict: each hunk only at
     /// its position) and writes it to the index. Like stage and unstage: first a backup if the
     /// staged version exists only in the index (e.g. lines of an `MM` file), and the ref in the
@@ -277,8 +274,7 @@ pub trait GitIndex {
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError>;
 
     /// Creates a commit with what is staged (`commit.create`), or with `request.amend`
-    /// rewrites the last one. The worktree is not touched; afterwards, the index equals the new
-    /// HEAD.
+    /// rewrites the last one. The worktree is not touched; afterwards, the index equals the new HEAD.
     ///
     /// Before writing: [`CommitRequest::check_message`], [`check_commit_state`] (conflicts,
     /// operations in progress, nothing to commit, `amend` without a commit or during a merge) and,
@@ -286,8 +282,7 @@ pub trait GitIndex {
     /// ([`amend_impact`]; the other branches and tags that contain it go in `also_on`). With
     /// `amend` the rewritten commit is saved in a backup ref
     /// (`refs/project/backup/amend-...`, in the result) before writing; if the backup
-    /// fails nothing is committed. The `CliBackend` runs `git commit` with hooks and signing per
-    /// the
+    /// fails nothing is committed. The `CliBackend` runs `git commit` with hooks and signing per the
     /// user's configuration: a rejecting hook or a failing signature gives
     /// [`EngineError::Git`] with everything they wrote, and no commit.
     ///
@@ -299,13 +294,11 @@ pub trait GitIndex {
     /// Discards the unstaged changes of the files `paths` (`worktree.discard`, §7): the worktree
     /// goes back as the index, like `git restore --worktree`. **The index is not touched.**
     ///
-    /// The files are those of [`discard_plan`] on the state read now (see there for the refusals:
-    /// untracked
+    /// The files are those of [`discard_plan`] on the state read now (see there for the refusals: untracked
     /// files requested by name, submodules, conflicts, `intent-to-add`, branch without
     /// commits, nothing to discard); untracked files inside a folder are not touched. Before
     /// writing, the worktree is saved with `git stash create` in a new ref
-    /// `refs/project/backup/discard-...` (in the result, with the commit and the files); if the
-    /// backup
+    /// `refs/project/backup/discard-...` (in the result, with the commit and the files); if the backup
     /// fails, or does not contain the current content of all files, nothing is discarded.
     /// Empty `paths` does nothing (error: nothing to discard).
     ///
@@ -323,8 +316,7 @@ pub trait GitIndex {
     ///
     /// Undo: every file must still have the recorded entry in the index
     /// ([`WorktreeRestore::index_conflicts`]) and the worktree equal to the index (as the discard
-    /// left it); then it goes back as it was in commit `request.stash` (a file that is not there,
-    /// because
+    /// left it); then it goes back as it was in commit `request.stash` (a file that is not there, because
     /// it was deleted, is removed). Redo: same index entry and worktree equal to
     /// `request.stash` (as the undo left it); then it goes back to the staged version. If a file
     /// changed, [`EngineError::UndoConflict`] and nothing changes.
@@ -381,8 +373,7 @@ pub trait GitRefs {
     ) -> Result<Oid, EngineError>;
 
     /// Deletes the local tag `name` (`tag.delete` and the redo of `tag.create` undone), only if
-    /// `refs/tags/<name>` still has the value `expected` (the commit, or the tag object of an
-    /// annotated tag).
+    /// `refs/tags/<name>` still has the value `expected` (the commit, or the tag object of an annotated tag).
     /// First it saves `expected` in a new backup ref `refs/project/backup/tag-delete-...`
     /// (returned): if the backup fails nothing is deleted. Then `update-ref --no-deref -d
     /// refs/tags/<name> <expected>`; if that fails the backup is removed. A tag missing or with
@@ -406,10 +397,8 @@ pub trait GitRefs {
     /// First it saves the commit in a new backup ref `refs/project/backup/delete-...` (in the
     /// result); if the backup fails nothing is deleted. Then it removes the `branch.<name>.*`
     /// configuration (upstream, ...), like `git branch -d`. Rejected
-    /// ([`EngineError::NotAllowed`], nothing changes) if it is the branch of HEAD or if it is open
-    /// in
-    /// another worktree, or if `expected` no longer holds. The "merged or not" check is done by the
-    /// command
+    /// ([`EngineError::NotAllowed`], nothing changes) if it is the branch of HEAD or if it is open in
+    /// another worktree, or if `expected` no longer holds. The "merged or not" check is done by the command
     /// ([`GitRead::unmerged_count`]).
     fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError>;
 
@@ -429,8 +418,7 @@ pub trait GitRefs {
 
     /// The repo's `branch.<name>.*` configuration for undo and redo of `branch.delete`, after
     /// the ref was recreated or deleted. `remove == false` (undo): writes `entries` back,
-    /// only if the repo has no `branch.<name>.*` entries yet (otherwise it writes nothing and says
-    /// so
+    /// only if the repo has no `branch.<name>.*` entries yet (otherwise it writes nothing and says so
     /// in a warning). `remove == true` (redo): removes the section, only if it contains exactly
     /// `entries` (what the undo put back); a different configuration stays, with a
     /// warning. Returns the warnings: the ref has already been moved, so a problem here is not an
@@ -474,15 +462,11 @@ pub trait GitRemotes {
     /// The names of the configured remotes (`git remote`), in name order. A read.
     fn remotes(&self) -> Result<Vec<String>, EngineError>;
 
-    /// Downloads from the remote `request.remote` (`git fetch --progress`, §6): new objects and
-    /// remote
+    /// Downloads from the remote `request.remote` (`git fetch --progress`, §6): new objects and remote
     /// branches (`refs/remotes/<remote>/...`) and tags as the remote's configuration says, plus
-    /// `FETCH_HEAD`. Never the local branches, the index or the worktree (except a refspec
-    /// configured
-    /// on purpose towards `refs/heads/`, which the command reports). With `request.branch` only
-    /// that
-    /// branch of the remote (`refs/heads/<branch>`), which updates its remote branch as the
-    /// configured
+    /// `FETCH_HEAD`. Never the local branches, the index or the worktree (except a refspec configured
+    /// on purpose towards `refs/heads/`, which the command reports). With `request.branch` only that
+    /// branch of the remote (`refs/heads/<branch>`), which updates its remote branch as the configured
     /// refspec says. Slow command: progress goes to `job` ([`JobContext::report`]);
     /// if `job` is cancelled the process stops and the result is
     /// [`EngineError::Cancelled`]. Errors: credentials → [`EngineError::Auth`], remote not
@@ -516,8 +500,7 @@ pub trait GitRemotes {
         limit: usize,
     ) -> Result<Vec<Commit>, EngineError>;
 
-    /// Integrates the upstream into the branch after the fetch (`remote.pull`): fast-forward, merge
-    /// or
+    /// Integrates the upstream into the branch after the fetch (`remote.pull`): fast-forward, merge or
     /// rebase according to `request.mode`. Before writing: [`check_pull_state`] on the state read
     /// now, the branch must equal `request.expected` (and, with `request.current`, be the branch
     /// of HEAD; otherwise it must not be open in another worktree) and a backup ref
@@ -525,8 +508,7 @@ pub trait GitRemotes {
     /// active branch: `git merge --ff-only`, which does not overwrite local changes
     /// ([`EngineError::NotAllowed`] with the files, nothing changes); of another branch:
     /// `update-ref` with the old value. Merge and rebase: never `--autostash`. A **merge**
-    /// that stops (conflicts, hooks, signing) **stays in progress** as with
-    /// [`GitOperations::merge`]:
+    /// that stops (conflicts, hooks, signing) **stays in progress** as with [`GitOperations::merge`]:
     /// [`PullOutcome::in_progress`] with the conflicted files, the branch as it was and the backup
     /// kept. A **rebase** that stops stays in progress too, with its [`RebaseRecord`] (command
     /// `remote.pull`): `rebase.continue` concludes it with the pull's journal entry. It is not
@@ -535,8 +517,7 @@ pub trait GitRemotes {
 
     /// Publishes the branch to the remote (`remote.push`, slow like the fetch: progress and
     /// cancellation from `job`): only `refs/heads/<branch>:refs/heads/<remote_branch>`, never tags
-    /// or other refs, with `--set-upstream` if requested and `--force-with-lease` with the expected
-    /// oid if
+    /// or other refs, with `--set-upstream` if requested and `--force-with-lease` with the expected oid if
     /// `request.lease` (never `--force`). Before a force, the backup of `request.backup`.
     /// Errors: rejected (not fast-forward, lease, `pre-push` hook, remote) →
     /// [`EngineError::PushRejected`] and nothing changes; credentials → [`EngineError::Auth`];
@@ -562,8 +543,7 @@ pub trait GitRemotes {
     ) -> Result<RemoteBranchDeleted, EngineError>;
 
     /// The value of `refs/tags/<name>` on the remote `remote` (`git ls-remote`, slow: it contacts
-    /// the remote; cancellation from `job`), as the remote stores it: the tag object of an
-    /// annotated
+    /// the remote; cancellation from `job`), as the remote stores it: the tag object of an annotated
     /// tag, not the peeled commit. `None` if the remote does not have it. Errors as
     /// [`GitRemotes::fetch`]: [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
     /// [`EngineError::Cancelled`]. A read.
@@ -583,12 +563,9 @@ pub trait GitRemotes {
 
     /// Deletes the tag `request.name` from the remote (`remote.delete_tag`), like
     /// [`GitRemotes::delete_remote_branch`]: always with
-    /// `--force-with-lease=refs/tags/<name>:<expected>`, after saving `request.expected` in a
-    /// backup ref
-    /// `refs/project/backup/push-delete-...`. If the object is not here it is first fetched from
-    /// the
-    /// remote straight into the backup ref (only that ref: no tags, no `FETCH_HEAD`), which must
-    /// then
+    /// `--force-with-lease=refs/tags/<name>:<expected>`, after saving `request.expected` in a backup ref
+    /// `refs/project/backup/push-delete-...`. If the object is not here it is first fetched from the
+    /// remote straight into the backup ref (only that ref: no tags, no `FETCH_HEAD`), which must then
     /// equal `expected` (otherwise [`EngineError::PushRejected`] with
     /// [`PushRejection::StaleLease`], nothing deleted). If the backup cannot be made nothing is
     /// deleted. Backup removal and errors as [`GitRemotes::delete_remote_branch`].
@@ -603,15 +580,13 @@ pub trait GitRemotes {
 
     /// What exists of the remote `name` ([`RemoteSnapshot`]): `remote.<name>.*` of the repo
     /// file, the remote branches `refs/remotes/<name>/...` (not symbolic, excluding those of a
-    /// remote `<name>/...`; [`owned_by`]), where `refs/remotes/<name>/HEAD` points and the
-    /// dependents
+    /// remote `<name>/...`; [`owned_by`]), where `refs/remotes/<name>/HEAD` points and the dependents
     /// ([`remote_dependents`], `remote.pushDefault`). All empty if the remote does not exist.
     /// A read. A non-UTF-8 value (it could not be put back) gives [`EngineError::NotAllowed`].
     fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError>;
 
     /// Adds the remote `name` with `url` (`git remote add --end-of-options <name> <url>`: URL
-    /// and default refspec `+refs/heads/*:refs/remotes/<name>/*`), without fetch. Name and URL
-    /// already
+    /// and default refspec `+refs/heads/*:refs/remotes/<name>/*`), without fetch. Name and URL already
     /// checked ([`check_new_remote_name`], [`check_remote_url`]); a remote with that name
     /// that already exists gives [`EngineError::NotAllowed`], a name or URL that git rejects gives
     /// [`EngineError::InvalidParams`].
@@ -620,8 +595,7 @@ pub trait GitRemotes {
     /// Removes the configuration of the remote of `snapshot` (after [`remove_remote`] removed the
     /// remote branches): the section `remote.<name>`, the symbolic ref `refs/remotes/<name>/HEAD`
     /// if `snapshot.head`, and the entries of `snapshot.upstreams` and `remote.pushDefault` if
-    /// `snapshot.push_default` (only with those values). Returns the warnings: the refs have
-    /// already been
+    /// `snapshot.push_default` (only with those values). Returns the warnings: the refs have already been
     /// removed, so a problem here is not an error of the operation.
     fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message>;
 
@@ -648,15 +622,13 @@ pub trait GitStash {
     fn stashes(&self) -> Result<Vec<StashEntry>, EngineError>;
 
     /// Sets changes aside (`git stash push`): saves them in a new stash at the top
-    /// of the list and brings index and worktree back to HEAD (with `keep_index` the index stays,
-    /// and the
+    /// of the list and brings index and worktree back to HEAD (with `keep_index` the index stays, and the
     /// worktree as the index), for the chosen files. First: [`check_stash_push`]. Nothing to
     /// set aside (git does not create the stash) → [`EngineError::NotAllowed`]. Returns the
     /// new stash.
     fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError>;
 
-    /// Applies the stash `request.id` to index and worktree (`git stash apply`), without removing
-    /// it
+    /// Applies the stash `request.id` to index and worktree (`git stash apply`), without removing it
     /// from the list. First: [`check_stash_apply`] and the files the stash changes or restores must
     /// have no local changes nor be occupied ([`stash_local_changes`], plus the worktree
     /// files the status does not show): otherwise [`EngineError::NotAllowed`] and nothing
@@ -688,18 +660,14 @@ pub trait GitOperations {
     /// `request.expected`, no file the merge brings in place of an untracked or
     /// ignored one, and a backup ref `refs/project/backup/merge-...` on the previous value (in the
     /// result; removed if nothing changes). Never `--autostash`. If git refuses because it
-    /// would overwrite changes or untracked files → [`EngineError::NotAllowed`] with the files,
-    /// nothing
+    /// would overwrite changes or untracked files → [`EngineError::NotAllowed`] with the files, nothing
     /// changes. **A merge that stops (conflicts, `pre-merge-commit` hook) stays in progress**:
-    /// it is not an error, [`MergeOutcome::in_progress`] and the files in
-    /// [`MergeOutcome::conflicts`].
+    /// it is not an error, [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`].
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
 
-    /// Aborts the merge in progress (`merge.abort`, `git merge --abort`): index and worktree go
-    /// back
+    /// Aborts the merge in progress (`merge.abort`, `git merge --abort`): index and worktree go back
     /// as HEAD for the files of the merge. First it saves index and worktree (conflicts and
-    /// resolutions included) in a new ref `refs/project/backup/merge-abort-...` ([`MergeAborted`]);
-    /// if the
+    /// resolutions included) in a new ref `refs/project/backup/merge-abort-...` ([`MergeAborted`]); if the
     /// backup fails nothing is aborted. Without a merge in progress
     /// ([`check_merging`]) → [`EngineError::NotAllowed`]. The command asks for confirmation.
     fn merge_abort(&mut self) -> Result<MergeAborted, EngineError>;
@@ -717,8 +685,7 @@ pub trait GitOperations {
     /// brings in place of an untracked or ignored one, no `--assume-unchanged` file that
     /// changes, and a backup ref `refs/project/backup/<cherry-pick|revert>-...` on the previous
     /// value (in the result; removed if nothing changes). Empty result (commit already applied) →
-    /// [`EngineError::NotAllowed`], nothing in progress and the backup removed. **A conflict (or a
-    /// hook
+    /// [`EngineError::NotAllowed`], nothing in progress and the backup removed. **A conflict (or a hook
     /// that rejects the commit) leaves the operation in progress**: it is not an error,
     /// [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`].
     fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError>;
@@ -771,8 +738,7 @@ pub trait GitOperations {
     /// [`GitIndex::stage`] of that single path. Before writing, without changing anything:
     /// [`check_conflict`], [`check_digest`] on the worktree bytes read now
     /// ([`EngineError::StaleDiff`]), locked index ([`EngineError::IndexLocked`]); then the
-    /// backup of the worktree bytes (if the file exists) in `refs/project/backup/conflict-...`: if
-    /// it
+    /// backup of the worktree bytes (if the file exists) in `refs/project/backup/conflict-...`: if it
     /// fails nothing is written. An error after the backup names it.
     fn resolve_conflict(
         &mut self,
@@ -890,16 +856,14 @@ pub struct LogQuery {
     pub all: bool,
     /// Only with `all`: also starts from the stash bases ([`StashEntry::base`], the commit
     /// each was created on), so the graph always has the commit the UI attaches a
-    /// stash to, even if no branch contains it anymore. The commits of the stashes (and those of
-    /// the index
+    /// stash to, even if no branch contains it anymore. The commits of the stashes (and those of the index
     /// and untracked files that have them as parents) stay out: the list is `stash.list`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stashes: bool,
 }
 
 impl LogQuery {
-    /// Error if the parameters contradict each other: `rev` and `all` together, `stashes` without
-    /// `all`.
+    /// Error if the parameters contradict each other: `rev` and `all` together, `stashes` without `all`.
     pub fn check(&self) -> Result<(), EngineError> {
         if self.all && self.rev.is_some() {
             return Err(EngineError::InvalidParams {

@@ -3,13 +3,11 @@
 //!
 //! In this order, and nothing is written if a step before the ref move fails:
 //!
-//! 1. [`RefRestore::check`](project_engine::RefRestore::check) (operation in progress), HEAD and
-//! the branch equal to the expected
+//! 1. [`RefRestore::check`](project_engine::RefRestore::check) (operation in progress), HEAD and the branch equal to the expected
 //!    values, the target a commit (`rev-parse --verify <oid>^{commit}`);
 //! 2. status without `core.fsmonitor`; `strict` (undo/redo): nothing that would need a backup;
 //! 3. `mixed`/`hard`: no `--assume-unchanged`/`--skip-worktree` file whose index entry differs
-//!    from the target; `hard`: the plan ([`reset_files`]) equal to the confirmed one, no
-//! untracked/ignored file (or link, or folder)
+//!    from the target; `hard`: the plan ([`reset_files`]) equal to the confirmed one, no untracked/ignored file (or link, or folder)
 //!    where the target puts a file or a folder; `index.lock` → [`EngineError::IndexLocked`];
 //! 4. backups: `mixed` the staged versions that exist only in the index (the index backup of
 //!    stage/unstage); `hard` the local changes with `git stash create` (with conflicts, on a

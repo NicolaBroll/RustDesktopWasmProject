@@ -11,8 +11,7 @@
 //!   hexadecimal and cannot look like an option. The path goes after `--` and blame takes it
 //!   literally (it is not a pathspec);
 //! - log: `git --literal-pathspecs -c log.diffMerges=separate log <FILE_LOG_ARGS> (--follow
-//!   --find-renames | --no-follow --no-renames) [--skip=<n>] --max-count=<n> --end-of-options <oid>
-//! -- <path>`: the explicit
+//!   --find-renames | --no-follow --no-renames) [--skip=<n>] --max-count=<n> --end-of-options <oid> -- <path>`: the explicit
 //!   options make the result independent of `log.follow` and `diff.renames` (`copies`).
 //!   With `--follow` git applies `--skip` before seeing the renames (the commits before a
 //!   rename then vanish): the first `skip` commits are asked for and dropped here.

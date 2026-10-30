@@ -202,8 +202,7 @@ pub enum EngineError {
         command: &'static str,
         reason: Message,
         /// The full id (40 digits) to repeat in `"expected"` to confirm: for the force of
-        /// `remote.push` (the local remote-tracking branch read now) and for `stash.drop` (the
-        /// stash to
+        /// `remote.push` (the local remote-tracking branch read now) and for `stash.drop` (the stash to
         /// delete), which is also in the text of `reason`; `None` for the other commands.
         expected: Option<String>,
     },
@@ -236,8 +235,7 @@ pub enum EngineError {
         files: Vec<String>,
         stderr: String,
     },
-    /// The remote rejected the credentials, or they would have to be asked for (user name,
-    /// password,
+    /// The remote rejected the credentials, or they would have to be asked for (user name, password,
     /// passphrase, host key confirmation) and there is no way to do so without a terminal:
     /// "Authentication failed", "could not read Username", "Permission denied (publickey)",
     /// HTTP 401/403, "Host key verification failed". Nothing was modified. `message` is git's
@@ -274,8 +272,7 @@ pub enum EngineError {
         message: String,
     },
     /// `remote.push` rejected: nothing changed, neither on the remote nor locally (the local
-    /// remote-tracking branch stays as it was). `branch` is the branch on the remote, `message`
-    /// git's text.
+    /// remote-tracking branch stays as it was). `branch` is the branch on the remote, `message` git's text.
     PushRejected {
         remote: String,
         branch: String,
@@ -474,8 +471,7 @@ pub fn quoted_list(paths: &[impl std::fmt::Display]) -> String {
         .join(", ")
 }
 
-/// An error inside the text of another (e.g. "the state cannot be re-read (…)"): translated into
-/// the
+/// An error inside the text of another (e.g. "the state cannot be re-read (…)"): translated into the
 /// same language.
 impl ToArg for EngineError {
     fn to_arg(&self) -> MessageArg {

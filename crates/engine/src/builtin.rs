@@ -555,8 +555,7 @@ fn opened(s: &Session, path: String) -> Result<RepoOpenResult, EngineError> {
 ///
 /// A write (it adds or replaces `objects/info/commit-graph`), but it cannot lose data: the file
 /// is a cache that git derives from the objects and that `git gc` itself rewrites. So no
-/// `confirm`, no backup, and no [`JournalEntry`](crate::JournalEntry): no ref, index or worktree
-/// file changes.
+/// `confirm`, no backup, and no [`JournalEntry`](crate::JournalEntry): no ref, index or worktree file changes.
 /// Slow (~19 s on the Linux kernel): progress and cancellation from [`Session::job`]. Refused
 /// with `core.commitGraph=false` ([`commit_graph_disabled`]), in a shallow repo
 /// ([`commit_graph_shallow`]) and with replace refs or grafts ([`commit_graph_replaced`]): git

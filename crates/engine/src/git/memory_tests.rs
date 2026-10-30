@@ -568,8 +568,7 @@ fn details_root_merge_and_deletion() {
         .unwrap();
     assert_eq!(deleted[0].old_oid, added.new_oid);
 
-    // The merge is compared with the first parent: the files brought in by `feature/graph`, with
-    // the
+    // The merge is compared with the first parent: the files brought in by `feature/graph`, with the
     // content they have on the branch.
     let merge = repo.show_commit("v0.1.0").unwrap();
     assert!(merge.commit.is_merge());

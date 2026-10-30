@@ -233,8 +233,7 @@ impl CliBackend {
         }
     }
 
-    /// Files that the patch `from` → `to` writes and that HEAD (`head`) does not have must not
-    /// exist
+    /// Files that the patch `from` → `to` writes and that HEAD (`head`) does not have must not exist
     /// in the worktree (untracked or ignored): git would overwrite them.
     fn check_pick_paths(
         &self,

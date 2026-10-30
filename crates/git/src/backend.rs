@@ -83,11 +83,9 @@ impl CliOpener {
         self
     }
 
-    /// Does not search for repositories above `root`: when opening a directory inside `root` that
-    /// is not a repo,
+    /// Does not search for repositories above `root`: when opening a directory inside `root` that is not a repo,
     /// git does not climb up to a repo that contains `root` (`GIT_CEILING_DIRECTORIES`). A repo
-    /// in `root` or below opens as usual. Used by the MCP server to stay within the root; `root`
-    /// must be absolute and without symbolic
+    /// in `root` or below opens as usual. Used by the MCP server to stay within the root; `root` must be absolute and without symbolic
     /// links (`canonicalize`).
     pub fn confine_to(self, root: &Path) -> Self {
         match root.parent() {
@@ -361,8 +359,7 @@ impl CliBackend {
     /// are needed) and `extra` (options), limited to `paths`, taken literally: no globs or
     /// magic pathspecs (`--literal-pathspecs`). A read: it does not update the index. For
     /// `git diff` `--no-optional-locks` is not enough: with a file changed only in its
-    /// `stat` data (e.g. rewritten identically) it rewrites the index to update them; this is
-    /// prevented by
+    /// `stat` data (e.g. rewritten identically) it rewrites the index to update them; this is prevented by
     /// `diff.autoRefreshIndex=false`, and the file stays out of the diff anyway.
     fn run_diff(
         &self,
@@ -454,8 +451,7 @@ impl CliBackend {
 
     /// Where `unstage` restarts the index from: the HEAD commit, or the empty tree if HEAD
     /// is a branch that has no commits yet. A HEAD that does not resolve for other reasons (broken
-    /// ref, missing object) is an error: treating it as "no commits" would remove all the requested
-    /// files
+    /// ref, missing object) is an error: treating it as "no commits" would remove all the requested files
     /// from the index.
     fn index_source(&self) -> Result<String, EngineError> {
         if let Some(head) = self.resolve("HEAD")? {
@@ -493,8 +489,7 @@ impl CliBackend {
     }
 
     /// Before rewriting the index for `operation` on `paths`: if there are staged versions
-    /// that exist only in the index ([`versions_at_risk_hidden`]) saves them with
-    /// [`Self::save_backup`]
+    /// that exist only in the index ([`versions_at_risk_hidden`]) saves them with [`Self::save_backup`]
     /// and returns the ref; `None` if nothing is at risk.
     fn backup(
         &self,
@@ -712,8 +707,7 @@ impl CliBackend {
     }
 
     /// Right before writing: the index entries touched by `paths` agree with the status
-    /// read at the start and are still those read at the start (`before`, which also feeds the risk
-    /// check and the backup).
+    /// read at the start and are still those read at the start (`before`, which also feeds the risk check and the backup).
     /// If another git process changed them in the meantime, error without writing.
     fn check_index_unchanged(
         &self,
@@ -784,8 +778,7 @@ impl CliBackend {
         let file = &prepared.file;
         let entry = index.get(prepared.target());
         let consistent = match direction {
-            // A new file in the worktree diff is an `intent-to-add` placeholder: it is in the
-            // index,
+            // A new file in the worktree diff is an `intent-to-add` placeholder: it is in the index,
             // with the empty blob.
             PatchDirection::Stage if file.change == Change::Added => {
                 entry.is_some_and(|e| self.is_intent_to_add(e))
@@ -825,8 +818,7 @@ impl CliBackend {
     /// Writes the entry of `path` to the index: `Some((mode, id))` creates or replaces it,
     /// `None` removes it (`update-index -z --index-info`, path on stdin). It is the only step
     /// that writes the index. `--index-info` creates a new entry: the `--skip-worktree` and
-    /// `--assume-unchanged` flags of the old one are lost and [`Self::restore_flags`] puts them
-    /// back.
+    /// `--assume-unchanged` flags of the old one are lost and [`Self::restore_flags`] puts them back.
     fn write_index_entry(
         &self,
         path: &RepoPath,
@@ -844,13 +836,10 @@ impl CliBackend {
     }
 
     /// After a write that recreates index entries (`update-index --index-info`,
-    /// `restore --staged`), puts back the `--skip-worktree` and `--assume-unchanged` flags that the
-    /// entries
+    /// `restore --staged`), puts back the `--skip-worktree` and `--assume-unchanged` flags that the entries
     /// of `paths` had in `before` (letters of `ls-files -v`: `S`/`s` skip-worktree,
-    /// lowercase assume-unchanged) and that they no longer have. Without it, a file outside the
-    /// cone of
-    /// a sparse checkout would look deleted from the worktree, and a later `git add -A` or `commit
-    /// -a`
+    /// lowercase assume-unchanged) and that they no longer have. Without it, a file outside the cone of
+    /// a sparse checkout would look deleted from the worktree, and a later `git add -A` or `commit -a`
     /// would stage a deletion never made. Entries no longer in the
     /// index are skipped. If it fails, error: the entries written are correct anyway.
     fn restore_flags(&self, before: &IndexListing, paths: &[RepoPath]) -> Result<(), EngineError> {
@@ -945,11 +934,9 @@ impl CliBackend {
 
     /// Operation in progress, from the files git leaves in its directory (like `git status`).
     ///
-    /// `rebase-apply/applying` indicates `git am` ([`Operation::Am`]). A multi-commit cherry-pick
-    /// or revert
+    /// `rebase-apply/applying` indicates `git am` ([`Operation::Am`]). A multi-commit cherry-pick or revert
     /// stopped between one commit and the next (after `git commit` of a resolution, or with
-    /// an empty commit) leaves `sequencer/` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`: it is still
-    /// in
+    /// an empty commit) leaves `sequencer/` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`: it is still in
     /// progress, and the kind is read from the first line of `sequencer/todo` (`revert ...` →
     /// [`Operation::Revert`], otherwise [`Operation::CherryPick`]).
     fn operation(&self) -> Option<Operation> {
@@ -1209,8 +1196,7 @@ impl GitIndex for CliBackend {
         let add = ["add", "--no-ignore-errors"];
         // First a dry run: with an ignored file `git add` adds the others and then fails,
         // with a nonexistent path it fails before adding. The dry run does the
-        // same checks without touching the index, so either everything goes through or nothing
-        // changes.
+        // same checks without touching the index, so either everything goes through or nothing changes.
         let dry = [&add[..], &["--dry-run"]].concat();
         let out = self.output_with_paths(&dry, &paths)?;
         if !out.status.success() {

@@ -27,8 +27,7 @@ pub(super) fn commit_create(s: &mut Session, request: CommitRequest) -> Out {
     request.check_message()?;
     let (repo, journal) = s.repo_and_journal()?;
     let outcome = repo.commit(&request)?;
-    // The commit is made: it goes into the journal (for `edit.undo`) even if the state cannot be
-    // re-read afterwards.
+    // The commit is made: it goes into the journal (for `edit.undo`) even if the state cannot be re-read afterwards.
     if let Some(entry) = JournalEntry::commit(&outcome, request.amend) {
         journal.record(entry);
     }

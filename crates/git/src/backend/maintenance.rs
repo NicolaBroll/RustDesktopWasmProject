@@ -1,8 +1,7 @@
 //! The commit-graph on the [`CliBackend`] (`repo.open`, `repo.optimize`, S36), per §5:
 //!
 //! - state: `git rev-parse --git-path objects` (the object directory, also in a linked
-//!   worktree; `GIT_OBJECT_DIRECTORY` is cleared from git's environment), then the files
-//! `info/commit-graph` and
+//!   worktree; `GIT_OBJECT_DIRECTORY` is cleared from git's environment), then the files `info/commit-graph` and
 //!   `info/commit-graphs/commit-graph-chain` there and in the alternates
 //!   (`info/alternates`, followed up to [`MAX_ALTERNATE_DEPTH`] levels like git; relative
 //!   entries are relative to the object directory that lists them; `#` comments and quoted

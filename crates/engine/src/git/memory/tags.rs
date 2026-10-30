@@ -1,9 +1,7 @@
 //! Deletion of a local tag and tags on the remote on the [`MemoryBackend`] (`tag.delete`,
-//! `remote.push_tag`, `remote.delete_tag`, S47), with the same checks as the `CliBackend`: the
-//! local
+//! `remote.push_tag`, `remote.delete_tag`, S47), with the same checks as the `CliBackend`: the local
 //! deletion only with the expected value and after the backup; the push never overwrites a tag
-//! with another value; the remote deletion with the lease on the value confirmed and, if the object
-//! is
+//! with another value; the remote deletion with the lease on the value confirmed and, if the object is
 //! not here, a "fetch" of it into the backup first.
 
 use super::{MemoryBackend, TAGS};

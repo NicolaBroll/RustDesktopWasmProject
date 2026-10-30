@@ -126,8 +126,7 @@ impl MemoryBackend {
     }
 
     /// The entries matching `wanted`, or an error like git's if `wanted` is
-    /// neither among the entries nor in HEAD. `in_head` says whether there is at least one HEAD
-    /// file under `wanted`.
+    /// neither among the entries nor in HEAD. `in_head` says whether there is at least one HEAD file under `wanted`.
     fn hits(
         entries: &[StatusEntry],
         head: &BTreeMap<RepoPath, TreeEntry>,
@@ -460,8 +459,7 @@ impl MemoryBackend {
             .ok_or_else(not_in_index)?;
         let entry = self.entries[i].clone();
         let info = tracked_info(&entry).cloned().ok_or_else(not_in_index)?;
-        // Without a staged version (`intent-to-add` file, or deleted in the stage) the patch
-        // creates the
+        // Without a staged version (`intent-to-add` file, or deleted in the stage) the patch creates the
         // file.
         let base = (info.mode_index != 0)
             .then(|| self.blobs.get(&info.oid_index).cloned())

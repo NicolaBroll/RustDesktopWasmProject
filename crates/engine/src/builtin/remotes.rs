@@ -241,8 +241,7 @@ fn remote_items(repo: &dyn GitBackend) -> Result<RemoteListResult, EngineError> 
             shown
         };
         let url = urls.first().map(&mut show);
-        // Without `pushurl` the push goes to all the `url`s: they are listed only if there is more
-        // than one.
+        // Without `pushurl` the push goes to all the `url`s: they are listed only if there is more than one.
         let push_urls: Vec<String> = if !push.is_empty() {
             push.iter().map(&mut show).collect()
         } else if urls.len() > 1 {
@@ -304,8 +303,7 @@ fn remotes_and_refs(repo: &dyn GitBackend) -> Reread {
 ///   (`https://token@host`) the user too becomes `***`; `credentials` says the URL had them
 ///   (see [`mask_url`]).
 /// - `fetch`: the `remote.<name>.fetch` refspecs; `mirror`: `remote.<name>.mirror`.
-/// - `branches`: how many remote-tracking branches `refs/remotes/<name>/...` there are (without
-/// those of a
+/// - `branches`: how many remote-tracking branches `refs/remotes/<name>/...` there are (without those of a
 ///   remote `<name>/...`).
 /// - `default`: the remote `remote.fetch` uses without `remote` (upstream of the active branch,
 ///   `origin`, the only remote; `null` if ambiguous); `push_default`: `remote.pushDefault`
@@ -372,15 +370,12 @@ fn fetch_all(
 /// Checks before writing: new name ([`check_new_remote_name`]: no leading `-`) and
 /// URL ([`check_remote_url`]: no leading `-`, no `ext::`/`fd::`, no host that
 /// starts with `-`, no control characters) → [`EngineError::InvalidParams`]; a remote
-/// with that name already configured, or remote-tracking branches `refs/remotes/<name>/...` left
-/// over from before
+/// with that name already configured, or remote-tracking branches `refs/remotes/<name>/...` left over from before
 /// (undo would delete them) → [`EngineError::NotAllowed`]. A URL with credentials is accepted
 /// (git saves it in clear text in the repo configuration: `warnings` says so).
 ///
-/// It goes into the journal: `edit.undo` removes the remote (configuration and fetched
-/// remote-tracking branches) only
-/// if it is still as it was right after; `edit.redo` puts it back. A failed or cancelled fetch does
-/// not
+/// It goes into the journal: `edit.undo` removes the remote (configuration and fetched remote-tracking branches) only
+/// if it is still as it was right after; `edit.redo` puts it back. A failed or cancelled fetch does not
 /// undo the addition: the remote stays (and is in the journal) and the error is in `fetch_error`.
 ///
 /// Result: [`RemoteAddResult`].
@@ -483,38 +478,30 @@ fn removal_summary(snapshot: &RemoteSnapshot) -> MessageArg {
     MessageArg::Joined(parts, ", ".into())
 }
 
-/// Removes the configured remote `name`: the `remote.<name>` section of the repo file, the
-/// remote-tracking
+/// Removes the configured remote `name`: the `remote.<name>` section of the repo file, the remote-tracking
 /// branches `refs/remotes/<name>/...` (and `refs/remotes/<name>/HEAD`), the upstream of the local
 /// branches that use it (`branch.<b>.remote`/`merge`), the `branch.<b>.pushRemote` that name it
 /// and `remote.pushDefault` if it is `name` (like `git remote remove`). On the real remote nothing
 /// changes; fetched tags stay.
 ///
-/// It always asks for `"confirm": true`: without it, [`EngineError::ConfirmRequired`] listing the
-/// branches
-/// that would lose their upstream and the number of remote-tracking branches, and nothing changes.
-/// Refusals
+/// It always asks for `"confirm": true`: without it, [`EngineError::ConfirmRequired`] listing the branches
+/// that would lose their upstream and the number of remote-tracking branches, and nothing changes. Refusals
 /// ([`EngineError::NotAllowed`]): a remote that is not configured; one defined, even only in
 /// part, outside the repo file (global or system configuration, `include`,
 /// `config.worktree`, `.git/remotes/`: the error says where); the promisor remote of a partial
 /// clone (`remote.<name>.promisor`, `extensions.partialClone`: without it, missing objects
 /// could no longer be found); an operation in progress. If after the removal git still sees the
-/// remote, everything is put back immediately as it was and the result is
-/// [`EngineError::NotAllowed`].
+/// remote, everything is put back immediately as it was and the result is [`EngineError::NotAllowed`].
 ///
 /// Before writing, the journal entry saves everything ([`RemoteSnapshot`]: configuration,
-/// remote-tracking branches with the commits, upstream) and the commits that would remain only in
-/// remote-tracking branches
+/// remote-tracking branches with the commits, upstream) and the commits that would remain only in remote-tracking branches
 /// (not reachable from local branches, tags, other refs or backups) go into backup refs
 /// `refs/project/backup/remote-...` (one per tip commit, in `backups`), so undo
-/// finds them even after a `gc`. The remote-tracking branches are removed with a transaction
-/// (`update-ref
-/// --stdin`, with the values read); then the configuration (a problem there goes into `warnings`).
-/// Unlike
+/// finds them even after a `gc`. The remote-tracking branches are removed with a transaction (`update-ref
+/// --stdin`, with the values read); then the configuration (a problem there goes into `warnings`). Unlike
 /// `git remote remove`, refs outside `refs/remotes/<name>/` written by a custom
 /// refspec (e.g. `refs/pull/*`) stay.
-/// `edit.undo` puts back remote-tracking branches, configuration and upstream, only if in the
-/// meantime nobody
+/// `edit.undo` puts back remote-tracking branches, configuration and upstream, only if in the meantime nobody
 /// recreated a remote with that name (otherwise [`EngineError::UndoConflict`]); an upstream
 /// that in the meantime was set elsewhere stays, with a warning.
 ///

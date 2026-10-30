@@ -3,8 +3,7 @@
 //!
 //! A remote is always given by the **name** of a configured remote (`origin`), never by a
 //! URL or a path: `git fetch <x>` with an `x` that is not a remote would use it as a URL, so
-//! the command checks that the name is among those of
-//! [`GitRemotes::remotes`](super::GitRemotes::remotes)
+//! the command checks that the name is among those of [`GitRemotes::remotes`](super::GitRemotes::remotes)
 //! before calling the backend.
 
 use super::valid_ref_name;
@@ -13,8 +12,7 @@ use project_domain::REMOTES_PREFIX;
 use project_domain::Status;
 use serde::{Deserialize, Serialize};
 
-/// What to download with [`GitRemotes::fetch`](super::GitRemotes::fetch). Names already checked by
-/// the
+/// What to download with [`GitRemotes::fetch`](super::GitRemotes::fetch). Names already checked by the
 /// command: `remote` is a configured remote, `branch` a valid short branch name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchRequest {

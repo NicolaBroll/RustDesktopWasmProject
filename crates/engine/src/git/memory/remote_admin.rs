@@ -8,8 +8,7 @@
 //! `branch.<b>.pushRemote` and `remote.pushDefault`. The in-memory repo has no symbolic refs:
 //! `head` is always `None`.
 //!
-//! The in-memory remote is also the "server" (its branches and commits): when it is removed, the
-//! server
+//! The in-memory remote is also the "server" (its branches and commits): when it is removed, the server
 //! is set aside by URL, and a remote added or put back with the same URL finds it again (so a
 //! fetch after `remote.add` of an already seen URL downloads its branches).
 
@@ -31,9 +30,7 @@ impl MemoryBackend {
     }
 
     /// Simulates `remote.<name>.*` entries defined outside the repo file (global configuration,
-    /// `include`):
-    /// [`GitRemotes::remote_config_elsewhere`](crate::GitRemotes::remote_config_elsewhere) returns
-    /// them.
+    /// `include`): [`GitRemotes::remote_config_elsewhere`](crate::GitRemotes::remote_config_elsewhere) returns them.
     pub fn set_remote_elsewhere(&mut self, name: &str, entries: &[&str]) {
         self.remote_elsewhere.insert(
             name.to_owned(),

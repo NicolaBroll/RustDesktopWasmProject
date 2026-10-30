@@ -8,14 +8,12 @@
 //! - `git remote add --end-of-options <name> <url>`: name and URL (already checked by the engine)
 //!   never become options; git adds `remote.<name>.url` and the default refspec; no
 //!   fetch (never `-f`);
-//! - removal does **not** use `git remote remove`: the remote branches are removed by the engine
-//! with a
+//! - removal does **not** use `git remote remove`: the remote branches are removed by the engine with a
 //!   `update-ref --stdin` transaction with the values read (`GitRefs::restore_refs`), and here
 //!   exactly the entries saved in the journal are removed: `git config --local --remove-section
 //!   --end-of-options remote.<name>`, `git config --local --fixed-value --unset-all
 //!   --end-of-options <key> <value>` for upstream, `pushRemote` and `remote.pushDefault`, and
-//!   `git symbolic-ref --delete refs/remotes/<name>/HEAD`. So nothing disappears without having
-//! been
+//!   `git symbolic-ref --delete refs/remotes/<name>/HEAD`. So nothing disappears without having been
 //!   saved (with `git remote remove` git would choose by itself what to remove);
 //! - restoring: `git config --local --add --end-of-options <key> <value>` for each entry
 //!   and `git symbolic-ref -m <reflog> refs/remotes/<name>/HEAD <ref>`.

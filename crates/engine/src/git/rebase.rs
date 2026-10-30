@@ -71,8 +71,7 @@ impl RebaseRecord {
     }
 }
 
-/// What `rebase.start` asks of the backend
-/// ([`GitOperations::rebase`](crate::GitOperations::rebase)).
+/// What `rebase.start` asks of the backend ([`GitOperations::rebase`](crate::GitOperations::rebase)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RebaseRequest {
     /// The branch of HEAD (short name): the rebase does not start with detached HEAD.

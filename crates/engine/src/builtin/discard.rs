@@ -41,8 +41,7 @@ pub struct DiscardParams {
 /// Discards the unstaged changes of the files `paths` (files or folders): the worktree goes back
 /// to the index, the index is not touched (see
 /// [`GitIndex::discard`](crate::GitIndex::discard) and [`discard_plan`]: untracked files are
-/// never touched). Needs `"confirm": true`: without it, [`EngineError::ConfirmRequired`] with the
-/// files
+/// never touched). Needs `"confirm": true`: without it, [`EngineError::ConfirmRequired`] with the files
 /// that would be lost and nothing changes (the refusals of [`discard_plan`] come first). Before
 /// writing, the worktree is saved with `git stash create` in `refs/project/backup/discard-...`;
 /// the operation goes into the journal and `edit.undo` puts the files back as they were.
@@ -71,8 +70,7 @@ pub(super) fn worktree_discard(
     }
     // The backend re-reads the state and refuses if the files are no longer these.
     let outcome = repo.discard(&paths, &files)?;
-    // The files are discarded: the entry goes into the journal even if the state cannot be re-read
-    // afterwards.
+    // The files are discarded: the entry goes into the journal even if the state cannot be re-read afterwards.
     journal.record(JournalEntry::discard(
         &outcome,
         HeadState::from_head(&status.head),

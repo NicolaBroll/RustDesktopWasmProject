@@ -2,8 +2,7 @@
 //! the same checks as the `CliBackend`.
 //!
 //! The `u` entries of the status (from [`merge_three_way`](MemoryBackend::merge_three_way) or
-//! [`set_entries`](MemoryBackend::set_entries)) have the ids of the three stages; the contents are
-//! in the
+//! [`set_entries`](MemoryBackend::set_entries)) have the ids of the three stages; the contents are in the
 //! blobs. The worktree backup is a commit without parents with just the file, in the store of
 //! commit backups (like the other `refs/project/backup/...` refs).
 

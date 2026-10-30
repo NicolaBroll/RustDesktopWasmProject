@@ -206,8 +206,7 @@ pub struct RemoteDeleteTagParams {
 /// `--force-with-lease=refs/tags/<name>:<expected>`: if the tag moved on the remote in the meantime
 /// git rejects it ([`EngineError::PushRejected`] with `stale_lease`). Backup and errors as
 /// `remote.delete_branch` (see
-/// [`GitRemotes::delete_remote_tag`](crate::GitRemotes::delete_remote_tag)). Slow, not in the
-/// journal.
+/// [`GitRemotes::delete_remote_tag`](crate::GitRemotes::delete_remote_tag)). Slow, not in the journal.
 ///
 /// Result: [`RemoteDeleteTagResult`].
 pub(super) fn remote_delete_tag(

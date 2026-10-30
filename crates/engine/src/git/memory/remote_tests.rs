@@ -36,8 +36,7 @@ fn sample_has_origin_with_one_commit_to_fetch() {
     );
     // Local branches intact.
     assert_eq!(repo.refs["refs/heads/feature/graph"].target, oid(9));
-    // The downloaded commit is only on `origin/feature/graph`: the log of HEAD does not have it,
-    // that
+    // The downloaded commit is only on `origin/feature/graph`: the log of HEAD does not have it, that
     // of all refs does, at the top (it is the most recent).
     let ids = |q: LogQuery| -> Vec<Oid> { repo.log(&q).unwrap().iter().map(|c| c.id).collect() };
     assert!(!ids(LogQuery::all()).contains(&oid(13)));

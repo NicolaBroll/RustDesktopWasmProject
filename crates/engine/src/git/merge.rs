@@ -4,8 +4,7 @@
 //! The command resolves the rev, decides between fast-forward and merge commit (with
 //! [`GitRead::unmerged_count`](super::GitRead::unmerged_count)), checks the state
 //! ([`check_merge_state`]) and writes the default message ([`merge_source`],
-//! [`MergeSource::message`]); the backend executes
-//! ([`GitOperations::merge`](super::GitOperations::merge)).
+//! [`MergeSource::message`]); the backend executes ([`GitOperations::merge`](super::GitOperations::merge)).
 //! **A merge stopped on conflict stays in progress** (like pull in merge mode; pull in rebase mode
 //! is instead aborted): it is
 //! concluded with `merge.continue` (which uses [`GitIndex::commit`](super::GitIndex::commit),
@@ -59,8 +58,7 @@ pub struct MergeRequest {
 /// Outcome of [`GitOperations::merge`](super::GitOperations::merge).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeOutcome {
-    /// The value of the branch afterwards: the merge commit, the fast-forward commit or, if the
-    /// merge
+    /// The value of the branch afterwards: the merge commit, the fast-forward commit or, if the merge
     /// is stopped, the previous one.
     pub after: Oid,
     /// The backup ref of the branch before the merge (`refs/project/backup/merge-...`).
@@ -110,8 +108,7 @@ pub struct OperationState {
     /// Rebase: the branch being rewritten (`head-name`, full name), `None` if the
     /// rebase started from detached HEAD.
     pub rebase_branch: Option<String>,
-    /// True if there is a cherry-pick or revert sequence of several commits started from the
-    /// terminal
+    /// True if there is a cherry-pick or revert sequence of several commits started from the terminal
     /// (`.git/sequencer`): the S31 commands leave it to the terminal (`check_picking`).
     #[serde(default)]
     pub sequencer: bool,

@@ -44,8 +44,7 @@ fn opened() -> (Registry, Session) {
     (r, s)
 }
 
-/// The page of `repo.search`, read through the typed result
-/// [`RepoSearchResult`](crate::RepoSearchResult)
+/// The page of `repo.search`, read through the typed result [`RepoSearchResult`](crate::RepoSearchResult)
 /// (which gives the same JSON again: the UI deserializes into it).
 fn search(r: &Registry, s: &mut Session, params: Value) -> (Vec<Oid>, u64, bool) {
     let out = r

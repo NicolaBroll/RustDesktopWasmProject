@@ -3,8 +3,7 @@
 //! `impl-docs/git/conflicts.md`.
 //!
 //! `conflict.resolve` does not move refs: no journal, like stage. Recovery is the backup of the
-//! worktree (`git show <backup>:<path>`) or `git checkout -m <path>` while the merge is in
-//! progress.
+//! worktree (`git show <backup>:<path>`) or `git checkout -m <path>` while the merge is in progress.
 
 use super::{Out, check_path, to_json};
 use crate::{ConflictResolution, EngineError, Session, VersionText, worktree_digest};

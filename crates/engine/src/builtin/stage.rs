@@ -33,8 +33,7 @@ pub(super) fn index_stage(s: &mut Session, p: IndexPathsParams) -> Out {
     index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
 }
 
-/// Unstages `paths` (see [`GitIndex::unstage`](crate::GitIndex::unstage)), without touching the
-/// worktree.
+/// Unstages `paths` (see [`GitIndex::unstage`](crate::GitIndex::unstage)), without touching the worktree.
 ///
 /// Result: [`IndexWriteResult`].
 pub(super) fn index_unstage(s: &mut Session, p: IndexPathsParams) -> Out {

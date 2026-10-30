@@ -2,8 +2,7 @@
 //! ([`check_stash_push`], [`check_stash_apply`], [`stash_local_changes`]).
 //!
 //! Each stash keeps the status entries it set aside and the worktree content of
-//! those files, plus a commit (inserted among the repo's commits, with the files changed relative
-//! to the
+//! those files, plus a commit (inserted among the repo's commits, with the files changed relative to the
 //! base) so `commit.show`/`diff.commit` with the stash id work as with git. The apply
 //! is stricter and simpler than git: a file changed by the stash and also by HEAD relative
 //! to the base is always a conflict (git merges line by line), with the stash content

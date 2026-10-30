@@ -14,8 +14,7 @@
 //!
 //! with `GIT_EDITOR=:` (git keeps its default messages) and `GIT_REFLOG_ACTION=project: <id>`.
 //! A `reword`, and a group with a message, is followed by a `break`: at each of these stops the
-//! message is applied with `git commit --amend --only --cleanup=whitespace -F -` (hooks and signing
-//! according to the
+//! message is applied with `git commit --amend --only --cleanup=whitespace -F -` (hooks and signing according to the
 //! configuration), then `git rebase --continue`. Any other stop (conflict, failed hook or
 //! signing, an amend that failed) leaves the rebase in progress with the [`RebaseRecord`] in
 //! `rebase-merge/project-rebase.json`, which git removes with the folder.

@@ -2,10 +2,8 @@
 //! `branch.delete`, `branch.rename`; and `tag.create`, from the same name dialog, and `tag.delete`
 //! (S47), from the tag menu. Data only, no egui: tested with unit tests.
 //!
-//! The name of a new (or renamed) branch or of a new tag is typed in a small dialog; the only check
-//! done
-//! here is that it is not empty: the engine decides whether it is valid, and its error stays in the
-//! dialog.
+//! The name of a new (or renamed) branch or of a new tag is typed in a small dialog; the only check done
+//! here is that it is not empty: the engine decides whether it is valid, and its error stays in the dialog.
 //! Deletion happens in two steps like discard: first without `confirm`, which deletes a merged
 //! branch right away or answers `ConfirmRequired`; only after the click in the confirmation
 //! dialog, `"confirm": true`. A checkout refused because it would overwrite local changes
@@ -62,8 +60,7 @@ pub struct Start {
 }
 
 impl Start {
-    /// The starting point of the `info` ref and the proposed name: the name of the remote branch
-    /// without
+    /// The starting point of the `info` ref and the proposed name: the name of the remote branch without
     /// the remote (`origin/feature/x` -> `feature/x`); empty for local branches and tags (the same
     /// name would already be taken, or ambiguous with the tag).
     pub fn from_ref(info: &RefInfo) -> (Self, String) {
@@ -1558,8 +1555,7 @@ mod tests {
             serde_json::from_value(r.run("repo.refs", &mut s, json!({})).unwrap()).unwrap();
         assert!(refs.iter().any(|i| i.name == "refs/heads/experiment"));
 
-        // The confirmation is valid for the shown commit: if in the meantime the branch was
-        // recreated
+        // The confirmation is valid for the shown commit: if in the meantime the branch was recreated
         // elsewhere, `confirm: true` is refused and the branch stays.
         let seen = tip(&r, &mut s, "experiment");
         let check = b.start_delete("experiment".to_owned(), seen).unwrap();

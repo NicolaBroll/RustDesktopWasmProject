@@ -3,8 +3,7 @@
 //! The command decides remote, destination branch and upstream; the backend publishes **only**
 //! `refs/heads/<branch>:refs/heads/<remote_branch>` (explicit refspec: no tags, no other
 //! branches, whatever `push.default`, `remote.<name>.push` or `push.followTags` say). A force is
-//! always and only `--force-with-lease=refs/heads/<remote_branch>:<expected oid>`, with the oid
-//! read
+//! always and only `--force-with-lease=refs/heads/<remote_branch>:<expected oid>`, with the oid read
 //! from the local remote branch before the push.
 
 use crate::Message;
@@ -24,10 +23,8 @@ pub struct PushRequest {
     /// Sets the branch's upstream (`--set-upstream`) if the push succeeds: only on the first push,
     /// when the branch has none.
     pub set_upstream: bool,
-    /// `Some(expected)`: force with `--force-with-lease=refs/heads/<remote_branch>:<expected>`,
-    /// that is
-    /// the remote is overwritten only if its branch still equals `expected` (`None`: only if it
-    /// does not
+    /// `Some(expected)`: force with `--force-with-lease=refs/heads/<remote_branch>:<expected>`, that is
+    /// the remote is overwritten only if its branch still equals `expected` (`None`: only if it does not
     /// exist). `None`: normal push, fast-forward only.
     pub lease: Option<Option<Oid>>,
     /// The commit to save in a backup ref before a force (`refs/project/backup/push-...`):
@@ -61,8 +58,7 @@ pub struct PushOutcome {
     pub backup: Option<String>,
 }
 
-/// The deletion of a branch on the remote
-/// ([`GitRemotes::delete_remote_branch`](super::GitRemotes::delete_remote_branch),
+/// The deletion of a branch on the remote ([`GitRemotes::delete_remote_branch`](super::GitRemotes::delete_remote_branch),
 /// `remote.delete_branch`). Names already checked by the command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteBranchDelete {

@@ -2,8 +2,7 @@
 //!
 //! - lightweight: `update-ref --no-deref refs/tags/<name> <id> ""`, created only if it does not
 //!   exist;
-//! - annotated: `git tag -a --cleanup=whitespace -F - --end-of-options <name> <id>` with the
-//! message on
+//! - annotated: `git tag -a --cleanup=whitespace -F - --end-of-options <name> <id>` with the message on
 //!   stdin (never on the command line: visible in `ps`, limited in size), without
 //!   `-f` (git refuses an existing tag), with the user's identity and `tag.gpgSign`, like a commit;
 //!   `--cleanup=whitespace` keeps the lines starting with `#` (`#123` is not a comment);

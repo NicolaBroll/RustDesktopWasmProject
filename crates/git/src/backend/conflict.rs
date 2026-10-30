@@ -4,8 +4,7 @@
 //! - versions: the ids of stages 1/2/3 from the `u` record of the status (`git status
 //!   --porcelain=v2`, the same as `ls-files -s`), the bytes with `git cat-file blob <id>` (no
 //!   filters); the worktree read from the file system (a link or a directory, also among the
-//!   directories of the path, → `NotAllowed`); `conflict-marker-size` with `git check-attr -z
-//! --stdin`;
+//!   directories of the path, → `NotAllowed`); `conflict-marker-size` with `git check-attr -z --stdin`;
 //! - resolution: checks (conflict, digest, locked index), backup of the worktree bytes
 //!   (`hash-object -w --no-filters --stdin`, tree in a temporary index, `commit-tree` with no
 //!   parents using the backup identity, new ref `refs/project/backup/conflict-...`), temporary

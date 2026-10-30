@@ -493,8 +493,7 @@ impl CliBackend {
         )
     }
 
-    /// [`GitOperations::operation_state`](project_engine::GitOperations::operation_state): from the
-    /// files
+    /// [`GitOperations::operation_state`](project_engine::GitOperations::operation_state): from the files
     /// of the git folder (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_MSG`,
     /// `rebase-merge/` or `rebase-apply/` with `onto` and `head-name`).
     pub(super) fn read_operation_state(&self) -> OperationState {

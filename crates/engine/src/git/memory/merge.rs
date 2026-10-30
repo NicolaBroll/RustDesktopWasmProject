@@ -3,13 +3,11 @@
 //!
 //! Like the in-memory pull, the merge works file by file: a file changed differently
 //! on the two sides is a conflict (even if git could merge the lines). As in the pull in merge mode
-//! (unlike the pull in rebase mode, which is aborted), **a conflict leaves the merge in progress**:
-//! files merged without conflicts are staged, those
+//! (unlike the pull in rebase mode, which is aborted), **a conflict leaves the merge in progress**: files merged without conflicts are staged, those
 //! in conflict become `u` entries of the status (with markers in the worktree if the contents
 //! are known), `MERGE_HEAD` and `MERGE_MSG` are kept in [`MemoryMerge`]. The commit
 //! ([`GitIndex::commit`](crate::GitIndex::commit)) with a merge in progress creates the merge
-//! commit; the abort saves index and worktree in a stash-shaped backup commit and brings all the
-//! tracked
+//! commit; the abort saves index and worktree in a stash-shaped backup commit and brings all the tracked
 //! files back to HEAD (stricter than `git merge --abort`, which keeps the unstaged changes of the
 //! files the merge did not touch: here they end up only in the backup).
 
@@ -160,8 +158,7 @@ impl MemoryBackend {
     /// The merge commit of `target` into HEAD (the branch `full`, which equals `expected`), file by
     /// file: without conflicts the commit with `message` and the moved branch; with conflicts the
     /// merge **stays in progress** (merged files staged, `u` entries with markers, `MERGE_HEAD` and
-    /// `MERGE_MSG` with the `# Conflicts:` block), the branch as it was. `what` for the error if
-    /// the
+    /// `MERGE_MSG` with the `# Conflicts:` block), the branch as it was. `what` for the error if the
     /// merge would write over local changes or untracked files ([`EngineError::NotAllowed`],
     /// nothing changes). Used by `merge.start` and `remote.pull`.
     pub(super) fn merge_three_way(

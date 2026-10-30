@@ -16,10 +16,8 @@
 //!   writing: if a file would be overwritten nothing changes.
 //!
 //! Known limits: a modified `--assume-unchanged` file would be overwritten by git without
-//! warning; the checkout refuses it if the file differs between HEAD and the destination. A branch
-//! on
-//! which a rebase or bisect is stopped in another worktree (HEAD detached there) does not count as
-//! "open"
+//! warning; the checkout refuses it if the file differs between HEAD and the destination. A branch on
+//! which a rebase or bisect is stopped in another worktree (HEAD detached there) does not count as "open"
 //! and can be deleted: the commit stays in the backup.
 
 use super::CliBackend;
@@ -137,8 +135,7 @@ impl CliBackend {
         let full = branch_ref(name);
         let oid = target.to_string();
         let reflog = format!("project: branch.create {name} at {oid}");
-        // Older git (2.43 does) overwrites a symbolic ref that points nowhere even with
-        // `--no-deref`
+        // Older git (2.43 does) overwrites a symbolic ref that points nowhere even with `--no-deref`
         // and an empty old value: refused here first.
         if let Some(target) = self.symbolic_target(&full)? {
             return Err(EngineError::NotAllowed(msg!(

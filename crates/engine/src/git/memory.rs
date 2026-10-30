@@ -326,8 +326,7 @@ impl MemoryBackend {
             return Ok(entry.target);
         }
         // Commit backups are refs too (`refs/project/backup/...`).
-        // A backup of a tag object (`tag.delete`, `remote.delete_tag`) leads to its commit, like
-        // `^{commit}`.
+        // A backup of a tag object (`tag.delete`, `remote.delete_tag`) leads to its commit, like `^{commit}`.
         if let Some((_, id)) = self.commit_backups.iter().find(|(name, _)| name == rev) {
             return Ok(self.tag_objects.get(id).copied().unwrap_or(*id));
         }

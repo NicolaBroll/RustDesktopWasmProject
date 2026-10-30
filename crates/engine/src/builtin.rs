@@ -12,7 +12,7 @@ pub(crate) mod rebase;
 pub(crate) mod remote;
 pub(crate) mod remote_branch;
 pub(crate) mod remote_tag;
-mod remotes;
+pub(crate) mod remotes;
 pub(crate) mod reset;
 mod search;
 pub(crate) mod stash;

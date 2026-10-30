@@ -1,4 +1,5 @@
 use super::*;
+use crate::{discard, fetch, sync, tabs};
 
 /// Last component of the path, for the title.
 pub(crate) fn repo_name(path: &str) -> &str {
@@ -183,7 +184,7 @@ fn undo_buttons(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<A
             button.on_hover_text(&hint).on_disabled_hover_text(&hint)
         };
         if button.clicked() {
-            actions.push(Action::Undo(op));
+            actions.push(Action::Discard(discard::Action::Undo(op)));
         }
     }
 }
@@ -205,7 +206,7 @@ pub(super) fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<
                     .add_enabled(!repo.missing, egui::Button::new(recent_text(repo)))
                     .on_disabled_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
                 if button.clicked() {
-                    actions.push(Action::Open(repo.path.clone()));
+                    actions.push(Action::Tabs(tabs::Action::Open(repo.path.clone())));
                     ui.close();
                 }
             }
@@ -216,7 +217,7 @@ pub(super) fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<
                     .on_hover_text(tr!("top-bar-recent-forget-hint"))
                     .clicked()
                 {
-                    actions.push(Action::ForgetMissing);
+                    actions.push(Action::Tabs(tabs::Action::ForgetMissing));
                 }
             }
         })
@@ -251,7 +252,7 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
         .on_hover_text(tr!("top-bar-fetch-hint"))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::Fetch(None));
+        actions.push(Action::Fetch(fetch::Action::Fetch(None)));
     }
     let remotes = repo.remotes.names();
     if remotes.len() > 1 {
@@ -263,7 +264,7 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
                         .button(tr!("top-bar-fetch-from", remote = &remote))
                         .clicked()
                     {
-                        actions.push(Action::Fetch(Some(remote)));
+                        actions.push(Action::Fetch(fetch::Action::Fetch(Some(remote))));
                         ui.close();
                     }
                 }
@@ -310,7 +311,7 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
         pull.on_disabled_hover_text(&pull_hint)
     };
     if pull.clicked() {
-        actions.push(Action::Pull(None, None));
+        actions.push(Action::Sync(sync::Action::Pull(None, None)));
     }
     let push = ui
         .add_enabled(enabled, ToolButton::new(icons::PUSH, &tr!("top-bar-push")))
@@ -321,7 +322,7 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
         push.on_disabled_hover_text(&push_hint)
     };
     if push.clicked() {
-        actions.push(Action::Push(None));
+        actions.push(Action::Sync(sync::Action::Push(None)));
     }
 }
 
@@ -418,7 +419,7 @@ pub(crate) fn welcome(
             ui.heading(tr!("top-bar-no-repo"));
             ui.add_space(8.0);
             if ui.button(tr!("top-bar-open-repo")).clicked() {
-                actions.push(Action::PickFolder);
+                actions.push(Action::Tabs(tabs::Action::PickFolder));
             }
             create_buttons(ui, actions);
         } else {
@@ -434,7 +435,7 @@ pub(crate) fn welcome(
                     ui.label(recent_text(repo))
                         .on_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
                 } else if ui.link(recent_item(&repo.path)).clicked() {
-                    actions.push(Action::Open(repo.path.clone()));
+                    actions.push(Action::Tabs(tabs::Action::Open(repo.path.clone())));
                 }
             }
             if recent.iter().any(|r| r.missing)
@@ -443,7 +444,7 @@ pub(crate) fn welcome(
                     .on_hover_text(tr!("top-bar-recent-forget-hint"))
                     .clicked()
             {
-                actions.push(Action::ForgetMissing);
+                actions.push(Action::Tabs(tabs::Action::ForgetMissing));
             }
         }
     });

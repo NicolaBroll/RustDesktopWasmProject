@@ -19,11 +19,26 @@
 //! - When the log is read again (refs changed) the same query runs again: the highlight stays
 //!   until the new answer arrives, the current match is kept by id.
 
-use crate::{Action, Done, RepoView, Request, Tab, Ticket};
+use crate::{Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
 use project_engine::{RepoSearchParams, RepoSearchResult};
 use serde_json::Value;
 use std::collections::HashSet;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Ctrl+F: opens the search bar above the list and focuses its field.
+    Open,
+    /// The text of the search field, typed at that time (seconds of `egui::InputState::time`).
+    Text(String, f64),
+    /// Selects the next match (button or Enter).
+    Next,
+    /// Selects the previous match (button or Shift+Enter).
+    Previous,
+    /// Escape: closes the search bar and removes the highlight.
+    Close,
+}
 
 /// The id of the command.
 pub const COMMAND: &str = "repo.search";
@@ -394,21 +409,20 @@ impl Tab {
             return;
         };
         let select = match action {
-            Action::SearchOpen => {
+            Action::Open => {
                 repo.search.open();
                 None
             }
-            Action::SearchText(text, now) => {
+            Action::Text(text, now) => {
                 repo.search.edit(text, now);
                 None
             }
-            Action::SearchNext => repo.search.next(),
-            Action::SearchPrevious => repo.search.previous(),
-            Action::SearchClose => {
+            Action::Next => repo.search.next(),
+            Action::Previous => repo.search.previous(),
+            Action::Close => {
                 repo.search.close();
                 None
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         };
         if let Some(id) = select {
             self.select_match(id);

@@ -14,7 +14,7 @@
 //!   `StaleDiff` (the file changed after reading) rereads the file.
 
 use crate::running::Running;
-use crate::{Action, Done, Request, Tab, params};
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
@@ -25,6 +25,33 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the stage area and, in the center, the file's conflict editor.
+    Open(RepoPath),
+    /// Closes the conflict editor (unmarked choices are lost).
+    Close,
+    /// "Start over": re-reads the conflicted file.
+    Restart,
+    /// The result of the conflict editor, edited by hand.
+    Text(String),
+    /// Replaces the conflict block with this index with the choice.
+    ChooseBlock(usize, Choice),
+    /// Replaces all conflict blocks with the same choice.
+    ChooseAll(Choice),
+    /// "Mark as resolved" with the result (asks for confirmation if markers remain).
+    Resolve,
+    /// Resolves with the whole version of one side.
+    UseSide(Pick),
+    /// "Delete the file": opens the confirmation.
+    Delete,
+    /// Confirms the pending resolution (remaining markers or deletion).
+    Confirm,
+    /// Gives up the resolution awaiting confirmation.
+    Cancel,
+}
 
 /// The id of the command that reads the versions of the conflicted file.
 pub const SHOW: &str = "conflict.show";
@@ -558,32 +585,28 @@ impl Tab {
         let mut send = None;
         let mut read = None;
         match action {
-            Action::OpenConflict(path) => {
+            Action::Open(path) => {
                 repo.stash.select(None);
                 repo.select_worktree(true);
                 repo.diff.close();
                 repo.file.close();
                 read = repo.conflict.open(path);
             }
-            Action::CloseConflict => repo.conflict.close(),
-            Action::RestartConflict => read = repo.conflict.restart(),
-            Action::ConflictText(text) => repo.conflict.set_result(text),
+            Action::Close => repo.conflict.close(),
+            Action::Restart => read = repo.conflict.restart(),
+            Action::Text(text) => repo.conflict.set_result(text),
             Action::ChooseBlock(index, choice) => {
                 repo.conflict.choose(index, choice);
             }
             Action::ChooseAll(choice) => {
                 repo.conflict.choose_all(choice);
             }
-            Action::ResolveConflict if can_write => send = repo.conflict.resolve(),
+            Action::Resolve if can_write => send = repo.conflict.resolve(),
             Action::UseSide(pick) if can_write => send = repo.conflict.use_side(pick),
-            Action::DeleteConflicted if can_write => repo.conflict.delete(),
-            Action::ConfirmConflict if can_write => send = repo.conflict.confirm(),
-            Action::CancelConflict => repo.conflict.cancel(),
-            Action::ResolveConflict
-            | Action::UseSide(_)
-            | Action::DeleteConflicted
-            | Action::ConfirmConflict => {}
-            _ => unreachable!("action dispatched to the wrong function"),
+            Action::Delete if can_write => repo.conflict.delete(),
+            Action::Confirm if can_write => send = repo.conflict.confirm(),
+            Action::Cancel => repo.conflict.cancel(),
+            Action::Resolve | Action::UseSide(_) | Action::Delete | Action::Confirm => {}
         }
         if let Some((params, seq)) = read {
             self.submit(SHOW, params, Request::ConflictShow(generation, seq));

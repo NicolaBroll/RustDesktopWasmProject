@@ -1,7 +1,7 @@
 //! The commit-graph notice under the bar (S36): why the history is slow, "Optimize" and "Not now".
 
 use crate::Action;
-use crate::optimize::OptimizeBox;
+use crate::optimize::{self, OptimizeBox};
 use egui::{RichText, Ui};
 use project_i18n::tr;
 
@@ -42,14 +42,14 @@ pub(crate) fn optimize_notice(
                         .on_hover_text(tr!("optimize-not-now-hint"))
                         .clicked()
                     {
-                        actions.push(Action::DismissOptimize);
+                        actions.push(Action::Optimize(optimize::Action::Dismiss));
                     }
                     let button = ui
                         .add_enabled(can_write, egui::Button::new(tr!("optimize-button")))
                         .on_hover_text(tr!("optimize-explanation"))
                         .on_disabled_hover_text(tr!("optimize-after-operation"));
                     if button.clicked() {
-                        actions.push(Action::Optimize);
+                        actions.push(Action::Optimize(optimize::Action::Optimize));
                     }
                 });
             });

@@ -8,11 +8,27 @@
 //! reload or another file). Only added and removed lines can be selected, never context.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
-use crate::{Action, Drag, Request, Tab};
+use crate::{Drag, Request, Tab};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
 use project_engine::IndexLinesParams;
 use project_i18n::tr;
 use std::collections::BTreeSet;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Click on a diff row (index in `DiffDoc::rows`): selects or deselects it;
+    /// with Shift selects the range from the last clicked one.
+    Select { row: usize, shift: bool },
+    /// Dragging over the diff rows.
+    Drag(Drag),
+    /// Deselects all the diff rows.
+    Clear,
+    /// Stage (worktree diff) or unstage (index diff) the hunk with this index.
+    Hunk(usize),
+    /// Stage or unstage the selected lines.
+    Selected,
+}
 
 /// Whether the shown diff allows staging (or unstaging) hunks and lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,12 +325,12 @@ impl Tab {
     /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_lines(&mut self, action: Action) {
         match action {
-            Action::SelectLine { row, shift } => {
+            Action::Select { row, shift } => {
                 if let Some((_, doc, selection)) = self.selectable_diff() {
                     selection.click(doc, row, shift);
                 }
             }
-            Action::DragLines(step) => {
+            Action::Drag(step) => {
                 if let Some((_, doc, selection)) = self.selectable_diff() {
                     match step {
                         Drag::Start(row) => selection.drag_start(doc, row),
@@ -323,14 +339,14 @@ impl Tab {
                     }
                 }
             }
-            Action::ClearLines => {
+            Action::Clear => {
                 if let Some((_, _, selection)) =
                     self.repo.as_mut().and_then(|r| r.diff.loaded_mut())
                 {
                     selection.clear();
                 }
             }
-            Action::WriteHunk(h) => {
+            Action::Hunk(h) => {
                 let write = self.repo.as_ref().and_then(|r| {
                     let (target, doc, _) = r.diff.loaded()?;
                     plan(doc, target, Pick::Hunk(h))
@@ -339,7 +355,7 @@ impl Tab {
                     self.send_line_write(write);
                 }
             }
-            Action::WriteSelectedLines => {
+            Action::Selected => {
                 let write = self.repo.as_ref().and_then(|r| {
                     let (target, doc, selection) = r.diff.loaded()?;
                     plan(doc, target, Pick::Selected(selection))
@@ -348,7 +364,6 @@ impl Tab {
                     self.send_line_write(write);
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

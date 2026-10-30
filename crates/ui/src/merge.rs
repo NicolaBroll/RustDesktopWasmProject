@@ -22,7 +22,7 @@
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
 use crate::running::Running;
-use crate::{Action, Done, Request, Tab, params};
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 pub use pick::{MainlineDialog, Pick};
 use project_domain::branch_short;
@@ -33,6 +33,44 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Merges `rev` (shown as `what`) into the active branch; `no_ff`: always a merge
+    /// commit.
+    Merge {
+        rev: String,
+        what: String,
+        no_ff: bool,
+    },
+    /// Opens the "Continue merge" dialog.
+    Continue,
+    /// The message of the "Continue merge" dialog changed.
+    Message(String),
+    /// Finishes the merge with the dialog's message (`merge.continue`).
+    SubmitContinue,
+    /// Starts aborting the merge: the engine answers with the confirmation.
+    Abort,
+    /// The user confirmed the abort.
+    ConfirmAbort,
+    /// Cherry-pick or revert the commit `rev` (shown as `what`) on the active branch; with several
+    /// `parents` (merge commit) the parent dialog opens first.
+    Pick {
+        pick: Pick,
+        rev: Oid,
+        what: String,
+        parents: Vec<Oid>,
+    },
+    /// The parent (from 1) chosen in the `mainline` dialog.
+    Mainline(usize),
+    /// Submits the cherry-pick or revert with the chosen parent.
+    SubmitMainline,
+    /// Closes the open merge, cherry-pick or revert dialog.
+    CloseDialog,
+    /// Closes the window of a rejected merge.
+    DismissError,
+}
 
 #[path = "pick.rs"]
 mod pick;
@@ -992,7 +1030,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
-            Action::ContinueMerge => {
+            Action::Continue => {
                 if let Some(repo) = &mut self.repo
                     && self.executor.writing().is_none()
                     && !repo.modal_open()
@@ -1000,12 +1038,12 @@ impl Tab {
                     repo.merge.open_continue();
                 }
             }
-            Action::MergeMessage(message) => {
+            Action::Message(message) => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.set_message(message);
                 }
             }
-            Action::SubmitContinueMerge => {
+            Action::SubmitContinue => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1022,7 +1060,7 @@ impl Tab {
                     }
                 }
             }
-            Action::AbortMerge => {
+            Action::Abort => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1036,7 +1074,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
-            Action::ConfirmAbortMerge => {
+            Action::ConfirmAbort => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1106,17 +1144,16 @@ impl Tab {
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
-            Action::CloseMergeDialog => {
+            Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.close();
                 }
             }
-            Action::DismissMergeError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.dismiss();
                 }
             }
-            _ => unreachable!("action routed to the wrong function"),
         }
     }
 

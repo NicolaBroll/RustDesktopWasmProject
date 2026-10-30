@@ -1,4 +1,5 @@
 use super::*;
+use crate::diff;
 
 pub(super) fn signer(sig: &Signature) -> String {
     format!("{} <{}>", sig.name, sig.email)
@@ -218,11 +219,11 @@ pub(super) fn changed_files(
 
                 let response = response.on_hover_text(file_tooltip(file));
                 if response.clicked() {
-                    actions.push(Action::OpenDiff(target.clone()));
+                    actions.push(Action::Diff(diff::Action::Open(target.clone())));
                 }
                 response.context_menu(|ui| {
                     if ui.button(tr!("details-show-diff")).clicked() {
-                        actions.push(Action::OpenDiff(target));
+                        actions.push(Action::Diff(diff::Action::Open(target)));
                         ui.close();
                     }
                     ui.separator();

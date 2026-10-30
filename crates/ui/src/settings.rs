@@ -6,12 +6,25 @@
 //! values are ignored, so a save from an older or newer version keeps working.
 //!
 //! Adding a setting: a field of [`Settings`], a variant of [`Change`] (the window, a menu or a
-//! view push it in an [`crate::Action::Setting`]) and its row in the section that shows it. Adding
+//! view push it in an [`Action::Change`]) and its row in the section that shows it. Adding
 //! a section: a variant of [`Section`] and its arm in `view/settings_view.rs`.
 
 use project_engine::Platform;
 use project_i18n::Lang;
 use serde::{Deserialize, Serialize};
+
+/// The actions of this area, applied by [`App`](crate::App).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the "Settings…" window.
+    Open,
+    /// Closes it.
+    Close,
+    /// Shows that section of the window.
+    Section(Section),
+    /// Changes a setting (from the window, the theme menu or the diff view).
+    Change(Change),
+}
 
 /// Opens the window (Ctrl+, or Cmd+, on macOS).
 pub(crate) const SHORTCUT: egui::KeyboardShortcut =

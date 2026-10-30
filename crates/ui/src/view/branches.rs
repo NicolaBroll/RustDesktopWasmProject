@@ -1,4 +1,5 @@
 use super::*;
+use crate::branch;
 
 /// The open branch dialog: name (new or rename), delete confirmation,
 /// refused checkout.
@@ -23,7 +24,7 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
         }
     });
     if modal.should_close() {
-        actions.push(Action::CloseBranchDialog);
+        actions.push(Action::Branch(branch::Action::CloseDialog));
     }
 }
 
@@ -74,7 +75,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
         response.request_focus();
     }
     if response.changed() {
-        actions.push(Action::BranchName(name));
+        actions.push(Action::Branch(branch::Action::Name(name)));
     }
     if matches!(dialog.kind, NameKind::Tag(_)) {
         ui.add_space(6.0);
@@ -85,7 +86,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             .desired_width(f32::INFINITY)
             .interactive(dialog.running.is_none());
         if ui.add(edit).changed() {
-            actions.push(Action::TagMessage(message));
+            actions.push(Action::Branch(branch::Action::TagMessage(message)));
         }
     }
     if let Some(error) = &dialog.error {
@@ -98,7 +99,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             .add_enabled(dialog.can_submit(), egui::Button::new(button))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
-            actions.push(Action::SubmitBranchName);
+            actions.push(Action::Branch(branch::Action::SubmitName));
         }
         if ui
             .add_enabled(
@@ -107,7 +108,7 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             )
             .clicked()
         {
-            actions.push(Action::CloseBranchDialog);
+            actions.push(Action::Branch(branch::Action::CloseDialog));
         }
         if dialog.running.is_some() {
             ui.spinner();
@@ -140,10 +141,10 @@ pub(super) fn delete_dialog(
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
-            actions.push(Action::ConfirmDeleteBranch);
+            actions.push(Action::Branch(branch::Action::ConfirmDeleteBranch));
         }
         if ui.button(tr!("branch-dont-delete")).clicked() {
-            actions.push(Action::CloseBranchDialog);
+            actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
 }
@@ -170,10 +171,10 @@ pub(super) fn delete_tag_dialog(
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add_enabled(delete.expected.is_some(), button).clicked() {
-            actions.push(Action::ConfirmDeleteTag);
+            actions.push(Action::Branch(branch::Action::ConfirmDeleteTag));
         }
         if ui.button(tr!("branch-dont-delete")).clicked() {
-            actions.push(Action::CloseBranchDialog);
+            actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
 }
@@ -200,6 +201,6 @@ pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &m
         });
     ui.add_space(10.0);
     if ui.button(tr!("branch-close")).clicked() {
-        actions.push(Action::CloseBranchDialog);
+        actions.push(Action::Branch(branch::Action::CloseDialog));
     }
 }

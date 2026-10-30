@@ -9,12 +9,23 @@
 
 use crate::format::change_name;
 use crate::lines::LineSelection;
-use crate::word_diff;
+use crate::{Tab, word_diff};
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
 use project_engine::{DiffCommitParams, DiffParams};
 use project_i18n::tr;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens a file's diff of the selected commit in place of the graph.
+    Open(DiffTarget),
+    /// Closes the diff and returns to the graph.
+    Close,
+    /// Asks again for the open diff after an error.
+    Retry,
+}
 
 /// Where the diff of a file comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -508,6 +519,37 @@ pub fn line_number(number: Option<u32>, width: usize) -> String {
 /// The sign of the row as git writes it: ` `, `+`, `-`.
 pub fn line_prefix(kind: LineKind) -> char {
     char::from(kind.prefix())
+}
+
+impl Tab {
+    /// The actions of this area, dispatched by [`Tab::apply`].
+    pub(crate) fn apply_diff(&mut self, action: Action) {
+        match action {
+            Action::Open(target) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.conflict.close();
+                    repo.file.close();
+                }
+                if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
+                    self.request_diff(&target, seq);
+                }
+            }
+            Action::Close => {
+                if let Some(repo) = &mut self.repo {
+                    repo.diff.close();
+                }
+            }
+            Action::Retry => {
+                let repo = self.repo.as_mut();
+                if let Some((seq, target)) = repo.and_then(|r| {
+                    let seq = r.diff.retry()?;
+                    Some((seq, r.diff.target()?.clone()))
+                }) {
+                    self.request_diff(&target, seq);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

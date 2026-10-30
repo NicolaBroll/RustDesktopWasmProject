@@ -7,11 +7,26 @@
 //! fails. It is emptied only after a successful commit.
 
 use crate::executor::ErrorKind;
-use crate::{Action, Done, Request, Tab};
+use crate::{Done, Request, Tab};
 use project_domain::{Commit, Oid, Operation, Status};
 use project_engine::{CommitCreateResult, CommitOutcome, CommitRequest, CommitShowParams};
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Toggles "Amend" in the message box.
+    SetAmend(bool),
+    /// Commit with the written message (button or Ctrl+Enter).
+    Commit,
+    /// Confirms the amend of an already published commit: resends with `"confirm": true`.
+    Confirm,
+    /// Cancels the amend awaiting confirmation.
+    Cancel,
+    /// Hides the error of the last commit.
+    DismissError,
+}
 
 /// Beyond this length the subject is flagged with a mild warning (git convention: the
 /// log lines stay readable).
@@ -421,18 +436,17 @@ impl Tab {
                 }
             }
             Action::Commit => self.send_commit(false),
-            Action::ConfirmCommit => self.send_commit(true),
-            Action::CancelCommit => {
+            Action::Confirm => self.send_commit(true),
+            Action::Cancel => {
                 if let Some(repo) = &mut self.repo {
                     repo.commit.cancel_confirm();
                 }
             }
-            Action::DismissCommitError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.commit.dismiss_error();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

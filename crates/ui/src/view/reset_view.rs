@@ -2,7 +2,7 @@
 //! (files a `hard` overwrites, commits already published) and "Reset".
 
 use super::*;
-use crate::reset::{Mode, Phase, ResetDialog};
+use crate::reset::{self, Mode, Phase, ResetDialog};
 use project_engine::ResetPreviewResult;
 
 /// Maximum height of the list of overwritten files; beyond it, it scrolls.
@@ -39,10 +39,10 @@ pub(super) fn reset_item(
         .on_hover_text(tr!("reset-menu-hint", id = commit.id.short()))
         .on_disabled_hover_text(blocked.unwrap_or_else(wait));
     if button.clicked() {
-        actions.push(Action::OpenReset {
+        actions.push(Action::Reset(reset::Action::Open {
             target: commit.id,
             what: what.to_owned(),
-        });
+        }));
         ui.close();
     }
 }
@@ -61,7 +61,7 @@ pub(crate) fn reset_dialog(ctx: &egui::Context, dialog: &ResetDialog, actions: &
             for mode in Mode::ALL {
                 let name = RichText::new(mode.param()).strong();
                 if ui.radio(dialog.mode == mode, name).clicked() && dialog.mode != mode {
-                    actions.push(Action::ResetMode(mode));
+                    actions.push(Action::Reset(reset::Action::Mode(mode)));
                 }
                 ui.indent(mode.param(), |ui| {
                     ui.add(egui::Label::new(RichText::new(mode.hint()).weak()).wrap());
@@ -95,13 +95,13 @@ pub(crate) fn reset_dialog(ctx: &egui::Context, dialog: &ResetDialog, actions: &
                 button = button.fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
             }
             if ui.add_enabled(dialog.can_submit(), button).clicked() {
-                actions.push(Action::SubmitReset);
+                actions.push(Action::Reset(reset::Action::Submit));
             }
             if ui
                 .add_enabled(!sending, egui::Button::new(tr!("reset-cancel")))
                 .clicked()
             {
-                actions.push(Action::CloseReset);
+                actions.push(Action::Reset(reset::Action::Close));
             }
             if sending {
                 ui.spinner();
@@ -110,7 +110,7 @@ pub(crate) fn reset_dialog(ctx: &egui::Context, dialog: &ResetDialog, actions: &
         });
     });
     if !sending && modal.should_close() {
-        actions.push(Action::CloseReset);
+        actions.push(Action::Reset(reset::Action::Close));
     }
 }
 

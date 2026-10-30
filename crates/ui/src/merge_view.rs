@@ -1,6 +1,7 @@
 //! Drawing of the in-progress operation panel and the merge dialogs (S29). The functions
 //! read the view and produce [`Action`]; they change nothing directly.
 
+use crate::conflict;
 use crate::discard::Phase;
 use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog};
 use crate::view::git_text;
@@ -132,7 +133,7 @@ fn buttons(
             ))
             .on_disabled_hover_text(tr!("merge-wait"));
         if button.clicked() {
-            actions.push(Action::AbortMerge);
+            actions.push(Action::Merge(merge::Action::Abort));
         }
     }
     if let Some(kind) = resume {
@@ -153,7 +154,7 @@ fn buttons(
                 tr!("merge-continue-conflicts")
             });
         if button.clicked() {
-            actions.push(Action::ContinueMerge);
+            actions.push(Action::Merge(merge::Action::Continue));
         }
     }
 }
@@ -204,7 +205,7 @@ fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>
         .selectable_label(open, text)
         .on_hover_text(tr!("merge-file-hint"));
     if response.clicked() {
-        actions.push(Action::OpenConflict(path.clone()));
+        actions.push(Action::Conflict(conflict::Action::Open(path.clone())));
     }
 }
 
@@ -228,7 +229,7 @@ pub(crate) fn merge_dialog(
         }
     });
     if modal.should_close() {
-        actions.push(Action::CloseMergeDialog);
+        actions.push(Action::Merge(merge::Action::CloseDialog));
     }
 }
 
@@ -265,7 +266,7 @@ fn continue_dialog(
         edit.request_focus();
     }
     if edit.changed() {
-        actions.push(Action::MergeMessage(message));
+        actions.push(Action::Merge(merge::Action::Message(message)));
     }
     if let Some(error) = &dialog.error {
         ui.add_space(4.0);
@@ -286,7 +287,7 @@ fn continue_dialog(
                 tr!("merge-write-message")
             });
         if button.clicked() {
-            actions.push(Action::SubmitContinueMerge);
+            actions.push(Action::Merge(merge::Action::SubmitContinue));
         }
         if ui
             .add_enabled(
@@ -295,7 +296,7 @@ fn continue_dialog(
             )
             .clicked()
         {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
         if dialog.running.is_some() {
             ui.spinner();
@@ -341,7 +342,7 @@ fn rebase_continue_dialog(
             )
             .on_disabled_hover_text(tr!("merge-continuing"));
         if button.clicked() {
-            actions.push(Action::SubmitContinueMerge);
+            actions.push(Action::Merge(merge::Action::SubmitContinue));
         }
         if ui
             .add_enabled(
@@ -350,7 +351,7 @@ fn rebase_continue_dialog(
             )
             .clicked()
         {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
         if dialog.running.is_some() {
             ui.spinner();
@@ -389,10 +390,10 @@ fn abort_dialog(ui: &mut Ui, kind: Kind, reason: &str, actions: &mut Vec<Action>
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
-            actions.push(Action::ConfirmAbortMerge);
+            actions.push(Action::Merge(merge::Action::ConfirmAbort));
         }
         if ui.button(tr!("merge-dont-abort")).clicked() {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
     });
 }
@@ -432,7 +433,7 @@ fn mainline_dialog(ui: &mut Ui, dialog: &MainlineDialog, actions: &mut Vec<Actio
             text.push_str(&format!(" — {summary}"));
         }
         if ui.radio(dialog.mainline == n, text).clicked() {
-            actions.push(Action::Mainline(n));
+            actions.push(Action::Merge(merge::Action::Mainline(n)));
         }
     }
     ui.add_space(10.0);
@@ -442,10 +443,10 @@ fn mainline_dialog(ui: &mut Ui, dialog: &MainlineDialog, actions: &mut Vec<Actio
             .on_hover_text(tr!("merge-mainline-hint", n = dialog.mainline))
             .clicked()
         {
-            actions.push(Action::SubmitMainline);
+            actions.push(Action::Merge(merge::Action::SubmitMainline));
         }
         if ui.button(tr!("merge-close")).clicked() {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
     });
 }

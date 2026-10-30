@@ -24,7 +24,7 @@ use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
 use crate::running::Running;
-use crate::{Action, Done, Tab, params};
+use crate::{Done, Tab, params};
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, Status};
 use project_engine::{
@@ -34,6 +34,27 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Pull the given branch (`None`: HEAD's), with the given strategy (`None`:
+    /// the configured one).
+    Pull(Option<String>, Option<Strategy>),
+    /// Push the given branch (`None`: HEAD's), never forced.
+    Push(Option<String>),
+    /// Push the tag (second value, short name) to the remote (first value), never forced.
+    PushTag(String, String),
+    /// "Force (with lease)…" in the rejected push window: `"force": true` without
+    /// `confirm`.
+    ForcePush,
+    /// "Force the push" in the confirmation: `"force": true, "confirm": true`.
+    ConfirmForcePush,
+    /// "Stop" the pull or push in progress.
+    Cancel,
+    /// Closes the pull and push window (also the force confirmation, without forcing).
+    Dismiss,
+}
 
 /// The Registry command ids.
 pub const PULL: &str = "remote.pull";
@@ -772,17 +793,16 @@ impl Tab {
                     self.send_sync(request, true);
                 }
             }
-            Action::CancelSync => {
+            Action::Cancel => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.sync.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::DismissSync => {
+            Action::Dismiss => {
                 if let Some(repo) = &mut self.repo {
                     repo.sync.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

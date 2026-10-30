@@ -11,7 +11,7 @@
 
 use crate::discard::{History, Phase};
 use crate::running::Running;
-use crate::{Action, Done, Request, Tab, params};
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, messages_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
@@ -22,6 +22,37 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the dialog for a new branch from `start`, with the proposed name.
+    NewBranch(Start, String),
+    /// Opens the dialog for a new tag on the commit of `start`.
+    NewTag(Start),
+    /// The text of the tag message changed.
+    TagMessage(String),
+    /// Opens the dialog to rename the local branch (short name).
+    RenameBranch(String),
+    /// The text of the branch name dialog changed.
+    Name(String),
+    /// Submits the name dialog: creates or renames.
+    SubmitName,
+    /// Switches to the local branch (short name).
+    Checkout(String),
+    /// Deletes the local branch (short name) seen on the given commit: first without confirmation;
+    /// if the engine asks for it the dialog opens. The commit goes to the engine as `expected`.
+    DeleteBranch(String, Oid),
+    /// Confirms the pending deletion: resends with `"confirm": true`.
+    ConfirmDeleteBranch,
+    /// Deletes the local tag (short name): first without confirmation, the engine always asks
+    /// and the dialog opens.
+    DeleteTag(String),
+    /// Confirms the pending tag deletion: resends with `"confirm": true`.
+    ConfirmDeleteTag,
+    /// Closes the open branch dialog without sending anything.
+    CloseDialog,
+}
 
 /// A command on branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -810,12 +841,12 @@ impl Tab {
                     repo.branch.open_rename(name);
                 }
             }
-            Action::BranchName(name) => {
+            Action::Name(name) => {
                 if let Some(repo) = &mut self.repo {
                     repo.branch.set_name(name);
                 }
             }
-            Action::SubmitBranchName => {
+            Action::SubmitName => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -919,12 +950,11 @@ impl Tab {
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
-            Action::CloseBranchDialog => {
+            Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.branch.close();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

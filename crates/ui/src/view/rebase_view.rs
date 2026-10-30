@@ -26,7 +26,7 @@ pub(crate) fn rebase_editor(ctx: &egui::Context, editor: &Editor, actions: &mut 
                 });
                 ui.add_space(8.0);
                 if ui.button(tr!("rebase-close")).clicked() {
-                    actions.push(Action::CloseRebase);
+                    actions.push(Action::Rebase(rebase::Action::Close));
                 }
             }
             Phase::Unavailable => {
@@ -40,7 +40,7 @@ pub(crate) fn rebase_editor(ctx: &egui::Context, editor: &Editor, actions: &mut 
                 }
                 ui.add_space(8.0);
                 if ui.button(tr!("rebase-close")).clicked() {
-                    actions.push(Action::CloseRebase);
+                    actions.push(Action::Rebase(rebase::Action::Close));
                 }
             }
             _ => plan_editor(ui, editor, width, actions),
@@ -50,9 +50,9 @@ pub(crate) fn rebase_editor(ctx: &egui::Context, editor: &Editor, actions: &mut 
     if editor.phase != Phase::Sending && !modal.backdrop_response.clicked() && modal.should_close()
     {
         if matches!(editor.phase, Phase::Confirm { .. }) {
-            actions.push(Action::CancelRebaseConfirm);
+            actions.push(Action::Rebase(rebase::Action::CancelConfirm));
         } else {
-            actions.push(Action::CloseRebase);
+            actions.push(Action::Rebase(rebase::Action::Close));
         }
     }
     if let Phase::Confirm { reason } = &editor.phase {
@@ -120,7 +120,7 @@ fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Actio
             )
             .on_hover_text(tr!("rebase-run-hint", branch = &editor.branch));
         if run.clicked() {
-            actions.push(Action::RunRebase);
+            actions.push(Action::Rebase(rebase::Action::Run));
         }
         if ui
             .add_enabled(
@@ -129,7 +129,7 @@ fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Actio
             )
             .clicked()
         {
-            actions.push(Action::CloseRebase);
+            actions.push(Action::Rebase(rebase::Action::Close));
         }
         if editor.phase == Phase::Sending {
             ui.spinner();
@@ -169,7 +169,7 @@ fn steps(
                         .rect_filled(rect, 2.0, visuals.widgets.hovered.weak_bg_fill);
                 }
                 if response.clicked() {
-                    actions.push(Action::RebaseSelect(i));
+                    actions.push(Action::Rebase(rebase::Action::Select(i)));
                 }
                 // Drop: into the gap above or below this row, by the pointer's half.
                 if let Some(pointer) = ui.ctx().pointer_interact_pos()
@@ -184,10 +184,10 @@ fn steps(
                     );
                     if let Some(dragged) = response.dnd_release_payload::<StepDrag>() {
                         let to = if below { i + 1 } else { i };
-                        actions.push(Action::RebaseMove {
+                        actions.push(Action::Rebase(rebase::Action::Move {
                             from: dragged.0,
                             to,
-                        });
+                        }));
                     }
                 }
                 let mut child = ui.new_child(
@@ -226,13 +226,13 @@ fn step_row(ui: &mut Ui, editor: &Editor, i: usize, len: usize, actions: &mut Ve
         .on_hover_text(tr!("rebase-up-hint"))
         .clicked()
     {
-        actions.push(Action::RebaseMove { from: i, to: i - 1 });
+        actions.push(Action::Rebase(rebase::Action::Move { from: i, to: i - 1 }));
     }
     if arrow(ui, false, i + 1 < len)
         .on_hover_text(tr!("rebase-down-hint"))
         .clicked()
     {
-        actions.push(Action::RebaseMove { from: i, to: i + 2 });
+        actions.push(Action::Rebase(rebase::Action::Move { from: i, to: i + 2 }));
     }
     let mut chosen = row.action;
     egui::ComboBox::from_id_salt(("rebase-action", row.commit))
@@ -245,7 +245,7 @@ fn step_row(ui: &mut Ui, editor: &Editor, i: usize, len: usize, actions: &mut Ve
             }
         });
     if chosen != row.action {
-        actions.push(Action::RebaseChoose(i, chosen));
+        actions.push(Action::Rebase(rebase::Action::Choose(i, chosen)));
     }
     let dropped = row.action == RebaseAction::Drop;
     let mut id = RichText::new(row.commit.short()).monospace();
@@ -362,7 +362,7 @@ fn message_editor(ui: &mut Ui, editor: &Editor, actions: &mut Vec<Action>) {
             .desired_width(f32::INFINITY),
     );
     if response.changed() {
-        actions.push(Action::RebaseMessage(i, text));
+        actions.push(Action::Rebase(rebase::Action::Message(i, text)));
     }
 }
 
@@ -382,15 +382,15 @@ fn confirm_dialog(ctx: &egui::Context, reason: &str, actions: &mut Vec<Action>) 
             )
             .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
             if ui.add(button).clicked() {
-                actions.push(Action::ConfirmRebase);
+                actions.push(Action::Rebase(rebase::Action::Confirm));
             }
             if ui.button(tr!("rebase-confirm-back")).clicked() {
-                actions.push(Action::CancelRebaseConfirm);
+                actions.push(Action::Rebase(rebase::Action::CancelConfirm));
             }
         });
     });
     if modal.should_close() {
-        actions.push(Action::CancelRebaseConfirm);
+        actions.push(Action::Rebase(rebase::Action::CancelConfirm));
     }
 }
 

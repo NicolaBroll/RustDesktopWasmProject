@@ -7,11 +7,25 @@
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
-use crate::{Action, Done, Request, Tab};
+use crate::{Done, Request, Tab};
 use project_domain::{Change, RepoPath};
 use project_engine::{DiscardParams, DiscardResult, UndoResult};
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Discards the unstaged changes of the given files (never empty): first the engine checks
+    /// and asks for confirmation, which opens in a dialog.
+    Discard(Vec<RepoPath>),
+    /// Confirms the pending discard: resends with `"confirm": true`.
+    Confirm,
+    /// Closes the discard dialog without discarding anything.
+    Cancel,
+    /// Undoes the last journal operation, or redoes the last undone one.
+    Undo(UndoOp),
+}
 
 /// True if the changes of the file can be discarded: tracked, not conflicted. Untracked files
 /// are never touched (discarding them would mean deleting them, with no backup).
@@ -315,7 +329,7 @@ impl Tab {
                     self.submit(COMMAND, params, Request::Discard(generation));
                 }
             }
-            Action::ConfirmDiscard => {
+            Action::Confirm => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -329,7 +343,7 @@ impl Tab {
                     self.submit(COMMAND, params, Request::Discard(generation));
                 }
             }
-            Action::CancelDiscard => {
+            Action::Cancel => {
                 if let Some(repo) = &mut self.repo {
                     repo.discard.cancel();
                 }
@@ -349,7 +363,6 @@ impl Tab {
                 repo.write_label = Some(op.hint(&repo.history));
                 self.submit(op.command(), json!({}), Request::Undo(generation));
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

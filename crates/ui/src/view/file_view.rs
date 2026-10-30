@@ -25,10 +25,12 @@ pub(super) fn file_menu_entries(
     blame_off: Option<String>,
     actions: &mut Vec<Action>,
 ) {
-    let open = |mode| Action::OpenFile {
-        path: path.clone(),
-        rev,
-        mode,
+    let open = |mode| {
+        Action::File(file::Action::Open {
+            path: path.clone(),
+            rev,
+            mode,
+        })
     };
     let blame = ui
         .add_enabled(
@@ -80,7 +82,7 @@ fn toolbar(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
             .on_hover_text(tr!("file-close-hint"))
             .clicked()
         {
-            actions.push(Action::CloseFile);
+            actions.push(Action::File(file::Action::Close));
         }
         ui.separator();
         for (mode, label) in [
@@ -88,7 +90,7 @@ fn toolbar(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
             (Mode::History, tr!("file-tab-history")),
         ] {
             if ui.selectable_label(view.mode == mode, label).clicked() && view.mode != mode {
-                actions.push(Action::FileMode(mode));
+                actions.push(Action::File(file::Action::Mode(mode)));
             }
         }
         ui.separator();
@@ -111,7 +113,7 @@ fn toolbar(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
                     .on_hover_text(tr!("file-follow-hint"))
                     .changed()
                 {
-                    actions.push(Action::FileFollow(follow));
+                    actions.push(Action::File(file::Action::Follow(follow)));
                 }
             });
         }
@@ -129,7 +131,7 @@ fn loading(ui: &mut Ui, text: String) {
 fn failed(ui: &mut Ui, error: &str, actions: &mut Vec<Action>) {
     ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
     if ui.button(tr!("file-retry")).clicked() {
-        actions.push(Action::FileRetry);
+        actions.push(Action::File(file::Action::Retry));
     }
 }
 
@@ -447,7 +449,7 @@ fn history_list(
                 painter.galley(pos2(left, y), bottom, text);
                 let response = response.on_hover_text(entry_tooltip(entry));
                 if response.clicked() {
-                    actions.push(Action::FileSelect(index));
+                    actions.push(Action::File(file::Action::Select(index)));
                 }
                 response.context_menu(|ui| {
                     if ui.button(tr!("file-select-commit")).clicked() {
@@ -470,10 +472,10 @@ fn tail_row(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
                 ui.colored_label(ui.visuals().error_fg_color, tr!("file-history-page-error"))
                     .on_hover_text(error);
                 if ui.small_button(tr!("file-retry")).clicked() {
-                    actions.push(Action::FileRetry);
+                    actions.push(Action::File(file::Action::Retry));
                 }
             } else if ui.small_button(tr!("file-load-more")).clicked() {
-                actions.push(Action::FileMore);
+                actions.push(Action::File(file::Action::More));
             }
         });
     });

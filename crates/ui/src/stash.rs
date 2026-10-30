@@ -9,11 +9,13 @@
 //!   index"; an engine refusal (nothing to stash, conflicts, operation in progress)
 //!   stays in the dialog. It enters the journal: "Undo" reapplies it.
 //! - **Apply/pop**: always with `index` and `expected` (the id seen): if the list changed the
-//!   engine refuses and the list is reread. They do not enter the journal: the notice does not offer
+//!   engine refuses and the list is reread. They do not enter the journal: the notice does not
+//! offer
 //!   "Undo" (which would concern the previous operation). With non-empty `conflicts` it is a
 //!   partial success: a window opens with the files, to be resolved from the stage area.
 //! - **Drop**: in two steps like removing a remote: first without `confirm` (the engine
-//!   always answers with `ConfirmRequired` and what would be lost), then, only after the click in the
+//!   always answers with `ConfirmRequired` and what would be lost), then, only after the click in
+//! the
 //!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
@@ -829,7 +831,8 @@ impl Tab {
                 self.notice = outcome.notice;
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
-                // The drop does not touch files; the others do, and if the status did not arrive it is
+                // The drop does not touch files; the others do, and if the status did not arrive it
+                // is
                 // reread.
                 if !status_read && outcome.op != Op::Drop {
                     self.submit("repo.status", json!({}), Request::Status(generation));
@@ -861,7 +864,9 @@ impl Tab {
 mod tests {
     use super::*;
     use project_domain::{Change, ChangedFile, Commit, EntryKind, RepoPath};
-    use project_engine::{GitBackend, MemoryBackend, MemoryOpener, Registry, Session, StashPush};
+    use project_engine::{
+        GitRead, GitStash, MemoryBackend, MemoryOpener, Registry, Session, StashPush,
+    };
     use std::sync::Arc;
 
     fn opened(repo: MemoryBackend) -> (Registry, Session) {

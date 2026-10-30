@@ -1,10 +1,13 @@
-//! Cherry-pick and revert on the [`MemoryBackend`] (`commit.cherry_pick`, `commit.revert`, S31), with
+//! Cherry-pick and revert on the [`MemoryBackend`] (`commit.cherry_pick`, `commit.revert`, S31),
+//! with
 //! the same checks as the `CliBackend`.
 //!
-//! Like the in-memory merge, file by file: the commit's patch (from the chosen parent to the commit;
+//! Like the in-memory merge, file by file: the commit's patch (from the chosen parent to the
+//! commit;
 //! for revert, inverted) is applied to HEAD, and a file that HEAD changed differently
 //! is a conflict. Without conflicts a new commit on top of HEAD (for cherry-pick with the original
-//! author); with conflicts the operation **stays in progress** like the merge (`u` entries, the files
+//! author); with conflicts the operation **stays in progress** like the merge (`u` entries, the
+//! files
 //! without conflicts staged, `CHERRY_PICK_HEAD`/`REVERT_HEAD` and `MERGE_MSG` in
 //! [`MemoryMerge`]). A result equal to HEAD (commit already applied) is
 //! [`EngineError::NotAllowed`] and changes nothing.
@@ -12,14 +15,14 @@
 use super::merge::{MemoryMerge, merge_partial};
 use super::{HEADS, HeadRef, MemoryBackend};
 use crate::EngineError;
-use crate::git::GitBackend;
+use crate::git::GitRead;
 use crate::git::{
     BACKUP_PREFIX, MergeOutcome, PickKind, PickRequest, check_pick_state, pick_empty_error,
     split_message,
 };
 
 impl MemoryBackend {
-    /// [`GitBackend::pick`](crate::GitBackend::pick).
+    /// [`GitOperations::pick`](crate::GitOperations::pick).
     pub(super) fn pick_commit(
         &mut self,
         request: &PickRequest,

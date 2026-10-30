@@ -105,7 +105,7 @@ The `MemoryBackend` does the same checks; the worktree backup is a `WorktreeStas
 
 A reset that changes the commit enters the journal (`JournalEntry::reset`, `reset: {"mode", "stash"}`,
 `backup` the worktree backup); a `hard` on HEAD itself does not (its recovery is the backup).
-`edit.undo`/`edit.redo` call `GitBackend::reset` with the same mode and `strict`: HEAD and the branch
+`edit.undo`/`edit.redo` call `GitRefs::reset` with the same mode and `strict`: HEAD and the branch
 must be as the reset (or the undo) left them (`UndoConflict`), and nothing may need a new backup:
 `mixed` refuses with staged changes or conflicts (the index is rewritten as the other commit),
 `hard` with any local change to tracked files (the worktree is rewritten). The undo of a `hard`

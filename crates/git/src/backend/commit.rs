@@ -15,8 +15,10 @@
 //! confirmation of an ssh key) legitimately waits for the user; without a terminal or graphical
 //! pinentry gpg fails immediately (git's stdin is a pipe, `GIT_TERMINAL_PROMPT=0`). Instead these
 //! can wait: a hook that leaves background processes with stdout/stderr open (the
-//! command finishes when they close them); an ssh signature with a passphrase and no agent or a hook that
-//! reads `/dev/tty`, on the controlling terminal if there is one (CLI or MCP started from a terminal).
+//! command finishes when they close them); an ssh signature with a passphrase and no agent or a
+//! hook that
+//! reads `/dev/tty`, on the controlling terminal if there is one (CLI or MCP started from a
+//! terminal).
 //!
 //! After a successful commit every problem is [`EngineError::PostCommit`], with the commit created
 //! (if HEAD is still that one) and the backup: the commit must not be repeated.
@@ -32,7 +34,7 @@ use project_engine::{
 use std::ffi::OsStr;
 
 impl CliBackend {
-    /// [`GitBackend::commit`](project_engine::GitBackend::commit).
+    /// [`GitIndex::commit`](project_engine::GitIndex::commit).
     pub(super) fn create_commit(
         &mut self,
         request: &CommitRequest,
@@ -120,7 +122,8 @@ impl CliBackend {
             return Err(err);
         }
 
-        // From here the commit is done: every error is `PostCommit`, with the commit and the backup.
+        // From here the commit is done: every error is `PostCommit`, with the commit and the
+        // backup.
         let post = |commit: Option<Oid>, reason: Message| EngineError::PostCommit {
             commit,
             backup: backup.clone(),

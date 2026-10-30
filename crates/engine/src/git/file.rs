@@ -14,7 +14,7 @@ pub struct BlameQuery {
     pub rev: Option<String>,
 }
 
-/// The result of [`GitBackend::blame`](super::GitBackend::blame): the [`Blame`] with the
+/// The result of [`GitRead::blame`](super::GitRead::blame): the [`Blame`] with the
 /// requested path and the commit `rev` resolved to (`None` for the worktree).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileBlame {
@@ -24,7 +24,7 @@ pub struct FileBlame {
     pub rev: Option<Oid>,
 }
 
-/// A page of the history of one file ([`GitBackend::file_log`](super::GitBackend::file_log)).
+/// A page of the history of one file ([`GitRead::file_log`](super::GitRead::file_log)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileLogQuery {
     pub path: RepoPath,

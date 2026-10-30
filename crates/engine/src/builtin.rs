@@ -483,7 +483,7 @@ fn to_json(value: impl Serialize) -> Value {
 /// opened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepoOpenResult {
-    /// The worktree root, absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same
+    /// The worktree root, absolute ([`GitRead::root`](crate::GitRead::root)), so the same
     /// repo opened from a subfolder or a relative path gives the same path; the given path if
     /// the backend has none.
     pub path: String,
@@ -555,7 +555,8 @@ fn opened(s: &Session, path: String) -> Result<RepoOpenResult, EngineError> {
 ///
 /// A write (it adds or replaces `objects/info/commit-graph`), but it cannot lose data: the file
 /// is a cache that git derives from the objects and that `git gc` itself rewrites. So no
-/// `confirm`, no backup, and no [`JournalEntry`](crate::JournalEntry): no ref, index or worktree file changes.
+/// `confirm`, no backup, and no [`JournalEntry`](crate::JournalEntry): no ref, index or worktree
+/// file changes.
 /// Slow (~19 s on the Linux kernel): progress and cancellation from [`Session::job`]. Refused
 /// with `core.commitGraph=false` ([`commit_graph_disabled`]), in a shallow repo
 /// ([`commit_graph_shallow`]) and with replace refs or grafts ([`commit_graph_replaced`]): git
@@ -783,7 +784,7 @@ mod snapshot_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend, MemoryOpener};
+    use crate::{GitRead, MemoryBackend, MemoryOpener};
     use project_domain::{CommitDetails, RefInfo, Status};
     use serde_json::json;
     use std::sync::Arc;

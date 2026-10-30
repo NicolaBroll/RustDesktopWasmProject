@@ -16,8 +16,10 @@
 //!   writing: if a file would be overwritten nothing changes.
 //!
 //! Known limits: a modified `--assume-unchanged` file would be overwritten by git without
-//! warning; the checkout refuses it if the file differs between HEAD and the destination. A branch on
-//! which a rebase or bisect is stopped in another worktree (HEAD detached there) does not count as "open"
+//! warning; the checkout refuses it if the file differs between HEAD and the destination. A branch
+//! on
+//! which a rebase or bisect is stopped in another worktree (HEAD detached there) does not count as
+//! "open"
 //! and can be deleted: the commit stays in the backup.
 
 use super::CliBackend;
@@ -104,7 +106,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::unmerged_count`](project_engine::GitBackend::unmerged_count):
+    /// [`GitRead::unmerged_count`](project_engine::GitRead::unmerged_count):
     /// `rev-list --count <tip> ^<into>...`, without replace objects (counts the real history).
     pub(super) fn count_unmerged(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
         let revs: Vec<String> = std::iter::once(tip.to_string())
@@ -125,7 +127,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::create_branch`](project_engine::GitBackend::create_branch).
+    /// [`GitRefs::create_branch`](project_engine::GitRefs::create_branch).
     pub(super) fn create_local_branch(
         &mut self,
         name: &str,
@@ -135,7 +137,8 @@ impl CliBackend {
         let full = branch_ref(name);
         let oid = target.to_string();
         let reflog = format!("project: branch.create {name} at {oid}");
-        // Older git (2.43 does) overwrites a symbolic ref that points nowhere even with `--no-deref`
+        // Older git (2.43 does) overwrites a symbolic ref that points nowhere even with
+        // `--no-deref`
         // and an empty old value: refused here first.
         if let Some(target) = self.symbolic_target(&full)? {
             return Err(EngineError::NotAllowed(msg!(
@@ -169,7 +172,7 @@ impl CliBackend {
         Err(failure(&args, &out))
     }
 
-    /// [`GitBackend::checkout`](project_engine::GitBackend::checkout) with `git switch`.
+    /// [`GitRefs::checkout`](project_engine::GitRefs::checkout) with `git switch`.
     pub(super) fn switch_to(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
         check_no_operation(
             "branch.checkout",
@@ -320,7 +323,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::delete_branch`](project_engine::GitBackend::delete_branch).
+    /// [`GitRefs::delete_branch`](project_engine::GitRefs::delete_branch).
     pub(super) fn delete_local_branch(
         &mut self,
         name: &str,
@@ -377,7 +380,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::rename_branch`](project_engine::GitBackend::rename_branch) with `git
+    /// [`GitRefs::rename_branch`](project_engine::GitRefs::rename_branch) with `git
     /// branch -m` (never `-M`).
     pub(super) fn rename_local_branch(
         &mut self,
@@ -480,7 +483,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::restore_branch_config`](project_engine::GitBackend::restore_branch_config).
+    /// [`GitRefs::restore_branch_config`](project_engine::GitRefs::restore_branch_config).
     pub(super) fn set_branch_config(
         &mut self,
         name: &str,

@@ -3,7 +3,8 @@
 //!
 //! Discarding restores the worktree files to the staged version (like `git restore --worktree`):
 //! what was in the worktree no longer exists anywhere else. Before writing, the
-//! backends save the worktree with `git stash create` (a commit that touches neither the index nor the
+//! backends save the worktree with `git stash create` (a commit that touches neither the index nor
+//! the
 //! worktree) and a `refs/project/backup/discard-...` ref that holds it, so gc does not
 //! delete it; the journal entry ([`WorktreeBackup`]) lets `edit.undo` put the files back
 //! as they were.
@@ -42,7 +43,7 @@ pub struct DiscardedFile {
     pub oid: Oid,
 }
 
-/// Outcome of [`GitBackend::discard`](crate::GitBackend::discard).
+/// Outcome of [`GitIndex::discard`](crate::GitIndex::discard).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscardOutcome {
     /// The files restored to the staged version, in path order.
@@ -54,7 +55,8 @@ pub struct DiscardOutcome {
     /// files before the discard (`git show <stash>:<path>`).
     pub stash: Oid,
     /// Only if for some file the worktree bytes are not those `git restore` would recreate
-    /// from the `stash` commit (`clean` filters, line-ending conversions such as `core.autocrlf=input`):
+    /// from the `stash` commit (`clean` filters, line-ending conversions such as
+    /// `core.autocrlf=input`):
     /// a commit (child of `stash`) with only the files saved byte for byte, without filters. Undo
     /// writes back those exact bytes. The backup ref points to this commit when present.
     #[serde(default)]
@@ -62,7 +64,8 @@ pub struct DiscardOutcome {
 }
 
 /// The worktree backup in a journal entry: the commit of `git stash create` and the
-/// discarded files. `edit.undo` puts those files back as they were in the commit, `edit.redo` discards them
+/// discarded files. `edit.undo` puts those files back as they were in the commit, `edit.redo`
+/// discards them
 /// again.
 ///
 /// JSON: `{"stash": oid, "files": [DiscardedFile]}`.
@@ -76,7 +79,7 @@ pub struct WorktreeBackup {
 }
 
 /// What `edit.undo`/`edit.redo` of a discard ask of the backend
-/// ([`GitBackend::restore_worktree`](crate::GitBackend::restore_worktree)).
+/// ([`GitIndex::restore_worktree`](crate::GitIndex::restore_worktree)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeRestore {
     /// `edit.undo` or `edit.redo`, for errors.
@@ -98,7 +101,8 @@ impl WorktreeRestore {
         self.files.iter().map(|f| f.path.clone()).collect()
     }
 
-    /// The differences between the expected and the current index (`index` gives mode and id of the entry of
+    /// The differences between the expected and the current index (`index` gives mode and id of the
+    /// entry of
     /// a path, `None` if absent), one per line, for [`EngineError::UndoConflict`].
     pub fn index_conflicts(
         &self,
@@ -317,7 +321,7 @@ fn list(paths: &[&RepoPath]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
     use project_domain::{Head, StatusEntry, TrackedInfo, UnmergedInfo};
 
     fn p(s: &str) -> RepoPath {

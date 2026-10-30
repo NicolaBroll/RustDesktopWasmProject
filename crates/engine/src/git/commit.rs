@@ -20,7 +20,8 @@ const COMMAND: &str = "commit.create";
 #[serde(deny_unknown_fields)]
 pub struct CommitRequest {
     /// The message, passed to git as is (via stdin, `git commit -F -`). Cleanup is done by git
-    /// according to the user's `commit.cleanup`: with no configuration, with `-F` it is `whitespace`
+    /// according to the user's `commit.cleanup`: with no configuration, with `-F` it is
+    /// `whitespace`
     /// (trailing spaces on lines, leading, trailing and repeated blank lines removed; lines
     /// starting with `#` **stay**, e.g. `#123 fixes ...`).
     pub message: String,
@@ -91,7 +92,7 @@ impl CommitRequest {
     }
 }
 
-/// Result of [`GitBackend::commit`](crate::GitBackend::commit). `commit.create` adds the
+/// Result of [`GitIndex::commit`](crate::GitIndex::commit). `commit.create` adds the
 /// state (`status`).
 ///
 /// It has the before and after values needed by the operation journal (§7): the moved ref
@@ -147,10 +148,12 @@ pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>
 /// HEAD already has a commit. Nothing has been modified when they fail.
 ///
 /// - Conflicted files in the index → [`EngineError::NotAllowed`] (git would reject it anyway).
-/// - Rebase, cherry-pick, revert or `git am` in progress → [`EngineError::NotAllowed`]: `git commit`
+/// - Rebase, cherry-pick, revert or `git am` in progress → [`EngineError::NotAllowed`]: `git
+/// commit`
 ///   would conclude or change the operation in hard-to-see ways (a cherry-pick would take
 ///   the original commit's author and close the operation; during a rebase the commit
-///   would end up in the sequence). Cherry-pick and revert conclude with `*.continue` ([`CommitRequest::concluding`]); the others from the
+///   would end up in the sequence). Cherry-pick and revert conclude with `*.continue`
+/// ([`CommitRequest::concluding`]); the others from the
 ///   terminal.
 /// - Merge in progress: the commit is the **merge commit** (git adds `MERGE_HEAD` to the parents),
 ///   even with the index equal to HEAD (merge without changes, e.g. `-s ours`). With `amend` it is
@@ -212,8 +215,10 @@ pub fn check_commit_state(
 }
 
 /// With `amend` of an already published commit (`published`: the remote branches and tags it is
-/// reachable from, see [`amend_impact`]) `"confirm": true` is needed: whoever already downloaded the commit
-/// would find a different history, the next push would have to be forced and a tag would stay on the
+/// reachable from, see [`amend_impact`]) `"confirm": true` is needed: whoever already downloaded
+/// the commit
+/// would find a different history, the next push would have to be forced and a tag would stay on
+/// the
 /// old commit. Without confirmation, [`EngineError::ConfirmRequired`] with the refs.
 pub fn check_amend_published(
     request: &CommitRequest,
@@ -231,7 +236,8 @@ pub fn check_amend_published(
 }
 
 /// The message as git cleans it with `--cleanup=whitespace` (the default of `git commit -F`):
-/// trailing spaces on lines removed, leading and trailing blank lines removed, consecutive blank lines
+/// trailing spaces on lines removed, leading and trailing blank lines removed, consecutive blank
+/// lines
 /// reduced to one, a final newline. Comment lines stay. Used by the
 /// `MemoryBackend`, which has no git; the `CliBackend` leaves it to git.
 #[cfg(any(test, feature = "test-support"))]
@@ -278,7 +284,7 @@ pub fn split_message(message: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
     use project_domain::{Change, RepoPath, StatusEntry};
 
     #[test]

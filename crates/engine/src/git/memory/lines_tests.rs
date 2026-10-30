@@ -1,7 +1,7 @@
 //! Tests of `apply_lines` (stage and unstage of lines) on the `MemoryBackend`.
 
 use super::*;
-use crate::{DiffSpec, GitBackend, LineSelection, file_digest};
+use crate::{DiffSpec, GitIndex, GitRead, LineSelection, file_digest};
 use project_domain::{FileDiff, LineKind, LineRef, PatchDirection};
 
 fn p(path: &str) -> RepoPath {

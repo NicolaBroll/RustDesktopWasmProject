@@ -8,7 +8,7 @@ use common::{
     repo_with_special_names,
 };
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
-use project_engine::{DiffSpec, EngineError, GitBackend, Registry, Session};
+use project_engine::{DiffSpec, EngineError, GitRead, Registry, Session};
 use serde_json::{Value, json};
 use std::sync::Arc;
 

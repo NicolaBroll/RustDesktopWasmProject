@@ -2,7 +2,8 @@
 //! (`impl-docs/ARCHITECTURE-git.md` §7).
 //!
 //! The operation journal ([`Journal`](crate::Journal)) remembers, for every command that
-//! moved refs, HEAD and the refs before and after. Undoing means bringing them back to the "before" values,
+//! moved refs, HEAD and the refs before and after. Undoing means bringing them back to the "before"
+//! values,
 //! redoing to the "after" values, and **only** if in the meantime nobody touched them: a
 //! [`RefRestore`] tells the backends which values they expect now (`expected`) and which to write
 //! (`target`). The checks shared by the backends are here, so `MemoryBackend` and `CliBackend`
@@ -26,7 +27,7 @@ pub enum HeadState {
 }
 
 impl HeadState {
-    /// HEAD as read from [`GitBackend::head`](crate::GitBackend::head): the branch with its full
+    /// HEAD as read from [`GitRead::head`](crate::GitRead::head): the branch with its full
     /// name (`refs/heads/<name>`), or detached.
     pub fn from_head(head: &project_domain::Head) -> Self {
         match head {
@@ -76,10 +77,10 @@ pub struct RefMove {
     pub target: Option<Oid>,
 }
 
-/// What `edit.undo`/`edit.redo` ask of the backend ([`GitBackend::restore_refs`]): HEAD and the
+/// What `edit.undo`/`edit.redo` ask of the backend ([`GitRefs::restore_refs`]): HEAD and the
 /// refs must now equal `expected`, and must be moved to `target` all together or none.
 ///
-/// [`GitBackend::restore_refs`]: crate::GitBackend::restore_refs
+/// [`GitRefs::restore_refs`]: crate::GitRefs::restore_refs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefRestore {
     /// `edit.undo` or `edit.redo`: in errors and in the name of the backup refs.
@@ -87,10 +88,11 @@ pub struct RefRestore {
     /// HEAD as it must be now.
     pub head_expected: HeadState,
     /// HEAD as it must become: only the same branch as `head_expected` (HEAD is not touched)
-    /// or another commit with detached HEAD. A branch change does not go through here: undo and redo
+    /// or another commit with detached HEAD. A branch change does not go through here: undo and
+    /// redo
     /// of `branch.checkout` and `branch.rename` use
-    /// [`GitBackend::checkout`](crate::GitBackend::checkout) and
-    /// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch), which also update the
+    /// [`GitRefs::checkout`](crate::GitRefs::checkout) and
+    /// [`GitRefs::rename_branch`](crate::GitRefs::rename_branch), which also update the
     /// worktree, reflog and configuration.
     pub head_target: HeadState,
     pub refs: Vec<RefMove>,
@@ -110,12 +112,14 @@ impl RefRestore {
     }
 
     /// The checks before touching anything, the same for all backends (`operation` is
-    /// the operation in progress in the repo, as in [`Status::operation`]); nothing has changed when
+    /// the operation in progress in the repo, as in [`Status::operation`]); nothing has changed
+    /// when
     /// they fail.
     ///
     /// [`Status::operation`]: project_domain::Status::operation
     ///
-    /// - Merge, rebase, cherry-pick, revert, bisect or `git am` in progress → [`EngineError::NotAllowed`]:
+    /// - Merge, rebase, cherry-pick, revert, bisect or `git am` in progress →
+    /// [`EngineError::NotAllowed`]:
     ///   moving a branch in the middle of an operation would change it in hard-to-see ways (e.g.
     ///   a merge that would conclude on another commit).
     /// - Invalid ref names (not under `refs/`, with spaces, control characters or
@@ -148,7 +152,8 @@ impl RefRestore {
         Ok(())
     }
 
-    /// The differences between the expected and the current state (`head`, and `current` which gives the
+    /// The differences between the expected and the current state (`head`, and `current` which
+    /// gives the
     /// current value of a ref by name, `None` if it does not exist), one per line, for
     /// [`EngineError::UndoConflict`]. Empty if everything is as expected.
     pub fn conflicts(
@@ -179,7 +184,8 @@ impl RefRestore {
     }
 
     /// The commits that after the move would no longer be pointed to by HEAD or by the refs of the
-    /// request: the expected values (of refs and detached HEAD) that are not among the new ones. The
+    /// request: the expected values (of refs and detached HEAD) that are not among the new ones.
+    /// The
     /// backend saves in a backup ref those that remain unreachable from other refs and from
     /// the new values (§7), so gc does not delete them and `edit.redo` remains possible.
     pub fn abandoned(&self) -> Vec<Oid> {
@@ -220,7 +226,7 @@ impl RefRestore {
     }
 }
 
-/// Outcome of [`GitBackend::restore_refs`](crate::GitBackend::restore_refs).
+/// Outcome of [`GitRefs::restore_refs`](crate::GitRefs::restore_refs).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreOutcome {
     /// The backup refs created for the commits that would no longer be reachable.

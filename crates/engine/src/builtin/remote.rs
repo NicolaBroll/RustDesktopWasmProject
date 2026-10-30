@@ -114,7 +114,8 @@ fn values(refs: &[RefInfo]) -> BTreeMap<&str, (Oid, Option<Oid>)> {
         .collect()
 }
 
-/// The refs that differ between `before` and `after`, in name order. The reported value is the commit (for
+/// The refs that differ between `before` and `after`, in name order. The reported value is the
+/// commit (for
 /// an annotated tag, the one pointed to).
 pub(super) fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
     let (old, new) = (values(before), values(after));
@@ -154,15 +155,21 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
     ))
 }
 
-/// Fetches from the remote `remote` (see [`GitBackend::fetch`](crate::GitBackend::fetch)): new
-/// commits, remote-tracking branches and tags as the configuration says; with `branch` only that branch of the
+/// Fetches from the remote `remote` (see [`GitRemotes::fetch`](crate::GitRemotes::fetch)): new
+/// commits, remote-tracking branches and tags as the configuration says; with `branch` only that
+/// branch of the
 /// remote. `remote` is the name of a **configured** remote (never a URL or a path:
-/// [`EngineError::NotAllowed`] if there is none); if missing, the one of the active branch's upstream,
-/// otherwise `origin`, otherwise the only remote. It does not touch local branches, index, worktree:
-/// it does not go into the journal of operations (the remote-tracking branches mirror the remote; a fetch after
-/// an undo would bring them back to where they were). With `prune` (not together with `branch`) it also removes
+/// [`EngineError::NotAllowed`] if there is none); if missing, the one of the active branch's
+/// upstream,
+/// otherwise `origin`, otherwise the only remote. It does not touch local branches, index,
+/// worktree:
+/// it does not go into the journal of operations (the remote-tracking branches mirror the remote; a
+/// fetch after
+/// an undo would bring them back to where they were). With `prune` (not together with `branch`) it
+/// also removes
 /// the remote-tracking branches whose branch the remote no longer has (`--prune`); without it the
-/// configuration's `fetch.prune` / `remote.<name>.prune` applies. A removed remote-tracking branch whose
+/// configuration's `fetch.prune` / `remote.<name>.prune` applies. A removed remote-tracking branch
+/// whose
 /// commits no other ref reaches is first saved in `refs/project/backup/prune-...` (in `backups`).
 ///
 /// Slow command: progress goes to the [`JobContext`](crate::JobContext) of

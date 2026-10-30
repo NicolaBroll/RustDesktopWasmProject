@@ -18,7 +18,7 @@ pub struct CommitCreateResult {
 }
 
 /// Creates a commit with what is staged, or with `amend` rewrites the last one (see
-/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` is needed only for `amend` of a
+/// [`GitIndex::commit`](crate::GitIndex::commit)). `confirm` is needed only for `amend` of a
 /// commit already published. An error after a successful commit is
 /// [`EngineError::PostCommit`].
 ///
@@ -27,7 +27,8 @@ pub(super) fn commit_create(s: &mut Session, request: CommitRequest) -> Out {
     request.check_message()?;
     let (repo, journal) = s.repo_and_journal()?;
     let outcome = repo.commit(&request)?;
-    // The commit is made: it goes into the journal (for `edit.undo`) even if the state cannot be re-read afterwards.
+    // The commit is made: it goes into the journal (for `edit.undo`) even if the state cannot be
+    // re-read afterwards.
     if let Some(entry) = JournalEntry::commit(&outcome, request.amend) {
         journal.record(entry);
     }

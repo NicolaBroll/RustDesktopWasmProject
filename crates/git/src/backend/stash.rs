@@ -6,7 +6,8 @@
 //!   record, each terminated by NUL; the fourth NUL is added by `-z`), only if `refs/stash` exists;
 //! - push: `git -c core.fsmonitor=false [--literal-pathspecs] stash push [--include-untracked]
 //!   --keep-index|--no-keep-index [--message=<message>] [--pathspec-from-file=-
-//!   --pathspec-file-nul]`. `git stash` does not read the message from stdin or a file: it goes in a
+//!   --pathspec-file-nul]`. `git stash` does not read the message from stdin or a file: it goes in
+//! a
 //!   single argument `--message=<text>` (one line, no control characters: the engine checks
 //!   it), which git cannot read as another option. Never `--all` (ignored files stay);
 //!   the stash is recognized by the value of `refs/stash` before and after (git exits 0 even when
@@ -15,11 +16,13 @@
 //!   and not `stash@{n}` (the position can change); first the checks of `git/stash.rs` plus the
 //!   file system: a file the stash adds, or an untracked one it restores, must not
 //!   exist in the worktree (not even ignored, nor a file in place of one of its directories), and
-//!   `--assume-unchanged` files that the stash changes are refused (git would overwrite them without
+//!   `--assume-unchanged` files that the stash changes are refused (git would overwrite them
+//! without
 //!   checking);
 //! - drop: backup `refs/project/backup/<kind>-...` on the id, recheck that `stash@{n}` is
 //!   still that id, `git stash drop --quiet --end-of-options stash@{n}`; the instant between the
-//!   recheck and `drop` remains (git has no drop with an expected value), and afterwards the list is compared
+//!   recheck and `drop` remains (git has no drop with an expected value), and afterwards the list
+//! is compared
 //!   with the expected one (another stash dropped by mistake goes in `warnings`);
 //! - store (undo of a drop): `git stash store --quiet --message=<message> <id>` (`store` does not
 //!   accept `--end-of-options`; the id is hexadecimal and cannot look like an option).
@@ -37,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 impl CliBackend {
-    /// [`GitBackend::stashes`](project_engine::GitBackend::stashes).
+    /// [`GitStash::stashes`](project_engine::GitStash::stashes).
     pub(super) fn stash_entries(&self) -> Result<Vec<StashEntry>, EngineError> {
         if self.ref_value(STASH_REF)?.is_none() {
             return Ok(Vec::new());
@@ -90,11 +93,13 @@ impl CliBackend {
         Ok(list)
     }
 
-    /// [`GitBackend::stash_push`](project_engine::GitBackend::stash_push).
+    /// [`GitStash::stash_push`](project_engine::GitStash::stash_push).
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
-        // `git stash push` does not see changes to `--assume-unchanged` files (it does not save them) and
+        // `git stash push` does not see changes to `--assume-unchanged` files (it does not save
+        // them) and
         // then resets the worktree to HEAD: it would lose them. Always refused among the
-        // chosen files, without looking at the content, before the other checks (the status does not
+        // chosen files, without looking at the content, before the other checks (the status does
+        // not
         // show them: it would look like there is nothing to stash).
         let hidden: Vec<String> = self
             .index_listing()?
@@ -262,8 +267,10 @@ impl CliBackend {
         Ok(entries)
     }
 
-    /// True if the worktree has something in place of the file `path` that git would have to create: the
-    /// file itself (even a directory or a link) or, in place of one of its directories, something that
+    /// True if the worktree has something in place of the file `path` that git would have to
+    /// create: the
+    /// file itself (even a directory or a link) or, in place of one of its directories, something
+    /// that
     /// is not a real directory.
     fn occupied(&self, path: &RepoPath) -> bool {
         let full = self
@@ -287,7 +294,7 @@ impl CliBackend {
         false
     }
 
-    /// [`GitBackend::stash_apply`](project_engine::GitBackend::stash_apply).
+    /// [`GitStash::stash_apply`](project_engine::GitStash::stash_apply).
     pub(super) fn apply_stash(
         &mut self,
         request: &StashApply,
@@ -397,7 +404,8 @@ impl CliBackend {
                 name = stash.name
             )));
         }
-        // Only if the repo changed between the checks and git: in these cases git has already written
+        // Only if the repo changed between the checks and git: in these cases git has already
+        // written
         // part of it.
         let quoted = |files: Vec<String>| {
             files
@@ -422,7 +430,8 @@ impl CliBackend {
             )));
         }
         if text.contains("would be overwritten") {
-            // The files are the lines with a tab right after the message (afterwards git also prints
+            // The files are the lines with a tab right after the message (afterwards git also
+            // prints
             // a status summary, with other lines starting with a tab).
             let files: Vec<String> = text
                 .lines()
@@ -450,7 +459,7 @@ impl CliBackend {
         Err(failure(&args, &out))
     }
 
-    /// [`GitBackend::stash_drop`](project_engine::GitBackend::stash_drop).
+    /// [`GitStash::stash_drop`](project_engine::GitStash::stash_drop).
     pub(super) fn drop_stash(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
         let command = request.command;
         let list = self.stash_entries()?;
@@ -516,7 +525,7 @@ impl CliBackend {
         Ok(StashDropped { backup, warnings })
     }
 
-    /// [`GitBackend::stash_store`](project_engine::GitBackend::stash_store).
+    /// [`GitStash::stash_store`](project_engine::GitStash::stash_store).
     pub(super) fn store_stash(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         let hex = id.to_string();
         let message = format!("--message={message}");

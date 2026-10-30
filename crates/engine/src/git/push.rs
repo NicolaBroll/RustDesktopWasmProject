@@ -3,14 +3,15 @@
 //! The command decides remote, destination branch and upstream; the backend publishes **only**
 //! `refs/heads/<branch>:refs/heads/<remote_branch>` (explicit refspec: no tags, no other
 //! branches, whatever `push.default`, `remote.<name>.push` or `push.followTags` say). A force is
-//! always and only `--force-with-lease=refs/heads/<remote_branch>:<expected oid>`, with the oid read
+//! always and only `--force-with-lease=refs/heads/<remote_branch>:<expected oid>`, with the oid
+//! read
 //! from the local remote branch before the push.
 
 use crate::Message;
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
-/// What to publish with [`GitBackend::push`](super::GitBackend::push). Names already checked by the
+/// What to publish with [`GitRemotes::push`](super::GitRemotes::push). Names already checked by the
 /// command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushRequest {
@@ -23,8 +24,10 @@ pub struct PushRequest {
     /// Sets the branch's upstream (`--set-upstream`) if the push succeeds: only on the first push,
     /// when the branch has none.
     pub set_upstream: bool,
-    /// `Some(expected)`: force with `--force-with-lease=refs/heads/<remote_branch>:<expected>`, that is
-    /// the remote is overwritten only if its branch still equals `expected` (`None`: only if it does not
+    /// `Some(expected)`: force with `--force-with-lease=refs/heads/<remote_branch>:<expected>`,
+    /// that is
+    /// the remote is overwritten only if its branch still equals `expected` (`None`: only if it
+    /// does not
     /// exist). `None`: normal push, fast-forward only.
     pub lease: Option<Option<Oid>>,
     /// The commit to save in a backup ref before a force (`refs/project/backup/push-...`):
@@ -46,7 +49,7 @@ pub enum PushKind {
     UpToDate,
 }
 
-/// Outcome of [`GitBackend::push`](super::GitBackend::push).
+/// Outcome of [`GitRemotes::push`](super::GitRemotes::push).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushOutcome {
     pub kind: PushKind,
@@ -58,7 +61,8 @@ pub struct PushOutcome {
     pub backup: Option<String>,
 }
 
-/// The deletion of a branch on the remote ([`GitBackend::delete_remote_branch`](super::GitBackend::delete_remote_branch),
+/// The deletion of a branch on the remote
+/// ([`GitRemotes::delete_remote_branch`](super::GitRemotes::delete_remote_branch),
 /// `remote.delete_branch`). Names already checked by the command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteBranchDelete {
@@ -72,7 +76,7 @@ pub struct RemoteBranchDelete {
     pub expected: Oid,
 }
 
-/// Outcome of [`GitBackend::delete_remote_branch`](super::GitBackend::delete_remote_branch).
+/// Outcome of [`GitRemotes::delete_remote_branch`](super::GitRemotes::delete_remote_branch).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteBranchDeleted {
     /// The git summary (`[deleted]`).
@@ -87,7 +91,7 @@ pub struct RemoteBranchDeleted {
     pub incomplete: bool,
 }
 
-/// The publication of a tag ([`GitBackend::push_tag`](super::GitBackend::push_tag),
+/// The publication of a tag ([`GitRemotes::push_tag`](super::GitRemotes::push_tag),
 /// `remote.push_tag`). Names already checked by the command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagPush {
@@ -97,7 +101,7 @@ pub struct TagPush {
     pub name: String,
 }
 
-/// Outcome of [`GitBackend::push_tag`](super::GitBackend::push_tag).
+/// Outcome of [`GitRemotes::push_tag`](super::GitRemotes::push_tag).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagPushed {
     /// The remote already had the tag with the same value: nothing published.
@@ -109,7 +113,7 @@ pub struct TagPushed {
 }
 
 /// The deletion of a tag on the remote
-/// ([`GitBackend::delete_remote_tag`](super::GitBackend::delete_remote_tag), `remote.delete_tag`).
+/// ([`GitRemotes::delete_remote_tag`](super::GitRemotes::delete_remote_tag), `remote.delete_tag`).
 /// Names already checked by the command. The outcome is a [`RemoteBranchDeleted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteTagDelete {

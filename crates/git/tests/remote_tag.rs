@@ -1,6 +1,7 @@
 //! Integration tests of `remote.push_tag` and `remote.delete_tag` with the `CliBackend` and a local
 //! remote (`git init --bare`) on which a second clone publishes at the same time: lightweight and
-//! annotated tags, a tag already on the remote with the same or another value, names that start with
+//! annotated tags, a tag already on the remote with the same or another value, names that start
+//! with
 //! `-`, the confirmation with the value seen, a lease that fails because the tag moved, an object
 //! missing locally fetched straight into the backup, `pre-push` hook that rejects.
 
@@ -9,7 +10,7 @@ mod common;
 use common::Repo;
 use project_domain::Oid;
 use project_engine::{
-    EngineError, GitBackend, JobContext, PushRejection, Registry, RemoteTagDelete, Session,
+    EngineError, GitRemotes, JobContext, PushRejection, Registry, RemoteTagDelete, Session,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;

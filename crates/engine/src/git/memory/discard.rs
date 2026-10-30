@@ -8,7 +8,7 @@
 use super::MemoryBackend;
 use super::write::{entry_order, tracked_info};
 use crate::EngineError;
-use crate::GitBackend;
+use crate::GitRead;
 use crate::git::{
     BACKUP_PREFIX, DiscardOutcome, DiscardedFile, WorktreeRestore, check_same_plan, discard_plan,
 };
@@ -42,7 +42,7 @@ impl MemoryBackend {
         self.worktree.get(path).map(Vec::as_slice)
     }
 
-    /// [`GitBackend::discard`]. An error changes nothing.
+    /// [`GitIndex::discard`]. An error changes nothing.
     pub(super) fn discard_paths(
         &mut self,
         paths: &[RepoPath],
@@ -78,7 +78,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::restore_worktree`]. An error changes nothing.
+    /// [`GitIndex::restore_worktree`]. An error changes nothing.
     pub(super) fn restore_discarded(
         &mut self,
         request: &WorktreeRestore,

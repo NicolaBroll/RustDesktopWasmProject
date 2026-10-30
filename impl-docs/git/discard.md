@@ -41,7 +41,7 @@ taken literally) to the staged version, like `git restore --worktree`. Choices:
   directory in the path: it must be a real directory, not a file or a link; the file must not
   be a directory), so ignored files and links are covered too. The check is repeated before
   the undo and the redo.
-- **The confirmed plan.** `GitBackend::discard` also receives the plan computed by the command
+- **The confirmed plan.** `GitIndex::discard` also receives the plan computed by the command
   (what the confirmation lists): if the plan read by the backend before writing is different
   (one file more or less, another staged version), `NotAllowed` and nothing changes. The
   plan is computed inside the same command: between what the UI showed and the command
@@ -69,7 +69,7 @@ change.
 The journal entry has `"worktree": {"stash", "files": [{"path", "change", "mode", "oid"}],
 "raw"}` (the mode and the id of the index entry the file was returned to; `raw` is `null`
 if not needed) and `"backup"` with the ref. `Journal::undo`/`redo` call
-`GitBackend::restore_worktree` instead of `restore_refs`, and first check HEAD: it must be
+`GitIndex::restore_worktree` instead of `restore_refs`, and first check HEAD: it must be
 the recorded one (`head.after` for the undo, `head.before` for the redo, equal for a discard),
 otherwise `UndoConflict` (a checkout or a commit from the terminal) and nothing changes.
 

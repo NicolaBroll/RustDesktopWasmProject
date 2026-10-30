@@ -8,7 +8,7 @@ use common::{
     repo_with_merge_conflict,
 };
 use project_domain::{Change, Commit, CommitDetails, EntryKind, Head, Oid, Operation, RefKind};
-use project_engine::{EngineError, GitBackend, LogQuery, Registry, RepoOpener, Session};
+use project_engine::{EngineError, GitRead, LogQuery, Registry, RepoOpener, Session};
 use project_git::{CliOpener, GitVersion};
 use serde_json::json;
 use std::sync::Arc;

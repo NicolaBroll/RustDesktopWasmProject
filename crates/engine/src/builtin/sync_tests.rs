@@ -2,7 +2,7 @@
 //! `git/memory/sync_tests.rs` and, with real git, in `crates/git/tests/{pull,push}.rs`).
 
 use crate::{
-    CancelToken, EngineError, FetchFailure, GitBackend, JobContext, MemoryBackend, MemoryOpener,
+    CancelToken, EngineError, FetchFailure, GitRead, JobContext, MemoryBackend, MemoryOpener,
     PullSettings, PushRejection, Registry, Session,
 };
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};

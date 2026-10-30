@@ -1,7 +1,9 @@
 //! Deletion of a local tag and tags on the remote on the [`MemoryBackend`] (`tag.delete`,
-//! `remote.push_tag`, `remote.delete_tag`, S47), with the same checks as the `CliBackend`: the local
+//! `remote.push_tag`, `remote.delete_tag`, S47), with the same checks as the `CliBackend`: the
+//! local
 //! deletion only with the expected value and after the backup; the push never overwrites a tag
-//! with another value; the remote deletion with the lease on the value confirmed and, if the object is
+//! with another value; the remote deletion with the lease on the value confirmed and, if the object
+//! is
 //! not here, a "fetch" of it into the backup first.
 
 use super::{MemoryBackend, TAGS};
@@ -44,7 +46,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::delete_tag`](crate::GitBackend::delete_tag).
+    /// [`GitRefs::delete_tag`](crate::GitRefs::delete_tag).
     pub(super) fn delete_local_tag(
         &mut self,
         name: &str,
@@ -73,7 +75,7 @@ impl MemoryBackend {
         Ok(backup)
     }
 
-    /// [`GitBackend::remote_tag`](crate::GitBackend::remote_tag).
+    /// [`GitRemotes::remote_tag`](crate::GitRemotes::remote_tag).
     pub(super) fn tag_value_on_remote(
         &self,
         remote: &str,
@@ -89,7 +91,7 @@ impl MemoryBackend {
         Ok(self.tag_on_remote(remote, name))
     }
 
-    /// [`GitBackend::push_tag`](crate::GitBackend::push_tag).
+    /// [`GitRemotes::push_tag`](crate::GitRemotes::push_tag).
     pub(super) fn push_tag_to_remote(
         &mut self,
         request: &TagPush,
@@ -155,7 +157,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::delete_remote_tag`](crate::GitBackend::delete_remote_tag).
+    /// [`GitRemotes::delete_remote_tag`](crate::GitRemotes::delete_remote_tag).
     pub(super) fn delete_tag_on_remote(
         &mut self,
         request: &RemoteTagDelete,

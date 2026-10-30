@@ -10,7 +10,7 @@ mod common;
 use common::{
     Repo, repo_detached_head, repo_with_all_refs, repo_with_history, repo_with_merge_conflict,
 };
-use project_engine::{CancelToken, EngineError, GitBackend, JobContext, Registry, Session};
+use project_engine::{CancelToken, EngineError, GitMaintenance, JobContext, Registry, Session};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

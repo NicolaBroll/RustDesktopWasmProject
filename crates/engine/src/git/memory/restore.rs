@@ -3,7 +3,8 @@
 //! refs of the commits that would no longer be reachable (in
 //! [`MemoryBackend::commit_backups`], with the names `refs/project/backup/undo-<n>`).
 //!
-//! The index and worktree do not change, as with `update-ref`: the index is the previous one, and the
+//! The index and worktree do not change, as with `update-ref`: the index is the previous one, and
+//! the
 //! status entries are recomputed against the new HEAD (the changes of the undone commit
 //! reappear in the stage). Staged renames come back as deletion and addition: the in-memory repo
 //! does not detect renames. The in-memory repo has no symbolic refs or replace
@@ -17,7 +18,7 @@ use project_domain::{Change, EntryKind, Oid, RepoPath, StatusEntry, TrackedInfo}
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MemoryBackend {
-    /// [`GitBackend::restore_refs`](crate::GitBackend::restore_refs). An error changes
+    /// [`GitRefs::restore_refs`](crate::GitRefs::restore_refs). An error changes
     /// nothing.
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
         request.check(self.operation)?;

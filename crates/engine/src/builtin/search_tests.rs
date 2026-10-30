@@ -4,8 +4,8 @@
 //! renamed to `src/bin/app.rs` in 12) plus commit 14 on the unmerged branch `wip`.
 
 use crate::{
-    CancelToken, EngineError, GitBackend, JobContext, LogQuery, MemoryBackend, MemoryOpener,
-    Registry, Session,
+    CancelToken, EngineError, GitRead, JobContext, LogQuery, MemoryBackend, MemoryOpener, Registry,
+    Session,
 };
 use project_domain::{Commit, Oid, Signature};
 use serde_json::{Value, json};
@@ -44,7 +44,8 @@ fn opened() -> (Registry, Session) {
     (r, s)
 }
 
-/// The page of `repo.search`, read through the typed result [`RepoSearchResult`](crate::RepoSearchResult)
+/// The page of `repo.search`, read through the typed result
+/// [`RepoSearchResult`](crate::RepoSearchResult)
 /// (which gives the same JSON again: the UI deserializes into it).
 fn search(r: &Registry, s: &mut Session, params: Value) -> (Vec<Oid>, u64, bool) {
     let out = r

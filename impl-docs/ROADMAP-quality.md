@@ -150,12 +150,19 @@ Rules that apply to every step:
   to `list_commands`.
 
 ### Q14 — `GitBackend` split by area
-- [ ] **Agent:** `git-engine`
+- [x] **Agent:** `git-engine`
 - **Goal:** `GitBackend` has ~65 methods. Sub-traits by area (reading, index, refs and journal,
   remotes, stash, operations in progress, maintenance) with `GitBackend` as their union
   (supertraits plus a blanket impl), so callers and `Session` do not change. No behavior change;
   the docs of each method move with it.
 - **Done when:** both backends implement the sub-traits; `cargo doc` clean; CI green.
+- **Done:** `GitRead` (12 methods), `GitIndex` (6), `GitRefs` (10), `GitRemotes` (16),
+  `GitStash` (5), `GitOperations` (10), `GitMaintenance` (2), exported by `project-engine`;
+  `GitBackend: GitRead + ... + GitMaintenance + Send` with a blanket impl, so `Session`, the
+  commands and `Box<dyn GitBackend>` do not change. `MemoryBackend` and `CliBackend` implement the
+  seven traits (same bodies, moved). Callers with a concrete backend (tests, the backends' own
+  helper modules) import the traits of the methods they call instead of `GitBackend`; the doc
+  links `GitBackend::<method>` point to the sub-trait.
 
 ## Phase Q2 — UI structure
 

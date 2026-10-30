@@ -31,7 +31,8 @@ pub fn path_matches(path: &RepoPath, wanted: &RepoPath) -> bool {
 }
 
 /// The staged versions of the files touched by `paths` (also inside a requested folder) that
-/// exist only in the index: different from HEAD (X ∉ {`.`, `?`}) and from the worktree (Y ≠ `.`). They are
+/// exist only in the index: different from HEAD (X ∉ {`.`, `?`}) and from the worktree (Y ≠ `.`).
+/// They are
 /// the ones a stage or unstage would lose. Conflicted files do not count: unstage
 /// rejects them and stage resolves them leaving their versions in the index's REUC
 /// extension (`git checkout -m` restores them).
@@ -88,7 +89,7 @@ pub fn backup_message(operation: &str, versions: &[StagedVersion]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
 
     #[test]
     fn only_staged_versions_missing_from_head_and_worktree() {

@@ -55,7 +55,7 @@ use project_engine::{EngineError, HeadState, RefMove, RefRestore, RestoreOutcome
 use std::collections::BTreeSet;
 
 impl CliBackend {
-    /// [`GitBackend::restore_refs`](project_engine::GitBackend::restore_refs).
+    /// [`GitRefs::restore_refs`](project_engine::GitRefs::restore_refs).
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         request.check(self.operation())?;
         // A branch open in another worktree is not deleted (e.g. redo of `branch.delete`).
@@ -94,7 +94,8 @@ impl CliBackend {
     /// The HEAD reflog entries: the lines of the worktree's `logs/HEAD` file (the path
     /// is given by `rev-parse --git-path logs/HEAD`). Not `rev-list --walk-reflogs --count HEAD`,
     /// which with HEAD on a branch without commits gives 0 even if the file has lines. With the
-    /// reftable format the file does not exist: 0, and only the comparison with the current HEAD remains.
+    /// reftable format the file does not exist: 0, and only the comparison with the current HEAD
+    /// remains.
     fn head_log_len(&self) -> Result<usize, EngineError> {
         let out = self.run(&["rev-parse", "--git-path", "logs/HEAD"])?;
         let path = self.workdir.join(path_from_output(&out));
@@ -155,7 +156,8 @@ impl CliBackend {
     }
 
     /// The value of the ref `name` (full name, validated by [`RefRestore::check`]), `None` if
-    /// it does not exist. `for-each-ref` with the name as pattern also finds the refs under `name/`:
+    /// it does not exist. `for-each-ref` with the name as pattern also finds the refs under
+    /// `name/`:
     /// only the one with the exact name is kept.
     pub(super) fn ref_value(&self, name: &str) -> Result<Option<Oid>, EngineError> {
         let args = ["for-each-ref", "--format=%(refname)%00%(objectname)", name];
@@ -189,8 +191,10 @@ impl CliBackend {
     /// returns the names of the refs created. An error stops everything before moving the refs.
     ///
     /// The refs moved by the request and symbolic refs (e.g.
-    /// `refs/heads/master -> refs/heads/main`) do not count as protection: `for-each-ref` shows them with the value of the
-    /// ref they point to *before* the transaction, and afterwards they would hold nothing. The ref they
+    /// `refs/heads/master -> refs/heads/main`) do not count as protection: `for-each-ref` shows
+    /// them with the value of the
+    /// ref they point to *before* the transaction, and afterwards they would hold nothing. The ref
+    /// they
     /// point to shows up on its own anyway, if it does not move.
     pub(super) fn protect(&self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
         let targets = request.targets();
@@ -275,7 +279,8 @@ impl CliBackend {
         }
     }
 
-    /// The non-symbolic refs (branches, remotes, tags, stash, backups, ...) from which at least one of the
+    /// The non-symbolic refs (branches, remotes, tags, stash, backups, ...) from which at least one
+    /// of the
     /// commits `ids` is reachable, full names. Without replace objects, like
     /// [`Self::is_ancestor`].
     fn refs_containing_any(&self, ids: &[Oid]) -> Result<Vec<String>, EngineError> {

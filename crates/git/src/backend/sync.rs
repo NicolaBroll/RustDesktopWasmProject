@@ -1,6 +1,7 @@
 //! Pull on the [`CliBackend`] (`remote.pull`, S26) and its undo/redo, following §5 and §7.
 //!
-//! The fetch is done by the command beforehand, with [`GitBackend::fetch`](project_engine::GitBackend::fetch);
+//! The fetch is done by the command beforehand, with
+//! [`GitRemotes::fetch`](project_engine::GitRemotes::fetch);
 //! only the local integration is here, which is not cancelled halfway:
 //!
 //! - fast-forward of the active branch: `git -c core.fsmonitor=false merge --ff-only
@@ -15,12 +16,15 @@
 //!   Hooks (`pre-merge-commit`, `commit-msg`) and signing as the configuration says;
 //! - rebase: `git -c core.fsmonitor=false -c rebase.updateRefs=false rebase --no-autostash
 //!   [--rebase-merges] --end-of-options <oid>` (`rebase.updateRefs` would move other branches
-//!   outside the journal), with `GIT_EDITOR=:` and `GIT_SEQUENCE_EDITOR=:`. Rebase onto the upstream
+//!   outside the journal), with `GIT_EDITOR=:` and `GIT_SEQUENCE_EDITOR=:`. Rebase onto the
+//! upstream
 //!   like `git rebase <upstream>`, without the fork-point of `git pull --rebase`: if the upstream
 //!   was rewritten (force push) its old commits are replayed too, and usually the
 //!   rebase stops with a conflict;
-//! - stopped merge (conflicts, `pre-merge-commit`/`commit-msg` hooks, signing): **stays in progress**
-//!   as with `merge.start` ([`PullOutcome::in_progress`] with the conflicted files from the status and
+//! - stopped merge (conflicts, `pre-merge-commit`/`commit-msg` hooks, signing): **stays in
+//! progress**
+//!   as with `merge.start` ([`PullOutcome::in_progress`] with the conflicted files from the status
+//! and
 //!   from git's output), to be finished with `merge.continue` or aborted with `merge.abort`;
 //! - stopped rebase (S32): **stays in progress** too, with the conflicted files and the
 //!   [`RebaseRecord`] of the pull in `rebase-merge/project-rebase.json`, to be finished with
@@ -33,8 +37,10 @@
 //! Undo/redo of the active branch ([`CliBackend::reset_keep`]): the same checks as
 //! `restore_refs` and the backups of the abandoned commits, then `git -c core.fsmonitor=false reset
 //! --keep <oid>` (updates index and worktree of the files that differ between the two commits,
-//! refuses if one of them has local changes, does not overwrite untracked ones); first it checks that no
-//! file to be recreated already exists in the worktree (`reset --keep` would overwrite an ignored file).
+//! refuses if one of them has local changes, does not overwrite untracked ones); first it checks
+//! that no
+//! file to be recreated already exists in the worktree (`reset --keep` would overwrite an ignored
+//! file).
 //! The instant between the ref check and `reset` remains: `reset` updates the branch with the value
 //! it read itself, not with the expected one.
 
@@ -65,7 +71,7 @@ impl Drop for TempFile {
 const REFLOG_ACTION: &str = "project: remote.pull";
 
 impl CliBackend {
-    /// [`GitBackend::upstream`](project_engine::GitBackend::upstream) with `for-each-ref`:
+    /// [`GitRemotes::upstream`](project_engine::GitRemotes::upstream) with `for-each-ref`:
     /// `%(upstream:remotename)` and `%(upstream:remoteref)` are `branch.<name>.remote` and
     /// `.merge`, `%(upstream)` the local remote branch according to the remote's refspec.
     pub(super) fn upstream_of(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
@@ -114,7 +120,7 @@ impl CliBackend {
         Ok(Some(String::from_utf8_lossy(value).into_owned()))
     }
 
-    /// [`GitBackend::config_values`](project_engine::GitBackend::config_values): `git config
+    /// [`GitRead::config_values`](project_engine::GitRead::config_values): `git config
     /// -z --get-all`, non-UTF-8 values converted with `from_utf8_lossy`.
     pub(super) fn config_all(&self, key: &str) -> Result<Vec<String>, EngineError> {
         let args = ["config", "-z", "--get-all", "--end-of-options", key];
@@ -133,16 +139,19 @@ impl CliBackend {
             .collect())
     }
 
-    /// Before integrating the upstream into the active branch: the files the pull would bring into the
+    /// Before integrating the upstream into the active branch: the files the pull would bring into
+    /// the
     /// worktree and that HEAD does not have (`diff-tree --diff-filter=A HEAD <upstream>`) must not
     /// exist in the worktree, neither as a file nor in place of one of their folders: they would be
     /// untracked or ignored, and git overwrites (or, with an aborted merge, deletes) ignored
-    /// files without saying so. The rebase has no `--no-overwrite-ignore`; for fast-forward and merge
+    /// files without saying so. The rebase has no `--no-overwrite-ignore`; for fast-forward and
+    /// merge
     /// it is a second defence. Otherwise [`EngineError::NotAllowed`] with the files.
     ///
     /// With `replay` (rebase) the files touched by each of the commits to replay also count
     /// (`git log -m --no-renames --name-only <upstream>..HEAD`, merges included for
-    /// `--rebase-merges`) that HEAD does not have: the rebase goes through the intermediate trees, and a file
+    /// `--rebase-merges`) that HEAD does not have: the rebase goes through the intermediate trees,
+    /// and a file
     /// added by one commit and removed by a later one (or renamed, or removed and recreated), or
     /// modified by a local commit but removed by the upstream (modify/delete conflict, then
     /// `rebase --abort`), would be written and then deleted, taking with it the ignored file in
@@ -208,7 +217,8 @@ impl CliBackend {
     }
 
     /// [`EngineError::NotAllowed`] if one of the paths `paths`, which the operation `what`
-    /// would write, exists in the worktree as untracked or ignored (or a file stands in place of one of
+    /// would write, exists in the worktree as untracked or ignored (or a file stands in place of
+    /// one of
     /// its folders): git would overwrite it.
     pub(super) fn check_paths_free(
         &self,
@@ -241,7 +251,7 @@ impl CliBackend {
         )))
     }
 
-    /// [`GitBackend::pull_settings`](project_engine::GitBackend::pull_settings).
+    /// [`GitRemotes::pull_settings`](project_engine::GitRemotes::pull_settings).
     pub(super) fn read_pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError> {
         let rebase = match self.config_value(&format!("branch.{branch}.rebase"))? {
             Some(value) => Some(value),
@@ -253,7 +263,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::missing_commits`](project_engine::GitBackend::missing_commits).
+    /// [`GitRemotes::missing_commits`](project_engine::GitRemotes::missing_commits).
     pub(super) fn commits_missing(
         &self,
         tip: &Oid,
@@ -283,7 +293,7 @@ impl CliBackend {
             .output(Some(&self.workdir), &["update-ref", "-d", name, &oid]);
     }
 
-    /// [`GitBackend::pull`](project_engine::GitBackend::pull).
+    /// [`GitRemotes::pull`](project_engine::GitRemotes::pull).
     pub(super) fn pull_upstream(
         &mut self,
         request: &PullRequest,
@@ -332,7 +342,8 @@ impl CliBackend {
         match result {
             Ok(None) => {}
             Ok(Some(Stopped { conflicts, message })) => {
-                // Stopped merge or rebase: stays in progress, the branch has not moved and the backup
+                // Stopped merge or rebase: stays in progress, the branch has not moved and the
+                // backup
                 // stays. The same checks as a successful merge, as warnings: the operation in
                 // progress must be the upstream's on this branch.
                 let mut warnings = Vec::new();
@@ -415,7 +426,8 @@ impl CliBackend {
                 });
             }
             Err(e) => {
-                // Nothing changed: the backup is not needed (removed only if the branch is as it was and
+                // Nothing changed: the backup is not needed (removed only if the branch is as it
+                // was and
                 // no operation is left in progress, e.g. a failed `rebase --abort`).
                 let now = self.ref_value(&full)?;
                 let in_progress = self.operation().is_some();
@@ -641,7 +653,7 @@ impl CliBackend {
         files
     }
 
-    /// [`GitBackend::reset_branch`](project_engine::GitBackend::reset_branch).
+    /// [`GitRefs::reset_branch`](project_engine::GitRefs::reset_branch).
     pub(super) fn reset_keep(
         &mut self,
         request: &RefRestore,

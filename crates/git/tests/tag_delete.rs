@@ -1,12 +1,14 @@
-//! Integration tests of `tag.delete` with the `CliBackend` on real repos: always confirmed, the value
+//! Integration tests of `tag.delete` with the `CliBackend` on real repos: always confirmed, the
+//! value
 //! (tag object or commit) saved in a backup before deleting, undo that puts back the same tag
-//! object and redo, conflicts with tags changed from outside, names that look like options, a backup
+//! object and redo, conflicts with tags changed from outside, names that look like options, a
+//! backup
 //! that cannot be made.
 
 mod common;
 
 use common::Repo;
-use project_engine::{EngineError, GitBackend, Registry, Session};
+use project_engine::{EngineError, GitRefs, Registry, Session};
 use serde_json::{Value, json};
 use std::sync::Arc;
 

@@ -34,13 +34,14 @@ use project_engine::{
     BACKUP_PREFIX, BlameQuery, BranchDeleted, CloneOutcome, CloneRequest, CommitGraphState,
     CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
     ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError, FetchOutcome,
-    FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, InitRequest, JobContext,
-    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
-    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
-    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
-    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
-    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
-    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance, GitOperations,
+    GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext, LinePatch,
+    LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message, OperationState,
+    PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest,
+    RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot,
+    RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion, StashApplied,
+    StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed, UpstreamConfig,
+    WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
     versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -82,9 +83,11 @@ impl CliOpener {
         self
     }
 
-    /// Does not search for repositories above `root`: when opening a directory inside `root` that is not a repo,
+    /// Does not search for repositories above `root`: when opening a directory inside `root` that
+    /// is not a repo,
     /// git does not climb up to a repo that contains `root` (`GIT_CEILING_DIRECTORIES`). A repo
-    /// in `root` or below opens as usual. Used by the MCP server to stay within the root; `root` must be absolute and without symbolic
+    /// in `root` or below opens as usual. Used by the MCP server to stay within the root; `root`
+    /// must be absolute and without symbolic
     /// links (`canonicalize`).
     pub fn confine_to(self, root: &Path) -> Self {
         match root.parent() {
@@ -358,7 +361,8 @@ impl CliBackend {
     /// are needed) and `extra` (options), limited to `paths`, taken literally: no globs or
     /// magic pathspecs (`--literal-pathspecs`). A read: it does not update the index. For
     /// `git diff` `--no-optional-locks` is not enough: with a file changed only in its
-    /// `stat` data (e.g. rewritten identically) it rewrites the index to update them; this is prevented by
+    /// `stat` data (e.g. rewritten identically) it rewrites the index to update them; this is
+    /// prevented by
     /// `diff.autoRefreshIndex=false`, and the file stays out of the diff anyway.
     fn run_diff(
         &self,
@@ -450,7 +454,8 @@ impl CliBackend {
 
     /// Where `unstage` restarts the index from: the HEAD commit, or the empty tree if HEAD
     /// is a branch that has no commits yet. A HEAD that does not resolve for other reasons (broken
-    /// ref, missing object) is an error: treating it as "no commits" would remove all the requested files
+    /// ref, missing object) is an error: treating it as "no commits" would remove all the requested
+    /// files
     /// from the index.
     fn index_source(&self) -> Result<String, EngineError> {
         if let Some(head) = self.resolve("HEAD")? {
@@ -488,7 +493,8 @@ impl CliBackend {
     }
 
     /// Before rewriting the index for `operation` on `paths`: if there are staged versions
-    /// that exist only in the index ([`versions_at_risk_hidden`]) saves them with [`Self::save_backup`]
+    /// that exist only in the index ([`versions_at_risk_hidden`]) saves them with
+    /// [`Self::save_backup`]
     /// and returns the ref; `None` if nothing is at risk.
     fn backup(
         &self,
@@ -657,7 +663,7 @@ impl CliBackend {
         })
     }
 
-    /// The status read before a write: like [`GitBackend::status`], but without
+    /// The status read before a write: like [`GitRead::status`], but without
     /// `core.fsmonitor`, which if out of date makes a changed file look unchanged.
     fn status_for_write(&self) -> Result<Status, EngineError> {
         let mut args = vec![
@@ -706,7 +712,8 @@ impl CliBackend {
     }
 
     /// Right before writing: the index entries touched by `paths` agree with the status
-    /// read at the start and are still those read at the start (`before`, which also feeds the risk check and the backup).
+    /// read at the start and are still those read at the start (`before`, which also feeds the risk
+    /// check and the backup).
     /// If another git process changed them in the meantime, error without writing.
     fn check_index_unchanged(
         &self,
@@ -777,7 +784,8 @@ impl CliBackend {
         let file = &prepared.file;
         let entry = index.get(prepared.target());
         let consistent = match direction {
-            // A new file in the worktree diff is an `intent-to-add` placeholder: it is in the index,
+            // A new file in the worktree diff is an `intent-to-add` placeholder: it is in the
+            // index,
             // with the empty blob.
             PatchDirection::Stage if file.change == Change::Added => {
                 entry.is_some_and(|e| self.is_intent_to_add(e))
@@ -817,7 +825,8 @@ impl CliBackend {
     /// Writes the entry of `path` to the index: `Some((mode, id))` creates or replaces it,
     /// `None` removes it (`update-index -z --index-info`, path on stdin). It is the only step
     /// that writes the index. `--index-info` creates a new entry: the `--skip-worktree` and
-    /// `--assume-unchanged` flags of the old one are lost and [`Self::restore_flags`] puts them back.
+    /// `--assume-unchanged` flags of the old one are lost and [`Self::restore_flags`] puts them
+    /// back.
     fn write_index_entry(
         &self,
         path: &RepoPath,
@@ -835,10 +844,13 @@ impl CliBackend {
     }
 
     /// After a write that recreates index entries (`update-index --index-info`,
-    /// `restore --staged`), puts back the `--skip-worktree` and `--assume-unchanged` flags that the entries
+    /// `restore --staged`), puts back the `--skip-worktree` and `--assume-unchanged` flags that the
+    /// entries
     /// of `paths` had in `before` (letters of `ls-files -v`: `S`/`s` skip-worktree,
-    /// lowercase assume-unchanged) and that they no longer have. Without it, a file outside the cone of
-    /// a sparse checkout would look deleted from the worktree, and a later `git add -A` or `commit -a`
+    /// lowercase assume-unchanged) and that they no longer have. Without it, a file outside the
+    /// cone of
+    /// a sparse checkout would look deleted from the worktree, and a later `git add -A` or `commit
+    /// -a`
     /// would stage a deletion never made. Entries no longer in the
     /// index are skipped. If it fails, error: the entries written are correct anyway.
     fn restore_flags(&self, before: &IndexListing, paths: &[RepoPath]) -> Result<(), EngineError> {
@@ -933,9 +945,11 @@ impl CliBackend {
 
     /// Operation in progress, from the files git leaves in its directory (like `git status`).
     ///
-    /// `rebase-apply/applying` indicates `git am` ([`Operation::Am`]). A multi-commit cherry-pick or revert
+    /// `rebase-apply/applying` indicates `git am` ([`Operation::Am`]). A multi-commit cherry-pick
+    /// or revert
     /// stopped between one commit and the next (after `git commit` of a resolution, or with
-    /// an empty commit) leaves `sequencer/` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`: it is still in
+    /// an empty commit) leaves `sequencer/` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`: it is still
+    /// in
     /// progress, and the kind is read from the first line of `sequencer/todo` (`revert ...` →
     /// [`Operation::Revert`], otherwise [`Operation::CherryPick`]).
     fn operation(&self) -> Option<Operation> {
@@ -1010,7 +1024,7 @@ impl CliBackend {
     }
 }
 
-impl GitBackend for CliBackend {
+impl GitRead for CliBackend {
     fn head(&self) -> Result<Head, EngineError> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
         let out = self.git.output(Some(&self.workdir), &args)?;
@@ -1157,14 +1171,16 @@ impl GitBackend for CliBackend {
         self.workdir.to_str().map(str::to_owned)
     }
 
-    fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
-        self.read_commit_graph_state()
+    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
+        self.count_unmerged(tip, into)
     }
 
-    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError> {
-        self.write_reachable_commit_graph(job)
+    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
+        self.config_all(key)
     }
+}
 
+impl GitIndex for CliBackend {
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         if paths.is_empty() {
             // `git add` with no paths adds nothing, but better not to ask for it at all.
@@ -1193,7 +1209,8 @@ impl GitBackend for CliBackend {
         let add = ["add", "--no-ignore-errors"];
         // First a dry run: with an ignored file `git add` adds the others and then fails,
         // with a nonexistent path it fails before adding. The dry run does the
-        // same checks without touching the index, so either everything goes through or nothing changes.
+        // same checks without touching the index, so either everything goes through or nothing
+        // changes.
         let dry = [&add[..], &["--dry-run"]].concat();
         let out = self.output_with_paths(&dry, &paths)?;
         if !out.status.success() {
@@ -1253,10 +1270,6 @@ impl GitBackend for CliBackend {
         self.create_commit(request)
     }
 
-    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
-        self.restore(request)
-    }
-
     fn discard(
         &mut self,
         paths: &[RepoPath],
@@ -1270,221 +1283,6 @@ impl GitBackend for CliBackend {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)
-    }
-
-    fn remotes(&self) -> Result<Vec<String>, EngineError> {
-        self.remote_names()
-    }
-
-    fn fetch(
-        &mut self,
-        request: &FetchRequest,
-        job: &JobContext,
-    ) -> Result<FetchOutcome, EngineError> {
-        self.fetch_remote(request, job)
-    }
-
-    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
-        self.count_unmerged(tip, into)
-    }
-
-    fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
-        self.upstream_of(branch)
-    }
-
-    fn pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError> {
-        self.read_pull_settings(branch)
-    }
-
-    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
-        self.config_all(key)
-    }
-
-    fn missing_commits(
-        &self,
-        tip: &Oid,
-        exclude: &[Oid],
-        limit: usize,
-    ) -> Result<Vec<Commit>, EngineError> {
-        self.commits_missing(tip, exclude, limit)
-    }
-
-    fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError> {
-        self.pull_upstream(request)
-    }
-
-    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
-        self.reset_keep(request)
-    }
-
-    fn push(
-        &mut self,
-        request: &PushRequest,
-        job: &JobContext,
-    ) -> Result<PushOutcome, EngineError> {
-        self.push_branch(request, job)
-    }
-
-    fn delete_remote_branch(
-        &mut self,
-        request: &RemoteBranchDelete,
-        job: &JobContext,
-    ) -> Result<RemoteBranchDeleted, EngineError> {
-        self.delete_branch_on_remote(request, job)
-    }
-
-    fn remote_tag(
-        &self,
-        remote: &str,
-        name: &str,
-        job: &JobContext,
-    ) -> Result<Option<Oid>, EngineError> {
-        self.tag_value_on_remote(remote, name, job)
-    }
-
-    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError> {
-        self.push_tag_to_remote(request, job)
-    }
-
-    fn delete_remote_tag(
-        &mut self,
-        request: &RemoteTagDelete,
-        job: &JobContext,
-    ) -> Result<RemoteBranchDeleted, EngineError> {
-        self.delete_tag_on_remote(request, job)
-    }
-
-    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
-        self.delete_tag_ref(name, expected)
-    }
-
-    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
-        self.create_local_branch(name, target)
-    }
-
-    fn create_tag(
-        &mut self,
-        name: &str,
-        target: &Oid,
-        message: Option<&str>,
-    ) -> Result<Oid, EngineError> {
-        self.create_tag_ref(name, target, message)
-    }
-
-    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
-        self.switch_to(target)
-    }
-
-    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError> {
-        self.delete_local_branch(name, expected)
-    }
-
-    fn rename_branch(
-        &mut self,
-        from: &str,
-        to: &str,
-        expected: &Oid,
-    ) -> Result<RestoreOutcome, EngineError> {
-        self.rename_local_branch(from, to, expected)
-    }
-
-    fn restore_branch_config(
-        &mut self,
-        name: &str,
-        entries: &[ConfigEntry],
-        remove: bool,
-    ) -> Vec<Message> {
-        self.set_branch_config(name, entries, remove)
-    }
-
-    fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError> {
-        self.snapshot_remote(name)
-    }
-
-    fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError> {
-        self.add_remote(name, url)
-    }
-
-    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
-        self.drop_remote_config(snapshot)
-    }
-
-    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
-        self.put_remote_config(snapshot)
-    }
-
-    fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
-        self.remote_elsewhere(name)
-    }
-
-    fn stashes(&self) -> Result<Vec<StashEntry>, EngineError> {
-        self.stash_entries()
-    }
-
-    fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
-        self.push_stash(request)
-    }
-
-    fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError> {
-        self.apply_stash(request)
-    }
-
-    fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
-        self.drop_stash(request)
-    }
-
-    fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
-        self.store_stash(id, message)
-    }
-
-    fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError> {
-        self.merge_into_head(request)
-    }
-
-    fn merge_abort(&mut self) -> Result<MergeAborted, EngineError> {
-        self.abort_merge()
-    }
-
-    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
-        self.conflict_files(path)
-    }
-
-    fn resolve_conflict(
-        &mut self,
-        request: &ConflictResolution,
-    ) -> Result<ConflictResolved, EngineError> {
-        self.resolve_file(request)
-    }
-
-    fn reset(
-        &mut self,
-        request: &project_engine::ResetRequest,
-    ) -> Result<project_engine::ResetOutcome, EngineError> {
-        self.reset_head(request)
-    }
-
-    fn operation_state(&self) -> Result<OperationState, EngineError> {
-        Ok(self.read_operation_state())
-    }
-
-    fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError> {
-        self.pick_onto_head(request)
-    }
-
-    fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
-        self.abort_pick(kind)
-    }
-
-    fn rebase(&mut self, request: &RebaseRequest) -> Result<MergeOutcome, EngineError> {
-        self.rebase_onto_base(request)
-    }
-
-    fn rebase_continue(&mut self) -> Result<MergeOutcome, EngineError> {
-        self.rebase_go_on()
-    }
-
-    fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
-        self.abort_rebase()
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {
@@ -1560,6 +1358,235 @@ impl GitBackend for CliBackend {
             });
         }
         Ok(backup)
+    }
+}
+
+impl GitRefs for CliBackend {
+    fn restore_refs(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        self.restore(request)
+    }
+
+    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        self.reset_keep(request)
+    }
+
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
+        self.delete_tag_ref(name, expected)
+    }
+
+    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
+        self.create_local_branch(name, target)
+    }
+
+    fn create_tag(
+        &mut self,
+        name: &str,
+        target: &Oid,
+        message: Option<&str>,
+    ) -> Result<Oid, EngineError> {
+        self.create_tag_ref(name, target, message)
+    }
+
+    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
+        self.switch_to(target)
+    }
+
+    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError> {
+        self.delete_local_branch(name, expected)
+    }
+
+    fn rename_branch(
+        &mut self,
+        from: &str,
+        to: &str,
+        expected: &Oid,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.rename_local_branch(from, to, expected)
+    }
+
+    fn restore_branch_config(
+        &mut self,
+        name: &str,
+        entries: &[ConfigEntry],
+        remove: bool,
+    ) -> Vec<Message> {
+        self.set_branch_config(name, entries, remove)
+    }
+
+    fn reset(
+        &mut self,
+        request: &project_engine::ResetRequest,
+    ) -> Result<project_engine::ResetOutcome, EngineError> {
+        self.reset_head(request)
+    }
+}
+
+impl GitRemotes for CliBackend {
+    fn remotes(&self) -> Result<Vec<String>, EngineError> {
+        self.remote_names()
+    }
+
+    fn fetch(
+        &mut self,
+        request: &FetchRequest,
+        job: &JobContext,
+    ) -> Result<FetchOutcome, EngineError> {
+        self.fetch_remote(request, job)
+    }
+
+    fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
+        self.upstream_of(branch)
+    }
+
+    fn pull_settings(&self, branch: &str) -> Result<PullSettings, EngineError> {
+        self.read_pull_settings(branch)
+    }
+
+    fn missing_commits(
+        &self,
+        tip: &Oid,
+        exclude: &[Oid],
+        limit: usize,
+    ) -> Result<Vec<Commit>, EngineError> {
+        self.commits_missing(tip, exclude, limit)
+    }
+
+    fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError> {
+        self.pull_upstream(request)
+    }
+
+    fn push(
+        &mut self,
+        request: &PushRequest,
+        job: &JobContext,
+    ) -> Result<PushOutcome, EngineError> {
+        self.push_branch(request, job)
+    }
+
+    fn delete_remote_branch(
+        &mut self,
+        request: &RemoteBranchDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_branch_on_remote(request, job)
+    }
+
+    fn remote_tag(
+        &self,
+        remote: &str,
+        name: &str,
+        job: &JobContext,
+    ) -> Result<Option<Oid>, EngineError> {
+        self.tag_value_on_remote(remote, name, job)
+    }
+
+    fn push_tag(&mut self, request: &TagPush, job: &JobContext) -> Result<TagPushed, EngineError> {
+        self.push_tag_to_remote(request, job)
+    }
+
+    fn delete_remote_tag(
+        &mut self,
+        request: &RemoteTagDelete,
+        job: &JobContext,
+    ) -> Result<RemoteBranchDeleted, EngineError> {
+        self.delete_tag_on_remote(request, job)
+    }
+
+    fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError> {
+        self.snapshot_remote(name)
+    }
+
+    fn create_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError> {
+        self.add_remote(name, url)
+    }
+
+    fn remove_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
+        self.drop_remote_config(snapshot)
+    }
+
+    fn write_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
+        self.put_remote_config(snapshot)
+    }
+
+    fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
+        self.remote_elsewhere(name)
+    }
+}
+
+impl GitStash for CliBackend {
+    fn stashes(&self) -> Result<Vec<StashEntry>, EngineError> {
+        self.stash_entries()
+    }
+
+    fn stash_push(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
+        self.push_stash(request)
+    }
+
+    fn stash_apply(&mut self, request: &StashApply) -> Result<StashApplied, EngineError> {
+        self.apply_stash(request)
+    }
+
+    fn stash_drop(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
+        self.drop_stash(request)
+    }
+
+    fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
+        self.store_stash(id, message)
+    }
+}
+
+impl GitOperations for CliBackend {
+    fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError> {
+        self.merge_into_head(request)
+    }
+
+    fn merge_abort(&mut self) -> Result<MergeAborted, EngineError> {
+        self.abort_merge()
+    }
+
+    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
+        self.conflict_files(path)
+    }
+
+    fn resolve_conflict(
+        &mut self,
+        request: &ConflictResolution,
+    ) -> Result<ConflictResolved, EngineError> {
+        self.resolve_file(request)
+    }
+
+    fn operation_state(&self) -> Result<OperationState, EngineError> {
+        Ok(self.read_operation_state())
+    }
+
+    fn pick(&mut self, request: &PickRequest) -> Result<MergeOutcome, EngineError> {
+        self.pick_onto_head(request)
+    }
+
+    fn pick_abort(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
+        self.abort_pick(kind)
+    }
+
+    fn rebase(&mut self, request: &RebaseRequest) -> Result<MergeOutcome, EngineError> {
+        self.rebase_onto_base(request)
+    }
+
+    fn rebase_continue(&mut self) -> Result<MergeOutcome, EngineError> {
+        self.rebase_go_on()
+    }
+
+    fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
+        self.abort_rebase()
+    }
+}
+
+impl GitMaintenance for CliBackend {
+    fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
+        self.read_commit_graph_state()
+    }
+
+    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError> {
+        self.write_reachable_commit_graph(job)
     }
 }
 

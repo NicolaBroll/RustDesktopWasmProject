@@ -2,8 +2,9 @@
 //! (`impl-docs/git/sync.md`).
 //!
 //! The pull is driven by the engine in two steps: first the fetch of only the upstream's branch
-//! ([`GitBackend::fetch`](super::GitBackend::fetch), slow and cancellable), then the local
-//! integration ([`GitBackend::pull`](super::GitBackend::pull): fast-forward, merge or rebase), which
+//! ([`GitRemotes::fetch`](super::GitRemotes::fetch), slow and cancellable), then the local
+//! integration ([`GitRemotes::pull`](super::GitRemotes::pull): fast-forward, merge or rebase),
+//! which
 //! cannot be cancelled midway. So the command knows what arrived before writing, decides the
 //! strategy ([`PullSettings::policy`], [`pull_mode`]), checks the repo state
 //! ([`check_pull_state`]) and records the branch move in the journal.
@@ -28,7 +29,8 @@ pub struct UpstreamConfig {
 }
 
 impl UpstreamConfig {
-    /// The short name of the branch on the remote (`main` for `refs/heads/main`), if it is a branch.
+    /// The short name of the branch on the remote (`main` for `refs/heads/main`), if it is a
+    /// branch.
     pub fn merge_branch(&self) -> Option<&str> {
         self.merge.strip_prefix(HEADS_PREFIX)
     }
@@ -165,10 +167,11 @@ impl PullSettings {
     }
 }
 
-/// How to integrate the upstream into the branch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// How to integrate the upstream into the branch ([`GitRemotes::pull`](super::GitRemotes::pull)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullMode {
-    /// The branch advances to the upstream (`git merge --ff-only`, or `update-ref` for a branch that
+    /// The branch advances to the upstream (`git merge --ff-only`, or `update-ref` for a branch
+    /// that
     /// is not the one of HEAD).
     FastForward,
     /// A merge commit (parents: the branch and the upstream).
@@ -189,7 +192,8 @@ impl PullMode {
 }
 
 /// What to do given the branch's commits the upstream does not have (`ahead`) and the upstream's
-/// commits the branch does not have (`behind`): `None` if the branch already contains the upstream (nothing to
+/// commits the branch does not have (`behind`): `None` if the branch already contains the upstream
+/// (nothing to
 /// do). A branch that is not the one of HEAD (`current == false`) can only be moved forward
 /// (fast-forward), without touching the worktree; diverged branches with `ff_only` →
 /// [`EngineError::NotAllowed`].
@@ -235,7 +239,8 @@ pub fn pull_mode(
 
 /// The checks before integrating the upstream, the same for the backends, on the state read now:
 ///
-/// - merge, rebase, cherry-pick, revert, bisect or `git am` in progress → [`EngineError::NotAllowed`];
+/// - merge, rebase, cherry-pick, revert, bisect or `git am` in progress →
+/// [`EngineError::NotAllowed`];
 /// - conflicted files → [`EngineError::NotAllowed`];
 /// - for merge and rebase, **any** change to tracked files (staged or not) →
 ///   [`EngineError::NotAllowed`]: a merge or rebase that stops on conflict with
@@ -294,7 +299,8 @@ pub fn merge_message(upstream: &str, branch: &str) -> String {
     message
 }
 
-/// What `remote.pull` asks of the backend after the fetch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// What `remote.pull` asks of the backend after the fetch
+/// ([`GitRemotes::pull`](super::GitRemotes::pull)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequest {
     /// The local branch (short name).
@@ -313,10 +319,11 @@ pub struct PullRequest {
     pub message: String,
 }
 
-/// Outcome of [`GitBackend::pull`](super::GitBackend::pull).
+/// Outcome of [`GitRemotes::pull`](super::GitRemotes::pull).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullOutcome {
-    /// The value of the branch afterwards; if the merge is stopped ([`PullOutcome::in_progress`]) the one
+    /// The value of the branch afterwards; if the merge is stopped ([`PullOutcome::in_progress`])
+    /// the one
     /// from before.
     pub after: Oid,
     /// The backup ref of the branch before the pull (`refs/project/backup/pull-...`); it stays
@@ -326,7 +333,8 @@ pub struct PullOutcome {
     /// and **stays in progress**, like `merge.start`/`rebase.start`: to be concluded with
     /// `merge.continue`/`rebase.continue` or aborted with `merge.abort`/`rebase.abort`.
     pub in_progress: bool,
-    /// The conflicted files of the stopped merge or rebase: those still unmerged and those git reported
+    /// The conflicted files of the stopped merge or rebase: those still unmerged and those git
+    /// reported
     /// as conflicted (even if `rerere` already resolved them); empty otherwise.
     pub conflicts: Vec<RepoPath>,
     /// The git text (stdout and stderr) of the stopped merge or rebase; empty otherwise.

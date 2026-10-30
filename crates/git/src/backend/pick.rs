@@ -31,7 +31,7 @@ fn says_empty(text: &str) -> bool {
 }
 
 impl CliBackend {
-    /// [`GitBackend::pick`](project_engine::GitBackend::pick).
+    /// [`GitOperations::pick`](project_engine::GitOperations::pick).
     pub(super) fn pick_onto_head(
         &mut self,
         request: &PickRequest,
@@ -233,7 +233,8 @@ impl CliBackend {
         }
     }
 
-    /// Files that the patch `from` → `to` writes and that HEAD (`head`) does not have must not exist
+    /// Files that the patch `from` → `to` writes and that HEAD (`head`) does not have must not
+    /// exist
     /// in the worktree (untracked or ignored): git would overwrite them.
     fn check_pick_paths(
         &self,

@@ -33,7 +33,8 @@
 //! Deletion of a remote branch (`remote.delete_branch`): `git push --porcelain --progress
 //! --no-follow-tags --force-with-lease=refs/heads/<b>:<oid> --end-of-options <remote>
 //! :refs/heads/<b>`, same environment; never `--delete` with several names, `--prune` or
-//! `--force`. The lease makes the deletion fail (`stale info`) if the branch moved or is already gone.
+//! `--force`. The lease makes the deletion fail (`stale info`) if the branch moved or is already
+//! gone.
 //!
 //! Tags (`remote.push_tag`, `remote.delete_tag`, S47): the push of `refs/tags/<n>:refs/tags/<n>`
 //! like the branch push, never forced (`[rejected] (already exists)` → `tag_exists`); the remote
@@ -177,7 +178,8 @@ impl CliBackend {
     }
 
     /// The backup of the ref `name` removed by `--prune`, which held `oid`: for a remote-tracking
-    /// branch only if some of its commits are no longer reachable from any ref; any other ref always.
+    /// branch only if some of its commits are no longer reachable from any ref; any other ref
+    /// always.
     fn save_pruned(&self, name: &str, oid: &str) -> Result<Option<String>, EngineError> {
         let reflog = format!("project: backup of {name} removed by fetch --prune");
         if !name.starts_with(REMOTES_PREFIX) {
@@ -193,7 +195,7 @@ impl CliBackend {
 }
 
 impl CliBackend {
-    /// [`GitBackend::push`](project_engine::GitBackend::push).
+    /// [`GitRemotes::push`](project_engine::GitRemotes::push).
     pub(super) fn push_branch(
         &self,
         request: &PushRequest,
@@ -342,7 +344,7 @@ impl CliBackend {
 }
 
 impl CliBackend {
-    /// [`GitBackend::delete_remote_branch`](project_engine::GitBackend::delete_remote_branch).
+    /// [`GitRemotes::delete_remote_branch`](project_engine::GitRemotes::delete_remote_branch).
     pub(super) fn delete_branch_on_remote(
         &self,
         request: &RemoteBranchDelete,
@@ -369,7 +371,7 @@ impl CliBackend {
         )
     }
 
-    /// [`GitBackend::remote_tag`](project_engine::GitBackend::remote_tag): `git ls-remote --tags
+    /// [`GitRemotes::remote_tag`](project_engine::GitRemotes::remote_tag): `git ls-remote --tags
     /// --refs --end-of-options <remote> refs/tags/<name>`. `--refs` leaves out the peeled lines
     /// (`^{}`), so the value is the one the remote stores (the tag object of an annotated tag);
     /// the pattern matches the tail of the names, so only the line with exactly `refs/tags/<name>`
@@ -413,7 +415,7 @@ impl CliBackend {
         Ok(None)
     }
 
-    /// [`GitBackend::push_tag`](project_engine::GitBackend::push_tag): `git push --porcelain
+    /// [`GitRemotes::push_tag`](project_engine::GitRemotes::push_tag): `git push --porcelain
     /// --progress --no-follow-tags --recurse-submodules=check --end-of-options <remote>
     /// refs/tags/<name>:refs/tags/<name>`, never `--force`.
     pub(super) fn push_tag_to_remote(
@@ -505,7 +507,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::delete_remote_tag`](project_engine::GitBackend::delete_remote_tag).
+    /// [`GitRemotes::delete_remote_tag`](project_engine::GitRemotes::delete_remote_tag).
     pub(super) fn delete_tag_on_remote(
         &self,
         request: &RemoteTagDelete,
@@ -537,7 +539,8 @@ impl CliBackend {
     /// The remote value of `dst` (a tag whose object is not here) fetched straight into a new
     /// backup ref `refs/project/backup/push-delete-...`: `git fetch --no-tags --no-write-fetch-head
     /// --no-recurse-submodules --no-prune --no-auto-gc --refmap= --end-of-options <remote>
-    /// <dst>:<backup>`. Only that ref is written: no tags followed, no `FETCH_HEAD`, and `--refmap=`
+    /// <dst>:<backup>`. Only that ref is written: no tags followed, no `FETCH_HEAD`, and
+    /// `--refmap=`
     /// keeps a configured refspec (e.g. `+refs/tags/*:refs/tags/*`) from also updating the local
     /// tag. The backup must then equal `expected`: otherwise it is removed and
     /// [`EngineError::PushRejected`] with `stale_lease` (the tag moved on the remote).

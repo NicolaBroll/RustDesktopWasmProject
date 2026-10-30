@@ -1,5 +1,6 @@
 //! Remote management (`remote.list`, `remote.add`, `remote.remove`, S27): types and checks
-//! shared by the backends, and the removal/restoration of a remote used by the commands and the journal
+//! shared by the backends, and the removal/restoration of a remote used by the commands and the
+//! journal
 //! (`impl-docs/git/remotes.md`).
 //!
 //! A remote is made of three parts, which [`RemoteSnapshot`] captures:
@@ -12,7 +13,8 @@
 //!   `remote.pushDefault`, always from the repo file.
 //!
 //! Removing a remote ([`remove_remote`]) removes the remote branches with a single transaction
-//! (`GitBackend::restore_refs`, with the expected values and the backups of the commits that would no longer be
+//! (`GitRefs::restore_refs`, with the expected values and the backups of the commits that would no
+//! longer be
 //! reachable), then the configuration; restoring it ([`restore_remote`]) does the opposite,
 //! only if in the meantime nobody recreated a remote with that name.
 
@@ -171,7 +173,8 @@ impl RemoteSnapshot {
             .and_then(|e| e.value.as_deref())
     }
 
-    /// The same remote without the dependents (for the undo and redo of `remote.add`, which does not
+    /// The same remote without the dependents (for the undo and redo of `remote.add`, which does
+    /// not
     /// touch them).
     fn without_dependents(&self) -> RemoteSnapshot {
         RemoteSnapshot {
@@ -226,7 +229,8 @@ pub fn owned_by(remote: &str, remotes: &[String], refname: &str) -> bool {
     })
 }
 
-/// The name of a **new** remote (`remote.add`): like [`check_remote_name`] and in addition it does not
+/// The name of a **new** remote (`remote.add`): like [`check_remote_name`] and in addition it does
+/// not
 /// start with `-` (git would accept it after `--end-of-options`, but then every hand-written
 /// command would take it for an option). Otherwise [`EngineError::InvalidParams`].
 pub fn check_new_remote_name(id: &'static str, name: &str) -> Result<(), EngineError> {
@@ -309,7 +313,8 @@ fn scheme_like(s: &str) -> bool {
 }
 
 /// User and host of a URL `scheme://[user@]host...` or of an scp-like address
-/// `[user@]host:...` (without `/` before the `:`), with the `[]` of an IPv6 host removed; `None` for
+/// `[user@]host:...` (without `/` before the `:`), with the `[]` of an IPv6 host removed; `None`
+/// for
 /// a path.
 fn split_user(authority: &str) -> (Option<&str>, &str) {
     match authority.rsplit_once('@') {
@@ -348,7 +353,8 @@ fn dash_in_authority(url: &str) -> bool {
 /// `scheme://user:password@host/...` the password becomes `***` (`https://nicola:***@host/r`);
 /// in an `http(s)://` or `ftp(s)://` URL with only the user the user also becomes `***`
 /// (`https://***@github.com/r`: there the "user" is often a token). A user without password in
-/// `ssh://`, `git://` or scp-like (`git@host:r`) stays: it is not a secret. It also applies inside a
+/// `ssh://`, `git://` or scp-like (`git@host:r`) stays: it is not a secret. It also applies inside
+/// a
 /// helper (`<transport>::<url>`). Everything else stays as is.
 pub fn mask_url(url: &str) -> (String, bool) {
     if let Some((scheme, rest)) = url.split_once("::")
@@ -383,10 +389,12 @@ pub fn mask_url(url: &str) -> (String, bool) {
 /// Removes the remote captured in `snapshot` (`remote.remove`, undo of `remote.add`, redo of
 /// `remote.remove`), only if right now it is exactly so ([`RemoteSnapshot::differences`]:
 /// otherwise [`EngineError::UndoConflict`] for `edit.*`, [`EngineError::NotAllowed`] for the
-/// other commands, and nothing changes). With `dependents` it also removes the saved upstream, `pushRemote` and
+/// other commands, and nothing changes). With `dependents` it also removes the saved upstream,
+/// `pushRemote` and
 /// `remote.pushDefault` (for `remote.add` not: it did not create them).
 ///
-/// The remote branches are removed with [`GitBackend::restore_refs`] (a transaction with the expected
+/// The remote branches are removed with [`GitRefs::restore_refs`](crate::GitRefs::restore_refs) (a
+/// transaction with the expected
 /// values; the commits that would no longer be reachable from other refs go first in
 /// `refs/project/backup/<remote|undo|redo>-...`, in the result), then the configuration: a
 /// problem there is a warning, because the refs are already removed.
@@ -433,11 +441,13 @@ pub fn remove_remote(
 }
 
 /// Puts back the remote captured in `snapshot` (undo of `remote.remove`, redo of
-/// `remote.add`), only if right now nothing exists of the remote (neither among the configured remotes nor
+/// `remote.add`), only if right now nothing exists of the remote (neither among the configured
+/// remotes nor
 /// configuration nor remote branches: otherwise [`EngineError::UndoConflict`] and nothing changes).
 /// First the remote branches (a transaction that creates them only if they do not exist), then the
 /// configuration. With `dependents` also upstream, `pushRemote` and `remote.pushDefault`, but
-/// only where the repo does not have a new one and the branch still exists: the others stay as they are,
+/// only where the repo does not have a new one and the branch still exists: the others stay as they
+/// are,
 /// with a warning.
 pub fn restore_remote(
     repo: &mut dyn GitBackend,
@@ -476,7 +486,8 @@ pub fn restore_remote(
 }
 
 /// Puts back remote branches and configuration of `snapshot` without first checking that the remote
-/// is not there (the refs are created anyway only if they do not exist). Returns the outcome and what
+/// is not there (the refs are created anyway only if they do not exist). Returns the outcome and
+/// what
 /// was actually rewritten (the skipped dependents are not there). With `strict` an error on the
 /// refs stops everything before writing (undo and redo: nothing changes); without it (the emergency
 /// restore of [`ensure_remote_gone`]) it becomes a warning and the configuration is written

@@ -63,7 +63,8 @@ pub use builtin::{
 pub use commands::{Access, CommandSpec, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HEADS_PREFIX, HeadState,
+    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
+    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
     LinePatch, LineSelection, LogQuery, RefMove, RefRestore, RepoOpener, RestoreOutcome,
     SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore, amend_impact,
     apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
@@ -201,7 +202,8 @@ pub enum EngineError {
         command: &'static str,
         reason: Message,
         /// The full id (40 digits) to repeat in `"expected"` to confirm: for the force of
-        /// `remote.push` (the local remote-tracking branch read now) and for `stash.drop` (the stash to
+        /// `remote.push` (the local remote-tracking branch read now) and for `stash.drop` (the
+        /// stash to
         /// delete), which is also in the text of `reason`; `None` for the other commands.
         expected: Option<String>,
     },
@@ -234,7 +236,8 @@ pub enum EngineError {
         files: Vec<String>,
         stderr: String,
     },
-    /// The remote rejected the credentials, or they would have to be asked for (user name, password,
+    /// The remote rejected the credentials, or they would have to be asked for (user name,
+    /// password,
     /// passphrase, host key confirmation) and there is no way to do so without a terminal:
     /// "Authentication failed", "could not read Username", "Permission denied (publickey)",
     /// HTTP 401/403, "Host key verification failed". Nothing was modified. `message` is git's
@@ -271,7 +274,8 @@ pub enum EngineError {
         message: String,
     },
     /// `remote.push` rejected: nothing changed, neither on the remote nor locally (the local
-    /// remote-tracking branch stays as it was). `branch` is the branch on the remote, `message` git's text.
+    /// remote-tracking branch stays as it was). `branch` is the branch on the remote, `message`
+    /// git's text.
     PushRejected {
         remote: String,
         branch: String,
@@ -470,7 +474,8 @@ pub fn quoted_list(paths: &[impl std::fmt::Display]) -> String {
         .join(", ")
 }
 
-/// An error inside the text of another (e.g. "the state cannot be re-read (…)"): translated into the
+/// An error inside the text of another (e.g. "the state cannot be re-read (…)"): translated into
+/// the
 /// same language.
 impl ToArg for EngineError {
     fn to_arg(&self) -> MessageArg {

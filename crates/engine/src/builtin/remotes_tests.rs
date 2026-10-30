@@ -1,6 +1,6 @@
 //! Tests of `remote.list`, `remote.add`, `remote.remove` on the `MemoryBackend`.
 
-use crate::{EngineError, GitBackend, MemoryBackend, MemoryOpener, Registry, Session};
+use crate::{EngineError, GitRemotes, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::Oid;
 use serde_json::{Value, json};
 use std::sync::Arc;

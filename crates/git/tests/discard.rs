@@ -8,7 +8,7 @@ mod common;
 
 use common::{Repo, repo_with_merge_conflict, repo_with_special_names};
 use project_domain::{Change, RepoPath};
-use project_engine::{EngineError, GitBackend, Registry, Session, WorktreeRestore};
+use project_engine::{EngineError, GitIndex, GitRead, Registry, Session, WorktreeRestore};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -159,7 +159,8 @@ fn discard_then_undo_restores_the_files_byte_for_byte() {
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["undone"]["command"], "worktree.discard");
     assert_eq!(undo["warnings"], json!([]));
-    // Everything as before, byte for byte (and the mode of `script.sh`); the backup remains in addition.
+    // Everything as before, byte for byte (and the mode of `script.sh`); the backup remains in
+    // addition.
     let after = snapshot(&repo, FILES);
     assert_eq!(
         (&after.0, &after.1, &after.3),

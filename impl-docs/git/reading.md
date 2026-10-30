@@ -11,9 +11,9 @@ undo and backup of this function. "§n" always refers to the main document.
 Parameters: `{"path"}`.
 
 Uses the injected `RepoOpener`. Result `{"path", "head", "commit_graph": bool}`: `path` is the absolute worktree root
-(`GitBackend::root`, `git rev-parse --show-toplevel`), so the same repo opened from a subfolder or
+(`GitRead::root`, `git rev-parse --show-toplevel`), so the same repo opened from a subfolder or
 a relative path gives the same `path` (the given one on the `MemoryBackend`); `commit_graph` is
-`true` when git reads a commit-graph for the repo (`GitBackend::commit_graph` →
+`true` when git reads a commit-graph for the repo (`GitMaintenance::commit_graph` →
 `CommitGraphState::in_use`, see `repo.optimize` below); a failed check gives `false`, the repo
 opens anyway.
 
@@ -128,7 +128,7 @@ anyway); the fix is the commit-graph, which git itself writes in `git gc`/`git m
 ### `repo.optimize`
 
 Parameters: `{}`. A write (`Access::Write`): `git commit-graph write --reachable --progress` (no
-`--changed-paths`, no `--split`) through `GitBackend::write_commit_graph`. Result `{"commit_graph":
+`--changed-paths`, no `--split`) through `GitMaintenance::write_commit_graph`. Result `{"commit_graph":
 bool}`, the state afterwards (as in `repo.open`; `false` for a repo without commits, where git writes
 nothing).
 

@@ -2,7 +2,8 @@
 //! ([`check_stash_push`], [`check_stash_apply`], [`stash_local_changes`]).
 //!
 //! Each stash keeps the status entries it set aside and the worktree content of
-//! those files, plus a commit (inserted among the repo's commits, with the files changed relative to the
+//! those files, plus a commit (inserted among the repo's commits, with the files changed relative
+//! to the
 //! base) so `commit.show`/`diff.commit` with the stash id work as with git. The apply
 //! is stricter and simpler than git: a file changed by the stash and also by HEAD relative
 //! to the base is always a conflict (git merges line by line), with the stash content
@@ -14,7 +15,7 @@ use super::write::{ZERO, entry_order, file_type, tracked_info};
 use super::{HeadRef, MemoryBackend};
 use crate::EngineError;
 use crate::git::{
-    BACKUP_PREFIX, GitBackend, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped,
+    BACKUP_PREFIX, GitRead, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped,
     StashEntry, StashPush, check_stash_apply, check_stash_push, stash_blocked, stash_local_changes,
 };
 use project_domain::{
@@ -102,7 +103,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::stashes`].
+    /// [`GitStash::stashes`].
     pub(super) fn stash_list(&self) -> Vec<StashEntry> {
         self.stashes
             .iter()
@@ -121,7 +122,7 @@ impl MemoryBackend {
             })
     }
 
-    /// [`GitBackend::stash_push`]. An error changes nothing.
+    /// [`GitStash::stash_push`]. An error changes nothing.
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
         let status = self.status()?;
         check_stash_push(&status, request)?;
@@ -281,7 +282,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::stash_apply`]. A refusal changes nothing.
+    /// [`GitStash::stash_apply`]. A refusal changes nothing.
     pub(super) fn apply_stash(
         &mut self,
         request: &StashApply,
@@ -447,7 +448,7 @@ impl MemoryBackend {
         self.stash_drop_failure = message.map(str::to_owned);
     }
 
-    /// [`GitBackend::stash_drop`]: the backup goes in `commit_backups`
+    /// [`GitStash::stash_drop`]: the backup goes in `commit_backups`
     /// (`refs/project/backup/<kind>-<n>`).
     pub(super) fn drop_stash(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
         let position = self.stash_position(request.command, &request.id)?;
@@ -477,7 +478,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::stash_store`]: a dropped stash comes back on top with its files; any
+    /// [`GitStash::stash_store`]: a dropped stash comes back on top with its files; any
     /// commit as a stash without files.
     pub(super) fn store_stash(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         let mut stash = match self.dropped_stashes.get(id).cloned() {

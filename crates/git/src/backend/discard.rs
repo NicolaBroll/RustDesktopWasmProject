@@ -48,7 +48,7 @@ fn os_bytes(s: &OsStr) -> Vec<u8> {
 const STASH_MESSAGE: &str = "project: backup of the worktree before worktree.discard";
 
 impl CliBackend {
-    /// [`GitBackend::discard`](project_engine::GitBackend::discard).
+    /// [`GitIndex::discard`](project_engine::GitIndex::discard).
     pub(super) fn discard_paths(
         &mut self,
         paths: &[RepoPath],
@@ -93,7 +93,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::restore_worktree`](project_engine::GitBackend::restore_worktree).
+    /// [`GitIndex::restore_worktree`](project_engine::GitIndex::restore_worktree).
     pub(super) fn restore_discarded(
         &mut self,
         request: &WorktreeRestore,
@@ -250,7 +250,8 @@ impl CliBackend {
 
     /// The files of `paths` whose worktree is not the backup's: the content that `git
     /// restore --source=<stash>` would recreate (with the `smudge` filters and line-ending
-    /// conversions), or the bytes saved in `raw`, and the same mode (`git diff <stash>`). A file that is not
+    /// conversions), or the bytes saved in `raw`, and the same mode (`git diff <stash>`). A file
+    /// that is not
     /// in the backup must not exist.
     pub(super) fn not_as_in_backup(
         &self,
@@ -379,9 +380,12 @@ impl CliBackend {
     }
 
     /// If for some regular file the worktree bytes are not the ones `git restore`
-    /// would recreate from `stash` (e.g. CRLF with `core.autocrlf=input`, which the `clean` filter removes
-    /// and `smudge` does not put back), saves them without filters (`hash-object -w --no-filters`) in a
-    /// commit with only those files and parent `stash`, which undo uses to rewrite them identically.
+    /// would recreate from `stash` (e.g. CRLF with `core.autocrlf=input`, which the `clean` filter
+    /// removes
+    /// and `smudge` does not put back), saves them without filters (`hash-object -w --no-filters`)
+    /// in a
+    /// commit with only those files and parent `stash`, which undo uses to rewrite them
+    /// identically.
     /// `None` if not needed. A link or a file type different from the backup is an error: the
     /// backup does not represent it.
     pub(super) fn save_raw(

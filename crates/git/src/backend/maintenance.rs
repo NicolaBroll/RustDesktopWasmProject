@@ -1,7 +1,8 @@
 //! The commit-graph on the [`CliBackend`] (`repo.open`, `repo.optimize`, S36), per §5:
 //!
 //! - state: `git rev-parse --git-path objects` (the object directory, also in a linked
-//!   worktree; `GIT_OBJECT_DIRECTORY` is cleared from git's environment), then the files `info/commit-graph` and
+//!   worktree; `GIT_OBJECT_DIRECTORY` is cleared from git's environment), then the files
+//! `info/commit-graph` and
 //!   `info/commit-graphs/commit-graph-chain` there and in the alternates
 //!   (`info/alternates`, followed up to [`MAX_ALTERNATE_DEPTH`] levels like git; relative
 //!   entries are relative to the object directory that lists them; `#` comments and quoted
@@ -31,7 +32,7 @@ use std::process::Output;
 const MAX_ALTERNATE_DEPTH: usize = 5;
 
 impl CliBackend {
-    /// [`GitBackend::commit_graph`](project_engine::GitBackend::commit_graph).
+    /// [`GitMaintenance::commit_graph`](project_engine::GitMaintenance::commit_graph).
     pub(super) fn read_commit_graph_state(&self) -> Result<CommitGraphState, EngineError> {
         let out = self.run(&["rev-parse", "--git-path", "objects"])?;
         let objects = self.workdir.join(path_from_output(&out));
@@ -80,7 +81,7 @@ impl CliBackend {
         Ok(self.workdir.join(path_from_output(&out)).is_file())
     }
 
-    /// [`GitBackend::write_commit_graph`](project_engine::GitBackend::write_commit_graph).
+    /// [`GitMaintenance::write_commit_graph`](project_engine::GitMaintenance::write_commit_graph).
     pub(super) fn write_reachable_commit_graph(&self, job: &JobContext) -> Result<(), EngineError> {
         if job.is_cancelled() {
             return Err(EngineError::Cancelled {

@@ -1,5 +1,6 @@
 //! Commands of the stashes (S28): `stash.list`, `stash.push`, `stash.apply`, `stash.pop`,
-//! `stash.drop`. Types, checks common to the backends and choices in `git/stash.rs`; here the commands.
+//! `stash.drop`. Types, checks common to the backends and choices in `git/stash.rs`; here the
+//! commands.
 //! `stash.push` and `stash.drop` enter the journal, `stash.apply` and `stash.pop` do not (§7).
 
 use super::{JournalState, Out, check_path_list, reread, to_json};
@@ -184,9 +185,10 @@ pub(super) fn stash_list(s: &mut Session, ListParams {}: ListParams) -> Out {
 }
 
 /// Sets changes aside in a new stash (see
-/// [`GitBackend::stash_push`] and
+/// [`GitStash::stash_push`](crate::GitStash::stash_push) and
 /// [`check_stash_push`](crate::check_stash_push)): nothing is lost, the changes are in the
-/// stash. It goes into the journal: `edit.undo` reapplies it (with the index) and removes it from the list, only
+/// stash. It goes into the journal: `edit.undo` reapplies it (with the index) and removes it from
+/// the list, only
 /// if HEAD has not moved.
 ///
 /// Result: [`StashPushResult`].
@@ -270,7 +272,7 @@ fn apply(
 }
 
 /// Applies a stash to index and worktree without removing it from the list (see
-/// [`GitBackend::stash_apply`]): never over local changes to the
+/// [`GitStash::stash_apply`](crate::GitStash::stash_apply)): never over local changes to the
 /// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
 /// Result: [`StashApplyResult`] (`dropped: false`, `backup: null`).
@@ -288,8 +290,10 @@ pub(super) fn stash_pop(s: &mut Session, p: StashApplyParams) -> Out {
 /// Drops the stash `index`: needs `"confirm": true` **with `"expected"`**, the full id of the
 /// confirmed stash (without `confirm`, [`EngineError::ConfirmRequired`] which says what would
 /// be lost and has the id in `expected`; `confirm` without `expected`,
-/// [`EngineError::InvalidParams`]): the confirmation holds only for the stash seen. First a backup of the commit
-/// in `refs/project/backup/stash-...`; it goes into the journal, and `edit.undo` puts it back at the top
+/// [`EngineError::InvalidParams`]): the confirmation holds only for the stash seen. First a backup
+/// of the commit
+/// in `refs/project/backup/stash-...`; it goes into the journal, and `edit.undo` puts it back at
+/// the top
 /// of the list.
 ///
 /// Result: [`StashDropResult`].

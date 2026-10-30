@@ -125,7 +125,8 @@ fn no_upstream(branch: &str) -> EngineError {
 }
 
 /// Fetches the branch's upstream (`branch`, or the one of HEAD) and integrates it: fast-forward,
-/// merge or rebase according to the configuration (`branch.<name>.rebase`, `pull.rebase`, `pull.ff`)
+/// merge or rebase according to the configuration (`branch.<name>.rebase`, `pull.rebase`,
+/// `pull.ff`)
 /// or the `strategy` parameter; without configuration merge (see
 /// [`PullSettings::policy`](crate::PullSettings::policy)). A branch that is not the one of HEAD
 /// can only be fast-forwarded (fast-forward of the ref, index and worktree are not touched).
@@ -135,21 +136,25 @@ fn no_upstream(branch: &str) -> EngineError {
 /// 1. detached HEAD without `branch`, branch without commits, operation in progress, conflicted
 ///    files, branch without upstream (or with local upstream `.`), `remote` different from the
 ///    upstream's, invalid configuration → [`EngineError::NotAllowed`], nothing fetched;
-/// 2. fetch of only the upstream's branch ([`GitBackend::fetch`](crate::GitBackend::fetch):
+/// 2. fetch of only the upstream's branch ([`GitRemotes::fetch`](crate::GitRemotes::fetch):
 ///    progress and cancellation from the [`JobContext`](crate::JobContext), errors `Auth`,
 ///    `RemoteUnreachable`, `Cancelled`); a cancellation requested during the fetch stops the
 ///    command even if the fetch finished, before integrating;
 /// 3. the strategy ([`pull_mode`]): nothing to do if the branch already contains the upstream;
-/// 4. the integration ([`GitBackend::pull`](crate::GitBackend::pull)): state checks
+/// 4. the integration ([`GitRemotes::pull`](crate::GitRemotes::pull)): state checks
 ///    ([`check_pull_state`]), branch backup, then merge/rebase. A stopped **merge**
-///    (conflicts, hooks, signing) **stays in progress** as with `merge.start`: it is not an error, the
+///    (conflicts, hooks, signing) **stays in progress** as with `merge.start`: it is not an error,
+/// the
 ///    result has `in_progress: true` and the files in `conflicts`, the branch has not moved, the
-///    backup remains; it is concluded with `merge.continue` or aborted with `merge.abort`. A stopped
+///    backup remains; it is concluded with `merge.continue` or aborted with `merge.abort`. A
+/// stopped
 ///    **rebase** stays in progress the same way: `rebase.continue` concludes it with the pull's
 ///    journal entry, `rebase.abort` brings the branch back.
 ///
-/// The branch move goes into the journal: `edit.undo` brings it back to where it was (with index and
-/// worktree, like `git reset --keep`, if it is the active branch). The fetch does not (§7), neither does a stopped
+/// The branch move goes into the journal: `edit.undo` brings it back to where it was (with index
+/// and
+/// worktree, like `git reset --keep`, if it is the active branch). The fetch does not (§7), neither
+/// does a stopped
 /// merge or rebase (the entry arrives with `merge.continue`/`rebase.continue`).
 ///
 /// Result: [`RemotePullResult`].
@@ -303,8 +308,10 @@ pub(super) fn remote_pull(
                 mode,
                 message: merge_message(&tracking, &branch),
             })?;
-            // The branch moved: the entry goes into the journal even if something cannot be re-read afterwards.
-            // A stopped merge does not: the branch has not moved, the entry arrives with `merge.continue`.
+            // The branch moved: the entry goes into the journal even if something cannot be re-read
+            // afterwards.
+            // A stopped merge does not: the branch has not moved, the entry arrives with
+            // `merge.continue`.
             if !outcome.in_progress && outcome.after != before {
                 journal.record(JournalEntry::pull(
                     &full,

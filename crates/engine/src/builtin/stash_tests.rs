@@ -2,7 +2,9 @@
 //! undo/redo on the `MemoryBackend` (sample repo: `README.md` `MM`, `docs/guide.md` `A.`,
 //! `src/lib.rs` `.M`, `note.txt` untracked).
 
-use crate::{EngineError, GitBackend, MemoryBackend, MemoryOpener, Registry, Session, StashPush};
+use crate::{
+    EngineError, GitRead, GitStash, MemoryBackend, MemoryOpener, Registry, Session, StashPush,
+};
 use project_domain::{
     Change, ChangedFile, Commit, EntryKind, Operation, RepoPath, Signature, StatusEntry,
 };
@@ -118,7 +120,8 @@ fn push_list_undo_and_redo() {
         "{err}"
     );
 
-    // Undo: the stash goes back into the files (also the split between staged and not) and disappears
+    // Undo: the stash goes back into the files (also the split between staged and not) and
+    // disappears
     // from the list, with the commit in a backup.
     let undo = run(&r, &mut s, "edit.undo", json!({}));
     assert_eq!(undo["undone"]["command"], "stash.push");

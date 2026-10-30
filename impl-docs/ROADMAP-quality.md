@@ -123,7 +123,8 @@ Rules that apply to every step:
   parameter structs are `pub(crate)` for now: still to do, one function per pull request, make
   them `pub` + `Serialize` (exported with a unique name, e.g. `BranchCreateParams`) and build
   the UI parameters with them (`crate::params`) instead of `json!`. Absent optional fields are
-  not serialized (`skip_serializing_if`), so the JSON sent stays the same. Done: branch, tag, stash, sync.
+  not serialized (`skip_serializing_if`), so the JSON sent stays the same. Done: branch, tag, stash, sync, merge (with
+  conflict; `MergeContinueParams`/`MergeAbortParams` also serve cherry-pick, revert and rebase).
 
 ### Q13 — Parameter schema for CLI and MCP
 - [ ] **Agent:** `git-engine`

@@ -143,33 +143,39 @@ pub struct MergeAbortResult {
 }
 
 /// Parameters of `merge.start`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct StartParams {
+pub struct MergeStartParams {
     /// What to merge: a local or remote branch, a tag, an id or another rev.
-    rev: String,
-    #[serde(default)]
-    no_ff: bool,
-    #[serde(default)]
-    ff_only: bool,
-    #[serde(default)]
-    message: Option<String>,
+    pub rev: String,
+    /// Always a merge commit, also when a fast-forward is possible.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_ff: bool,
+    /// Fast-forward only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ff_only: bool,
+    /// The message of the merge commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
-/// Parameters of `merge.abort`.
-#[derive(Deserialize)]
+/// Parameters of `merge.abort`, also of `cherry_pick.abort`, `revert.abort` and
+/// `rebase.abort`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AbortParams {
-    #[serde(default)]
-    confirm: bool,
+pub struct MergeAbortParams {
+    /// Always required to abort.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 
-/// Parameters of `merge.continue`.
-#[derive(Deserialize)]
+/// Parameters of `merge.continue`, also of `cherry_pick.continue` and `revert.continue`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ContinueParams {
-    #[serde(default)]
-    message: Option<String>,
+pub struct MergeContinueParams {
+    /// The message of the commit; without: the one prepared by git.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -224,12 +230,12 @@ pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
 /// Result: [`MergeStartResult`].
 pub(super) fn merge_start(
     s: &mut Session,
-    StartParams {
+    MergeStartParams {
         rev,
         no_ff,
         ff_only,
         message,
-    }: StartParams,
+    }: MergeStartParams,
 ) -> Out {
     const ID: &str = "merge.start";
     if no_ff && ff_only {
@@ -389,7 +395,7 @@ pub(super) fn merge_start(
 /// the journal (recovery is the backup).
 ///
 /// Result: [`MergeAbortResult`].
-pub(super) fn merge_abort(s: &mut Session, AbortParams { confirm }: AbortParams) -> Out {
+pub(super) fn merge_abort(s: &mut Session, MergeAbortParams { confirm }: MergeAbortParams) -> Out {
     const ID: &str = "merge.abort";
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
@@ -465,7 +471,10 @@ pub(super) fn abort_confirm(
 /// a concluded merge; with detached HEAD (a merge started from a terminal) as a commit.
 ///
 /// Result: [`MergeContinueResult`].
-pub(super) fn merge_continue(s: &mut Session, ContinueParams { message }: ContinueParams) -> Out {
+pub(super) fn merge_continue(
+    s: &mut Session,
+    MergeContinueParams { message }: MergeContinueParams,
+) -> Out {
     const ID: &str = "merge.continue";
     check_message(ID, &message)?;
     let (repo, journal) = s.repo_and_journal()?;

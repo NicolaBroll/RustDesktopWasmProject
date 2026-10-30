@@ -9,8 +9,8 @@
 use crate::executor::ErrorKind;
 use crate::{Action, Done, Request, Tab};
 use project_domain::{Commit, Oid, Operation, Status};
+use project_engine::{CommitCreateResult, CommitOutcome};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// Beyond this length the subject is flagged with a mild warning (git convention: the
@@ -235,43 +235,27 @@ impl CommitSend {
     }
 }
 
-/// Result of `commit.create` (the `branch` field is not needed by the UI: refs are reread).
-#[derive(Debug, Clone, Deserialize)]
-pub struct CommitResult {
-    pub commit: Commit,
-    /// HEAD before the commit (with amend, the rewritten commit).
-    pub previous: Option<Oid>,
-    /// With amend, the backup ref of the rewritten commit.
-    pub backup: Option<String>,
-    /// With amend, the other branches and tags left on the rewritten commit.
-    #[serde(default)]
-    pub also_on: Vec<String>,
-    pub status: Status,
-}
-
-impl CommitResult {
-    /// The message for the status bar.
-    pub fn notice(&self) -> String {
-        // Amend that produced the same commit: the engine changed nothing.
-        if self.previous == Some(self.commit.id) && self.backup.is_none() {
-            return tr!("commit-unchanged", id = self.commit.id.short());
-        }
-        let id = self.commit.id.short();
-        let mut text = match (self.previous, &self.backup) {
-            (Some(previous), Some(backup)) => tr!(
-                "commit-amended",
-                id = id,
-                previous = previous.short(),
-                backup = backup
-            ),
-            (None, Some(backup)) => tr!("commit-created-backup", id = id, backup = backup),
-            (_, None) => tr!("commit-created", id = id),
-        };
-        if !self.also_on.is_empty() {
-            text.push_str(&tr!("commit-also-on", refs = self.also_on.join(", ")));
-        }
-        text
+/// The message for the status bar after `commit.create`.
+fn notice(result: &CommitOutcome) -> String {
+    // Amend that produced the same commit: the engine changed nothing.
+    if result.previous == Some(result.commit.id) && result.backup.is_none() {
+        return tr!("commit-unchanged", id = result.commit.id.short());
     }
+    let id = result.commit.id.short();
+    let mut text = match (result.previous, &result.backup) {
+        (Some(previous), Some(backup)) => tr!(
+            "commit-amended",
+            id = id,
+            previous = previous.short(),
+            backup = backup
+        ),
+        (None, Some(backup)) => tr!("commit-created-backup", id = id, backup = backup),
+        (_, None) => tr!("commit-created", id = id),
+    };
+    if !result.also_on.is_empty() {
+        text.push_str(&tr!("commit-also-on", refs = result.also_on.join(", ")));
+    }
+    text
 }
 
 /// The other local branches and tags that point exactly at `head` (full names): with amend
@@ -485,7 +469,7 @@ impl Tab {
     pub(crate) fn receive_commit(&mut self, generation: u64, done: Done) {
         let result = done
             .result
-            .and_then(|value| crate::decode::<CommitResult>(&done.command, value));
+            .and_then(|value| crate::decode::<CommitCreateResult>(&done.command, value));
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -493,8 +477,8 @@ impl Tab {
         match result {
             Ok(result) => {
                 repo.commit.succeeded();
-                let notice = result.notice();
-                let id = result.commit.id;
+                let notice = notice(&result.outcome);
+                let id = result.outcome.commit.id;
                 repo.set_status(result.status);
                 // With other changes you stay on the changes row; if it is gone the
                 // new commit is selected as soon as the log arrives.
@@ -725,19 +709,18 @@ mod tests {
 
     #[test]
     fn notice_after_commit_and_amend() {
-        let status = status(Vec::new(), None);
         let c = commit("x", "");
         let other = Oid::from_bytes([8; 20]);
-        let result = |previous, backup: Option<&str>, also_on: Vec<&str>| CommitResult {
+        let result = |previous, backup: Option<&str>, also_on: Vec<&str>| CommitOutcome {
             commit: c.clone(),
             previous,
+            branch: Some("refs/heads/main".to_owned()),
             backup: backup.map(str::to_owned),
             also_on: also_on.into_iter().map(str::to_owned).collect(),
-            status: status.clone(),
         };
         let id = c.id.short();
         assert_eq!(
-            result(Some(other), None, vec![]).notice(),
+            notice(&result(Some(other), None, vec![])),
             format!("Commit {id} created")
         );
         let amend = result(
@@ -746,7 +729,7 @@ mod tests {
             vec!["refs/tags/v1"],
         );
         assert_eq!(
-            amend.notice(),
+            notice(&amend),
             format!(
                 "Commit {id} created in place of {}; backup of the previous commit in \
                  refs/project/backup/amend-1; the previous commit is still on refs/tags/v1",
@@ -754,7 +737,7 @@ mod tests {
             )
         );
         let same = result(Some(c.id), None, vec![]);
-        assert!(same.notice().starts_with("No change"), "{}", same.notice());
+        assert!(notice(&same).starts_with("No change"), "{}", notice(&same));
     }
 
     #[test]
@@ -925,7 +908,10 @@ mod tests {
         assert_eq!(gate.check(), Ok(()));
         let (send, params) = b.start().unwrap();
         let out = registry.run(send.command(), &mut session, params).unwrap();
-        let result: CommitResult = serde_json::from_value(out).unwrap();
+        let CommitCreateResult {
+            outcome: result,
+            status: after,
+        } = serde_json::from_value(out).unwrap();
         b.succeeded();
         assert!(b.draft.is_blank());
         assert_eq!(result.previous, head);
@@ -933,13 +919,13 @@ mod tests {
         assert_eq!(result.commit.summary, "Adds the notes");
         assert_eq!(result.commit.author.name, "Ada Rossi");
         assert_eq!(
-            result.notice(),
+            notice(&result),
             format!("Commit {} created", result.commit.id.short())
         );
         // The state from the answer: nothing more staged.
-        let lists = StageLists::new(&result.status);
+        let lists = StageLists::new(&after);
         assert!(lists.staged.is_empty());
-        assert_eq!(result.status.head.target(), Some(result.commit.id));
+        assert_eq!(after.head.target(), Some(result.commit.id));
         // The reloaded log has the new commit on top.
         let log = registry
             .run("repo.log", &mut session, json!({ "limit": 2 }))
@@ -952,7 +938,7 @@ mod tests {
         b.draft.subject = "Again".to_owned();
         let gate = Gate {
             draft: &b.draft,
-            status: Some(&result.status),
+            status: Some(&after),
             staged: 0,
             has_head: true,
             busy: false,
@@ -981,14 +967,17 @@ mod tests {
         let (send, params) = b.start().unwrap();
         assert_eq!(params["amend"], true);
         let out = registry.run(send.command(), &mut session, params).unwrap();
-        let amended: CommitResult = serde_json::from_value(out).unwrap();
+        let amended = serde_json::from_value::<CommitCreateResult>(out)
+            .unwrap()
+            .outcome;
         b.succeeded();
         assert_eq!(amended.previous, Some(result.commit.id));
         let backup = amended
             .backup
             .clone()
             .expect("backup of the rewritten commit");
-        assert!(amended.notice().contains(&backup), "{}", amended.notice());
+        let text = notice(&amended);
+        assert!(text.contains(&backup), "{text}");
         assert_eq!(amended.commit.parents, result.commit.parents);
         let log = registry
             .run("repo.log", &mut session, json!({ "limit": 2 }))

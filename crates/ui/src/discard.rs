@@ -8,10 +8,9 @@
 use crate::ErrorKind;
 use crate::stage::StageItem;
 use crate::{Action, Done, Request, Tab};
-use project_domain::{Change, RepoPath, Status};
-use project_engine::DiscardResult;
+use project_domain::{Change, RepoPath};
+use project_engine::{DiscardResult, UndoResult};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// True if the changes of the file can be discarded: tracked, not conflicted. Untracked files
@@ -215,13 +214,11 @@ fn notice(result: &DiscardResult) -> String {
 }
 
 /// The state of the operation journal: what "Undo" would undo and what "Redo" would redo.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct History {
     pub can_undo: bool,
     pub can_redo: bool,
-    #[serde(default, deserialize_with = "crate::engine_text::opt_text")]
     pub next_undo: Option<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::opt_text")]
     pub next_redo: Option<String>,
 }
 
@@ -286,42 +283,18 @@ impl UndoOp {
     }
 }
 
-/// The journal entry affected by undo or redo: the description is enough.
-#[derive(Debug, Clone, Deserialize)]
-pub struct EntryName {
-    #[serde(deserialize_with = "crate::engine_text::text")]
-    pub description: String,
-}
-
-/// Result of `edit.undo`/`edit.redo`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct UndoResult {
-    pub undone: Option<EntryName>,
-    pub redone: Option<EntryName>,
-    #[serde(default)]
-    pub backups: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub status: Option<Status>,
-    pub status_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl UndoResult {
-    /// The message for the status bar.
-    pub fn notice(&self) -> String {
-        let mut text = match (&self.undone, &self.redone) {
-            (Some(entry), _) => tr!("undo-undone", description = &entry.description),
-            (None, Some(entry)) => tr!("undo-redone", description = &entry.description),
-            (None, None) => tr!("undo-done"),
-        };
-        if !self.backups.is_empty() {
-            text.push_str(&tr!("undo-backups", refs = self.backups.join(", ")));
-        }
-        text.push_str(&crate::warnings_text(&self.warnings));
-        text
+/// The message for the status bar after `edit.undo`/`edit.redo`.
+fn undo_notice(result: &UndoResult) -> String {
+    let mut text = match (&result.undone, &result.redone) {
+        (Some(entry), _) => tr!("undo-undone", description = entry.description.text()),
+        (None, Some(entry)) => tr!("undo-redone", description = entry.description.text()),
+        (None, None) => tr!("undo-done"),
+    };
+    if !result.backups.is_empty() {
+        text.push_str(&tr!("undo-backups", refs = result.backups.join(", ")));
     }
+    text.push_str(&crate::messages_text(&result.warnings));
+    text
 }
 
 impl Tab {
@@ -443,13 +416,19 @@ impl Tab {
             .unwrap_or_else(|| done.command.clone());
         match result {
             Ok(result) => {
-                repo.history = result.history.clone();
-                if let Some(status) = result.status.clone() {
+                let notice = undo_notice(&result);
+                let UndoResult {
+                    status,
+                    status_error,
+                    journal,
+                    ..
+                } = result;
+                repo.history = journal.into();
+                if let Some(status) = status {
                     repo.set_status(status);
                 }
-                self.notice = result.notice();
-                self.error = result
-                    .status_error
+                self.notice = notice;
+                self.error = status_error
                     .map(|e| tr!("app-done-status-unread", error = e))
                     .unwrap_or_default();
                 self.follow_diff();
@@ -471,6 +450,7 @@ mod tests {
     use super::*;
     use crate::stage::{Side, StageLists};
     use project_domain::Conflict;
+    use project_engine::HistoryResult;
 
     fn item(path: &str, change: Change, conflict: Option<Conflict>) -> StageItem {
         StageItem {
@@ -618,13 +598,13 @@ mod tests {
         registry
             .run("repo.open", &mut session, json!({ "path": path }))
             .unwrap();
-        let history: History = serde_json::from_value(
+        let history: HistoryResult = serde_json::from_value(
             registry
                 .run("edit.history", &mut session, json!({}))
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(history, History::default());
+        assert_eq!(History::from(history.journal), History::default());
         let status = registry
             .run("repo.status", &mut session, json!({}))
             .unwrap();
@@ -680,12 +660,9 @@ mod tests {
             .unwrap();
         assert!(statuses(&out).contains(Side::Unstaged, &"src/lib.rs".into()));
         let undo: UndoResult = serde_json::from_value(out).unwrap();
-        assert!(
-            undo.notice().starts_with("Undone: Discard"),
-            "{}",
-            undo.notice()
-        );
-        assert!(undo.history.can_redo && !undo.history.can_undo);
+        let notice = undo_notice(&undo);
+        assert!(notice.starts_with("Undone: Discard"), "{notice}");
+        assert!(undo.journal.can_redo && !undo.journal.can_undo);
         let diff_after = registry
             .run(
                 "diff.worktree",
@@ -701,7 +678,8 @@ mod tests {
             .unwrap();
         assert!(!statuses(&out).contains(Side::Unstaged, &"src/lib.rs".into()));
         let redo: UndoResult = serde_json::from_value(out).unwrap();
-        assert!(redo.notice().starts_with("Redone: "), "{}", redo.notice());
+        let notice = undo_notice(&redo);
+        assert!(notice.starts_with("Redone: "), "{notice}");
     }
 
     #[test]

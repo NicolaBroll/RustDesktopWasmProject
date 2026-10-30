@@ -26,9 +26,9 @@ use crate::{ErrorKind, Ticket};
 use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
 use project_engine::{
-    FetchErrorKind, RemoteAddResult, RemoteDeleteBranchParams, RemoteDeleteBranchResult,
-    RemoteDeleteTagParams, RemoteDeleteTagResult, RemoteFetchResult, RemoteListEntry,
-    RemoteListResult, RemoteRemoveResult, mask_url,
+    FetchErrorKind, RemoteAddParams, RemoteAddResult, RemoteDeleteBranchParams,
+    RemoteDeleteBranchResult, RemoteDeleteTagParams, RemoteDeleteTagResult, RemoteFetchResult,
+    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, mask_url,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -417,10 +417,10 @@ impl RemotesBox {
         dialog.cancelling = false;
         dialog.fetching = dialog.fields.fetch;
         self.failure = None;
-        let params = json!({
-            "name": dialog.fields.name.trim(),
-            "url": dialog.fields.url.trim(),
-            "fetch": dialog.fields.fetch,
+        let params = params(RemoteAddParams {
+            name: dialog.fields.name.trim().to_owned(),
+            url: dialog.fields.url.trim().to_owned(),
+            fetch: dialog.fields.fetch,
         });
         Some((params, dialog.label()))
     }
@@ -459,7 +459,10 @@ impl RemotesBox {
         if self.dialog.is_some() {
             return None;
         }
-        let params = json!({ "name": name });
+        let params = params(RemoteRemoveParams {
+            name: name.clone(),
+            confirm: false,
+        });
         self.dialog = Some(Dialog::Remove(RemoveDialog {
             name,
             phase: Phase::Checking,
@@ -477,7 +480,10 @@ impl RemotesBox {
         }
         remove.phase = Phase::Sending;
         Some((
-            json!({ "name": remove.name, "confirm": true }),
+            params(RemoteRemoveParams {
+                name: remove.name.clone(),
+                confirm: true,
+            }),
             tr!("remotes-remove-label", name = &remove.name),
         ))
     }

@@ -186,22 +186,27 @@ pub struct RemoteRemoveResult {
 pub(crate) struct ListParams {}
 
 /// Parameters of `remote.add`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AddParams {
-    name: String,
-    url: String,
+pub struct RemoteAddParams {
+    /// The name of the new remote.
+    pub name: String,
+    /// Its URL.
+    pub url: String,
+    /// Then download from it.
     #[serde(default)]
-    fetch: bool,
+    pub fetch: bool,
 }
 
 /// Parameters of `remote.remove`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RemoveParams {
-    name: String,
-    #[serde(default)]
-    confirm: bool,
+pub struct RemoteRemoveParams {
+    /// The remote.
+    pub name: String,
+    /// Always required to remove.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 
 /// True for a git boolean value (`true`, `yes`, `on`, `1`).
@@ -373,7 +378,10 @@ fn fetch_all(
 /// undo the addition: the remote stays (and is in the journal) and the error is in `fetch_error`.
 ///
 /// Result: [`RemoteAddResult`].
-pub(super) fn remote_add(s: &mut Session, AddParams { name, url, fetch }: AddParams) -> Out {
+pub(super) fn remote_add(
+    s: &mut Session,
+    RemoteAddParams { name, url, fetch }: RemoteAddParams,
+) -> Out {
     const ID: &str = "remote.add";
     check_new_remote_name(ID, &name)?;
     check_remote_url(ID, &url)?;
@@ -497,7 +505,10 @@ fn removal_summary(snapshot: &RemoteSnapshot) -> MessageArg {
 /// that in the meantime was set elsewhere stays, with a warning.
 ///
 /// Result: [`RemoteRemoveResult`].
-pub(super) fn remote_remove(s: &mut Session, RemoveParams { name, confirm }: RemoveParams) -> Out {
+pub(super) fn remote_remove(
+    s: &mut Session,
+    RemoteRemoveParams { name, confirm }: RemoteRemoveParams,
+) -> Out {
     const ID: &str = "remote.remove";
     check_remote_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;

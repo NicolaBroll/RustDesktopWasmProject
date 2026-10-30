@@ -88,7 +88,7 @@ Rules that apply to every step:
   alone (2.31/2.32).
 
 ### Q11 — Typed command results shared by engine and UI
-- [ ] **Agent:** `git-engine`, then `egui-ui`
+- [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** today the handlers build their result by hand (`json!`, `out["x"] = ...`) and the UI
   redefines ~32 `*Result` structs that mirror them: the schema lives twice and a mismatch shows
   only at runtime. Each command gets a `#[derive(Serialize, Deserialize)]` result type in the
@@ -99,6 +99,12 @@ Rules that apply to every step:
   commit, reads).
 - **Done when:** for the migrated function, no `json!`/`out[...]` left in its handlers and no
   mirror struct in `crates/ui`; snapshots unchanged; CI green.
+- **Done:** 94 snapshots of the 61 commands (`builtin/snapshot_tests.rs`), then one pull request
+  per function. Every handler returns a typed result exported by `project-engine` (shared
+  `JournalState` flattened, `reread` for the `<key>`/`<key>_error` pairs); continue/abort of
+  cherry-pick, revert and rebase reuse `MergeContinueResult`/`MergeAbortResult`. The UI decodes
+  into them: its only `Deserialize` structs left are settings and saved tabs; `engine_text` is
+  gone. Snapshots never re-accepted.
 
 ### Q12 — Typed registry and parameters
 - [ ] **Agent:** `git-engine`

@@ -64,12 +64,11 @@ use optimize::OptimizeBox;
 use project_domain::HEADS_PREFIX;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
-use project_engine::IndexWriteResult;
+use project_engine::{IndexWriteResult, RepoLogResult, RepoOpenResult};
 
 use project_i18n::tr;
 use rebase::RebaseBox;
 use remotes::{AddFields, RemotesBox};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
 use stash::{PushFields, StashBox};
@@ -691,20 +690,6 @@ struct ListViewport {
     /// Rows drawn, even only partly.
     rows: std::ops::Range<usize>,
     height: f32,
-}
-
-#[derive(Deserialize)]
-struct Opened {
-    path: String,
-    head: Head,
-    /// False: git reads no commit-graph, the log of a big repo is slow (S36).
-    commit_graph: bool,
-}
-
-#[derive(Deserialize)]
-struct LogPage {
-    commits: Vec<Commit>,
-    has_more: bool,
 }
 
 /// One open repository: its own `Session` (journal for undo/redo included) in the executor, the
@@ -1435,7 +1420,7 @@ impl Tab {
     fn store(&mut self, request: Request, value: Value) -> Result<(), serde_json::Error> {
         match request {
             Request::Open => {
-                let Opened {
+                let RepoOpenResult {
                     path,
                     head,
                     commit_graph,
@@ -1469,7 +1454,7 @@ impl Tab {
             }
             Request::Log(generation, page) => {
                 if let Some(repo) = self.current(generation) {
-                    let LogPage { commits, has_more } = serde_json::from_value(value)?;
+                    let RepoLogResult { commits, has_more } = serde_json::from_value(value)?;
                     if !repo.list.receive(page, commits, has_more) {
                         return Ok(());
                     }

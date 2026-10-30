@@ -2,12 +2,13 @@
 //! read the view and produce [`Action`]; they change nothing directly.
 
 use crate::discard::Phase;
-use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog, OperationInfo};
+use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog};
 use crate::view::git_text;
 use crate::{Action, RepoView};
 use egui::{RichText, Ui};
 use project_domain::branch_short;
 use project_domain::{Operation, RepoPath};
+use project_engine::RepoOperationResult;
 use project_i18n::tr;
 
 /// The panel below the bar when the repo is in merge, rebase, cherry-pick, revert, bisect or
@@ -38,7 +39,7 @@ pub(crate) fn banner(
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let title = match info {
-                    Some(info) => info.title(),
+                    Some(info) => merge::title(info),
                     None => tr!("merge-title", name = merge::operation_name(operation)),
                 };
                 ui.add(egui::Label::new(RichText::new(title).strong().color(warn)).truncate())
@@ -70,7 +71,7 @@ pub(crate) fn banner(
 }
 
 /// The title tooltip: the incoming commits in full, with the refs pointing at them.
-fn hover(info: &OperationInfo) -> String {
+fn hover(info: &RepoOperationResult) -> String {
     let mut lines: Vec<String> = info
         .incoming
         .iter()
@@ -92,7 +93,7 @@ fn hover(info: &OperationInfo) -> String {
 /// (merge, cherry-pick, revert), or how to finish from the terminal.
 fn buttons(
     ui: &mut Ui,
-    info: &OperationInfo,
+    info: &RepoOperationResult,
     operation: Operation,
     can_write: bool,
     actions: &mut Vec<Action>,
@@ -159,7 +160,12 @@ fn buttons(
 
 /// The conflicts row: the first files (a click opens the conflict editor), how many more
 /// there are, or that it can be concluded.
-fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &mut Vec<Action>) {
+fn conflicts_line(
+    ui: &mut Ui,
+    repo: &RepoView,
+    info: &RepoOperationResult,
+    actions: &mut Vec<Action>,
+) {
     let n = info.conflicts.len();
     if n == 0 {
         let resume = info

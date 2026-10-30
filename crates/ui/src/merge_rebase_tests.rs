@@ -2,7 +2,7 @@
 //! "Continue" without a message (it may stop again on the next commit) and two-step abort.
 
 use super::*;
-use project_domain::{Change, ChangedFile, Commit, Signature};
+use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use std::sync::Arc;
 

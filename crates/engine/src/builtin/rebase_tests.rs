@@ -468,6 +468,11 @@ fn conflict_stays_in_progress_then_continue() {
     assert_eq!(op["abort"], "rebase.abort");
     assert_eq!(op["onto"], id(1));
     assert_eq!(op["rebase_branch"], "refs/heads/main");
+    // The typed result of `repo.operation` reads it back and gives the same JSON again.
+    let typed: crate::RepoOperationResult = serde_json::from_value(op.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), op);
+    assert_eq!(typed.onto, Some(oid(1)));
+    assert_eq!(typed.rebase_branch.as_deref(), Some("refs/heads/main"));
     assert!(r.run("edit.undo", &mut s, json!({})).is_err());
     assert!(r.run("rebase.start", &mut s, start(vec![])).is_err());
     let err = r.run("rebase.continue", &mut s, json!({})).unwrap_err();

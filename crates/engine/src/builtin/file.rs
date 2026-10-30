@@ -4,9 +4,18 @@
 use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
 use crate::commands::parse_params;
 use crate::{BlameQuery, FileLogQuery, Session};
-use project_domain::RepoPath;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{FileLogEntry, RepoPath};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Result of `file.log`: a page of the history of a file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileLogResult {
+    /// The commits that change the file, newest first.
+    pub commits: Vec<FileLogEntry>,
+    /// After the last returned commit there are others (as in `repo.log`).
+    pub has_more: bool,
+}
 
 /// Parameters of `file.blame`.
 #[derive(Deserialize)]
@@ -52,7 +61,7 @@ struct FileLogParams {
 
 /// The commits that change `path`, newest first (paginated like `repo.log`, `limit` 200).
 ///
-/// Result: `{"commits": [{"commit", "path", "old_path", "status"}], "has_more"}`.
+/// Result: [`FileLogResult`].
 pub(super) fn file_log(s: &mut Session, p: Value) -> Out {
     const ID: &str = "file.log";
     let FileLogParams {
@@ -76,7 +85,7 @@ pub(super) fn file_log(s: &mut Session, p: Value) -> Out {
     let mut commits = s.repo()?.file_log(&query, &job)?;
     let has_more = commits.len() > limit;
     commits.truncate(limit);
-    Ok(json!({ "commits": commits, "has_more": has_more }))
+    Ok(to_json(FileLogResult { commits, has_more }))
 }
 
 #[cfg(test)]

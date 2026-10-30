@@ -21,7 +21,7 @@
 
 use crate::{Action, Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
-use serde::Deserialize;
+use project_engine::RepoSearchResult;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -79,13 +79,6 @@ pub enum State<'a> {
         total: usize,
     },
     Failed(&'a str),
-}
-
-#[derive(Deserialize)]
-struct Page {
-    ids: Vec<Oid>,
-    total: usize,
-    has_more: bool,
 }
 
 #[derive(Debug, Default)]
@@ -221,7 +214,7 @@ impl SearchBox {
     /// query, or the match "next" was waiting for. A stale answer is discarded.
     pub fn receive(&mut self, seq: u64, result: Result<Value, String>) -> Option<Oid> {
         let job = self.job.take_if(|j| j.seq == seq)?;
-        let page = result.and_then(|value| crate::decode::<Page>(COMMAND, value));
+        let page = result.and_then(|value| crate::decode::<RepoSearchResult>(COMMAND, value));
         if job.skip == 0 {
             let previous = self.found.take();
             let mut found = Found {

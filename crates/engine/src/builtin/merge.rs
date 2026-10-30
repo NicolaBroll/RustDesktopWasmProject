@@ -17,7 +17,7 @@ use crate::{
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// How `merge.start` integrated the rev (`strategy` of [`MergeStartResult`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -544,17 +544,51 @@ pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
     }))
 }
 
-/// The operation in progress, for the UI banner: `{"operation": "Merge" | "Rebase" |
-/// "CherryPick" | "Revert" | "Bisect" | "Am" | null, "head": Head, "conflicts": [path],
-/// "incoming": [{"id", "label", "summary": string | null, "refs": [full name]}], "message":
-/// string | null, "onto": oid | null, "rebase_branch": string | null, "ready": bool,
-/// "continue": id | null, "abort": id | null}`.
-///
-/// `incoming`: the incoming commits (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`) with the refs
-/// that point to them; `message`: the message `merge.continue` would use (`MERGE_MSG` without the
-/// conflicts block); `ready`: no more conflicted files; `continue`/`abort`: the commands
-/// that conclude or abort the operation from here (merge, cherry-pick and revert; `null` for the
-/// others and for a sequence of several commits started from a terminal).
+/// An incoming commit of [`RepoOperationResult`] (`MERGE_HEAD`, `CHERRY_PICK_HEAD`,
+/// `REVERT_HEAD`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncomingCommit {
+    /// The commit.
+    pub id: Oid,
+    /// The short name of the first branch or tag that points to it, otherwise the abbreviated
+    /// id.
+    pub label: String,
+    /// The commit subject (`null` if it cannot be read).
+    pub summary: Option<String>,
+    /// The refs (full names, stashes excluded) that point to it.
+    pub refs: Vec<String>,
+}
+
+/// Result of `repo.operation`: the operation in progress, for the UI banner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoOperationResult {
+    /// The operation in progress (`null` if none).
+    pub operation: Option<Operation>,
+    /// HEAD of the repo.
+    pub head: Head,
+    /// The conflicted files.
+    pub conflicts: Vec<RepoPath>,
+    /// The incoming commits with the refs that point to them.
+    pub incoming: Vec<IncomingCommit>,
+    /// The message `merge.continue` would use (`MERGE_MSG` without the conflicts block).
+    pub message: Option<String>,
+    /// For a rebase: the commit it is reapplied onto.
+    pub onto: Option<Oid>,
+    /// For a rebase: the rewritten branch.
+    pub rebase_branch: Option<String>,
+    /// There is an operation and no conflicted files remain.
+    pub ready: bool,
+    /// The command that concludes the operation from here (merge, rebase, cherry-pick and
+    /// revert; `null` for the others and for a sequence of several commits started from a
+    /// terminal).
+    #[serde(rename = "continue")]
+    pub continue_command: Option<String>,
+    /// The command that aborts the operation from here (`null` as for `continue`).
+    #[serde(rename = "abort")]
+    pub abort_command: Option<String>,
+}
+
+/// The operation in progress, for the UI banner: [`RepoOperationResult`].
 pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
     let NoParams {} = parse_params("repo.operation", p)?;
     let repo = s.repo()?;
@@ -562,7 +596,7 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
     let state = repo.operation_state()?;
     let refs = repo.refs()?;
     let conflicts: Vec<RepoPath> = conflicted_paths(&status);
-    let incoming: Vec<Value> = state
+    let incoming: Vec<IncomingCommit> = state
         .incoming
         .iter()
         .map(|oid| {
@@ -570,17 +604,17 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
                 .log(&LogQuery::page(0, 1).from_rev(oid.to_string()))
                 .ok()
                 .and_then(|c| c.first().map(|c| c.summary.clone()));
-            let names: Vec<&str> = refs
+            let names = refs
                 .iter()
                 .filter(|r| r.target == *oid && r.kind != RefKind::Stash)
-                .map(|r| r.name.as_str())
+                .map(|r| r.name.clone())
                 .collect();
-            json!({
-                "id": oid.to_string(),
-                "label": label(oid, &refs),
-                "summary": summary,
-                "refs": names,
-            })
+            IncomingCommit {
+                id: *oid,
+                label: label(oid, &refs),
+                summary,
+                refs: names,
+            }
         })
         .collect();
     let operation = status.operation;
@@ -598,17 +632,18 @@ pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
         },
         None => (None, None),
     };
-    Ok(json!({
-        "operation": operation,
-        "head": status.head,
-        "conflicts": conflicts,
-        "incoming": incoming,
-        "message": state.message.as_deref().map(clean_merge_message),
-        "onto": state.onto.map(|o| o.to_string()),
-        "rebase_branch": state.rebase_branch,
-        "ready": operation.is_some() && conflicts.is_empty(),
-        "continue": continue_id,
-        "abort": abort_id,
+    let ready = operation.is_some() && conflicts.is_empty();
+    Ok(to_json(RepoOperationResult {
+        operation,
+        head: status.head,
+        conflicts,
+        incoming,
+        message: state.message.as_deref().map(clean_merge_message),
+        onto: state.onto,
+        rebase_branch: state.rebase_branch,
+        ready,
+        continue_command: continue_id.map(str::to_owned),
+        abort_command: abort_id.map(str::to_owned),
     }))
 }
 

@@ -7,8 +7,8 @@
 
 use crate::fetch::{self, Failure};
 use crate::{ErrorKind, Ticket};
+use project_engine::RepoCloneResult;
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -129,12 +129,6 @@ pub enum Received {
     Unexpected,
 }
 
-#[derive(Deserialize)]
-struct Messages {
-    #[serde(default)]
-    messages: Vec<String>,
-}
-
 /// The dialog, one at a time.
 #[derive(Debug, Default)]
 pub struct CloneBox {
@@ -242,9 +236,13 @@ impl CloneBox {
         d.running = None;
         let error = match result {
             Ok(value) => {
-                let messages = serde_json::from_value::<Messages>(value.clone())
-                    .map(|m| m.messages)
-                    .unwrap_or_default();
+                // `repo.init` gives a `RepoOpenResult`, without git's messages.
+                let messages = match d.kind {
+                    Kind::Clone => serde_json::from_value::<RepoCloneResult>(value.clone())
+                        .map(|r| r.messages)
+                        .unwrap_or_default(),
+                    Kind::Init => Vec::new(),
+                };
                 self.dialog = None;
                 return Received::Opened {
                     value,

@@ -65,6 +65,7 @@ use optimize::OptimizeBox;
 use project_domain::HEADS_PREFIX;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
+use project_engine::IndexWriteResult;
 
 use project_i18n::tr;
 use rebase::RebaseBox;
@@ -402,14 +403,6 @@ enum Drag {
     Start(usize),
     Over(usize),
     End,
-}
-
-/// Result of `index.stage`/`index.unstage` (and the per-line versions): the new status and the index backup ref,
-/// if one was saved before writing.
-#[derive(serde::Deserialize)]
-struct WriteResult {
-    status: Status,
-    backup: Option<String>,
 }
 
 /// What a command sent to the executor is for. Reads carry the generation of the open repo:
@@ -1392,7 +1385,7 @@ impl Tab {
     fn receive_write(&mut self, generation: u64, done: Done) {
         let result = done
             .result
-            .and_then(|value| decode::<WriteResult>(&done.command, value));
+            .and_then(|value| decode::<IndexWriteResult>(&done.command, value));
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1401,7 +1394,7 @@ impl Tab {
             .take()
             .unwrap_or_else(|| done.command.clone());
         match result {
-            Ok(WriteResult { status, backup }) => {
+            Ok(IndexWriteResult { status, backup }) => {
                 repo.set_status(status);
                 self.error.clear();
                 // Staged versions that existed only in the index: saved before

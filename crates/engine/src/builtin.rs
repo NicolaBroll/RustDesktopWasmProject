@@ -3,6 +3,7 @@
 pub(crate) mod branch;
 mod clone;
 pub(crate) mod conflict;
+pub(crate) mod discard;
 mod file;
 pub(crate) mod merge;
 pub(crate) mod pick;
@@ -15,16 +16,17 @@ pub(crate) mod remote_tag;
 pub(crate) mod remotes;
 pub(crate) mod reset;
 mod search;
+pub(crate) mod stage;
 pub(crate) mod stash;
 pub(crate) mod tag;
 
 use crate::commands::parse_params;
 use crate::{
-    CommandSpec, CommitRequest, DiffSpec, EngineError, GitBackend, HeadState, Journal,
-    JournalEntry, LineSelection, LogQuery, Message, Registry, RestoreOutcome, Session,
-    commit_graph_disabled, commit_graph_replaced, commit_graph_shallow, discard_plan, file_digest,
+    CommandSpec, CommitRequest, DiffSpec, EngineError, Journal, JournalEntry, LogQuery, Message,
+    Registry, RestoreOutcome, Session, commit_graph_disabled, commit_graph_replaced,
+    commit_graph_shallow, file_digest,
 };
-use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
+use project_domain::{Diff, RepoPath};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -130,25 +132,25 @@ impl Registry {
             "index.stage",
             "Stage files",
             r#"{"paths": [path, ...]}"#,
-            index_stage,
+            stage::index_stage,
         );
         add(
             "index.unstage",
             "Unstage files",
             r#"{"paths": [path, ...]}"#,
-            index_unstage,
+            stage::index_unstage,
         );
         add(
             "index.stage_lines",
             "Stage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.worktree)}"#,
-            index_stage_lines,
+            stage::index_stage_lines,
         );
         add(
             "index.unstage_lines",
             "Unstage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.index)}"#,
-            index_unstage_lines,
+            stage::index_unstage_lines,
         );
         add(
             "commit.create",
@@ -160,7 +162,7 @@ impl Registry {
             "worktree.discard",
             "Discard the unstaged changes",
             r#"{"paths": [path, ...], "confirm": true}"#,
-            worktree_discard,
+            discard::worktree_discard,
         );
         add(
             "branch.create",
@@ -450,7 +452,7 @@ fn to_json(value: impl Serialize) -> Value {
 }
 
 /// `{"path", "head", "commit_graph"}` of the repo just opened. `path`: the worktree root,
-/// absolute ([`GitBackend::root`]), so the same repo opened from a
+/// absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same repo opened from a
 /// subfolder or a relative path gives the same path; the given path if the backend has none.
 /// `commit_graph`: git reads a
 /// commit-graph for the repo ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log` is slow on
@@ -619,22 +621,10 @@ fn diff_commit(s: &mut Session, p: Value) -> Out {
     ))
 }
 
-/// Parameters of `index.stage` and `index.unstage`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PathsParams {
-    paths: Vec<RepoPath>,
-}
-
-/// The paths of `index.stage`/`index.unstage`, validated as in `diff.*` and without duplicates
-/// (in the given order). An empty list is an error: for git "no path" would mean
+/// The paths of a command that writes the index or the worktree (`index.stage`,
+/// `index.unstage`, `worktree.discard`, `stash.push`), validated as in `diff.*` and without
+/// duplicates (in the given order). An empty list is an error: for git "no path" would mean
 /// "everything", and it is better that it cannot be asked for by mistake.
-fn check_paths(id: &'static str, p: Value) -> Result<Vec<RepoPath>, EngineError> {
-    let PathsParams { paths } = parse_params(id, p)?;
-    check_path_list(id, paths)
-}
-
-/// Like [`check_paths`], for an already read list.
 fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPath>, EngineError> {
     if paths.is_empty() {
         return Err(EngineError::InvalidParams {
@@ -653,80 +643,8 @@ fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPat
     Ok(out)
 }
 
-/// Stages `paths` (see [`GitBackend::stage`]).
-/// Result: `{"status": Status, "backup": string | null}`, with the new
-/// [`Status`](project_domain::Status) (the caller updates the view without a second command) and
-/// the index backup ref, if before writing staged versions
-/// that existed only in the index were saved.
-fn index_stage(s: &mut Session, p: Value) -> Out {
-    index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
-}
-
-/// Unstages `paths` (see [`GitBackend::unstage`]),
-/// without touching the worktree. Result like `index.stage`.
-fn index_unstage(s: &mut Session, p: Value) -> Out {
-    index_paths("index.unstage", s, p, |repo, paths| repo.unstage(paths))
-}
-
-/// The write of `index.stage`/`index.unstage`: the index backup ref, if one was saved.
-type IndexWrite = fn(&mut dyn GitBackend, &[RepoPath]) -> Result<Option<String>, EngineError>;
-
-/// `index.stage`/`index.unstage`: `write` on the validated paths, then the new status.
-fn index_paths(id: &'static str, s: &mut Session, p: Value, write: IndexWrite) -> Out {
-    let paths = check_paths(id, p)?;
-    let repo = s.repo_mut()?;
-    let backup = write(repo, &paths)?;
-    Ok(json!({ "status": repo.status()?, "backup": backup }))
-}
-
-/// Parameters of `index.stage_lines` and `index.unstage_lines`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LinesParams {
-    path: RepoPath,
-    lines: Vec<LineRef>,
-    digest: String,
-}
-
-/// The `lines` of file `path` staged or unstaged, with the diff seen identified by
-/// `digest` (see [`GitBackend::apply_lines`]). An empty
-/// selection is an error, not a no-op: it is almost always a mistake by the
-/// caller. Result like `index.stage`.
-fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: Value) -> Out {
-    let LinesParams {
-        path,
-        lines,
-        digest,
-    } = parse_params(id, p)?;
-    let path = check_path(id, path)?;
-    if lines.is_empty() {
-        return Err(EngineError::InvalidParams {
-            id,
-            reason: msg!("engine-lines-empty"),
-        });
-    }
-    let repo = s.repo_mut()?;
-    let backup = repo.apply_lines(&LineSelection {
-        path,
-        lines,
-        digest,
-        direction,
-    })?;
-    Ok(json!({ "status": repo.status()?, "backup": backup }))
-}
-
-/// Stages the chosen lines of the worktree diff.
-fn index_stage_lines(s: &mut Session, p: Value) -> Out {
-    index_lines("index.stage_lines", PatchDirection::Stage, s, p)
-}
-
-/// Unstages the chosen lines of the index diff.
-fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
-    index_lines("index.unstage_lines", PatchDirection::Unstage, s, p)
-}
-
 /// Creates a commit with what is staged, or with `amend` rewrites the last one (see
-/// [`GitBackend::commit`]). `confirm` is needed only for `amend` of a
+/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` is needed only for `amend` of a
 /// commit already published.
 ///
 /// Result: `{"commit": Commit, "previous": string | null, "branch": string | null, "backup":
@@ -752,60 +670,6 @@ fn commit_create(s: &mut Session, p: Value) -> Out {
     })?;
     let mut out = to_json(outcome);
     out["status"] = to_json(status);
-    Ok(out)
-}
-
-/// Parameters of `worktree.discard`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DiscardParams {
-    paths: Vec<RepoPath>,
-    #[serde(default)]
-    confirm: bool,
-}
-
-/// Discards the unstaged changes of the files `paths` (files or folders): the worktree goes back
-/// to the index, the index is not touched (see
-/// [`GitBackend::discard`] and [`discard_plan`]: untracked files are
-/// never touched). Needs `"confirm": true`: without it, [`EngineError::ConfirmRequired`] with the files
-/// that would be lost and nothing changes (the refusals of [`discard_plan`] come first). Before
-/// writing, the worktree is saved with `git stash create` in `refs/project/backup/discard-...`;
-/// the operation goes into the journal and `edit.undo` puts the files back as they were.
-///
-/// Result: `{"files": [{"path", "change", "mode", "oid"}], "backup": string, "stash":
-/// string, "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`; the
-/// state is `null` (with `status_error`) if it cannot be re-read: the discard is done anyway.
-fn worktree_discard(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "worktree.discard";
-    let DiscardParams { paths, confirm } = parse_params(ID, p)?;
-    let paths = check_path_list(ID, paths)?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let status = repo.status()?;
-    let files = discard_plan(&status, &paths)?;
-    if !confirm {
-        let names: Vec<String> = files.iter().map(|f| format!("`{}`", f.path)).collect();
-        return Err(EngineError::ConfirmRequired {
-            command: ID,
-            reason: msg!(
-                "engine-discard-confirm",
-                n = files.len(),
-                files = names.join(", ")
-            ),
-            expected: None,
-        });
-    }
-    // The backend re-reads the state and refuses if the files are no longer these.
-    let outcome = repo.discard(&paths, &files)?;
-    // The files are discarded: the entry goes into the journal even if the state cannot be re-read afterwards.
-    journal.record(JournalEntry::discard(
-        &outcome,
-        HeadState::from_head(&status.head),
-    ));
-    let mut out = journal_state(journal);
-    out["files"] = to_json(&outcome.files);
-    out["backup"] = Value::String(outcome.backup);
-    out["stash"] = Value::String(outcome.stash.to_string());
-    put_reread(&mut out, "status", repo.status());
     Ok(out)
 }
 

@@ -9,6 +9,7 @@ use crate::ErrorKind;
 use crate::stage::StageItem;
 use crate::{Action, Done, Request, Tab};
 use project_domain::{Change, RepoPath, Status};
+use project_engine::DiscardResult;
 use project_i18n::tr;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -201,36 +202,15 @@ impl DiscardBox {
     }
 }
 
-/// A discarded file, as `worktree.discard` lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct DiscardedFile {
-    pub path: RepoPath,
-}
-
-/// Result of `worktree.discard` with `"confirm": true`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct DiscardResult {
-    pub files: Vec<DiscardedFile>,
-    /// The ref of the worktree backup.
-    pub backup: String,
-    /// The new status; `None` if it was not reread (the discard is done anyway).
-    pub status: Option<Status>,
-    pub status_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl DiscardResult {
-    /// The message for the status bar.
-    pub fn notice(&self) -> String {
-        match self.files.as_slice() {
-            [one] => tr!(
-                "discard-done-one",
-                path = one.path.to_string_lossy().into_owned(),
-                backup = &self.backup
-            ),
-            many => tr!("discard-done-many", n = many.len(), backup = &self.backup),
-        }
+/// The message for the status bar after `worktree.discard`.
+fn notice(result: &DiscardResult) -> String {
+    match result.files.as_slice() {
+        [one] => tr!(
+            "discard-done-one",
+            path = one.path.to_string_lossy().into_owned(),
+            backup = &result.backup
+        ),
+        many => tr!("discard-done-many", n = many.len(), backup = &result.backup),
     }
 }
 
@@ -414,16 +394,22 @@ impl Tab {
         {
             Received::Confirm => {}
             Received::Done(result) => {
-                repo.history = result.history.clone();
-                let notice = result.notice();
-                match result.status {
+                let notice = notice(&result);
+                let DiscardResult {
+                    status,
+                    status_error,
+                    journal,
+                    ..
+                } = *result;
+                repo.history = journal.into();
+                match status {
                     Some(status) => {
                         repo.set_status(status);
                         self.error.clear();
                         self.follow_diff();
                     }
                     None => {
-                        let reason = result.status_error.unwrap_or_default();
+                        let reason = status_error.unwrap_or_default();
                         self.error = tr!("discard-status-not-reread", reason = reason);
                         self.submit("repo.status", json!({}), Request::Status(generation));
                     }
@@ -677,18 +663,16 @@ mod tests {
             panic!()
         };
         assert!(result.backup.starts_with("refs/project/backup/discard-"));
+        let paths: Vec<&RepoPath> = result.files.iter().map(|f| &f.path).collect();
+        assert_eq!(paths, [&RepoPath::from("src/lib.rs")]);
+        let notice = notice(&result);
+        let history = History::from(result.journal);
+        assert!(history.can_undo);
         assert_eq!(
-            result.files,
-            [DiscardedFile {
-                path: "src/lib.rs".into()
-            }]
-        );
-        assert!(result.history.can_undo);
-        assert_eq!(
-            UndoOp::Undo.next(&result.history),
+            UndoOp::Undo.next(&history),
             Some("Discard changes to “src/lib.rs”")
         );
-        assert!(result.notice().contains("Undo"), "{}", result.notice());
+        assert!(notice.contains("Undo"), "{notice}");
 
         // Undo: the file comes back with its changes, identical.
         let out = registry

@@ -13,6 +13,23 @@ use project_i18n::tr;
 use serde_json::Value;
 use std::path::Path;
 
+/// The actions of this area, applied by [`App`](crate::App).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the "Clone…" or "New repository…" dialog.
+    Open(Kind),
+    /// The fields of that dialog changed.
+    Fields(Fields),
+    /// "Browse…" in that dialog: the folder dialog, the choice goes into the destination.
+    Browse,
+    /// "Clone"/"Create" in that dialog.
+    Submit,
+    /// "Cancel" the clone in progress.
+    Cancel,
+    /// Closes that dialog (not while its command runs).
+    Close,
+}
+
 /// What the dialog creates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

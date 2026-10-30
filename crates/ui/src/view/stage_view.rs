@@ -1,4 +1,5 @@
 use super::*;
+use crate::{commit, conflict, diff, discard, stage};
 
 /// Stage area, in place of the details when the changes row is selected: the lists
 /// "Staged" and "Unstaged", each virtualized, and below the commit message box.
@@ -47,7 +48,7 @@ pub(crate) fn stage_panel(
                 .on_hover_text(tr!("stage-hide"))
                 .clicked()
             {
-                actions.push(Action::DismissWriteError);
+                actions.push(Action::Stage(stage::Action::DismissError));
             }
             ui.add(
                 egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap(),
@@ -99,7 +100,7 @@ pub(super) fn commit_box(
     // Before the text fields, which would otherwise receive the key.
     let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Enter);
     if !repo.modal_open() && ui.input_mut(|i| i.consume_shortcut(&shortcut)) && gate.is_ok() {
-        actions.push(Action::Commit);
+        actions.push(Action::Commit(commit::Action::Commit));
     }
 
     ui.horizontal(|ui| {
@@ -144,7 +145,7 @@ pub(super) fn commit_box(
         )
         .on_hover_text(tr!("stage-amend-help"));
     if toggle.changed() {
-        actions.push(Action::SetAmend(amend));
+        actions.push(Action::Commit(commit::Action::SetAmend(amend)));
     }
     if draft.amend() {
         let mut text = match repo.head_commit() {
@@ -185,7 +186,7 @@ pub(super) fn commit_box(
             Err(blocked) => button.on_disabled_hover_text(blocked.hint()),
         };
         if button.clicked() {
-            actions.push(Action::Commit);
+            actions.push(Action::Commit(commit::Action::Commit));
         }
         if sending {
             ui.spinner();
@@ -213,7 +214,7 @@ pub(super) fn commit_box(
                 .on_hover_text(tr!("stage-hide"))
                 .clicked()
             {
-                actions.push(Action::DismissCommitError);
+                actions.push(Action::Commit(commit::Action::DismissError));
             }
             ui.add(
                 egui::Label::new(RichText::new(&error.message).color(ui.visuals().error_fg_color))
@@ -288,7 +289,7 @@ pub(super) fn stage_section(
             if button.clicked()
                 && let Some(paths) = stage::all_paths(items)
             {
-                actions.push(Action::Write(op, paths));
+                actions.push(Action::Stage(stage::Action::Write(op, paths)));
             }
             if side == Side::Unstaged {
                 let paths = discard::discardable_paths(items);
@@ -301,7 +302,7 @@ pub(super) fn stage_section(
                 if button.clicked()
                     && let Some(paths) = paths
                 {
-                    actions.push(Action::Discard(paths));
+                    actions.push(Action::Discard(discard::Action::Discard(paths)));
                 }
             }
         },
@@ -400,12 +401,15 @@ pub(super) fn stage_section(
 
                 let response = response.on_hover_text(stage_tooltip(op, item));
                 if (clicked || response.double_clicked()) && enabled {
-                    actions.push(Action::Write(op, vec![item.path.clone()]));
+                    actions.push(Action::Stage(stage::Action::Write(
+                        op,
+                        vec![item.path.clone()],
+                    )));
                 } else if response.clicked() {
                     actions.push(if item.is_conflict() && op == StageOp::Stage {
-                        Action::OpenConflict(item.path.clone())
+                        Action::Conflict(conflict::Action::Open(item.path.clone()))
                     } else {
-                        Action::OpenDiff(target.clone())
+                        Action::Diff(diff::Action::Open(target.clone()))
                     });
                 }
                 response.context_menu(|ui| {
@@ -429,11 +433,11 @@ pub(super) fn file_menu(
         && op == StageOp::Stage
         && ui.button(tr!("stage-resolve-in-editor")).clicked()
     {
-        actions.push(Action::OpenConflict(item.path.clone()));
+        actions.push(Action::Conflict(conflict::Action::Open(item.path.clone())));
         ui.close();
     }
     if ui.button(tr!("stage-show-diff")).clicked() {
-        actions.push(Action::OpenDiff(target.clone()));
+        actions.push(Action::Diff(diff::Action::Open(target.clone())));
         ui.close();
     }
     let blame_off = match item.change {
@@ -452,7 +456,10 @@ pub(super) fn file_menu(
         .add_enabled(enabled, egui::Button::new(label))
         .on_hover_text(row_action_help(op, item));
     if button.clicked() {
-        actions.push(Action::Write(op, vec![item.path.clone()]));
+        actions.push(Action::Stage(stage::Action::Write(
+            op,
+            vec![item.path.clone()],
+        )));
         ui.close();
     }
     if op == StageOp::Stage {
@@ -472,7 +479,9 @@ pub(super) fn file_menu(
             .on_hover_text(tr!("stage-discard-file-help"))
             .on_disabled_hover_text(reason.unwrap_or_else(|| tr!("stage-wait")));
         if button.clicked() {
-            actions.push(Action::Discard(vec![item.path.clone()]));
+            actions.push(Action::Discard(discard::Action::Discard(vec![
+                item.path.clone(),
+            ])));
             ui.close();
         }
     }

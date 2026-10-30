@@ -7,13 +7,25 @@
 //! network errors are explained in a window with git's text.
 
 use crate::running::Running;
-use crate::{Action, Done, Request, Tab, params};
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::RefInfo;
 use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
 use project_engine::{Progress, RefUpdate, RemoteFetchParams, RemoteFetchResult};
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Fetch from the given remote (`None`: the one the engine chooses: upstream, `origin`,
+    /// the only one).
+    Fetch(Option<String>),
+    /// "Stop" the fetch in progress.
+    Cancel,
+    /// Closes the fetch error window.
+    DismissError,
+}
 
 /// The id of the Registry command.
 pub const COMMAND: &str = "remote.fetch";
@@ -380,17 +392,16 @@ impl Tab {
                 repo.write_error = None;
                 self.start_fetch(remote, false);
             }
-            Action::CancelFetch => {
+            Action::Cancel => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.fetch.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::DismissFetchError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.fetch.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

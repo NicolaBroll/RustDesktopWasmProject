@@ -13,11 +13,34 @@
 //!   selecting an entry opens `diff.commit` of that commit for the entry's path.
 
 use crate::diff::{DiffTarget, MAX_LINE_COLS, number_width};
-use crate::{Action, Done, Request, Tab, Ticket};
+use crate::{Done, Request, Tab, Ticket};
 use project_domain::{Blame, BlameLine, Change, FileLogEntry, Oid, RepoPath};
 use project_engine::{FileBlameParams, FileLogParams, FileLogResult};
 use project_i18n::tr;
 use serde_json::Value;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens blame or history of `path` at commit `rev` (`None`: working tree / HEAD).
+    Open {
+        path: RepoPath,
+        rev: Option<Oid>,
+        mode: Mode,
+    },
+    /// Closes the blame and history view.
+    Close,
+    /// Switches between blame and history.
+    Mode(Mode),
+    /// "Follow renames" of the history.
+    Follow(bool),
+    /// "Load more" of the history.
+    More,
+    /// Asks again for the tab that failed.
+    Retry,
+    /// Shows the diff of entry `n` of the history.
+    Select(usize),
+}
 
 /// The id of the command that reads the blame.
 pub const BLAME: &str = "file.blame";
@@ -409,23 +432,23 @@ impl Tab {
             return;
         };
         match action {
-            Action::OpenFile { path, rev, mode } => {
+            Action::Open { path, rev, mode } => {
                 repo.conflict.close();
                 repo.diff.close();
                 repo.file.open(path, rev, mode);
             }
-            Action::CloseFile => {
+            Action::Close => {
                 repo.file.close();
                 repo.diff.close();
             }
-            Action::FileMode(mode) => repo.file.set_mode(mode),
-            Action::FileFollow(follow) => {
+            Action::Mode(mode) => repo.file.set_mode(mode),
+            Action::Follow(follow) => {
                 repo.file.set_follow(follow);
                 repo.diff.close();
             }
-            Action::FileMore => repo.file.more(),
-            Action::FileRetry => repo.file.retry(),
-            Action::FileSelect(index) => {
+            Action::More => repo.file.more(),
+            Action::Retry => repo.file.retry(),
+            Action::Select(index) => {
                 let target = repo.file.view().and_then(|v| v.entry_target(index));
                 if let Some(target) = target
                     && let Some(seq) = repo.diff.open(target.clone())
@@ -433,7 +456,6 @@ impl Tab {
                     self.request_diff(&target, seq);
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

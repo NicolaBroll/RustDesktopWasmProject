@@ -19,7 +19,7 @@
 use crate::discard::{History, Phase};
 use crate::messages_text;
 use crate::running::Running;
-use crate::{Action, Done, Request, Tab, params};
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, format};
 use project_domain::{Oid, Signature, Status};
 use project_engine::{
@@ -28,6 +28,33 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the "Stash" dialog to set changes aside.
+    Open,
+    /// The fields of the "Stash" dialog changed.
+    Fields(PushFields),
+    /// Submits the "Stash" dialog (`stash.push`).
+    Submit,
+    /// Selects the stash with this id: its files on the right, its base in the graph.
+    Select(Oid),
+    /// Applies the stash with this id (`true`: pop, i.e. apply and, if all goes well, delete
+    /// it), with `index` and `expected` from the list seen.
+    Apply(Oid, bool),
+    /// "Also restore the stage" for apply and pop.
+    RestoreIndex(bool),
+    /// Deletes the stash with this id: first without confirmation, the engine always asks and
+    /// the dialog opens.
+    Drop(Oid),
+    /// Confirms the pending deletion: resends with `"confirm": true`.
+    ConfirmDrop,
+    /// Closes the open stash dialog without sending anything.
+    CloseDialog,
+    /// Closes the apply or pop conflicts window.
+    DismissConflicts,
+}
 
 /// The id of the command that lists the stashes.
 pub const LIST: &str = "stash.list";
@@ -702,7 +729,7 @@ impl Tab {
     /// The actions of this function, routed by [`Tab::apply`].
     pub(crate) fn apply_stash(&mut self, action: Action) {
         match action {
-            Action::OpenStash => {
+            Action::Open => {
                 if let Some(repo) = &mut self.repo
                     && self.executor.writing().is_none()
                     && !repo.modal_open()
@@ -710,12 +737,12 @@ impl Tab {
                     repo.stash.open_push();
                 }
             }
-            Action::StashFields(fields) => {
+            Action::Fields(fields) => {
                 if let Some(repo) = &mut self.repo {
                     repo.stash.set_fields(fields);
                 }
             }
-            Action::SubmitStash => {
+            Action::Submit => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -733,7 +760,7 @@ impl Tab {
                     }
                 }
             }
-            Action::SelectStash(id) => {
+            Action::Select(id) => {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
@@ -747,7 +774,7 @@ impl Tab {
                     repo.stash.select(Some(id));
                 }
             }
-            Action::ApplyStash(id, pop) => {
+            Action::Apply(id, pop) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -762,12 +789,12 @@ impl Tab {
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
-            Action::StashRestoreIndex(on) => {
+            Action::RestoreIndex(on) => {
                 if let Some(repo) = &mut self.repo {
                     repo.stash.restore_index = on;
                 }
             }
-            Action::DropStash(id) => {
+            Action::Drop(id) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -782,7 +809,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
-            Action::ConfirmDropStash => {
+            Action::ConfirmDrop => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -796,17 +823,16 @@ impl Tab {
                     self.submit(op.command(), params, Request::Stash(generation, op));
                 }
             }
-            Action::CloseStashDialog => {
+            Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.stash.close();
                 }
             }
-            Action::DismissStashConflicts => {
+            Action::DismissConflicts => {
                 if let Some(repo) = &mut self.repo {
                     repo.stash.dismiss();
                 }
             }
-            _ => unreachable!("action routed to the wrong function"),
         }
     }
 

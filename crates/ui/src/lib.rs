@@ -50,70 +50,40 @@ mod word_diff;
 
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
-use branch::{BranchBox, Start};
+use branch::BranchBox;
 use commit::{CommitBox, Gate};
 use conflict::ConflictBox;
 use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
-use discard::{DiscardBox, History, UndoOp};
+use discard::{DiscardBox, History};
 use fetch::FetchBox;
 use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
 use merge::MergeBox;
 use optimize::OptimizeBox;
 use project_domain::HEADS_PREFIX;
-use project_domain::RebaseAction;
-use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
+use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, Status};
 use project_engine::{
     CommitShowParams, IndexWriteResult, RepoLogResult, RepoOpenParams, RepoOpenResult,
 };
 
 use project_i18n::tr;
 use rebase::RebaseBox;
-use remotes::{AddFields, RemotesBox};
+use remotes::RemotesBox;
 use serde_json::{Value, json};
-use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
-use stash::{PushFields, StashBox};
+use stage::{Follow, PendingWrite, Side, StageLists};
+use stash::StashBox;
 use std::collections::HashMap;
 
 use sync::SyncBox;
 pub use tabs::App;
 pub use view::WindowFrame;
 
-/// What the user asked for during the frame.
+/// What the user asked for during the frame: the list selection here, the rest grouped by
+/// area (`branch::Action`, `stash::Action`, ...), each applied by its `apply_*` function.
 #[derive(Debug, Clone)]
 enum Action {
-    /// Dialog to choose the repo folder.
-    PickFolder,
-    /// Opens the repo in a tab: a new one, the empty one shown, or the one where it is already open.
-    Open(String),
-    /// Shows the tab at that index.
-    SwitchTab(usize),
-    /// Closes the tab at that index (not while it is writing).
-    CloseTab(usize),
-    /// Drops from the recent list the repos whose folder no longer exists.
-    ForgetMissing,
-    /// Opens the "Clone…" or "New repository…" dialog.
-    OpenClone(clone::Kind),
-    /// The fields of that dialog changed.
-    CloneFields(clone::Fields),
-    /// "Browse…" in that dialog: the folder dialog, the choice goes into the destination.
-    BrowseCloneFolder,
-    /// "Clone"/"Create" in that dialog.
-    SubmitClone,
-    /// "Cancel" the clone in progress.
-    CancelClone,
-    /// Closes that dialog (not while its command runs).
-    CloseClone,
-    /// Opens the "Settings…" window.
-    OpenSettings,
-    /// Closes it.
-    CloseSettings,
-    /// Shows that section of the window.
-    SettingsSection(settings::Section),
-    /// Changes a setting (from the window, the theme menu or the diff view).
-    Setting(settings::Change),
     /// Re-reads refs, status and log of the open repo.
     Refresh,
     /// Selects the commit at the given row of the list.
@@ -130,272 +100,48 @@ enum Action {
     Visible(usize),
     /// Asks again for the selected commit's details after an error.
     RetryDetails,
-    /// Opens a file's diff of the selected commit in place of the graph.
-    OpenDiff(DiffTarget),
-    /// Closes the diff and returns to the graph.
-    CloseDiff,
-    /// Asks again for the open diff after an error.
-    RetryDiff,
-    /// Stage or unstage the given paths (never empty). Staging conflicted files asks
-    /// for confirmation first.
-    Write(StageOp, Vec<RepoPath>),
-    /// Confirms the pending write.
-    ConfirmWrite,
-    /// Cancels the write awaiting confirmation.
-    CancelWrite,
-    /// Hides the error of the last write.
-    DismissWriteError,
-    /// Discards the unstaged changes of the given files (never empty): first the engine checks
-    /// and asks for confirmation, which opens in a dialog.
-    Discard(Vec<RepoPath>),
-    /// Confirms the pending discard: resends with `"confirm": true`.
-    ConfirmDiscard,
-    /// Closes the discard dialog without discarding anything.
-    CancelDiscard,
-    /// Undoes the last journal operation, or redoes the last undone one.
-    Undo(UndoOp),
-    /// Click on a diff row (index in `DiffDoc::rows`): selects or deselects it;
-    /// with Shift selects the range from the last clicked one.
-    SelectLine { row: usize, shift: bool },
-    /// Dragging over the diff rows.
-    DragLines(Drag),
-    /// Deselects all the diff rows.
-    ClearLines,
-    /// Stage (worktree diff) or unstage (index diff) the hunk with this index.
-    WriteHunk(usize),
-    /// Stage or unstage the selected lines.
-    WriteSelectedLines,
-    /// Toggles "Amend" in the message box.
-    SetAmend(bool),
-    /// Commit with the written message (button or Ctrl+Enter).
-    Commit,
-    /// Confirms the amend of an already published commit: resends with `"confirm": true`.
-    ConfirmCommit,
-    /// Cancels the amend awaiting confirmation.
-    CancelCommit,
-    /// Hides the error of the last commit.
-    DismissCommitError,
-    /// Opens the dialog for a new branch from `start`, with the proposed name.
-    NewBranch(Start, String),
-    /// Opens the dialog for a new tag on the commit of `start`.
-    NewTag(Start),
-    /// The text of the tag message changed.
-    TagMessage(String),
-    /// Opens the dialog to rename the local branch (short name).
-    RenameBranch(String),
-    /// The text of the branch name dialog changed.
-    BranchName(String),
-    /// Submits the name dialog: creates or renames.
-    SubmitBranchName,
-    /// Switches to the local branch (short name).
-    Checkout(String),
-    /// Deletes the local branch (short name) seen on the given commit: first without confirmation;
-    /// if the engine asks for it the dialog opens. The commit goes to the engine as `expected`.
-    DeleteBranch(String, Oid),
-    /// Confirms the pending deletion: resends with `"confirm": true`.
-    ConfirmDeleteBranch,
-    /// Deletes the local tag (short name): first without confirmation, the engine always asks
-    /// and the dialog opens.
-    DeleteTag(String),
-    /// Confirms the pending tag deletion: resends with `"confirm": true`.
-    ConfirmDeleteTag,
-    /// Closes the open branch dialog without sending anything.
-    CloseBranchDialog,
-    /// Fetch from the given remote (`None`: the one the engine chooses: upstream, `origin`,
-    /// the only one).
-    Fetch(Option<String>),
-    /// "Stop" the fetch in progress.
-    CancelFetch,
-    /// Closes the fetch error window.
-    DismissFetchError,
     /// "Retry" in the notice of the automatic fetch suspended by an authentication error.
     RetryAutoFetch,
-    /// "Optimize" in the commit-graph notice: `repo.optimize` in the background.
-    Optimize,
-    /// "Stop" the `repo.optimize` in progress.
-    CancelOptimize,
-    /// "Not now" in the commit-graph notice: hidden for this repo view.
-    DismissOptimize,
-    /// Pull the given branch (`None`: HEAD's), with the given strategy (`None`:
-    /// the configured one).
-    Pull(Option<String>, Option<sync::Strategy>),
-    /// Push the given branch (`None`: HEAD's), never forced.
-    Push(Option<String>),
-    /// Push the tag (second value, short name) to the remote (first value), never forced.
-    PushTag(String, String),
-    /// "Force (with lease)…" in the rejected push window: `"force": true` without
-    /// `confirm`.
-    ForcePush,
-    /// "Force the push" in the confirmation: `"force": true, "confirm": true`.
-    ConfirmForcePush,
-    /// "Stop" the pull or push in progress.
-    CancelSync,
-    /// Closes the pull and push window (also the force confirmation, without forcing).
-    DismissSync,
-    /// Opens the "Add remote" dialog.
-    AddRemote,
-    /// The fields of the "Add remote" dialog changed.
-    AddRemoteFields(AddFields),
-    /// "Hide" (`true`) or "Show" the URL with credentials in the "Add remote" dialog.
-    HideRemoteUrl(bool),
-    /// Submits the "Add remote" dialog.
-    SubmitAddRemote,
-    /// "Stop" the fetch of the add in progress (the remote stays added).
-    CancelAddRemote,
-    /// Removes the given remote: first without confirmation, the engine always asks and the
-    /// dialog opens.
-    RemoveRemote(String),
-    /// Confirms the pending removal: resends with `"confirm": true`.
-    ConfirmRemoveRemote,
-    /// Deletes the branch (second value) from the remote (first value): first without
-    /// confirmation, the engine always asks and the dialog opens.
-    DeleteRemoteBranch(String, String),
-    /// Confirms the pending deletion of the remote branch: resends with `"confirm": true` and the
-    /// commit seen.
-    ConfirmDeleteRemoteBranch,
-    /// Deletes the tag (second value) from the remote (first value): first without confirmation,
-    /// the engine always asks and the dialog opens.
-    DeleteRemoteTag(String, String),
-    /// Confirms the pending deletion of the remote tag: resends with `"confirm": true` and the
-    /// value seen.
-    ConfirmDeleteRemoteTag,
-    /// Closes the open remotes dialog without sending anything.
-    CloseRemoteDialog,
-    /// Closes the fetch error window after the add.
-    DismissRemoteError,
-    /// Opens the "Stash" dialog to set changes aside.
-    OpenStash,
-    /// The fields of the "Stash" dialog changed.
-    StashFields(PushFields),
-    /// Submits the "Stash" dialog (`stash.push`).
-    SubmitStash,
-    /// Selects the stash with this id: its files on the right, its base in the graph.
-    SelectStash(Oid),
-    /// Applies the stash with this id (`true`: pop, i.e. apply and, if all goes well, delete
-    /// it), with `index` and `expected` from the list seen.
-    ApplyStash(Oid, bool),
-    /// "Also restore the stage" for apply and pop.
-    StashRestoreIndex(bool),
-    /// Deletes the stash with this id: first without confirmation, the engine always asks and
-    /// the dialog opens.
-    DropStash(Oid),
-    /// Confirms the pending deletion: resends with `"confirm": true`.
-    ConfirmDropStash,
-    /// Closes the open stash dialog without sending anything.
-    CloseStashDialog,
-    /// Closes the apply or pop conflicts window.
-    DismissStashConflicts,
-    /// Merges `rev` (shown as `what`) into the active branch; `no_ff`: always a merge
-    /// commit.
-    Merge {
-        rev: String,
-        what: String,
-        no_ff: bool,
-    },
-    /// Opens the "Continue merge" dialog.
-    ContinueMerge,
-    /// The message of the "Continue merge" dialog changed.
-    MergeMessage(String),
-    /// Finishes the merge with the dialog's message (`merge.continue`).
-    SubmitContinueMerge,
-    /// Starts aborting the merge: the engine answers with the confirmation.
-    AbortMerge,
-    /// The user confirmed the abort.
-    ConfirmAbortMerge,
-    /// Cherry-pick or revert the commit `rev` (shown as `what`) on the active branch; with several
-    /// `parents` (merge commit) the parent dialog opens first.
-    Pick {
-        pick: merge::Pick,
-        rev: Oid,
-        what: String,
-        parents: Vec<Oid>,
-    },
-    /// The parent (from 1) chosen in the `mainline` dialog.
-    Mainline(usize),
-    /// Submits the cherry-pick or revert with the chosen parent.
-    SubmitMainline,
-    /// Closes the open merge, cherry-pick or revert dialog.
-    CloseMergeDialog,
-    /// Closes the window of a rejected merge.
-    DismissMergeError,
-    /// Opens the interactive rebase editor for the commits after `base` (the parent of the chosen
-    /// commit, shown as `what`).
-    OpenRebase { base: Oid, what: String },
-    /// Moves step `from` into the gap above row `to` of the rebase plan (`len` = at the bottom).
-    RebaseMove { from: usize, to: usize },
-    /// The action of a step of the rebase plan.
-    RebaseChoose(usize, RebaseAction),
-    /// The message of a step of the rebase plan.
-    RebaseMessage(usize, String),
-    /// Selects the step whose message is edited.
-    RebaseSelect(usize),
-    /// "Run rebase" (`rebase.start`).
-    RunRebase,
-    /// Confirms rewriting published commits (`"confirm": true`).
-    ConfirmRebase,
-    /// "Back to the plan" from the confirmation.
-    CancelRebaseConfirm,
-    /// Closes the rebase editor.
-    CloseRebase,
-    /// Opens the stage area and, in the center, the file's conflict editor.
-    OpenConflict(RepoPath),
-    /// Closes the conflict editor (unmarked choices are lost).
-    CloseConflict,
-    /// "Start over": re-reads the conflicted file.
-    RestartConflict,
-    /// The result of the conflict editor, edited by hand.
-    ConflictText(String),
-    /// Replaces the conflict block with this index with the choice.
-    ChooseBlock(usize, project_domain::Choice),
-    /// Replaces all conflict blocks with the same choice.
-    ChooseAll(project_domain::Choice),
-    /// "Mark as resolved" with the result (asks for confirmation if markers remain).
-    ResolveConflict,
-    /// Resolves with the whole version of one side.
-    UseSide(conflict::Pick),
-    /// "Delete the file": opens the confirmation.
-    DeleteConflicted,
-    /// Confirms the pending resolution (remaining markers or deletion).
-    ConfirmConflict,
-    /// Gives up the resolution awaiting confirmation.
-    CancelConflict,
-    /// Opens the dialog to reset the current branch (or a detached HEAD) to `target` (shown as
-    /// `what`): the plan of the chosen mode is read first.
-    OpenReset { target: Oid, what: String },
-    /// The mode chosen in the reset dialog: its plan is read again.
-    ResetMode(reset::Mode),
-    /// "Reset" in the dialog (`branch.reset` with the plan's `expected`).
-    SubmitReset,
-    /// Closes the reset dialog without resetting.
-    CloseReset,
-    /// Opens blame or history of `path` at commit `rev` (`None`: working tree / HEAD).
-    OpenFile {
-        path: RepoPath,
-        rev: Option<Oid>,
-        mode: file::Mode,
-    },
-    /// Closes the blame and history view.
-    CloseFile,
-    /// Switches between blame and history.
-    FileMode(file::Mode),
-    /// "Follow renames" of the history.
-    FileFollow(bool),
-    /// "Load more" of the history.
-    FileMore,
-    /// Asks again for the tab that failed.
-    FileRetry,
-    /// Shows the diff of entry `n` of the history.
-    FileSelect(usize),
-    /// Ctrl+F: opens the search bar above the list and focuses its field.
-    SearchOpen,
-    /// The text of the search field, typed at that time (seconds of `egui::InputState::time`).
-    SearchText(String, f64),
-    /// Selects the next match (button or Enter).
-    SearchNext,
-    /// Selects the previous match (button or Shift+Enter).
-    SearchPrevious,
-    /// Escape: closes the search bar and removes the highlight.
-    SearchClose,
+    /// Tabs, folder dialog and recent list: applied by [`App`].
+    Tabs(tabs::Action),
+    /// The "Clone…" and "New repository…" dialog: applied by [`App`].
+    Clone(clone::Action),
+    /// The "Settings…" window and the settings: applied by [`App`].
+    Settings(settings::Action),
+    /// Opening and closing a file's diff.
+    Diff(diff::Action),
+    /// Stage and unstage of whole files.
+    Stage(stage::Action),
+    /// Discarding changes, undo and redo.
+    Discard(discard::Action),
+    /// Selecting diff rows and staging hunks or lines.
+    Lines(lines::Action),
+    /// The commit message box.
+    Commit(commit::Action),
+    /// Branches and tags: dialogs, checkout, deletion.
+    Branch(branch::Action),
+    /// Fetch.
+    Fetch(fetch::Action),
+    /// The commit-graph notice and `repo.optimize`.
+    Optimize(optimize::Action),
+    /// Pull and push.
+    Sync(sync::Action),
+    /// Adding and removing remotes, deleting remote branches and tags.
+    Remotes(remotes::Action),
+    /// Stashes.
+    Stash(stash::Action),
+    /// Merge, cherry-pick and revert.
+    Merge(merge::Action),
+    /// The interactive rebase editor.
+    Rebase(rebase::Action),
+    /// The conflict editor.
+    Conflict(conflict::Action),
+    /// The reset dialog.
+    Reset(reset::Action),
+    /// Blame and history of a file.
+    File(file::Action),
+    /// The search in the history.
+    Search(search::Action),
 }
 
 /// A step of dragging over the diff rows.
@@ -790,24 +536,12 @@ impl Tab {
         ticket
     }
 
+    /// Applies an action of the frame: the list selection here, the rest in its area's
+    /// `apply_*` function.
     fn apply(&mut self, action: Action) {
         match action {
-            // The tabs and the folder dialog belong to `App`.
-            Action::PickFolder
-            | Action::Open(_)
-            | Action::SwitchTab(_)
-            | Action::CloseTab(_)
-            | Action::ForgetMissing
-            | Action::OpenClone(_)
-            | Action::CloneFields(_)
-            | Action::BrowseCloneFolder
-            | Action::SubmitClone
-            | Action::CancelClone
-            | Action::CloseClone
-            | Action::OpenSettings
-            | Action::CloseSettings
-            | Action::SettingsSection(_)
-            | Action::Setting(_) => {}
+            // The tabs, the folder dialog, clone and settings belong to `App`.
+            Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -855,29 +589,6 @@ impl Tab {
                     repo.details.retry();
                 }
             }
-            Action::OpenDiff(target) => {
-                if let Some(repo) = &mut self.repo {
-                    repo.conflict.close();
-                    repo.file.close();
-                }
-                if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
-                    self.request_diff(&target, seq);
-                }
-            }
-            Action::CloseDiff => {
-                if let Some(repo) = &mut self.repo {
-                    repo.diff.close();
-                }
-            }
-            Action::RetryDiff => {
-                let repo = self.repo.as_mut();
-                if let Some((seq, target)) = repo.and_then(|r| {
-                    let seq = r.diff.retry()?;
-                    Some((seq, r.diff.target()?.clone()))
-                }) {
-                    self.request_diff(&target, seq);
-                }
-            }
             Action::Visible(end) => {
                 if let Some(repo) = &mut self.repo {
                     repo.search_visible(end);
@@ -886,120 +597,24 @@ impl Tab {
                     self.request_page(request);
                 }
             }
-            Action::Write(..)
-            | Action::ConfirmWrite
-            | Action::CancelWrite
-            | Action::DismissWriteError => self.apply_stage(action),
-            Action::Discard(..)
-            | Action::ConfirmDiscard
-            | Action::CancelDiscard
-            | Action::Undo(..) => self.apply_discard(action),
-            Action::SelectLine { .. }
-            | Action::DragLines(..)
-            | Action::ClearLines
-            | Action::WriteHunk(..)
-            | Action::WriteSelectedLines => self.apply_lines(action),
-            Action::SetAmend(..)
-            | Action::Commit
-            | Action::ConfirmCommit
-            | Action::CancelCommit
-            | Action::DismissCommitError => self.apply_commit(action),
-            Action::NewBranch(..)
-            | Action::NewTag(..)
-            | Action::TagMessage(..)
-            | Action::RenameBranch(..)
-            | Action::BranchName(..)
-            | Action::SubmitBranchName
-            | Action::Checkout(..)
-            | Action::DeleteBranch(..)
-            | Action::ConfirmDeleteBranch
-            | Action::DeleteTag(..)
-            | Action::ConfirmDeleteTag
-            | Action::CloseBranchDialog => self.apply_branch(action),
-            Action::Fetch(..) | Action::CancelFetch | Action::DismissFetchError => {
-                self.apply_fetch(action)
-            }
             Action::RetryAutoFetch => self.retry_auto_fetch(),
-            Action::Optimize | Action::CancelOptimize | Action::DismissOptimize => {
-                self.apply_optimize(action)
-            }
-            Action::Pull(..)
-            | Action::Push(..)
-            | Action::PushTag(..)
-            | Action::ForcePush
-            | Action::ConfirmForcePush
-            | Action::CancelSync
-            | Action::DismissSync => self.apply_sync(action),
-            Action::AddRemote
-            | Action::AddRemoteFields(..)
-            | Action::HideRemoteUrl(..)
-            | Action::SubmitAddRemote
-            | Action::CancelAddRemote
-            | Action::RemoveRemote(..)
-            | Action::ConfirmRemoveRemote
-            | Action::DeleteRemoteBranch(..)
-            | Action::ConfirmDeleteRemoteBranch
-            | Action::DeleteRemoteTag(..)
-            | Action::ConfirmDeleteRemoteTag
-            | Action::CloseRemoteDialog
-            | Action::DismissRemoteError => self.apply_remotes(action),
-            Action::OpenStash
-            | Action::StashFields(..)
-            | Action::SubmitStash
-            | Action::SelectStash(..)
-            | Action::ApplyStash(..)
-            | Action::StashRestoreIndex(..)
-            | Action::DropStash(..)
-            | Action::ConfirmDropStash
-            | Action::CloseStashDialog
-            | Action::DismissStashConflicts => self.apply_stash(action),
-            Action::Merge { .. }
-            | Action::ContinueMerge
-            | Action::MergeMessage(..)
-            | Action::SubmitContinueMerge
-            | Action::AbortMerge
-            | Action::ConfirmAbortMerge
-            | Action::Pick { .. }
-            | Action::Mainline(..)
-            | Action::SubmitMainline
-            | Action::CloseMergeDialog
-            | Action::DismissMergeError => self.apply_merge(action),
-            Action::OpenRebase { .. }
-            | Action::RebaseMove { .. }
-            | Action::RebaseChoose(..)
-            | Action::RebaseMessage(..)
-            | Action::RebaseSelect(..)
-            | Action::RunRebase
-            | Action::ConfirmRebase
-            | Action::CancelRebaseConfirm
-            | Action::CloseRebase => self.apply_rebase(action),
-            Action::OpenReset { .. }
-            | Action::ResetMode(..)
-            | Action::SubmitReset
-            | Action::CloseReset => self.apply_reset(action),
-            Action::OpenConflict(..)
-            | Action::CloseConflict
-            | Action::RestartConflict
-            | Action::ConflictText(..)
-            | Action::ChooseBlock(..)
-            | Action::ChooseAll(..)
-            | Action::ResolveConflict
-            | Action::UseSide(..)
-            | Action::DeleteConflicted
-            | Action::ConfirmConflict
-            | Action::CancelConflict => self.apply_conflict(action),
-            Action::OpenFile { .. }
-            | Action::CloseFile
-            | Action::FileMode(..)
-            | Action::FileFollow(..)
-            | Action::FileMore
-            | Action::FileRetry
-            | Action::FileSelect(..) => self.apply_file(action),
-            Action::SearchOpen
-            | Action::SearchText(..)
-            | Action::SearchNext
-            | Action::SearchPrevious
-            | Action::SearchClose => self.apply_search(action),
+            Action::Diff(action) => self.apply_diff(action),
+            Action::Stage(action) => self.apply_stage(action),
+            Action::Discard(action) => self.apply_discard(action),
+            Action::Lines(action) => self.apply_lines(action),
+            Action::Commit(action) => self.apply_commit(action),
+            Action::Branch(action) => self.apply_branch(action),
+            Action::Fetch(action) => self.apply_fetch(action),
+            Action::Optimize(action) => self.apply_optimize(action),
+            Action::Sync(action) => self.apply_sync(action),
+            Action::Remotes(action) => self.apply_remotes(action),
+            Action::Stash(action) => self.apply_stash(action),
+            Action::Merge(action) => self.apply_merge(action),
+            Action::Rebase(action) => self.apply_rebase(action),
+            Action::Reset(action) => self.apply_reset(action),
+            Action::Conflict(action) => self.apply_conflict(action),
+            Action::File(action) => self.apply_file(action),
+            Action::Search(action) => self.apply_search(action),
         }
     }
 
@@ -1142,7 +757,7 @@ impl Tab {
         // Ctrl+F also from another field (e.g. the commit message): the search field takes the keyboard.
         let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
         if list_in_view && ctx.input_mut(|i| i.consume_shortcut(&find)) {
-            actions.push(Action::SearchOpen);
+            actions.push(Action::Search(search::Action::Open));
             return;
         }
         if ctx.egui_wants_keyboard_input() {
@@ -1156,9 +771,9 @@ impl Tab {
         if repo.file.view().is_some() {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 actions.push(if repo.diff.target().is_some() {
-                    Action::CloseDiff
+                    Action::Diff(diff::Action::Close)
                 } else {
-                    Action::CloseFile
+                    Action::File(file::Action::Close)
                 });
             }
             return;
@@ -1167,16 +782,16 @@ impl Tab {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 // First deselect, then close.
                 if repo.diff.selection().is_some_and(|s| !s.is_empty()) {
-                    actions.push(Action::ClearLines);
+                    actions.push(Action::Lines(lines::Action::Clear));
                 } else {
-                    actions.push(Action::CloseDiff);
+                    actions.push(Action::Diff(diff::Action::Close));
                 }
             }
             return;
         }
         // Esc with the search open (the field without the keyboard) closes it.
         if repo.search.is_open() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            actions.push(Action::SearchClose);
+            actions.push(Action::Search(search::Action::Close));
         }
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
@@ -1534,7 +1149,7 @@ impl Tab {
                 cancelling: running.cancelling,
                 progress: self.executor.progress(running.ticket),
                 stop_hint: tr!("optimize-stop-hint"),
-                cancel: Action::CancelOptimize,
+                cancel: Action::Optimize(optimize::Action::Cancel),
             });
         }
         if let Some(running) = r.fetch.running() {
@@ -1547,7 +1162,7 @@ impl Tab {
                 cancelling: running.cancelling,
                 progress: self.executor.progress(running.ticket),
                 stop_hint: tr!("app-stop-fetch-hint"),
-                cancel: Action::CancelFetch,
+                cancel: Action::Fetch(fetch::Action::Cancel),
             });
         }
         if let Some(adding) = r.remotes.running_fetch() {
@@ -1558,7 +1173,7 @@ impl Tab {
                     .running
                     .and_then(|r| self.executor.progress(r.ticket)),
                 stop_hint: tr!("app-stop-add-remote-hint"),
-                cancel: Action::CancelAddRemote,
+                cancel: Action::Remotes(remotes::Action::CancelAdd),
             });
         }
         let running = r.sync.running()?;
@@ -1570,7 +1185,7 @@ impl Tab {
                 sync::Op::Pull => tr!("app-stop-pull-hint"),
                 sync::Op::Push | sync::Op::PushTag => tr!("app-stop-push-hint"),
             },
-            cancel: Action::CancelSync,
+            cancel: Action::Sync(sync::Action::Cancel),
         })
     }
 
@@ -1596,10 +1211,41 @@ impl Tab {
             .map(|r| std::mem::take(&mut r.commit.draft))
             .unwrap_or_default();
 
+        self.top_panels(ui, writing, &mut actions);
+        match &self.repo {
+            Some(repo) => {
+                side_panels(ui, repo, &mut draft, writing, &mut actions);
+                self.dialogs(&ctx, repo, writing, &mut actions);
+                let center = Center {
+                    writing,
+                    focus_search,
+                    split: settings.diff_split,
+                };
+                central_panel(ui, repo, &mut self.viewport, center, &mut actions);
+            }
+            None => {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let busy = self.executor.is_busy();
+                    view::welcome(ui, can_pick, busy, recent, &mut actions);
+                });
+            }
+        }
+
+        // The list brought the requested row into view: no longer needed.
+        if let Some(repo) = &mut self.repo {
+            repo.commit.draft = draft;
+            repo.list.take_scroll_to();
+            repo.scroll_header = false;
+        }
+        actions
+    }
+
+    /// The panels across the full width: the bar, the status bar and, under the bar, the notices.
+    fn top_panels(&self, ui: &mut egui::Ui, writing: bool, actions: &mut Vec<Action>) {
         let network = self.network();
         if let Some(repo) = &self.repo {
             egui::Panel::top("bar").show(ui, |ui| {
-                view::top_bar(ui, repo, writing, network, &mut actions);
+                view::top_bar(ui, repo, writing, network, actions);
             });
         }
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -1619,7 +1265,7 @@ impl Tab {
         {
             let can_write = !writing && !repo.modal_open() && !repo.merge.busy();
             egui::Panel::top("operation").show(ui, |ui| {
-                merge_view::banner(ui, repo, operation, can_write, &mut actions);
+                merge_view::banner(ui, repo, operation, can_write, actions);
             });
         }
         // The commit-graph notice (S36), under the bar too.
@@ -1628,7 +1274,7 @@ impl Tab {
         {
             let can_write = !writing && !repo.modal_open();
             egui::Panel::top("optimize").show(ui, |ui| {
-                view::optimize_notice(ui, &repo.optimize, can_write, &mut actions);
+                view::optimize_notice(ui, &repo.optimize, can_write, actions);
             });
         }
         // The automatic fetch suspended by an authentication error (S50), under the bar too.
@@ -1636,173 +1282,91 @@ impl Tab {
             && let Some(suspended) = repo.auto_fetch.suspended()
         {
             egui::Panel::top("auto-fetch").show(ui, |ui| {
-                view::auto_fetch_notice(ui, suspended, &mut actions);
+                view::auto_fetch_notice(ui, suspended, actions);
             });
         }
-        // Side panels do not exceed a third of the window: the content wraps.
-        let side_max = (ui.available_width() / 3.0).max(200.0);
-        match &self.repo {
-            Some(repo) => {
-                egui::Panel::left("ref")
-                    .resizable(true)
-                    .default_size(220.0)
-                    .min_size(140.0)
-                    .max_size(side_max)
-                    .show(ui, |ui| view::refs_panel(ui, repo, writing, &mut actions));
-                egui::Panel::right("details")
-                    .resizable(true)
-                    .default_size(320.0)
-                    .min_size(200.0)
-                    .max_size(side_max)
-                    .show(ui, |ui| {
-                        if repo.worktree_selected {
-                            view::stage_panel(ui, repo, &mut draft, writing, &mut actions);
-                        } else if let Some(stash) = repo.stash.selected() {
-                            view::stash_panel(ui, repo, stash, writing, &mut actions);
-                        } else {
-                            view::details_panel(
-                                ui,
-                                repo.list.selected_commit(),
-                                repo.details.shown(),
-                                repo.diff.target(),
-                                &mut actions,
-                            );
-                        }
-                    });
-                if let Some(write) = &repo.confirm {
-                    view::confirm_write(&ctx, write, &mut actions);
-                }
-                if let Some(pending) = repo.discard.confirm() {
-                    view::confirm_discard(&ctx, pending, &mut actions);
-                }
-                if let Some(failure) = repo.fetch.failure() {
-                    view::failure_window(
-                        &ctx,
-                        "fetch-error",
-                        failure,
-                        Action::DismissFetchError,
-                        &mut actions,
-                    );
-                }
-                if let Some(failure) = repo.remotes.failure() {
-                    view::failure_window(
-                        &ctx,
-                        "remote-error",
-                        failure,
-                        Action::DismissRemoteError,
-                        &mut actions,
-                    );
-                }
-                if let Some(dialog) = repo.remotes.dialog() {
-                    let progress = repo
-                        .remotes
-                        .running_fetch()
-                        .and_then(|d| d.running)
-                        .and_then(|r| self.executor.progress(r.ticket));
-                    view::remote_dialog(&ctx, dialog, progress.as_ref(), &mut actions);
-                }
-                if let Some(dialog) = repo.stash.dialog() {
-                    view::stash_dialog(&ctx, repo, dialog, &mut actions);
-                }
-                if let Some(conflicts) = repo.stash.conflicts() {
-                    view::stash_conflicts_window(&ctx, conflicts, &mut actions);
-                }
-                if let Some(window) = repo.sync.window() {
-                    let can_write = !writing && !repo.modal_open();
-                    view::sync_window(&ctx, window, writing, can_write, &mut actions);
-                }
-                if let Some(dialog) = repo.branch.dialog() {
-                    view::branch_dialog(&ctx, dialog, &mut actions);
-                }
-                if let Some(dialog) = repo.merge.dialog() {
-                    merge_view::merge_dialog(&ctx, repo, dialog, &mut actions);
-                }
-                if let Some(editor) = repo.rebase.editor() {
-                    view::rebase_editor(&ctx, editor, &mut actions);
-                }
-                if let Some(dialog) = repo.reset.dialog() {
-                    view::reset_dialog(&ctx, dialog, &mut actions);
-                }
-                if let Some(failure) = repo.merge.failure() {
-                    view::failure_window(
-                        &ctx,
-                        "merge-error",
-                        failure,
-                        Action::DismissMergeError,
-                        &mut actions,
-                    );
-                }
-                if let Some(confirm) = repo.commit.confirm() {
-                    let branch = match &repo.head {
-                        Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
-                        Head::Detached(_) => None,
-                    };
-                    let left_behind =
-                        commit::refs_left_behind(&repo.refs, repo.head.target(), branch.as_deref());
-                    view::confirm_amend(&ctx, confirm, &left_behind, &mut actions);
-                }
-                let viewport = &mut self.viewport;
-                let incoming = repo
-                    .merge
-                    .info()
-                    .and_then(|i| i.incoming.first())
-                    .map(|i| i.label.as_str());
-                let conflict_write = !writing && !repo.modal_open();
-                egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
-                    _ if repo.conflict.editor().is_some() => {
-                        if let Some(editor) = repo.conflict.editor() {
-                            view::conflict_editor(
-                                ui,
-                                editor,
-                                incoming,
-                                conflict_write,
-                                &mut actions,
-                            );
-                        }
-                    }
-                    _ if repo.file.view().is_some() => {
-                        if let Some(file) = repo.file.view() {
-                            let can_write = !writing && !repo.modal_open();
-                            let split = settings.diff_split;
-                            view::file_view(
-                                ui,
-                                file,
-                                repo.diff.pane(),
-                                can_write,
-                                split,
-                                &mut actions,
-                            );
-                        }
-                    }
-                    Pane::Closed => {
-                        view::commit_list(ui, repo, viewport, writing, focus_search, &mut actions)
-                    }
-                    pane => {
-                        let lines = diff_view::LinesUi {
-                            selection: repo.diff.selection(),
-                            can_write: !writing && !repo.modal_open(),
-                            back: true,
-                            split: settings.diff_split,
-                        };
-                        diff_view::diff_panel(ui, pane, lines, &mut actions);
-                    }
-                });
-            }
-            None => {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    let busy = self.executor.is_busy();
-                    view::welcome(ui, can_pick, busy, recent, &mut actions);
-                });
-            }
-        }
+    }
 
-        // The list brought the requested row into view: no longer needed.
-        if let Some(repo) = &mut self.repo {
-            repo.commit.draft = draft;
-            repo.list.take_scroll_to();
-            repo.scroll_header = false;
+    /// The dialogs and windows of the repo, above the panels.
+    fn dialogs(
+        &self,
+        ctx: &egui::Context,
+        repo: &RepoView,
+        writing: bool,
+        actions: &mut Vec<Action>,
+    ) {
+        if let Some(write) = &repo.confirm {
+            view::confirm_write(ctx, write, actions);
         }
-        actions
+        if let Some(pending) = repo.discard.confirm() {
+            view::confirm_discard(ctx, pending, actions);
+        }
+        if let Some(failure) = repo.fetch.failure() {
+            view::failure_window(
+                ctx,
+                "fetch-error",
+                failure,
+                Action::Fetch(fetch::Action::DismissError),
+                actions,
+            );
+        }
+        if let Some(failure) = repo.remotes.failure() {
+            view::failure_window(
+                ctx,
+                "remote-error",
+                failure,
+                Action::Remotes(remotes::Action::DismissError),
+                actions,
+            );
+        }
+        if let Some(dialog) = repo.remotes.dialog() {
+            let progress = repo
+                .remotes
+                .running_fetch()
+                .and_then(|d| d.running)
+                .and_then(|r| self.executor.progress(r.ticket));
+            view::remote_dialog(ctx, dialog, progress.as_ref(), actions);
+        }
+        if let Some(dialog) = repo.stash.dialog() {
+            view::stash_dialog(ctx, repo, dialog, actions);
+        }
+        if let Some(conflicts) = repo.stash.conflicts() {
+            view::stash_conflicts_window(ctx, conflicts, actions);
+        }
+        if let Some(window) = repo.sync.window() {
+            let can_write = !writing && !repo.modal_open();
+            view::sync_window(ctx, window, writing, can_write, actions);
+        }
+        if let Some(dialog) = repo.branch.dialog() {
+            view::branch_dialog(ctx, dialog, actions);
+        }
+        if let Some(dialog) = repo.merge.dialog() {
+            merge_view::merge_dialog(ctx, repo, dialog, actions);
+        }
+        if let Some(editor) = repo.rebase.editor() {
+            view::rebase_editor(ctx, editor, actions);
+        }
+        if let Some(dialog) = repo.reset.dialog() {
+            view::reset_dialog(ctx, dialog, actions);
+        }
+        if let Some(failure) = repo.merge.failure() {
+            view::failure_window(
+                ctx,
+                "merge-error",
+                failure,
+                Action::Merge(merge::Action::DismissError),
+                actions,
+            );
+        }
+        if let Some(confirm) = repo.commit.confirm() {
+            let branch = match &repo.head {
+                Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
+                Head::Detached(_) => None,
+            };
+            let left_behind =
+                commit::refs_left_behind(&repo.refs, repo.head.target(), branch.as_deref());
+            view::confirm_amend(ctx, confirm, &left_behind, actions);
+        }
     }
 
     /// After the actions of the frame: the selection just changed is requested in this same
@@ -1813,6 +1377,98 @@ impl Tab {
         self.request_file();
         self.request_search(ctx);
     }
+}
+
+/// The refs on the left and, on the right, the stage area, the selected stash or the commit
+/// details.
+fn side_panels(
+    ui: &mut egui::Ui,
+    repo: &RepoView,
+    draft: &mut commit::CommitDraft,
+    writing: bool,
+    actions: &mut Vec<Action>,
+) {
+    // Side panels do not exceed a third of the window: the content wraps.
+    let side_max = (ui.available_width() / 3.0).max(200.0);
+    egui::Panel::left("ref")
+        .resizable(true)
+        .default_size(220.0)
+        .min_size(140.0)
+        .max_size(side_max)
+        .show(ui, |ui| view::refs_panel(ui, repo, writing, actions));
+    egui::Panel::right("details")
+        .resizable(true)
+        .default_size(320.0)
+        .min_size(200.0)
+        .max_size(side_max)
+        .show(ui, |ui| {
+            if repo.worktree_selected {
+                view::stage_panel(ui, repo, draft, writing, actions);
+            } else if let Some(stash) = repo.stash.selected() {
+                view::stash_panel(ui, repo, stash, writing, actions);
+            } else {
+                view::details_panel(
+                    ui,
+                    repo.list.selected_commit(),
+                    repo.details.shown(),
+                    repo.diff.target(),
+                    actions,
+                );
+            }
+        });
+}
+
+/// What the central panel needs besides the repo.
+#[derive(Clone, Copy)]
+struct Center {
+    writing: bool,
+    focus_search: bool,
+    /// Diffs side by side.
+    split: bool,
+}
+
+/// The center: conflict editor, blame and history, the open diff or the commit list.
+fn central_panel(
+    ui: &mut egui::Ui,
+    repo: &RepoView,
+    viewport: &mut ListViewport,
+    center: Center,
+    actions: &mut Vec<Action>,
+) {
+    let Center {
+        writing,
+        focus_search,
+        split,
+    } = center;
+    let incoming = repo
+        .merge
+        .info()
+        .and_then(|i| i.incoming.first())
+        .map(|i| i.label.as_str());
+    let conflict_write = !writing && !repo.modal_open();
+    egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
+        _ if repo.conflict.editor().is_some() => {
+            if let Some(editor) = repo.conflict.editor() {
+                view::conflict_editor(ui, editor, incoming, conflict_write, actions);
+            }
+        }
+        _ if repo.file.view().is_some() => {
+            if let Some(file) = repo.file.view() {
+                let can_write = !writing && !repo.modal_open();
+                view::file_view(ui, file, repo.diff.pane(), can_write, split, actions);
+            }
+        }
+        Pane::Closed => view::commit_list(ui, repo, viewport, writing, focus_search, actions),
+        pane => {
+            let lines = diff_view::LinesUi {
+                selection: repo.diff.selection(),
+                can_write: !writing && !repo.modal_open(),
+                back: true,
+                split,
+            };
+            diff_view::diff_panel(ui, pane, lines, actions);
+        }
+    });
 }
 
 /// The diff of a file of the `side` list.

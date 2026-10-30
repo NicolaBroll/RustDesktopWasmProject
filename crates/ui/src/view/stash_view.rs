@@ -1,4 +1,5 @@
 use super::*;
+use crate::stash;
 
 /// The "Stash" section: the stashes (`stash.list`), newest first, with the menu to apply them,
 /// pop and drop them; a click shows the files on the right and the base in the graph. Below,
@@ -95,7 +96,7 @@ pub(super) fn stash_push_button(
             tr!("stash-no-changes")
         });
     if button.clicked() {
-        actions.push(Action::OpenStash);
+        actions.push(Action::Stash(stash::Action::Open));
     }
 }
 
@@ -118,7 +119,7 @@ pub(super) fn stash_row(ui: &mut Ui, row: &StashRow<'_>, actions: &mut Vec<Actio
             .add(egui::Button::selectable(row.selected, text).truncate())
             .on_hover_text(&tooltip);
         if response.clicked() {
-            actions.push(Action::SelectStash(stash.id));
+            actions.push(Action::Stash(stash::Action::Select(stash.id)));
         }
         response.context_menu(|ui| stash_menu(ui, row, actions));
     });
@@ -175,7 +176,7 @@ pub(super) fn stash_actions(
         .on_hover_text(tr!("stash-apply-help", name = name))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::ApplyStash(stash.id, false));
+        actions.push(Action::Stash(stash::Action::Apply(stash.id, false)));
         if menu {
             ui.close();
         }
@@ -192,7 +193,7 @@ pub(super) fn stash_actions(
             wait()
         });
     if button.clicked() {
-        actions.push(Action::ApplyStash(stash.id, true));
+        actions.push(Action::Stash(stash::Action::Apply(stash.id, true)));
         if menu {
             ui.close();
         }
@@ -205,7 +206,7 @@ pub(super) fn stash_actions(
         )
         .on_hover_text(tr!("stash-restore-index-help"));
     if check.changed() {
-        actions.push(Action::StashRestoreIndex(restore));
+        actions.push(Action::Stash(stash::Action::RestoreIndex(restore)));
     }
     if menu {
         ui.separator();
@@ -223,7 +224,7 @@ pub(super) fn stash_actions(
         .on_hover_text(tr!("stash-drop-help"))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::DropStash(stash.id));
+        actions.push(Action::Stash(stash::Action::Drop(stash.id)));
         if menu {
             ui.close();
         }
@@ -347,7 +348,7 @@ pub(crate) fn stash_dialog(
         }
     });
     if modal.should_close() {
-        actions.push(Action::CloseStashDialog);
+        actions.push(Action::Stash(stash::Action::CloseDialog));
     }
 }
 
@@ -404,7 +405,7 @@ pub(super) fn push_stash_dialog(
         .on_hover_text(tr!("stash-keep-index-help"));
     changed |= check.changed();
     if changed {
-        actions.push(Action::StashFields(fields));
+        actions.push(Action::Stash(stash::Action::Fields(fields)));
     }
     if let Some(error) = &dialog.error {
         ui.add_space(4.0);
@@ -419,7 +420,7 @@ pub(super) fn push_stash_dialog(
             )
             .clicked();
         if (clicked || enter) && dialog.running.is_none() {
-            actions.push(Action::SubmitStash);
+            actions.push(Action::Stash(stash::Action::Submit));
         }
         if ui
             .add_enabled(
@@ -428,7 +429,7 @@ pub(super) fn push_stash_dialog(
             )
             .clicked()
         {
-            actions.push(Action::CloseStashDialog);
+            actions.push(Action::Stash(stash::Action::CloseDialog));
         }
         if dialog.running.is_some() {
             ui.spinner();
@@ -461,10 +462,10 @@ pub(super) fn drop_stash_dialog(
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
-            actions.push(Action::ConfirmDropStash);
+            actions.push(Action::Stash(stash::Action::ConfirmDrop));
         }
         if ui.button(tr!("stash-drop-keep")).clicked() {
-            actions.push(Action::CloseStashDialog);
+            actions.push(Action::Stash(stash::Action::CloseDialog));
         }
     });
 }
@@ -523,14 +524,14 @@ pub(crate) fn stash_conflicts_window(
                     .clicked()
                 {
                     actions.push(Action::SelectWorktree);
-                    actions.push(Action::DismissStashConflicts);
+                    actions.push(Action::Stash(stash::Action::DismissConflicts));
                 }
                 if ui.button(tr!("stash-close")).clicked() {
-                    actions.push(Action::DismissStashConflicts);
+                    actions.push(Action::Stash(stash::Action::DismissConflicts));
                 }
             });
         });
     if !open {
-        actions.push(Action::DismissStashConflicts);
+        actions.push(Action::Stash(stash::Action::DismissConflicts));
     }
 }

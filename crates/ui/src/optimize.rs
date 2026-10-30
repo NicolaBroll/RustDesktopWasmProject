@@ -6,11 +6,22 @@
 //! runs the other writes and "Refresh" are disabled; it is not offered while another write runs.
 
 use crate::running::Running;
-use crate::{Action, Done, ErrorKind, Request, Tab, Ticket};
+use crate::{Done, ErrorKind, Request, Tab, Ticket};
 use project_engine::RepoOptimizeResult;
 use project_i18n::tr;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// "Optimize" in the commit-graph notice: `repo.optimize` in the background.
+    Optimize,
+    /// "Stop" the `repo.optimize` in progress.
+    Cancel,
+    /// "Not now" in the commit-graph notice: hidden for this repo view.
+    Dismiss,
+}
 
 /// The id of the Registry command.
 pub const COMMAND: &str = "repo.optimize";
@@ -201,17 +212,16 @@ impl Tab {
                     repo.optimize.started(ticket);
                 }
             }
-            Action::CancelOptimize => {
+            Action::Cancel => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.optimize.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::DismissOptimize => {
+            Action::Dismiss => {
                 if let Some(repo) = &mut self.repo {
                     repo.optimize.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

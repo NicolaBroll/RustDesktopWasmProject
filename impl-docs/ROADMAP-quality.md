@@ -185,7 +185,7 @@ Rules that apply to every step:
   (running and "Fetch right away", the fields being read-only while it runs).
 
 ### Q21 — `Tab` and `Action` by area
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** `Action` is a ~300-line enum and `Tab::apply`, `Tab::ui` are over 200 lines each.
   `Action` becomes `Action::Branch(branch::Action)`, `Action::Stash(stash::Action)`, ... (the
   `apply_*` functions already exist per area), and `Tab::ui` delegates per panel.

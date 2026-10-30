@@ -4,7 +4,7 @@
 
 use super::stage_view::conflict_name;
 use crate::Action;
-use crate::conflict::{BlockInfo, Column, Editor, Load, Loaded, Pending, Pick};
+use crate::conflict::{self, BlockInfo, Column, Editor, Load, Loaded, Pending, Pick};
 use egui::{RichText, Ui};
 use project_domain::Choice;
 use project_i18n::tr;
@@ -38,7 +38,7 @@ pub(crate) fn conflict_editor(
                 )
                 .on_hover_text(tr!("conflict-close-hint"));
             if close.clicked() {
-                actions.push(Action::CloseConflict);
+                actions.push(Action::Conflict(conflict::Action::Close));
             }
             let restart = ui
                 .add_enabled(
@@ -47,7 +47,7 @@ pub(crate) fn conflict_editor(
                 )
                 .on_hover_text(tr!("conflict-restart-hint"));
             if restart.clicked() {
-                actions.push(Action::RestartConflict);
+                actions.push(Action::Conflict(conflict::Action::Restart));
             }
         });
     });
@@ -68,7 +68,7 @@ pub(crate) fn conflict_editor(
                 .wrap(),
             );
             if ui.button(tr!("conflict-retry")).clicked() {
-                actions.push(Action::RestartConflict);
+                actions.push(Action::Conflict(conflict::Action::Restart));
             }
         }
         Load::Ready(loaded) => loaded_editor(ui, editor, loaded, incoming, can_write, actions),
@@ -128,14 +128,16 @@ fn loaded_editor(
                         .on_hover_text(tr!("conflict-all-theirs-hint"))
                         .clicked()
                     {
-                        actions.push(Action::ChooseAll(Choice::Theirs));
+                        actions.push(Action::Conflict(conflict::Action::ChooseAll(
+                            Choice::Theirs,
+                        )));
                     }
                     if ui
                         .add_enabled(on, egui::Button::new(tr!("conflict-all-ours")))
                         .on_hover_text(tr!("conflict-all-ours-hint"))
                         .clicked()
                     {
-                        actions.push(Action::ChooseAll(Choice::Ours));
+                        actions.push(Action::Conflict(conflict::Action::ChooseAll(Choice::Ours)));
                     }
                 });
             });
@@ -165,7 +167,7 @@ fn loaded_editor(
                             .interactive(enabled),
                     );
                     if edit.changed() {
-                        actions.push(Action::ConflictText(text));
+                        actions.push(Action::Conflict(conflict::Action::Text(text)));
                     }
                 });
         }
@@ -231,7 +233,10 @@ fn block_rows(ui: &mut Ui, blocks: &[BlockInfo], enabled: bool, actions: &mut Ve
                             .on_hover_text(hint)
                             .clicked()
                         {
-                            actions.push(Action::ChooseBlock(block.index, choice));
+                            actions.push(Action::Conflict(conflict::Action::ChooseBlock(
+                                block.index,
+                                choice,
+                            )));
                         }
                     };
                     choice(
@@ -288,7 +293,7 @@ fn sides_only(ui: &mut Ui, loaded: &Loaded, enabled: bool, actions: &mut Vec<Act
                     tr!("conflict-side-unavailable")
                 });
             if button.clicked() {
-                actions.push(Action::UseSide(pick));
+                actions.push(Action::Conflict(conflict::Action::UseSide(pick)));
             }
         }
     });
@@ -323,10 +328,10 @@ fn footer_row(
             let confirm =
                 egui::Button::new(RichText::new(button).strong()).fill(warn.gamma_multiply(0.3));
             if ui.add_enabled(enabled, confirm).clicked() {
-                actions.push(Action::ConfirmConflict);
+                actions.push(Action::Conflict(conflict::Action::Confirm));
             }
             if ui.button(tr!("conflict-cancel")).clicked() {
-                actions.push(Action::CancelConflict);
+                actions.push(Action::Conflict(conflict::Action::Cancel));
             }
         });
         return;
@@ -341,7 +346,7 @@ fn footer_row(
                 .on_hover_text(tr!("conflict-mark-resolved-hint"))
                 .on_disabled_hover_text(tr!("conflict-wait-dialog"));
             if button.clicked() {
-                actions.push(Action::ResolveConflict);
+                actions.push(Action::Conflict(conflict::Action::Resolve));
             }
         }
         if loaded.can_delete() {
@@ -357,7 +362,7 @@ fn footer_row(
                 )
                 .on_hover_text(tr!("conflict-delete-hint"));
             if button.clicked() {
-                actions.push(Action::DeleteConflicted);
+                actions.push(Action::Conflict(conflict::Action::Delete));
             }
         }
         if editor.running.is_some() {

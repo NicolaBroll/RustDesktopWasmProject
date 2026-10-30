@@ -2,7 +2,7 @@
 //! "Browse…", optional branch and depth; during the clone, git's progress and "Cancel".
 
 use super::*;
-use crate::clone::{CloneDialog, Kind};
+use crate::clone::{self, CloneDialog, Kind};
 
 /// "Clone…" and "New repository…", for the File menu and the empty screen.
 pub(super) fn create_buttons(ui: &mut Ui, actions: &mut Vec<Action>) {
@@ -11,7 +11,7 @@ pub(super) fn create_buttons(ui: &mut Ui, actions: &mut Vec<Action>) {
         .on_hover_text(tr!("clone-menu-clone-hint"))
         .clicked()
     {
-        actions.push(Action::OpenClone(Kind::Clone));
+        actions.push(Action::Clone(clone::Action::Open(Kind::Clone)));
         ui.close();
     }
     if ui
@@ -19,7 +19,7 @@ pub(super) fn create_buttons(ui: &mut Ui, actions: &mut Vec<Action>) {
         .on_hover_text(tr!("clone-menu-init-hint"))
         .clicked()
     {
-        actions.push(Action::OpenClone(Kind::Init));
+        actions.push(Action::Clone(clone::Action::Open(Kind::Init)));
         ui.close();
     }
 }
@@ -90,7 +90,7 @@ pub(crate) fn clone_dialog(
                             .add_enabled(!running, egui::Button::new(tr!("clone-browse")))
                             .on_hover_text(hint);
                         if browse.clicked() {
-                            actions.push(Action::BrowseCloneFolder);
+                            actions.push(Action::Clone(clone::Action::Browse));
                         }
                     }
                 });
@@ -125,7 +125,7 @@ pub(crate) fn clone_dialog(
                 }
             });
         if changed {
-            actions.push(Action::CloneFields(fields));
+            actions.push(Action::Clone(clone::Action::Fields(fields)));
         }
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(tr!("clone-path-rule")).weak()).wrap());
@@ -157,7 +157,7 @@ pub(crate) fn clone_dialog(
                 .add_enabled(dialog.can_submit(), egui::Button::new(label))
                 .clicked();
             if (clicked || enter) && dialog.can_submit() {
-                actions.push(Action::SubmitClone);
+                actions.push(Action::Clone(clone::Action::Submit));
             }
             match dialog.running {
                 Some(r) => {
@@ -169,12 +169,12 @@ pub(crate) fn clone_dialog(
                         .on_hover_text(tr!("clone-cancel-hint"))
                         .on_disabled_hover_text(tr!("clone-cancelling"));
                     if stop.clicked() {
-                        actions.push(Action::CancelClone);
+                        actions.push(Action::Clone(clone::Action::Cancel));
                     }
                 }
                 None => {
                     if ui.button(tr!("clone-close")).clicked() {
-                        actions.push(Action::CloseClone);
+                        actions.push(Action::Clone(clone::Action::Close));
                     }
                 }
             }
@@ -204,7 +204,7 @@ pub(crate) fn clone_dialog(
         }
     });
     if !running && modal.should_close() {
-        actions.push(Action::CloseClone);
+        actions.push(Action::Clone(clone::Action::Close));
     }
 }
 

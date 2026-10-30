@@ -4,10 +4,10 @@
 //! results of a tab not shown keep landing in it. What is saved (eframe storage): the paths of the
 //! open tabs, the one shown and the recent repos; at startup the tabs reopen.
 
-use crate::clone::{CloneBox, Received};
+use crate::clone::{self, CloneBox, Received};
 use crate::executor::{Executor, Wake};
 use crate::settings::{self, Settings, SettingsBox};
-use crate::{Action, Tab, view};
+use crate::{Tab, view};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,21 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// The actions of this area, applied by [`App`].
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Dialog to choose the repo folder.
+    PickFolder,
+    /// Opens the repo in a tab: a new one, the empty one shown, or the one where it is already open.
+    Open(String),
+    /// Shows the tab at that index.
+    SwitchTab(usize),
+    /// Closes the tab at that index (not while it is writing).
+    CloseTab(usize),
+    /// Drops from the recent list the repos whose folder no longer exists.
+    ForgetMissing,
+}
 
 /// Key of the state in the eframe storage.
 const KEY: &str = "tabs";
@@ -312,41 +327,18 @@ impl App {
         }));
     }
 
-    fn apply(&mut self, ctx: &egui::Context, action: Action) {
+    fn apply(&mut self, ctx: &egui::Context, action: crate::Action) {
+        match action {
+            crate::Action::Tabs(action) => self.apply_tabs(ctx, action),
+            crate::Action::Clone(action) => self.apply_clone(ctx, action),
+            crate::Action::Settings(action) => self.apply_settings(ctx, action),
+            action => self.tabs[self.active].apply(action),
+        }
+    }
+
+    fn apply_tabs(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::PickFolder => self.pick_folder(ctx, Pick::Open),
-            Action::OpenClone(kind) => self.clone.open(kind),
-            Action::CloneFields(fields) => self.clone.set_fields(fields),
-            Action::BrowseCloneFolder => self.pick_folder(ctx, Pick::Destination),
-            Action::SubmitClone => {
-                if self.cloning.is_some() {
-                    return;
-                }
-                let Some((command, params)) = self.clone.submit() else {
-                    return;
-                };
-                let mut tab = self.new_tab();
-                let ticket = tab.create_repo(command, params);
-                self.clone.started(ticket);
-                self.cloning = Some(tab);
-            }
-            Action::CancelClone => {
-                if let (Some(ticket), Some(tab)) = (self.clone.cancel(), &self.cloning) {
-                    tab.executor.cancel(ticket);
-                }
-            }
-            Action::CloseClone => self.clone.close(),
-            Action::OpenSettings => self.settings_box.open = true,
-            Action::CloseSettings => self.settings_box.open = false,
-            Action::SettingsSection(section) => self.settings_box.section = section,
-            Action::Setting(change) => {
-                let mut settings = self.settings.clone();
-                settings.change(change);
-                if settings != self.settings {
-                    settings.apply(ctx, self.platform.as_ref());
-                    self.settings = settings;
-                }
-            }
             Action::Open(path) => self.open(path),
             Action::SwitchTab(index) => {
                 if index < self.tabs.len() {
@@ -358,7 +350,48 @@ impl App {
                 prune(&mut self.recent, &self.missing);
                 self.missing.clear();
             }
-            action => self.tabs[self.active].apply(action),
+        }
+    }
+
+    fn apply_clone(&mut self, ctx: &egui::Context, action: clone::Action) {
+        match action {
+            clone::Action::Open(kind) => self.clone.open(kind),
+            clone::Action::Fields(fields) => self.clone.set_fields(fields),
+            clone::Action::Browse => self.pick_folder(ctx, Pick::Destination),
+            clone::Action::Submit => {
+                if self.cloning.is_some() {
+                    return;
+                }
+                let Some((command, params)) = self.clone.submit() else {
+                    return;
+                };
+                let mut tab = self.new_tab();
+                let ticket = tab.create_repo(command, params);
+                self.clone.started(ticket);
+                self.cloning = Some(tab);
+            }
+            clone::Action::Cancel => {
+                if let (Some(ticket), Some(tab)) = (self.clone.cancel(), &self.cloning) {
+                    tab.executor.cancel(ticket);
+                }
+            }
+            clone::Action::Close => self.clone.close(),
+        }
+    }
+
+    fn apply_settings(&mut self, ctx: &egui::Context, action: settings::Action) {
+        match action {
+            settings::Action::Open => self.settings_box.open = true,
+            settings::Action::Close => self.settings_box.open = false,
+            settings::Action::Section(section) => self.settings_box.section = section,
+            settings::Action::Change(change) => {
+                let mut settings = self.settings.clone();
+                settings.change(change);
+                if settings != self.settings {
+                    settings.apply(ctx, self.platform.as_ref());
+                    self.settings = settings;
+                }
+            }
         }
     }
 
@@ -491,7 +524,7 @@ impl eframe::App for App {
         }
         let modal = self.clone.dialog().is_some() || self.settings_box.open;
         if !modal && ctx.input_mut(|i| i.consume_shortcut(&settings::SHORTCUT)) {
-            strip.push(Action::OpenSettings);
+            strip.push(crate::Action::Settings(settings::Action::Open));
         }
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];
@@ -633,13 +666,13 @@ mod tests {
             None,
         );
         let ctx = egui::Context::default();
-        app.apply(&ctx, Action::PickFolder);
-        app.apply(&ctx, Action::PickFolder);
+        app.apply(&ctx, crate::Action::Tabs(Action::PickFolder));
+        app.apply(&ctx, crate::Action::Tabs(Action::PickFolder));
         let first = platform.pending.lock().unwrap().pop().unwrap();
         assert!(platform.pending.lock().unwrap().is_empty());
         // Cancelled: the next click opens a dialog again.
         first(None);
-        app.apply(&ctx, Action::PickFolder);
+        app.apply(&ctx, crate::Action::Tabs(Action::PickFolder));
         let second = platform.pending.lock().unwrap().pop().unwrap();
         second(Some("a".to_owned()));
         app.receive();
@@ -707,7 +740,10 @@ mod tests {
         assert!(!app.missing.contains("/another/missing"));
         app.check_missing(11.0);
         assert!(app.missing.contains("/another/missing"));
-        app.apply(&egui::Context::default(), Action::ForgetMissing);
+        app.apply(
+            &egui::Context::default(),
+            crate::Action::Tabs(Action::ForgetMissing),
+        );
         assert_eq!(app.recent, ["."]);
         assert_eq!(app.state().recent, ["."]);
     }
@@ -855,8 +891,14 @@ mod tests {
         let mut storage = Memory::default();
         app.persist(Some(&mut storage));
         assert_eq!(storage.flushes, 0, "nothing changed");
-        app.apply(&ctx, Action::Setting(Change::Theme(Theme::Dark)));
-        app.apply(&ctx, Action::Setting(Change::DiffSplit(true)));
+        app.apply(
+            &ctx,
+            crate::Action::Settings(settings::Action::Change(Change::Theme(Theme::Dark))),
+        );
+        app.apply(
+            &ctx,
+            crate::Action::Settings(settings::Action::Change(Change::DiffSplit(true))),
+        );
         assert_eq!(
             ctx.options(|o| o.theme_preference),
             egui::ThemePreference::Dark
@@ -919,21 +961,21 @@ mod tests {
         }
     }
 
-    fn clone_fields(url: &str, path: &str) -> Action {
-        Action::CloneFields(crate::clone::Fields {
+    fn clone_fields(url: &str, path: &str) -> crate::Action {
+        crate::Action::Clone(clone::Action::Fields(clone::Fields {
             url: url.into(),
             path: path.into(),
             ..Default::default()
-        })
+        }))
     }
 
     #[test]
     fn a_clone_opens_in_the_empty_tab_then_in_new_tabs_and_enters_recent() {
         let ctx = egui::Context::default();
         let mut app = app(Saved::default(), None);
-        app.apply(&ctx, Action::OpenClone(Kind::Clone));
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Open(Kind::Clone)));
         app.apply(&ctx, clone_fields("a", "copy"));
-        app.apply(&ctx, Action::SubmitClone);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Submit));
         app.receive();
         assert!(app.clone.dialog().is_none());
         assert_eq!(paths(&app), [Some("copy")]);
@@ -943,9 +985,9 @@ mod tests {
             "log read"
         );
         // With a repo shown: a new tab, shown.
-        app.apply(&ctx, Action::OpenClone(Kind::Init));
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Open(Kind::Init)));
         app.apply(&ctx, clone_fields("", "fresh"));
-        app.apply(&ctx, Action::SubmitClone);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Submit));
         app.receive();
         assert_eq!(
             (paths(&app), app.active),
@@ -959,9 +1001,9 @@ mod tests {
     fn a_failed_clone_leaves_the_tabs_alone_and_the_dialog_open() {
         let ctx = egui::Context::default();
         let mut app = app(Saved::default(), Some("a"));
-        app.apply(&ctx, Action::OpenClone(Kind::Clone));
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Open(Kind::Clone)));
         app.apply(&ctx, clone_fields("nowhere", "copy"));
-        app.apply(&ctx, Action::SubmitClone);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Submit));
         app.receive();
         assert_eq!(paths(&app), [Some("a")]);
         assert!(app.cloning.is_none());
@@ -983,23 +1025,23 @@ mod tests {
             None,
         );
         let ctx = egui::Context::default();
-        app.apply(&ctx, Action::OpenClone(Kind::Clone));
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Open(Kind::Clone)));
         app.apply(&ctx, clone_fields("https://host/a.git", ""));
         // "Browse…": the destination is the chosen folder plus the name.
-        app.apply(&ctx, Action::BrowseCloneFolder);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Browse));
         app.receive();
         let path = app.clone.dialog().unwrap().fields.path.clone();
         assert_eq!(path, Path::new("/work").join("a").to_string_lossy());
         app.apply(&ctx, clone_fields("a", "copy"));
-        app.apply(&ctx, Action::SubmitClone);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Submit));
         app.receive();
         assert!(app.clone.running().is_some());
         assert_eq!(paths(&app), [None], "not among the tabs yet");
         // Not closed while running; a second submit does nothing.
-        app.apply(&ctx, Action::CloseClone);
-        app.apply(&ctx, Action::SubmitClone);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Close));
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Submit));
         assert!(app.clone.dialog().is_some());
-        app.apply(&ctx, Action::CancelClone);
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Cancel));
         platform.run_all();
         app.receive();
         let dialog = app.clone.dialog().unwrap();

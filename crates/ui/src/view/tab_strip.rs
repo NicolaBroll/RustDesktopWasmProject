@@ -3,6 +3,7 @@
 //! shows only on the active tab and under the mouse.
 
 use super::*;
+use crate::tabs;
 use egui::{Pos2, Rect, Stroke};
 
 /// Height of the strip.
@@ -63,7 +64,7 @@ fn tab_strip(
                     }
                 }
                 if can_pick && new_tab_button(ui).clicked() {
-                    actions.push(Action::PickFolder);
+                    actions.push(Action::Tabs(tabs::Action::PickFolder));
                 }
             });
         });
@@ -148,9 +149,9 @@ fn tab(
 
     let closes = close.clicked() || response.middle_clicked();
     if closes && !label.writing {
-        actions.push(Action::CloseTab(index));
+        actions.push(Action::Tabs(tabs::Action::CloseTab(index)));
     } else if response.clicked() {
-        actions.push(Action::SwitchTab(index));
+        actions.push(Action::Tabs(tabs::Action::SwitchTab(index)));
     }
     close.on_hover_text(if label.writing {
         tr!("tabs-close-writing")

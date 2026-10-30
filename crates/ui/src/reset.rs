@@ -6,11 +6,25 @@
 //! Data only, no egui. Command contract in `impl-docs/git/reset.md`.
 
 use crate::merge::{Outcome, Received, reread_warning};
-use crate::{Action, Done, ErrorKind, Request, Tab, params};
+use crate::{Done, ErrorKind, Request, Tab, params};
 use project_domain::Oid;
 use project_engine::{ResetMode, ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 use project_i18n::tr;
 use serde_json::Value;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the dialog to reset the current branch (or a detached HEAD) to `target` (shown as
+    /// `what`): the plan of the chosen mode is read first.
+    Open { target: Oid, what: String },
+    /// The mode chosen in the reset dialog: its plan is read again.
+    Mode(Mode),
+    /// "Reset" in the dialog (`branch.reset` with the plan's `expected`).
+    Submit,
+    /// Closes the reset dialog without resetting.
+    Close,
+}
 
 /// The read-only plan for the dialog.
 pub const PREVIEW: &str = "branch.reset_preview";
@@ -347,7 +361,7 @@ impl Tab {
             return;
         };
         let preview = match action {
-            Action::OpenReset { target, what } => {
+            Action::Open { target, what } => {
                 if writing || repo.modal_open() {
                     return;
                 }
@@ -357,8 +371,8 @@ impl Tab {
                 };
                 repo.reset.open(target, what, branch)
             }
-            Action::ResetMode(mode) => repo.reset.set_mode(mode),
-            Action::SubmitReset => {
+            Action::Mode(mode) => repo.reset.set_mode(mode),
+            Action::Submit => {
                 if writing {
                     return;
                 }
@@ -369,11 +383,10 @@ impl Tab {
                 }
                 None
             }
-            Action::CloseReset => {
+            Action::Close => {
                 repo.reset.close();
                 None
             }
-            _ => unreachable!("action routed to the wrong function"),
         };
         if let Some((params, seq)) = preview {
             self.submit(PREVIEW, params, Request::ResetPreview(generation, seq));

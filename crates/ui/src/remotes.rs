@@ -22,7 +22,7 @@ use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure};
 use crate::messages_text;
 use crate::running::Running;
-use crate::{Action, Done, Request, Tab, params};
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
@@ -33,6 +33,42 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the "Add remote" dialog.
+    Add,
+    /// The fields of the "Add remote" dialog changed.
+    AddFields(AddFields),
+    /// "Hide" (`true`) or "Show" the URL with credentials in the "Add remote" dialog.
+    HideUrl(bool),
+    /// Submits the "Add remote" dialog.
+    SubmitAdd,
+    /// "Stop" the fetch of the add in progress (the remote stays added).
+    CancelAdd,
+    /// Removes the given remote: first without confirmation, the engine always asks and the
+    /// dialog opens.
+    Remove(String),
+    /// Confirms the pending removal: resends with `"confirm": true`.
+    ConfirmRemove,
+    /// Deletes the branch (second value) from the remote (first value): first without
+    /// confirmation, the engine always asks and the dialog opens.
+    DeleteBranch(String, String),
+    /// Confirms the pending deletion of the remote branch: resends with `"confirm": true` and the
+    /// commit seen.
+    ConfirmDeleteBranch,
+    /// Deletes the tag (second value) from the remote (first value): first without confirmation,
+    /// the engine always asks and the dialog opens.
+    DeleteTag(String, String),
+    /// Confirms the pending deletion of the remote tag: resends with `"confirm": true` and the
+    /// value seen.
+    ConfirmDeleteTag,
+    /// Closes the open remotes dialog without sending anything.
+    CloseDialog,
+    /// Closes the fetch error window after the add.
+    DismissError,
+}
 
 /// The id of the command that lists the remotes.
 pub const LIST: &str = "remote.list";
@@ -976,7 +1012,7 @@ impl Tab {
     /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_remotes(&mut self, action: Action) {
         match action {
-            Action::AddRemote => {
+            Action::Add => {
                 if let Some(repo) = &mut self.repo
                     && self.executor.writing().is_none()
                     && !repo.modal_open()
@@ -984,17 +1020,17 @@ impl Tab {
                     repo.remotes.open_add();
                 }
             }
-            Action::AddRemoteFields(fields) => {
+            Action::AddFields(fields) => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.set_fields(fields);
                 }
             }
-            Action::HideRemoteUrl(hide) => {
+            Action::HideUrl(hide) => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.hide_url(hide);
                 }
             }
-            Action::SubmitAddRemote => {
+            Action::SubmitAdd => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1014,12 +1050,12 @@ impl Tab {
                     repo.remotes.add_started(ticket);
                 }
             }
-            Action::CancelAddRemote => {
+            Action::CancelAdd => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.remotes.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::RemoveRemote(name) => {
+            Action::Remove(name) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1035,7 +1071,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::ConfirmRemoveRemote => {
+            Action::ConfirmRemove => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1049,7 +1085,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::DeleteRemoteBranch(remote, branch) => {
+            Action::DeleteBranch(remote, branch) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1068,7 +1104,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::DeleteRemoteTag(remote, name) => {
+            Action::DeleteTag(remote, name) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1088,7 +1124,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::ConfirmDeleteRemoteBranch | Action::ConfirmDeleteRemoteTag => {
+            Action::ConfirmDeleteBranch | Action::ConfirmDeleteTag => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1101,17 +1137,16 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::CloseRemoteDialog => {
+            Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.close();
                 }
             }
-            Action::DismissRemoteError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

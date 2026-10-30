@@ -1,4 +1,5 @@
 use super::*;
+use crate::{fetch, sync};
 
 /// The window of a failed operation: what happened, what to do, git's text. It does not
 /// block the rest of the window; `dismiss` closes it.
@@ -42,7 +43,13 @@ pub(crate) fn sync_window(
 ) {
     match window {
         Window::Failure(failure) => {
-            failure_window(ctx, "sync-error", failure, Action::DismissSync, actions);
+            failure_window(
+                ctx,
+                "sync-error",
+                failure,
+                Action::Sync(sync::Action::Dismiss),
+                actions,
+            );
         }
         Window::Conflict(conflict) => conflict_window(ctx, conflict, can_write, actions),
         Window::Rejected(rejected) => rejected_window(ctx, rejected, can_write, actions),
@@ -113,15 +120,18 @@ pub(super) fn conflict_window(
                     ))
                     .on_disabled_hover_text(wait());
                 if button.clicked() {
-                    actions.push(Action::Pull(conflict.branch.clone(), Some(other)));
+                    actions.push(Action::Sync(sync::Action::Pull(
+                        conflict.branch.clone(),
+                        Some(other),
+                    )));
                 }
                 if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(Action::DismissSync);
+                    actions.push(Action::Sync(sync::Action::Dismiss));
                 }
             });
         });
     if !open {
-        actions.push(Action::DismissSync);
+        actions.push(Action::Sync(sync::Action::Dismiss));
     }
 }
 
@@ -156,7 +166,10 @@ pub(super) fn rejected_window(
                         .on_hover_text(tr!("sync-pull-button-hint"))
                         .on_disabled_hover_text(wait());
                     if pull.clicked() {
-                        actions.push(Action::Pull(rejected.branch.clone(), None));
+                        actions.push(Action::Sync(sync::Action::Pull(
+                            rejected.branch.clone(),
+                            None,
+                        )));
                     }
                 }
                 if rejected.stale() {
@@ -165,12 +178,12 @@ pub(super) fn rejected_window(
                         .on_hover_text(tr!("sync-fetch-button-hint"))
                         .on_disabled_hover_text(wait());
                     if fetch.clicked() {
-                        actions.push(Action::DismissSync);
-                        actions.push(Action::Fetch(None));
+                        actions.push(Action::Sync(sync::Action::Dismiss));
+                        actions.push(Action::Fetch(fetch::Action::Fetch(None)));
                     }
                 }
                 if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(Action::DismissSync);
+                    actions.push(Action::Sync(sync::Action::Dismiss));
                 }
                 if rejected.non_fast_forward() {
                     ui.separator();
@@ -186,13 +199,13 @@ pub(super) fn rejected_window(
                         .on_hover_text(tr!("sync-force-button-hint"))
                         .on_disabled_hover_text(wait());
                     if force.clicked() {
-                        actions.push(Action::ForcePush);
+                        actions.push(Action::Sync(sync::Action::ForcePush));
                     }
                 }
             });
         });
     if !open {
-        actions.push(Action::DismissSync);
+        actions.push(Action::Sync(sync::Action::Dismiss));
     }
 }
 
@@ -250,14 +263,14 @@ pub(super) fn confirm_force(
                     tr!("sync-force-confirm-gone")
                 });
             if response.clicked() {
-                actions.push(Action::ConfirmForcePush);
+                actions.push(Action::Sync(sync::Action::ConfirmForcePush));
             }
             if ui.button(tr!("sync-force-confirm-cancel")).clicked() {
-                actions.push(Action::DismissSync);
+                actions.push(Action::Sync(sync::Action::Dismiss));
             }
         });
     });
     if modal.should_close() {
-        actions.push(Action::DismissSync);
+        actions.push(Action::Sync(sync::Action::Dismiss));
     }
 }

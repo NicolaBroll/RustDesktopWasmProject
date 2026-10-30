@@ -2,12 +2,12 @@
 //! Reads the state of [`crate::diff`] and produces [`Action`]; changes nothing directly.
 
 use crate::diff::{
-    DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_summary, file_title,
-    line_number, line_prefix,
+    self, DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_summary,
+    file_title, line_number, line_prefix,
 };
 use crate::icons;
 use crate::lines::{self, LineButtons, LineSelection, Partial};
-use crate::settings::Change;
+use crate::settings::{self, Change};
 use crate::{Action, Drag};
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
 use project_domain::LineKind;
@@ -89,7 +89,7 @@ pub(crate) fn diff_panel(
         Pane::Failed(_, error) => {
             ui.colored_label(ui.visuals().error_fg_color, error);
             if ui.button(tr!("diff-retry")).clicked() {
-                actions.push(Action::RetryDiff);
+                actions.push(Action::Diff(diff::Action::Retry));
             }
         }
         Pane::Loaded(target, doc) if doc.diff.files.is_empty() => {
@@ -129,7 +129,7 @@ fn toolbar(
                 .on_hover_text(tr!("diff-back-hint"))
                 .clicked()
             {
-                actions.push(Action::CloseDiff);
+                actions.push(Action::Diff(diff::Action::Close));
             }
             ui.separator();
         }
@@ -156,7 +156,9 @@ fn toolbar(
             for (value, icon, hint) in layouts {
                 let button = egui::Button::selectable(split == value, icons::text(icon, 14.0));
                 if ui.add(button).on_hover_text(hint).clicked() && split != value {
-                    actions.push(Action::Setting(Change::DiffSplit(value)));
+                    actions.push(Action::Settings(settings::Action::Change(
+                        Change::DiffSplit(value),
+                    )));
                 }
             }
             if let Pane::Loaded(_, doc) = pane
@@ -206,13 +208,13 @@ fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
                 tr!("diff-wait-write")
             });
         if button.clicked() {
-            actions.push(Action::WriteSelectedLines);
+            actions.push(Action::Lines(lines::Action::Selected));
         }
         let clear = ui
             .add_enabled(b.clear, egui::Button::new(tr!("diff-clear")))
             .on_hover_text(tr!("diff-clear-hint"));
         if clear.clicked() {
-            actions.push(Action::ClearLines);
+            actions.push(Action::Lines(lines::Action::Clear));
         }
     });
 }
@@ -335,7 +337,7 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
     let selectable_lines = buttons.is_some();
     let (pointer, down) = ui.input(|i| (i.pointer.interact_pos(), i.pointer.primary_down()));
     if state.selection.is_dragging() && !down {
-        actions.push(Action::DragLines(Drag::End));
+        actions.push(Action::Lines(lines::Action::Drag(Drag::End)));
     }
     // Width of the content: the widest row, plus the cut sign.
     let text_w = (doc.max_cols + 28) as f32 * style.char_w;
@@ -373,14 +375,14 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
                     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if response.clicked() {
                         let shift = ui.input(|i| i.modifiers.shift);
-                        actions.push(Action::SelectLine { row: index, shift });
+                        actions.push(Action::Lines(lines::Action::Select { row: index, shift }));
                     } else if response.drag_started() {
-                        actions.push(Action::DragLines(Drag::Start(index)));
+                        actions.push(Action::Lines(lines::Action::Drag(Drag::Start(index))));
                     } else if state.selection.is_dragging()
                         && down
                         && pointer.is_some_and(|p| rect.contains(p))
                     {
-                        actions.push(Action::DragLines(Drag::Over(index)));
+                        actions.push(Action::Lines(lines::Action::Drag(Drag::Over(index))));
                     }
                 }
                 if let (Row::Hunk(_, h), Some(b)) = (row, buttons) {
@@ -420,7 +422,7 @@ fn hunk_button(ui: &mut Ui, rect: Rect, hunk: usize, b: LineButtons, actions: &m
         .on_hover_text(help)
         .on_disabled_hover_text(tr!("diff-wait-write"));
     if button.clicked() {
-        actions.push(Action::WriteHunk(hunk));
+        actions.push(Action::Lines(lines::Action::Hunk(hunk)));
     }
 }
 

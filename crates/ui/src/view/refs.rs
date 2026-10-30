@@ -1,5 +1,6 @@
 use super::*;
 use crate::ref_tree::{self, Row};
+use crate::{branch, merge, remotes, sync};
 use egui::{Rect, UiBuilder};
 use project_domain::{HEADS_PREFIX, remote_short};
 use std::collections::HashSet;
@@ -363,7 +364,9 @@ impl Column<'_> {
         }
         let local = info.kind == RefKind::LocalBranch;
         if response.double_clicked() && local && !is_head && self.can_write {
-            actions.push(Action::Checkout(info.short_name().to_owned()));
+            actions.push(Action::Branch(branch::Action::Checkout(
+                info.short_name().to_owned(),
+            )));
         } else if response.clicked() {
             actions.push(Action::SelectCommit(info.target));
         }
@@ -415,7 +418,7 @@ fn remotes_section(
             .on_hover_text(tr!("remotes-add-button-hint"))
             .on_disabled_hover_text(wait());
         if button.clicked() {
-            actions.push(Action::AddRemote);
+            actions.push(Action::Remotes(remotes::Action::Add));
         }
     };
     let mut body_actions = Vec::new();
@@ -534,7 +537,7 @@ pub(super) fn ref_menu(
                 wait()
             });
         if button.clicked() {
-            actions.push(Action::Checkout(name.to_owned()));
+            actions.push(Action::Branch(branch::Action::Checkout(name.to_owned())));
             ui.close();
         }
     }
@@ -544,7 +547,7 @@ pub(super) fn ref_menu(
         .on_disabled_hover_text(wait());
     if button.clicked() {
         let (start, proposed) = Start::from_ref(info);
-        actions.push(Action::NewBranch(start, proposed));
+        actions.push(Action::Branch(branch::Action::NewBranch(start, proposed)));
         ui.close();
     }
     let button = ui
@@ -552,7 +555,9 @@ pub(super) fn ref_menu(
         .on_hover_text(tr!("refs-new-tag-hint", id = info.target.short()))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::NewTag(Start::from_ref(info).0));
+        actions.push(Action::Branch(branch::Action::NewTag(
+            Start::from_ref(info).0,
+        )));
         ui.close();
     }
     if !is_head {
@@ -577,7 +582,9 @@ pub(super) fn ref_menu(
             ))
             .on_disabled_hover_text(wait());
         if button.clicked() {
-            actions.push(Action::DeleteRemoteBranch(remote, branch));
+            actions.push(Action::Remotes(remotes::Action::DeleteBranch(
+                remote, branch,
+            )));
             ui.close();
         }
     }
@@ -594,7 +601,9 @@ pub(super) fn ref_menu(
         .add_enabled(can_write, egui::Button::new(tr!("refs-rename")))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::RenameBranch(name.to_owned()));
+        actions.push(Action::Branch(branch::Action::RenameBranch(
+            name.to_owned(),
+        )));
         ui.close();
     }
     ui.separator();
@@ -624,7 +633,10 @@ pub(super) fn ref_menu(
             pull_hint
         });
     if button.clicked() {
-        actions.push(Action::Pull(Some(name.to_owned()), None));
+        actions.push(Action::Sync(sync::Action::Pull(
+            Some(name.to_owned()),
+            None,
+        )));
         ui.close();
     }
     let button = ui
@@ -639,7 +651,7 @@ pub(super) fn ref_menu(
         })
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::Push(Some(name.to_owned())));
+        actions.push(Action::Sync(sync::Action::Push(Some(name.to_owned()))));
         ui.close();
     }
     ui.separator();
@@ -661,7 +673,10 @@ pub(super) fn ref_menu(
             wait()
         });
     if button.clicked() {
-        actions.push(Action::DeleteBranch(name.to_owned(), info.target));
+        actions.push(Action::Branch(branch::Action::DeleteBranch(
+            name.to_owned(),
+            info.target,
+        )));
         ui.close();
     }
 }
@@ -689,7 +704,10 @@ fn tag_items(
             .on_hover_text(tr!("refs-tag-push-hint", name = name, remote = remote))
             .on_disabled_hover_text(wait());
         if button.clicked() {
-            actions.push(Action::PushTag(remote.clone(), name.to_owned()));
+            actions.push(Action::Sync(sync::Action::PushTag(
+                remote.clone(),
+                name.to_owned(),
+            )));
             ui.close();
         }
     }
@@ -707,7 +725,7 @@ fn tag_items(
         .on_hover_text(tr!("refs-tag-delete-hint", name = name))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::DeleteTag(name.to_owned()));
+        actions.push(Action::Branch(branch::Action::DeleteTag(name.to_owned())));
         ui.close();
     }
     for remote in remotes {
@@ -725,7 +743,10 @@ fn tag_items(
             ))
             .on_disabled_hover_text(wait());
         if button.clicked() {
-            actions.push(Action::DeleteRemoteTag(remote.clone(), name.to_owned()));
+            actions.push(Action::Remotes(remotes::Action::DeleteTag(
+                remote.clone(),
+                name.to_owned(),
+            )));
             ui.close();
         }
     }
@@ -766,11 +787,11 @@ pub(super) fn merge_items(
             .on_disabled_hover_text(blocked.map_or_else(wait, str::to_owned));
 
         if button.clicked() {
-            actions.push(Action::Merge {
+            actions.push(Action::Merge(merge::Action::Merge {
                 rev: rev.to_owned(),
                 what: what.to_owned(),
                 no_ff,
-            });
+            }));
             ui.close();
         }
     }

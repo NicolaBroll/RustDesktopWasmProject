@@ -11,11 +11,35 @@
 //! `Kind::Rebase`) finishes or aborts it.
 
 use crate::merge::{Outcome, Received, message_texts, reread_warning};
-use crate::{Action, Done, ErrorKind, Request, Tab};
+use crate::{Done, ErrorKind, Request, Tab};
 use project_domain::{Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep};
 use project_engine::{RebasePlanParams, RebasePlanResult, RebaseStartParams, RebaseStartResult};
 use project_i18n::tr;
 use serde_json::Value;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the interactive rebase editor for the commits after `base` (the parent of the chosen
+    /// commit, shown as `what`).
+    Open { base: Oid, what: String },
+    /// Moves step `from` into the gap above row `to` of the rebase plan (`len` = at the bottom).
+    Move { from: usize, to: usize },
+    /// The action of a step of the rebase plan.
+    Choose(usize, RebaseAction),
+    /// The message of a step of the rebase plan.
+    Message(usize, String),
+    /// Selects the step whose message is edited.
+    Select(usize),
+    /// "Run rebase" (`rebase.start`).
+    Run,
+    /// Confirms rewriting published commits (`"confirm": true`).
+    Confirm,
+    /// "Back to the plan" from the confirmation.
+    CancelConfirm,
+    /// Closes the rebase editor.
+    Close,
+}
 
 /// The command that reads the default plan.
 pub const PLAN: &str = "rebase.plan";
@@ -558,7 +582,7 @@ impl Tab {
             return;
         };
         match action {
-            Action::OpenRebase { base, what } => {
+            Action::Open { base, what } => {
                 if writing || repo.modal_open() {
                     return;
                 }
@@ -566,15 +590,15 @@ impl Tab {
                     self.submit(PLAN, params, Request::RebasePlan(generation));
                 }
             }
-            Action::RebaseMove { from, to } => repo.rebase.move_step(from, to),
-            Action::RebaseChoose(i, action) => repo.rebase.set_action(i, action),
-            Action::RebaseMessage(i, message) => repo.rebase.set_message(i, message),
-            Action::RebaseSelect(i) => repo.rebase.select(i),
-            Action::RunRebase | Action::ConfirmRebase => {
+            Action::Move { from, to } => repo.rebase.move_step(from, to),
+            Action::Choose(i, action) => repo.rebase.set_action(i, action),
+            Action::Message(i, message) => repo.rebase.set_message(i, message),
+            Action::Select(i) => repo.rebase.select(i),
+            Action::Run | Action::Confirm => {
                 if writing {
                     return;
                 }
-                let sent = if matches!(action, Action::RunRebase) {
+                let sent = if matches!(action, Action::Run) {
                     repo.rebase.run()
                 } else {
                     repo.rebase.confirm()
@@ -585,9 +609,8 @@ impl Tab {
                     self.submit(START, params, Request::Rebase(generation));
                 }
             }
-            Action::CancelRebaseConfirm => repo.rebase.cancel_confirm(),
-            Action::CloseRebase => repo.rebase.close(),
-            _ => unreachable!("action routed to the wrong function"),
+            Action::CancelConfirm => repo.rebase.cancel_confirm(),
+            Action::Close => repo.rebase.close(),
         }
     }
 

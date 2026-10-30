@@ -143,6 +143,15 @@ pub(crate) fn commit_list(
             }
             let id = commit.id;
             response.context_menu(|ui| {
+                if ui
+                    .button(tr!("commit-copy-id"))
+                    .on_hover_text(tr!("commit-copy-id-hint", id = id.to_string()))
+                    .clicked()
+                {
+                    ui.ctx().copy_text(id.to_string());
+                    ui.close();
+                }
+                ui.separator();
                 let button = ui
                     .add_enabled(can_write, egui::Button::new(tr!("commit-new-branch")))
                     .on_hover_text(tr!("commit-new-branch-hint", id = id.short()))
@@ -165,8 +174,12 @@ pub(crate) fn commit_list(
                     ui.close();
                 }
                 let what = merge::commit_name(id, &repo.refs);
-                merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
-                pick_items(ui, commit, &what, &merge, can_write, actions);
+                // Already in HEAD: merging or cherry-picking it would change nothing.
+                let in_head = in_head_history(repo, id);
+                if !in_head {
+                    merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
+                }
+                pick_items(ui, commit, &what, &merge, !in_head, can_write, actions);
                 rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
                 reset_item(ui, repo, commit, &what, can_write, actions);
             });
@@ -668,12 +681,14 @@ pub(super) fn ref_labels(
 
 /// "Cherry-pick onto «branch»" and "Revert" of the commit menu: off like merge (detached
 /// HEAD, operation in progress, write or open dialog). For a merge commit the parent's
-/// dialog is opened first.
+/// dialog is opened first. `cherry_pick`: false for a commit already in HEAD, which only
+/// gets "Revert".
 fn pick_items(
     ui: &mut Ui,
     commit: &Commit,
     what: &str,
     gate: &merge::Gate,
+    cherry_pick: bool,
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -711,6 +726,9 @@ fn pick_items(
         ]
     };
     for (pick, label, hint) in items {
+        if pick == merge::Pick::CherryPick && !cherry_pick {
+            continue;
+        }
         let button = ui
             .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
             .on_hover_text(hint)
@@ -774,6 +792,29 @@ fn rebase_item(
         }));
         ui.close();
     }
+}
+
+/// True if `id` is HEAD or one of its ancestors among the loaded commits (all parents). Only
+/// computed while the commit menu is open, on the list already loaded: no git call.
+fn in_head_history(repo: &RepoView, id: Oid) -> bool {
+    let Some(head) = repo.head.target() else {
+        return false;
+    };
+    let by_id: std::collections::HashMap<Oid, &Commit> =
+        repo.list.commits().iter().map(|c| (c.id, c)).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut next = vec![head];
+    while let Some(current) = next.pop() {
+        if current == id {
+            return true;
+        }
+        if seen.insert(current)
+            && let Some(commit) = by_id.get(&current)
+        {
+            next.extend(commit.parents.iter().copied());
+        }
+    }
+    false
 }
 
 /// True if `id` is reached from HEAD following first parents among the loaded commits.

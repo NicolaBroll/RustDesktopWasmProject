@@ -30,6 +30,7 @@ diff-unstage-selected = Unstage righe selezionate ({ $n })
 diff-stage-selected-hint = Mette in stage solo le righe selezionate; il resto del file resta fuori
 diff-unstage-selected-hint = Toglie dallo stage solo le righe selezionate; il worktree non cambia
 diff-no-lines-selected = Nessuna riga selezionata: clic su una riga + o - per selezionarla, Maiusc+clic per un intervallo, trascina per più righe
+diff-select-lines-hint = Clicca le righe per selezionarle
 diff-wait-write = Attendere la fine della scrittura in corso
 diff-clear = Deseleziona
 diff-clear-hint = Deseleziona tutte le righe (Esc)

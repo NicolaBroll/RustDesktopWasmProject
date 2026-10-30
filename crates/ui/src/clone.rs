@@ -266,6 +266,7 @@ impl CloneBox {
                 title: tr!("clone-not-possible-title"),
                 explanation: error,
                 git: detail,
+                stash: false,
             }),
             _ => Some(Failure {
                 title: match d.kind {
@@ -274,6 +275,7 @@ impl CloneBox {
                 },
                 explanation: error,
                 git: detail,
+                stash: false,
             }),
         };
         Received::Failed

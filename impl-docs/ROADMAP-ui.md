@@ -146,7 +146,7 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   no keys, so Esc closes only the menu (`keys_tests.rs`, checked on Xvfb).
 
 ### U32 — Readable "local changes" refusals
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** merge, cherry-pick, revert, rebase and pull refused for local changes show the
   engine text ("`stash.push`", "--autostash", "niente modificato") in a dialog at the top of
   the window with only "Close". The UI recognizes these refusals (message keys
@@ -156,6 +156,10 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   not change.
 - **Done when:** merge of `experiment` into `main` with `src/lib.rs` modified shows the new
   dialog in both languages; "Stash…" opens the stash dialog; CI green.
+- **Done:** `ErrorKind::LocalChanges` (keys `engine-{merge,pick,pull,rebase}-local-changes`, files in
+  `error_detail`) → `common-local-changes` in a centered window with "Stash…" (opens the stash dialog)
+  and "Close" for merge, cherry-pick, revert and pull; the rebase editor shows the same text inline
+  (no button: the stash dialog cannot open above it). Engine texts unchanged.
 
 ### U33 — Narrow commit rows keep the branch names
 - [x] **Agent:** `egui-ui`
@@ -216,7 +220,7 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   destructive red (grey when nothing can be discarded); "Stage all" stays a button.
 
 ### U44 — Commit context menu: only what makes sense
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** on an ancestor of the current branch the menu offers "Merge into main" and
   "Cherry-pick onto main", which do nothing useful; it lacks "Copy commit id" and "Checkout this
   commit" (detached). Merge is hidden for ancestors of HEAD, cherry-pick for commits already in
@@ -225,14 +229,20 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   command).
 - **Done when:** menu on an ancestor of main has no merge/cherry-pick; "Copy commit id" puts
   the full id in the clipboard; CI green.
+- **Done:** merge and cherry-pick hidden for HEAD and its ancestors (walk of the loaded commits, only
+  while the menu is open); "Copy commit id" copies the full id. "Checkout this commit…" skipped: the
+  engine has no detached checkout (`branch.checkout` takes a branch name).
 
 ### U45 — Disabled entries say why
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** "Delete" on the current branch and "Pull (fast-forward)" on another branch are
   greyed without a reason; the same pull is called "Pull" on `main` and "Pull (fast-forward)"
   elsewhere. Every disabled context-menu entry has a tooltip with the reason (current branch,
   no upstream, ...); the pull entry has one name with the detail in the tooltip.
 - **Done when:** hover on the disabled entries shows the reason, both languages; CI green.
+- **Done:** the disabled entries already had `on_disabled_hover_text` (checked on Xvfb: Pull without
+  upstream, Delete on the current branch); the pull entry is now "Pull" everywhere, fast-forward detail
+  in the tooltip.
 
 ### U46 — Stable lane colors
 - [ ] **Agent:** `egui-ui`
@@ -274,13 +284,15 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
 - **Done when:** light screenshot of the stage panel shows the fields; CI green.
 
 ### U52 — Diff and file menu discoverability
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** "Stage selected lines (0)" and "Deselect" stay on screen without a selection and
   nothing says that lines are selected by clicking them. Without a selection the bar shows a
   hint ("Click lines to select them") instead of the two buttons. The file context menu gets
   "Copy path".
 - **Done when:** screenshots with and without a selection; "Copy path" fills the clipboard;
   CI green.
+- **Done:** without a selection the bar shows "Click lines to select them" (same height as the
+  buttons); "Copy path" in the file menu of the stage area and of the commit details.
 
 ### U53 — Settings: UI scale and date format
 - [x] **Agent:** `egui-ui`

@@ -909,6 +909,7 @@ fn add_outcome(r: RemoteAddResult) -> (Outcome, Option<Failure>) {
                     title: tr!("remotes-fetch-failed-title"),
                     explanation: format!("{} {}", error.message, added_anyway()),
                     git: None,
+                    stash: false,
                 });
                 notice.push_str(&tr!("remotes-added-fetch-failed"));
             }

@@ -55,6 +55,8 @@ pub struct Failure {
     pub explanation: String,
     /// git's text (stderr), if any.
     pub git: Option<String>,
+    /// Refused for uncommitted local changes: the window offers "Stash…".
+    pub stash: bool,
 }
 
 /// The fetch: the one in progress and the last error to explain.
@@ -210,6 +212,7 @@ impl FetchBox {
                     title: tr!("fetch-failed-title"),
                     explanation: error.clone(),
                     git: detail,
+                    stash: false,
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
@@ -250,6 +253,7 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
             nothing_changed()
         ),
         git: detail,
+        stash: false,
     }
 }
 
@@ -263,6 +267,21 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
             nothing_changed()
         ),
         git: detail,
+        stash: false,
+    }
+}
+
+/// The window of an operation (`title`) refused because of uncommitted changes to `files`:
+/// the UI's text instead of the engine's (meant for CLI and MCP), with "Stash…".
+pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
+    Failure {
+        title,
+        explanation: match files {
+            Some(files) => tr!("common-local-changes", files = files),
+            None => tr!("common-local-changes-no-files"),
+        },
+        git: None,
+        stash: true,
     }
 }
 

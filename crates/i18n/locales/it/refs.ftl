@@ -35,7 +35,6 @@ refs-pull-no-upstream = «{ $name }» non ha un upstream: fare prima Push, che l
 refs-pull-head-hint = Scarica { $upstream } e lo integra: fast-forward, merge o rebase secondo la configurazione
 refs-pull-other-hint = Scarica { $upstream } e porta avanti «{ $name }» senza passarci (solo fast-forward: se è divergente bisogna passarci)
 refs-pull = Pull
-refs-pull-ff = Pull (fast-forward)
 refs-push = Push
 refs-push-hint = Pubblica «{ $name }» su { $upstream }. Mai forzato
 refs-push-first-hint = Primo push di «{ $name }»: lo pubblica e imposta l'upstream

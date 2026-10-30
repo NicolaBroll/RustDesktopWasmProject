@@ -25,11 +25,11 @@ pub struct CommitRequest {
     pub message: String,
     /// Rewrites the last commit (`git commit --amend`) instead of creating a new one: same
     /// author and same parents, tree from the index, new message.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub amend: bool,
     /// Needed only with `amend` of an already published commit (reachable from a remote
     /// branch): without it, [`EngineError::ConfirmRequired`]. Ignored elsewhere.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub confirm: bool,
     /// Not a parameter of `commit.create`: set by `cherry_pick.continue` /
     /// `revert.continue` ([`CommitRequest::concluding`]) to conclude the cherry-pick or the

@@ -67,6 +67,21 @@ pub fn date_time_zone(sig: &Signature) -> String {
     format!("{} {sign}{:02}{:02}", date_time(sig), off / 60, off % 60)
 }
 
+/// How long before `now` (seconds since the epoch) a signature is, e.g. "3 h ago". A date in the
+/// future (a clock ahead) is "just now".
+pub fn relative(sig: &Signature, now: i64) -> String {
+    let secs = now.saturating_sub(sig.time).max(0);
+    let n = |unit: i64| secs / unit;
+    match secs {
+        s if s < 60 => tr!("format-relative-now"),
+        s if s < 3_600 => tr!("format-relative-minutes", n = n(60)),
+        s if s < 86_400 => tr!("format-relative-hours", n = n(3_600)),
+        s if s < 30 * 86_400 => tr!("format-relative-days", n = n(86_400)),
+        s if s < 365 * 86_400 => tr!("format-relative-months", n = n(30 * 86_400)),
+        _ => tr!("format-relative-years", n = n(365 * 86_400)),
+    }
+}
+
 /// Days since the Unix epoch → (year, month, day) in the Gregorian calendar
 /// (Howard Hinnant's `civil_from_days` algorithm).
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
@@ -139,6 +154,21 @@ mod tests {
         .map(change_letter)
         .concat();
         assert_eq!(letters, "ADMTC");
+    }
+
+    #[test]
+    fn relative_dates() {
+        project_i18n::set_lang(project_i18n::Lang::En);
+        let now = 1_700_000_000;
+        let ago = |secs: i64| relative(&sig(now - secs, 120), now);
+        assert_eq!(ago(-30), "just now");
+        assert_eq!(ago(59), "just now");
+        assert_eq!(ago(5 * 60), "5 min ago");
+        assert_eq!(ago(3 * 3_600 + 59), "3 h ago");
+        assert_eq!(ago(86_400), "yesterday");
+        assert_eq!(ago(4 * 86_400), "4 days ago");
+        assert_eq!(ago(40 * 86_400), "1 month ago");
+        assert_eq!(ago(800 * 86_400), "2 years ago");
     }
 
     #[test]

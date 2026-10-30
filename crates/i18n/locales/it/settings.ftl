@@ -1,4 +1,4 @@
-# Settings window: sections, theme and language (settings.rs, view/settings_view.rs).
+# Settings window: sections, theme, language, scale and dates (settings.rs, view/settings_view.rs).
 
 settings-title = Impostazioni
 settings-close = Chiudi
@@ -18,3 +18,9 @@ settings-fetch-minutes = { $n ->
    *[other] Ogni { $n } minuti
 }
 settings-fetch-hint = Ogni scheda aperta scarica dal suo remote in background (fetch, mai pull): branch locali e file non vengono toccati. Aspetta finché è aperta una finestra, gira un comando o c'è un'operazione in corso.
+settings-scale = Dimensione dell'interfaccia
+settings-scale-value = { $n }%
+settings-scale-hint = Anche { $larger } e { $smaller }; { $reset } torna al 100%.
+settings-dates = Date nell'elenco dei commit
+settings-dates-absolute = Data e ora
+settings-dates-relative = Relative (“3 h fa”)

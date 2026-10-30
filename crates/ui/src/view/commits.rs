@@ -1,18 +1,31 @@
 use super::*;
+use crate::settings::DateFormat;
 use crate::{branch, merge, rebase, search};
 
 /// Height of a row of the commit list.
 pub(super) const ROW_HEIGHT: f32 = 22.0;
 
-/// `writing`: a write is in progress, the menu entries that write wait.
+/// How the commit list is drawn in this frame.
+pub(crate) struct ListOptions {
+    /// A write is in progress: the menu entries that write wait.
+    pub(crate) writing: bool,
+    /// The search field takes the keyboard.
+    pub(crate) focus_search: bool,
+    pub(crate) dates: DateFormat,
+}
+
 pub(crate) fn commit_list(
     ui: &mut Ui,
     repo: &RepoView,
     viewport: &mut ListViewport,
-    writing: bool,
-    focus_search: bool,
+    options: ListOptions,
     actions: &mut Vec<Action>,
 ) {
+    let ListOptions {
+        writing,
+        focus_search,
+        dates,
+    } = options;
     if repo.search.is_open() {
         search_bar(ui, &repo.search, focus_search, actions);
     }
@@ -40,6 +53,10 @@ pub(crate) fn commit_list(
         tag_fill: ui.visuals().widgets.inactive.bg_fill,
         head_fill: ui.visuals().strong_text_color(),
         head_text: ui.visuals().panel_fill,
+        now: match dates {
+            DateFormat::Absolute => None,
+            DateFormat::Relative => Some(unix_now()),
+        },
     };
     // On the selected row the text takes the selection's color: gray on blue is hard to read.
     let on_selection = RowStyle {
@@ -432,6 +449,17 @@ pub(super) struct RowStyle {
     tag_fill: Color32,
     head_fill: Color32,
     head_text: Color32,
+    /// Dates relative to this moment (seconds since the epoch); `None`: date and time.
+    now: Option<i64>,
+}
+
+/// Seconds since the epoch now (0 if the clock is before it).
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 /// Width of the id column.
@@ -451,6 +479,14 @@ pub(super) fn side_columns(width: f32) -> (f32, f32) {
         (0.0, DATE_W)
     } else {
         (0.0, 0.0)
+    }
+}
+
+/// The date of the list: relative to `now` if given, otherwise date and time.
+fn commit_date(sig: &Signature, now: Option<i64>) -> String {
+    match now {
+        Some(now) => format::relative(sig, now),
+        None => date_time(sig),
     }
 }
 
@@ -475,7 +511,12 @@ pub(super) fn commit_row(
             &style.font,
             style.weak,
         ),
-        (date_w, date_time(&commit.author), &style.font, style.weak),
+        (
+            date_w,
+            commit_date(&commit.author, style.now),
+            &style.font,
+            style.weak,
+        ),
     ];
     let mut x = rect.left() + 8.0;
     let mut more = None;

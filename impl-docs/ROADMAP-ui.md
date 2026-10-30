@@ -136,12 +136,14 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   the button's tooltip) and keeps its row also when empty, so the box does not move.
 
 ### U31 — Esc with a menu open
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** with a diff open, Esc that closes the File/Help menu (or a context menu) also
   closes the diff (`lib.rs` keyboard handling does not check open popups). Esc closes only the
   topmost thing.
 - **Done when:** unit or Xvfb check: menu open over a diff, Esc → menu closed, diff still open;
   CI green.
+- **Done:** the frame notes whether a menu or popup is open before drawing; then the tab takes
+  no keys, so Esc closes only the menu (`keys_tests.rs`, checked on Xvfb).
 
 ### U32 — Readable "local changes" refusals
 - [ ] **Agent:** `egui-ui`
@@ -177,7 +179,7 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
 ## Phase U4 — Second review: everyday use
 
 ### U40 — Keyboard shortcuts
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** only Ctrl+F, Ctrl+,, Ctrl+Enter and the arrows exist. Add Ctrl+Z / Ctrl+Shift+Z
   (and Ctrl+Y) for undo/redo, F5 refresh, Ctrl+Shift+L pull,
   Ctrl+Shift+P push, Ctrl+Shift+T fetch, Ctrl+Tab / Ctrl+Shift+Tab between tabs, Space stages /
@@ -185,6 +187,8 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   toolbar tooltips show the shortcut. Help gets "Keyboard shortcuts" with the list.
 - **Done when:** unit tests of the key → action mapping; Help → Keyboard shortcuts shows the
   list in both languages; CI green.
+- **Done:** one table in `crates/ui/src/keys.rs` (key → command, tooltips, Help → "Keyboard
+  shortcuts"); each shortcut becomes the button's own `Action` with the button's gates.
 
 ### U41 — Sync counts on Pull and Push
 - [ ] **Agent:** `egui-ui`
@@ -241,11 +245,13 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   another lane; `main` and `origin/main` share it; CI green.
 
 ### U47 — Search keeps the selection
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** Ctrl+F then Esc leaves the found commit selected instead of "Uncommitted
   changes": the stage panel disappears. Closing the search with Esc gives back the selection
   from before the search; Enter (or a click) on a result keeps it.
 - **Done when:** unit test of the search state; CI green.
+- **Done:** `SearchBox` keeps the selection from before Ctrl+F and gives it back on close
+  unless Enter, ↑/↓ or a click/key in the list chose a result (`search_tests.rs`).
 
 ## Phase U5 — Second review: polish
 
@@ -277,11 +283,13 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   CI green.
 
 ### U53 — Settings: UI scale and date format
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** settings have only theme, language and remotes. Add the UI scale (90–150%, also
   Ctrl+= / Ctrl+- / Ctrl+0) and the date format of the commit list (absolute / relative
   "3 h ago"), persisted like the theme.
 - **Done when:** both settings persist across a restart; CI green.
+- **Done:** `scale` (90–150%, Ctrl+= / Ctrl+- / Ctrl+0 in place of egui's zoom keys) and
+  `dates` (absolute / relative) in the settings, saved with the theme.
 
 ### Left for later (they need new engine commands or `Platform` capabilities)
 

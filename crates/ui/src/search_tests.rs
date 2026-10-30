@@ -69,7 +69,7 @@ fn step(r: &Registry, s: &mut Session, b: &mut SearchBox, now: f64) -> Option<Oi
 
 /// Types `text` at time 0 and runs the search once the debounce is over.
 fn search(r: &Registry, s: &mut Session, b: &mut SearchBox, text: &str) -> Option<Oid> {
-    b.open();
+    b.open(Before::Nothing);
     b.edit(text.into(), 0.0);
     step(r, s, b, DEBOUNCE)
 }
@@ -78,7 +78,7 @@ fn search(r: &Registry, s: &mut Session, b: &mut SearchBox, text: &str) -> Optio
 fn typing_is_debounced_and_the_first_match_is_selected() {
     let (r, mut s) = opened(20, 5);
     let mut b = SearchBox::default();
-    b.open();
+    b.open(Before::Nothing);
     assert!(b.take_focus());
     assert!(!b.take_focus(), "only once");
     assert_eq!(b.state(), State::Idle);
@@ -130,7 +130,7 @@ fn texts_that_cannot_be_searched_are_never_sent() {
 fn stale_answers_are_ignored_and_cancelled() {
     let (r, mut s) = opened(20, 5);
     let mut b = SearchBox::default();
-    b.open();
+    b.open(Before::Nothing);
     b.edit("work".into(), 0.0);
     let (old, old_result) = send(&r, &mut s, &mut b, 1.0);
     // The query changes while the answer is on its way: the old request is cancelled.
@@ -273,7 +273,7 @@ fn escape_clears_the_field_and_the_highlight() {
     assert_eq!(b.next(), None);
     assert_eq!(b.state(), State::Idle);
     // Opened again, it starts empty.
-    b.open();
+    b.open(Before::Nothing);
     assert_eq!(b.want(100.0), None);
 }
 
@@ -303,4 +303,38 @@ fn a_match_beyond_the_loaded_commits_is_selected_with_seek() {
     assert_eq!(seek, Seek::Selected);
     assert_eq!(list.selected_commit().unwrap().id, oid(400));
     assert_eq!(list.take_scroll_to(), Some(800));
+}
+
+#[test]
+fn closing_without_choosing_gives_back_the_selection_from_before() {
+    let (r, mut s) = opened(20, 5);
+    let mut b = SearchBox::default();
+    b.open(Before::Worktree);
+    b.edit("fix".into(), 0.0);
+    // The first match is selected while the bar is open...
+    assert_eq!(step(&r, &mut s, &mut b, DEBOUNCE), Some(oid(20)));
+    // ...Ctrl+F again does not replace what was selected before.
+    b.open(Before::Commit(oid(20)));
+    // Esc: the "Uncommitted changes" row comes back.
+    assert_eq!(b.close(), Some(Before::Worktree));
+    assert_eq!(b.close(), None, "already closed");
+}
+
+#[test]
+fn enter_or_a_click_on_a_result_keeps_it() {
+    let (r, mut s) = opened(20, 5);
+    let mut b = SearchBox::default();
+    b.open(Before::Commit(oid(3)));
+    b.edit("fix".into(), 0.0);
+    step(&r, &mut s, &mut b, DEBOUNCE);
+    // Enter (or ↓) goes to a match: it stays selected after Esc.
+    assert_eq!(b.next(), Some(oid(15)));
+    assert_eq!(b.close(), None);
+    // A click in the list while the bar is open.
+    search(&r, &mut s, &mut b, "fix");
+    b.keep();
+    assert_eq!(b.close(), None);
+    // Opened again after being kept: the new selection is remembered.
+    b.open(Before::Stash(oid(7)));
+    assert_eq!(b.close(), Some(Before::Stash(oid(7))));
 }

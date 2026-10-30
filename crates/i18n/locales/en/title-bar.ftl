@@ -1,4 +1,4 @@
-# Title bar: the File menu (open, recent, theme), the Help menu (about), window title and buttons (view/title_bar.rs).
+# Title bar: the File menu (open, recent, theme), the Help menu (shortcuts, about), window title and buttons (view/title_bar.rs).
 
 title-bar-file = File
 title-bar-open = Open repository…
@@ -12,6 +12,7 @@ title-bar-close = Close
 title-bar-settings = Settings…
 title-bar-theme = Theme
 title-bar-help = Help
+title-bar-shortcuts = Keyboard shortcuts
 title-bar-about = About BinariGit
 title-bar-about-version = Version { $version }
 title-bar-about-description = A graphical git client

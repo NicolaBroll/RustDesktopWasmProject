@@ -1,4 +1,5 @@
 use super::*;
+use crate::keys::{Command, with_shortcut};
 use crate::{discard, fetch, sync, tabs};
 
 /// Last component of the path, for the title.
@@ -156,23 +157,44 @@ fn refresh_button(ui: &mut Ui, writing: bool, actions: &mut Vec<Action>) {
             !writing,
             ToolButton::new(icons::REFRESH, &tr!("top-bar-refresh")),
         )
-        .on_hover_text(tr!("top-bar-refresh-hint"))
+        .on_hover_text(with_shortcut(
+            ui.ctx(),
+            &tr!("top-bar-refresh-hint"),
+            Command::Refresh,
+        ))
         .on_disabled_hover_text(tr!("top-bar-after-operation"));
     if button.clicked() {
         actions.push(Action::Refresh);
     }
 }
 
+/// Whether "Undo" or "Redo" (button or shortcut) can run: with an operation in progress (merge,
+/// rebase...) the engine refuses them.
+pub(crate) fn undo_enabled(repo: &RepoView, op: UndoOp, writing: bool) -> bool {
+    let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
+    op.available(&repo.history) && !in_operation && !writing && !repo.modal_open()
+}
+
+/// The branch HEAD is on, with at least one commit: Pull and Push need it.
+pub(crate) fn current_branch(head: &Head) -> Option<&str> {
+    match head {
+        Head::Branch {
+            name,
+            target: Some(_),
+        } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
 /// "Undo" and "Redo", with the journal entry they would affect on hover.
 fn undo_buttons(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<Action>) {
-    // With an operation in progress (merge, rebase...) the engine refuses undo and redo.
     let in_operation = repo.status.as_ref().is_some_and(|s| s.operation.is_some());
     for op in [UndoOp::Undo, UndoOp::Redo] {
         let available = op.available(&repo.history);
-        let enabled = available && !in_operation && !writing && !repo.modal_open();
-        let icon = match op {
-            UndoOp::Undo => icons::UNDO,
-            UndoOp::Redo => icons::REDO,
+        let enabled = undo_enabled(repo, op, writing);
+        let (icon, command) = match op {
+            UndoOp::Undo => (icons::UNDO, Command::Undo),
+            UndoOp::Redo => (icons::REDO, Command::Redo),
         };
         let button = ui.add_enabled(enabled, ToolButton::new(icon, &op.label()));
         let hint = op.hint(&repo.history);
@@ -181,7 +203,9 @@ fn undo_buttons(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<A
         } else if available && !enabled {
             button.on_disabled_hover_text(tr!("top-bar-undo-after-operation", hint = &hint))
         } else {
-            button.on_hover_text(&hint).on_disabled_hover_text(&hint)
+            button
+                .on_hover_text(with_shortcut(ui.ctx(), &hint, command))
+                .on_disabled_hover_text(&hint)
         };
         if button.clicked() {
             actions.push(Action::Discard(discard::Action::Undo(op)));
@@ -249,7 +273,11 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
             enabled,
             ToolButton::new(icons::FETCH, &tr!("top-bar-fetch")),
         )
-        .on_hover_text(tr!("top-bar-fetch-hint"))
+        .on_hover_text(with_shortcut(
+            ui.ctx(),
+            &tr!("top-bar-fetch-hint"),
+            Command::Fetch,
+        ))
         .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::Fetch(fetch::Action::Fetch(None)));
@@ -278,13 +306,7 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
 /// The "Pull" and "Push" buttons of the active branch. Never a forced push from here: force is
 /// offered only in the window of a rejected push.
 fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
-    let branch = match &repo.head {
-        Head::Branch {
-            name,
-            target: Some(_),
-        } => Some(name.as_str()),
-        _ => None,
-    };
+    let branch = current_branch(&repo.head);
     let upstream = repo
         .status
         .as_ref()
@@ -304,7 +326,7 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
     let enabled = enabled && branch.is_some();
     let pull = ui
         .add_enabled(enabled, ToolButton::new(icons::PULL, &tr!("top-bar-pull")))
-        .on_hover_text(&pull_hint);
+        .on_hover_text(with_shortcut(ui.ctx(), &pull_hint, Command::Pull));
     let pull = if branch.is_some() {
         pull.on_disabled_hover_text(wait())
     } else {
@@ -315,7 +337,7 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
     }
     let push = ui
         .add_enabled(enabled, ToolButton::new(icons::PUSH, &tr!("top-bar-push")))
-        .on_hover_text(&push_hint);
+        .on_hover_text(with_shortcut(ui.ctx(), &push_hint, Command::Push));
     let push = if branch.is_some() {
         push.on_disabled_hover_text(wait())
     } else {

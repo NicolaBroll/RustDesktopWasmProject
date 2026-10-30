@@ -18,11 +18,12 @@
 
 use crate::discard::{History, Phase};
 use crate::messages_text;
-use crate::{Action, Done, Request, Tab};
+use crate::{Action, Done, Request, Tab, params};
 use crate::{ErrorKind, format};
 use project_domain::{Oid, Signature, Status};
 use project_engine::{
-    Message, StashApplyResult, StashDropResult, StashEntry, StashListResult, StashPushResult,
+    Message, StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashEntry,
+    StashListResult, StashPush, StashPushResult,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -154,15 +155,13 @@ impl PushDialog {
 
     /// The parameters of `stash.push`.
     pub fn params(&self) -> Value {
-        let mut params = json!({
-            "include_untracked": self.fields.include_untracked,
-            "keep_index": self.fields.keep_index,
-        });
         let message = self.message();
-        if !message.is_empty() {
-            params["message"] = json!(message);
-        }
-        params
+        params(StashPush {
+            message: (!message.is_empty()).then_some(message),
+            include_untracked: self.fields.include_untracked,
+            keep_index: self.fields.keep_index,
+            paths: None,
+        })
     }
 }
 
@@ -363,10 +362,10 @@ impl StashBox {
         }
         let stash = self.find(id)?.clone();
         let op = if pop { Op::Pop } else { Op::Apply };
-        let params = json!({
-            "index": stash.index,
-            "expected": stash.id.to_string(),
-            "restore_index": self.restore_index,
+        let params = params(StashApplyParams {
+            index: stash.index,
+            expected: Some(stash.id.to_string()),
+            restore_index: self.restore_index,
         });
         let label = match op {
             Op::Pop => tr!("stash-pop-label", name = &stash.name),
@@ -384,7 +383,11 @@ impl StashBox {
             return None;
         }
         let stash = self.find(id)?.clone();
-        let params = json!({ "index": stash.index, "expected": stash.id.to_string() });
+        let params = params(StashDropParams {
+            index: stash.index,
+            expected: Some(stash.id.to_string()),
+            confirm: false,
+        });
         let label = tr!("stash-drop-check-label", name = &stash.name);
         self.dialog = Some(Dialog::Drop(DropDialog {
             stash,
@@ -403,10 +406,10 @@ impl StashBox {
         }
         drop.phase = Phase::Sending;
         Some((
-            json!({
-                "index": drop.stash.index,
-                "expected": drop.stash.id.to_string(),
-                "confirm": true,
+            params(StashDropParams {
+                index: drop.stash.index,
+                expected: Some(drop.stash.id.to_string()),
+                confirm: true,
             }),
             tr!("stash-drop-label", name = &drop.stash.name),
         ))
@@ -984,13 +987,18 @@ mod tests {
         };
         assert_eq!(
             d.params(),
-            json!({ "message": "first line second", "include_untracked": true, "keep_index": false })
+            json!({
+                "message": "first line second",
+                "include_untracked": true,
+                "keep_index": false,
+                "paths": null,
+            })
         );
         d.fields.message = "   ".into();
         d.fields.keep_index = true;
         assert_eq!(
             d.params(),
-            json!({ "include_untracked": true, "keep_index": true }),
+            json!({ "message": null, "include_untracked": true, "keep_index": true, "paths": null }),
             "empty = absent"
         );
     }

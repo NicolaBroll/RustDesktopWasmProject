@@ -93,29 +93,33 @@ pub struct StashDropResult {
 pub(crate) struct ListParams {}
 
 /// Parameters of `stash.apply` and `stash.pop`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ApplyParams {
+pub struct StashApplyParams {
     /// The position: `n` of `stash@{n}` (0 if missing).
     #[serde(default)]
-    index: usize,
+    pub index: usize,
     /// The full id of the stash as seen by the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Also restore the staged changes of the stash (`--index`).
     #[serde(default)]
-    expected: Option<String>,
-    #[serde(default)]
-    restore_index: bool,
+    pub restore_index: bool,
 }
 
 /// Parameters of `stash.drop`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DropParams {
+pub struct StashDropParams {
+    /// The position: `n` of `stash@{n}` (0 if missing).
     #[serde(default)]
-    index: usize,
-    #[serde(default)]
-    expected: Option<String>,
-    #[serde(default)]
-    confirm: bool,
+    pub index: usize,
+    /// The full id of the stash to drop; required with `confirm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Always required to drop.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 
 /// `expected` as a full id (40 digits), or [`EngineError::InvalidParams`].
@@ -214,11 +218,11 @@ fn apply(
     id: &'static str,
     pop: bool,
     s: &mut Session,
-    ApplyParams {
+    StashApplyParams {
         index,
         expected,
         restore_index,
-    }: ApplyParams,
+    }: StashApplyParams,
 ) -> Out {
     let expected = full_id(id, expected)?;
     let repo = s.repo_mut()?;
@@ -269,14 +273,14 @@ fn apply(
 /// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
 /// Result: [`StashApplyResult`] (`dropped: false`, `backup: null`).
-pub(super) fn stash_apply(s: &mut Session, p: ApplyParams) -> Out {
+pub(super) fn stash_apply(s: &mut Session, p: StashApplyParams) -> Out {
     apply("stash.apply", false, s, p)
 }
 
 /// Like `stash.apply`, then, if no conflicts remain, removes the stash from the list (first a
 /// backup of its commit: `backup`). With conflicts the stash stays (`dropped: false`).
 /// Result: [`StashApplyResult`].
-pub(super) fn stash_pop(s: &mut Session, p: ApplyParams) -> Out {
+pub(super) fn stash_pop(s: &mut Session, p: StashApplyParams) -> Out {
     apply("stash.pop", true, s, p)
 }
 
@@ -290,11 +294,11 @@ pub(super) fn stash_pop(s: &mut Session, p: ApplyParams) -> Out {
 /// Result: [`StashDropResult`].
 pub(super) fn stash_drop(
     s: &mut Session,
-    DropParams {
+    StashDropParams {
         index,
         expected,
         confirm,
-    }: DropParams,
+    }: StashDropParams,
 ) -> Out {
     const ID: &str = "stash.drop";
     let expected = full_id(ID, expected)?;

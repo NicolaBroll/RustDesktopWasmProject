@@ -130,7 +130,7 @@ pub use git::{
 };
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
-pub use journal::{HeadChange, Integration, Journal, JournalEntry, RefChange};
+pub use journal::{BranchMove, HeadChange, Integration, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};
 pub use platform::{Capabilities, OnChange, Platform, Watch};
 pub use project_core::Invocation;

@@ -165,45 +165,7 @@ impl CliBackend {
         .to_owned();
         let operation = self.operation();
         if out.status.success() && operation.is_none() {
-            let after = self
-                .ref_value(&full)?
-                .ok_or_else(|| EngineError::GitWithReason {
-                    command: "merge".to_owned(),
-                    reason: msg!("engine-merge-branch-gone", full = full),
-                })?;
-            if after == request.expected {
-                // Git says it finished but the branch did not move (e.g. a `--squash` from the
-                // configuration, or a hook): it is not a successful merge. The backup stays.
-                return Err(EngineError::GitWithReason {
-                    command: "merge".to_owned(),
-                    reason: msg!(
-                        "engine-merge-branch-not-moved",
-                        full = full,
-                        text = text,
-                        backup = backup
-                    ),
-                });
-            }
-            let mut warnings = Vec::new();
-            if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
-                warnings.push(msg!("engine-merge-head-moved-after", full = full));
-            }
-            if !self.is_ancestor(&request.target, &after)? {
-                warnings.push(msg!(
-                    "engine-merge-target-missing",
-                    full = full,
-                    after = after,
-                    target = request.target_name
-                ));
-            }
-            return Ok(MergeOutcome {
-                after,
-                backup,
-                in_progress: false,
-                conflicts: Vec::new(),
-                message: String::new(),
-                warnings,
-            });
+            return self.merge_concluded(request, &full, backup, &text);
         }
         if operation == Some(Operation::Merge) {
             // Stopped: stays in progress. The conflicted files are those still unmerged and those
@@ -226,6 +188,56 @@ impl CliBackend {
         Err(EngineError::Git {
             command: "merge".to_owned(),
             stderr: text,
+        })
+    }
+
+    /// Git finished the merge: the branch must have moved, onto a result that contains the
+    /// target.
+    fn merge_concluded(
+        &self,
+        request: &MergeRequest,
+        full: &str,
+        backup: String,
+        text: &str,
+    ) -> Result<MergeOutcome, EngineError> {
+        let after = self
+            .ref_value(full)?
+            .ok_or_else(|| EngineError::GitWithReason {
+                command: "merge".to_owned(),
+                reason: msg!("engine-merge-branch-gone", full = full),
+            })?;
+        if after == request.expected {
+            // Git says it finished but the branch did not move (e.g. a `--squash` from the
+            // configuration, or a hook): it is not a successful merge. The backup stays.
+            return Err(EngineError::GitWithReason {
+                command: "merge".to_owned(),
+                reason: msg!(
+                    "engine-merge-branch-not-moved",
+                    full = full,
+                    text = text,
+                    backup = backup
+                ),
+            });
+        }
+        let mut warnings = Vec::new();
+        if self.head_ref_name()?.as_deref() != Some(full) {
+            warnings.push(msg!("engine-merge-head-moved-after", full = full));
+        }
+        if !self.is_ancestor(&request.target, &after)? {
+            warnings.push(msg!(
+                "engine-merge-target-missing",
+                full = full,
+                after = after,
+                target = request.target_name
+            ));
+        }
+        Ok(MergeOutcome {
+            after,
+            backup,
+            in_progress: false,
+            conflicts: Vec::new(),
+            message: String::new(),
+            warnings,
         })
     }
 

@@ -9,7 +9,7 @@
 use super::merge::{MergeAbortParams, MergeContinueParams, abort_confirm, check_message, label};
 use super::{JournalState, Out, reread, to_json};
 use crate::{
-    CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeAbortResult,
+    BranchMove, CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeAbortResult,
     MergeContinueResult, Message, PickKind, PickRequest, Session, branch_ref, check_pick_state,
     check_picking, clean_merge_message, conflicted_paths, pick_message, pick_parent,
 };
@@ -187,10 +187,12 @@ fn pick_start(
         journal.record(JournalEntry::pick(
             id,
             kind,
-            &branch_ref(&branch),
-            before,
-            outcome.after,
-            HeadState::from_head(&status.head),
+            BranchMove {
+                branch: &branch_ref(&branch),
+                before,
+                after: outcome.after,
+                head: HeadState::from_head(&status.head),
+            },
             &source,
             Some(outcome.backup.clone()),
         ));
@@ -288,10 +290,12 @@ fn pick_continue(
         (Some(branch), Some(previous)) => journal.record(JournalEntry::pick(
             id,
             kind,
-            branch,
-            previous,
-            outcome.commit.id,
-            HeadState::from_head(&status.head),
+            BranchMove {
+                branch,
+                before: previous,
+                after: outcome.commit.id,
+                head: HeadState::from_head(&status.head),
+            },
             &source,
             None,
         )),

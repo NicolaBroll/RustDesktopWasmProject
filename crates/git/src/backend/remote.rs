@@ -358,15 +358,14 @@ impl CliBackend {
                 request.remote, request.branch
             ),
         )?;
-        self.delete_on_remote(
-            "remote.delete_branch",
-            &request.remote,
-            &format!("{HEADS_PREFIX}{}", request.branch),
-            &request.branch,
-            &expected,
-            backup,
-            job,
-        )
+        let target = RemoteDeletion {
+            id: "remote.delete_branch",
+            remote: &request.remote,
+            dst: &format!("{HEADS_PREFIX}{}", request.branch),
+            label: &request.branch,
+            expected: &expected,
+        };
+        self.delete_on_remote(&target, backup, job)
     }
 
     /// [`GitRemotes::remote_tag`](project_engine::GitRemotes::remote_tag): `git ls-remote --tags
@@ -531,7 +530,14 @@ impl CliBackend {
         } else {
             self.fetch_into_backup(ID, &request.remote, &dst, &expected, job)?
         };
-        self.delete_on_remote(ID, &request.remote, &dst, &dst, &expected, backup, job)
+        let target = RemoteDeletion {
+            id: ID,
+            remote: &request.remote,
+            dst: &dst,
+            label: &dst,
+            expected: &expected,
+        };
+        self.delete_on_remote(&target, backup, job)
     }
 
     /// The remote value of `dst` (a tag whose object is not here) fetched straight into a new
@@ -639,17 +645,19 @@ impl CliBackend {
     /// --force-with-lease=<dst>:<expected> --end-of-options <remote> :<dst>`. `label` names the
     /// ref in [`EngineError::PushRejected`]. The backup is removed only when nothing was certainly
     /// deleted.
-    #[allow(clippy::too_many_arguments)]
     fn delete_on_remote(
         &self,
-        id: &'static str,
-        remote: &str,
-        dst: &str,
-        label: &str,
-        expected: &str,
+        target: &RemoteDeletion<'_>,
         backup: String,
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError> {
+        let RemoteDeletion {
+            id,
+            remote,
+            dst,
+            label,
+            expected,
+        } = *target;
         let refspec = format!(":{dst}");
         let lease = format!("--force-with-lease={dst}:{expected}");
         let args = [
@@ -749,6 +757,17 @@ impl CliBackend {
             }
         }
     }
+}
+
+/// What [`CliBackend::delete_on_remote`] deletes: `dst` (full name) on `remote`, if it is still
+/// `expected` there; `label` names it in the errors.
+#[derive(Clone, Copy)]
+struct RemoteDeletion<'a> {
+    id: &'static str,
+    remote: &'a str,
+    dst: &'a str,
+    label: &'a str,
+    expected: &'a str,
 }
 
 /// The error of a failed command that contacts `remote`: [`EngineError::Auth`] /

@@ -192,7 +192,7 @@ Rules that apply to every step:
 - **Done when:** `apply` and `ui` under 100 lines; UI tests green; CI green.
 
 ### Q22 — Long functions and long argument lists
-- [ ] **Agent:** `git-engine`
+- [x] **Agent:** `git-engine`
 - **Goal:** the longest handlers and backend functions (`remote_push` ~290 lines in
   `crates/engine/src/builtin/push.rs`, `remote_branch.rs` ~220, `pull.rs` ~190, `pull_upstream`
   ~180 in `crates/git/src/backend/sync.rs`, `backend/merge.rs`, `backend/stash.rs`) split into

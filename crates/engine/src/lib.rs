@@ -44,7 +44,10 @@ pub use builtin::remotes::{
 pub use builtin::reset::{ResetPreviewResult, ResetResult};
 pub use builtin::search::RepoSearchResult;
 pub use builtin::stage::IndexWriteResult;
-pub use builtin::stash::{StashApplyResult, StashDropResult, StashListResult, StashPushResult};
+pub use builtin::stash::{
+    StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashListResult,
+    StashPushResult,
+};
 pub use builtin::tag::{TagCreateParams, TagCreateResult, TagDeleteParams, TagDeleteResult};
 pub use builtin::{
     DEFAULT_LOG_LIMIT, DiffWithDigests, FileDiffWithDigest, JournalState, RepoLogResult,

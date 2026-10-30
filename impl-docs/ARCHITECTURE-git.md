@@ -516,7 +516,7 @@ GitKraken-like layout:
   buttons with the name underneath at the center (undo/redo, fetch/pull/push, stash, refresh;
   icons from a subset of Phosphor, `crates/ui/assets/icons.ttf`, rebuilt by
   `scripts/icon-font.py`), changed files and the network job in progress.
-- **Colors**: egui's visuals, dark or light (as the system or chosen in File → Theme); the few
+- **Colors**: egui's visuals, dark or light (as the system or chosen in Settings); the few
   colors of their own (change types, text on badges, lanes used as text) are in `theme.rs`, with
   a contrast test for the light theme.
 - **Left column** (`view/refs.rs`, tree in `ref_tree.rs`): a filter, then local branches, remotes

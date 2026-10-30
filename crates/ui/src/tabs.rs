@@ -561,13 +561,11 @@ impl eframe::App for App {
             repo: self.tabs[self.active].repo.as_ref(),
             can_pick,
             recent: &recent,
-            theme: self.settings.theme,
         };
         view::title_bar_panel(ui, &bar, &mut strip);
-        if self.tabs.len() > 1 || self.tabs[0].path().is_some() {
-            let labels = self.labels();
-            view::tab_strip_panel(ui, &labels, self.active, can_pick, &mut strip);
-        }
+        // Always shown: after closing the last tab its "+" is still there.
+        let labels = self.labels();
+        view::tab_strip_panel(ui, &labels, self.active, can_pick, &mut strip);
         strip.extend(self.app_shortcuts(&pressed.commands));
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];

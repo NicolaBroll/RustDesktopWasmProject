@@ -7,10 +7,6 @@ top-bar-after-operation = Dopo l'operazione in corso
 top-bar-stash = Stash…
 top-bar-undo-in-operation = { $hint } (non durante un'operazione in corso: concluderla o annullarla dal riquadro in alto)
 top-bar-undo-after-operation = { $hint } (dopo l'operazione in corso)
-top-bar-changed-files = { $n ->
-    [one] 1 file modificato
-   *[other] { $n } file modificati
-}
 top-bar-head-unborn = { $name } (senza commit)
 top-bar-head-detached = HEAD staccata su { $id }
 top-bar-fetch = Fetch
@@ -40,3 +36,5 @@ top-bar-recent-heading = Repository recenti
 top-bar-recent-missing-hint = La cartella { $path } non esiste più
 top-bar-recent-forget = Rimuovi mancanti
 top-bar-recent-forget-hint = Toglie dall'elenco dei recenti i repository la cui cartella non esiste più (le cartelle non vengono toccate)
+top-bar-last-fetch = Ultimo fetch: { $when }
+top-bar-last-fetch-none = Nessun fetch da quando il repository è stato aperto

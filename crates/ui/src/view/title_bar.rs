@@ -2,10 +2,9 @@
 //! recent ones), the "Help" menu (keyboard shortcuts, about) and, when the app draws the window frame itself, the title,
 //! the drag area, the minimize, maximize and close buttons and the edges to resize the window.
 
-use super::settings_view::theme_label;
 use super::*;
 use crate::keys::{self, SHORTCUTS};
-use crate::settings::{self, Change, Theme};
+use crate::settings;
 use crate::tabs;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Stroke, StrokeKind, ViewportCommand};
 
@@ -45,8 +44,6 @@ pub(crate) struct TitleBar<'a> {
     pub(crate) repo: Option<&'a RepoView>,
     pub(crate) can_pick: bool,
     pub(crate) recent: &'a [RecentRepo],
-    /// The theme setting, for the shortcut menu.
-    pub(crate) theme: Theme,
 }
 
 /// The bar in its own panel, above everything else.
@@ -149,6 +146,8 @@ fn title(ui: &Ui, bar: &TitleBar<'_>, bar_rect: Rect, free: Rect) {
 /// Only what is not about the repo shown: its commands are in the toolbar.
 fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-file"), |ui| {
+        // Room for the shortcut of "Settings…" after the longest item.
+        ui.set_min_width(190.0);
         if bar.can_pick
             && ui
                 .button(tr!("title-bar-open"))
@@ -168,7 +167,6 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
             actions.push(Action::Settings(settings::Action::Open));
             ui.close();
         }
-        theme_menu(ui, bar.theme, actions);
     });
     ui.menu_button(tr!("title-bar-help"), |ui| {
         if ui.button(tr!("title-bar-shortcuts")).clicked() {
@@ -321,20 +319,6 @@ pub(crate) fn end_window_move(ctx: &egui::Context, input: &mut egui::RawInput) {
         },
         egui::Event::PointerGone,
     ]);
-}
-
-/// System, light or dark: a shortcut to the same setting of the "Settings…" window.
-fn theme_menu(ui: &mut Ui, current: Theme, actions: &mut Vec<Action>) {
-    ui.menu_button(tr!("title-bar-theme"), |ui| {
-        for choice in Theme::ALL {
-            if ui.radio(current == choice, theme_label(choice)).clicked() {
-                actions.push(Action::Settings(settings::Action::Change(Change::Theme(
-                    choice,
-                ))));
-                ui.close();
-            }
-        }
-    });
 }
 
 #[derive(Debug, Clone, Copy)]

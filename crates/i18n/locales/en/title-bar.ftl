@@ -10,7 +10,6 @@ title-bar-maximize = Maximize
 title-bar-restore = Restore
 title-bar-close = Close
 title-bar-settings = Settings…
-title-bar-theme = Theme
 title-bar-help = Help
 title-bar-shortcuts = Keyboard shortcuts
 title-bar-about = About BinariGit

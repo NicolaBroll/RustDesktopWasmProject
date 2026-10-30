@@ -195,11 +195,13 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   shortcuts"); each shortcut becomes the button's own `Action` with the button's gates.
 
 ### U41 — Sync counts on Pull and Push
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** "main ↑1 ↓1" is only in the small label at the top left; Pull and Push show
   nothing. Pull shows a "↓n" badge and Push "↑n" (from the current branch's upstream); the Fetch
   tooltip says when the last fetch ran ("last fetch: 3 min ago", from the auto-fetch state).
 - **Done when:** on the demo repo after a commit Pull shows ↓1 and Push ↑1; CI green.
+- **Done:** Pull and Push carry a "↓n"/"↑n" badge from the upstream counts; the Fetch tooltip
+  ends with "Last fetch: 3 min ago" (`AutoFetch::last_fetch`, `format::ago`).
 
 ### U42 — Commit is the primary button
 - [x] **Agent:** `egui-ui`
@@ -245,7 +247,7 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   in the tooltip.
 
 ### U46 — Stable lane colors
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** after a commit the lanes change colors (`origin/main` blue → orange,
   `feature/docs` green → orange) because the color follows the lane index. The color of a
   lane follows the branch at its tip (a hash of the name without the remote prefix, so `main`
@@ -253,6 +255,9 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   same color.
 - **Done when:** unit test: the same branch keeps its color when a commit is added on top of
   another lane; `main` and `origin/main` share it; CI green.
+- **Done:** `graph::lane_colors` follows each lane opening and colors it by the first branch on
+  it (`name_color`, remote prefix stripped), lane index only without a branch; dots, edges and
+  badges use it, cached per graph and refs version.
 
 ### U47 — Search keeps the selection
 - [x] **Agent:** `egui-ui`
@@ -266,7 +271,7 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
 ## Phase U5 — Second review: polish
 
 ### U50 — Wording and duplicates
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the Italian commit hint is still in the infinitive ("mettere in stage… oppure
   attivare"); "Stage di tutto" is not parallel to "Togli tutto dallo stage" ("Metti tutto in
   stage"). The discard dialog shows "index" and `refs/project/backup/discard-…` in its body: the
@@ -275,13 +280,19 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   repeat the "n changed files" of the graph row. Closing the last tab keeps the tab strip with
   "+"; a recent repo is one link (name) with the path in grey.
 - **Done when:** texts changed in both locales; screenshots; CI green.
+- **Done:** Italian imperative hint and "Metti tutto in stage"; discard dialog without "index"
+  and with the backup ref in a collapsed "Details"; File → Theme removed (menu wide enough for
+  "Ctrl+,"); no changed-files count in the status bar; tab strip always shown; recent repo =
+  name link with the path in grey.
 
 ### U51 — Light theme contrast
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** in the light theme text fields and disabled buttons almost disappear (the subject
   field has no visible border). Text fields get a visible border and background, disabled
   text reaches at least 3:1 against the panel.
 - **Done when:** light screenshot of the stage panel shows the fields; CI green.
+- **Done:** light theme: fields and buttons with a grey(140) border on a white field, weak
+  and disabled text alpha raised to ≥ 3:1 (`theme::light`, tested).
 
 ### U52 — Diff and file menu discoverability
 - [x] **Agent:** `egui-ui`

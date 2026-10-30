@@ -69,6 +69,7 @@ pub(crate) fn commit_list(
     let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
     // The graph takes at most two fifths of the list: beyond that it is cut on the right.
     let graph_w = graph::graph_width(list.graph().width).min(ui.available_width() * 0.4);
+    let colors = lane_colors(ui, repo);
 
     let mut area = egui::ScrollArea::vertical().auto_shrink(false);
     let wanted = if repo.scroll_header {
@@ -183,7 +184,6 @@ pub(crate) fn commit_list(
                 rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
                 reset_item(ui, repo, commit, &what, can_write, actions);
             });
-            let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
             let text_rect = rect.with_min_x(rect.left() + graph_w);
             let more = commit_row(
@@ -191,7 +191,7 @@ pub(crate) fn commit_list(
                 text_rect,
                 commit,
                 labels,
-                graph::lane_color(lane),
+                colors.commit(index),
                 if selected { &on_selection } else { &style },
             );
             if let Some(more) = more {
@@ -203,7 +203,7 @@ pub(crate) fn commit_list(
         if let (Some(rect), Some(anchor)) = (header_rect, anchor) {
             paint_changes_link(ui, rect, anchor, graph_w, step, style.weak);
         }
-        paint_graph(ui, list, &drawn, graph_w, step);
+        paint_graph(ui, list, &colors, &drawn, graph_w, step);
         range
     });
     viewport.rows = output.inner;
@@ -384,6 +384,7 @@ pub(super) fn changes_row(
 pub(super) fn paint_graph(
     ui: &Ui,
     list: &CommitList,
+    colors: &graph::LaneColors,
     rows: &[(usize, egui::Rect)],
     width: f32,
     step: f32,
@@ -406,8 +407,8 @@ pub(super) fn paint_graph(
         let Some(row) = layout.rows.get(index) else {
             continue;
         };
-        for segment in &row.segments {
-            let stroke = egui::Stroke::new(graph::EDGE_WIDTH, graph::lane_color(segment.lane));
+        for (n, segment) in row.segments.iter().enumerate() {
+            let stroke = egui::Stroke::new(graph::EDGE_WIDTH, colors.segment(index, n));
             match graph::segment_edge(segment, left, y, step) {
                 graph::Edge::Line(points) => {
                     painter.line_segment(points, stroke);
@@ -430,7 +431,7 @@ pub(super) fn paint_graph(
             continue;
         };
         let center = egui::pos2(graph::column_x(left, row.column), rect.center().y);
-        let color = graph::lane_color(row.column);
+        let color = colors.commit(index);
         if commit.is_merge() {
             painter.circle(
                 center,
@@ -442,6 +443,30 @@ pub(super) fn paint_graph(
             painter.circle_filled(center, graph::NODE_RADIUS, color);
         }
     }
+}
+
+/// The colors of the graph's lanes ([`graph::lane_colors`]), computed again only when the graph,
+/// the refs or the remotes change.
+fn lane_colors(ui: &Ui, repo: &RepoView) -> std::sync::Arc<graph::LaneColors> {
+    type Key = (u64, u64, Vec<String>);
+    let remotes = repo.remotes.names();
+    let key: Key = (repo.list.graph_version(), repo.refs_version, remotes);
+    let id = ui.make_persistent_id(("lane-colors", &repo.path));
+    if let Some((cached, colors)) =
+        ui.data(|d| d.get_temp::<(Key, std::sync::Arc<graph::LaneColors>)>(id))
+        && cached == key
+    {
+        return colors;
+    }
+    let ids: Vec<_> = repo.list.commits().iter().map(|c| c.id).collect();
+    let colors = std::sync::Arc::new(graph::lane_colors(
+        repo.list.graph(),
+        &ids,
+        &repo.labels,
+        &key.2,
+    ));
+    ui.data_mut(|d| d.insert_temp(id, (key, colors.clone())));
+    colors
 }
 
 /// The row (of the view) to bring into view, if it is not already fully visible.

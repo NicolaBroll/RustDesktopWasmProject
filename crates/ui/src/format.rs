@@ -70,7 +70,12 @@ pub fn date_time_zone(sig: &Signature) -> String {
 /// How long before `now` (seconds since the epoch) a signature is, e.g. "3 h ago". A date in the
 /// future (a clock ahead) is "just now".
 pub fn relative(sig: &Signature, now: i64) -> String {
-    let secs = now.saturating_sub(sig.time).max(0);
+    ago(now.saturating_sub(sig.time))
+}
+
+/// `secs` seconds ago, e.g. "3 min ago"; a negative count is "just now".
+pub fn ago(secs: i64) -> String {
+    let secs = secs.max(0);
     let n = |unit: i64| secs / unit;
     match secs {
         s if s < 60 => tr!("format-relative-now"),

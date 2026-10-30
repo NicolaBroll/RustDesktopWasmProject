@@ -59,6 +59,8 @@ pub struct AutoFetch {
     /// The remote branches moved by the last automatic fetch: the notice is written once the log
     /// has been read again (it counts the new commits in it).
     news: Option<Vec<RefUpdate>>,
+    /// The end of the last fetch that worked (automatic or manual), for the Fetch tooltip.
+    last: Option<Instant>,
 }
 
 impl AutoFetch {
@@ -117,9 +119,15 @@ impl AutoFetch {
 
     /// A fetch (automatic or manual) worked: back to the interval.
     pub fn succeeded(&mut self) {
+        self.last = Some(Instant::now());
         self.failures = 0;
         self.offline = None;
         self.suspended = None;
+    }
+
+    /// When the last fetch that worked ended; `None`: none since the repo was opened.
+    pub fn last_fetch(&self) -> Option<Instant> {
+        self.last
     }
 
     /// The remote could not be reached: the wait doubles.

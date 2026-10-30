@@ -108,11 +108,23 @@ fn caption(ui: &mut Ui, text: &str, content: impl FnOnce(&mut Ui)) {
 pub(super) struct ToolButton<'a> {
     icon: &'a str,
     label: &'a str,
+    /// A small count at the top right of the icon (`↓2`), if any.
+    badge: Option<String>,
 }
 
 impl<'a> ToolButton<'a> {
     pub(super) fn new(icon: &'a str, label: &'a str) -> Self {
-        Self { icon, label }
+        Self {
+            icon,
+            label,
+            badge: None,
+        }
+    }
+
+    /// The count at the top right of the icon.
+    fn badge(mut self, badge: Option<String>) -> Self {
+        self.badge = badge;
+        self
     }
 }
 
@@ -143,8 +155,25 @@ impl egui::Widget for ToolButton<'_> {
                 rect.center().x - label.size().x / 2.0,
                 rect.bottom() - 5.0 - label.size().y,
             );
+            let icon_right = icon_pos.x + icon.size().x;
             ui.painter().galley(icon_pos, icon, color);
             ui.painter().galley(label_pos, label, color);
+            if let Some(badge) = self.badge {
+                let accent = ui.visuals().selection.bg_fill;
+                let text = ui.visuals().selection.stroke.color;
+                let galley = ui.painter().layout_no_wrap(badge, theme::small(), text);
+                let size = galley.size() + vec2(6.0, 0.0);
+                let badge_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        (icon_right - 4.0).min(rect.right() - size.x),
+                        rect.top() + 1.0,
+                    ),
+                    size,
+                );
+                ui.painter().rect_filled(badge_rect, size.y / 2.0, accent);
+                ui.painter()
+                    .galley(badge_rect.min + vec2(3.0, 0.0), galley, text);
+            }
         }
         response
     }
@@ -268,16 +297,15 @@ fn recent_text(repo: &RecentRepo) -> RichText {
 
 /// The "Fetch" button and, with several remotes, the menu to choose one.
 fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
+    let mut hint = with_shortcut(ui.ctx(), &tr!("top-bar-fetch-hint"), Command::Fetch);
+    hint.push('\n');
+    hint.push_str(&last_fetch_text(repo.auto_fetch.last_fetch()));
     let button = ui
         .add_enabled(
             enabled,
             ToolButton::new(icons::FETCH, &tr!("top-bar-fetch")),
         )
-        .on_hover_text(with_shortcut(
-            ui.ctx(),
-            &tr!("top-bar-fetch-hint"),
-            Command::Fetch,
-        ))
+        .on_hover_text(hint)
         .on_disabled_hover_text(wait());
     if button.clicked() {
         actions.push(Action::Fetch(fetch::Action::Fetch(None)));
@@ -303,15 +331,34 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
     }
 }
 
+/// "Last fetch: 3 min ago", or that there was none since the repo was opened.
+fn last_fetch_text(last: Option<std::time::Instant>) -> String {
+    match last {
+        Some(at) => {
+            let secs = i64::try_from(at.elapsed().as_secs()).unwrap_or(i64::MAX);
+            tr!("top-bar-last-fetch", when = format::ago(secs))
+        }
+        None => tr!("top-bar-last-fetch-none"),
+    }
+}
+
+/// The badges of Pull and Push: the commits to pull (`↓n`) and to push (`↑n`) compared to the
+/// upstream, nothing for a zero or a gone upstream.
+fn sync_badges(upstream: Option<&Upstream>) -> (Option<String>, Option<String>) {
+    let count = |n: Option<u32>, arrow: char| n.filter(|&n| n > 0).map(|n| format!("{arrow}{n}"));
+    let Some(up) = upstream else {
+        return (None, None);
+    };
+    (count(up.behind, '↓'), count(up.ahead, '↑'))
+}
+
 /// The "Pull" and "Push" buttons of the active branch. Never a forced push from here: force is
 /// offered only in the window of a rejected push.
 fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
     let branch = current_branch(&repo.head);
-    let upstream = repo
-        .status
-        .as_ref()
-        .and_then(|s| s.upstream.as_ref())
-        .map(|u| u.name.as_str());
+    let tracked = repo.status.as_ref().and_then(|s| s.upstream.as_ref());
+    let (pull_badge, push_badge) = sync_badges(tracked.filter(|_| branch.is_some()));
+    let upstream = tracked.map(|u| u.name.as_str());
     let (pull_hint, push_hint) = match (branch, upstream) {
         (None, _) => (tr!("top-bar-detached-hint"), tr!("top-bar-detached-hint")),
         (Some(b), Some(up)) => (
@@ -325,7 +372,10 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
     };
     let enabled = enabled && branch.is_some();
     let pull = ui
-        .add_enabled(enabled, ToolButton::new(icons::PULL, &tr!("top-bar-pull")))
+        .add_enabled(
+            enabled,
+            ToolButton::new(icons::PULL, &tr!("top-bar-pull")).badge(pull_badge),
+        )
         .on_hover_text(with_shortcut(ui.ctx(), &pull_hint, Command::Pull));
     let pull = if branch.is_some() {
         pull.on_disabled_hover_text(wait())
@@ -336,7 +386,10 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
         actions.push(Action::Sync(sync::Action::Pull(None, None)));
     }
     let push = ui
-        .add_enabled(enabled, ToolButton::new(icons::PUSH, &tr!("top-bar-push")))
+        .add_enabled(
+            enabled,
+            ToolButton::new(icons::PUSH, &tr!("top-bar-push")).badge(push_badge),
+        )
         .on_hover_text(with_shortcut(ui.ctx(), &push_hint, Command::Push));
     let push = if branch.is_some() {
         push.on_disabled_hover_text(wait())
@@ -400,7 +453,7 @@ fn slow_job<'a>(ui: &Ui, running: &'a [Job]) -> Option<&'a Job> {
 
 /// `write` is the write in progress, described: it takes precedence over the other commands. `notice`
 /// is an informational message, shown if there is nothing in progress and no error. `repo`: the repo
-/// shown, for the changed files and its path on the right.
+/// shown, for its path on the right.
 pub(crate) fn status_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
@@ -425,17 +478,12 @@ pub(crate) fn status_bar(
         } else if !notice.is_empty() {
             ui.label(notice);
         }
-        // On the right what is always useful: the changed files and where the repo is.
+        // On the right where the repo is (the changed files are on the graph's first row).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::warn_if_debug_build(ui);
             let Some(repo) = repo else {
                 return;
             };
-            let changes = repo.status.as_ref().map_or(0, |s| s.entries.len());
-            if changes > 0 {
-                ui.label(RichText::new(tr!("top-bar-changed-files", n = changes)).small());
-                ui.separator();
-            }
             ui.add(egui::Label::new(RichText::new(&repo.path).small().weak()).truncate());
         });
     });
@@ -473,8 +521,13 @@ pub(crate) fn welcome(
                 if repo.missing {
                     ui.label(recent_text(repo))
                         .on_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
-                } else if ui.link(recent_item(&repo.path)).clicked() {
-                    actions.push(Action::Tabs(tabs::Action::Open(repo.path.clone())));
+                } else {
+                    // The name is the link, the path under it tells apart two folders with the same name.
+                    if ui.link(repo_name(&repo.path)).clicked() {
+                        actions.push(Action::Tabs(tabs::Action::Open(repo.path.clone())));
+                    }
+                    ui.label(RichText::new(&repo.path).small().weak());
+                    ui.add_space(4.0);
                 }
             }
             if recent.iter().any(|r| r.missing)
@@ -500,5 +553,24 @@ mod tests {
         assert_eq!(repo_name(r"C:\repo\app"), "app");
         assert_eq!(repo_name("example"), "example");
         assert_eq!(repo_name("/"), "/");
+    }
+
+    #[test]
+    fn pull_and_push_badges_count_the_upstream_commits() {
+        let up = |ahead, behind| Upstream {
+            name: "origin/main".to_owned(),
+            ahead,
+            behind,
+        };
+        assert_eq!(
+            sync_badges(Some(&up(Some(1), Some(1)))),
+            (Some("↓1".to_owned()), Some("↑1".to_owned()))
+        );
+        assert_eq!(
+            sync_badges(Some(&up(Some(2), Some(0)))),
+            (None, Some("↑2".to_owned()))
+        );
+        assert_eq!(sync_badges(Some(&up(None, None))), (None, None));
+        assert_eq!(sync_badges(None), (None, None));
     }
 }

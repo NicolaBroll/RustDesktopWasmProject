@@ -49,7 +49,7 @@ pub use builtin::{
     DEFAULT_LOG_LIMIT, DiffWithDigests, FileDiffWithDigest, JournalState, RepoLogResult,
     RepoOpenResult, RepoOptimizeResult,
 };
-pub use commands::{CommandSpec, Handler, Registry};
+pub use commands::{Access, CommandSpec, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
     DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, HEADS_PREFIX, HeadState,

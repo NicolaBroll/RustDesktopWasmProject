@@ -8,7 +8,6 @@
 
 use super::merge::{abort_confirm, check_message, label};
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeAbortResult,
     MergeContinueResult, Message, PickKind, PickRequest, Session, branch_ref, check_pick_state,
@@ -16,7 +15,6 @@ use crate::{
 };
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `commit.cherry_pick` and `commit.revert`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,7 +64,7 @@ pub struct PickStartResult {
 /// Parameters of `commit.cherry_pick` and `commit.revert`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StartParams {
+pub(crate) struct StartParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.
     rev: String,
     /// For a merge commit: the parent (from 1) relative to which to take the changes.
@@ -77,7 +75,7 @@ struct StartParams {
 /// Parameters of `*.continue`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ContinueParams {
+pub(crate) struct ContinueParams {
     #[serde(default)]
     message: Option<String>,
 }
@@ -85,32 +83,32 @@ struct ContinueParams {
 /// Parameters of `*.abort`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AbortParams {
+pub(crate) struct AbortParams {
     #[serde(default)]
     confirm: bool,
 }
 
-pub(super) fn commit_cherry_pick(s: &mut Session, p: Value) -> Out {
+pub(super) fn commit_cherry_pick(s: &mut Session, p: StartParams) -> Out {
     pick_start(s, p, PickKind::CherryPick)
 }
 
-pub(super) fn commit_revert(s: &mut Session, p: Value) -> Out {
+pub(super) fn commit_revert(s: &mut Session, p: StartParams) -> Out {
     pick_start(s, p, PickKind::Revert)
 }
 
-pub(super) fn cherry_pick_continue(s: &mut Session, p: Value) -> Out {
+pub(super) fn cherry_pick_continue(s: &mut Session, p: ContinueParams) -> Out {
     pick_continue(s, p, PickKind::CherryPick)
 }
 
-pub(super) fn revert_continue(s: &mut Session, p: Value) -> Out {
+pub(super) fn revert_continue(s: &mut Session, p: ContinueParams) -> Out {
     pick_continue(s, p, PickKind::Revert)
 }
 
-pub(super) fn cherry_pick_abort(s: &mut Session, p: Value) -> Out {
+pub(super) fn cherry_pick_abort(s: &mut Session, p: AbortParams) -> Out {
     pick_abort(s, p, PickKind::CherryPick)
 }
 
-pub(super) fn revert_abort(s: &mut Session, p: Value) -> Out {
+pub(super) fn revert_abort(s: &mut Session, p: AbortParams) -> Out {
     pick_abort(s, p, PickKind::Revert)
 }
 
@@ -131,9 +129,8 @@ pub(super) fn revert_abort(s: &mut Session, p: Value) -> Out {
 /// `edit.undo` brings the branch, with index and worktree, back to where it was.
 ///
 /// Result: [`PickStartResult`].
-fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
+fn pick_start(s: &mut Session, StartParams { rev, mainline }: StartParams, kind: PickKind) -> Out {
     let id = kind.command();
-    let StartParams { rev, mainline } = parse_params(id, p)?;
     if rev.trim().is_empty() || rev.contains('\0') {
         return Err(EngineError::InvalidParams {
             id,
@@ -241,9 +238,12 @@ fn pick_start(s: &mut Session, p: Value, kind: PickKind) -> Out {
 /// (started from a terminal) as a commit.
 ///
 /// Result: [`MergeContinueResult`] (the same shape as `merge.continue`).
-fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
+fn pick_continue(
+    s: &mut Session,
+    ContinueParams { message }: ContinueParams,
+    kind: PickKind,
+) -> Out {
     let id = kind.continue_command();
-    let ContinueParams { message } = parse_params(id, p)?;
     check_message(id, &message)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
@@ -336,9 +336,8 @@ fn pick_continue(s: &mut Session, p: Value, kind: PickKind) -> Out {
 /// from a terminal → [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
 /// Result: [`MergeAbortResult`] (the same shape as `merge.abort`).
-fn pick_abort(s: &mut Session, p: Value, kind: PickKind) -> Out {
+fn pick_abort(s: &mut Session, AbortParams { confirm }: AbortParams, kind: PickKind) -> Out {
     let id = kind.abort_command();
-    let AbortParams { confirm } = parse_params(id, p)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
     let state = repo.operation_state()?;

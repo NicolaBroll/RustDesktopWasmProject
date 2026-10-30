@@ -2,11 +2,9 @@
 //! `git/commit.rs`; contract in `impl-docs/git/commit.md`.
 
 use super::{Out, to_json};
-use crate::commands::parse_params;
 use crate::{CommitOutcome, CommitRequest, EngineError, JournalEntry, Session};
 use project_domain::Status;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `commit.create`: the fields of [`CommitOutcome`] and the new status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,8 +23,7 @@ pub struct CommitCreateResult {
 /// [`EngineError::PostCommit`].
 ///
 /// Result: [`CommitCreateResult`].
-pub(super) fn commit_create(s: &mut Session, p: Value) -> Out {
-    let request: CommitRequest = parse_params("commit.create", p)?;
+pub(super) fn commit_create(s: &mut Session, request: CommitRequest) -> Out {
     request.check_message()?;
     let (repo, journal) = s.repo_and_journal()?;
     let outcome = repo.commit(&request)?;

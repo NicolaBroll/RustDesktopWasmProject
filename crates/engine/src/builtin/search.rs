@@ -2,17 +2,15 @@
 //! `repo.log` (`impl-docs/git/reading.md`, `repo.search`).
 
 use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
-use crate::commands::parse_params;
 use crate::{EngineError, SearchField, SearchQuery, Session};
 use project_domain::{Oid, RepoPath};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 const ID: &str = "repo.search";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SearchParams {
+pub(crate) struct SearchParams {
     query: String,
     #[serde(default, rename = "in")]
     fields: Option<Vec<SearchField>>,
@@ -41,8 +39,9 @@ pub struct RepoSearchResult {
 }
 
 /// The commits that match a text: [`RepoSearchResult`].
-pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
-    let SearchParams {
+pub(super) fn repo_search(
+    s: &mut Session,
+    SearchParams {
         query,
         fields,
         path,
@@ -50,7 +49,8 @@ pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
         stashes,
         skip,
         limit,
-    } = parse_params(ID, p)?;
+    }: SearchParams,
+) -> Out {
     let invalid = |reason| EngineError::InvalidParams { id: ID, reason };
     if query.is_empty() {
         return Err(invalid(msg!("engine-search-empty")));

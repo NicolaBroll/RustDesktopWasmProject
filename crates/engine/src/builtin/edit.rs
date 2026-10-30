@@ -3,11 +3,9 @@
 //! in `impl-docs/git/commit.md`.
 
 use super::{JournalState, NoParams, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{Journal, JournalEntry, Message, RestoreOutcome, Session};
 use project_domain::Status;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `edit.undo` (with `undone`) and `edit.redo` (with `redone`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,8 +75,7 @@ fn undo_result(s: &mut Session, op: Op, entry: JournalEntry, outcome: RestoreOut
 /// otherwise, and nothing changes). Index and worktree are not touched.
 ///
 /// Result: [`UndoResult`], with the entry in `undone`.
-pub(super) fn edit_undo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.undo", p)?;
+pub(super) fn edit_undo(s: &mut Session, NoParams {}: NoParams) -> Out {
     let (repo, journal) = s.repo_and_journal()?;
     let (entry, outcome) = journal.undo(repo)?;
     undo_result(s, Op::Undo, entry, outcome)
@@ -87,8 +84,7 @@ pub(super) fn edit_undo(s: &mut Session, p: Value) -> Out {
 /// Redoes the last undone operation (see [`Journal::redo`]), with the same check.
 ///
 /// Result: [`UndoResult`], with the entry in `redone`.
-pub(super) fn edit_redo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.redo", p)?;
+pub(super) fn edit_redo(s: &mut Session, NoParams {}: NoParams) -> Out {
     let (repo, journal) = s.repo_and_journal()?;
     let (entry, outcome) = journal.redo(repo)?;
     undo_result(s, Op::Redo, entry, outcome)
@@ -97,8 +93,7 @@ pub(super) fn edit_redo(s: &mut Session, p: Value) -> Out {
 /// The journal of the open repo.
 ///
 /// Result: [`HistoryResult`].
-pub(super) fn edit_history(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.history", p)?;
+pub(super) fn edit_history(s: &mut Session, NoParams {}: NoParams) -> Out {
     let journal: &Journal = s.journal()?;
     Ok(to_json(HistoryResult {
         done: journal.done().to_vec(),

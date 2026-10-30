@@ -22,10 +22,10 @@ pub(crate) mod stage;
 pub(crate) mod stash;
 pub(crate) mod tag;
 
-use crate::commands::parse_params;
 use crate::{
-    CommandSpec, DiffSpec, EngineError, Journal, LogQuery, Message, Registry, Session,
-    commit_graph_disabled, commit_graph_replaced, commit_graph_shallow, file_digest,
+    Access::{Read, Write},
+    DiffSpec, EngineError, Journal, LogQuery, Message, Registry, Session, commit_graph_disabled,
+    commit_graph_replaced, commit_graph_shallow, file_digest,
 };
 use project_domain::{Commit, Diff, FileDiff, Head, RepoPath};
 use serde::{Deserialize, Serialize};
@@ -38,424 +38,430 @@ impl Registry {
     /// Registry with all the built-in commands.
     pub fn builtin() -> Self {
         let mut r = Self::default();
-        let mut add = |id, title, params_help, handler| {
-            r.register(
-                CommandSpec {
-                    id,
-                    title,
-                    params_help,
-                    writes: WRITES.contains(&id),
-                },
-                handler,
-            )
-        };
-        add(
+        r.add(
             "repo.open",
             "Open repository",
             r#"{"path": string}"#,
+            Read,
             repo_open,
         );
-        add(
+        r.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
             r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
+            Write,
             clone::repo_clone,
         );
-        add(
+        r.add(
             "repo.init",
             "New empty repository in an absent or empty folder, then open it",
             r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
+            Write,
             clone::repo_init,
         );
-        add("repo.status", "Repository status", "{}", repo_status);
-        add("repo.refs", "Branches, tags and stashes", "{}", repo_refs);
-        add(
+        r.add("repo.status", "Repository status", "{}", Read, repo_status);
+        r.add(
+            "repo.refs",
+            "Branches, tags and stashes",
+            "{}",
+            Read,
+            repo_refs,
+        );
+        r.add(
             "repo.operation",
             "Operation in progress (merge, rebase...) and conflicted files",
             "{}",
+            Read,
             merge::repo_operation,
         );
-        add(
+        r.add(
             "repo.log",
             "Commit history",
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (with all: also the stash bases)}"#,
+            Read,
             repo_log,
         );
-        add(
+        r.add(
             "repo.search",
             "Commits whose message, author or id contains a text (literal, case-insensitive), in the order of repo.log",
             r#"{"query": string, "in"?: ["message" | "author" | "id"] (all three), "path"?: path (only commits touching it, no rename following), "all"?: bool, "stashes"?: bool (as in repo.log), "skip"?: number, "limit"?: number (200)} -> {"ids", "total", "has_more"}"#,
+            Read,
             search::repo_search,
         );
-        add(
+        r.add(
             "repo.optimize",
             "Write the commit-graph (fast history on huge repos)",
             "{}",
+            Write,
             repo_optimize,
         );
-        add(
+        r.add(
             "commit.show",
             "Commit details",
             r#"{"id": string}"#,
+            Read,
             commit_show,
         );
-        add(
+        r.add(
             "file.blame",
             "Who last changed each line of a file",
             r#"{"path": path, "rev"?: string (without: the worktree, uncommitted lines have commit null)}"#,
+            Read,
             file::file_blame,
         );
-        add(
+        r.add(
             "file.log",
             "Commits that change a file",
             r#"{"path": path, "rev"?: string, "skip"?: number, "limit"?: number (200), "follow"?: bool (true: across renames)}"#,
+            Read,
             file::file_log,
         );
-        add(
+        r.add(
             "diff.worktree",
             "Diff of the unstaged changes",
             r#"{"path"?: path}"#,
+            Read,
             diff_worktree,
         );
-        add(
+        r.add(
             "diff.index",
             "Diff of the staged changes",
             r#"{"path"?: path}"#,
+            Read,
             diff_index,
         );
-        add(
+        r.add(
             "diff.commit",
             "Commit diff",
             r#"{"id": string, "path"?: path}"#,
+            Read,
             diff_commit,
         );
-        add(
+        r.add(
             "index.stage",
             "Stage files",
             r#"{"paths": [path, ...]}"#,
+            Write,
             stage::index_stage,
         );
-        add(
+        r.add(
             "index.unstage",
             "Unstage files",
             r#"{"paths": [path, ...]}"#,
+            Write,
             stage::index_unstage,
         );
-        add(
+        r.add(
             "index.stage_lines",
             "Stage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.worktree)}"#,
+            Write,
             stage::index_stage_lines,
         );
-        add(
+        r.add(
             "index.unstage_lines",
             "Unstage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.index)}"#,
+            Write,
             stage::index_unstage_lines,
         );
-        add(
+        r.add(
             "commit.create",
             "Commit the staged changes",
             r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend of a published commit)}"#,
+            Write,
             commit::commit_create,
         );
-        add(
+        r.add(
             "worktree.discard",
             "Discard the unstaged changes",
             r#"{"paths": [path, ...], "confirm": true}"#,
+            Write,
             discard::worktree_discard,
         );
-        add(
+        r.add(
             "branch.create",
             "Create a branch",
             r#"{"name": string, "start"?: string (rev, HEAD)}"#,
+            Write,
             branch::branch_create,
         );
-        add(
+        r.add(
             "branch.checkout",
             "Switch to a branch",
             r#"{"name": string}"#,
+            Write,
             branch::branch_checkout,
         );
-        add(
+        r.add(
             "branch.delete",
             "Delete a branch",
             r#"{"name": string, "confirm"?: bool (unmerged branch), "expected"?: full oid (the branch must point there)}"#,
+            Write,
             branch::branch_delete,
         );
-        add(
+        r.add(
             "branch.rename",
             "Rename a branch",
             r#"{"name": string, "new_name": string}"#,
+            Write,
             branch::branch_rename,
         );
-        add(
+        r.add(
             "branch.reset",
             "Reset the current branch to a commit",
             r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard", "confirm"?: bool (hard with local changes), "expected"?: full oid (HEAD must be there)}"#,
+            Write,
             reset::branch_reset,
         );
-        add(
+        r.add(
             "branch.reset_preview",
             "What a reset would do (files a hard overwrites)",
             r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard"}"#,
+            Read,
             reset::branch_reset_preview,
         );
-        add(
+        r.add(
             "tag.create",
             "Create a tag",
             r#"{"name": string, "target"?: string (rev, HEAD), "message"?: string (annotated tag; without: lightweight)}"#,
+            Write,
             tag::tag_create,
         );
-        add(
+        r.add(
             "tag.delete",
             "Delete a tag",
             r#"{"name": string, "confirm": true (always required; the tag is saved in a backup ref first), "expected"?: string (full id of the value shown in the confirmation)}"#,
+            Write,
             tag::tag_delete,
         );
-        add(
+        r.add(
             "remote.fetch",
             "Download from the remote (fetch)",
             r#"{"remote"?: string (configured remote; upstream, origin or the only one), "branch"?: string (only that branch), "prune"?: bool (also remove the remote branches gone from the remote; not with branch)}"#,
+            Write,
             remote::remote_fetch,
         );
-        add(
+        r.add(
             "remote.pull",
             "Download and integrate the upstream (pull)",
             r#"{"remote"?: string (the upstream's), "branch"?: string (local branch; HEAD), "strategy"?: "merge" | "rebase" | "ff_only" (instead of the configuration)}"#,
+            Write,
             pull::remote_pull,
         );
-        add(
+        r.add(
             "remote.push",
             "Publish the branch to the remote (push)",
             r#"{"remote"?: string (upstream, origin or the only one), "branch"?: string (local branch; HEAD), "force"?: bool (force-with-lease), "confirm"?: bool (force that removes commits from the remote)}"#,
+            Write,
             push::remote_push,
         );
-        add(
+        r.add(
             "remote.delete_branch",
             "Delete a branch from the remote",
             r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
+            Write,
             remote_branch::remote_delete_branch,
         );
-        add(
+        r.add(
             "remote.push_tag",
             "Publish a tag to the remote",
             r#"{"remote": string, "name": string (local tag; never overwrites a tag on the remote)}"#,
+            Write,
             remote_tag::remote_push_tag,
         );
-        add(
+        r.add(
             "remote.delete_tag",
             "Delete a tag from the remote",
             r#"{"remote": string, "name": string (tag on the remote), "confirm": true, "expected": string (full id of the remote tag shown in the confirmation)}"#,
+            Write,
             remote_tag::remote_delete_tag,
         );
-        add(
+        r.add(
             "remote.list",
             "Configured remotes",
             "{}",
+            Read,
             remotes::remote_list,
         );
-        add(
+        r.add(
             "remote.add",
             "Add a remote",
             r#"{"name": string, "url": string, "fetch"?: bool (then download)}"#,
+            Write,
             remotes::remote_add,
         );
-        add(
+        r.add(
             "remote.remove",
             "Remove a remote",
             r#"{"name": string, "confirm": true}"#,
+            Write,
             remotes::remote_remove,
         );
-        add("stash.list", "Stashes", "{}", stash::stash_list);
-        add(
+        r.add("stash.list", "Stashes", "{}", Read, stash::stash_list);
+        r.add(
             "stash.push",
             "Stash the changes",
             r#"{"message"?: string (one line), "include_untracked"?: bool, "keep_index"?: bool, "paths"?: [path, ...]}"#,
+            Write,
             stash::stash_push,
         );
-        add(
+        r.add(
             "stash.apply",
             "Apply a stash",
             r#"{"index"?: number (stash@{n}, 0), "expected"?: full oid (the stash seen), "restore_index"?: bool}"#,
+            Write,
             stash::stash_apply,
         );
-        add(
+        r.add(
             "stash.pop",
             "Apply a stash and remove it from the list",
             r#"{"index"?: number (stash@{n}, 0), "expected"?: full oid (the stash seen), "restore_index"?: bool}"#,
+            Write,
             stash::stash_pop,
         );
-        add(
+        r.add(
             "stash.drop",
             "Drop a stash",
             r#"{"index"?: number (stash@{n}, 0), "expected": full oid (the stash to drop; required with confirm), "confirm": true}"#,
+            Write,
             stash::stash_drop,
         );
-        add(
+        r.add(
             "merge.start",
             "Merge a branch into the current branch",
             r#"{"rev": string (branch, remote branch, tag or id), "no_ff"?: bool (always a merge commit), "ff_only"?: bool (fast-forward only), "message"?: string (of the merge commit)}"#,
+            Write,
             merge::merge_start,
         );
-        add(
+        r.add(
             "merge.continue",
             "Finish the merge in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
+            Write,
             merge::merge_continue,
         );
-        add(
+        r.add(
             "merge.abort",
             "Abort the merge in progress",
             r#"{"confirm": true}"#,
+            Write,
             merge::merge_abort,
         );
-        add(
+        r.add(
             "commit.cherry_pick",
             "Apply a commit onto the current branch (cherry-pick)",
             r#"{"rev": string (id, branch or tag of the commit), "mainline"?: number (for a merge commit: the parent, from 1)}"#,
+            Write,
             pick::commit_cherry_pick,
         );
-        add(
+        r.add(
             "cherry_pick.continue",
             "Finish the cherry-pick in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
+            Write,
             pick::cherry_pick_continue,
         );
-        add(
+        r.add(
             "cherry_pick.abort",
             "Abort the cherry-pick in progress",
             r#"{"confirm": true}"#,
+            Write,
             pick::cherry_pick_abort,
         );
-        add(
+        r.add(
             "commit.revert",
             "Undo a commit with a new commit (revert)",
             r#"{"rev": string (id, branch or tag of the commit), "mainline"?: number (for a merge commit: the parent, from 1)}"#,
+            Write,
             pick::commit_revert,
         );
-        add(
+        r.add(
             "revert.continue",
             "Finish the revert in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
+            Write,
             pick::revert_continue,
         );
-        add(
+        r.add(
             "revert.abort",
             "Abort the revert in progress",
             r#"{"confirm": true}"#,
+            Write,
             pick::revert_abort,
         );
-        add(
+        r.add(
             "rebase.plan",
             "Default plan of an interactive rebase of the current branch",
             r#"{"base": string (the commit to rebuild on, excluded: id, branch or tag)}"#,
+            Read,
             rebase::rebase_plan,
         );
-        add(
+        r.add(
             "rebase.start",
             "Rewrite the commits of the current branch (interactive rebase)",
             r#"{"base": string, "steps": [{"action": "pick" | "reword" | "squash" | "fixup" | "drop", "commit": full oid, "message"?: string}] (oldest first, every commit of base..HEAD once), "confirm"?: bool (rewrites published commits)}"#,
+            Write,
             rebase::rebase_start,
         );
-        add(
+        r.add(
             "rebase.continue",
             "Continue the rebase in progress",
             "{}",
+            Write,
             rebase::rebase_continue,
         );
-        add(
+        r.add(
             "rebase.abort",
             "Abort the rebase in progress",
             r#"{"confirm": true}"#,
+            Write,
             rebase::rebase_abort,
         );
-        add(
+        r.add(
             "conflict.show",
             "Versions of a conflicted file (base, ours, theirs, worktree)",
             r#"{"path": path}"#,
+            Read,
             conflict::conflict_show,
         );
-        add(
+        r.add(
             "conflict.resolve",
             "Resolve a conflicted file and stage it",
             r#"{"path": path, "digest": string (from conflict.show), "content"?: string (the resolved text), "delete"?: bool (deletes the file; instead of content)}"#,
+            Write,
             conflict::conflict_resolve,
         );
-        add(
+        r.add(
             "edit.undo",
             "Undo the last operation",
             "{}",
+            Write,
             edit::edit_undo,
         );
-        add(
+        r.add(
             "edit.redo",
             "Redo the undone operation",
             "{}",
+            Write,
             edit::edit_redo,
         );
-        add(
+        r.add(
             "edit.history",
             "Operation journal",
             "{}",
+            Read,
             edit::edit_history,
         );
         r
     }
 }
 
-/// The commands that modify the repository ([`CommandSpec::writes`]).
-const WRITES: &[&str] = &[
-    "branch.checkout",
-    "branch.create",
-    "branch.delete",
-    "branch.rename",
-    "branch.reset",
-    "cherry_pick.abort",
-    "cherry_pick.continue",
-    "commit.cherry_pick",
-    "commit.create",
-    "commit.revert",
-    "conflict.resolve",
-    "edit.redo",
-    "edit.undo",
-    "index.stage",
-    "index.unstage",
-    "index.stage_lines",
-    "index.unstage_lines",
-    "merge.abort",
-    "merge.continue",
-    "merge.start",
-    "rebase.abort",
-    "rebase.continue",
-    "rebase.start",
-    "remote.add",
-    "remote.delete_branch",
-    "remote.delete_tag",
-    "remote.fetch",
-    "remote.pull",
-    "remote.push",
-    "remote.push_tag",
-    "remote.remove",
-    "repo.clone",
-    "repo.init",
-    "repo.optimize",
-    "revert.abort",
-    "revert.continue",
-    "stash.apply",
-    "stash.drop",
-    "stash.pop",
-    "stash.push",
-    "tag.create",
-    "tag.delete",
-    "worktree.discard",
-];
-
 type Out = Result<Value, EngineError>;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NoParams {}
+pub(crate) struct NoParams {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -520,8 +526,7 @@ pub struct FileDiffWithDigest {
 }
 
 /// The repo at `path`, opened: [`RepoOpenResult`].
-fn repo_open(s: &mut Session, p: Value) -> Out {
-    let PathParam { path } = parse_params("repo.open", p)?;
+fn repo_open(s: &mut Session, PathParam { path }: PathParam) -> Out {
     s.open(&path)?;
     Ok(to_json(opened(s, path)?))
 }
@@ -551,9 +556,8 @@ fn opened(s: &Session, path: String) -> Result<RepoOpenResult, EngineError> {
 /// would not read it.
 ///
 /// Result: [`RepoOptimizeResult`], the state afterwards (as in `repo.open`).
-fn repo_optimize(s: &mut Session, p: Value) -> Out {
+fn repo_optimize(s: &mut Session, NoParams {}: NoParams) -> Out {
     const ID: &str = "repo.optimize";
-    let NoParams {} = parse_params(ID, p)?;
     let job = s.job().clone();
     let repo = s.repo_mut()?;
     let before = repo.commit_graph()?;
@@ -577,14 +581,12 @@ fn repo_optimize(s: &mut Session, p: Value) -> Out {
 }
 
 /// The [`Status`](project_domain::Status) of the open repo.
-fn repo_status(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("repo.status", p)?;
+fn repo_status(s: &mut Session, NoParams {}: NoParams) -> Out {
     Ok(to_json(s.repo()?.status()?))
 }
 
 /// The [`RefInfo`](project_domain::RefInfo) of the open repo, in name order.
-fn repo_refs(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("repo.refs", p)?;
+fn repo_refs(s: &mut Session, NoParams {}: NoParams) -> Out {
     Ok(to_json(s.repo()?.refs()?))
 }
 
@@ -597,15 +599,14 @@ struct IdParam {
 /// The [`CommitDetails`](project_domain::CommitDetails) of commit `id` (also abbreviated, or a
 /// ref name): `{"commit", "compared_to", "files"}`, with the files compared to the first
 /// parent.
-fn commit_show(s: &mut Session, p: Value) -> Out {
-    let IdParam { id } = parse_params("commit.show", p)?;
+fn commit_show(s: &mut Session, IdParam { id }: IdParam) -> Out {
     Ok(to_json(s.repo()?.show_commit(&id)?))
 }
 
 /// Parameters of `diff.worktree` and `diff.index`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DiffParams {
+pub(crate) struct DiffParams {
     #[serde(default)]
     path: Option<RepoPath>,
 }
@@ -613,7 +614,7 @@ struct DiffParams {
 /// Parameters of `diff.commit`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CommitDiffParams {
+pub(crate) struct CommitDiffParams {
     id: String,
     #[serde(default)]
     path: Option<RepoPath>,
@@ -662,8 +663,7 @@ fn diff_with_digests(diff: Diff) -> Value {
 
 /// The [`Diff`] of the worktree against the index (unstaged changes): `{"files": [...]}`,
 /// each file with its `digest`. Untracked files do not appear.
-fn diff_worktree(s: &mut Session, p: Value) -> Out {
-    let DiffParams { path } = parse_params("diff.worktree", p)?;
+fn diff_worktree(s: &mut Session, DiffParams { path }: DiffParams) -> Out {
     let path = check_opt_path("diff.worktree", path)?;
     Ok(diff_with_digests(
         s.repo()?.diff(&DiffSpec::Worktree { path })?,
@@ -672,8 +672,7 @@ fn diff_worktree(s: &mut Session, p: Value) -> Out {
 
 /// The [`Diff`] of the index against HEAD (staged changes), each file with its
 /// `digest`.
-fn diff_index(s: &mut Session, p: Value) -> Out {
-    let DiffParams { path } = parse_params("diff.index", p)?;
+fn diff_index(s: &mut Session, DiffParams { path }: DiffParams) -> Out {
     let path = check_opt_path("diff.index", path)?;
     Ok(diff_with_digests(
         s.repo()?.diff(&DiffSpec::Index { path })?,
@@ -682,8 +681,7 @@ fn diff_index(s: &mut Session, p: Value) -> Out {
 
 /// The [`Diff`] of commit `id` against the first parent (like
 /// `commit.show`).
-fn diff_commit(s: &mut Session, p: Value) -> Out {
-    let CommitDiffParams { id, path } = parse_params("diff.commit", p)?;
+fn diff_commit(s: &mut Session, CommitDiffParams { id, path }: CommitDiffParams) -> Out {
     let path = check_opt_path("diff.commit", path)?;
     Ok(to_json(
         s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,
@@ -754,8 +752,7 @@ fn reread<T>(result: Result<T, EngineError>) -> (Option<T>, Option<String>) {
 }
 
 /// A page of the log: [`RepoLogResult`].
-fn repo_log(s: &mut Session, p: Value) -> Out {
-    let query: LogQuery = parse_params("repo.log", p)?;
+fn repo_log(s: &mut Session, query: LogQuery) -> Out {
     let limit = query.limit.unwrap_or(DEFAULT_LOG_LIMIT);
     // One more commit to know whether the page is the last.
     let probe = LogQuery {

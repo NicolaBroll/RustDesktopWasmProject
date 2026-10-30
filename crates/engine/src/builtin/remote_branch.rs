@@ -2,14 +2,12 @@
 
 use super::remote::{RefUpdate, RefsAfter};
 use super::{Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, Message, MessageArg, RemoteBranchDelete, Session, branch_ref, check_branch_name,
     check_remote_name, tracking_ref, unknown_remote,
 };
 use project_domain::{Commit, Oid, RefInfo, RefKind, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `remote.delete_branch`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,7 +62,7 @@ const LOST_LIMIT: usize = 10;
 /// Parameters of `remote.delete_branch`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DeleteParams {
+pub(crate) struct DeleteParams {
     remote: String,
     branch: String,
     #[serde(default)]
@@ -96,13 +94,15 @@ struct DeleteParams {
 /// Result: [`RemoteDeleteBranchResult`]: `only_here` and `lost` are the commits of the deleted branch
 /// that no other ref here reaches (only the backup keeps them), `upstream_of` the local branches
 /// with it as upstream.
-pub(super) fn remote_delete_branch(s: &mut Session, p: Value) -> Out {
-    let DeleteParams {
+pub(super) fn remote_delete_branch(
+    s: &mut Session,
+    DeleteParams {
         remote,
         branch,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: DeleteParams,
+) -> Out {
     check_remote_name(ID, &remote)?;
     check_branch_name(ID, &branch)?;
     if confirm && expected.is_none() {

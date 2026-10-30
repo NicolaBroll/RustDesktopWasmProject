@@ -23,7 +23,7 @@ A new crate must be declared in `xtask/src/layers.rs`.
 - Every operation on the repository is a `Registry` command (`crates/engine/src/builtin.rs`).
   UI, CLI, MCP and tests invoke it with `Registry::run`; no modification logic in graphical callbacks.
 - Command ids are stable: do not rename them.
-- A command that modifies the repo goes in `WRITES` (`builtin.rs`): `CommandSpec::writes` flags it to
+- A command that modifies the repo is registered with `Access::Write` (`builtin.rs`): `CommandSpec::writes` flags it to
   UI, CLI and MCP. If it can lose data it asks for `"confirm": true` and saves a backup; if it rewrites
   the only copy of something without git asking for confirmation (stage/unstage) it saves a backup on its own
   and does not write if the backup fails (§1 and §7

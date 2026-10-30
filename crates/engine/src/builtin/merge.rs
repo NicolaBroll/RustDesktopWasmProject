@@ -8,7 +8,6 @@
 //! for `"confirm": true` and first saves index and worktree in a backup.
 
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeMode, MergeRequest,
     MergeSource, Message, MessageArg, Session, branch_ref, check_merge_state, check_merging,
@@ -17,7 +16,6 @@ use crate::{
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// How `merge.start` integrated the rev (`strategy` of [`MergeStartResult`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,7 +145,7 @@ pub struct MergeAbortResult {
 /// Parameters of `merge.start`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StartParams {
+pub(crate) struct StartParams {
     /// What to merge: a local or remote branch, a tag, an id or another rev.
     rev: String,
     #[serde(default)]
@@ -161,7 +159,7 @@ struct StartParams {
 /// Parameters of `merge.abort`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AbortParams {
+pub(crate) struct AbortParams {
     #[serde(default)]
     confirm: bool,
 }
@@ -169,14 +167,14 @@ struct AbortParams {
 /// Parameters of `merge.continue`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ContinueParams {
+pub(crate) struct ContinueParams {
     #[serde(default)]
     message: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NoParams {}
+pub(crate) struct NoParams {}
 
 /// The optional message of `merge.start`/`merge.continue`: non-empty and without NUL (like
 /// `commit.create`), otherwise [`EngineError::InvalidParams`] with the command id.
@@ -224,14 +222,16 @@ pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
 /// index and worktree, back to where it was.
 ///
 /// Result: [`MergeStartResult`].
-pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "merge.start";
-    let StartParams {
+pub(super) fn merge_start(
+    s: &mut Session,
+    StartParams {
         rev,
         no_ff,
         ff_only,
         message,
-    } = parse_params(ID, p)?;
+    }: StartParams,
+) -> Out {
+    const ID: &str = "merge.start";
     if no_ff && ff_only {
         return Err(EngineError::InvalidParams {
             id: ID,
@@ -389,9 +389,8 @@ pub(super) fn merge_start(s: &mut Session, p: Value) -> Out {
 /// the journal (recovery is the backup).
 ///
 /// Result: [`MergeAbortResult`].
-pub(super) fn merge_abort(s: &mut Session, p: Value) -> Out {
+pub(super) fn merge_abort(s: &mut Session, AbortParams { confirm }: AbortParams) -> Out {
     const ID: &str = "merge.abort";
-    let AbortParams { confirm } = parse_params(ID, p)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
     check_merging(ID, &status)?;
@@ -466,9 +465,8 @@ pub(super) fn abort_confirm(
 /// a concluded merge; with detached HEAD (a merge started from a terminal) as a commit.
 ///
 /// Result: [`MergeContinueResult`].
-pub(super) fn merge_continue(s: &mut Session, p: Value) -> Out {
+pub(super) fn merge_continue(s: &mut Session, ContinueParams { message }: ContinueParams) -> Out {
     const ID: &str = "merge.continue";
-    let ContinueParams { message } = parse_params(ID, p)?;
     check_message(ID, &message)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
@@ -589,8 +587,7 @@ pub struct RepoOperationResult {
 }
 
 /// The operation in progress, for the UI banner: [`RepoOperationResult`].
-pub(super) fn repo_operation(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("repo.operation", p)?;
+pub(super) fn repo_operation(s: &mut Session, NoParams {}: NoParams) -> Out {
     let repo = s.repo()?;
     let status = repo.status()?;
     let state = repo.operation_state()?;

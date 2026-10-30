@@ -375,7 +375,7 @@ impl Drop for Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_engine::{Capabilities, CommandSpec, EngineError, MemoryOpener, Platform};
+    use project_engine::{Access, Capabilities, EngineError, MemoryOpener, Platform};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -449,22 +449,10 @@ mod tests {
     /// write that sleeps [`SLOW`]).
     fn registry() -> Registry {
         let mut registry = Registry::builtin();
-        let spec = |id| CommandSpec {
-            id,
-            title: "test",
-            params_help: "{}",
-            writes: false,
-        };
-        registry.register(spec("test.slow"), slow);
-        registry.register(spec("test.panic"), panics);
-        registry.register(spec("test.cancel"), until_cancelled);
-        registry.register(
-            CommandSpec {
-                writes: true,
-                ..spec("test.write")
-            },
-            slow_write,
-        );
+        registry.add("test.slow", "test", "{}", Access::Read, slow);
+        registry.add("test.panic", "test", "{}", Access::Read, panics);
+        registry.add("test.cancel", "test", "{}", Access::Read, until_cancelled);
+        registry.add("test.write", "test", "{}", Access::Write, slow_write);
         registry
     }
 

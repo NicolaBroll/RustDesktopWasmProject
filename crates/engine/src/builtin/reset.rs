@@ -3,7 +3,6 @@
 //! `impl-docs/git/reset.md`.
 
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, LogQuery, Message, RefMove, RefRestore,
     ResetMode, ResetRequest, Session, branch_short, check_no_operation, reset_files,
@@ -11,7 +10,6 @@ use crate::{
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `branch.reset_preview`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,7 +83,7 @@ pub struct ResetResult {
 /// Parameters of `branch.reset`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResetParams {
+pub(crate) struct ResetParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.
     target: String,
     mode: ResetMode,
@@ -100,7 +98,7 @@ struct ResetParams {
 /// Parameters of `branch.reset_preview`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PreviewParams {
+pub(crate) struct PreviewParams {
     target: String,
     mode: ResetMode,
 }
@@ -234,9 +232,11 @@ fn file_list(files: &[RepoPath]) -> String {
 /// true`, `expected` is the value to repeat in the command's `expected`.
 ///
 /// Result: [`ResetPreviewResult`].
-pub(super) fn branch_reset_preview(s: &mut Session, p: Value) -> Out {
+pub(super) fn branch_reset_preview(
+    s: &mut Session,
+    PreviewParams { target, mode }: PreviewParams,
+) -> Out {
     const ID: &str = "branch.reset_preview";
-    let PreviewParams { target, mode } = parse_params(ID, p)?;
     let repo = s.repo()?;
     let status = repo.status()?;
     let plan = plan(ID, repo, &status, &target, mode)?;
@@ -276,14 +276,16 @@ pub(super) fn branch_reset_preview(s: &mut Session, p: Value) -> Out {
 /// are already on its upstream: the next push will need `--force-with-lease`.
 ///
 /// Result: [`ResetResult`].
-pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "branch.reset";
-    let ResetParams {
+pub(super) fn branch_reset(
+    s: &mut Session,
+    ResetParams {
         target,
         mode,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: ResetParams,
+) -> Out {
+    const ID: &str = "branch.reset";
     let expected = expected
         .map(|hex| {
             let full = hex.len() == Oid::HEX_LEN && hex.bytes().all(|b| b.is_ascii_hexdigit());

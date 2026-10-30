@@ -3,11 +3,9 @@
 //! [`GitBackend::apply_lines`]); contract in `impl-docs/git/stage.md`.
 
 use super::{Out, check_path, check_path_list, to_json};
-use crate::commands::parse_params;
 use crate::{EngineError, GitBackend, LineSelection, Session};
 use project_domain::{LineRef, PatchDirection, RepoPath, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `index.stage`, `index.unstage`, `index.stage_lines` and `index.unstage_lines`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,27 +20,21 @@ pub struct IndexWriteResult {
 /// Parameters of `index.stage` and `index.unstage`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PathsParams {
+pub(crate) struct PathsParams {
     paths: Vec<RepoPath>,
-}
-
-/// The paths of `index.stage`/`index.unstage` (see [`check_path_list`]).
-fn check_paths(id: &'static str, p: Value) -> Result<Vec<RepoPath>, EngineError> {
-    let PathsParams { paths } = parse_params(id, p)?;
-    check_path_list(id, paths)
 }
 
 /// Stages `paths` (see [`GitBackend::stage`]).
 ///
 /// Result: [`IndexWriteResult`].
-pub(super) fn index_stage(s: &mut Session, p: Value) -> Out {
+pub(super) fn index_stage(s: &mut Session, p: PathsParams) -> Out {
     index_paths("index.stage", s, p, |repo, paths| repo.stage(paths))
 }
 
 /// Unstages `paths` (see [`GitBackend::unstage`]), without touching the worktree.
 ///
 /// Result: [`IndexWriteResult`].
-pub(super) fn index_unstage(s: &mut Session, p: Value) -> Out {
+pub(super) fn index_unstage(s: &mut Session, p: PathsParams) -> Out {
     index_paths("index.unstage", s, p, |repo, paths| repo.unstage(paths))
 }
 
@@ -50,8 +42,13 @@ pub(super) fn index_unstage(s: &mut Session, p: Value) -> Out {
 type IndexWrite = fn(&mut dyn GitBackend, &[RepoPath]) -> Result<Option<String>, EngineError>;
 
 /// `index.stage`/`index.unstage`: `write` on the validated paths, then the new status.
-fn index_paths(id: &'static str, s: &mut Session, p: Value, write: IndexWrite) -> Out {
-    let paths = check_paths(id, p)?;
+fn index_paths(
+    id: &'static str,
+    s: &mut Session,
+    PathsParams { paths }: PathsParams,
+    write: IndexWrite,
+) -> Out {
+    let paths = check_path_list(id, paths)?;
     let repo = s.repo_mut()?;
     let backup = write(repo, &paths)?;
     Ok(to_json(IndexWriteResult {
@@ -63,7 +60,7 @@ fn index_paths(id: &'static str, s: &mut Session, p: Value, write: IndexWrite) -
 /// Parameters of `index.stage_lines` and `index.unstage_lines`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LinesParams {
+pub(crate) struct LinesParams {
     path: RepoPath,
     lines: Vec<LineRef>,
     digest: String,
@@ -73,12 +70,16 @@ struct LinesParams {
 /// `digest` (see [`GitBackend::apply_lines`]). An empty
 /// selection is an error, not a no-op: it is almost always a mistake by the
 /// caller. Result: [`IndexWriteResult`].
-fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: Value) -> Out {
-    let LinesParams {
+fn index_lines(
+    id: &'static str,
+    direction: PatchDirection,
+    s: &mut Session,
+    LinesParams {
         path,
         lines,
         digest,
-    } = parse_params(id, p)?;
+    }: LinesParams,
+) -> Out {
     let path = check_path(id, path)?;
     if lines.is_empty() {
         return Err(EngineError::InvalidParams {
@@ -100,12 +101,12 @@ fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: 
 }
 
 /// Stages the chosen lines of the worktree diff.
-pub(super) fn index_stage_lines(s: &mut Session, p: Value) -> Out {
+pub(super) fn index_stage_lines(s: &mut Session, p: LinesParams) -> Out {
     index_lines("index.stage_lines", PatchDirection::Stage, s, p)
 }
 
 /// Unstages the chosen lines of the index diff.
-pub(super) fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
+pub(super) fn index_unstage_lines(s: &mut Session, p: LinesParams) -> Out {
     index_lines("index.unstage_lines", PatchDirection::Unstage, s, p)
 }
 

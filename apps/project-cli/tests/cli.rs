@@ -455,6 +455,7 @@ fn commands_lists_the_catalog() {
             "conflict.show",
             "diff.commit",
             "diff.index",
+            "diff.range",
             "diff.worktree",
             "edit.history",
             "edit.redo",

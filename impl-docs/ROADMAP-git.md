@@ -598,3 +598,22 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
 - **Done when:** UI tests with a fake clock (interval, skips, backoff, suspension on an
   authentication error and Retry, hidden tab); by hand on Xvfb: a commit pushed to a local
   remote from a terminal shows up in the graph without pressing Fetch; CI green.
+
+### S53 — Compare two revisions
+- [ ] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `diff.commit` only compares a commit with its parent. Add the read-only `diff.range
+  {"from", "to", "merge_base"?: bool, "path"?}`: the diff of `to` against `from` (`git diff from
+  to`), or with `merge_base: true` what `to` brings since it diverged from `from` (`from...to`, i.e.
+  against the merge base; no merge base → clear error). Same result shape, renames handling, size
+  limits and binary handling as `diff.commit` (same parser and code path), plus `{"from", "to",
+  "base"?}` as full oids. Without `path`: every changed file with its hunks, as `diff.commit`. Revs
+  after `--end-of-options`, paths after `--` with `--literal-pathspecs`; a rev that is not a commit
+  → `InvalidParams`. Docs in `impl-docs/git/reading.md`, examples in `impl-docs/git/cli.md`, README
+  command list. UI: Ctrl+click a second commit in the list → details panel "Compare A ↔ B" with
+  files and diff; "Compare with the current branch" in the branch menu (`merge_base: true`).
+- **Done when:** integration tests (two unrelated commits, merge_base with diverged branches, no
+  common base, rename, binary, path filter, rev starting with `-`, tag and branch names) and on the
+  `MemoryBackend`; desktop screenshot; CI green.
+- **Status:** engine part done (`diff.range`, `GitRead::commit_id`/`common_base`,
+  `DiffSpec::Range`; tests in `crates/git/tests/range.rs` and `crates/engine/src/builtin/range_tests.rs`);
+  UI part (`egui-ui`) to do.

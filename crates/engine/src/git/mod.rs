@@ -208,6 +208,15 @@ pub trait GitRead {
     /// built by the engine from already checked names (e.g. `branch.<name>.pushRemote`,
     /// `remote.<name>.fetch`).
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError>;
+
+    /// The commit `rev` leads to (`rev^{commit}`), `None` if it does not resolve to a commit
+    /// (unknown, ambiguous, a tree or a blob). A read, for `diff.range`.
+    fn commit_id(&self, rev: &str) -> Result<Option<Oid>, EngineError>;
+
+    /// The best common ancestor of commits `a` and `b` (`git merge-base`), `None` if they have
+    /// no common history. With several best ones, the one git picks (the one `git diff a...b`
+    /// uses). A read, for `diff.range` with `merge_base`.
+    fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError>;
 }
 
 /// Index and worktree: stage, unstage, commit, discard and their restores. Part of
@@ -786,7 +795,7 @@ impl<T> GitBackend for T where
 }
 
 /// What to compare in [`GitRead::diff`]: parameters of `diff.worktree`, `diff.index` and
-/// `diff.commit` (§4). `path`, if present, limits the diff to that file.
+/// `diff.commit` and `diff.range` (§4). `path`, if present, limits the diff to that file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffSpec {
     /// Worktree relative to the index: the unstaged changes (`git diff`). Untracked files
@@ -799,6 +808,13 @@ pub enum DiffSpec {
     /// root commit relative to the empty tree. The same files as
     /// [`GitRead::show_commit`].
     Commit { rev: String, path: Option<RepoPath> },
+    /// Commit `to` relative to commit `from` (`git diff <from> <to>`), whatever their relation:
+    /// `diff.range`, which resolves the revisions (and the merge base) first.
+    Range {
+        from: Oid,
+        to: Oid,
+        path: Option<RepoPath>,
+    },
 }
 
 impl DiffSpec {
@@ -807,7 +823,8 @@ impl DiffSpec {
         match self {
             DiffSpec::Worktree { path }
             | DiffSpec::Index { path }
-            | DiffSpec::Commit { path, .. } => path.as_ref(),
+            | DiffSpec::Commit { path, .. }
+            | DiffSpec::Range { path, .. } => path.as_ref(),
         }
     }
 }

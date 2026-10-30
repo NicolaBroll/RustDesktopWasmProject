@@ -344,6 +344,13 @@ fn diffs() {
         "path",
         json!({ "id": id(4), "path": "src/lib.rs" }),
     );
+    snap(
+        &r,
+        &mut s,
+        "diff.range",
+        "",
+        json!({ "from": id(8), "to": id(9), "merge_base": true, "path": "src/graph.rs" }),
+    );
 }
 
 /// The `digest` and the first added line of `path` in the diff `diff_id`.

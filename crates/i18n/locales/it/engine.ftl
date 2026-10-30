@@ -120,6 +120,8 @@ engine-index-flags-not-restored = l'indice è stato scritto correttamente, ma no
 engine-backup-no-name = nessun nome libero per il backup dopo `{ $base }`
 engine-git-unexpected-output = output inatteso: `{ $output }`
 engine-git-no-commit = nessun commit letto per `{ $hex }`
+engine-range-not-commit = `{ $rev }` non è un commit
+engine-range-no-base = `{ $from }` e `{ $to }` non hanno storia in comune: non c'è una base di merge con cui confrontare
 engine-command-quoted = `{ $id }`
 # An error with a note at the end (what was left changed, where the backup is).
 engine-note-newline =

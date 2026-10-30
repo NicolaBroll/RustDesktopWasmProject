@@ -1,0 +1,82 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "base": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+  "files": [
+    {
+      "binary": false,
+      "change": "Added",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "// src/graph.rs",
+              "kind": "Added",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "// last change: commit 7",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Added",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "pub fn graph() -> &'static str {",
+              "kind": "Added",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "    \"src/graph.rs\"",
+              "kind": "Added",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "}",
+              "kind": "Added",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "// line added by: commit 7",
+              "kind": "Added",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 7,
+          "new_start": 1,
+          "old_count": 0,
+          "old_start": 0,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "617f9835d8eaea7a839144bbf33efee2c872f52d",
+      "new_path": "src/graph.rs",
+      "old_mode": null,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "old_path": "src/graph.rs",
+      "similarity": null
+    }
+  ],
+  "from": "9e5651b0ef9536369ca8a164477d7801b0643a4e",
+  "to": "aeaf52febe706064c02d8a5e87afea6243ec2be5"
+}

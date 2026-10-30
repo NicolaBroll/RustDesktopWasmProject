@@ -48,8 +48,10 @@ the folder it created; not available over MCP),
 prefix contain the text, literal and case-insensitive, in the order of `repo.log`; `in` limits to
 `"message"`, `"author"`, `"id"`; result `{"ids", "total", "has_more"}`), `commit.show {"id"}` (metadata and files
 changed relative to the first parent), `diff.worktree {"path"?}` (unstaged changes),
-`diff.index {"path"?}` (staged changes) and `diff.commit {"id", "path"?}` (commit relative to its
-first parent). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and
+`diff.index {"path"?}` (staged changes), `diff.commit {"id", "path"?}` (commit relative to its
+first parent) and `diff.range {"from", "to", "merge_base"?, "path"?}` (`to` relative to `from`, or
+with `merge_base: true` relative to their merge base; the result also has `from`, `to` and `base`
+as full ids). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and
 `diff.index` each file also has `digest`, to be passed to `index.*_lines`); `path` limits the
 result to that file (renames stay renames) and is a string, or a byte array for non-UTF-8 names.
 There is no size limit: for large commits it is better to request one file at a time.

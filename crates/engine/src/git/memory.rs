@@ -510,8 +510,50 @@ impl MemoryBackend {
     /// The files of commit `rev` relative to the first parent, from the files of `show_commit`.
     fn commit_diff(&self, rev: &str) -> Result<Vec<FileDiff>, EngineError> {
         let details = self.show_commit(rev)?;
-        Ok(details
-            .files
+        Ok(self.changes_diff(&details.files))
+    }
+
+    /// Commit `to` relative to commit `from`, from their trees. Renames: only exact ones (a
+    /// deleted file and an added file with the same blob), paired by path order.
+    fn range_diff(&self, from: Oid, to: Oid) -> Vec<FileDiff> {
+        // `from` is the first parent: the changes of the commit (with its renames), as `diff.commit`.
+        if self.commits.get(&to).and_then(|c| c.parents.first()) == Some(&from) {
+            return self.changes_diff(self.changes.get(&to).map_or(&[], Vec::as_slice));
+        }
+        let mut changes = commit::tree_changes(&self.tree_at(from), &self.tree_at(to));
+        let mut i = 0;
+        while i < changes.len() {
+            let added = &changes[i];
+            let source = (added.change == Change::Added)
+                .then(|| {
+                    changes.iter().position(|d| {
+                        d.change == Change::Deleted
+                            && d.old_oid == added.new_oid
+                            && d.old_mode == added.new_mode
+                    })
+                })
+                .flatten();
+            match source {
+                Some(d) => {
+                    let deleted = changes.remove(d);
+                    let i_now = if d < i { i - 1 } else { i };
+                    let file = &mut changes[i_now];
+                    file.change = Change::Renamed;
+                    file.original = Some(deleted.path);
+                    file.score = Some(100);
+                    file.old_mode = deleted.old_mode;
+                    file.old_oid = deleted.old_oid;
+                    i = i_now + 1;
+                }
+                None => i += 1,
+            }
+        }
+        self.changes_diff(&changes)
+    }
+
+    /// The [`FileDiff`]s of the files `changes`, with the contents of the known blobs.
+    fn changes_diff(&self, changes: &[ChangedFile]) -> Vec<FileDiff> {
+        changes
             .iter()
             .map(|f| {
                 file_diff(
@@ -523,7 +565,7 @@ impl MemoryBackend {
                     self.side(f.new_mode, f.new_oid),
                 )
             })
-            .collect())
+            .collect()
     }
 
     /// Index relative to HEAD, from the status entries.
@@ -747,6 +789,7 @@ impl GitRead for MemoryBackend {
             DiffSpec::Worktree { .. } => self.worktree_diff(),
             DiffSpec::Index { .. } => self.index_diff(),
             DiffSpec::Commit { rev, .. } => self.commit_diff(rev)?,
+            DiffSpec::Range { from, to, .. } => self.range_diff(*from, *to),
         };
         if let Some(path) = spec.path() {
             files.retain(|f| f.new_path == *path || f.old_path == *path);
@@ -772,6 +815,17 @@ impl GitRead for MemoryBackend {
 
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
         Ok(self.config_of(key))
+    }
+
+    fn commit_id(&self, rev: &str) -> Result<Option<Oid>, EngineError> {
+        Ok(self
+            .resolve(rev)
+            .ok()
+            .filter(|id| self.commits.contains_key(id)))
+    }
+
+    fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError> {
+        Ok(self.merge_base(*a, *b))
     }
 }
 

@@ -13,9 +13,9 @@
 use crate::merge::{Outcome, Received, message_texts, reread_warning};
 use crate::{Action, Done, ErrorKind, Request, Tab};
 use project_domain::{Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep};
-use project_engine::{RebasePlanResult, RebaseStartResult};
+use project_engine::{RebasePlanParams, RebasePlanResult, RebaseStartParams, RebaseStartResult};
 use project_i18n::tr;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// The command that reads the default plan.
 pub const PLAN: &str = "rebase.plan";
@@ -313,7 +313,9 @@ impl RebaseBox {
             phase: Phase::Loading,
             error: None,
         });
-        Some(json!({ "base": base.to_string() }))
+        Some(crate::params(RebasePlanParams {
+            base: base.to_string(),
+        }))
     }
 
     /// The response of `rebase.plan`: the rows, or the reason (e.g. merges in the range).
@@ -427,13 +429,11 @@ impl RebaseBox {
 
     fn params(editor: &Editor, confirm: bool) -> (Value, String) {
         let plan = editor.plan();
-        let mut params = json!({
-            "base": plan.base.to_string(),
-            "steps": serde_json::to_value(&plan.steps).unwrap_or_default(),
+        let params = crate::params(RebaseStartParams {
+            base: plan.base.to_string(),
+            steps: plan.steps,
+            confirm,
         });
-        if confirm {
-            params["confirm"] = json!(true);
-        }
         (params, tr!("rebase-label", branch = &editor.branch))
     }
 

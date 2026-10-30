@@ -5,6 +5,7 @@
 use super::*;
 use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
+use serde_json::json;
 use std::sync::Arc;
 
 fn oid(n: u64) -> Oid {

@@ -81,26 +81,30 @@ pub struct ResetResult {
 }
 
 /// Parameters of `branch.reset`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ResetParams {
+pub struct ResetParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.
-    target: String,
-    mode: ResetMode,
-    #[serde(default)]
-    confirm: bool,
+    pub target: String,
+    /// What the reset moves besides the branch.
+    pub mode: ResetMode,
+    /// A `hard` reset that overwrites local changes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
     /// The full id of the commit HEAD was on when the reset was confirmed (the `expected` of the
     /// confirmation request): HEAD must still be there.
-    #[serde(default)]
-    expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Parameters of `branch.reset_preview`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PreviewParams {
-    target: String,
-    mode: ResetMode,
+pub struct ResetPreviewParams {
+    /// The commit, as in `branch.reset`.
+    pub target: String,
+    /// The mode, as in `branch.reset`.
+    pub mode: ResetMode,
 }
 
 /// What a reset would do, read before writing: shared by the command and its preview.
@@ -234,7 +238,7 @@ fn file_list(files: &[RepoPath]) -> String {
 /// Result: [`ResetPreviewResult`].
 pub(super) fn branch_reset_preview(
     s: &mut Session,
-    PreviewParams { target, mode }: PreviewParams,
+    ResetPreviewParams { target, mode }: ResetPreviewParams,
 ) -> Out {
     const ID: &str = "branch.reset_preview";
     let repo = s.repo()?;

@@ -6,11 +6,11 @@
 //! Data only, no egui. Command contract in `impl-docs/git/reset.md`.
 
 use crate::merge::{Outcome, Received, reread_warning};
-use crate::{Action, Done, ErrorKind, Request, Tab};
+use crate::{Action, Done, ErrorKind, Request, Tab, params};
 use project_domain::Oid;
-use project_engine::{ResetPreviewResult, ResetResult};
+use project_engine::{ResetMode, ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 use project_i18n::tr;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// The read-only plan for the dialog.
 pub const PREVIEW: &str = "branch.reset_preview";
@@ -38,6 +38,14 @@ impl Mode {
             Mode::Soft => "soft",
             Mode::Mixed => "mixed",
             Mode::Hard => "hard",
+        }
+    }
+
+    fn engine(self) -> ResetMode {
+        match self {
+            Mode::Soft => ResetMode::Soft,
+            Mode::Mixed => ResetMode::Mixed,
+            Mode::Hard => ResetMode::Hard,
         }
     }
 
@@ -107,7 +115,10 @@ impl ResetDialog {
     }
 
     fn preview_params(&self) -> Value {
-        json!({ "target": self.target.to_string(), "mode": self.mode.param() })
+        params(ResetPreviewParams {
+            target: self.target.to_string(),
+            mode: self.mode.engine(),
+        })
     }
 }
 
@@ -196,11 +207,12 @@ impl ResetBox {
         let Phase::Ready(preview) = &dialog.phase else {
             return None;
         };
-        let mut params = dialog.preview_params();
-        params["expected"] = json!(preview.expected.to_string());
-        if preview.needs_confirm {
-            params["confirm"] = json!(true);
-        }
+        let params = params(ResetParams {
+            target: dialog.target.to_string(),
+            mode: dialog.mode.engine(),
+            confirm: preview.needs_confirm,
+            expected: Some(preview.expected.to_string()),
+        });
         dialog.phase = Phase::Sending(preview.clone());
         dialog.error = None;
         Some((params, dialog.label()))

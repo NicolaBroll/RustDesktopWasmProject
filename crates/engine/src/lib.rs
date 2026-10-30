@@ -47,7 +47,7 @@ pub use builtin::remotes::{
     FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddResult, RemoteListEntry,
     RemoteListResult, RemoteRemoveResult, RemovedRemote,
 };
-pub use builtin::reset::{ResetPreviewResult, ResetResult};
+pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 pub use builtin::search::RepoSearchResult;
 pub use builtin::stage::IndexWriteResult;
 pub use builtin::stash::{

@@ -391,16 +391,22 @@ pub fn file_title(file: &FileDiff) -> String {
 
 /// Kind of change, similarity and changed lines, e.g. `renamed 92%  +1 -1`.
 pub fn file_summary(file: &FileDiff) -> String {
+    let mut summary = file_kind(file);
+    let (added, removed) = file.line_counts();
+    if added + removed > 0 {
+        summary.push_str(&format!("  +{added} -{removed}"));
+    }
+    summary
+}
+
+/// Kind of change and similarity, e.g. `renamed  92%`.
+pub fn file_kind(file: &FileDiff) -> String {
     let mut parts = vec![change_name(file.change)];
     if let Some(similarity) = file.similarity {
         parts.push(format!("{similarity}%"));
     }
     if file.is_submodule() {
         parts.push(tr!("diff-submodule-badge"));
-    }
-    let (added, removed) = file.line_counts();
-    if added + removed > 0 {
-        parts.push(format!("+{added} -{removed}"));
     }
     parts.join("  ")
 }
@@ -742,6 +748,7 @@ mod tests {
         renamed.similarity = Some(92);
         assert_eq!(file_title(&renamed), "src/main.rs -> src/bin/app.rs");
         assert_eq!(file_summary(&renamed), "renamed  92%  +2 -1");
+        assert_eq!(file_kind(&renamed), "renamed  92%");
         assert!(file_notes(&renamed).is_empty());
 
         renamed.hunks.clear();

@@ -100,7 +100,7 @@ Rules that apply to every step:
   scale; the only literal sizes left are the icon-font checks in the `icons` tests.
 
 ### U21 — Wording and repeated header
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** Italian "Unstage di tutto" becomes "Togli tutto dallo stage" and the hint "Scrivere
   il messaggio del commit" an imperative ("Scrivi …"); "Ctrl+Comma" is shown as "Ctrl+," in both
   languages, as "Ctrl+Enter" is shown with its key. The diff of one file shows its name twice
@@ -108,3 +108,8 @@ Rules that apply to every step:
   the bar does not repeat what the file row says.
 - **Done when:** the texts above changed in both locales; i18n tests green; screenshot of a
   one-file diff; CI green.
+- **Done:** Italian "Togli tutto dallo stage", "Scrivi il messaggio del commit" (and "Scrivi il
+  messaggio" in the merge dialog). The File menu writes the settings shortcut with the key's
+  symbol (`shortcut_text` in `view/title_bar.rs`: "Ctrl+,"; egui's symbols on macOS). In the diff
+  of a single file that is not renamed the file row shows only the kind of change
+  (`diff::file_kind`): path and counters are in the bar.

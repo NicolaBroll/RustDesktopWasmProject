@@ -2,8 +2,8 @@
 //! Reads the state of [`crate::diff`] and produces [`Action`]; changes nothing directly.
 
 use crate::diff::{
-    self, DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_summary,
-    file_title, line_number, line_prefix,
+    self, DiffDoc, DiffSource, DiffTarget, Pane, Row, SplitRow, display_line, file_kind,
+    file_summary, file_title, line_number, line_prefix,
 };
 use crate::icons;
 use crate::lines::{self, LineButtons, LineSelection, Partial};
@@ -472,10 +472,22 @@ fn paint_row(
             painter.rect_filled(rect, 0.0, style.file_bg);
             // The title stays visible while scrolling: it starts from the left edge of the view.
             let left = gutter.left() + PAD;
+            let title = file_title(file);
+            // One file, not renamed: the bar above already shows its path and counters.
+            if doc.diff.files.len() == 1 && title == file.path().to_string_lossy() {
+                painter.text(
+                    pos2(left, mid),
+                    Align2::LEFT_CENTER,
+                    file_kind(file),
+                    style.title.clone(),
+                    style.weak,
+                );
+                return;
+            }
             let title = painter.text(
                 pos2(left, mid),
                 Align2::LEFT_CENTER,
-                file_title(file),
+                title,
                 style.title.clone(),
                 style.strong,
             );

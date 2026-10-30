@@ -488,7 +488,12 @@ pub(super) fn commit_row(
         let painter = ui.painter_at(cell);
         let mut start = cell.left_top();
         if i == 1 {
-            let (used, hidden) = ref_labels(&painter, cell, labels, lane, style);
+            // The subject keeps its first characters; the labels take the rest.
+            let summary = painter.layout_no_wrap(value.clone(), font.clone(), color);
+            let prefix: String = value.chars().take(SUMMARY_CHARS).chain(['…']).collect();
+            let prefix = painter.layout_no_wrap(prefix, font.clone(), color);
+            let room = cell.width() - summary.size().x.min(prefix.size().x) - LABEL_GAP;
+            let (used, hidden) = ref_labels(&painter, cell, labels, lane, style, room);
             start.x += used;
             more = hidden;
         }
@@ -498,6 +503,15 @@ pub(super) fn commit_row(
         x += width;
     }
     more
+}
+
+/// Characters of the subject that stay before the ref labels collapse into "+N".
+const SUMMARY_CHARS: usize = 8;
+
+/// How many ref labels (`widths`, gap included) a row shows in `room`: all if they fit,
+/// otherwise as many as fit next to the `+N` (`more` wide), and at least the first one.
+pub(super) fn shown_labels(widths: &[f32], room: f32, more: f32) -> usize {
+    graph::labels_that_fit(widths, room, more).max(widths.len().min(1))
 }
 
 /// `text` on one line, cut with "…" if wider than `width`.
@@ -528,14 +542,15 @@ pub(super) const LABEL_GAP: f32 = 4.0;
 pub(super) const LABEL_PAD: f32 = 4.0;
 
 /// Draws the ref labels at the start of `cell`, in the color of the commit's lane, and
-/// returns the width used and where the `+N` is. They take at most half the cell; those that do
-/// not fit become `+N`.
+/// returns the width used and where the `+N` is. They take at most `room`; those that do not
+/// fit become `+N`, but the first one is always drawn.
 pub(super) fn ref_labels(
     painter: &egui::Painter,
     cell: egui::Rect,
     labels: &[RefLabel],
     lane: Color32,
     style: &RowStyle,
+    room: f32,
 ) -> (f32, Option<egui::Rect>) {
     if labels.is_empty() {
         return (0.0, None);
@@ -579,7 +594,7 @@ pub(super) fn ref_labels(
         .collect();
     let hidden_text = |n: usize| format!("+{n}");
     let more = painter.layout_no_wrap(hidden_text(labels.len()), style.label.clone(), style.weak);
-    let shown = graph::labels_that_fit(&widths, cell.width() / 2.0, more.size().x + LABEL_GAP);
+    let shown = shown_labels(&widths, room, more.size().x + LABEL_GAP);
 
     let height = style.label.size + 4.0;
     let mut x = cell.left();
@@ -738,6 +753,15 @@ fn on_first_parent_history(repo: &RepoView, id: Oid) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_labels_collapse_to_the_first_one_and_the_count() {
+        assert_eq!(shown_labels(&[40.0, 40.0], 100.0, 20.0), 2);
+        assert_eq!(shown_labels(&[40.0, 40.0, 40.0], 70.0, 20.0), 1);
+        // Too narrow even for one: the first stays, the others go into "+N".
+        assert_eq!(shown_labels(&[80.0, 40.0], 30.0, 20.0), 1);
+        assert_eq!(shown_labels(&[], 30.0, 20.0), 0);
+    }
 
     #[test]
     fn a_narrow_list_hides_the_author_then_the_date() {

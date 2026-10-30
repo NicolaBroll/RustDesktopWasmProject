@@ -45,6 +45,12 @@ pub(crate) fn install_text_styles(ctx: &egui::Context) {
     });
 }
 
+/// Fill and text of the primary button of a panel (Commit) when it is enabled: the accent of
+/// the selected rows, so it stands out from the grey of the other buttons and of itself disabled.
+pub(crate) fn primary(visuals: &egui::Visuals) -> (Color32, Color32) {
+    (visuals.selection.bg_fill, visuals.selection.stroke.color)
+}
+
 /// Text on a colored badge (change letters, branch labels): dark on every badge color.
 pub(crate) const ON_BADGE: Color32 = Color32::from_gray(20);
 
@@ -54,7 +60,6 @@ pub(crate) const CLOSE_HOVER: Color32 = Color32::from_rgb(0xc4, 0x2b, 0x1c);
 /// Merge commits in the details.
 pub(crate) const MERGE: Color32 = Color32::from_rgb(0x9b, 0x6b, 0xdf);
 
-/// Badge color of a change type.
 /// Background of the commit rows that match the search (S48): a warm tint, lighter than the
 /// selection.
 pub(crate) fn search_match(dark_mode: bool) -> Color32 {
@@ -65,6 +70,7 @@ pub(crate) fn search_match(dark_mode: bool) -> Color32 {
     }
 }
 
+/// Badge color of a change type.
 pub(crate) fn change(change: Change) -> Color32 {
     match change {
         Change::Added => Color32::from_rgb(0x3f, 0xb9, 0x50),

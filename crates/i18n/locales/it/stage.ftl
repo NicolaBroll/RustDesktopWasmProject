@@ -35,6 +35,7 @@ stage-stage-all-help = Mette in stage tutti i file di questa lista
 stage-section-title = { $title } ({ $n })
 stage-discard-all = Scarta tutto…
 stage-discard-all-help = Scarta le modifiche fuori stage di tutti i file tracciati di questa lista (chiede conferma, si può annullare). I file non tracciati non si toccano
+stage-more-hint = Altre azioni su questa lista
 stage-empty-staged = Nessun file in stage.
 stage-empty-unstaged = Nessuna modifica fuori dallo stage.
 stage-stage = Stage

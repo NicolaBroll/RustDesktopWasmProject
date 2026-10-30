@@ -9,9 +9,10 @@
 use super::remote::{RefUpdate, changes, unexpected};
 use super::{JournalState, Out, reread, to_json};
 use crate::{
-    EngineError, FetchRequest, HeadState, JournalEntry, Message, PullMode, PullPolicy, PullRequest,
-    PullStrategy, Session, StrategySource, branch_ref, check_branch_name, check_pull_state,
-    check_remote_name, merge_message, pull_mode, unknown_remote,
+    BranchMove, EngineError, FetchRequest, GitBackend, HeadState, JobContext, JournalEntry,
+    Message, PullMode, PullPolicy, PullRequest, PullStrategy, Session, StrategySource,
+    UpstreamConfig, branch_ref, check_branch_name, check_pull_state, check_remote_name,
+    merge_message, pull_mode, unknown_remote,
 };
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
@@ -136,7 +137,7 @@ fn no_upstream(branch: &str) -> EngineError {
 ///    files, branch without upstream (or with local upstream `.`), `remote` different from the
 ///    upstream's, invalid configuration → [`EngineError::NotAllowed`], nothing fetched;
 /// 2. fetch of only the upstream's branch ([`GitRemotes::fetch`](crate::GitRemotes::fetch):
-///    progress and cancellation from the [`JobContext`](crate::JobContext), errors `Auth`,
+///    progress and cancellation from the [`JobContext`], errors `Auth`,
 ///    `RemoteUnreachable`, `Cancelled`); a cancellation requested during the fetch stops the
 ///    command even if the fetch finished, before integrating;
 /// 3. the strategy ([`pull_mode`]): nothing to do if the branch already contains the upstream;
@@ -196,44 +197,7 @@ pub(super) fn remote_pull(
     // Before fetching: an operation in progress or a conflict would stop the pull anyway.
     check_pull_state(&status, &PullMode::FastForward)?;
 
-    let upstream = repo
-        .upstream(&branch)?
-        .ok_or_else(|| no_upstream(&branch))?;
-    if upstream.remote == "." {
-        return Err(EngineError::NotAllowed(msg!(
-            "engine-pull-local-upstream",
-            branch = branch.escape_debug(),
-            merge = upstream.merge
-        )));
-    }
-    if let Some(remote) = &remote
-        && *remote != upstream.remote
-    {
-        return Err(EngineError::NotAllowed(msg!(
-            "engine-pull-other-remote",
-            branch = branch.escape_debug(),
-            upstream = upstream.remote.escape_debug(),
-            remote = remote.escape_debug()
-        )));
-    }
-    let remotes = repo.remotes()?;
-    if !remotes.contains(&upstream.remote) {
-        return Err(unknown_remote(&upstream.remote, &remotes));
-    }
-    let merge_branch = upstream.merge_branch().ok_or_else(|| {
-        EngineError::NotAllowed(msg!(
-            "engine-pull-upstream-not-branch",
-            branch = branch.escape_debug(),
-            merge = upstream.merge
-        ))
-    })?;
-    let tracking = upstream.tracking.clone().ok_or_else(|| {
-        EngineError::NotAllowed(msg!(
-            "engine-pull-no-refspec",
-            remote = upstream.remote.escape_debug(),
-            merge = upstream.merge
-        ))
-    })?;
+    let (upstream, merge_branch, tracking) = checked_upstream(repo, &branch, remote.as_deref())?;
     // The strategy is read before the fetch: an invalid configuration fetches nothing.
     let policy = if current {
         repo.pull_settings(&branch)?.policy(strategy)?
@@ -249,33 +213,18 @@ pub(super) fn remote_pull(
     if job.is_cancelled() {
         return Err(EngineError::Cancelled { command: ID });
     }
-    let fetched = repo
-        .fetch(
-            &FetchRequest {
-                remote: upstream.remote.clone(),
-                branch: Some(merge_branch.to_owned()),
-                prune: false,
-            },
-            &job,
-        )
-        .map_err(|e| match e {
-            EngineError::Cancelled { .. } => EngineError::Cancelled { command: ID },
-            other => other,
-        })?;
-    let after_fetch = repo.refs()?;
-    let updated = changes(&refs, &after_fetch);
-    let mut warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
-    let fetch = PullFetch {
-        updated,
-        messages: fetched.messages,
-    };
-    let upstream_oid = after_fetch
-        .iter()
-        .find(|r| r.name == tracking)
-        .map(|r| r.target)
-        .ok_or_else(|| {
-            EngineError::NotAllowed(msg!("engine-pull-tracking-missing", tracking = tracking))
-        })?;
+    let FetchedUpstream {
+        fetch,
+        mut warnings,
+        upstream_oid,
+    } = fetch_upstream(
+        repo,
+        &job,
+        &refs,
+        &upstream.remote,
+        &merge_branch,
+        &tracking,
+    )?;
     // Cancelled during the fetch: no integration.
     if job.is_cancelled() {
         return Err(EngineError::Cancelled { command: ID });
@@ -307,10 +256,12 @@ pub(super) fn remote_pull(
             // A stopped merge does not: the branch has not moved, the entry arrives with `merge.continue`.
             if !outcome.in_progress && outcome.after != before {
                 journal.record(JournalEntry::pull(
-                    &full,
-                    before,
-                    outcome.after,
-                    HeadState::from_head(&status.head),
+                    BranchMove {
+                        branch: &full,
+                        before,
+                        after: outcome.after,
+                        head: HeadState::from_head(&status.head),
+                    },
                     (&mode).into(),
                     remote_short(&tracking),
                     outcome.backup.clone(),
@@ -351,6 +302,105 @@ pub(super) fn remote_pull(
         refs_error,
         journal: JournalState::of(journal),
     }))
+}
+
+/// The upstream of `branch`, checked before fetching: on a configured remote (the one asked for,
+/// if any), a branch, mapped by a fetch refspec. With its branch on the remote and the
+/// remote-tracking branch.
+fn checked_upstream(
+    repo: &dyn GitBackend,
+    branch: &str,
+    remote: Option<&str>,
+) -> Result<(UpstreamConfig, String, String), EngineError> {
+    let upstream = repo.upstream(branch)?.ok_or_else(|| no_upstream(branch))?;
+    if upstream.remote == "." {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pull-local-upstream",
+            branch = branch.escape_debug(),
+            merge = upstream.merge
+        )));
+    }
+    if let Some(remote) = remote
+        && remote != upstream.remote
+    {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-pull-other-remote",
+            branch = branch.escape_debug(),
+            upstream = upstream.remote.escape_debug(),
+            remote = remote.escape_debug()
+        )));
+    }
+    let remotes = repo.remotes()?;
+    if !remotes.contains(&upstream.remote) {
+        return Err(unknown_remote(&upstream.remote, &remotes));
+    }
+    let merge_branch = upstream.merge_branch().map(str::to_owned).ok_or_else(|| {
+        EngineError::NotAllowed(msg!(
+            "engine-pull-upstream-not-branch",
+            branch = branch.escape_debug(),
+            merge = upstream.merge
+        ))
+    })?;
+    let tracking = upstream.tracking.clone().ok_or_else(|| {
+        EngineError::NotAllowed(msg!(
+            "engine-pull-no-refspec",
+            remote = upstream.remote.escape_debug(),
+            merge = upstream.merge
+        ))
+    })?;
+    Ok((upstream, merge_branch, tracking))
+}
+
+/// What the fetch of the upstream brought.
+struct FetchedUpstream {
+    fetch: PullFetch,
+    /// Unexpected refs moved by the fetch.
+    warnings: Vec<Message>,
+    /// The remote-tracking branch after the fetch.
+    upstream_oid: Oid,
+}
+
+/// Fetches only the upstream's branch (`merge_branch` of `remote`).
+fn fetch_upstream(
+    repo: &mut dyn GitBackend,
+    job: &JobContext,
+    refs: &[RefInfo],
+    remote: &str,
+    merge_branch: &str,
+    tracking: &str,
+) -> Result<FetchedUpstream, EngineError> {
+    let fetched = repo
+        .fetch(
+            &FetchRequest {
+                remote: remote.to_owned(),
+                branch: Some(merge_branch.to_owned()),
+                prune: false,
+            },
+            job,
+        )
+        .map_err(|e| match e {
+            EngineError::Cancelled { .. } => EngineError::Cancelled { command: ID },
+            other => other,
+        })?;
+    let after_fetch = repo.refs()?;
+    let updated = changes(refs, &after_fetch);
+    let warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
+    let fetch = PullFetch {
+        updated,
+        messages: fetched.messages,
+    };
+    let upstream_oid = after_fetch
+        .iter()
+        .find(|r| r.name == tracking)
+        .map(|r| r.target)
+        .ok_or_else(|| {
+            EngineError::NotAllowed(msg!("engine-pull-tracking-missing", tracking = tracking))
+        })?;
+    Ok(FetchedUpstream {
+        fetch,
+        warnings,
+        upstream_oid,
+    })
 }
 
 #[cfg(test)]

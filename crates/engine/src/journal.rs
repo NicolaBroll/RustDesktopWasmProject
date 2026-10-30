@@ -114,6 +114,18 @@ pub struct RefChange {
     pub after: Option<Oid>,
 }
 
+/// A branch moved by an integration (pull, merge, cherry-pick, revert): the argument of the
+/// [`JournalEntry`] constructors of those commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchMove<'a> {
+    /// The branch, full name.
+    pub branch: &'a str,
+    pub before: Oid,
+    pub after: Oid,
+    /// HEAD, the same before and after (the branch itself if it is the active branch).
+    pub head: HeadState,
+}
+
 /// HEAD before and after an operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeadChange {
@@ -414,14 +426,17 @@ impl JournalEntry {
     /// go through [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (they also update index and worktree, like
     /// `git reset --keep`); of another branch through [`GitRefs::restore_refs`](crate::GitRefs::restore_refs).
     pub fn pull(
-        branch: &str,
-        before: Oid,
-        after: Oid,
-        head: HeadState,
+        moved: BranchMove<'_>,
         strategy: Integration,
         upstream: &str,
         backup: String,
     ) -> Self {
+        let BranchMove {
+            branch,
+            before,
+            after,
+            head,
+        } = moved;
         let how = match strategy {
             Integration::FastForward => msg!("engine-journal-pull-ff"),
             Integration::Rebase => msg!("engine-journal-pull-rebase", upstream = upstream),
@@ -455,17 +470,19 @@ impl JournalEntry {
     /// `source` the name of what was merged (`feature`, `origin/x`, an id), `backup` the ref
     /// of the branch before the merge (if saved). Undo and redo as for a pull of the active branch:
     /// [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (like `git reset --keep`).
-    #[allow(clippy::too_many_arguments)]
     pub fn merge(
         command: &str,
-        branch: &str,
-        before: Oid,
-        after: Oid,
-        head: HeadState,
+        moved: BranchMove<'_>,
         strategy: Integration,
         source: &str,
         backup: Option<String>,
     ) -> Self {
+        let BranchMove {
+            branch,
+            before,
+            after,
+            head,
+        } = moved;
         let strategy = match strategy {
             Integration::FastForward => "fast_forward",
             Integration::Merge | Integration::Rebase => "merge",
@@ -498,17 +515,19 @@ impl JournalEntry {
     /// `before` to `after` (a new commit on top of `before`), HEAD same before and after; `source`
     /// the commit applied or undone, `backup` the ref of the branch before (if saved). Undo and
     /// redo like the merge: [`GitRefs::reset_branch`](crate::GitRefs::reset_branch) (like `git reset --keep`).
-    #[allow(clippy::too_many_arguments)]
     pub fn pick(
         command: &str,
         kind: crate::PickKind,
-        branch: &str,
-        before: Oid,
-        after: Oid,
-        head: HeadState,
+        moved: BranchMove<'_>,
         source: &str,
         backup: Option<String>,
     ) -> Self {
+        let BranchMove {
+            branch,
+            before,
+            after,
+            head,
+        } = moved;
         Self::branch_entry(
             command,
             msg!(

@@ -1,9 +1,10 @@
 //! `remote.delete_branch`: deletes a branch from the remote (`impl-docs/git/sync.md`).
 
+use super::push::{Lost, config_true, parse_expected};
 use super::remote::{RefUpdate, RefsAfter};
 use super::{Out, reread, to_json};
 use crate::{
-    EngineError, Message, MessageArg, RemoteBranchDelete, Session, branch_ref, check_branch_name,
+    EngineError, GitBackend, Message, RemoteBranchDelete, Session, branch_ref, check_branch_name,
     check_remote_name, tracking_ref, unknown_remote,
 };
 use project_domain::{Commit, Oid, RefInfo, RefKind, Status};
@@ -56,9 +57,6 @@ pub struct RemoteDeleteBranchResult {
 }
 
 const ID: &str = "remote.delete_branch";
-
-/// Commits listed at most in the confirmation.
-const LOST_LIMIT: usize = 10;
 
 /// Parameters of `remote.delete_branch`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -116,42 +114,10 @@ pub(super) fn remote_delete_branch(
             reason: msg!("engine-push-confirm-without-expected"),
         });
     }
-    let expected = expected
-        .map(|hex| {
-            let full = hex.len() == Oid::HEX_LEN && hex.bytes().all(|b| b.is_ascii_hexdigit());
-            full.then(|| hex.to_ascii_lowercase().parse::<Oid>().ok())
-                .flatten()
-                .ok_or_else(|| EngineError::InvalidParams {
-                    id: ID,
-                    reason: msg!(
-                        "engine-push-expected-hex",
-                        len = Oid::HEX_LEN,
-                        value = hex.escape_debug()
-                    ),
-                })
-        })
-        .transpose()?;
+    let expected = parse_expected(ID, expected.as_deref())?;
     let job = s.job().clone();
     let repo = s.repo_mut()?;
-    let remotes = repo.remotes()?;
-    if !remotes.contains(&remote) {
-        return Err(unknown_remote(&remote, &remotes));
-    }
-    let mirror = repo
-        .config_values(&format!("remote.{remote}.mirror"))?
-        .into_iter()
-        .last();
-    if mirror.as_deref().is_some_and(|v| {
-        matches!(
-            v.to_ascii_lowercase().as_str(),
-            "" | "true" | "yes" | "on" | "1"
-        )
-    }) {
-        return Err(EngineError::NotAllowed(msg!(
-            "engine-remote-branch-mirror",
-            remote = remote.escape_debug()
-        )));
-    }
+    check_remote(repo, &remote)?;
     let refspecs = repo.config_values(&format!("remote.{remote}.fetch"))?;
     let tracking = tracking_ref(&refspecs, &branch_ref(&branch)).ok_or_else(|| {
         EngineError::NotAllowed(msg!(
@@ -161,121 +127,15 @@ pub(super) fn remote_delete_branch(
         ))
     })?;
     let refs_before = repo.refs()?;
-    let theirs = refs_before
-        .iter()
-        .find(|r| r.name == tracking)
-        .map(|r| r.target)
-        .ok_or_else(|| {
-            EngineError::NotAllowed(msg!(
-                "engine-remote-branch-unknown",
-                tracking = tracking.as_str(),
-                remote = remote.escape_debug()
-            ))
-        })?;
-    let upstream_of: Vec<String> = refs_before
-        .iter()
-        .filter(|r| r.kind == RefKind::LocalBranch)
-        .filter(|r| r.upstream.as_ref().is_some_and(|up| up.name == tracking))
-        .map(|r| r.short_name().to_owned())
-        .collect();
-    // The commits that, once the branch is deleted, only the backup would keep.
-    let others: Vec<Oid> = refs_before
-        .iter()
-        .filter(|r| r.name != tracking)
-        .map(|r| r.target)
-        .collect();
-    let only_here = repo.unmerged_count(&theirs, &others)?;
-    let lost = if only_here > 0 {
-        repo.missing_commits(&theirs, &others, LOST_LIMIT)?
-    } else {
-        Vec::new()
-    };
-
-    let details = || {
-        let only = if only_here == 0 {
-            msg!("engine-remote-branch-only-none")
-        } else {
-            let names: Vec<Message> = lost
-                .iter()
-                .map(|c| {
-                    msg!(
-                        "engine-push-lost-commit",
-                        id = c.id.short(),
-                        summary = c.summary
-                    )
-                })
-                .collect();
-            let more = only_here.saturating_sub(lost.len());
-            let empty = names.is_empty();
-            let commits = MessageArg::Joined(names, ", ".into());
-            let commits = match (empty, more) {
-                (_, 0) => msg!("engine-other", text = commits),
-                (true, more) => msg!("engine-push-lost-others", n = more),
-                (false, more) => msg!("engine-push-lost-and-others", commits = commits, n = more),
-            };
-            msg!(
-                "engine-remote-branch-only",
-                n = only_here,
-                commits = commits
-            )
-        };
-        let upstreams = if upstream_of.is_empty() {
-            msg!("engine-other", text = "")
-        } else {
-            let names = upstream_of
-                .iter()
-                .map(|b| format!("`{b}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            msg!(
-                "engine-remote-branch-upstream-of",
-                n = upstream_of.len(),
-                branches = names
-            )
-        };
-        (only, upstreams)
-    };
-    // The confirmation holds only for the commit seen.
-    if let Some(expected) = expected
-        && expected != theirs
-    {
-        let (only, upstreams) = details();
-        return Err(EngineError::ConfirmRequired {
-            command: ID,
-            reason: msg!(
-                "engine-remote-branch-moved",
-                tracking = tracking.as_str(),
-                expected = expected,
-                now = theirs,
-                only = only,
-                upstreams = upstreams
-            ),
-            expected: Some(theirs.to_string()),
-        });
-    }
-    if !confirm {
-        let (only, upstreams) = details();
-        return Err(EngineError::ConfirmRequired {
-            command: ID,
-            reason: msg!(
-                "engine-remote-branch-confirm",
-                remote = remote.as_str(),
-                branch = branch.as_str(),
-                tracking = tracking.as_str(),
-                theirs = theirs,
-                only = only,
-                upstreams = upstreams
-            ),
-            expected: Some(theirs.to_string()),
-        });
-    }
+    let seen = Seen::read(repo, &refs_before, &remote, tracking)?;
+    seen.check_confirmation(&remote, &branch, expected, confirm)?;
     if job.is_cancelled() {
         return Err(EngineError::Cancelled { command: ID });
     }
     let request = RemoteBranchDelete {
         remote: remote.clone(),
         branch: branch.clone(),
-        expected: theirs,
+        expected: seen.theirs,
     };
     let deleted = repo.delete_remote_branch(&request, &job)?;
     let incomplete = deleted.incomplete.then(|| {
@@ -291,11 +151,11 @@ pub(super) fn remote_delete_branch(
     Ok(to_json(RemoteDeleteBranchResult {
         remote,
         branch,
-        tracking,
-        deleted: theirs,
-        only_here,
-        lost,
-        upstream_of,
+        tracking: seen.tracking,
+        deleted: seen.theirs,
+        only_here: seen.lost.count,
+        lost: seen.lost.commits,
+        upstream_of: seen.upstream_of,
         backup: deleted.backup,
         summary: deleted.summary,
         messages: deleted.messages,
@@ -307,4 +167,146 @@ pub(super) fn remote_delete_branch(
         refs: after.refs,
         refs_error: after.refs_error,
     }))
+}
+
+/// The remote must be configured and not a mirror.
+fn check_remote(repo: &dyn GitBackend, remote: &str) -> Result<(), EngineError> {
+    let remotes = repo.remotes()?;
+    if !remotes.iter().any(|r| r == remote) {
+        return Err(unknown_remote(remote, &remotes));
+    }
+    let mirror = repo
+        .config_values(&format!("remote.{remote}.mirror"))?
+        .into_iter()
+        .last();
+    if mirror.as_deref().is_some_and(config_true) {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-branch-mirror",
+            remote = remote.escape_debug()
+        )));
+    }
+    Ok(())
+}
+
+/// The remote branch as the local remote-tracking branch shows it: what the confirmation is about.
+struct Seen {
+    tracking: String,
+    /// The commit of the remote-tracking branch.
+    theirs: Oid,
+    /// The local branches with it as upstream.
+    upstream_of: Vec<String>,
+    /// The commits that, once the branch is deleted, only the backup would keep.
+    lost: Lost,
+}
+
+impl Seen {
+    fn read(
+        repo: &dyn GitBackend,
+        refs: &[RefInfo],
+        remote: &str,
+        tracking: String,
+    ) -> Result<Self, EngineError> {
+        let theirs = refs
+            .iter()
+            .find(|r| r.name == tracking)
+            .map(|r| r.target)
+            .ok_or_else(|| {
+                EngineError::NotAllowed(msg!(
+                    "engine-remote-branch-unknown",
+                    tracking = tracking.as_str(),
+                    remote = remote.escape_debug()
+                ))
+            })?;
+        let upstream_of = refs
+            .iter()
+            .filter(|r| r.kind == RefKind::LocalBranch)
+            .filter(|r| r.upstream.as_ref().is_some_and(|up| up.name == tracking))
+            .map(|r| r.short_name().to_owned())
+            .collect();
+        let others: Vec<Oid> = refs
+            .iter()
+            .filter(|r| r.name != tracking)
+            .map(|r| r.target)
+            .collect();
+        let lost = Lost::read(repo, theirs, &others)?;
+        Ok(Self {
+            tracking,
+            theirs,
+            upstream_of,
+            lost,
+        })
+    }
+
+    /// The commits only here and the branches with it as upstream, for the confirmation.
+    fn details(&self) -> (Message, Message) {
+        let only = if self.lost.count == 0 {
+            msg!("engine-remote-branch-only-none")
+        } else {
+            msg!(
+                "engine-remote-branch-only",
+                n = self.lost.count,
+                commits = self.lost.describe()
+            )
+        };
+        let upstreams = if self.upstream_of.is_empty() {
+            msg!("engine-other", text = "")
+        } else {
+            let names = self
+                .upstream_of
+                .iter()
+                .map(|b| format!("`{b}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            msg!(
+                "engine-remote-branch-upstream-of",
+                n = self.upstream_of.len(),
+                branches = names
+            )
+        };
+        (only, upstreams)
+    }
+
+    /// Deleting always needs `confirm`, and the confirmation holds only for the commit seen.
+    fn check_confirmation(
+        &self,
+        remote: &str,
+        branch: &str,
+        expected: Option<Oid>,
+        confirm: bool,
+    ) -> Result<(), EngineError> {
+        if let Some(expected) = expected
+            && expected != self.theirs
+        {
+            let (only, upstreams) = self.details();
+            return Err(EngineError::ConfirmRequired {
+                command: ID,
+                reason: msg!(
+                    "engine-remote-branch-moved",
+                    tracking = self.tracking.as_str(),
+                    expected = expected,
+                    now = self.theirs,
+                    only = only,
+                    upstreams = upstreams
+                ),
+                expected: Some(self.theirs.to_string()),
+            });
+        }
+        if !confirm {
+            let (only, upstreams) = self.details();
+            return Err(EngineError::ConfirmRequired {
+                command: ID,
+                reason: msg!(
+                    "engine-remote-branch-confirm",
+                    remote = remote,
+                    branch = branch,
+                    tracking = self.tracking.as_str(),
+                    theirs = self.theirs,
+                    only = only,
+                    upstreams = upstreams
+                ),
+                expected: Some(self.theirs.to_string()),
+            });
+        }
+        Ok(())
+    }
 }

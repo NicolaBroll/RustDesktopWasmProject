@@ -241,14 +241,9 @@ mod tests {
         assert_eq!(redo.redone.unwrap().command, command);
     }
 
-    /// Every kind of journal entry the `MemoryBackend` produces reads back from its own JSON
-    /// (in `edit.history`, `edit.undo` and `edit.redo`): the UI decodes the entries into
-    /// [`JournalEntry`](crate::JournalEntry).
-    #[test]
-    fn every_entry_kind_round_trips() {
+    /// Sample repo: branches, tags, discard, stash, remotes, reset, pull, commit.
+    fn sample_entries() -> Vec<String> {
         let mut covered = Vec::new();
-
-        // Sample repo: branches, tags, discard, stash, remotes, reset, pull, commit.
         let (r, mut s) = sample();
         let s = &mut s;
         run(&r, s, "branch.create", json!({ "name": "topic" }));
@@ -324,8 +319,12 @@ mod tests {
         run(&r, s, "commit.create", json!({ "message": "One" }));
         undo_redo(&r, s, "commit.create");
         covered.extend(history_commands(&r, s));
+        covered
+    }
 
-        // Merges (fast-forward, merge commit, conflict concluded, aborted).
+    /// Merges (fast-forward, merge commit, conflict concluded, aborted).
+    fn merge_entries() -> Vec<String> {
+        let mut covered = Vec::new();
         for (rev, finish) in [
             ("ahead", None),
             ("feat", None),
@@ -348,8 +347,12 @@ mod tests {
             }
             covered.extend(history_commands(&r, s));
         }
+        covered
+    }
 
-        // Cherry-pick and revert, clean and after a conflict.
+    /// Cherry-pick and revert, clean and after a conflict.
+    fn pick_entries() -> Vec<String> {
+        let mut covered = Vec::new();
         let (r, mut s) = opened_with(conflict_repo());
         let s = &mut s;
         run(&r, s, "commit.cherry_pick", json!({ "rev": "feat" }));
@@ -368,8 +371,12 @@ mod tests {
             run(&r, s, cont, json!({}));
             covered.extend(history_commands(&r, s));
         }
+        covered
+    }
 
-        // Rebase, and a pull that rebases with a conflict, continued and aborted.
+    /// Rebase, and a pull that rebases with a conflict, continued and aborted.
+    fn rebase_entries() -> Vec<String> {
+        let mut covered = Vec::new();
         let (r, mut s) = opened_with(clean_sample());
         let s = &mut s;
         run(
@@ -394,7 +401,18 @@ mod tests {
         run(&r, s, "remote.pull", json!({}));
         run(&r, s, "rebase.abort", json!({ "confirm": true }));
         covered.extend(history_commands(&r, s));
+        covered
+    }
 
+    /// Every kind of journal entry the `MemoryBackend` produces reads back from its own JSON
+    /// (in `edit.history`, `edit.undo` and `edit.redo`): the UI decodes the entries into
+    /// [`JournalEntry`](crate::JournalEntry).
+    #[test]
+    fn every_entry_kind_round_trips() {
+        let mut covered = sample_entries();
+        covered.extend(merge_entries());
+        covered.extend(pick_entries());
+        covered.extend(rebase_entries());
         covered.sort();
         covered.dedup();
         for id in [

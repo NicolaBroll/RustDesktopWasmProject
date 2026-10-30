@@ -288,39 +288,8 @@ impl CliBackend {
         &mut self,
         request: &PullRequest,
     ) -> Result<PullOutcome, EngineError> {
-        let status = self.status_for_write()?;
-        check_pull_state(&status, &request.mode)?;
         let full = branch_ref(&request.branch);
-        let on_head = self.head_ref_name()?.as_deref() == Some(full.as_str());
-        if on_head != request.current {
-            return Err(EngineError::NotAllowed(msg!("engine-pull-head-moved")));
-        }
-        if !request.current {
-            if request.mode != PullMode::FastForward {
-                return Err(EngineError::NotAllowed(msg!(
-                    "engine-pull-not-current-ff",
-                    branch = request.branch.escape_debug()
-                )));
-            }
-            if let Some(path) = self.checked_out_elsewhere(&full)? {
-                return Err(EngineError::NotAllowed(msg!(
-                    "engine-pull-other-worktree",
-                    branch = request.branch.escape_debug(),
-                    worktree = path.display()
-                )));
-            }
-        }
-        self.check_branch_value(&full, &request.expected)?;
-        if request.current {
-            self.check_assume_unchanged(&Some(request.expected), &request.upstream)?;
-            let replay = matches!(request.mode, PullMode::Rebase { .. });
-            self.check_incoming_paths(
-                &request.expected,
-                &request.upstream,
-                replay,
-                msg!("engine-merge-what-pull"),
-            )?;
-        }
+        self.check_pull_request(request, &full)?;
         let expected = request.expected.to_string();
         let upstream = request.upstream.to_string();
         let backup = self.create_backup_ref(
@@ -331,116 +300,8 @@ impl CliBackend {
         let result = self.integrate(request, &full, &expected, &upstream);
         match result {
             Ok(None) => {}
-            Ok(Some(Stopped { conflicts, message })) => {
-                // Stopped merge or rebase: stays in progress, the branch has not moved and the backup
-                // stays. The same checks as a successful merge, as warnings: the operation in
-                // progress must be the upstream's on this branch.
-                let mut warnings = Vec::new();
-                let rebase = matches!(request.mode, PullMode::Rebase { .. });
-                let state = self.read_operation_state();
-                let on_branch = if rebase {
-                    state.rebase_branch.as_deref() == Some(full.as_str())
-                } else {
-                    self.head_ref_name()?.as_deref() == Some(full.as_str())
-                };
-                if !on_branch {
-                    warnings.push(msg!("engine-pull-head-moved-merge", full = full));
-                }
-                let now = self.ref_value(&full)?;
-                if now != Some(request.expected) {
-                    warnings.push(msg!(
-                        "engine-pull-branch-moved",
-                        full = full,
-                        now = now.map_or_else(
-                            || msg!("engine-nothing"),
-                            |o| Message::plain(o.to_string())
-                        ),
-                        expected = request.expected,
-                        backup = backup
-                    ));
-                }
-                // The rebase: what `rebase.continue` needs to conclude it as this pull.
-                if rebase {
-                    let record = RebaseRecord {
-                        command: "remote.pull".to_owned(),
-                        branch: request.branch.clone(),
-                        before: request.expected,
-                        onto: request.upstream,
-                        backup: backup.clone(),
-                        messages: Vec::new(),
-                        message_commits: Vec::new(),
-                        applied: 0,
-                        commits: self.count_unmerged(&request.expected, &[request.upstream])?,
-                        produces: None,
-                        upstream: Some(remote_short(&request.upstream_name).to_owned()),
-                    };
-                    if let Err(error) = self.write_rebase_record(&record) {
-                        warnings.push(msg!(
-                            "engine-rebase-record-not-written",
-                            error = error,
-                            backup = backup
-                        ));
-                    }
-                }
-                let incoming = if rebase {
-                    state.onto.into_iter().collect()
-                } else {
-                    state.incoming
-                };
-                if incoming != [request.upstream] {
-                    warnings.push(msg!(
-                        "engine-pull-merging-other",
-                        incoming = if incoming.is_empty() {
-                            msg!("engine-nothing")
-                        } else {
-                            Message::plain(
-                                incoming
-                                    .iter()
-                                    .map(ToString::to_string)
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                            )
-                        },
-                        name = request.upstream_name,
-                        upstream = request.upstream
-                    ));
-                }
-                return Ok(PullOutcome {
-                    after: request.expected,
-                    backup,
-                    in_progress: true,
-                    conflicts,
-                    message,
-                    warnings,
-                });
-            }
-            Err(e) => {
-                // Nothing changed: the backup is not needed (removed only if the branch is as it was and
-                // no operation is left in progress, e.g. a failed `rebase --abort`).
-                let now = self.ref_value(&full)?;
-                let in_progress = self.operation().is_some();
-                if now == Some(request.expected) && !in_progress {
-                    self.drop_backup(&backup, &request.expected);
-                    return Err(e);
-                }
-                // Something changed despite the error: the backup stays and the error says so;
-                // nothing in the journal (it is not the expected result of the pull).
-                let note = if in_progress {
-                    msg!("engine-pull-note-in-progress", backup = backup)
-                } else {
-                    msg!(
-                        "engine-pull-note-moved",
-                        full = full,
-                        from = request.expected,
-                        to = match now {
-                            Some(o) => msg!("engine-other", text = o.to_string()),
-                            None => msg!("engine-remote-head-none"),
-                        },
-                        backup = backup
-                    )
-                };
-                return Err(with_note(e, &note));
-            }
+            Ok(Some(stopped)) => return self.pull_stopped(request, &full, backup, stopped),
+            Err(e) => return self.pull_failed(request, &full, &backup, e),
         }
         let after = self
             .ref_value(&full)?
@@ -468,6 +329,165 @@ impl CliBackend {
             message: String::new(),
             warnings,
         })
+    }
+
+    /// The checks before the backup: the state of the repo, the branch where it was seen, HEAD
+    /// on it only for the active branch, the incoming paths.
+    fn check_pull_request(&self, request: &PullRequest, full: &str) -> Result<(), EngineError> {
+        let status = self.status_for_write()?;
+        check_pull_state(&status, &request.mode)?;
+        let on_head = self.head_ref_name()?.as_deref() == Some(full);
+        if on_head != request.current {
+            return Err(EngineError::NotAllowed(msg!("engine-pull-head-moved")));
+        }
+        if !request.current {
+            if request.mode != PullMode::FastForward {
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-not-current-ff",
+                    branch = request.branch.escape_debug()
+                )));
+            }
+            if let Some(path) = self.checked_out_elsewhere(full)? {
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-pull-other-worktree",
+                    branch = request.branch.escape_debug(),
+                    worktree = path.display()
+                )));
+            }
+        }
+        self.check_branch_value(full, &request.expected)?;
+        if request.current {
+            self.check_assume_unchanged(&Some(request.expected), &request.upstream)?;
+            let replay = matches!(request.mode, PullMode::Rebase { .. });
+            self.check_incoming_paths(
+                &request.expected,
+                &request.upstream,
+                replay,
+                msg!("engine-merge-what-pull"),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Stopped merge or rebase: stays in progress, the branch has not moved and the backup
+    /// stays. The same checks as a successful merge, as warnings: the operation in progress
+    /// must be the upstream's on this branch.
+    fn pull_stopped(
+        &self,
+        request: &PullRequest,
+        full: &str,
+        backup: String,
+        Stopped { conflicts, message }: Stopped,
+    ) -> Result<PullOutcome, EngineError> {
+        let mut warnings = Vec::new();
+        let rebase = matches!(request.mode, PullMode::Rebase { .. });
+        let state = self.read_operation_state();
+        let on_branch = if rebase {
+            state.rebase_branch.as_deref() == Some(full)
+        } else {
+            self.head_ref_name()?.as_deref() == Some(full)
+        };
+        if !on_branch {
+            warnings.push(msg!("engine-pull-head-moved-merge", full = full));
+        }
+        let now = self.ref_value(full)?;
+        if now != Some(request.expected) {
+            warnings.push(msg!(
+                "engine-pull-branch-moved",
+                full = full,
+                now = now.map_or_else(|| msg!("engine-nothing"), |o| Message::plain(o.to_string())),
+                expected = request.expected,
+                backup = backup
+            ));
+        }
+        // The rebase: what `rebase.continue` needs to conclude it as this pull.
+        if rebase {
+            let record = RebaseRecord {
+                command: "remote.pull".to_owned(),
+                branch: request.branch.clone(),
+                before: request.expected,
+                onto: request.upstream,
+                backup: backup.clone(),
+                messages: Vec::new(),
+                message_commits: Vec::new(),
+                applied: 0,
+                commits: self.count_unmerged(&request.expected, &[request.upstream])?,
+                produces: None,
+                upstream: Some(remote_short(&request.upstream_name).to_owned()),
+            };
+            if let Err(error) = self.write_rebase_record(&record) {
+                warnings.push(msg!(
+                    "engine-rebase-record-not-written",
+                    error = error,
+                    backup = backup
+                ));
+            }
+        }
+        let incoming = if rebase {
+            state.onto.into_iter().collect()
+        } else {
+            state.incoming
+        };
+        if incoming != [request.upstream] {
+            warnings.push(msg!(
+                "engine-pull-merging-other",
+                incoming = if incoming.is_empty() {
+                    msg!("engine-nothing")
+                } else {
+                    Message::plain(
+                        incoming
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                },
+                name = request.upstream_name,
+                upstream = request.upstream
+            ));
+        }
+        Ok(PullOutcome {
+            after: request.expected,
+            backup,
+            in_progress: true,
+            conflicts,
+            message,
+            warnings,
+        })
+    }
+
+    /// Nothing changed: the backup is not needed (removed only if the branch is as it was and
+    /// no operation is left in progress, e.g. a failed `rebase --abort`). Always an error.
+    fn pull_failed(
+        &self,
+        request: &PullRequest,
+        full: &str,
+        backup: &str,
+        e: EngineError,
+    ) -> Result<PullOutcome, EngineError> {
+        let now = self.ref_value(full)?;
+        let in_progress = self.operation().is_some();
+        if now == Some(request.expected) && !in_progress {
+            self.drop_backup(backup, &request.expected);
+            return Err(e);
+        }
+        // Something changed despite the error: the backup stays and the error says so;
+        // nothing in the journal (it is not the expected result of the pull).
+        let note = if in_progress {
+            msg!("engine-pull-note-in-progress", backup = backup)
+        } else {
+            msg!(
+                "engine-pull-note-moved",
+                full = full,
+                from = request.expected,
+                to = match now {
+                    Some(o) => msg!("engine-other", text = o.to_string()),
+                    None => msg!("engine-remote-head-none"),
+                },
+                backup = backup
+            )
+        };
+        Err(with_note(e, &note))
     }
 
     /// The actual integration (see the module): `Ok(None)` if the branch was

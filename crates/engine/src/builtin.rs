@@ -36,10 +36,23 @@ use serde_json::Value;
 pub const DEFAULT_LOG_LIMIT: usize = 200;
 
 impl Registry {
-    /// Registry with all the built-in commands.
+    /// Registry with all the built-in commands, in the order of the catalog.
     pub fn builtin() -> Self {
         let mut r = Self::default();
-        r.add(
+        r.add_repo();
+        r.add_changes();
+        r.add_refs();
+        r.add_remotes();
+        r.add_stashes();
+        r.add_merges();
+        r.add_rebase();
+        r.add_edit();
+        r
+    }
+
+    /// The repo, its history and the diffs.
+    fn add_repo(&mut self) {
+        self.add(
             "repo.open",
             "Open repository",
             r#"{"path": string}"#,
@@ -47,7 +60,7 @@ impl Registry {
             repo_open,
         )
         .takes_paths_outside_repo();
-        r.add(
+        self.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
             r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
@@ -55,7 +68,7 @@ impl Registry {
             clone::repo_clone,
         )
         .takes_paths_outside_repo();
-        r.add(
+        self.add(
             "repo.init",
             "New empty repository in an absent or empty folder, then open it",
             r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
@@ -63,401 +76,428 @@ impl Registry {
             clone::repo_init,
         )
         .takes_paths_outside_repo();
-        r.add("repo.status", "Repository status", "{}", Read, repo_status);
-        r.add(
+        self.add("repo.status", "Repository status", "{}", Read, repo_status);
+        self.add(
             "repo.refs",
             "Branches, tags and stashes",
             "{}",
             Read,
             repo_refs,
         );
-        r.add(
+        self.add(
             "repo.operation",
             "Operation in progress (merge, rebase...) and conflicted files",
             "{}",
             Read,
             merge::repo_operation,
         );
-        r.add(
+        self.add(
             "repo.log",
             "Commit history",
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (with all: also the stash bases)}"#,
             Read,
             repo_log,
         );
-        r.add(
+        self.add(
             "repo.search",
             "Commits whose message, author or id contains a text (literal, case-insensitive), in the order of repo.log",
             r#"{"query": string, "in"?: ["message" | "author" | "id"] (all three), "path"?: path (only commits touching it, no rename following), "all"?: bool, "stashes"?: bool (as in repo.log), "skip"?: number, "limit"?: number (200)} -> {"ids", "total", "has_more"}"#,
             Read,
             search::repo_search,
         );
-        r.add(
+        self.add(
             "repo.optimize",
             "Write the commit-graph (fast history on huge repos)",
             "{}",
             Write,
             repo_optimize,
         );
-        r.add(
+        self.add(
             "commit.show",
             "Commit details",
             r#"{"id": string}"#,
             Read,
             commit_show,
         );
-        r.add(
+        self.add(
             "file.blame",
             "Who last changed each line of a file",
             r#"{"path": path, "rev"?: string (without: the worktree, uncommitted lines have commit null)}"#,
             Read,
             file::file_blame,
         );
-        r.add(
+        self.add(
             "file.log",
             "Commits that change a file",
             r#"{"path": path, "rev"?: string, "skip"?: number, "limit"?: number (200), "follow"?: bool (true: across renames)}"#,
             Read,
             file::file_log,
         );
-        r.add(
+        self.add(
             "diff.worktree",
             "Diff of the unstaged changes",
             r#"{"path"?: path}"#,
             Read,
             diff_worktree,
         );
-        r.add(
+        self.add(
             "diff.index",
             "Diff of the staged changes",
             r#"{"path"?: path}"#,
             Read,
             diff_index,
         );
-        r.add(
+        self.add(
             "diff.commit",
             "Commit diff",
             r#"{"id": string, "path"?: path}"#,
             Read,
             diff_commit,
         );
-        r.add(
+    }
+
+    /// Stage, commit and discard.
+    fn add_changes(&mut self) {
+        self.add(
             "index.stage",
             "Stage files",
             r#"{"paths": [path, ...]}"#,
             Write,
             stage::index_stage,
         );
-        r.add(
+        self.add(
             "index.unstage",
             "Unstage files",
             r#"{"paths": [path, ...]}"#,
             Write,
             stage::index_unstage,
         );
-        r.add(
+        self.add(
             "index.stage_lines",
             "Stage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.worktree)}"#,
             Write,
             stage::index_stage_lines,
         );
-        r.add(
+        self.add(
             "index.unstage_lines",
             "Unstage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.index)}"#,
             Write,
             stage::index_unstage_lines,
         );
-        r.add(
+        self.add(
             "commit.create",
             "Commit the staged changes",
             r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend of a published commit)}"#,
             Write,
             commit::commit_create,
         );
-        r.add(
+        self.add(
             "worktree.discard",
             "Discard the unstaged changes",
             r#"{"paths": [path, ...], "confirm": true}"#,
             Write,
             discard::worktree_discard,
         );
-        r.add(
+    }
+
+    /// Branches, reset and tags.
+    fn add_refs(&mut self) {
+        self.add(
             "branch.create",
             "Create a branch",
             r#"{"name": string, "start"?: string (rev, HEAD)}"#,
             Write,
             branch::branch_create,
         );
-        r.add(
+        self.add(
             "branch.checkout",
             "Switch to a branch",
             r#"{"name": string}"#,
             Write,
             branch::branch_checkout,
         );
-        r.add(
+        self.add(
             "branch.delete",
             "Delete a branch",
             r#"{"name": string, "confirm"?: bool (unmerged branch), "expected"?: full oid (the branch must point there)}"#,
             Write,
             branch::branch_delete,
         );
-        r.add(
+        self.add(
             "branch.rename",
             "Rename a branch",
             r#"{"name": string, "new_name": string}"#,
             Write,
             branch::branch_rename,
         );
-        r.add(
+        self.add(
             "branch.reset",
             "Reset the current branch to a commit",
             r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard", "confirm"?: bool (hard with local changes), "expected"?: full oid (HEAD must be there)}"#,
             Write,
             reset::branch_reset,
         );
-        r.add(
+        self.add(
             "branch.reset_preview",
             "What a reset would do (files a hard overwrites)",
             r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard"}"#,
             Read,
             reset::branch_reset_preview,
         );
-        r.add(
+        self.add(
             "tag.create",
             "Create a tag",
             r#"{"name": string, "target"?: string (rev, HEAD), "message"?: string (annotated tag; without: lightweight)}"#,
             Write,
             tag::tag_create,
         );
-        r.add(
+        self.add(
             "tag.delete",
             "Delete a tag",
             r#"{"name": string, "confirm": true (always required; the tag is saved in a backup ref first), "expected"?: string (full id of the value shown in the confirmation)}"#,
             Write,
             tag::tag_delete,
         );
-        r.add(
+    }
+
+    /// Fetch, pull, push and the remotes.
+    fn add_remotes(&mut self) {
+        self.add(
             "remote.fetch",
             "Download from the remote (fetch)",
             r#"{"remote"?: string (configured remote; upstream, origin or the only one), "branch"?: string (only that branch), "prune"?: bool (also remove the remote branches gone from the remote; not with branch)}"#,
             Write,
             remote::remote_fetch,
         );
-        r.add(
+        self.add(
             "remote.pull",
             "Download and integrate the upstream (pull)",
             r#"{"remote"?: string (the upstream's), "branch"?: string (local branch; HEAD), "strategy"?: "merge" | "rebase" | "ff_only" (instead of the configuration)}"#,
             Write,
             pull::remote_pull,
         );
-        r.add(
+        self.add(
             "remote.push",
             "Publish the branch to the remote (push)",
             r#"{"remote"?: string (upstream, origin or the only one), "branch"?: string (local branch; HEAD), "force"?: bool (force-with-lease), "confirm"?: bool (force that removes commits from the remote)}"#,
             Write,
             push::remote_push,
         );
-        r.add(
+        self.add(
             "remote.delete_branch",
             "Delete a branch from the remote",
             r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
             Write,
             remote_branch::remote_delete_branch,
         );
-        r.add(
+        self.add(
             "remote.push_tag",
             "Publish a tag to the remote",
             r#"{"remote": string, "name": string (local tag; never overwrites a tag on the remote)}"#,
             Write,
             remote_tag::remote_push_tag,
         );
-        r.add(
+        self.add(
             "remote.delete_tag",
             "Delete a tag from the remote",
             r#"{"remote": string, "name": string (tag on the remote), "confirm": true, "expected": string (full id of the remote tag shown in the confirmation)}"#,
             Write,
             remote_tag::remote_delete_tag,
         );
-        r.add(
+        self.add(
             "remote.list",
             "Configured remotes",
             "{}",
             Read,
             remotes::remote_list,
         );
-        r.add(
+        self.add(
             "remote.add",
             "Add a remote",
             r#"{"name": string, "url": string, "fetch"?: bool (then download)}"#,
             Write,
             remotes::remote_add,
         );
-        r.add(
+        self.add(
             "remote.remove",
             "Remove a remote",
             r#"{"name": string, "confirm": true}"#,
             Write,
             remotes::remote_remove,
         );
-        r.add("stash.list", "Stashes", "{}", Read, stash::stash_list);
-        r.add(
+    }
+
+    /// Stashes.
+    fn add_stashes(&mut self) {
+        self.add("stash.list", "Stashes", "{}", Read, stash::stash_list);
+        self.add(
             "stash.push",
             "Stash the changes",
             r#"{"message"?: string (one line), "include_untracked"?: bool, "keep_index"?: bool, "paths"?: [path, ...]}"#,
             Write,
             stash::stash_push,
         );
-        r.add(
+        self.add(
             "stash.apply",
             "Apply a stash",
             r#"{"index"?: number (stash@{n}, 0), "expected"?: full oid (the stash seen), "restore_index"?: bool}"#,
             Write,
             stash::stash_apply,
         );
-        r.add(
+        self.add(
             "stash.pop",
             "Apply a stash and remove it from the list",
             r#"{"index"?: number (stash@{n}, 0), "expected"?: full oid (the stash seen), "restore_index"?: bool}"#,
             Write,
             stash::stash_pop,
         );
-        r.add(
+        self.add(
             "stash.drop",
             "Drop a stash",
             r#"{"index"?: number (stash@{n}, 0), "expected": full oid (the stash to drop; required with confirm), "confirm": true}"#,
             Write,
             stash::stash_drop,
         );
-        r.add(
+    }
+
+    /// Merge, cherry-pick and revert.
+    fn add_merges(&mut self) {
+        self.add(
             "merge.start",
             "Merge a branch into the current branch",
             r#"{"rev": string (branch, remote branch, tag or id), "no_ff"?: bool (always a merge commit), "ff_only"?: bool (fast-forward only), "message"?: string (of the merge commit)}"#,
             Write,
             merge::merge_start,
         );
-        r.add(
+        self.add(
             "merge.continue",
             "Finish the merge in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
             Write,
             merge::merge_continue,
         );
-        r.add(
+        self.add(
             "merge.abort",
             "Abort the merge in progress",
             r#"{"confirm": true}"#,
             Write,
             merge::merge_abort,
         );
-        r.add(
+        self.add(
             "commit.cherry_pick",
             "Apply a commit onto the current branch (cherry-pick)",
             r#"{"rev": string (id, branch or tag of the commit), "mainline"?: number (for a merge commit: the parent, from 1)}"#,
             Write,
             pick::commit_cherry_pick,
         );
-        r.add(
+        self.add(
             "cherry_pick.continue",
             "Finish the cherry-pick in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
             Write,
             pick::cherry_pick_continue,
         );
-        r.add(
+        self.add(
             "cherry_pick.abort",
             "Abort the cherry-pick in progress",
             r#"{"confirm": true}"#,
             Write,
             pick::cherry_pick_abort,
         );
-        r.add(
+        self.add(
             "commit.revert",
             "Undo a commit with a new commit (revert)",
             r#"{"rev": string (id, branch or tag of the commit), "mainline"?: number (for a merge commit: the parent, from 1)}"#,
             Write,
             pick::commit_revert,
         );
-        r.add(
+        self.add(
             "revert.continue",
             "Finish the revert in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
             Write,
             pick::revert_continue,
         );
-        r.add(
+        self.add(
             "revert.abort",
             "Abort the revert in progress",
             r#"{"confirm": true}"#,
             Write,
             pick::revert_abort,
         );
-        r.add(
+    }
+
+    /// Interactive rebase and conflict resolution.
+    fn add_rebase(&mut self) {
+        self.add(
             "rebase.plan",
             "Default plan of an interactive rebase of the current branch",
             r#"{"base": string (the commit to rebuild on, excluded: id, branch or tag)}"#,
             Read,
             rebase::rebase_plan,
         );
-        r.add(
+        self.add(
             "rebase.start",
             "Rewrite the commits of the current branch (interactive rebase)",
             r#"{"base": string, "steps": [{"action": "pick" | "reword" | "squash" | "fixup" | "drop", "commit": full oid, "message"?: string}] (oldest first, every commit of base..HEAD once), "confirm"?: bool (rewrites published commits)}"#,
             Write,
             rebase::rebase_start,
         );
-        r.add(
+        self.add(
             "rebase.continue",
             "Continue the rebase in progress",
             "{}",
             Write,
             rebase::rebase_continue,
         );
-        r.add(
+        self.add(
             "rebase.abort",
             "Abort the rebase in progress",
             r#"{"confirm": true}"#,
             Write,
             rebase::rebase_abort,
         );
-        r.add(
+        self.add(
             "conflict.show",
             "Versions of a conflicted file (base, ours, theirs, worktree)",
             r#"{"path": path}"#,
             Read,
             conflict::conflict_show,
         );
-        r.add(
+        self.add(
             "conflict.resolve",
             "Resolve a conflicted file and stage it",
             r#"{"path": path, "digest": string (from conflict.show), "content"?: string (the resolved text), "delete"?: bool (deletes the file; instead of content)}"#,
             Write,
             conflict::conflict_resolve,
         );
-        r.add(
+    }
+
+    /// Undo, redo and the journal.
+    fn add_edit(&mut self) {
+        self.add(
             "edit.undo",
             "Undo the last operation",
             "{}",
             Write,
             edit::edit_undo,
         );
-        r.add(
+        self.add(
             "edit.redo",
             "Redo the undone operation",
             "{}",
             Write,
             edit::edit_redo,
         );
-        r.add(
+        self.add(
             "edit.history",
             "Operation journal",
             "{}",
             Read,
             edit::edit_history,
         );
-        r
     }
 }
 

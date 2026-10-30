@@ -9,9 +9,9 @@
 
 use super::{JournalState, Out, reread, to_json};
 use crate::{
-    CommitRequest, EngineError, HeadState, JournalEntry, LogQuery, MergeMode, MergeRequest,
-    MergeSource, Message, MessageArg, Session, branch_ref, check_merge_state, check_merging,
-    clean_merge_message, conflicted_paths, merge_source,
+    BranchMove, CommitRequest, EngineError, GitBackend, HeadState, JournalEntry, LogQuery,
+    MergeMode, MergeOutcome, MergeRequest, MergeSource, Message, MessageArg, Session, branch_ref,
+    check_merge_state, check_merging, clean_merge_message, conflicted_paths, merge_source,
 };
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
@@ -239,36 +239,11 @@ pub(super) fn merge_start(
     }: MergeStartParams,
 ) -> Out {
     const ID: &str = "merge.start";
-    if no_ff && ff_only {
-        return Err(EngineError::InvalidParams {
-            id: ID,
-            reason: msg!("engine-merge-no-ff-and-ff-only"),
-        });
-    }
-    if rev.trim().is_empty() || rev.contains('\0') {
-        return Err(EngineError::InvalidParams {
-            id: ID,
-            reason: msg!("engine-merge-rev-empty"),
-        });
-    }
+    check_merge_params(ID, &rev, no_ff, ff_only)?;
     check_message(ID, &message)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
-    let (branch, before) = match &status.head {
-        Head::Branch {
-            name,
-            target: Some(target),
-        } => (name.clone(), *target),
-        Head::Branch { name, target: None } => {
-            return Err(EngineError::NotAllowed(msg!(
-                "engine-merge-unborn",
-                name = name.escape_debug()
-            )));
-        }
-        Head::Detached(_) => {
-            return Err(EngineError::NotAllowed(msg!("engine-merge-detached")));
-        }
-    };
+    let (branch, before) = merge_branch(&status.head)?;
     // Before everything else: an operation in progress or a conflict stops it anyway.
     check_merge_state(&status, &MergeMode::FastForward)?;
     let target = repo
@@ -329,19 +304,7 @@ pub(super) fn merge_start(
         message,
     })?;
     let mut warnings = outcome.warnings.clone();
-    // In the journal only if the result is the merge's: the fast-forward commit, or a
-    // merge commit on top of the previous branch. Otherwise another process (or a hook) has
-    // moved the branch in the meantime, and an undo would also bring back its work.
-    let as_expected = !outcome.in_progress
-        && outcome.after != before
-        && match mode {
-            MergeMode::FastForward => outcome.after == target,
-            MergeMode::Merge { .. } => repo
-                .log(&LogQuery::page(0, 1).from_rev(outcome.after.to_string()))
-                .ok()
-                .and_then(|c| c.first().map(|c| c.parents.first() == Some(&before)))
-                .unwrap_or(false),
-        };
+    let as_expected = merge_as_expected(repo, &outcome, &mode, before, target);
     if !outcome.in_progress && outcome.after != before && !as_expected {
         warnings.push(msg!(
             "engine-merge-unexpected-result",
@@ -353,10 +316,12 @@ pub(super) fn merge_start(
         // The branch moved: the entry goes into the journal even if something cannot be re-read afterwards.
         journal.record(JournalEntry::merge(
             ID,
-            &branch_ref(&branch),
-            before,
-            outcome.after,
-            HeadState::from_head(&status.head),
+            BranchMove {
+                branch: &branch_ref(&branch),
+                before,
+                after: outcome.after,
+                head: HeadState::from_head(&status.head),
+            },
             (&mode).into(),
             &source.name,
             Some(outcome.backup.clone()),
@@ -385,6 +350,65 @@ pub(super) fn merge_start(
         refs_error,
         journal: JournalState::of(journal),
     }))
+}
+
+/// The checks on the parameters of `merge.start` alone.
+fn check_merge_params(
+    id: &'static str,
+    rev: &str,
+    no_ff: bool,
+    ff_only: bool,
+) -> Result<(), EngineError> {
+    if no_ff && ff_only {
+        return Err(EngineError::InvalidParams {
+            id,
+            reason: msg!("engine-merge-no-ff-and-ff-only"),
+        });
+    }
+    if rev.trim().is_empty() || rev.contains('\0') {
+        return Err(EngineError::InvalidParams {
+            id,
+            reason: msg!("engine-merge-rev-empty"),
+        });
+    }
+    Ok(())
+}
+
+/// The active branch and its commit: a merge needs one with commits.
+fn merge_branch(head: &Head) -> Result<(String, Oid), EngineError> {
+    match head {
+        Head::Branch {
+            name,
+            target: Some(target),
+        } => Ok((name.clone(), *target)),
+        Head::Branch { name, target: None } => Err(EngineError::NotAllowed(msg!(
+            "engine-merge-unborn",
+            name = name.escape_debug()
+        ))),
+        Head::Detached(_) => Err(EngineError::NotAllowed(msg!("engine-merge-detached"))),
+    }
+}
+
+/// In the journal only if the result is the merge's: the fast-forward commit, or a merge commit
+/// on top of the previous branch. Otherwise another process (or a hook) has moved the branch in
+/// the meantime, and an undo would also bring back its work.
+fn merge_as_expected(
+    repo: &dyn GitBackend,
+    outcome: &MergeOutcome,
+    mode: &MergeMode,
+    before: Oid,
+    target: Oid,
+) -> bool {
+    !outcome.in_progress
+        && outcome.after != before
+        && match mode {
+            MergeMode::FastForward => outcome.after == target,
+            MergeMode::Merge { .. } => repo
+                .log(&LogQuery::page(0, 1).from_rev(outcome.after.to_string()))
+                .ok()
+                .and_then(|c| c.first().map(|c| c.parents.first() == Some(&before)))
+                .unwrap_or(false),
+        }
 }
 
 /// Aborts the merge in progress (`git merge --abort`): index and worktree go back to HEAD for the
@@ -518,10 +542,12 @@ pub(super) fn merge_continue(
     match (&outcome.branch, outcome.previous) {
         (Some(branch), Some(previous)) => journal.record(JournalEntry::merge(
             ID,
-            branch,
-            previous,
-            outcome.commit.id,
-            HeadState::from_head(&status.head),
+            BranchMove {
+                branch,
+                before: previous,
+                after: outcome.commit.id,
+                head: HeadState::from_head(&status.head),
+            },
             crate::Integration::Merge,
             &if sources.is_empty() {
                 "MERGE_HEAD".to_owned()

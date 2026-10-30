@@ -410,10 +410,12 @@ pub(super) fn rebase_continue(s: &mut Session, NoParams {}: NoParams) -> Out {
                     warnings.extend(check_result(repo, record, &outcome.after));
                     let entry = match &record.upstream {
                         Some(upstream) => JournalEntry::pull(
-                            &full,
-                            record.before,
-                            outcome.after,
-                            crate::HeadState::Branch(full.clone()),
+                            crate::BranchMove {
+                                branch: &full,
+                                before: record.before,
+                                after: outcome.after,
+                                head: crate::HeadState::Branch(full.clone()),
+                            },
                             crate::Integration::Rebase,
                             upstream,
                             record.backup.clone(),

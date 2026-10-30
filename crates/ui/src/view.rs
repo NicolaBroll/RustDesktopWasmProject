@@ -11,7 +11,7 @@ use crate::format::{self, change_letter, date_time, date_time_zone, file_path, f
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
 use crate::merge;
-use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, Remote, RemoveDialog};
+use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, RemoteText, RemoveDialog};
 use crate::search::{SearchBox, State as SearchState};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{self, DropDialog, PushDialog, PushFields, StashText};
@@ -22,7 +22,7 @@ use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
-use project_engine::{Progress, StashEntry};
+use project_engine::{Progress, RemoteListEntry, StashEntry};
 use project_i18n::tr;
 
 mod auto_fetch_view;

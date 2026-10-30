@@ -5,7 +5,7 @@ use super::*;
 /// is in the tooltip. Returns whether it was clicked (to open or close its branches).
 pub(super) fn remote_row(
     ui: &mut Ui,
-    remote: &Remote,
+    remote: &RemoteListEntry,
     open: bool,
     count: usize,
     can_write: bool,
@@ -47,7 +47,7 @@ pub(super) fn remote_row(
 /// The menu of a remote: fetch and removal.
 pub(super) fn remote_menu(
     ui: &mut Ui,
-    remote: &Remote,
+    remote: &RemoteListEntry,
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {

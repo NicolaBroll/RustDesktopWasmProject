@@ -28,6 +28,10 @@ pub use builtin::rebase::{
 pub use builtin::remote::{RefUpdate, RemoteFetchResult};
 pub use builtin::remote_branch::RemoteDeleteBranchResult;
 pub use builtin::remote_tag::{RemoteDeleteTagResult, RemotePushTagResult, TagPushKind};
+pub use builtin::remotes::{
+    FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddResult, RemoteListEntry,
+    RemoteListResult, RemoteRemoveResult, RemovedRemote,
+};
 pub use builtin::reset::{ResetPreviewResult, ResetResult};
 pub use builtin::stash::{StashApplyResult, StashDropResult, StashListResult, StashPushResult};
 pub use builtin::tag::{TagCreateResult, TagDeleteResult};

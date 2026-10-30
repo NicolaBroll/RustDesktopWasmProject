@@ -667,8 +667,11 @@ mod tests {
             };
             let (command, params) = target.request();
             let value = registry.run(command, session, params).unwrap();
-            let digest = value["files"][0]["digest"].as_str().map(str::to_owned);
-            let diff: Diff = serde_json::from_value(value).unwrap();
+            let read: project_engine::DiffWithDigests = serde_json::from_value(value).unwrap();
+            let digest = read.files.first().map(|f| f.digest.clone());
+            let diff = Diff {
+                files: read.files.into_iter().map(|f| f.file).collect(),
+            };
             (target, DiffDoc::new(diff, &path), digest)
         };
 

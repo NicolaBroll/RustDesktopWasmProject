@@ -25,13 +25,12 @@ use crate::fetch::Failure;
 use crate::{Action, Done, Request, Tab};
 pub use pick::{MainlineDialog, Pick};
 use project_domain::branch_short;
-use project_domain::{Head, Oid, Operation, RefInfo, RepoPath, Status};
+use project_domain::{Head, Oid, Operation, RefInfo, Status};
 use project_engine::{
     MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult, Message,
-    RebaseContinueResult,
+    RebaseContinueResult, RepoOperationResult,
 };
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[path = "pick.rs"]
@@ -172,105 +171,67 @@ pub fn terminal_hint(operation: Operation) -> String {
     }
 }
 
-/// An incoming commit (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Incoming {
-    pub id: Oid,
-    /// The short name of the first branch or tag that points to it, otherwise the abbreviated id.
-    pub label: String,
-    /// The commit subject.
-    pub summary: Option<String>,
-    /// The refs (full names) that point to it.
-    #[serde(default)]
-    pub refs: Vec<String>,
-}
-
-/// Result of `repo.operation`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct OperationInfo {
-    pub operation: Option<Operation>,
-    #[serde(default)]
-    pub conflicts: Vec<RepoPath>,
-    #[serde(default)]
-    pub incoming: Vec<Incoming>,
-    /// The message that `merge.continue` would use.
-    pub message: Option<String>,
-    /// For a rebase: the commit it is reapplied onto and the rewritten branch.
-    pub onto: Option<Oid>,
-    pub rebase_branch: Option<String>,
-    /// There is an operation and no conflicted files remain.
-    pub ready: bool,
-    /// The id of the command that finishes the operation from here, if any.
-    #[serde(rename = "continue")]
-    pub continue_command: Option<String>,
-    /// The id of the command that aborts the operation from here, if any.
-    #[serde(rename = "abort")]
-    pub abort_command: Option<String>,
-}
-
-impl OperationInfo {
-    /// What is coming in, for the panel: `"feature" (Title)`, several entries separated by commas.
-    pub fn incoming_text(&self) -> Option<String> {
-        if self.incoming.is_empty() {
-            return None;
-        }
-        Some(
-            self.incoming
-                .iter()
-                .map(|i| match &i.summary {
-                    Some(summary) => {
-                        tr!(
-                            "merge-incoming-summary",
-                            label = &i.label,
-                            summary = summary
-                        )
-                    }
-                    None => tr!("merge-incoming", label = &i.label),
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
+/// What is coming in, for the panel: `"feature" (Title)`, several entries separated by commas.
+pub fn incoming_text(info: &RepoOperationResult) -> Option<String> {
+    if info.incoming.is_empty() {
+        return None;
     }
-
-    /// The panel row: type of operation and what is coming in (or, for a rebase, what it is
-    /// reapplied onto).
-    pub fn title(&self) -> String {
-        let Some(operation) = self.operation else {
-            return String::new();
-        };
-        let name = operation_name(operation);
-        match operation {
-            Operation::Rebase => {
-                let branch = self.rebase_branch.as_deref().map(branch_short);
-                match (branch, self.onto.map(|o| o.short())) {
-                    (Some(branch), Some(onto)) => tr!(
-                        "merge-title-rebase-branch-onto",
-                        name = name,
-                        branch = branch,
-                        onto = onto
-                    ),
-                    (Some(branch), None) => {
-                        tr!("merge-title-rebase-branch", name = name, branch = branch)
-                    }
-                    (None, Some(onto)) => tr!("merge-title-rebase-onto", name = name, onto = onto),
-                    (None, None) => tr!("merge-title", name = name),
-                }
-            }
-            Operation::Merge => match self.incoming_text() {
-                Some(incoming) => {
+    Some(
+        info.incoming
+            .iter()
+            .map(|i| match &i.summary {
+                Some(summary) => {
                     tr!(
-                        "merge-title-merge-incoming",
-                        name = name,
-                        incoming = incoming
+                        "merge-incoming-summary",
+                        label = &i.label,
+                        summary = summary
                     )
                 }
-                None => tr!("merge-title", name = name),
-            },
-            _ => match self.incoming_text() {
-                Some(incoming) => tr!("merge-title-incoming", name = name, incoming = incoming),
-                None => tr!("merge-title", name = name),
-            },
+                None => tr!("merge-incoming", label = &i.label),
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// The panel row: type of operation and what is coming in (or, for a rebase, what it is
+/// reapplied onto).
+pub fn title(info: &RepoOperationResult) -> String {
+    let Some(operation) = info.operation else {
+        return String::new();
+    };
+    let name = operation_name(operation);
+    match operation {
+        Operation::Rebase => {
+            let branch = info.rebase_branch.as_deref().map(branch_short);
+            match (branch, info.onto.map(|o| o.short())) {
+                (Some(branch), Some(onto)) => tr!(
+                    "merge-title-rebase-branch-onto",
+                    name = name,
+                    branch = branch,
+                    onto = onto
+                ),
+                (Some(branch), None) => {
+                    tr!("merge-title-rebase-branch", name = name, branch = branch)
+                }
+                (None, Some(onto)) => tr!("merge-title-rebase-onto", name = name, onto = onto),
+                (None, None) => tr!("merge-title", name = name),
+            }
         }
+        Operation::Merge => match incoming_text(info) {
+            Some(incoming) => {
+                tr!(
+                    "merge-title-merge-incoming",
+                    name = name,
+                    incoming = incoming
+                )
+            }
+            None => tr!("merge-title", name = name),
+        },
+        _ => match incoming_text(info) {
+            Some(incoming) => tr!("merge-title-incoming", name = name, incoming = incoming),
+            None => tr!("merge-title", name = name),
+        },
     }
 }
 
@@ -355,7 +316,7 @@ struct Starting {
 #[derive(Debug, Default)]
 pub struct MergeBox {
     /// The last read of `repo.operation`; `None` without an operation in progress.
-    info: Option<OperationInfo>,
+    info: Option<RepoOperationResult>,
     /// The error of the last read.
     info_error: Option<String>,
     /// The status number for which `repo.operation` was last requested.
@@ -426,7 +387,7 @@ impl MergeBox {
     /// The response of `repo.operation`.
     pub fn receive_info(&mut self, result: Result<Value, String>) {
         self.reading = false;
-        match result.and_then(|value| crate::decode::<OperationInfo>(OPERATION, value)) {
+        match result.and_then(|value| crate::decode::<RepoOperationResult>(OPERATION, value)) {
             Ok(info) => {
                 self.info = info.operation.is_some().then_some(info);
                 self.info_error = None;
@@ -436,7 +397,7 @@ impl MergeBox {
     }
 
     /// The in-progress operation read from `repo.operation`, if any.
-    pub fn info(&self) -> Option<&OperationInfo> {
+    pub fn info(&self) -> Option<&RepoOperationResult> {
         self.info.as_ref()
     }
 
@@ -1224,7 +1185,7 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_domain::{Change, ChangedFile, Commit, Signature};
+    use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
 
@@ -1361,7 +1322,7 @@ mod tests {
         assert_eq!(info.operation, Some(Operation::Merge));
         assert_eq!(info.conflicts, vec![RepoPath::from("a.txt")]);
         assert!(!info.ready);
-        assert_eq!(info.title(), "Merge in progress: merging “other” (theirs)");
+        assert_eq!(title(info), "Merge in progress: merging “other” (theirs)");
         assert_eq!(info.continue_command.as_deref(), Some("merge.continue"));
         // The same status is not requested again.
         assert!(!b.want_info(Some(Operation::Merge), 2));
@@ -1553,7 +1514,7 @@ mod tests {
 
     #[test]
     fn rebase_and_cherry_pick_title() {
-        let info: OperationInfo = serde_json::from_value(json!({
+        let info: RepoOperationResult = serde_json::from_value(json!({
             "operation": "Rebase",
             "head": { "Detached": oid(1).to_string() },
             "conflicts": ["x.txt"],
@@ -1567,7 +1528,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            info.title(),
+            title(&info),
             format!("Rebase of “feature” in progress onto {}", oid(2).short())
         );
         let mut b = MergeBox {
@@ -1578,8 +1539,9 @@ mod tests {
         assert!(!b.open_continue());
         assert!(b.start_abort().is_none());
 
-        let pick: OperationInfo = serde_json::from_value(json!({
+        let pick: RepoOperationResult = serde_json::from_value(json!({
             "operation": "CherryPick",
+            "head": { "Detached": oid(1).to_string() },
             "conflicts": [],
             "incoming": [{ "id": oid(3).to_string(), "label": "abc1234", "summary": "Fix", "refs": [] }],
             "message": "Fix\n",
@@ -1590,7 +1552,7 @@ mod tests {
             "abort": null,
         }))
         .unwrap();
-        assert_eq!(pick.title(), "Cherry-pick in progress: “abc1234” (Fix)");
+        assert_eq!(title(&pick), "Cherry-pick in progress: “abc1234” (Fix)");
     }
 
     #[test]

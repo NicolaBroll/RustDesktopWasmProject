@@ -1,12 +1,12 @@
 //! Catalog of the built-in commands.
 
 pub(crate) mod branch;
-mod clone;
+pub(crate) mod clone;
 pub(crate) mod commit;
 pub(crate) mod conflict;
 pub(crate) mod discard;
 pub(crate) mod edit;
-mod file;
+pub(crate) mod file;
 pub(crate) mod merge;
 pub(crate) mod pick;
 pub(crate) mod pull;
@@ -17,7 +17,7 @@ pub(crate) mod remote_branch;
 pub(crate) mod remote_tag;
 pub(crate) mod remotes;
 pub(crate) mod reset;
-mod search;
+pub(crate) mod search;
 pub(crate) mod stage;
 pub(crate) mod stash;
 pub(crate) mod tag;
@@ -27,9 +27,9 @@ use crate::{
     CommandSpec, DiffSpec, EngineError, Journal, LogQuery, Message, Registry, Session,
     commit_graph_disabled, commit_graph_replaced, commit_graph_shallow, file_digest,
 };
-use project_domain::{Diff, RepoPath};
+use project_domain::{Commit, Diff, FileDiff, Head, RepoPath};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Commits returned by `repo.log` when `limit` is missing.
 pub const DEFAULT_LOG_LIMIT: usize = 200;
@@ -467,26 +467,76 @@ fn to_json(value: impl Serialize) -> Value {
     serde_json::to_value(value).expect("the domain types are serializable")
 }
 
-/// `{"path", "head", "commit_graph"}` of the repo just opened. `path`: the worktree root,
-/// absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same repo opened from a
-/// subfolder or a relative path gives the same path; the given path if the backend has none.
-/// `commit_graph`: git reads a
-/// commit-graph for the repo ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log` is slow on
-/// huge histories and the UI can offer `repo.optimize`. A failed check gives `false` (the
-/// repo opens anyway).
+/// Result of `repo.open` and `repo.init` (and the first fields of `repo.clone`): the repo just
+/// opened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepoOpenResult {
+    /// The worktree root, absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same
+    /// repo opened from a subfolder or a relative path gives the same path; the given path if
+    /// the backend has none.
+    pub path: String,
+    /// HEAD of the repo.
+    pub head: Head,
+    /// git reads a commit-graph for the repo
+    /// ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log`
+    /// is slow on huge histories and the UI can offer `repo.optimize`. A failed check gives
+    /// `false` (the repo opens anyway).
+    pub commit_graph: bool,
+}
+
+/// Result of `repo.optimize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoOptimizeResult {
+    /// The state afterwards, as in [`RepoOpenResult::commit_graph`].
+    pub commit_graph: bool,
+}
+
+/// Result of `repo.log`: a page of the history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoLogResult {
+    /// The commits of the page, in log order.
+    pub commits: Vec<Commit>,
+    /// After the last returned commit there are others (the next page starts at `skip +
+    /// limit`).
+    pub has_more: bool,
+}
+
+/// Result of `diff.worktree` and `diff.index`: a [`Diff`] whose files also carry their
+/// `digest`. Whoever reads it as a [`Diff`] ignores the digests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffWithDigests {
+    /// One element per file, in git's order.
+    pub files: Vec<FileDiffWithDigest>,
+}
+
+/// A file of [`DiffWithDigests`]: the fields of [`FileDiff`] and `digest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDiffWithDigest {
+    /// The changes to the file.
+    #[serde(flatten)]
+    pub file: FileDiff,
+    /// [`file_digest`] of the file, to pass to `index.stage_lines`/`index.unstage_lines`.
+    pub digest: String,
+}
+
+/// The repo at `path`, opened: [`RepoOpenResult`].
 fn repo_open(s: &mut Session, p: Value) -> Out {
     let PathParam { path } = parse_params("repo.open", p)?;
     s.open(&path)?;
-    opened(s, path)
+    Ok(to_json(opened(s, path)?))
 }
 
 /// The result of `repo.open` for the repo just opened at `path` (also `repo.clone`, `repo.init`).
-fn opened(s: &Session, path: String) -> Out {
+fn opened(s: &Session, path: String) -> Result<RepoOpenResult, EngineError> {
     let repo = s.repo()?;
     let path = repo.root().unwrap_or(path);
     let head = repo.head()?;
     let commit_graph = repo.commit_graph().is_ok_and(|g| g.in_use());
-    Ok(json!({ "path": path, "head": head, "commit_graph": commit_graph }))
+    Ok(RepoOpenResult {
+        path,
+        head,
+        commit_graph,
+    })
 }
 
 /// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`), so
@@ -500,7 +550,7 @@ fn opened(s: &Session, path: String) -> Out {
 /// ([`commit_graph_shallow`]) and with replace refs or grafts ([`commit_graph_replaced`]): git
 /// would not read it.
 ///
-/// Result: `{"commit_graph": bool}`, the state afterwards (as in `repo.open`).
+/// Result: [`RepoOptimizeResult`], the state afterwards (as in `repo.open`).
 fn repo_optimize(s: &mut Session, p: Value) -> Out {
     const ID: &str = "repo.optimize";
     let NoParams {} = parse_params(ID, p)?;
@@ -521,7 +571,9 @@ fn repo_optimize(s: &mut Session, p: Value) -> Out {
     }
     repo.write_commit_graph(&job)?;
     let after = repo.commit_graph()?;
-    Ok(json!({ "commit_graph": after.in_use() }))
+    Ok(to_json(RepoOptimizeResult {
+        commit_graph: after.in_use(),
+    }))
 }
 
 /// The [`Status`](project_domain::Status) of the open repo.
@@ -595,16 +647,17 @@ fn check_path(id: &'static str, path: RepoPath) -> Result<RepoPath, EngineError>
 }
 
 /// The JSON of a [`Diff`] with, in addition, in every file, the `digest` field ([`file_digest`]) to
-/// pass to `index.stage_lines`/`index.unstage_lines`. Whoever reads the result as a
-/// [`Diff`] ignores it.
-fn diff_with_digests(diff: &Diff) -> Value {
-    let mut out = to_json(diff);
-    if let Some(files) = out["files"].as_array_mut() {
-        for (json, file) in files.iter_mut().zip(&diff.files) {
-            json["digest"] = Value::String(file_digest(file));
-        }
-    }
-    out
+/// pass to `index.stage_lines`/`index.unstage_lines`: [`DiffWithDigests`].
+fn diff_with_digests(diff: Diff) -> Value {
+    let files = diff
+        .files
+        .into_iter()
+        .map(|file| FileDiffWithDigest {
+            digest: file_digest(&file),
+            file,
+        })
+        .collect();
+    to_json(DiffWithDigests { files })
 }
 
 /// The [`Diff`] of the worktree against the index (unstaged changes): `{"files": [...]}`,
@@ -613,7 +666,7 @@ fn diff_worktree(s: &mut Session, p: Value) -> Out {
     let DiffParams { path } = parse_params("diff.worktree", p)?;
     let path = check_opt_path("diff.worktree", path)?;
     Ok(diff_with_digests(
-        &s.repo()?.diff(&DiffSpec::Worktree { path })?,
+        s.repo()?.diff(&DiffSpec::Worktree { path })?,
     ))
 }
 
@@ -623,7 +676,7 @@ fn diff_index(s: &mut Session, p: Value) -> Out {
     let DiffParams { path } = parse_params("diff.index", p)?;
     let path = check_opt_path("diff.index", path)?;
     Ok(diff_with_digests(
-        &s.repo()?.diff(&DiffSpec::Index { path })?,
+        s.repo()?.diff(&DiffSpec::Index { path })?,
     ))
 }
 
@@ -700,8 +753,7 @@ fn reread<T>(result: Result<T, EngineError>) -> (Option<T>, Option<String>) {
     }
 }
 
-/// A page of the log: `{"commits": [...], "has_more": bool}`. `has_more` says whether after
-/// the last returned commit there are others (the next page starts at `skip + limit`).
+/// A page of the log: [`RepoLogResult`].
 fn repo_log(s: &mut Session, p: Value) -> Out {
     let query: LogQuery = parse_params("repo.log", p)?;
     let limit = query.limit.unwrap_or(DEFAULT_LOG_LIMIT);
@@ -713,7 +765,7 @@ fn repo_log(s: &mut Session, p: Value) -> Out {
     let mut commits = s.repo()?.log(&probe)?;
     let has_more = commits.len() > limit;
     commits.truncate(limit);
-    Ok(json!({ "commits": commits, "has_more": has_more }))
+    Ok(to_json(RepoLogResult { commits, has_more }))
 }
 
 #[cfg(test)]
@@ -724,7 +776,8 @@ mod snapshot_tests;
 mod tests {
     use super::*;
     use crate::{GitBackend, MemoryBackend, MemoryOpener};
-    use project_domain::{Commit, CommitDetails, Diff, RefInfo, Status};
+    use project_domain::{CommitDetails, RefInfo, Status};
+    use serde_json::json;
     use std::sync::Arc;
 
     fn session() -> Session {
@@ -888,6 +941,56 @@ mod tests {
         assert_eq!(out["head"], to_json(head));
         assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
         assert_eq!(out["commit_graph"], false);
+    }
+
+    /// Reads `out` as `T` and checks that `T` gives the same JSON again.
+    fn same<T: serde::de::DeserializeOwned + Serialize>(out: Value) -> T {
+        let typed: T = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(to_json(&typed), out);
+        typed
+    }
+
+    /// The typed results of `repo.open`, `repo.optimize`, `repo.log` and `diff.worktree`/
+    /// `diff.index` read back the JSON of the command and give the same JSON again: the UI
+    /// deserializes into them.
+    #[test]
+    fn read_results_round_trip() {
+        let r = Registry::builtin();
+        let mut s = session();
+        let open: RepoOpenResult = same(
+            r.run(
+                "repo.open",
+                &mut s,
+                json!({ "path": MemoryOpener::SAMPLE_PATH }),
+            )
+            .unwrap(),
+        );
+        assert_eq!(open.path, MemoryOpener::SAMPLE_PATH);
+        assert_eq!(open.head, MemoryBackend::sample().head().unwrap());
+        assert!(!open.commit_graph);
+
+        let log: RepoLogResult = same(r.run("repo.log", &mut s, json!({ "limit": 2 })).unwrap());
+        assert_eq!(log.commits.len(), 2);
+        assert!(log.has_more);
+        let last: RepoLogResult = same(r.run("repo.log", &mut s, json!({ "all": true })).unwrap());
+        assert!(!last.has_more);
+
+        for id in ["diff.worktree", "diff.index"] {
+            let diff: DiffWithDigests = same(r.run(id, &mut s, json!({})).unwrap());
+            assert!(!diff.files.is_empty(), "{id}");
+            for f in &diff.files {
+                assert_eq!(f.digest, file_digest(&f.file), "{id}");
+            }
+            // Read as a plain `Diff`, the digests are ignored.
+            let plain: Diff =
+                serde_json::from_value(r.run(id, &mut s, json!({})).unwrap()).unwrap();
+            let files: Vec<FileDiff> = diff.files.into_iter().map(|f| f.file).collect();
+            assert_eq!(plain.files, files, "{id}");
+        }
+
+        let optimized: RepoOptimizeResult =
+            same(r.run("repo.optimize", &mut s, json!({})).unwrap());
+        assert!(optimized.commit_graph);
     }
 
     /// Session on the sample repo with `core.commitGraph` set to `value` (unset if `None`).
@@ -1303,7 +1406,7 @@ mod tests {
             .run("diff.worktree", &mut s, json!({ "path": "src/lib.rs" }))
             .unwrap();
         let file = &diff["files"][0];
-        let parsed: project_domain::FileDiff = serde_json::from_value(file.clone()).unwrap();
+        let parsed: FileDiff = serde_json::from_value(file.clone()).unwrap();
         assert_eq!(file["digest"], file_digest(&parsed));
         let all = r.run("diff.index", &mut s, json!({})).unwrap();
         assert!(
@@ -1364,8 +1467,7 @@ mod tests {
 
         // Unstage of all the staged lines: back to the initial state, with a backup
         // because the file was `MM`.
-        let parsed: project_domain::FileDiff =
-            serde_json::from_value(diff["files"][0].clone()).unwrap();
+        let parsed: FileDiff = serde_json::from_value(diff["files"][0].clone()).unwrap();
         let out = r
             .run(
                 "index.unstage_lines",
@@ -1642,7 +1744,7 @@ mod tests {
     }
 
     fn to_json_diff(repo: &MemoryBackend, spec: DiffSpec) -> Value {
-        diff_with_digests(&repo.diff(&spec).unwrap())
+        diff_with_digests(repo.diff(&spec).unwrap())
     }
 
     #[test]

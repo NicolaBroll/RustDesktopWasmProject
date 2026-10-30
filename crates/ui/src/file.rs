@@ -15,8 +15,8 @@
 use crate::diff::{DiffTarget, MAX_LINE_COLS, number_width};
 use crate::{Action, Done, Request, Tab, Ticket};
 use project_domain::{Blame, BlameLine, Change, FileLogEntry, Oid, RepoPath};
+use project_engine::FileLogResult;
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The id of the command that reads the blame.
@@ -377,7 +377,7 @@ impl FileBox {
         {
             view.log_job = None;
             let history = &mut view.history;
-            match result.and_then(|value| crate::decode::<LogPage>(LOG, value)) {
+            match result.and_then(|value| crate::decode::<FileLogResult>(LOG, value)) {
                 Ok(page) => {
                     history.entries.truncate(skip);
                     history.entries.extend(page.commits);
@@ -391,12 +391,6 @@ impl FileBox {
         }
         false
     }
-}
-
-#[derive(Deserialize)]
-struct LogPage {
-    commits: Vec<FileLogEntry>,
-    has_more: bool,
 }
 
 /// The name of the file in `entry` when it is not `current` (the file shown).

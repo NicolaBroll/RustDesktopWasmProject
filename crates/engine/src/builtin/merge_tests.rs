@@ -410,7 +410,9 @@ fn oid_of_b(repo: &mut MemoryBackend) -> Oid {
 fn results_round_trip() {
     use crate::{
         MergeAbortResult, MergeApplied, MergeContinueResult, MergeSourceKind, MergeStartResult,
+        RepoOperationResult,
     };
+    use project_domain::Operation;
     fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
         let typed: T = serde_json::from_value(out.clone()).unwrap();
         assert_eq!(serde_json::to_value(&typed).unwrap(), out);
@@ -443,6 +445,18 @@ fn results_round_trip() {
     assert_eq!(stopped.strategy, MergeApplied::Merge);
     assert!(stopped.in_progress);
     assert_eq!(stopped.conflicts, vec![RepoPath::from("a.txt")]);
+    let op: RepoOperationResult = same(run(&r, &mut s, "repo.operation", json!({})));
+    assert_eq!(op.operation, Some(Operation::Merge));
+    assert_eq!(op.conflicts, vec![RepoPath::from("a.txt")]);
+    assert_eq!(op.incoming.len(), 1);
+    assert_eq!(op.incoming[0].id, oid(3));
+    assert_eq!(op.incoming[0].label, "other");
+    assert_eq!(op.incoming[0].summary.as_deref(), Some("theirs"));
+    assert_eq!(op.incoming[0].refs, vec!["refs/heads/other".to_string()]);
+    assert_eq!(op.message.as_deref(), Some("Merge branch 'other'"));
+    assert!(!op.ready);
+    assert_eq!(op.continue_command.as_deref(), Some("merge.continue"));
+    assert_eq!(op.abort_command.as_deref(), Some("merge.abort"));
     let shown = run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" }));
     run(
         &r,
@@ -456,6 +470,10 @@ fn results_round_trip() {
     assert_eq!(done.branch.as_deref(), Some("refs/heads/main"));
     assert_eq!(done.backup, None);
     assert!(done.journal.can_undo);
+    let none: RepoOperationResult = same(run(&r, &mut s, "repo.operation", json!({})));
+    assert_eq!(none.operation, None);
+    assert!(none.incoming.is_empty() && none.conflicts.is_empty() && !none.ready);
+    assert_eq!((none.continue_command, none.abort_command), (None, None));
     // Stopped, then abort.
     let (r, mut s) = opened_with(repo());
     start(&r, &mut s, json!({ "rev": "other" }));

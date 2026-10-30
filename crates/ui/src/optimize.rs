@@ -6,8 +6,8 @@
 //! runs the other writes and "Refresh" are disabled; it is not offered while another write runs.
 
 use crate::{Action, Done, ErrorKind, Request, Tab, Ticket};
+use project_engine::RepoOptimizeResult;
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -66,11 +66,6 @@ pub enum Received {
     Cancelled,
     /// Failed or refused: the message for the status bar (also kept in the notice).
     Failed(String),
-}
-
-#[derive(Deserialize)]
-struct OptimizeResult {
-    commit_graph: bool,
 }
 
 impl OptimizeBox {
@@ -172,7 +167,7 @@ impl OptimizeBox {
             }
         }
         let error = match result {
-            Ok(value) => match serde_json::from_value::<OptimizeResult>(value) {
+            Ok(value) => match serde_json::from_value::<RepoOptimizeResult>(value) {
                 Ok(result) => {
                     self.commit_graph = result.commit_graph;
                     // Hidden even if git wrote nothing (a repo without commits).

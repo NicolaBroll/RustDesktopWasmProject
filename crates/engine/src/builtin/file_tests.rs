@@ -382,6 +382,13 @@ fn log_pages_and_rev() {
             json!({ "path": "b.txt", "skip": skip, "limit": 2 }),
         );
         assert_eq!(out["has_more"], skip + 2 < all.len(), "skip {skip}");
+        // The typed result reads the page back and gives the same JSON again.
+        let typed: crate::FileLogResult = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        assert_eq!(
+            typed.commits.len(),
+            out["commits"].as_array().unwrap().len()
+        );
         paged.extend(history(&out));
     }
     assert_eq!(paged, all);

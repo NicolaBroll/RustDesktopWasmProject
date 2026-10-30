@@ -1,12 +1,12 @@
 //! `repo.search` (S48): the ids of the commits that match a literal text, in the order of
 //! `repo.log` (`impl-docs/git/reading.md`, `repo.search`).
 
-use super::{DEFAULT_LOG_LIMIT, Out, check_path};
+use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
 use crate::commands::parse_params;
 use crate::{EngineError, SearchField, SearchQuery, Session};
-use project_domain::RepoPath;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Oid, RepoPath};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const ID: &str = "repo.search";
 
@@ -28,9 +28,19 @@ struct SearchParams {
     limit: Option<usize>,
 }
 
-/// `{"ids": [oid], "total": number, "has_more": bool}`: the page `skip..skip + limit` of the
-/// matches, in the order of `repo.log` with the same `all`/`stashes`; `total` counts all the
-/// matches, `has_more` says whether there are others after the page.
+/// Result of `repo.search`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSearchResult {
+    /// The page `skip..skip + limit` of the matches, in the order of `repo.log` with the same
+    /// `all`/`stashes`.
+    pub ids: Vec<Oid>,
+    /// All the matches.
+    pub total: usize,
+    /// There are other matches after the page.
+    pub has_more: bool,
+}
+
+/// The commits that match a text: [`RepoSearchResult`].
 pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
     let SearchParams {
         query,
@@ -70,14 +80,13 @@ pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
     let ids = s.repo()?.search(&query, &job)?;
     let total = ids.len();
     let limit = limit.unwrap_or(DEFAULT_LOG_LIMIT);
-    let page: Vec<String> = ids
-        .iter()
-        .skip(skip)
-        .take(limit)
-        .map(ToString::to_string)
-        .collect();
+    let page: Vec<Oid> = ids.into_iter().skip(skip).take(limit).collect();
     let has_more = skip.saturating_add(limit) < total;
-    Ok(json!({ "ids": page, "total": total, "has_more": has_more }))
+    Ok(to_json(RepoSearchResult {
+        ids: page,
+        total,
+        has_more,
+    }))
 }
 
 #[cfg(test)]

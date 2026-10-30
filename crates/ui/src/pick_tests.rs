@@ -145,9 +145,9 @@ fn conflicted_cherry_pick_is_resolved_and_finished_from_the_panel() {
     let info = b.info().expect("cherry-pick in progress");
     assert_eq!(info.operation, Some(Operation::CherryPick));
     assert!(
-        info.title().starts_with("Cherry-pick in progress"),
+        crate::merge::title(info).starts_with("Cherry-pick in progress"),
         "{}",
-        info.title()
+        crate::merge::title(info)
     );
     assert_eq!(
         info.continue_command.as_deref(),

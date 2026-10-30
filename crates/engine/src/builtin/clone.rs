@@ -3,15 +3,25 @@
 //! session. Nothing to back up (the destination is absent or empty) and no journal entry (no ref
 //! of an open repo moves; the new repo starts with an empty journal).
 
-use super::{Out, opened};
+use super::{Out, RepoOpenResult, opened, to_json};
 use crate::commands::parse_params;
 use crate::{CloneRequest, EngineError, InitRequest, Session};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Result of `repo.clone`: the repo opened, as in `repo.open`, and git's messages.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepoCloneResult {
+    /// `path`, `head` and `commit_graph` of the new repo.
+    #[serde(flatten)]
+    pub opened: RepoOpenResult,
+    /// git's non-progress lines.
+    pub messages: Vec<String>,
+}
 
 /// Clones `url` into `path` and opens it. Slow: progress and cancellation from [`Session::job`].
 ///
-/// Result: `{"path", "head", "commit_graph", "messages": [string]}` (the first three as in
-/// `repo.open`, `messages`: git's non-progress lines).
+/// Result: [`RepoCloneResult`].
 pub(super) fn repo_clone(s: &mut Session, p: Value) -> Out {
     const ID: &str = "repo.clone";
     let request: CloneRequest = parse_params(ID, p)?;
@@ -20,19 +30,21 @@ pub(super) fn repo_clone(s: &mut Session, p: Value) -> Out {
         return Err(EngineError::Cancelled { command: ID });
     }
     let outcome = s.clone_repo(&request)?;
-    let mut out = opened(s, request.path)?;
-    out["messages"] = serde_json::to_value(outcome.messages).expect("strings are serializable");
-    Ok(out)
+    let opened = opened(s, request.path)?;
+    Ok(to_json(RepoCloneResult {
+        opened,
+        messages: outcome.messages,
+    }))
 }
 
 /// `git init` in `path` (initial branch `branch`, otherwise `init.defaultBranch`) and opens it.
 ///
-/// Result: `{"path", "head", "commit_graph"}` as in `repo.open`.
+/// Result: [`RepoOpenResult`], as in `repo.open`.
 pub(super) fn repo_init(s: &mut Session, p: Value) -> Out {
     let request: InitRequest = parse_params("repo.init", p)?;
     request.check()?;
     s.init_repo(&request)?;
-    opened(s, request.path)
+    Ok(to_json(opened(s, request.path)?))
 }
 
 #[cfg(test)]
@@ -261,5 +273,38 @@ mod tests {
         for id in ["repo.clone", "repo.init"] {
             assert!(r.get(id).unwrap().writes, "{id}");
         }
+    }
+
+    /// The typed results read back the JSON of the commands and give the same JSON again: the
+    /// UI deserializes into them.
+    #[test]
+    fn results_round_trip() {
+        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+            let typed: T = serde_json::from_value(out.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+            typed
+        }
+        let (r, mut s, _) = setup();
+        let cloned: crate::RepoCloneResult =
+            same(clone(&r, &mut s, json!({"url": "remote", "path": "dest"})).unwrap());
+        assert_eq!(cloned.opened.path, "dest");
+        assert_eq!(cloned.opened.head, s.repo().unwrap().head().unwrap());
+        assert!(!cloned.opened.commit_graph);
+        assert!(cloned.messages.is_empty());
+        // `repo.open` of the same repo gives the same first three fields.
+        let reopened: crate::RepoOpenResult =
+            same(r.run("repo.open", &mut s, json!({"path": "dest"})).unwrap());
+        assert_eq!(reopened, cloned.opened);
+
+        let init: crate::RepoOpenResult = same(
+            r.run(
+                "repo.init",
+                &mut s,
+                json!({"path": "new", "branch": "trunk"}),
+            )
+            .unwrap(),
+        );
+        assert_eq!(init.path, "new");
+        assert_eq!(init.head, s.repo().unwrap().head().unwrap());
     }
 }

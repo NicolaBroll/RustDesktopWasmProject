@@ -17,11 +17,16 @@ mod session;
 pub use builtin::branch::{
     BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
 };
+pub use builtin::clone::RepoCloneResult;
 pub use builtin::commit::CommitCreateResult;
 pub use builtin::conflict::{ConflictResolveResult, ConflictShowResult};
 pub use builtin::discard::DiscardResult;
 pub use builtin::edit::{HistoryResult, UndoResult};
-pub use builtin::merge::{MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult};
+pub use builtin::file::FileLogResult;
+pub use builtin::merge::{
+    IncomingCommit, MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult,
+    RepoOperationResult,
+};
 pub use builtin::pick::PickStartResult;
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullResult};
 pub use builtin::push::{PushRemoteSource, RemotePushResult};
@@ -36,10 +41,14 @@ pub use builtin::remotes::{
     RemoteListResult, RemoteRemoveResult, RemovedRemote,
 };
 pub use builtin::reset::{ResetPreviewResult, ResetResult};
+pub use builtin::search::RepoSearchResult;
 pub use builtin::stage::IndexWriteResult;
 pub use builtin::stash::{StashApplyResult, StashDropResult, StashListResult, StashPushResult};
 pub use builtin::tag::{TagCreateResult, TagDeleteResult};
-pub use builtin::{DEFAULT_LOG_LIMIT, JournalState};
+pub use builtin::{
+    DEFAULT_LOG_LIMIT, DiffWithDigests, FileDiffWithDigest, JournalState, RepoLogResult,
+    RepoOpenResult, RepoOptimizeResult,
+};
 pub use commands::{CommandSpec, Handler, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,

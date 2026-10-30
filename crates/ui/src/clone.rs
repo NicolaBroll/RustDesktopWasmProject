@@ -7,9 +7,9 @@
 
 use crate::fetch::{self, Failure};
 use crate::{ErrorKind, Ticket};
-use project_engine::RepoCloneResult;
+use project_engine::{CloneRequest, InitRequest, RepoCloneResult};
 use project_i18n::tr;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::path::Path;
 
 /// What the dialog creates.
@@ -92,18 +92,19 @@ impl CloneDialog {
             return None;
         }
         let f = &self.fields;
-        let mut params = json!({ "path": f.path.trim() });
-        if self.kind == Kind::Clone {
-            params["url"] = json!(f.url.trim());
-            if let Ok(depth) = f.depth.trim().parse::<u32>() {
-                params["depth"] = json!(depth);
-            }
-        }
-        let branch = f.branch.trim();
-        if !branch.is_empty() {
-            params["branch"] = json!(branch);
-        }
-        Some(params)
+        let path = f.path.trim().to_owned();
+        let branch = Some(f.branch.trim())
+            .filter(|b| !b.is_empty())
+            .map(str::to_owned);
+        Some(match self.kind {
+            Kind::Clone => crate::params(CloneRequest {
+                url: f.url.trim().to_owned(),
+                path,
+                branch,
+                depth: f.depth.trim().parse::<u32>().ok(),
+            }),
+            Kind::Init => crate::params(InitRequest { path, branch }),
+        })
     }
 }
 

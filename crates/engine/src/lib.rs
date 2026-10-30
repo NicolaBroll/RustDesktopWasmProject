@@ -25,7 +25,7 @@ pub use builtin::conflict::{
 };
 pub use builtin::discard::{DiscardParams, DiscardResult};
 pub use builtin::edit::{HistoryResult, UndoResult};
-pub use builtin::file::FileLogResult;
+pub use builtin::file::{FileBlameParams, FileLogParams, FileLogResult};
 pub use builtin::merge::{
     IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
     MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
@@ -48,7 +48,7 @@ pub use builtin::remotes::{
     RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemovedRemote,
 };
 pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
-pub use builtin::search::RepoSearchResult;
+pub use builtin::search::{RepoSearchParams, RepoSearchResult};
 pub use builtin::stage::{IndexLinesParams, IndexPathsParams, IndexWriteResult};
 pub use builtin::stash::{
     StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashListResult,
@@ -56,8 +56,9 @@ pub use builtin::stash::{
 };
 pub use builtin::tag::{TagCreateParams, TagCreateResult, TagDeleteParams, TagDeleteResult};
 pub use builtin::{
-    DEFAULT_LOG_LIMIT, DiffWithDigests, FileDiffWithDigest, JournalState, RepoLogResult,
-    RepoOpenResult, RepoOptimizeResult,
+    CommitShowParams, DEFAULT_LOG_LIMIT, DiffCommitParams, DiffParams, DiffWithDigests,
+    FileDiffWithDigest, JournalState, RepoLogResult, RepoOpenParams, RepoOpenResult,
+    RepoOptimizeResult,
 };
 pub use commands::{Access, CommandSpec, Registry};
 pub use git::{

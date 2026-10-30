@@ -14,10 +14,10 @@ pub struct CloneRequest {
     /// Destination folder: absent or empty.
     pub path: String,
     /// Branch (or tag) to check out; `None` = the remote's HEAD.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Shallow clone of this many commits (> 0).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<u32>,
 }
 
@@ -35,7 +35,7 @@ pub struct InitRequest {
     /// Destination folder: absent or empty.
     pub path: String,
     /// Initial branch; `None` = git's `init.defaultBranch`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
 }
 

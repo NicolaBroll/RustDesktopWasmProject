@@ -9,7 +9,7 @@
 use crate::executor::ErrorKind;
 use crate::{Action, Done, Request, Tab};
 use project_domain::{Commit, Oid, Operation, Status};
-use project_engine::{CommitCreateResult, CommitOutcome, CommitRequest};
+use project_engine::{CommitCreateResult, CommitOutcome, CommitRequest, CommitShowParams};
 use project_i18n::tr;
 use serde_json::{Value, json};
 
@@ -414,7 +414,9 @@ impl Tab {
                 let last = repo.head_commit().cloned();
                 let ask = repo.commit.draft.set_amend(on, last.as_ref());
                 if ask && let Some(head) = repo.head.target() {
-                    let params = json!({ "id": head.to_string() });
+                    let params = crate::params(CommitShowParams {
+                        id: head.to_string(),
+                    });
                     self.submit("commit.show", params, Request::HeadMessage(generation));
                 }
             }

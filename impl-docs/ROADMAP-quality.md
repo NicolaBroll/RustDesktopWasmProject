@@ -107,7 +107,7 @@ Rules that apply to every step:
   gone. Snapshots never re-accepted.
 
 ### Q12 — Typed registry and parameters
-- [ ] **Agent:** `git-engine`
+- [x] **Agent:** `git-engine`
 - **Goal:** every handler starts with `parse_params("<id>", p)?` and repeats its id (37 `const
   ID`); `WRITES` repeats the ids next to the registration. Generic registration
   `add::<P: DeserializeOwned>(id, title, writes, handler)`: the `Registry` deserializes the
@@ -117,15 +117,16 @@ Rules that apply to every step:
   request, after Q11).
 - **Done when:** no `parse_params` call left in the handlers; the catalog (`project-cli
   commands`) unchanged; CI green.
-- **Progress:** registry done: `Registry::add::<P>(id, title, params_help, Access, handler)`
-  deserializes the parameters (error with the registered id) and the 61 handlers receive their
-  struct; `register`, `parse_params` and `WRITES` are gone, the catalog is unchanged. The
-  parameter structs are `pub(crate)` for now: still to do, one function per pull request, make
-  them `pub` + `Serialize` (exported with a unique name, e.g. `BranchCreateParams`) and build
-  the UI parameters with them (`crate::params`) instead of `json!`. Absent optional fields are
-  not serialized (`skip_serializing_if`), so the JSON sent stays the same. Done: branch, tag, stash, sync, merge (with
-  conflict; `MergeContinueParams`/`MergeAbortParams` also serve cherry-pick, revert and rebase), rebase, pick, reset, remotes, discard
-  (with stage and lines), commit (`CommitRequest`, already public).
+- **Done:** `Registry::add::<P>(id, title, params_help, Access, handler)` deserializes the
+  parameters (error with the registered id) and the 61 handlers receive their struct;
+  `register`, `parse_params` and `WRITES` are gone, the catalog is unchanged. Then one pull
+  request per function: every parameter type is `pub` + `Serialize`, exported by
+  `project-engine` (`BranchCreateParams`, ..., or the existing `CommitRequest`, `StashPush`,
+  `LogQuery`, `CloneRequest`, `InitRequest`), and the UI builds its parameters with them
+  (`crate::params`); only `{}` is left for the commands without parameters. Absent options and
+  false flags are not serialized, so the JSON sent stayed the same, except `stash.push`, whose
+  `StashPush` also appears in the `edit.undo`/`edit.redo` results and keeps its `null` fields.
+  `MergeContinueParams`/`MergeAbortParams` also serve cherry-pick, revert and rebase.
 
 ### Q13 — Parameter schema for CLI and MCP
 - [ ] **Agent:** `git-engine`

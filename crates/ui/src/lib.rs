@@ -64,7 +64,9 @@ use optimize::OptimizeBox;
 use project_domain::HEADS_PREFIX;
 use project_domain::RebaseAction;
 use project_domain::{Commit, CommitDetails, Diff, Head, Oid, RefInfo, RepoPath, Status};
-use project_engine::{IndexWriteResult, RepoLogResult, RepoOpenResult};
+use project_engine::{
+    CommitShowParams, IndexWriteResult, RepoLogResult, RepoOpenParams, RepoOpenResult,
+};
 
 use project_i18n::tr;
 use rebase::RebaseBox;
@@ -742,7 +744,8 @@ impl Tab {
 
     /// Opens `path` in this tab, in the background.
     fn open(&mut self, path: String) {
-        self.submit("repo.open", json!({ "path": &path }), Request::Open);
+        let params = params(RepoOpenParams { path: path.clone() });
+        self.submit("repo.open", params, Request::Open);
         self.requested = Some(path);
     }
 
@@ -1115,7 +1118,8 @@ impl Tab {
         .filter(|_| !repo.worktree_selected);
         if let Some(id) = repo.details.want(selected) {
             let request = Request::Show(self.generation, id);
-            self.submit("commit.show", json!({ "id": id.to_string() }), request);
+            let params = params(CommitShowParams { id: id.to_string() });
+            self.submit("commit.show", params, request);
         }
     }
 

@@ -463,10 +463,12 @@ type Out = Result<Value, EngineError>;
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoParams {}
 
-#[derive(Deserialize)]
+/// Parameters of `repo.open`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PathParam {
-    path: String,
+pub struct RepoOpenParams {
+    /// The folder of the repo (also a subfolder of the worktree).
+    pub path: String,
 }
 
 fn to_json(value: impl Serialize) -> Value {
@@ -526,7 +528,7 @@ pub struct FileDiffWithDigest {
 }
 
 /// The repo at `path`, opened: [`RepoOpenResult`].
-fn repo_open(s: &mut Session, PathParam { path }: PathParam) -> Out {
+fn repo_open(s: &mut Session, RepoOpenParams { path }: RepoOpenParams) -> Out {
     s.open(&path)?;
     Ok(to_json(opened(s, path)?))
 }
@@ -590,34 +592,39 @@ fn repo_refs(s: &mut Session, NoParams {}: NoParams) -> Out {
     Ok(to_json(s.repo()?.refs()?))
 }
 
-#[derive(Deserialize)]
+/// Parameters of `commit.show`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IdParam {
-    id: String,
+pub struct CommitShowParams {
+    /// The commit: an id (also abbreviated) or a ref name.
+    pub id: String,
 }
 
 /// The [`CommitDetails`](project_domain::CommitDetails) of commit `id` (also abbreviated, or a
 /// ref name): `{"commit", "compared_to", "files"}`, with the files compared to the first
 /// parent.
-fn commit_show(s: &mut Session, IdParam { id }: IdParam) -> Out {
+fn commit_show(s: &mut Session, CommitShowParams { id }: CommitShowParams) -> Out {
     Ok(to_json(s.repo()?.show_commit(&id)?))
 }
 
 /// Parameters of `diff.worktree` and `diff.index`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DiffParams {
-    #[serde(default)]
-    path: Option<RepoPath>,
+pub struct DiffParams {
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
 }
 
 /// Parameters of `diff.commit`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CommitDiffParams {
-    id: String,
-    #[serde(default)]
-    path: Option<RepoPath>,
+pub struct DiffCommitParams {
+    /// The commit, as in `commit.show`.
+    pub id: String,
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
 }
 
 /// Like [`check_path`], for an optional path.
@@ -681,7 +688,7 @@ fn diff_index(s: &mut Session, DiffParams { path }: DiffParams) -> Out {
 
 /// The [`Diff`] of commit `id` against the first parent (like
 /// `commit.show`).
-fn diff_commit(s: &mut Session, CommitDiffParams { id, path }: CommitDiffParams) -> Out {
+fn diff_commit(s: &mut Session, DiffCommitParams { id, path }: DiffCommitParams) -> Out {
     let path = check_opt_path("diff.commit", path)?;
     Ok(to_json(
         s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,

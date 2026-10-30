@@ -794,18 +794,22 @@ pub struct LogQuery {
     /// Commits to skip from the start of the log.
     pub skip: usize,
     /// Maximum number of commits; `None` = all.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
     /// Where to start: name of a ref (`main`, `origin/main`, `v1.0`, `refs/heads/main`),
     /// `HEAD` or an id (also abbreviated, at least 4 digits). `None` = HEAD.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
     /// Starts from all local branches, remote branches, tags and HEAD (also detached), like
     /// `git log --branches --remotes --tags HEAD`. The other refs (`refs/stash`, the backups in
     /// `refs/project/backup/`, notes) are not included. Excludes `rev`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub all: bool,
     /// Only with `all`: also starts from the stash bases ([`StashEntry::base`], the commit
     /// each was created on), so the graph always has the commit the UI attaches a
     /// stash to, even if no branch contains it anymore. The commits of the stashes (and those of the index
     /// and untracked files that have them as parents) stay out: the list is `stash.list`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stashes: bool,
 }
 

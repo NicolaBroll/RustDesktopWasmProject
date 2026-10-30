@@ -16,12 +16,14 @@ pub struct FileLogResult {
 }
 
 /// Parameters of `file.blame`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct BlameParams {
-    path: RepoPath,
-    #[serde(default)]
-    rev: Option<String>,
+pub struct FileBlameParams {
+    /// The file.
+    pub path: RepoPath,
+    /// The commit (rev); without: the worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
 }
 
 /// Who last changed each line of `path`: in the worktree (lines not yet committed have
@@ -29,7 +31,7 @@ pub(crate) struct BlameParams {
 ///
 /// Result: the [`Blame`](project_domain::Blame) (`{"lines", "commits"}`) plus `{"path", "rev":
 /// oid | null}`.
-pub(super) fn file_blame(s: &mut Session, BlameParams { path, rev }: BlameParams) -> Out {
+pub(super) fn file_blame(s: &mut Session, FileBlameParams { path, rev }: FileBlameParams) -> Out {
     const ID: &str = "file.blame";
     let path = check_path(ID, path)?;
     let job = s.job().clone();
@@ -42,18 +44,23 @@ fn default_follow() -> bool {
 }
 
 /// Parameters of `file.log`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FileLogParams {
-    path: RepoPath,
+pub struct FileLogParams {
+    /// The file.
+    pub path: RepoPath,
+    /// Where to start (rev); without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    /// Commits to skip from the start.
     #[serde(default)]
-    rev: Option<String>,
-    #[serde(default)]
-    skip: usize,
-    #[serde(default)]
-    limit: Option<usize>,
+    pub skip: usize,
+    /// Maximum number of commits; without: 200.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Follow the file across renames (default `true`).
     #[serde(default = "default_follow")]
-    follow: bool,
+    pub follow: bool,
 }
 
 /// The commits that change `path`, newest first (paginated like `repo.log`, `limit` 200).

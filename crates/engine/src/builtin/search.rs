@@ -8,22 +8,30 @@ use serde::{Deserialize, Serialize};
 
 const ID: &str = "repo.search";
 
-#[derive(Deserialize)]
+/// Parameters of `repo.search`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SearchParams {
-    query: String,
-    #[serde(default, rename = "in")]
-    fields: Option<Vec<SearchField>>,
+pub struct RepoSearchParams {
+    /// The text to look for (literal, case-insensitive).
+    pub query: String,
+    /// Where to look (`in`); without: message, author and id.
+    #[serde(default, rename = "in", skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<SearchField>>,
+    /// Only commits touching this path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
+    /// As in `repo.log`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
+    /// As in `repo.log` (only with `all`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stashes: bool,
+    /// Matches to skip from the start.
     #[serde(default)]
-    path: Option<RepoPath>,
-    #[serde(default)]
-    all: bool,
-    #[serde(default)]
-    stashes: bool,
-    #[serde(default)]
-    skip: usize,
-    #[serde(default)]
-    limit: Option<usize>,
+    pub skip: usize,
+    /// Maximum number of ids; without: 200.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
 /// Result of `repo.search`.
@@ -41,7 +49,7 @@ pub struct RepoSearchResult {
 /// The commits that match a text: [`RepoSearchResult`].
 pub(super) fn repo_search(
     s: &mut Session,
-    SearchParams {
+    RepoSearchParams {
         query,
         fields,
         path,
@@ -49,7 +57,7 @@ pub(super) fn repo_search(
         stashes,
         skip,
         limit,
-    }: SearchParams,
+    }: RepoSearchParams,
 ) -> Out {
     let invalid = |reason| EngineError::InvalidParams { id: ID, reason };
     if query.is_empty() {

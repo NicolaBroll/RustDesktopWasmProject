@@ -167,7 +167,7 @@ Rules that apply to every step:
 ## Phase Q2 — UI structure
 
 ### Q20 — One state for a dialog's running command
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the dialogs keep `sending: bool`, `ticket: Option<Ticket>` and `cancelling: bool`
   side by side (remotes, branch, stash, merge, conflict editor), which allows impossible states
   (sending without a ticket), and four modules define their own `Running { ticket, cancelling }`
@@ -175,6 +175,14 @@ Rules that apply to every step:
   extra: T }`) held as `Option<Running<..>>`.
 - **Done when:** no `sending: bool` left; UI tests green; desktop screenshot on Xvfb of a
   dialog while it runs; CI green.
+- **Done:** `crates/ui/src/running.rs`: `Running<T = ()> { ticket, cancelling, extra }` with
+  `new`/`with` and `cancel()` (the ticket only the first time). Clone, optimize and the add-remote
+  dialog hold `Option<Running>`, fetch `Option<Running<Fetching>>` (`remote`, `auto`), pull/push
+  `Option<Running<Request>>`. The branch-name, stash, "Continue" and conflict-editor dialogs drop
+  `sending: bool` for `running: Option<Running>`: `submit_*` only returns the parameters, and
+  `name_started`/`push_started`/`continue_started`/`ConflictBox::started` record the ticket that
+  `Tab::submit` now returns. The add-remote `fetching` field became `AddDialog::fetching()`
+  (running and "Fetch right away", the fields being read-only while it runs).
 
 ### Q21 — `Tab` and `Action` by area
 - [ ] **Agent:** `egui-ui`

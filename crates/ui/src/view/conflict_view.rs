@@ -32,13 +32,19 @@ pub(crate) fn conflict_editor(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let close = ui
-                .add_enabled(!editor.sending, egui::Button::new(tr!("conflict-close")))
+                .add_enabled(
+                    editor.running.is_none(),
+                    egui::Button::new(tr!("conflict-close")),
+                )
                 .on_hover_text(tr!("conflict-close-hint"));
             if close.clicked() {
                 actions.push(Action::CloseConflict);
             }
             let restart = ui
-                .add_enabled(!editor.sending, egui::Button::new(tr!("conflict-restart")))
+                .add_enabled(
+                    editor.running.is_none(),
+                    egui::Button::new(tr!("conflict-restart")),
+                )
                 .on_hover_text(tr!("conflict-restart-hint"));
             if restart.clicked() {
                 actions.push(Action::RestartConflict);
@@ -108,7 +114,7 @@ fn loaded_editor(
         );
     });
     ui.separator();
-    let enabled = !editor.sending;
+    let enabled = editor.running.is_none();
     match loaded.result() {
         Some(result) => {
             let blocks = loaded.blocks();
@@ -299,7 +305,7 @@ fn footer_row(
     if let Some(error) = &editor.error {
         ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
     }
-    let enabled = can_write && !editor.sending;
+    let enabled = can_write && editor.running.is_none();
     if let Some(pending) = editor.pending {
         let warn = ui.visuals().warn_fg_color;
         ui.horizontal_wrapped(|ui| {
@@ -354,7 +360,7 @@ fn footer_row(
                 actions.push(Action::DeleteConflicted);
             }
         }
-        if editor.sending {
+        if editor.running.is_some() {
             ui.spinner();
             ui.label(tr!("conflict-resolving"));
         }

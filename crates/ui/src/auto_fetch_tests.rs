@@ -145,8 +145,8 @@ fn the_interval_starts_a_fetch_with_the_parameters_of_the_button() {
     frame(&mut tab, t0 + 5 * MINUTE);
     assert_eq!(fetching(&tab), 1);
     let running = tab.repo.as_ref().unwrap().fetch.running().unwrap().clone();
-    assert!(running.auto);
-    assert_eq!(running.remote, None, "the remote the engine chooses");
+    assert!(running.extra.auto);
+    assert_eq!(running.extra.remote, None, "the remote the engine chooses");
     // Same parameters as "Fetch": `prune` as the button.
     assert_eq!(
         tab.repo.as_ref().unwrap().fetch.request(None),
@@ -286,7 +286,16 @@ fn a_manual_fetch_restarts_the_timer() {
     let t0 = Instant::now();
     frame(&mut tab, t0);
     tab.apply(Action::Fetch(None));
-    assert!(!tab.repo.as_ref().unwrap().fetch.running().unwrap().auto);
+    assert!(
+        !tab.repo
+            .as_ref()
+            .unwrap()
+            .fetch
+            .running()
+            .unwrap()
+            .extra
+            .auto
+    );
     let t1 = t0 + 4 * MINUTE;
     frame(&mut tab, t1);
     settle(&mut tab);

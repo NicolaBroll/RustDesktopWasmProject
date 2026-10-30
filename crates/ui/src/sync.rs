@@ -23,6 +23,7 @@
 use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
+use crate::running::Running;
 use crate::{Action, Done, Tab, params};
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, Status};
@@ -182,15 +183,6 @@ impl Request {
     }
 }
 
-/// The pull or push in progress.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: crate::Ticket,
-    pub request: Request,
-    /// True after "Stop", until the command answers.
-    pub cancelling: bool,
-}
-
 /// A pull stopped on a conflict and already aborted by the engine: today only the rebase (the stopped merge
 /// stays in progress, [`Outcome::show_changes`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -271,7 +263,7 @@ pub enum Window {
 /// Pull and push: the one in progress and the open window.
 #[derive(Debug, Default)]
 pub struct SyncBox {
-    running: Option<Running>,
+    running: Option<Running<Request>>,
     window: Option<Window>,
 }
 
@@ -313,7 +305,7 @@ pub struct Outcome {
 }
 
 impl SyncBox {
-    pub fn running(&self) -> Option<&Running> {
+    pub fn running(&self) -> Option<&Running<Request>> {
         self.running.as_ref()
     }
 
@@ -383,18 +375,12 @@ impl SyncBox {
     /// The request started with `ticket`: the window closes.
     pub fn started(&mut self, ticket: crate::Ticket, request: Request) {
         self.window = None;
-        self.running = Some(Running {
-            ticket,
-            request,
-            cancelling: false,
-        });
+        self.running = Some(Running::with(ticket, request));
     }
 
     /// "Stop": the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<crate::Ticket> {
-        let running = self.running.as_mut().filter(|r| !r.cancelling)?;
-        running.cancelling = true;
-        Some(running.ticket)
+        self.running.as_mut()?.cancel()
     }
 
     /// The command's answer for `ticket`.
@@ -407,7 +393,7 @@ impl SyncBox {
         expected: Option<String>,
     ) -> Received {
         let request = match self.running.take() {
-            Some(running) if running.ticket == ticket => running.request,
+            Some(running) if running.ticket == ticket => running.extra,
             other => {
                 self.running = other;
                 return Received::Failed {

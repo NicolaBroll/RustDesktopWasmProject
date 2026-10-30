@@ -13,8 +13,9 @@
 //!   remain a two-step confirmation is asked; "Delete the file" also asks for confirmation. A
 //!   `StaleDiff` (the file changed after reading) rereads the file.
 
-use crate::ErrorKind;
+use crate::running::Running;
 use crate::{Action, Done, Request, Tab, params};
+use crate::{ErrorKind, Ticket};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
 };
@@ -215,8 +216,8 @@ pub struct Editor {
     pub load: Load,
     /// The open two-step confirmation, if any.
     pub pending: Option<Pending>,
-    /// True while `conflict.resolve` is in flight.
-    pub sending: bool,
+    /// `conflict.resolve` in flight.
+    pub running: Option<Running>,
     /// The last error (refusal, changed file), shown in the editor.
     pub error: Option<String>,
 }
@@ -232,7 +233,7 @@ impl Editor {
 
     fn loaded_mut(&mut self) -> Option<&mut Loaded> {
         match &mut self.load {
-            Load::Ready(loaded) if !self.sending => Some(loaded),
+            Load::Ready(loaded) if self.running.is_none() => Some(loaded),
             _ => None,
         }
     }
@@ -267,7 +268,7 @@ impl ConflictBox {
 
     /// True while `conflict.resolve` is in flight.
     pub fn busy(&self) -> bool {
-        self.editor.as_ref().is_some_and(|e| e.sending)
+        self.editor.as_ref().is_some_and(|e| e.running.is_some())
     }
 
     /// Opens the editor on `path`: the parameters of `conflict.show` and the reading number.
@@ -288,7 +289,7 @@ impl ConflictBox {
             seq: self.seq,
             load: Load::Loading,
             pending: None,
-            sending: false,
+            running: None,
             error: None,
         });
         Some((params(ConflictShowParams { path }), self.seq))
@@ -296,7 +297,7 @@ impl ConflictBox {
 
     /// "Start over": rereads the file, the choices and edits made here are lost.
     pub fn restart(&mut self) -> Option<(Value, u64)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         self.seq += 1;
         editor.seq = self.seq;
         editor.load = Load::Loading;
@@ -334,7 +335,7 @@ impl ConflictBox {
                 .any(|e| e.is_conflict() && &e.path == path)
         };
         if let Some(editor) = &self.editor
-            && !editor.sending
+            && editor.running.is_none()
             && !still(&editor.path)
         {
             self.editor = None;
@@ -390,7 +391,7 @@ impl ConflictBox {
     /// "Mark as resolved" with the result: the parameters of `conflict.resolve` and the
     /// description. If markers remain `None` and the confirmation opens ([`Pending::Markers`]).
     pub fn resolve(&mut self) -> Option<(Value, String)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         let loaded = editor.loaded()?;
         loaded.result.as_ref()?;
         let left = loaded.parsed.as_ref().map_or(0, ConflictText::block_count);
@@ -403,7 +404,7 @@ impl ConflictBox {
 
     /// "Use ours" / "Use theirs": the text of that side as the result, right away.
     pub fn use_side(&mut self, pick: Pick) -> Option<(Value, String)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         let loaded = editor.loaded()?;
         let content = loaded.side_text(pick)?.to_owned();
         let path = editor.path.to_string();
@@ -417,12 +418,12 @@ impl ConflictBox {
             content: Some(content),
             delete: false,
         });
-        Some(self.sending(params, label))
+        Some(self.send(params, label))
     }
 
     /// "Delete the file": opens the confirmation ([`Pending::Delete`]).
     pub fn delete(&mut self) {
-        if let Some(editor) = self.editor.as_mut().filter(|e| !e.sending)
+        if let Some(editor) = self.editor.as_mut().filter(|e| e.running.is_none())
             && editor.loaded().is_some_and(Loaded::can_delete)
         {
             editor.pending = Some(Pending::Delete);
@@ -431,7 +432,7 @@ impl ConflictBox {
 
     /// The two-step confirmation was given: the parameters to send.
     pub fn confirm(&mut self) -> Option<(Value, String)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         match editor.pending.take()? {
             Pending::Markers(_) => self.send_result(),
             Pending::Delete => {
@@ -443,7 +444,7 @@ impl ConflictBox {
                     delete: true,
                 });
                 let label = tr!("conflict-label-delete", path = editor.path.to_string());
-                Some(self.sending(params, label))
+                Some(self.send(params, label))
             }
         }
     }
@@ -465,16 +466,22 @@ impl ConflictBox {
             delete: false,
         });
         let label = tr!("conflict-label-resolve", path = editor.path.to_string());
-        Some(self.sending(params, label))
+        Some(self.send(params, label))
     }
 
-    fn sending(&mut self, params: Value, label: String) -> (Value, String) {
+    fn send(&mut self, params: Value, label: String) -> (Value, String) {
         if let Some(editor) = &mut self.editor {
-            editor.sending = true;
             editor.pending = None;
             editor.error = None;
         }
         (params, label)
+    }
+
+    /// The `conflict.resolve` given by the calls above started with `ticket`.
+    pub fn started(&mut self, ticket: Ticket) {
+        if let Some(editor) = &mut self.editor {
+            editor.running = Some(Running::new(ticket));
+        }
     }
 
     /// The answer of `conflict.resolve`.
@@ -484,7 +491,7 @@ impl ConflictBox {
         kind: Option<ErrorKind>,
     ) -> Received {
         if let Some(editor) = &mut self.editor {
-            editor.sending = false;
+            editor.running = None;
         }
         let path = self.editor.as_ref().map(|e| e.path.to_string());
         let result =
@@ -586,7 +593,10 @@ impl Tab {
         {
             repo.write_error = None;
             repo.write_label = Some(label);
-            self.submit(RESOLVE, params, Request::ConflictResolve(generation));
+            let ticket = self.submit(RESOLVE, params, Request::ConflictResolve(generation));
+            if let Some(repo) = &mut self.repo {
+                repo.conflict.started(ticket);
+            }
         }
     }
 

@@ -37,6 +37,7 @@ mod ref_tree;
 mod refresh;
 mod remotes;
 mod reset;
+mod running;
 mod search;
 mod settings;
 mod stage;
@@ -783,9 +784,10 @@ impl Tab {
         self.repo.is_none() && !self.executor.is_busy()
     }
 
-    fn submit(&mut self, command: &str, params: Value, request: Request) {
+    fn submit(&mut self, command: &str, params: Value, request: Request) -> Ticket {
         let ticket = self.executor.submit(command, params);
         self.pending.insert(ticket, request);
+        ticket
     }
 
     fn apply(&mut self, action: Action) {
@@ -1537,10 +1539,10 @@ impl Tab {
         }
         if let Some(running) = r.fetch.running() {
             return Some(view::Network {
-                what: if running.auto {
+                what: if running.extra.auto {
                     tr!("fetch-auto-label")
                 } else {
-                    fetch::label(running.remote.as_deref())
+                    fetch::label(running.extra.remote.as_deref())
                 },
                 cancelling: running.cancelling,
                 progress: self.executor.progress(running.ticket),
@@ -1551,18 +1553,20 @@ impl Tab {
         if let Some(adding) = r.remotes.running_fetch() {
             return Some(view::Network {
                 what: adding.label(),
-                cancelling: adding.cancelling,
-                progress: adding.ticket.and_then(|t| self.executor.progress(t)),
+                cancelling: adding.running.is_some_and(|r| r.cancelling),
+                progress: adding
+                    .running
+                    .and_then(|r| self.executor.progress(r.ticket)),
                 stop_hint: tr!("app-stop-add-remote-hint"),
                 cancel: Action::CancelAddRemote,
             });
         }
         let running = r.sync.running()?;
         Some(view::Network {
-            what: running.request.label(),
+            what: running.extra.label(),
             cancelling: running.cancelling,
             progress: self.executor.progress(running.ticket),
-            stop_hint: match running.request.op {
+            stop_hint: match running.extra.op {
                 sync::Op::Pull => tr!("app-stop-pull-hint"),
                 sync::Op::Push | sync::Op::PushTag => tr!("app-stop-push-hint"),
             },
@@ -1693,8 +1697,8 @@ impl Tab {
                     let progress = repo
                         .remotes
                         .running_fetch()
-                        .and_then(|d| d.ticket)
-                        .and_then(|t| self.executor.progress(t));
+                        .and_then(|d| d.running)
+                        .and_then(|r| self.executor.progress(r.ticket));
                     view::remote_dialog(&ctx, dialog, progress.as_ref(), &mut actions);
                 }
                 if let Some(dialog) = repo.stash.dialog() {

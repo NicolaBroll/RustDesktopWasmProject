@@ -3,6 +3,7 @@
 
 use super::super::{Dialog, Kind, OPERATION};
 use super::*;
+use crate::Ticket;
 use crate::discard::Phase;
 use project_domain::{Change, ChangedFile, Commit, Operation, RepoPath, Signature, Status};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
@@ -159,6 +160,7 @@ fn conflicted_cherry_pick_is_resolved_and_finished_from_the_panel() {
     // With the conflict the engine refuses: the error stays in the dialog.
     assert!(b.open_continue());
     let (op, params, _) = b.submit_continue().unwrap();
+    b.continue_started(Ticket::for_test(1));
     assert_eq!(op, Op::Continue(Kind::CherryPick));
     assert!(matches!(
         run(&r, &mut s, &mut b, op, params),
@@ -178,6 +180,7 @@ fn conflicted_cherry_pick_is_resolved_and_finished_from_the_panel() {
     assert_eq!(dialog.kind, Kind::CherryPick);
     assert!(!dialog.is_blank(), "message prepared by git");
     let (op, params, label) = b.submit_continue().unwrap();
+    b.continue_started(Ticket::for_test(1));
     assert_eq!(op.command(), "cherry_pick.continue");
     assert_eq!(label, "Finishing the cherry-pick");
     let outcome = done(run(&r, &mut s, &mut b, op, params));
@@ -273,6 +276,7 @@ fn conflicted_revert_is_finished_from_the_panel() {
     refresh(&r, &mut s, &mut b, 2);
     assert!(b.open_continue());
     let (op, params, label) = b.submit_continue().unwrap();
+    b.continue_started(Ticket::for_test(1));
     assert_eq!(op, Op::Continue(Kind::Revert));
     assert_eq!(label, "Finishing the revert");
     let outcome = done(run(&r, &mut s, &mut b, op, params));

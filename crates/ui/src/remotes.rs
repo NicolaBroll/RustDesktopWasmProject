@@ -21,6 +21,7 @@
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure};
 use crate::messages_text;
+use crate::running::Running;
 use crate::{Action, Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::remote_short;
@@ -145,14 +146,8 @@ pub struct AddDialog {
     pub fields: AddFields,
     /// The engine error from the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// True while the command is running.
-    pub sending: bool,
-    /// The ticket of the running command (for progress and "Cancel").
-    pub ticket: Option<Ticket>,
-    /// True after "Cancel", until the command answers.
-    pub cancelling: bool,
-    /// True if the running submit also asked for the fetch.
-    pub fetching: bool,
+    /// The running command (for progress and "Cancel").
+    pub running: Option<Running>,
     /// "Hide": the URL with credentials is shown masked even while typing.
     pub hide_url: bool,
 }
@@ -161,13 +156,15 @@ impl AddDialog {
     /// True if the button is enabled: name and URL typed, no submit in progress. The rest is
     /// checked by the engine.
     pub fn can_submit(&self) -> bool {
-        !self.sending && !self.fields.name.trim().is_empty() && !self.fields.url.trim().is_empty()
+        self.running.is_none()
+            && !self.fields.name.trim().is_empty()
+            && !self.fields.url.trim().is_empty()
     }
 
     /// True if the URL is shown masked in a read-only field: during the submit (the
     /// fetch can take long, the token does not stay in clear on screen) or after "Hide".
     pub fn url_masked(&self) -> bool {
-        (self.sending || self.hide_url) && looks_like_credentials(&self.fields.url)
+        (self.running.is_some() || self.hide_url) && looks_like_credentials(&self.fields.url)
     }
 
     /// The URL as shown in the field: masked as the engine shows it ([`mask_url`]) if
@@ -185,10 +182,16 @@ impl AddDialog {
         looks_like_credentials(&self.fields.url).then(|| tr!("remotes-credentials-warning"))
     }
 
+    /// True if the running submit also asked for the fetch (the fields do not change while it
+    /// runs).
+    pub fn fetching(&self) -> bool {
+        self.running.is_some() && self.fields.fetch
+    }
+
     /// The remote being added, for the status bar.
     pub fn label(&self) -> String {
         let name = self.fields.name.trim();
-        if self.fetching {
+        if self.fields.fetch {
             tr!("remotes-add-label-fetch", name = name)
         } else {
             tr!("remotes-add-label", name = name)
@@ -379,10 +382,7 @@ impl RemotesBox {
                 fetch: true,
             },
             error: None,
-            sending: false,
-            ticket: None,
-            cancelling: false,
-            fetching: false,
+            running: None,
             hide_url: false,
         }));
         true
@@ -391,7 +391,7 @@ impl RemotesBox {
     /// The fields of the add dialog changed.
     pub fn set_fields(&mut self, fields: AddFields) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.fields = fields;
         }
@@ -412,10 +412,7 @@ impl RemotesBox {
         if !dialog.can_submit() {
             return None;
         }
-        dialog.sending = true;
         dialog.error = None;
-        dialog.cancelling = false;
-        dialog.fetching = dialog.fields.fetch;
         self.failure = None;
         let params = params(RemoteAddParams {
             name: dialog.fields.name.trim().to_owned(),
@@ -428,14 +425,14 @@ impl RemotesBox {
     /// The add sent with [`RemotesBox::submit_add`] started with `ticket`.
     pub fn add_started(&mut self, ticket: Ticket) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog {
-            dialog.ticket = Some(ticket);
+            dialog.running = Some(Running::new(ticket));
         }
     }
 
     /// The add in progress with the fetch: the ticket for progress.
     pub fn running_fetch(&self) -> Option<&AddDialog> {
         match &self.dialog {
-            Some(Dialog::Add(dialog)) if dialog.sending && dialog.fetching => Some(dialog),
+            Some(Dialog::Add(dialog)) if dialog.fetching() => Some(dialog),
             _ => None,
         }
     }
@@ -446,11 +443,10 @@ impl RemotesBox {
         let Some(Dialog::Add(dialog)) = &mut self.dialog else {
             return None;
         };
-        if !dialog.sending || !dialog.fetching || dialog.cancelling {
+        if !dialog.fetching() {
             return None;
         }
-        dialog.cancelling = true;
-        dialog.ticket
+        dialog.running.as_mut()?.cancel()
     }
 
     /// Starts the removal of the remote `name`: the parameters of the first submit, without `confirm`
@@ -566,7 +562,7 @@ impl RemotesBox {
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
-            Some(Dialog::Add(dialog)) => !dialog.sending,
+            Some(Dialog::Add(dialog)) => dialog.running.is_none(),
             Some(Dialog::Remove(remove)) => matches!(remove.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteBranch(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             None => false,
@@ -604,15 +600,13 @@ impl RemotesBox {
         let Some(Dialog::Add(dialog)) = &mut self.dialog else {
             return unexpected(Op::Add);
         };
-        if !dialog.sending {
+        if dialog.running.is_none() {
             return unexpected(Op::Add);
         }
         match result {
             // Name or URL refused, name already taken: nothing changed, fixed in the dialog.
             Err(e) if matches!(kind, Some(ErrorKind::InvalidParams | ErrorKind::NotAllowed)) => {
-                dialog.sending = false;
-                dialog.ticket = None;
-                dialog.fetching = false;
+                dialog.running = None;
                 dialog.error = Some(e);
                 Received::Inline
             }
@@ -1436,13 +1430,14 @@ mod tests {
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let r = run(&registry, &mut session, &mut b, Op::Add, params);
         assert!(matches!(r, Received::Inline), "{r:?}");
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
         assert!(dialog.error.as_deref().unwrap().contains("already exists"));
-        assert!(!dialog.sending);
+        assert!(dialog.running.is_none());
 
         // URL with credentials: warning in the dialog and after.
         b.set_fields(AddFields {
@@ -1462,6 +1457,7 @@ mod tests {
         assert_eq!(dialog.shown_url(), "https://anna:***@example.com/fork.git");
         b.hide_url(false);
         let (params, label) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
@@ -1524,6 +1520,7 @@ mod tests {
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Add, params) else {
             panic!()
         };
@@ -1560,6 +1557,7 @@ mod tests {
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Add, params) else {
             panic!()
         };

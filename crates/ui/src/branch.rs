@@ -10,8 +10,9 @@
 //! opens a dialog with the files.
 
 use crate::discard::{History, Phase};
+use crate::running::Running;
 use crate::{Action, Done, Request, Tab, params};
-use crate::{ErrorKind, messages_text};
+use crate::{ErrorKind, Ticket, messages_text};
 use project_domain::{Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
 use project_engine::{
@@ -110,8 +111,8 @@ pub struct NameDialog {
     pub message: String,
     /// The engine error from the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// True while the command is running.
-    pub sending: bool,
+    /// The running command.
+    pub running: Option<Running>,
 }
 
 impl NameDialog {
@@ -124,7 +125,7 @@ impl NameDialog {
     /// current one), no submit in progress. The rest is checked by the engine.
     pub fn can_submit(&self) -> bool {
         let name = self.trimmed();
-        !self.sending
+        self.running.is_none()
             && !name.is_empty()
             && match &self.kind {
                 NameKind::Create(_) | NameKind::Tag(_) => true,
@@ -296,7 +297,7 @@ impl BranchBox {
             name,
             message: String::new(),
             error: None,
-            sending: false,
+            running: None,
         }));
         true
     }
@@ -304,7 +305,7 @@ impl BranchBox {
     /// The text of the name dialog changed.
     pub fn set_name(&mut self, name: String) {
         if let Some(Dialog::Name(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.name = name;
         }
@@ -313,7 +314,7 @@ impl BranchBox {
     /// The text of the tag message changed.
     pub fn set_message(&mut self, message: String) {
         if let Some(Dialog::Name(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.message = message;
         }
@@ -327,9 +328,15 @@ impl BranchBox {
         if !dialog.can_submit() {
             return None;
         }
-        dialog.sending = true;
         dialog.error = None;
         Some((dialog.op(), dialog.params(), dialog.label()))
+    }
+
+    /// The command of [`BranchBox::submit_name`] started with `ticket`.
+    pub fn name_started(&mut self, ticket: Ticket) {
+        if let Some(Dialog::Name(dialog)) = &mut self.dialog {
+            dialog.running = Some(Running::new(ticket));
+        }
     }
 
     /// Starts the checkout of the branch `name` (short).
@@ -417,7 +424,7 @@ impl BranchBox {
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
-            Some(Dialog::Name(dialog)) => !dialog.sending,
+            Some(Dialog::Name(dialog)) => dialog.running.is_none(),
             Some(Dialog::Delete(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteTag(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             Some(Dialog::Refused(_)) => true,
@@ -449,14 +456,14 @@ impl BranchBox {
         let Some(Dialog::Name(dialog)) = &mut self.dialog else {
             return unexpected(op);
         };
-        if !dialog.sending || dialog.op() != op {
+        if dialog.running.is_none() || dialog.op() != op {
             return unexpected(op);
         }
         match result {
             Err(e) => {
                 // Any refusal (invalid name, already taken, vanished rev) stays in the dialog:
                 // nothing changed and the name can be fixed.
-                dialog.sending = false;
+                dialog.running = None;
                 dialog.error = Some(e);
                 Received::Inline
             }
@@ -819,7 +826,10 @@ impl Tab {
                 if let Some((op, params, label)) = repo.branch.submit_name() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    self.submit(op.command(), params, Request::Branch(generation, op));
+                    let ticket = self.submit(op.command(), params, Request::Branch(generation, op));
+                    if let Some(repo) = &mut self.repo {
+                        repo.branch.name_started(ticket);
+                    }
                 }
             }
             Action::Checkout(name) => {
@@ -1032,6 +1042,7 @@ mod tests {
         assert_eq!(b.submit_name(), None);
         b.set_name("  feature/y ".to_owned());
         let (op, params, label) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert_eq!(op, Op::Create);
         assert_eq!(
             params,
@@ -1054,7 +1065,7 @@ mod tests {
             panic!()
         };
         assert_eq!(dialog.error.as_deref(), Some("invalid name"));
-        assert!(!dialog.sending);
+        assert!(dialog.running.is_none());
         b.close();
         assert!(b.dialog().is_none());
 
@@ -1063,6 +1074,7 @@ mod tests {
         assert_eq!(b.submit_name(), None);
         b.set_name("primary".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert_eq!(op, Op::Rename);
         assert_eq!(params, json!({ "name": "main", "new_name": "primary" }));
     }
@@ -1082,6 +1094,7 @@ mod tests {
         b.set_name(" v2 ".to_owned());
         b.set_message("  ".to_owned());
         let (op, params, label) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert_eq!(op, Op::CreateTag);
         assert_eq!(params, json!({ "name": "v2", "target": head.to_string() }));
         assert_eq!(label, "Creating tag “v2”");
@@ -1107,6 +1120,7 @@ mod tests {
         b.set_name("v3".to_owned());
         b.set_message("Release 3\n".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert_eq!(params["message"], "Release 3");
         let Received::Done(outcome) = b.receive(
             op,
@@ -1420,6 +1434,7 @@ mod tests {
         assert_eq!(name, "main");
         b.open_create(start, name);
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert!(matches!(
             send(&mut b, &r, &mut s, op, params),
             Received::Inline
@@ -1434,12 +1449,14 @@ mod tests {
         // A name that git does not accept: the engine says so.
         b.set_name("with space".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert!(matches!(
             send(&mut b, &r, &mut s, op, params),
             Received::Inline
         ));
         b.set_name("from-origin".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         let created = done(send(&mut b, &r, &mut s, op, params));
         assert!(b.dialog().is_none());
         assert!(has_branch(&created, "from-origin"));
@@ -1462,6 +1479,7 @@ mod tests {
         b.open_rename("from-origin".to_owned());
         b.set_name("trial".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         let renamed = done(send(&mut b, &r, &mut s, op, params));
         assert!(has_branch(&renamed, "trial") && !has_branch(&renamed, "from-origin"));
         assert!(
@@ -1510,6 +1528,7 @@ mod tests {
         assert_eq!(name, "");
         b.open_create(start, "copy".to_owned());
         let (op, params, _) = b.submit_name().unwrap();
+        b.name_started(Ticket::for_test(1));
         assert!(has_branch(
             &done(send(&mut b, &r, &mut s, op, params)),
             "copy"

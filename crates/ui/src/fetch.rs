@@ -6,6 +6,7 @@
 //! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
 //! network errors are explained in a window with git's text.
 
+use crate::running::Running;
 use crate::{Action, Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::RefInfo;
@@ -25,14 +26,11 @@ pub fn label(remote: Option<&str>) -> String {
     }
 }
 
-/// The fetch in progress.
+/// What the fetch in progress was asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: Ticket,
+pub struct Fetching {
     /// The requested remote; `None` = the one chosen by the engine (upstream, `origin`, the only one).
     pub remote: Option<String>,
-    /// True after "Stop", until the command answers.
-    pub cancelling: bool,
     /// Started by the timer of the automatic fetch (S50), not by the button.
     pub auto: bool,
 }
@@ -50,7 +48,7 @@ pub struct Failure {
 /// The fetch: the one in progress and the last error to explain.
 #[derive(Debug, Default)]
 pub struct FetchBox {
-    running: Option<Running>,
+    running: Option<Running<Fetching>>,
     failure: Option<Failure>,
 }
 
@@ -82,7 +80,7 @@ pub struct Outcome {
 
 impl FetchBox {
     /// The fetch in progress, if any.
-    pub fn running(&self) -> Option<&Running> {
+    pub fn running(&self) -> Option<&Running<Fetching>> {
         self.running.as_ref()
     }
 
@@ -113,30 +111,30 @@ impl FetchBox {
     /// The fetch requested with [`FetchBox::request`] started with `ticket`.
     pub fn started(&mut self, ticket: Ticket, remote: Option<String>) {
         self.failure = None;
-        self.running = Some(Running {
+        self.running = Some(Running::with(
             ticket,
-            remote,
-            cancelling: false,
-            auto: false,
-        });
+            Fetching {
+                remote,
+                auto: false,
+            },
+        ));
     }
 
     /// The automatic fetch (S50) started with `ticket`, from the remote the engine chooses. It
     /// opens no window: [`FetchBox::receive`] leaves none for it.
     pub fn started_auto(&mut self, ticket: Ticket) {
-        self.running = Some(Running {
+        self.running = Some(Running::with(
             ticket,
-            remote: None,
-            cancelling: false,
-            auto: true,
-        });
+            Fetching {
+                remote: None,
+                auto: true,
+            },
+        ));
     }
 
     /// "Stop": the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
-        let running = self.running.as_mut().filter(|r| !r.cancelling)?;
-        running.cancelling = true;
-        Some(running.ticket)
+        self.running.as_mut()?.cancel()
     }
 
     /// The response of `remote.fetch` for `ticket`.
@@ -148,7 +146,7 @@ impl FetchBox {
         detail: Option<String>,
     ) -> Received {
         let (remote, auto) = match self.running.take() {
-            Some(running) if running.ticket == ticket => (running.remote, running.auto),
+            Some(running) if running.ticket == ticket => (running.extra.remote, running.extra.auto),
             other => {
                 self.running = other;
                 return Received::Failed {
@@ -430,7 +428,7 @@ impl Tab {
         let auto = self
             .current(generation)
             .and_then(|r| r.fetch.running())
-            .is_some_and(|r| r.auto);
+            .is_some_and(|r| r.extra.auto);
         if auto {
             self.receive_auto_fetch(generation, done);
             return;

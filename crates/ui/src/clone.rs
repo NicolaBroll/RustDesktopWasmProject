@@ -6,6 +6,7 @@
 //! Command contract in `impl-docs/git/clone.md`.
 
 use crate::fetch::{self, Failure};
+use crate::running::Running;
 use crate::{ErrorKind, Ticket};
 use project_engine::{CloneRequest, InitRequest, RepoCloneResult};
 use project_i18n::tr;
@@ -42,14 +43,6 @@ pub struct Fields {
     pub branch: String,
     /// Clone: how many commits to download; empty: the whole history.
     pub depth: String,
-}
-
-/// The dialog's command in progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: Ticket,
-    /// True after "Cancel", until the command answers.
-    pub cancelling: bool,
 }
 
 /// The clone or new-repository dialog.
@@ -202,21 +195,13 @@ impl CloneBox {
         if let Some(d) = &mut self.dialog {
             d.failure = None;
             d.cancelled = false;
-            d.running = Some(Running {
-                ticket,
-                cancelling: false,
-            });
+            d.running = Some(Running::new(ticket));
         }
     }
 
     /// "Cancel" during the clone: the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
-        let running = self.dialog.as_mut()?.running.as_mut()?;
-        if running.cancelling {
-            return None;
-        }
-        running.cancelling = true;
-        Some(running.ticket)
+        self.dialog.as_mut()?.running.as_mut()?.cancel()
     }
 
     /// The answer of the command sent with `ticket`.

@@ -37,7 +37,7 @@ Rules that apply to every step:
 ## Phase U1 — Layout and resizing
 
 ### U10 — Side panels follow the window
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the side panels' `max_size` (a third of the window) clamps their width when the
   window shrinks and egui stores the clamped width: when the window grows again they stay
   narrow. At small widths the center (graph, diff) gets less room than the two panels together
@@ -46,6 +46,11 @@ Rules that apply to every step:
   their minimum.
 - **Done when:** 1200 → 900 → 1200 gives back the starting widths; at 760x520 the center is
   wider than each side panel; CI green.
+- **Done:** `crates/ui/src/side_panel.rs` keeps the width chosen by the user (persisted beside
+  egui's panel state) and before every frame writes it, clamped, into the `PanelState` egui
+  draws from; a drawn width other than the one asked is a drag and becomes the new choice. Each
+  panel gets at most 30% of the window (`max_width`, the center keeps 40%), never less than its
+  minimum. On Xvfb 1200 → 760 → 1200 gives back 320 px, a dragged width survives the same round.
 
 ### U11 — Headers without overlaps
 - [ ] **Agent:** `egui-ui`

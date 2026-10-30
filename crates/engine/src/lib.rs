@@ -18,6 +18,7 @@ pub use builtin::branch::{
     BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
 };
 pub use builtin::conflict::{ConflictResolveResult, ConflictShowResult};
+pub use builtin::discard::DiscardResult;
 pub use builtin::merge::{MergeAbortResult, MergeApplied, MergeContinueResult, MergeStartResult};
 pub use builtin::pick::PickStartResult;
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullResult};
@@ -33,6 +34,7 @@ pub use builtin::remotes::{
     RemoteListResult, RemoteRemoveResult, RemovedRemote,
 };
 pub use builtin::reset::{ResetPreviewResult, ResetResult};
+pub use builtin::stage::IndexWriteResult;
 pub use builtin::stash::{StashApplyResult, StashDropResult, StashListResult, StashPushResult};
 pub use builtin::tag::{TagCreateResult, TagDeleteResult};
 pub use builtin::{DEFAULT_LOG_LIMIT, JournalState};

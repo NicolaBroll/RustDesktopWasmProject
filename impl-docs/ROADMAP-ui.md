@@ -67,7 +67,7 @@ Rules that apply to every step:
   hunk color, so the header text stops before it; the split-view hint wraps.
 
 ### U12 — Stage panel: titles before buttons, no jump with a dialog open
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** "Unstaged (2)" becomes "Unstage…" ("Non in sta…" in Italian already at the default
   width) because the buttons on the same row take the room first, and "Uncommitted changes" is
   cut beside "Stash…". The section title keeps its full text; when the row is too narrow the
@@ -76,6 +76,12 @@ Rules that apply to every step:
 - **Done when:** at 760x520, in both languages, the titles of the stage panel are whole; a
   screenshot with the stash dialog open and one without show the commit box at the same place;
   CI green.
+- **Done:** `title_row` in `view/stage_view.rs` measures title and buttons: one row when the
+  title fits whole, otherwise the title (wrapped) and the buttons on the row under it; used by
+  the panel heading and by both sections. The list height is computed after the header
+  (`Space { height, below }`) and the scroll area may go under egui's 64 px, so the lists never
+  cover the commit box (at 760x520 the unstaged list is a short scrolled strip). With a dialog
+  open the commit hint row is kept empty: the box moves 1 px instead of 13.
 
 ## Phase U2 — Text
 

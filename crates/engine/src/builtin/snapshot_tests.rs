@@ -7,6 +7,7 @@
 //! Every command id has at least one snapshot named `<id>` or `<id>-<variant>`, or is listed in
 //! [`EXCLUDED`] with the reason; [`every_command_has_a_snapshot`] checks it. New snapshots:
 //! `INSTA_UPDATE=always cargo test -p project-engine snapshot_tests` (or `cargo insta review`).
+//! The repos and helpers marked `pub(super)` are shared with the journal tests of `edit.rs`.
 
 use crate::{MemoryBackend, MemoryOpener, PullSettings, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
@@ -23,11 +24,11 @@ fn oid(n: u64) -> Oid {
     MemoryBackend::fake_oid(n)
 }
 
-fn id(n: u64) -> String {
+pub(super) fn id(n: u64) -> String {
     oid(n).to_string()
 }
 
-fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
+pub(super) fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
     let mut opener = MemoryOpener::default();
     opener.insert("r", repo);
     let mut s = Session::new(Arc::new(opener));
@@ -37,18 +38,18 @@ fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
 }
 
 /// The sample repo, opened.
-fn sample() -> (Registry, Session) {
+pub(super) fn sample() -> (Registry, Session) {
     opened_with(MemoryBackend::sample())
 }
 
 /// The sample repo without local changes.
-fn clean_sample() -> MemoryBackend {
+pub(super) fn clean_sample() -> MemoryBackend {
     let mut repo = MemoryBackend::sample();
     repo.set_entries(Vec::new());
     repo
 }
 
-fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
+pub(super) fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
@@ -124,7 +125,7 @@ fn commit(
 /// Clean repo: `1` (root: `a.txt` = "base", `b.txt`); `main` at `2` (`a.txt` = "ours");
 /// `other` at `3` from `1` (`a.txt` = "theirs": conflict with `main`); `feat` at `4` from `1`
 /// (new `n.txt`); `ahead` at `5` from `2` (new `c.txt`: fast-forward of `main`).
-fn conflict_repo() -> MemoryBackend {
+pub(super) fn conflict_repo() -> MemoryBackend {
     let mut repo = MemoryBackend::new();
     repo.set_identity("Ada", "ada@example.com");
     commit(
@@ -160,7 +161,7 @@ fn conflict_repo() -> MemoryBackend {
 
 /// The clean sample with `origin/main` at a commit `20` (child of `11`, adds `src/bin/app.rs`)
 /// that `main` does not have, and `pull.rebase=true`: `remote.pull` stops on a conflict.
-fn pull_rebase_conflict() -> (Registry, Session) {
+pub(super) fn pull_rebase_conflict() -> (Registry, Session) {
     let mut repo = clean_sample();
     let who = Signature {
         name: "Carla".into(),

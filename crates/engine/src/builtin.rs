@@ -2,8 +2,10 @@
 
 pub(crate) mod branch;
 mod clone;
+pub(crate) mod commit;
 pub(crate) mod conflict;
 pub(crate) mod discard;
+pub(crate) mod edit;
 mod file;
 pub(crate) mod merge;
 pub(crate) mod pick;
@@ -22,9 +24,8 @@ pub(crate) mod tag;
 
 use crate::commands::parse_params;
 use crate::{
-    CommandSpec, CommitRequest, DiffSpec, EngineError, Journal, JournalEntry, LogQuery, Message,
-    Registry, RestoreOutcome, Session, commit_graph_disabled, commit_graph_replaced,
-    commit_graph_shallow, file_digest,
+    CommandSpec, DiffSpec, EngineError, Journal, LogQuery, Message, Registry, Session,
+    commit_graph_disabled, commit_graph_replaced, commit_graph_shallow, file_digest,
 };
 use project_domain::{Diff, RepoPath};
 use serde::{Deserialize, Serialize};
@@ -156,7 +157,7 @@ impl Registry {
             "commit.create",
             "Commit the staged changes",
             r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend of a published commit)}"#,
-            commit_create,
+            commit::commit_create,
         );
         add(
             "worktree.discard",
@@ -381,9 +382,24 @@ impl Registry {
             r#"{"path": path, "digest": string (from conflict.show), "content"?: string (the resolved text), "delete"?: bool (deletes the file; instead of content)}"#,
             conflict::conflict_resolve,
         );
-        add("edit.undo", "Undo the last operation", "{}", edit_undo);
-        add("edit.redo", "Redo the undone operation", "{}", edit_redo);
-        add("edit.history", "Operation journal", "{}", edit_history);
+        add(
+            "edit.undo",
+            "Undo the last operation",
+            "{}",
+            edit::edit_undo,
+        );
+        add(
+            "edit.redo",
+            "Redo the undone operation",
+            "{}",
+            edit::edit_redo,
+        );
+        add(
+            "edit.history",
+            "Operation journal",
+            "{}",
+            edit::edit_history,
+        );
         r
     }
 }
@@ -478,7 +494,7 @@ fn opened(s: &Session, path: String) -> Out {
 ///
 /// A write (it adds or replaces `objects/info/commit-graph`), but it cannot lose data: the file
 /// is a cache that git derives from the objects and that `git gc` itself rewrites. So no
-/// `confirm`, no backup, and no [`JournalEntry`]: no ref, index or worktree file changes.
+/// `confirm`, no backup, and no [`JournalEntry`](crate::JournalEntry): no ref, index or worktree file changes.
 /// Slow (~19 s on the Linux kernel): progress and cancellation from [`Session::job`]. Refused
 /// with `core.commitGraph=false` ([`commit_graph_disabled`]), in a shallow repo
 /// ([`commit_graph_shallow`]) and with replace refs or grafts ([`commit_graph_replaced`]): git
@@ -643,36 +659,6 @@ fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPat
     Ok(out)
 }
 
-/// Creates a commit with what is staged, or with `amend` rewrites the last one (see
-/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` is needed only for `amend` of a
-/// commit already published.
-///
-/// Result: `{"commit": Commit, "previous": string | null, "branch": string | null, "backup":
-/// string | null, "also_on": [string], "status": Status}`: the created commit (as in `repo.log`), HEAD before
-/// (`null` for the first commit), the moved branch with its full name (`null` with HEAD
-/// detached), the backup ref of the rewritten commit (only with `amend`), the other branches and tags
-/// that remain on the rewritten commit (only with `amend`) and the new state. An error after a
-/// successful commit is [`EngineError::PostCommit`].
-fn commit_create(s: &mut Session, p: Value) -> Out {
-    let request: CommitRequest = parse_params("commit.create", p)?;
-    request.check_message()?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let outcome = repo.commit(&request)?;
-    // The commit is made: it goes into the journal (for `edit.undo`) even if the state cannot be re-read afterwards.
-    if let Some(entry) = JournalEntry::commit(&outcome, request.amend) {
-        journal.record(entry);
-    }
-    // The commit is made: an error from here on must not look like a failed commit.
-    let status = repo.status().map_err(|e| EngineError::PostCommit {
-        commit: Some(outcome.commit.id),
-        backup: outcome.backup.clone(),
-        reason: msg!("engine-status-unreadable", error = e),
-    })?;
-    let mut out = to_json(outcome);
-    out["status"] = to_json(status);
-    Ok(out)
-}
-
 /// The state of the operation journal after a command, flattened into the results of the
 /// commands that write (`#[serde(flatten)]`): whether `edit.undo`/`edit.redo` have anything to do
 /// and the description of the entry they would touch.
@@ -704,78 +690,14 @@ impl JournalState {
     }
 }
 
-/// `{"can_undo", "can_redo", "next_undo", "next_redo"}`: see [`JournalState`].
-fn journal_state(journal: &Journal) -> Value {
-    to_json(JournalState::of(journal))
-}
-
 /// What a command re-reads after a successful write, as the pair of fields `<key>` and
-/// `<key>_error` of a typed result (see [`put_reread`]): the value, or `None` and the error text.
+/// `<key>_error` of a typed result: the value, or `None` and the error text. The operation is
+/// done anyway and must not look failed (or be repeated).
 fn reread<T>(result: Result<T, EngineError>) -> (Option<T>, Option<String>) {
     match result {
         Ok(value) => (Some(value), None),
         Err(e) => (None, Some(e.to_string())),
     }
-}
-
-/// Puts what a command re-reads after a successful write at `out[key]` (`refs`, `status`...);
-/// if it cannot be re-read, `null` and the error at `out["<key>_error"]`: the operation is done
-/// anyway and must not look failed (or be repeated).
-fn put_reread<T: Serialize>(out: &mut Value, key: &str, result: Result<T, EngineError>) {
-    match result {
-        Ok(value) => out[key] = to_json(value),
-        Err(e) => {
-            out[key] = Value::Null;
-            out[format!("{key}_error")] = Value::String(e.to_string());
-        }
-    }
-}
-
-/// Result of `edit.undo`/`edit.redo`: `{<key>: entry, "backups": [string], "warnings":
-/// [string], "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
-/// `warnings` reports something unexpected found after the successful move (usually
-/// empty). The state is `null` (with
-/// `status_error`) if it cannot be re-read: the operation is done anyway and must not be repeated (a
-/// second undo would undo the previous entry).
-fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, outcome: RestoreOutcome) -> Out {
-    let mut out = journal_state(s.journal()?);
-    out[key] = to_json(entry);
-    out["backups"] = to_json(outcome.backups);
-    out["warnings"] = to_json(outcome.warnings);
-    put_reread(&mut out, "status", s.repo()?.status());
-    Ok(out)
-}
-
-/// Undoes the last operation of the journal (see [`Journal::undo`]): the refs go back to their previous
-/// values, only if nobody moved them in the meantime ([`EngineError::UndoConflict`]
-/// otherwise, and nothing changes). Index and worktree are not touched. Result: see
-/// [`undo_result`], with the entry in `undone`.
-fn edit_undo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.undo", p)?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let (entry, outcome) = journal.undo(repo)?;
-    undo_result(s, "undone", entry, outcome)
-}
-
-/// Redoes the last undone operation (see [`Journal::redo`]), with the same check.
-/// Result: see [`undo_result`], with the entry in `redone`.
-fn edit_redo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.redo", p)?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let (entry, outcome) = journal.redo(repo)?;
-    undo_result(s, "redone", entry, outcome)
-}
-
-/// The journal of the open repo: `{"done": [entry], "undone": [entry], "can_undo", "can_redo",
-/// "next_undo", "next_redo"}`. In `done` the last entry is the one `edit.undo` undoes, in
-/// `undone` the last is the one `edit.redo` redoes.
-fn edit_history(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.history", p)?;
-    let journal = s.journal()?;
-    let mut out = journal_state(journal);
-    out["done"] = to_json(journal.done());
-    out["undone"] = to_json(journal.undone());
-    Ok(out)
 }
 
 /// A page of the log: `{"commits": [...], "has_more": bool}`. `has_more` says whether after

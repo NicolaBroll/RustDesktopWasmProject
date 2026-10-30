@@ -21,7 +21,6 @@ mod details;
 mod diff;
 mod diff_view;
 mod discard;
-mod engine_text;
 mod executor;
 mod fetch;
 mod file;
@@ -1499,7 +1498,8 @@ impl Tab {
             }
             Request::History(generation) => {
                 if let Some(repo) = self.current(generation) {
-                    repo.history = serde_json::from_value(value)?;
+                    let result: project_engine::HistoryResult = serde_json::from_value(value)?;
+                    repo.history = result.journal.into();
                 }
             }
             // Handled separately in `receive`.

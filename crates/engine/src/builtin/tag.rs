@@ -13,14 +13,17 @@ use project_domain::{Oid, RefInfo};
 use serde::{Deserialize, Serialize};
 
 /// Parameters of `tag.create`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CreateParams {
-    name: String,
-    #[serde(default)]
-    target: Option<String>,
-    #[serde(default)]
-    message: Option<String>,
+pub struct TagCreateParams {
+    /// The short name of the new tag.
+    pub name: String,
+    /// The commit to tag (rev); without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// The message of an annotated tag; without: a lightweight tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Result of `tag.create`.
@@ -74,11 +77,11 @@ pub struct TagDeleteResult {
 /// Result: [`TagCreateResult`].
 pub(super) fn tag_create(
     s: &mut Session,
-    CreateParams {
+    TagCreateParams {
         name,
         target,
         message,
-    }: CreateParams,
+    }: TagCreateParams,
 ) -> Out {
     const ID: &str = "tag.create";
     check_new_tag_name(ID, &name)?;
@@ -123,14 +126,17 @@ pub(super) fn tag_create(
 }
 
 /// Parameters of `tag.delete`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DeleteParams {
-    name: String,
-    #[serde(default)]
-    confirm: bool,
-    #[serde(default)]
-    expected: Option<String>,
+pub struct TagDeleteParams {
+    /// The short name of the tag.
+    pub name: String,
+    /// Always required to delete.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
+    /// The full id of the value seen in the confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Deletes the local tag `name` (any existing name, even `-x`): **always** needs `"confirm":
@@ -147,11 +153,11 @@ pub(crate) struct DeleteParams {
 /// Result: [`TagDeleteResult`].
 pub(super) fn tag_delete(
     s: &mut Session,
-    DeleteParams {
+    TagDeleteParams {
         name,
         confirm,
         expected,
-    }: DeleteParams,
+    }: TagDeleteParams,
 ) -> Out {
     const ID: &str = "tag.delete";
     check_tag_name(ID, &name)?;

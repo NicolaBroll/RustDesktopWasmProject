@@ -17,7 +17,7 @@ use project_domain::{branch_short, tag_short};
 use project_engine::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
     BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
-    TagCreateResult, TagDeleteResult,
+    TagCreateParams, TagCreateResult, TagDeleteParams, TagDeleteResult,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -152,12 +152,12 @@ impl NameDialog {
                 new_name: name.to_owned(),
             }),
             NameKind::Tag(start) => {
-                let mut params = json!({ "name": name, "target": start.target.to_string() });
                 let message = self.message.trim();
-                if !message.is_empty() {
-                    params["message"] = json!(message);
-                }
-                params
+                params(TagCreateParams {
+                    name: name.to_owned(),
+                    target: Some(start.target.to_string()),
+                    message: (!message.is_empty()).then(|| message.to_owned()),
+                })
             }
         }
     }
@@ -383,7 +383,11 @@ impl BranchBox {
         if self.busy() {
             return None;
         }
-        let params = json!({ "name": name });
+        let params = params(TagDeleteParams {
+            name: name.clone(),
+            confirm: false,
+            expected: None,
+        });
         self.dialog = Some(Dialog::DeleteTag(DeleteTagDialog {
             name,
             phase: Phase::Checking,
@@ -403,7 +407,11 @@ impl BranchBox {
         }
         let expected = delete.expected.clone()?;
         delete.phase = Phase::Sending;
-        Some(json!({ "name": delete.name, "confirm": true, "expected": expected }))
+        Some(params(TagDeleteParams {
+            name: delete.name.clone(),
+            confirm: true,
+            expected: Some(expected),
+        }))
     }
 
     /// Closes the open dialog without sending anything; not during a submit.

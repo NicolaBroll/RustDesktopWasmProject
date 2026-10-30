@@ -110,11 +110,13 @@ fn refs(s: &Session) -> (Option<Vec<RefInfo>>, Option<String>) {
 }
 
 /// Parameters of `remote.push_tag`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PushParams {
-    remote: String,
-    name: String,
+pub struct RemotePushTagParams {
+    /// The remote.
+    pub remote: String,
+    /// The local tag (short name).
+    pub name: String,
 }
 
 /// Publishes the local tag `name` to the remote `remote`: only
@@ -126,7 +128,10 @@ pub(crate) struct PushParams {
 /// `remote.push`. Slow, does not go into the journal.
 ///
 /// Result: [`RemotePushTagResult`].
-pub(super) fn remote_push_tag(s: &mut Session, PushParams { remote, name }: PushParams) -> Out {
+pub(super) fn remote_push_tag(
+    s: &mut Session,
+    RemotePushTagParams { remote, name }: RemotePushTagParams,
+) -> Out {
     const ID: &str = "remote.push_tag";
     check_remote_name(ID, &remote)?;
     check_tag_name(ID, &name)?;
@@ -172,15 +177,19 @@ pub(super) fn remote_push_tag(s: &mut Session, PushParams { remote, name }: Push
 }
 
 /// Parameters of `remote.delete_tag`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DeleteParams {
-    remote: String,
-    name: String,
-    #[serde(default)]
-    confirm: bool,
-    #[serde(default)]
-    expected: Option<String>,
+pub struct RemoteDeleteTagParams {
+    /// The remote.
+    pub remote: String,
+    /// The tag on the remote (short name).
+    pub name: String,
+    /// Always required to delete.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
+    /// The full id of the remote tag shown in the confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Deletes the tag `name` from the remote `remote` (`git push <remote> :refs/tags/<name>`): the tag
@@ -201,12 +210,12 @@ pub(crate) struct DeleteParams {
 /// Result: [`RemoteDeleteTagResult`].
 pub(super) fn remote_delete_tag(
     s: &mut Session,
-    DeleteParams {
+    RemoteDeleteTagParams {
         remote,
         name,
         confirm,
         expected,
-    }: DeleteParams,
+    }: RemoteDeleteTagParams,
 ) -> Out {
     const ID: &str = "remote.delete_tag";
     check_remote_name(ID, &remote)?;

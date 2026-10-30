@@ -79,15 +79,18 @@ impl RefsAfter {
 }
 
 /// Parameters of `remote.fetch`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FetchParams {
-    #[serde(default)]
-    remote: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    prune: bool,
+pub struct RemoteFetchParams {
+    /// The configured remote; without: upstream, `origin` or the only one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    /// Only this branch of the remote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Also remove the remote-tracking branches gone from the remote; not with `branch`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prune: bool,
 }
 
 /// A ref changed by a fetch or a push.
@@ -168,11 +171,11 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
 /// Result: [`RemoteFetchResult`].
 pub(super) fn remote_fetch(
     s: &mut Session,
-    FetchParams {
+    RemoteFetchParams {
         remote,
         branch,
         prune,
-    }: FetchParams,
+    }: RemoteFetchParams,
 ) -> Out {
     const ID: &str = "remote.fetch";
     if let Some(remote) = &remote {

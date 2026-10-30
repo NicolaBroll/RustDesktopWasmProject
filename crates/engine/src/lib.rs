@@ -29,14 +29,17 @@ pub use builtin::merge::{
     RepoOperationResult,
 };
 pub use builtin::pick::PickStartResult;
-pub use builtin::pull::{PullApplied, PullFetch, RemotePullResult};
-pub use builtin::push::{PushRemoteSource, RemotePushResult};
+pub use builtin::pull::{PullApplied, PullFetch, RemotePullParams, RemotePullResult};
+pub use builtin::push::{PushRemoteSource, RemotePushParams, RemotePushResult};
 pub use builtin::rebase::{
     RebaseContinueResult, RebasePlanResult, RebasePlanStep, RebaseStartResult,
 };
-pub use builtin::remote::{RefUpdate, RemoteFetchResult};
-pub use builtin::remote_branch::RemoteDeleteBranchResult;
-pub use builtin::remote_tag::{RemoteDeleteTagResult, RemotePushTagResult, TagPushKind};
+pub use builtin::remote::{RefUpdate, RemoteFetchParams, RemoteFetchResult};
+pub use builtin::remote_branch::{RemoteDeleteBranchParams, RemoteDeleteBranchResult};
+pub use builtin::remote_tag::{
+    RemoteDeleteTagParams, RemoteDeleteTagResult, RemotePushTagParams, RemotePushTagResult,
+    TagPushKind,
+};
 pub use builtin::remotes::{
     FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddResult, RemoteListEntry,
     RemoteListResult, RemoteRemoveResult, RemovedRemote,

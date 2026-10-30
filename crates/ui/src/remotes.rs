@@ -21,13 +21,14 @@
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure};
 use crate::messages_text;
-use crate::{Action, Done, Request, Tab};
+use crate::{Action, Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
 use project_engine::{
-    FetchErrorKind, RemoteAddResult, RemoteDeleteBranchResult, RemoteDeleteTagResult,
-    RemoteFetchResult, RemoteListEntry, RemoteListResult, RemoteRemoveResult, mask_url,
+    FetchErrorKind, RemoteAddResult, RemoteDeleteBranchParams, RemoteDeleteBranchResult,
+    RemoteDeleteTagParams, RemoteDeleteTagResult, RemoteFetchResult, RemoteListEntry,
+    RemoteListResult, RemoteRemoveResult, mask_url,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -487,7 +488,12 @@ impl RemotesBox {
         if self.dialog.is_some() {
             return None;
         }
-        let params = json!({ "remote": remote, "branch": branch });
+        let params = params(RemoteDeleteBranchParams {
+            remote: remote.clone(),
+            branch: branch.clone(),
+            confirm: false,
+            expected: None,
+        });
         self.dialog = Some(Dialog::DeleteBranch(DeleteBranchDialog {
             remote,
             branch,
@@ -504,7 +510,12 @@ impl RemotesBox {
         if self.dialog.is_some() {
             return None;
         }
-        let params = json!({ "remote": remote, "name": name });
+        let params = params(RemoteDeleteTagParams {
+            remote: remote.clone(),
+            name: name.clone(),
+            confirm: false,
+            expected: None,
+        });
         self.dialog = Some(Dialog::DeleteBranch(DeleteBranchDialog {
             remote,
             branch: name,
@@ -527,13 +538,22 @@ impl RemotesBox {
         }
         let expected = delete.expected.clone()?;
         delete.phase = Phase::Sending;
-        let what = if delete.tag { "name" } else { "branch" };
-        let mut params = json!({
-            "remote": delete.remote,
-            "confirm": true,
-            "expected": expected,
-        });
-        params[what] = json!(delete.branch);
+        let remote = delete.remote.clone();
+        let params = if delete.tag {
+            params(RemoteDeleteTagParams {
+                remote,
+                name: delete.branch.clone(),
+                confirm: true,
+                expected: Some(expected),
+            })
+        } else {
+            params(RemoteDeleteBranchParams {
+                remote,
+                branch: delete.branch.clone(),
+                confirm: true,
+                expected: Some(expected),
+            })
+        };
         Some((delete.op(), params, delete.label()))
     }
 

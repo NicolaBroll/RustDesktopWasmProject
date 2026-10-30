@@ -6,11 +6,11 @@
 //! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
 //! network errors are explained in a window with git's text.
 
-use crate::{Action, Done, Request, Tab};
+use crate::{Action, Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::RefInfo;
 use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
-use project_engine::{Progress, RefUpdate, RemoteFetchResult};
+use project_engine::{Progress, RefUpdate, RemoteFetchParams, RemoteFetchResult};
 use project_i18n::tr;
 use serde_json::{Value, json};
 
@@ -103,10 +103,11 @@ impl FetchBox {
         if self.running.is_some() {
             return None;
         }
-        Some(match remote {
-            Some(remote) => json!({ "remote": remote, "prune": true }),
-            None => json!({ "prune": true }),
-        })
+        Some(params(RemoteFetchParams {
+            remote: remote.map(str::to_owned),
+            branch: None,
+            prune: true,
+        }))
     }
 
     /// The fetch requested with [`FetchBox::request`] started with `ticket`.

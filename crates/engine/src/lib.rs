@@ -44,8 +44,8 @@ pub use builtin::remote_tag::{
     TagPushKind,
 };
 pub use builtin::remotes::{
-    FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddResult, RemoteListEntry,
-    RemoteListResult, RemoteRemoveResult, RemovedRemote,
+    FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddParams, RemoteAddResult,
+    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemovedRemote,
 };
 pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 pub use builtin::search::RepoSearchResult;

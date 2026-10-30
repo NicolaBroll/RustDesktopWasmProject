@@ -23,7 +23,7 @@ pub use builtin::commit::CommitCreateResult;
 pub use builtin::conflict::{
     ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
 };
-pub use builtin::discard::DiscardResult;
+pub use builtin::discard::{DiscardParams, DiscardResult};
 pub use builtin::edit::{HistoryResult, UndoResult};
 pub use builtin::file::FileLogResult;
 pub use builtin::merge::{
@@ -49,7 +49,7 @@ pub use builtin::remotes::{
 };
 pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 pub use builtin::search::RepoSearchResult;
-pub use builtin::stage::IndexWriteResult;
+pub use builtin::stage::{IndexLinesParams, IndexPathsParams, IndexWriteResult};
 pub use builtin::stash::{
     StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashListResult,
     StashPushResult,

@@ -10,6 +10,7 @@
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
 use crate::{Action, Drag, Request, Tab};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
+use project_engine::IndexLinesParams;
 use project_i18n::tr;
 use std::collections::BTreeSet;
 
@@ -205,10 +206,10 @@ impl LineWrite {
     }
 
     pub fn params(&self) -> serde_json::Value {
-        serde_json::json!({
-            "path": self.path,
-            "lines": self.lines,
-            "digest": self.digest,
+        crate::params(IndexLinesParams {
+            path: self.path.clone(),
+            lines: self.lines.clone(),
+            digest: self.digest.clone(),
         })
     }
 }

@@ -9,7 +9,7 @@ use crate::ErrorKind;
 use crate::stage::StageItem;
 use crate::{Action, Done, Request, Tab};
 use project_domain::{Change, RepoPath};
-use project_engine::{DiscardResult, UndoResult};
+use project_engine::{DiscardParams, DiscardResult, UndoResult};
 use project_i18n::tr;
 use serde_json::{Value, json};
 
@@ -69,11 +69,10 @@ pub fn describe_check(paths: &[RepoPath]) -> String {
 
 /// The parameters of `worktree.discard`; `confirm` only after the user's confirmation.
 pub fn params(paths: &[RepoPath], confirm: bool) -> Value {
-    let mut params = json!({ "paths": paths });
-    if confirm {
-        params["confirm"] = json!(true);
-    }
-    params
+    crate::params(DiscardParams {
+        paths: paths.to_vec(),
+        confirm,
+    })
 }
 
 /// Where the discard stands.

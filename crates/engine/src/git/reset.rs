@@ -20,12 +20,13 @@
 
 use crate::{EngineError, Message, MessageArg, RefRestore};
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The three modes of `git reset`.
 ///
 /// JSON: `"soft"`, `"mixed"`, `"hard"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetMode {
     /// Only the ref.
@@ -60,7 +61,7 @@ pub struct ResetRecord {
 }
 
 /// What `branch.reset` (or the undo/redo of one) asks of
-/// [`GitBackend::reset`](crate::GitBackend::reset).
+/// [`GitRefs::reset`](crate::GitRefs::reset).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResetRequest {
     pub mode: ResetMode,
@@ -105,7 +106,7 @@ impl ResetRequest {
     }
 }
 
-/// Outcome of [`GitBackend::reset`](crate::GitBackend::reset).
+/// Outcome of [`GitRefs::reset`](crate::GitRefs::reset).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResetOutcome {
     /// `hard`: the files whose local changes were overwritten (and saved in `backup`).
@@ -244,7 +245,7 @@ fn list(paths: &[RepoPath]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, HeadState, MemoryBackend, RefMove};
+    use crate::{GitRead, HeadState, MemoryBackend, RefMove};
 
     #[test]
     fn files_of_the_sample_and_json() {
@@ -290,7 +291,7 @@ mod tests {
             files: Vec::new(),
             strict: false,
         };
-        assert_eq!(request.shape().unwrap(), (Some(main.clone()), a, b));
+        assert_eq!(request.shape().unwrap(), (Some(main), a, b));
         request.refs.refs[0].name = "refs/heads/other".to_owned();
         assert!(request.shape().is_err());
         request.refs.refs.clear();

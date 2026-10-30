@@ -1,38 +1,56 @@
 //! `repo.search` (S48): the ids of the commits that match a literal text, in the order of
 //! `repo.log` (`impl-docs/git/reading.md`, `repo.search`).
 
-use super::{DEFAULT_LOG_LIMIT, Out, check_path};
-use crate::commands::parse_params;
+use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
 use crate::{EngineError, SearchField, SearchQuery, Session};
-use project_domain::RepoPath;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Oid, RepoPath};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 const ID: &str = "repo.search";
 
-#[derive(Deserialize)]
+/// Parameters of `repo.search`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct SearchParams {
-    query: String,
-    #[serde(default, rename = "in")]
-    fields: Option<Vec<SearchField>>,
+pub struct RepoSearchParams {
+    /// The text to look for (literal, case-insensitive).
+    pub query: String,
+    /// Where to look (`in`); without: message, author and id.
+    #[serde(default, rename = "in", skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<SearchField>>,
+    /// Only commits touching this path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
+    /// As in `repo.log`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
+    /// As in `repo.log` (only with `all`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stashes: bool,
+    /// Matches to skip from the start.
     #[serde(default)]
-    path: Option<RepoPath>,
-    #[serde(default)]
-    all: bool,
-    #[serde(default)]
-    stashes: bool,
-    #[serde(default)]
-    skip: usize,
-    #[serde(default)]
-    limit: Option<usize>,
+    pub skip: usize,
+    /// Maximum number of ids; without: 200.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
-/// `{"ids": [oid], "total": number, "has_more": bool}`: the page `skip..skip + limit` of the
-/// matches, in the order of `repo.log` with the same `all`/`stashes`; `total` counts all the
-/// matches, `has_more` says whether there are others after the page.
-pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
-    let SearchParams {
+/// Result of `repo.search`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSearchResult {
+    /// The page `skip..skip + limit` of the matches, in the order of `repo.log` with the same
+    /// `all`/`stashes`.
+    pub ids: Vec<Oid>,
+    /// All the matches.
+    pub total: usize,
+    /// There are other matches after the page.
+    pub has_more: bool,
+}
+
+/// The commits that match a text: [`RepoSearchResult`].
+pub(super) fn repo_search(
+    s: &mut Session,
+    RepoSearchParams {
         query,
         fields,
         path,
@@ -40,7 +58,8 @@ pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
         stashes,
         skip,
         limit,
-    } = parse_params(ID, p)?;
+    }: RepoSearchParams,
+) -> Out {
     let invalid = |reason| EngineError::InvalidParams { id: ID, reason };
     if query.is_empty() {
         return Err(invalid(msg!("engine-search-empty")));
@@ -70,14 +89,13 @@ pub(super) fn repo_search(s: &mut Session, p: Value) -> Out {
     let ids = s.repo()?.search(&query, &job)?;
     let total = ids.len();
     let limit = limit.unwrap_or(DEFAULT_LOG_LIMIT);
-    let page: Vec<String> = ids
-        .iter()
-        .skip(skip)
-        .take(limit)
-        .map(ToString::to_string)
-        .collect();
+    let page: Vec<Oid> = ids.into_iter().skip(skip).take(limit).collect();
     let has_more = skip.saturating_add(limit) < total;
-    Ok(json!({ "ids": page, "total": total, "has_more": has_more }))
+    Ok(to_json(RepoSearchResult {
+        ids: page,
+        total,
+        has_more,
+    }))
 }
 
 #[cfg(test)]

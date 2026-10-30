@@ -19,15 +19,58 @@
 //! - **Rebase** (S32): `rebase.continue` (no message: the commit it stopped on keeps its own; it
 //!   may stop again on the next conflict, and the panel stays) and `rebase.abort` like the others.
 
-use crate::ErrorKind;
 use crate::discard::{History, Phase};
 use crate::fetch::Failure;
-use crate::{Action, Done, Request, Tab, merge};
+use crate::running::Running;
+use crate::{Done, Request, Tab, params};
+use crate::{ErrorKind, Ticket};
 pub use pick::{MainlineDialog, Pick};
-use project_domain::{Commit, Head, Oid, Operation, RefInfo, RepoPath, Status};
+use project_domain::branch_short;
+use project_domain::{Head, Oid, Operation, RefInfo, Status};
+use project_engine::{
+    MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams, MergeContinueResult,
+    MergeStartParams, MergeStartResult, Message, RebaseContinueResult, RepoOperationResult,
+};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Merges `rev` (shown as `what`) into the active branch; `no_ff`: always a merge
+    /// commit.
+    Merge {
+        rev: String,
+        what: String,
+        no_ff: bool,
+    },
+    /// Opens the "Continue merge" dialog.
+    Continue,
+    /// The message of the "Continue merge" dialog changed.
+    Message(String),
+    /// Finishes the merge with the dialog's message (`merge.continue`).
+    SubmitContinue,
+    /// Starts aborting the merge: the engine answers with the confirmation.
+    Abort,
+    /// The user confirmed the abort.
+    ConfirmAbort,
+    /// Cherry-pick or revert the commit `rev` (shown as `what`) on the active branch; with several
+    /// `parents` (merge commit) the parent dialog opens first.
+    Pick {
+        pick: Pick,
+        rev: Oid,
+        what: String,
+        parents: Vec<Oid>,
+    },
+    /// The parent (from 1) chosen in the `mainline` dialog.
+    Mainline(usize),
+    /// Submits the cherry-pick or revert with the chosen parent.
+    SubmitMainline,
+    /// Closes the open merge, cherry-pick or revert dialog.
+    CloseDialog,
+    /// Closes the window of a rejected merge.
+    DismissError,
+}
 
 #[path = "pick.rs"]
 mod pick;
@@ -167,108 +210,67 @@ pub fn terminal_hint(operation: Operation) -> String {
     }
 }
 
-/// An incoming commit (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Incoming {
-    pub id: Oid,
-    /// The short name of the first branch or tag that points to it, otherwise the abbreviated id.
-    pub label: String,
-    /// The commit subject.
-    pub summary: Option<String>,
-    /// The refs (full names) that point to it.
-    #[serde(default)]
-    pub refs: Vec<String>,
-}
-
-/// Result of `repo.operation`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct OperationInfo {
-    pub operation: Option<Operation>,
-    #[serde(default)]
-    pub conflicts: Vec<RepoPath>,
-    #[serde(default)]
-    pub incoming: Vec<Incoming>,
-    /// The message that `merge.continue` would use.
-    pub message: Option<String>,
-    /// For a rebase: the commit it is reapplied onto and the rewritten branch.
-    pub onto: Option<Oid>,
-    pub rebase_branch: Option<String>,
-    /// There is an operation and no conflicted files remain.
-    pub ready: bool,
-    /// The id of the command that finishes the operation from here, if any.
-    #[serde(rename = "continue")]
-    pub continue_command: Option<String>,
-    /// The id of the command that aborts the operation from here, if any.
-    #[serde(rename = "abort")]
-    pub abort_command: Option<String>,
-}
-
-impl OperationInfo {
-    /// What is coming in, for the panel: `"feature" (Title)`, several entries separated by commas.
-    pub fn incoming_text(&self) -> Option<String> {
-        if self.incoming.is_empty() {
-            return None;
-        }
-        Some(
-            self.incoming
-                .iter()
-                .map(|i| match &i.summary {
-                    Some(summary) => {
-                        tr!(
-                            "merge-incoming-summary",
-                            label = &i.label,
-                            summary = summary
-                        )
-                    }
-                    None => tr!("merge-incoming", label = &i.label),
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
+/// What is coming in, for the panel: `"feature" (Title)`, several entries separated by commas.
+pub fn incoming_text(info: &RepoOperationResult) -> Option<String> {
+    if info.incoming.is_empty() {
+        return None;
     }
-
-    /// The panel row: type of operation and what is coming in (or, for a rebase, what it is
-    /// reapplied onto).
-    pub fn title(&self) -> String {
-        let Some(operation) = self.operation else {
-            return String::new();
-        };
-        let name = operation_name(operation);
-        match operation {
-            Operation::Rebase => {
-                let branch = self
-                    .rebase_branch
-                    .as_deref()
-                    .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
-                match (branch, self.onto.map(|o| o.short())) {
-                    (Some(branch), Some(onto)) => tr!(
-                        "merge-title-rebase-branch-onto",
-                        name = name,
-                        branch = branch,
-                        onto = onto
-                    ),
-                    (Some(branch), None) => {
-                        tr!("merge-title-rebase-branch", name = name, branch = branch)
-                    }
-                    (None, Some(onto)) => tr!("merge-title-rebase-onto", name = name, onto = onto),
-                    (None, None) => tr!("merge-title", name = name),
-                }
-            }
-            Operation::Merge => match self.incoming_text() {
-                Some(incoming) => {
+    Some(
+        info.incoming
+            .iter()
+            .map(|i| match &i.summary {
+                Some(summary) => {
                     tr!(
-                        "merge-title-merge-incoming",
-                        name = name,
-                        incoming = incoming
+                        "merge-incoming-summary",
+                        label = &i.label,
+                        summary = summary
                     )
                 }
-                None => tr!("merge-title", name = name),
-            },
-            _ => match self.incoming_text() {
-                Some(incoming) => tr!("merge-title-incoming", name = name, incoming = incoming),
-                None => tr!("merge-title", name = name),
-            },
+                None => tr!("merge-incoming", label = &i.label),
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// The panel row: type of operation and what is coming in (or, for a rebase, what it is
+/// reapplied onto).
+pub fn title(info: &RepoOperationResult) -> String {
+    let Some(operation) = info.operation else {
+        return String::new();
+    };
+    let name = operation_name(operation);
+    match operation {
+        Operation::Rebase => {
+            let branch = info.rebase_branch.as_deref().map(branch_short);
+            match (branch, info.onto.map(|o| o.short())) {
+                (Some(branch), Some(onto)) => tr!(
+                    "merge-title-rebase-branch-onto",
+                    name = name,
+                    branch = branch,
+                    onto = onto
+                ),
+                (Some(branch), None) => {
+                    tr!("merge-title-rebase-branch", name = name, branch = branch)
+                }
+                (None, Some(onto)) => tr!("merge-title-rebase-onto", name = name, onto = onto),
+                (None, None) => tr!("merge-title", name = name),
+            }
         }
+        Operation::Merge => match incoming_text(info) {
+            Some(incoming) => {
+                tr!(
+                    "merge-title-merge-incoming",
+                    name = name,
+                    incoming = incoming
+                )
+            }
+            None => tr!("merge-title", name = name),
+        },
+        _ => match incoming_text(info) {
+            Some(incoming) => tr!("merge-title-incoming", name = name, incoming = incoming),
+            None => tr!("merge-title", name = name),
+        },
     }
 }
 
@@ -319,8 +321,8 @@ pub struct ContinueDialog {
     pub error: Option<String>,
     /// The git text of the error, if any.
     pub git: Option<String>,
-    /// True while the command is running.
-    pub sending: bool,
+    /// The running command.
+    pub running: Option<Running>,
 }
 
 impl ContinueDialog {
@@ -353,7 +355,7 @@ struct Starting {
 #[derive(Debug, Default)]
 pub struct MergeBox {
     /// The last read of `repo.operation`; `None` without an operation in progress.
-    info: Option<OperationInfo>,
+    info: Option<RepoOperationResult>,
     /// The error of the last read.
     info_error: Option<String>,
     /// The status number for which `repo.operation` was last requested.
@@ -406,7 +408,7 @@ impl MergeBox {
             self.info_error = None;
             self.asked_for = Some(seq);
             // Without an operation there is no Continue or Abort to show.
-            if matches!(self.dialog, Some(Dialog::Continue(ref d)) if !d.sending)
+            if matches!(self.dialog, Some(Dialog::Continue(ref d)) if d.running.is_none())
                 || matches!(self.dialog, Some(Dialog::Abort(_, Phase::Confirm { .. })))
             {
                 self.dialog = None;
@@ -424,15 +426,7 @@ impl MergeBox {
     /// The response of `repo.operation`.
     pub fn receive_info(&mut self, result: Result<Value, String>) {
         self.reading = false;
-        match result.and_then(|value| {
-            serde_json::from_value::<OperationInfo>(value).map_err(|e| {
-                tr!(
-                    "merge-unexpected-result",
-                    command = OPERATION,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<RepoOperationResult>(OPERATION, value)) {
             Ok(info) => {
                 self.info = info.operation.is_some().then_some(info);
                 self.info_error = None;
@@ -442,7 +436,7 @@ impl MergeBox {
     }
 
     /// The in-progress operation read from `repo.operation`, if any.
-    pub fn info(&self) -> Option<&OperationInfo> {
+    pub fn info(&self) -> Option<&RepoOperationResult> {
         self.info.as_ref()
     }
 
@@ -478,7 +472,7 @@ impl MergeBox {
     pub fn busy(&self) -> bool {
         self.starting.is_some()
             || match &self.dialog {
-                Some(Dialog::Continue(d)) => d.sending,
+                Some(Dialog::Continue(d)) => d.running.is_some(),
                 Some(Dialog::Abort(_, phase)) => !matches!(phase, Phase::Confirm { .. }),
                 Some(Dialog::Mainline(_)) | None => false,
             }
@@ -496,10 +490,12 @@ impl MergeBox {
         if self.busy() || self.dialog.is_some() {
             return None;
         }
-        let mut params = json!({ "rev": rev });
-        if no_ff {
-            params["no_ff"] = json!(true);
-        }
+        let params = params(MergeStartParams {
+            rev,
+            no_ff,
+            ff_only: false,
+            message: None,
+        });
         let label = tr!("merge-start-label", what = &what, into = &into);
         self.failure = None;
         self.starting = Some(Starting { what, into });
@@ -533,7 +529,7 @@ impl MergeBox {
             message: message.trim_end().to_owned(),
             error: None,
             git: None,
-            sending: false,
+            running: None,
         }));
         true
     }
@@ -541,7 +537,7 @@ impl MergeBox {
     /// The message of the "Continue" dialog changed.
     pub fn set_message(&mut self, message: String) {
         if let Some(Dialog::Continue(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.message = message;
         }
@@ -553,22 +549,29 @@ impl MergeBox {
         let Some(Dialog::Continue(dialog)) = &mut self.dialog else {
             return None;
         };
-        if dialog.sending || dialog.is_blank() {
+        if dialog.running.is_some() || dialog.is_blank() {
             return None;
         }
-        dialog.sending = true;
         dialog.error = None;
         dialog.git = None;
-        let params = if dialog.kind.has_message() {
-            json!({ "message": dialog.message.trim_end() })
-        } else {
-            json!({})
-        };
+        let params = params(MergeContinueParams {
+            message: dialog
+                .kind
+                .has_message()
+                .then(|| dialog.message.trim_end().to_owned()),
+        });
         Some((
             Op::Continue(dialog.kind),
             params,
             tr!("merge-continue-label", name = dialog.kind.name()),
         ))
+    }
+
+    /// The command of [`MergeBox::submit_continue`] started with `ticket`.
+    pub fn continue_started(&mut self, ticket: Ticket) {
+        if let Some(Dialog::Continue(dialog)) = &mut self.dialog {
+            dialog.running = Some(Running::new(ticket));
+        }
     }
 
     /// Starts the abort: command and parameters of the first submit, without `confirm` (the
@@ -583,7 +586,7 @@ impl MergeBox {
         self.dialog = Some(Dialog::Abort(kind, Phase::Checking));
         Some((
             Op::Abort(kind),
-            json!({}),
+            params(MergeAbortParams { confirm: false }),
             tr!("merge-abort-check-label", name = kind.name()),
         ))
     }
@@ -599,7 +602,7 @@ impl MergeBox {
         *phase = Phase::Sending;
         Some((
             Op::Abort(*kind),
-            json!({ "confirm": true }),
+            params(MergeAbortParams { confirm: true }),
             tr!("merge-abort-label", name = kind.name()),
         ))
     }
@@ -607,7 +610,7 @@ impl MergeBox {
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
-            Some(Dialog::Continue(dialog)) => !dialog.sending,
+            Some(Dialog::Continue(dialog)) => dialog.running.is_none(),
             Some(Dialog::Abort(_, phase)) => matches!(phase, Phase::Confirm { .. }),
             Some(Dialog::Mainline(_)) => true,
             None => false,
@@ -677,25 +680,8 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<StartResult>(Op::Start, value) {
-                Ok(result) => {
-                    let notice = result.notice(&starting);
-                    let warning = reread_warning(
-                        &tr!("merge-done", title = "Merge"),
-                        &result.warnings,
-                        result.status_error.clone(),
-                        result.refs_error.clone(),
-                    );
-                    Received::Done(Box::new(Outcome {
-                        notice,
-                        moved: result.after != result.before,
-                        show_changes: result.in_progress && !result.conflicts.is_empty(),
-                        status: result.status,
-                        refs: result.refs,
-                        history: result.history,
-                        warning,
-                    }))
-                }
+            Ok(value) => match crate::decode::<MergeStartResult>(Op::Start.command(), value) {
+                Ok(result) => Received::Done(Box::new(start_outcome(result, &starting))),
                 Err(message) => Received::Failed {
                     message,
                     reload: true,
@@ -714,7 +700,7 @@ impl MergeBox {
         let Some(Dialog::Continue(dialog)) = &mut self.dialog else {
             return unexpected(Op::Continue(op));
         };
-        if !dialog.sending || dialog.kind != op {
+        if dialog.running.is_none() || dialog.kind != op {
             return unexpected(Op::Continue(op));
         }
         let title = op.title();
@@ -730,7 +716,7 @@ impl MergeBox {
             // Conflicts remain, no merge in progress, invalid message, a hook that
             // refuses, nothing to commit: nothing is committed, it is fixed in the dialog.
             Err(e) => {
-                dialog.sending = false;
+                dialog.running = None;
                 dialog.git =
                     detail.filter(|d| kind == Some(ErrorKind::Git) && !d.trim().is_empty());
                 dialog.error = Some(e);
@@ -738,8 +724,8 @@ impl MergeBox {
             }
             Ok(value) if op == Kind::Rebase => {
                 self.dialog = None;
-                match parse::<RebaseContinueResult>(Op::Continue(op), value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome())),
+                match crate::decode::<RebaseContinueResult>(Op::Continue(op).command(), value) {
+                    Ok(result) => Received::Done(Box::new(rebase_continue_outcome(result))),
                     Err(message) => Received::Failed {
                         message,
                         reload: true,
@@ -748,47 +734,8 @@ impl MergeBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<ContinueResult>(Op::Continue(op), value) {
-                    Ok(result) => {
-                        let warning = reread_warning(
-                            &tr!("merge-concluded", title = title),
-                            &[],
-                            result.status_error.clone(),
-                            result.refs_error.clone(),
-                        );
-                        let noun = op.commit_noun();
-                        let id = result.commit.id.short();
-                        let notice = match result
-                            .branch
-                            .as_deref()
-                            .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b))
-                        {
-                            Some(branch) => tr!(
-                                "merge-concluded-notice-branch",
-                                title = title,
-                                noun = noun,
-                                id = id,
-                                branch = branch
-                            ),
-                            None => {
-                                tr!(
-                                    "merge-concluded-notice",
-                                    title = title,
-                                    noun = noun,
-                                    id = id
-                                )
-                            }
-                        };
-                        Received::Done(Box::new(Outcome {
-                            notice,
-                            status: result.status,
-                            refs: result.refs,
-                            history: result.history,
-                            warning,
-                            moved: true,
-                            show_changes: false,
-                        }))
-                    }
+                match crate::decode::<MergeContinueResult>(Op::Continue(op).command(), value) {
+                    Ok(result) => Received::Done(Box::new(continue_outcome(result, op))),
                     Err(message) => Received::Failed {
                         message,
                         reload: true,
@@ -813,7 +760,6 @@ impl MergeBox {
             }
         };
         let name = op.name();
-        let title = op.title();
         match result {
             Err(_) if kind == Some(ErrorKind::ConfirmRequired) && phase == Phase::Checking => {
                 self.dialog = Some(Dialog::Abort(
@@ -837,31 +783,8 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<AbortResult>(Op::Abort(op), value) {
-                Ok(result) => {
-                    let warning = reread_warning(
-                        &tr!("merge-aborted", title = title),
-                        &result.warnings,
-                        result.status_error.clone(),
-                        result.refs_error.clone(),
-                    );
-                    let notice = tr!(
-                        "merge-aborted-notice",
-                        title = title,
-                        backup = &result.backup,
-                        n = result.files.len()
-                    );
-                    Received::Done(Box::new(Outcome {
-                        notice,
-                        status: result.status,
-                        refs: result.refs,
-                        history: result.history,
-                        warning,
-                        // The rebase abort puts HEAD back on the branch: the log changes.
-                        moved: op == Kind::Rebase,
-                        show_changes: false,
-                    }))
-                }
+            Ok(value) => match crate::decode::<MergeAbortResult>(Op::Abort(op).command(), value) {
+                Ok(result) => Received::Done(Box::new(abort_outcome(result, op))),
                 Err(message) => Received::Failed {
                     message,
                     reload: true,
@@ -873,19 +796,9 @@ impl MergeBox {
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("merge-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "merge-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
 }
 
 /// The git warnings and the problem after a successful operation: status or refs not reread.
@@ -904,179 +817,183 @@ pub(crate) fn reread_warning(
     (!parts.is_empty()).then(|| tr!("merge-done-but", what = what, problems = parts.join("; ")))
 }
 
-/// Where the merged commit comes from.
-#[derive(Debug, Clone, Deserialize)]
-struct Source {
-    name: String,
+/// The engine warnings as plain texts, for [`reread_warning`].
+pub(crate) fn message_texts(warnings: &[Message]) -> Vec<String> {
+    warnings.iter().map(Message::text).collect()
 }
 
-/// Result of `merge.start`.
-#[derive(Debug, Clone, Deserialize)]
-struct StartResult {
-    source: Source,
-    branch: String,
-    strategy: String,
-    before: Oid,
-    after: Oid,
-    #[serde(default)]
-    behind: usize,
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-impl StartResult {
-    /// The message for the status bar.
-    fn notice(&self, starting: &Starting) -> String {
-        let name = if self.source.name.is_empty() {
-            starting.what.as_str()
-        } else {
-            self.source.name.as_str()
-        };
-        let branch = &self.branch;
-        let commits = tr!("merge-commits", n = self.behind);
-        if self.in_progress {
-            return match self.conflicts.len() {
-                0 => tr!("merge-stopped-before-commit", name = name, branch = branch),
-                n => tr!(
-                    "merge-stopped",
-                    name = name,
-                    branch = branch,
-                    files = tr!("merge-conflict-files", n = n)
-                ),
-            };
-        }
-        let id = self.after.short();
-        match self.strategy.as_str() {
-            "up_to_date" => tr!("merge-up-to-date", branch = branch, name = name),
-            "fast_forward" => tr!(
-                "merge-fast-forward",
-                branch = branch,
-                commits = commits,
-                name = name,
-                id = id
-            ),
-            _ => tr!(
-                "merge-merged",
-                name = name,
-                branch = branch,
-                commits = commits,
-                id = id
-            ),
-        }
+/// The outcome of `merge.start`.
+fn start_outcome(r: MergeStartResult, starting: &Starting) -> Outcome {
+    let notice = start_notice(&r, starting);
+    let warning = reread_warning(
+        &tr!("merge-done", title = "Merge"),
+        &message_texts(&r.warnings),
+        r.status_error,
+        r.refs_error,
+    );
+    Outcome {
+        notice,
+        moved: r.after != r.before,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
     }
 }
 
-/// Result of `merge.continue`.
-#[derive(Debug, Clone, Deserialize)]
-struct ContinueResult {
-    commit: Commit,
-    branch: Option<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
+/// The message of `merge.start` for the status bar.
+fn start_notice(r: &MergeStartResult, starting: &Starting) -> String {
+    let name = if r.source.name.is_empty() {
+        starting.what.as_str()
+    } else {
+        r.source.name.as_str()
+    };
+    let branch = &r.branch;
+    let commits = tr!("merge-commits", n = r.behind);
+    if r.in_progress {
+        return match r.conflicts.len() {
+            0 => tr!("merge-stopped-before-commit", name = name, branch = branch),
+            n => tr!(
+                "merge-stopped",
+                name = name,
+                branch = branch,
+                files = tr!("merge-conflict-files", n = n)
+            ),
+        };
+    }
+    let id = r.after.short();
+    match r.strategy {
+        MergeApplied::UpToDate => tr!("merge-up-to-date", branch = branch, name = name),
+        MergeApplied::FastForward => tr!(
+            "merge-fast-forward",
+            branch = branch,
+            commits = commits,
+            name = name,
+            id = id
+        ),
+        MergeApplied::Merge => tr!(
+            "merge-merged",
+            name = name,
+            branch = branch,
+            commits = commits,
+            id = id
+        ),
+    }
 }
 
-/// Result of `rebase.continue`.
-#[derive(Debug, Clone, Deserialize)]
-struct RebaseContinueResult {
-    /// The short name of the rewritten branch.
-    branch: Option<String>,
-    after: Oid,
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    /// Git's text when it stops.
-    #[serde(default)]
-    message: Option<String>,
-    backup: Option<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
+/// The outcome of `merge.continue` (also `cherry_pick.continue` and `revert.continue`, same result).
+fn continue_outcome(r: MergeContinueResult, op: Kind) -> Outcome {
+    let title = op.title();
+    let warning = reread_warning(
+        &tr!("merge-concluded", title = title),
+        &[],
+        r.status_error,
+        r.refs_error,
+    );
+    let noun = op.commit_noun();
+    let id = r.commit.id.short();
+    let notice = match r.branch.as_deref().map(branch_short) {
+        Some(branch) => tr!(
+            "merge-concluded-notice-branch",
+            title = title,
+            noun = noun,
+            id = id,
+            branch = branch
+        ),
+        None => tr!(
+            "merge-concluded-notice",
+            title = title,
+            noun = noun,
+            id = id
+        ),
+    };
+    Outcome {
+        notice,
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        moved: true,
+        show_changes: false,
+    }
 }
 
-impl RebaseContinueResult {
-    /// Concluded, or stopped again on the next commit (conflicts, a hook): the stage area opens
-    /// with the files and the panel stays.
-    fn outcome(self) -> Outcome {
-        let mut warnings = self.warnings;
-        let notice = if self.in_progress {
-            match self.conflicts.len() {
-                0 => {
-                    let message = self.message.as_deref().map(str::trim).unwrap_or_default();
-                    if !message.is_empty() {
-                        warnings.push(message.to_owned());
-                    }
-                    tr!("merge-rebase-stopped-before-commit")
+/// The outcome of `merge.abort` (also the abort of cherry-pick, revert and rebase, same result).
+fn abort_outcome(r: MergeAbortResult, op: Kind) -> Outcome {
+    let title = op.title();
+    let warning = reread_warning(
+        &tr!("merge-aborted", title = title),
+        &message_texts(&r.warnings),
+        r.status_error,
+        r.refs_error,
+    );
+    let notice = tr!(
+        "merge-aborted-notice",
+        title = title,
+        backup = &r.backup,
+        n = r.files.len()
+    );
+    Outcome {
+        notice,
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        // The rebase abort puts HEAD back on the branch: the log changes.
+        moved: op == Kind::Rebase,
+        show_changes: false,
+    }
+}
+
+/// The outcome of `rebase.continue`: concluded, or stopped again on the next commit (conflicts, a
+/// hook): the stage area opens with the files and the panel stays.
+fn rebase_continue_outcome(r: RebaseContinueResult) -> Outcome {
+    let mut warnings = message_texts(&r.warnings);
+    let notice = if r.in_progress {
+        match r.conflicts.len() {
+            0 => {
+                let message = r.message.trim();
+                if !message.is_empty() {
+                    warnings.push(message.to_owned());
                 }
-                n => tr!(
-                    "merge-rebase-stopped",
-                    files = tr!("merge-conflict-files", n = n)
-                ),
+                tr!("merge-rebase-stopped-before-commit")
             }
-        } else {
-            let mut notice = match &self.branch {
-                Some(branch) => tr!(
-                    "merge-rebase-finished-branch",
-                    branch = branch,
-                    id = self.after.short()
-                ),
-                None => tr!("merge-rebase-finished", id = self.after.short()),
-            };
-            if let Some(backup) = &self.backup {
-                notice.push_str(&tr!("merge-rebase-backup", backup = backup));
-            }
-            notice
-        };
-        let what = if self.in_progress {
-            tr!("merge-rebase-stopped-short")
-        } else {
-            tr!("merge-concluded", title = Kind::Rebase.title())
-        };
-        let warning = reread_warning(&what, &warnings, self.status_error, self.refs_error);
-        Outcome {
-            notice,
-            show_changes: self.in_progress && !self.conflicts.is_empty(),
-            status: self.status,
-            refs: self.refs,
-            history: self.history,
-            warning,
-            // HEAD moved in any case (the commits applied, or the branch at the end).
-            moved: true,
+            n => tr!(
+                "merge-rebase-stopped",
+                files = tr!("merge-conflict-files", n = n)
+            ),
         }
+    } else {
+        let mut notice = match &r.branch {
+            Some(branch) => tr!(
+                "merge-rebase-finished-branch",
+                branch = branch,
+                id = r.after.short()
+            ),
+            None => tr!("merge-rebase-finished", id = r.after.short()),
+        };
+        if let Some(backup) = &r.backup {
+            notice.push_str(&tr!("merge-rebase-backup", backup = backup));
+        }
+        notice
+    };
+    let what = if r.in_progress {
+        tr!("merge-rebase-stopped-short")
+    } else {
+        tr!("merge-concluded", title = Kind::Rebase.title())
+    };
+    let warning = reread_warning(&what, &warnings, r.status_error, r.refs_error);
+    Outcome {
+        notice,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        // HEAD moved in any case (the commits applied, or the branch at the end).
+        moved: true,
     }
-}
-
-/// Result of `merge.abort`.
-#[derive(Debug, Clone, Deserialize)]
-struct AbortResult {
-    backup: String,
-    #[serde(default)]
-    files: Vec<RepoPath>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
 }
 
 /// The name of the commit `id` to show: the first local branch, remote branch or tag that points to it,
@@ -1103,18 +1020,17 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
-                else {
+                let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
                     return;
                 };
                 if let Some((params, label)) = repo.merge.start(rev, what, into, no_ff) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = merge::Op::Start;
+                    let op = Op::Start;
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
-            Action::ContinueMerge => {
+            Action::Continue => {
                 if let Some(repo) = &mut self.repo
                     && self.executor.writing().is_none()
                     && !repo.modal_open()
@@ -1122,12 +1038,12 @@ impl Tab {
                     repo.merge.open_continue();
                 }
             }
-            Action::MergeMessage(message) => {
+            Action::Message(message) => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.set_message(message);
                 }
             }
-            Action::SubmitContinueMerge => {
+            Action::SubmitContinue => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1138,10 +1054,13 @@ impl Tab {
                 if let Some((op, params, label)) = repo.merge.submit_continue() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    self.submit(op.command(), params, Request::Merge(generation, op));
+                    let ticket = self.submit(op.command(), params, Request::Merge(generation, op));
+                    if let Some(repo) = &mut self.repo {
+                        repo.merge.continue_started(ticket);
+                    }
                 }
             }
-            Action::AbortMerge => {
+            Action::Abort => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1155,7 +1074,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
-            Action::ConfirmAbortMerge => {
+            Action::ConfirmAbort => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1181,15 +1100,14 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let merge::Gate::Into(into) = merge::Gate::new(&repo.head, repo.status.as_ref())
-                else {
+                let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
                     return;
                 };
                 // The parents of a merge commit, with the name and subject if known.
                 let parents = parents
                     .into_iter()
                     .map(|id| {
-                        let name = merge::commit_name(id, &repo.refs);
+                        let name = commit_name(id, &repo.refs);
                         let summary = repo
                             .list
                             .commits()
@@ -1203,7 +1121,7 @@ impl Tab {
                 {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = merge::Op::Pick(pick);
+                    let op = Op::Pick(pick);
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
@@ -1226,17 +1144,16 @@ impl Tab {
                     self.submit(op.command(), params, Request::Merge(generation, op));
                 }
             }
-            Action::CloseMergeDialog => {
+            Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.close();
                 }
             }
-            Action::DismissMergeError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.dismiss();
                 }
             }
-            _ => unreachable!("action routed to the wrong function"),
         }
     }
 
@@ -1244,7 +1161,7 @@ impl Tab {
     /// new status), then the log reread if the branch moved, with the new HEAD
     /// selected. A merge stopped on conflicts opens the stage area; a refused start opens
     /// its window, a refusal of "Continue" stays in the dialog.
-    pub(crate) fn receive_merge(&mut self, generation: u64, op: merge::Op, done: Done) {
+    pub(crate) fn receive_merge(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1257,21 +1174,16 @@ impl Tab {
 
     /// What came back from a merge, cherry-pick, revert or rebase command: the notice, status,
     /// refs and journal from the response, the log reread if the branch moved.
-    pub(crate) fn apply_received(
-        &mut self,
-        generation: u64,
-        command: &str,
-        received: merge::Received,
-    ) {
+    pub(crate) fn apply_received(&mut self, generation: u64, command: &str, received: Received) {
         let Some(repo) = self.current(generation) else {
             return;
         };
         match received {
-            merge::Received::Inline | merge::Received::Confirm => {
+            Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            merge::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{command}: {}", outcome.notice);
                 repo.history = outcome.history.clone();
                 let refs_read = outcome.refs.is_some();
@@ -1305,7 +1217,7 @@ impl Tab {
                     self.request_page(first);
                 }
             }
-            merge::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{command}: {message}");
                 self.error = message;
                 self.notice.clear();
@@ -1323,7 +1235,7 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_domain::{Change, ChangedFile, Signature};
+    use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
 
@@ -1460,7 +1372,7 @@ mod tests {
         assert_eq!(info.operation, Some(Operation::Merge));
         assert_eq!(info.conflicts, vec![RepoPath::from("a.txt")]);
         assert!(!info.ready);
-        assert_eq!(info.title(), "Merge in progress: merging “other” (theirs)");
+        assert_eq!(title(info), "Merge in progress: merging “other” (theirs)");
         assert_eq!(info.continue_command.as_deref(), Some("merge.continue"));
         // The same status is not requested again.
         assert!(!b.want_info(Some(Operation::Merge), 2));
@@ -1476,6 +1388,7 @@ mod tests {
             dialog.message
         );
         let (_, params, _) = b.submit_continue().unwrap();
+        b.continue_started(Ticket::for_test(1));
         assert!(matches!(
             run(&r, &mut s, &mut b, Op::Continue(Kind::Merge), params),
             Received::Inline
@@ -1497,6 +1410,7 @@ mod tests {
         assert!(b.open_continue());
         b.set_message("Merge other\n\nWith our version".into());
         let (op, params, label) = b.submit_continue().unwrap();
+        b.continue_started(Ticket::for_test(1));
         assert_eq!(op, Op::Continue(Kind::Merge));
         assert_eq!(params["message"], "Merge other\n\nWith our version");
         assert_eq!(label, "Finishing the merge");
@@ -1652,7 +1566,7 @@ mod tests {
 
     #[test]
     fn rebase_and_cherry_pick_title() {
-        let info: OperationInfo = serde_json::from_value(json!({
+        let info: RepoOperationResult = serde_json::from_value(json!({
             "operation": "Rebase",
             "head": { "Detached": oid(1).to_string() },
             "conflicts": ["x.txt"],
@@ -1666,7 +1580,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            info.title(),
+            title(&info),
             format!("Rebase of “feature” in progress onto {}", oid(2).short())
         );
         let mut b = MergeBox {
@@ -1677,8 +1591,9 @@ mod tests {
         assert!(!b.open_continue());
         assert!(b.start_abort().is_none());
 
-        let pick: OperationInfo = serde_json::from_value(json!({
+        let pick: RepoOperationResult = serde_json::from_value(json!({
             "operation": "CherryPick",
+            "head": { "Detached": oid(1).to_string() },
             "conflicts": [],
             "incoming": [{ "id": oid(3).to_string(), "label": "abc1234", "summary": "Fix", "refs": [] }],
             "message": "Fix\n",
@@ -1689,7 +1604,7 @@ mod tests {
             "abort": null,
         }))
         .unwrap();
-        assert_eq!(pick.title(), "Cherry-pick in progress: “abc1234” (Fix)");
+        assert_eq!(title(&pick), "Cherry-pick in progress: “abc1234” (Fix)");
     }
 
     #[test]

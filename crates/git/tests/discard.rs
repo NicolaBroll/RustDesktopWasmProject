@@ -8,7 +8,7 @@ mod common;
 
 use common::{Repo, repo_with_merge_conflict, repo_with_special_names};
 use project_domain::{Change, RepoPath};
-use project_engine::{EngineError, GitBackend, Registry, Session, WorktreeRestore};
+use project_engine::{EngineError, GitIndex, GitRead, Registry, Session, WorktreeRestore};
 use serde_json::{Value, json};
 use std::sync::Arc;
 

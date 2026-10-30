@@ -1,0 +1,14 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commit_graph": false,
+  "head": {
+    "Branch": {
+      "name": "main",
+      "target": null
+    }
+  },
+  "path": "new"
+}

@@ -13,11 +13,34 @@
 //!   selecting an entry opens `diff.commit` of that commit for the entry's path.
 
 use crate::diff::{DiffTarget, MAX_LINE_COLS, number_width};
-use crate::{Action, Done, Request, Tab, Ticket};
+use crate::{Done, Request, Tab, Ticket};
 use project_domain::{Blame, BlameLine, Change, FileLogEntry, Oid, RepoPath};
+use project_engine::{FileBlameParams, FileLogParams, FileLogResult};
 use project_i18n::tr;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens blame or history of `path` at commit `rev` (`None`: working tree / HEAD).
+    Open {
+        path: RepoPath,
+        rev: Option<Oid>,
+        mode: Mode,
+    },
+    /// Closes the blame and history view.
+    Close,
+    /// Switches between blame and history.
+    Mode(Mode),
+    /// "Follow renames" of the history.
+    Follow(bool),
+    /// "Load more" of the history.
+    More,
+    /// Asks again for the tab that failed.
+    Retry,
+    /// Shows the diff of entry `n` of the history.
+    Select(usize),
+}
 
 /// The id of the command that reads the blame.
 pub const BLAME: &str = "file.blame";
@@ -288,7 +311,7 @@ impl FileBox {
     /// Called on every frame.
     pub fn want(&mut self) -> Option<Want> {
         let view = self.view.as_mut()?;
-        let path = serde_json::to_value(&view.path).unwrap_or_default();
+        let path = view.path.clone();
         let rev = view.rev.map(|id| id.to_string());
         let seq = self.next;
         let want = match view.mode {
@@ -297,10 +320,7 @@ impl FileBox {
                     return None;
                 }
                 view.blame_job = Some(Job { seq, ticket: None });
-                let mut params = json!({ "path": path });
-                if let Some(rev) = rev {
-                    params["rev"] = json!(rev);
-                }
+                let params = crate::params(FileBlameParams { path, rev });
                 Want {
                     command: BLAME,
                     params,
@@ -316,15 +336,13 @@ impl FileBox {
                 history.more = false;
                 let skip = history.entries.len();
                 view.log_job = Some((Job { seq, ticket: None }, skip));
-                let mut params = json!({
-                    "path": path,
-                    "skip": skip,
-                    "limit": PAGE,
-                    "follow": view.follow,
+                let params = crate::params(FileLogParams {
+                    path,
+                    rev,
+                    skip,
+                    limit: Some(PAGE),
+                    follow: view.follow,
                 });
-                if let Some(rev) = rev {
-                    params["rev"] = json!(rev);
-                }
                 Want {
                     command: LOG,
                     params,
@@ -367,11 +385,8 @@ impl FileBox {
         };
         if view.blame_job.is_some_and(|j| j.seq == seq) {
             view.blame_job = None;
-            let doc = result.and_then(|value| {
-                serde_json::from_value::<Blame>(value)
-                    .map(BlameDoc::new)
-                    .map_err(|e| unexpected(BLAME, &e))
-            });
+            let doc =
+                result.and_then(|value| crate::decode::<Blame>(BLAME, value).map(BlameDoc::new));
             view.blame = Some(doc);
             return true;
         }
@@ -380,9 +395,7 @@ impl FileBox {
         {
             view.log_job = None;
             let history = &mut view.history;
-            match result.and_then(|value| {
-                serde_json::from_value::<LogPage>(value).map_err(|e| unexpected(LOG, &e))
-            }) {
+            match result.and_then(|value| crate::decode::<FileLogResult>(LOG, value)) {
                 Ok(page) => {
                     history.entries.truncate(skip);
                     history.entries.extend(page.commits);
@@ -396,20 +409,6 @@ impl FileBox {
         }
         false
     }
-}
-
-#[derive(Deserialize)]
-struct LogPage {
-    commits: Vec<FileLogEntry>,
-    has_more: bool,
-}
-
-fn unexpected(command: &str, e: &serde_json::Error) -> String {
-    tr!(
-        "common-unexpected-result",
-        command = command,
-        error = e.to_string()
-    )
 }
 
 /// The name of the file in `entry` when it is not `current` (the file shown).
@@ -433,23 +432,23 @@ impl Tab {
             return;
         };
         match action {
-            Action::OpenFile { path, rev, mode } => {
+            Action::Open { path, rev, mode } => {
                 repo.conflict.close();
                 repo.diff.close();
                 repo.file.open(path, rev, mode);
             }
-            Action::CloseFile => {
+            Action::Close => {
                 repo.file.close();
                 repo.diff.close();
             }
-            Action::FileMode(mode) => repo.file.set_mode(mode),
-            Action::FileFollow(follow) => {
+            Action::Mode(mode) => repo.file.set_mode(mode),
+            Action::Follow(follow) => {
                 repo.file.set_follow(follow);
                 repo.diff.close();
             }
-            Action::FileMore => repo.file.more(),
-            Action::FileRetry => repo.file.retry(),
-            Action::FileSelect(index) => {
+            Action::More => repo.file.more(),
+            Action::Retry => repo.file.retry(),
+            Action::Select(index) => {
                 let target = repo.file.view().and_then(|v| v.entry_target(index));
                 if let Some(target) = target
                     && let Some(seq) = repo.diff.open(target.clone())
@@ -457,7 +456,6 @@ impl Tab {
                     self.request_diff(&target, seq);
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

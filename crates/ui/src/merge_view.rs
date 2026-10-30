@@ -1,12 +1,15 @@
 //! Drawing of the in-progress operation panel and the merge dialogs (S29). The functions
 //! read the view and produce [`Action`]; they change nothing directly.
 
+use crate::conflict;
 use crate::discard::Phase;
-use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog, OperationInfo};
+use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog};
 use crate::view::git_text;
 use crate::{Action, RepoView};
 use egui::{RichText, Ui};
+use project_domain::branch_short;
 use project_domain::{Operation, RepoPath};
+use project_engine::RepoOperationResult;
 use project_i18n::tr;
 
 /// The panel below the bar when the repo is in merge, rebase, cherry-pick, revert, bisect or
@@ -37,7 +40,7 @@ pub(crate) fn banner(
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let title = match info {
-                    Some(info) => info.title(),
+                    Some(info) => merge::title(info),
                     None => tr!("merge-title", name = merge::operation_name(operation)),
                 };
                 ui.add(egui::Label::new(RichText::new(title).strong().color(warn)).truncate())
@@ -69,7 +72,7 @@ pub(crate) fn banner(
 }
 
 /// The title tooltip: the incoming commits in full, with the refs pointing at them.
-fn hover(info: &OperationInfo) -> String {
+fn hover(info: &RepoOperationResult) -> String {
     let mut lines: Vec<String> = info
         .incoming
         .iter()
@@ -91,7 +94,7 @@ fn hover(info: &OperationInfo) -> String {
 /// (merge, cherry-pick, revert), or how to finish from the terminal.
 fn buttons(
     ui: &mut Ui,
-    info: &OperationInfo,
+    info: &RepoOperationResult,
     operation: Operation,
     can_write: bool,
     actions: &mut Vec<Action>,
@@ -130,7 +133,7 @@ fn buttons(
             ))
             .on_disabled_hover_text(tr!("merge-wait"));
         if button.clicked() {
-            actions.push(Action::AbortMerge);
+            actions.push(Action::Merge(merge::Action::Abort));
         }
     }
     if let Some(kind) = resume {
@@ -151,14 +154,19 @@ fn buttons(
                 tr!("merge-continue-conflicts")
             });
         if button.clicked() {
-            actions.push(Action::ContinueMerge);
+            actions.push(Action::Merge(merge::Action::Continue));
         }
     }
 }
 
 /// The conflicts row: the first files (a click opens the conflict editor), how many more
 /// there are, or that it can be concluded.
-fn conflicts_line(ui: &mut Ui, repo: &RepoView, info: &OperationInfo, actions: &mut Vec<Action>) {
+fn conflicts_line(
+    ui: &mut Ui,
+    repo: &RepoView,
+    info: &RepoOperationResult,
+    actions: &mut Vec<Action>,
+) {
     let n = info.conflicts.len();
     if n == 0 {
         let resume = info
@@ -197,7 +205,7 @@ fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>
         .selectable_label(open, text)
         .on_hover_text(tr!("merge-file-hint"));
     if response.clicked() {
-        actions.push(Action::OpenConflict(path.clone()));
+        actions.push(Action::Conflict(conflict::Action::Open(path.clone())));
     }
 }
 
@@ -221,7 +229,7 @@ pub(crate) fn merge_dialog(
         }
     });
     if modal.should_close() {
-        actions.push(Action::CloseMergeDialog);
+        actions.push(Action::Merge(merge::Action::CloseDialog));
     }
 }
 
@@ -252,13 +260,13 @@ fn continue_dialog(
             .desired_rows(5)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace)
-            .interactive(!dialog.sending),
+            .interactive(dialog.running.is_none()),
     );
-    if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+    if dialog.running.is_none() && ui.memory(|m| m.focused().is_none()) {
         edit.request_focus();
     }
     if edit.changed() {
-        actions.push(Action::MergeMessage(message));
+        actions.push(Action::Merge(merge::Action::Message(message)));
     }
     if let Some(error) = &dialog.error {
         ui.add_space(4.0);
@@ -267,27 +275,30 @@ fn continue_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let enabled = !dialog.sending && !dialog.is_blank();
+        let enabled = dialog.running.is_none() && !dialog.is_blank();
         let button = ui
             .add_enabled(
                 enabled,
                 egui::Button::new(tr!("merge-create-button", noun = &noun)),
             )
-            .on_disabled_hover_text(if dialog.sending {
+            .on_disabled_hover_text(if dialog.running.is_some() {
                 tr!("merge-committing-hint")
             } else {
                 tr!("merge-write-message")
             });
         if button.clicked() {
-            actions.push(Action::SubmitContinueMerge);
+            actions.push(Action::Merge(merge::Action::SubmitContinue));
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("merge-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("merge-close")),
+            )
             .clicked()
         {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
             ui.label(tr!("merge-committing"));
         }
@@ -309,7 +320,7 @@ fn rebase_continue_dialog(
         .merge
         .info()
         .and_then(|info| info.rebase_branch.as_deref())
-        .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b));
+        .map(branch_short);
     let text = match branch {
         Some(branch) => tr!("merge-rebase-continue-text-branch", branch = branch),
         None => tr!("merge-rebase-continue-text"),
@@ -324,22 +335,25 @@ fn rebase_continue_dialog(
     ui.horizontal(|ui| {
         let button = ui
             .add_enabled(
-                !dialog.sending,
+                dialog.running.is_none(),
                 egui::Button::new(
                     RichText::new(tr!("merge-rebase-continue-button", name = name)).strong(),
                 ),
             )
             .on_disabled_hover_text(tr!("merge-continuing"));
         if button.clicked() {
-            actions.push(Action::SubmitContinueMerge);
+            actions.push(Action::Merge(merge::Action::SubmitContinue));
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("merge-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("merge-close")),
+            )
             .clicked()
         {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
             ui.label(tr!("merge-continuing"));
         }
@@ -376,10 +390,10 @@ fn abort_dialog(ui: &mut Ui, kind: Kind, reason: &str, actions: &mut Vec<Action>
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
-            actions.push(Action::ConfirmAbortMerge);
+            actions.push(Action::Merge(merge::Action::ConfirmAbort));
         }
         if ui.button(tr!("merge-dont-abort")).clicked() {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
     });
 }
@@ -419,7 +433,7 @@ fn mainline_dialog(ui: &mut Ui, dialog: &MainlineDialog, actions: &mut Vec<Actio
             text.push_str(&format!(" — {summary}"));
         }
         if ui.radio(dialog.mainline == n, text).clicked() {
-            actions.push(Action::Mainline(n));
+            actions.push(Action::Merge(merge::Action::Mainline(n)));
         }
     }
     ui.add_space(10.0);
@@ -429,10 +443,10 @@ fn mainline_dialog(ui: &mut Ui, dialog: &MainlineDialog, actions: &mut Vec<Actio
             .on_hover_text(tr!("merge-mainline-hint", n = dialog.mainline))
             .clicked()
         {
-            actions.push(Action::SubmitMainline);
+            actions.push(Action::Merge(merge::Action::SubmitMainline));
         }
         if ui.button(tr!("merge-close")).clicked() {
-            actions.push(Action::CloseMergeDialog);
+            actions.push(Action::Merge(merge::Action::CloseDialog));
         }
     });
 }

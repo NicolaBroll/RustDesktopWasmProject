@@ -9,7 +9,7 @@
 //!   never become options; git adds `remote.<name>.url` and the default refspec; no
 //!   fetch (never `-f`);
 //! - removal does **not** use `git remote remove`: the remote branches are removed by the engine with a
-//!   `update-ref --stdin` transaction with the values read (`GitBackend::restore_refs`), and here
+//!   `update-ref --stdin` transaction with the values read (`GitRefs::restore_refs`), and here
 //!   exactly the entries saved in the journal are removed: `git config --local --remove-section
 //!   --end-of-options remote.<name>`, `git config --local --fixed-value --unset-all
 //!   --end-of-options <key> <value>` for upstream, `pushRemote` and `remote.pushDefault`, and
@@ -29,7 +29,7 @@ use project_engine::{
 };
 
 impl CliBackend {
-    /// [`GitBackend::remote_snapshot`](project_engine::GitBackend::remote_snapshot).
+    /// [`GitRemotes::remote_snapshot`](project_engine::GitRemotes::remote_snapshot).
     pub(super) fn snapshot_remote(&self, name: &str) -> Result<RemoteSnapshot, EngineError> {
         let pattern = format!(
             "^(remote\\.{}\\.[^.]+|remote\\.pushdefault|branch\\..+\\.(remote|merge|pushremote))$",
@@ -146,7 +146,7 @@ impl CliBackend {
         Ok(entries)
     }
 
-    /// [`GitBackend::create_remote`](project_engine::GitBackend::create_remote).
+    /// [`GitRemotes::create_remote`](project_engine::GitRemotes::create_remote).
     pub(super) fn add_remote(&mut self, name: &str, url: &str) -> Result<(), EngineError> {
         let args = ["remote", "add", "--end-of-options", name, url];
         let out = self.git.output(Some(&self.workdir), &args)?;
@@ -185,7 +185,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::remote_config_elsewhere`](project_engine::GitBackend::remote_config_elsewhere):
+    /// [`GitRemotes::remote_config_elsewhere`](project_engine::GitRemotes::remote_config_elsewhere):
     /// all sources with the `include`s (`git config -z --show-scope --show-origin --includes
     /// --get-regexp`), minus those of the repo file (`--local --show-origin`, without
     /// `include`). A file included by the repo file has scope `local` but another origin.
@@ -240,7 +240,7 @@ impl CliBackend {
         Ok(out)
     }
 
-    /// [`GitBackend::remove_remote_config`](project_engine::GitBackend::remove_remote_config).
+    /// [`GitRemotes::remove_remote_config`](project_engine::GitRemotes::remove_remote_config).
     pub(super) fn drop_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         let name = &snapshot.name;
         let mut warnings = Vec::new();
@@ -302,7 +302,7 @@ impl CliBackend {
         warnings
     }
 
-    /// [`GitBackend::write_remote_config`](project_engine::GitBackend::write_remote_config).
+    /// [`GitRemotes::write_remote_config`](project_engine::GitRemotes::write_remote_config).
     pub(super) fn put_remote_config(&mut self, snapshot: &RemoteSnapshot) -> Vec<Message> {
         let name = &snapshot.name;
         let mut warnings = Vec::new();

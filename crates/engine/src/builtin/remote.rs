@@ -2,35 +2,108 @@
 //! cancellation arrive from [`Session::job`].
 
 use super::{Out, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, FetchRequest, Message, Session, check_branch_name, check_remote_name,
     default_remote, unknown_remote,
 };
 use project_domain::{Oid, RefInfo};
+use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// Parameters of `remote.fetch`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FetchParams {
-    #[serde(default)]
-    remote: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    prune: bool,
+/// Result of `remote.fetch`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteFetchResult {
+    /// The remote fetched from (the one given, or the default one).
+    pub remote: String,
+    /// The only branch of the remote fetched; `null` for the whole remote.
+    pub branch: Option<String>,
+    /// `--prune` was requested.
+    pub prune: bool,
+    /// The refs changed by the fetch, in name order; `null` if the refs could not be re-read
+    /// (see `refs_error`).
+    pub updated: Option<Vec<RefUpdate>>,
+    /// The git lines that are not progress (`From <url>`, ` * [new branch] ...`), in order.
+    pub messages: Vec<String>,
+    /// Refs outside `refs/remotes/` and `refs/tags/` moved by the fetch (only with a refspec
+    /// configured on purpose); empty if the refs could not be re-read.
+    pub warnings: Vec<Message>,
+    /// The backup refs (`refs/project/backup/prune-...`) of the pruned remote-tracking branches.
+    pub backups: Vec<String>,
+    /// The refs re-read after the fetch; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
 }
 
-/// A ref changed by the fetch: `before`/`after` `null` = the ref did not exist / no longer exists (a
-/// remote-tracking branch removed by a configured `fetch.prune`).
-#[derive(Debug, Serialize)]
-pub(super) struct RefUpdate {
-    name: String,
-    before: Option<Oid>,
-    after: Option<Oid>,
+/// The refs re-read after a fetch or push, compared with those from before: the fields `updated`,
+/// `warnings`, `refs` and `refs_error` of the results.
+pub(super) struct RefsAfter {
+    /// The changed refs; `None` if the refs could not be re-read.
+    pub updated: Option<Vec<RefUpdate>>,
+    /// The warnings given, then one for each unexpected changed ref ([`unexpected`]).
+    pub warnings: Vec<Message>,
+    /// The refs re-read.
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read.
+    pub refs_error: Option<String>,
+}
+
+impl RefsAfter {
+    /// Compares `after` (the re-read) with `before`; `warnings` come first in the warnings.
+    pub(super) fn new(
+        before: &[RefInfo],
+        after: Result<Vec<RefInfo>, EngineError>,
+        mut warnings: Vec<Message>,
+    ) -> Self {
+        match after {
+            Ok(after) => {
+                let updated = changes(before, &after);
+                warnings.extend(updated.iter().filter_map(unexpected));
+                Self {
+                    updated: Some(updated),
+                    warnings,
+                    refs: Some(after),
+                    refs_error: None,
+                }
+            }
+            Err(e) => Self {
+                updated: None,
+                warnings,
+                refs: None,
+                refs_error: Some(e.to_string()),
+            },
+        }
+    }
+}
+
+/// Parameters of `remote.fetch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteFetchParams {
+    /// The configured remote; without: upstream, `origin` or the only one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    /// Only this branch of the remote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Also remove the remote-tracking branches gone from the remote; not with `branch`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prune: bool,
+}
+
+/// A ref changed by a fetch or a push.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefUpdate {
+    /// The full name of the ref (`refs/remotes/origin/main`).
+    pub name: String,
+    /// The commit before; `null` if the ref did not exist.
+    pub before: Option<Oid>,
+    /// The commit after; `null` if the ref no longer exists (a remote-tracking branch removed by
+    /// `prune` or a configured `fetch.prune`).
+    pub after: Option<Oid>,
 }
 
 /// The value of each ref for the before/after comparison: for an annotated tag the tag
@@ -63,8 +136,7 @@ pub(super) fn changes(before: &[RefInfo], after: &[RefInfo]) -> Vec<RefUpdate> {
 /// with a refspec configured on purpose (e.g. a mirror to `refs/heads/`). The previous value
 /// stays in that ref's reflog.
 pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
-    let expected =
-        update.name.starts_with("refs/remotes/") || update.name.starts_with("refs/tags/");
+    let expected = update.name.starts_with(REMOTES_PREFIX) || update.name.starts_with(TAGS_PREFIX);
     if expected {
         return None;
     }
@@ -82,7 +154,7 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
     ))
 }
 
-/// Fetches from the remote `remote` (see [`GitBackend::fetch`](crate::GitBackend::fetch)): new
+/// Fetches from the remote `remote` (see [`GitRemotes::fetch`](crate::GitRemotes::fetch)): new
 /// commits, remote-tracking branches and tags as the configuration says; with `branch` only that branch of the
 /// remote. `remote` is the name of a **configured** remote (never a URL or a path:
 /// [`EngineError::NotAllowed`] if there is none); if missing, the one of the active branch's upstream,
@@ -97,16 +169,16 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
 /// [`Registry::run_with`](crate::Registry::run_with); cancelled, it gives
 /// [`EngineError::Cancelled`] (the refs already updated by git stay).
 ///
-/// Result: `{"remote", "branch": string | null, "prune": bool, "updated": [{"name", "before",
-/// "after"}] | null, "messages": [string], "warnings": [string], "backups": [string], "refs":
-/// [RefInfo] | null, "refs_error"?}`.
-pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "remote.fetch";
-    let FetchParams {
+/// Result: [`RemoteFetchResult`].
+pub(super) fn remote_fetch(
+    s: &mut Session,
+    RemoteFetchParams {
         remote,
         branch,
         prune,
-    } = parse_params(ID, p)?;
+    }: RemoteFetchParams,
+) -> Out {
+    const ID: &str = "remote.fetch";
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;
     }
@@ -137,29 +209,18 @@ pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
         prune,
     };
     let outcome = repo.fetch(&request, &job)?;
-    let mut out = json!({
-        "remote": remote,
-        "branch": branch,
-        "prune": prune,
-        "messages": outcome.messages,
-        "backups": outcome.backups,
-    });
-    match repo.refs() {
-        Ok(after) => {
-            let updated = changes(&before, &after);
-            let warnings: Vec<Message> = updated.iter().filter_map(unexpected).collect();
-            out["updated"] = to_json(updated);
-            out["warnings"] = to_json(warnings);
-            out["refs"] = to_json(after);
-        }
-        Err(e) => {
-            out["updated"] = Value::Null;
-            out["warnings"] = json!([]);
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-    Ok(out)
+    let after = RefsAfter::new(&before, repo.refs(), Vec::new());
+    Ok(to_json(RemoteFetchResult {
+        remote,
+        branch,
+        prune,
+        updated: after.updated,
+        messages: outcome.messages,
+        warnings: after.warnings,
+        backups: outcome.backups,
+        refs: after.refs,
+        refs_error: after.refs_error,
+    }))
 }
 
 #[cfg(test)]

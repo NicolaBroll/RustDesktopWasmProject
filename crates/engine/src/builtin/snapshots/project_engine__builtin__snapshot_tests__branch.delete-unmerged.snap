@@ -1,0 +1,46 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/delete-1",
+  "branch": "refs/heads/other",
+  "can_redo": false,
+  "can_undo": true,
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "id": "1d0b14e",
+      "name": "other"
+    },
+    "key": "engine-journal-branch-delete",
+    "text": "Delete branch `other` (was 1d0b14e)"
+  },
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/ahead",
+      "tag_object": null,
+      "target": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feat",
+      "tag_object": null,
+      "target": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "upstream": null
+    }
+  ],
+  "removed_config": [],
+  "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+  "unmerged": 1,
+  "warnings": []
+}

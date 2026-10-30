@@ -27,6 +27,7 @@
 use super::branch::check_no_operation;
 use crate::{EngineError, Message};
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The stash ref: it points to the most recent stash, its reflog is the list.
@@ -103,7 +104,7 @@ pub fn find_stash<'a>(list: &'a [StashEntry], id: &Oid) -> Option<&'a StashEntry
 
 /// Parameters of `stash.push`: `{"message"?, "include_untracked"?, "keep_index"?, "paths"?}`.
 /// The journal entry keeps them too, for the redo.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct StashPush {
     /// The message (one line); without it, git writes `WIP on <branch>: <id> <subject>`.
@@ -273,7 +274,7 @@ pub fn stash_blocked(command: &str, stash: &str, files: &[String]) -> EngineErro
     ))
 }
 
-/// Request to [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
+/// Request to [`GitStash::stash_apply`](crate::GitStash::stash_apply).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashApply {
     /// The command, for messages (`stash.apply`, `stash.pop`, `edit.undo`).
@@ -285,7 +286,7 @@ pub struct StashApply {
     pub restore_index: bool,
 }
 
-/// Outcome of [`GitBackend::stash_apply`](crate::GitBackend::stash_apply).
+/// Outcome of [`GitStash::stash_apply`](crate::GitStash::stash_apply).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashApplied {
     /// The files left in conflict (the merge of the stash with HEAD stopped): empty if the
@@ -295,7 +296,7 @@ pub struct StashApplied {
     pub warnings: Vec<Message>,
 }
 
-/// Request to [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
+/// Request to [`GitStash::stash_drop`](crate::GitStash::stash_drop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StashDrop {
     /// The command, for messages and the backup's reflog.
@@ -307,7 +308,7 @@ pub struct StashDrop {
     pub backup: Option<&'static str>,
 }
 
-/// Outcome of [`GitBackend::stash_drop`](crate::GitBackend::stash_drop).
+/// Outcome of [`GitStash::stash_drop`](crate::GitStash::stash_drop).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashDropped {
     /// The backup ref on the stash commit, if created.
@@ -419,7 +420,7 @@ fn paths_where(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
 
     #[test]
     fn branch_from_message() {
@@ -465,7 +466,7 @@ mod tests {
         };
         assert!(check_stash_push(&status, &with_untracked).is_ok());
 
-        let mut busy = status.clone();
+        let mut busy = status;
         busy.operation = Some(project_domain::Operation::Rebase);
         assert!(matches!(
             check_stash_push(&busy, &StashPush::default()),

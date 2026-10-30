@@ -2,14 +2,14 @@
 //! backends (`impl-docs/git/conflicts.md`).
 //!
 //! The command reads the versions of a conflicted file with
-//! [`GitBackend::conflict_versions`](super::GitBackend::conflict_versions) and shows them with a
+//! [`GitOperations::conflict_versions`](super::GitOperations::conflict_versions) and shows them with a
 //! [`worktree_digest`] of the worktree bytes; `conflict.resolve` passes that digest back and the
-//! backend ([`GitBackend::resolve_conflict`](super::GitBackend::resolve_conflict)) writes the
+//! backend ([`GitOperations::resolve_conflict`](super::GitOperations::resolve_conflict)) writes the
 //! file only if the worktree is still the one that was seen, after a backup of its bytes.
 
 use crate::EngineError;
 use project_domain::{Conflict, EntryKind, RepoPath, Status, UnmergedInfo};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Size of the conflict markers if the `conflict-marker-size` attribute is not set.
 pub const DEFAULT_MARKER_SIZE: usize = 7;
@@ -19,7 +19,7 @@ const SUBMODULE_MODE: u32 = 0o160000;
 /// Object type of a symbolic link.
 const SYMLINK_MODE: u32 = 0o120000;
 
-/// The versions of a conflicted file ([`GitBackend::conflict_versions`](super::GitBackend::conflict_versions)):
+/// The versions of a conflicted file ([`GitOperations::conflict_versions`](super::GitOperations::conflict_versions)):
 /// unfiltered bytes of stages 1/2/3 of the index and of the worktree, `None` if missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictVersions {
@@ -35,10 +35,13 @@ pub struct ConflictVersions {
 
 /// A version for `conflict.show`: `text` if the bytes are valid UTF-8 without NUL, otherwise
 /// `None` and `binary`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionText {
+    /// The content, if it is valid UTF-8 without NUL.
     pub text: Option<String>,
+    /// The content is not text (`text` is `None`).
     pub binary: bool,
+    /// The size in bytes.
     pub size: usize,
 }
 
@@ -66,7 +69,7 @@ pub struct ConflictResolution {
     pub content: Option<Vec<u8>>,
 }
 
-/// Outcome of [`GitBackend::resolve_conflict`](super::GitBackend::resolve_conflict).
+/// Outcome of [`GitOperations::resolve_conflict`](super::GitOperations::resolve_conflict).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConflictResolved {
     /// The backup ref of the worktree bytes (`refs/project/backup/conflict-...`), `None` if

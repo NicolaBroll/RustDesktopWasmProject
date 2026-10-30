@@ -1,5 +1,5 @@
 use super::super::MemoryBackend;
-use crate::GitBackend;
+use crate::GitRemotes;
 use crate::git::{ConfigEntry, RemoteRef};
 
 fn entry(key: &str, value: &str) -> ConfigEntry {

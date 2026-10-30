@@ -468,6 +468,11 @@ fn conflict_stays_in_progress_then_continue() {
     assert_eq!(op["abort"], "rebase.abort");
     assert_eq!(op["onto"], id(1));
     assert_eq!(op["rebase_branch"], "refs/heads/main");
+    // The typed result of `repo.operation` reads it back and gives the same JSON again.
+    let typed: crate::RepoOperationResult = serde_json::from_value(op.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), op);
+    assert_eq!(typed.onto, Some(oid(1)));
+    assert_eq!(typed.rebase_branch.as_deref(), Some("refs/heads/main"));
     assert!(r.run("edit.undo", &mut s, json!({})).is_err());
     assert!(r.run("rebase.start", &mut s, start(vec![])).is_err());
     let err = r.run("rebase.continue", &mut s, json!({})).unwrap_err();
@@ -560,4 +565,136 @@ fn a_rebase_from_the_terminal_is_offered_but_not_journaled() {
     assert!(r.run("rebase.continue", &mut s, json!({})).is_err());
     let aborted = run(&r, &mut s, "rebase.abort", json!({ "confirm": true }));
     assert_eq!(aborted["status"]["operation"], json!(null));
+}
+
+fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+    let typed: T = serde_json::from_value(out.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+    typed
+}
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use crate::{
+        MergeAbortResult, RebaseContinueResult, RebasePlanResult, RebasePlanStep, RebaseStartResult,
+    };
+    use project_domain::RebaseAction;
+    let mut published = repo();
+    published.set_remote_branch("origin/main", oid(2));
+    let (r, mut s) = opened_with(published);
+    let plan: RebasePlanResult = same(run(&r, &mut s, "rebase.plan", json!({ "base": id(1) })));
+    assert_eq!(plan.base, oid(1));
+    assert_eq!(plan.branch, "main");
+    assert_eq!(plan.published, vec![oid(2)]);
+    assert_eq!(
+        plan.steps[0],
+        RebasePlanStep {
+            action: RebaseAction::Pick,
+            commit: oid(2),
+            summary: "one".into(),
+        }
+    );
+    // Concluded right away.
+    let mut reword = step("reword", 4);
+    reword["message"] = json!("THREE");
+    let out = run(
+        &r,
+        &mut s,
+        "rebase.start",
+        start(vec![step("pick", 2), step("pick", 3), reword]),
+    );
+    assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());
+    let done: RebaseStartResult = same(out);
+    assert!(!done.in_progress && done.journal.can_undo);
+    assert_eq!(done.backup, "refs/project/backup/rebase-1");
+
+    // Stopped, continued (stops again), concluded.
+    let (r, mut s, out) = conflicted();
+    let stopped: RebaseStartResult = same(out);
+    assert!(stopped.in_progress);
+    assert_eq!(stopped.conflicts, vec![RepoPath::from("a.txt")]);
+    run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
+    let next: RebaseContinueResult = same(run(&r, &mut s, "rebase.continue", json!({})));
+    assert!(next.in_progress);
+    assert_eq!(next.command.as_deref(), Some("rebase.start"));
+    assert_eq!(next.base, Some(oid(1)));
+    assert_eq!(next.before, Some(oid(4)));
+    run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
+    let done: RebaseContinueResult = same(run(&r, &mut s, "rebase.continue", json!({})));
+    assert!(!done.in_progress && done.journal.can_undo);
+    assert_eq!(done.branch.as_deref(), Some("main"));
+    assert_eq!(done.backup.as_deref(), Some("refs/project/backup/rebase-1"));
+
+    // Stopped, then aborted: the shape of `merge.abort`.
+    let (r, mut s, _) = conflicted();
+    let aborted: MergeAbortResult =
+        same(run(&r, &mut s, "rebase.abort", json!({ "confirm": true })));
+    assert_eq!(aborted.backup, "refs/project/backup/rebase-abort-1");
+    assert_eq!(aborted.files, vec![RepoPath::from("a.txt")]);
+}
+
+/// A re-read that fails gives `null` and `<key>_error`; the unknown fields of a rebase from the
+/// terminal are `null`.
+#[test]
+fn reread_error_fields() {
+    use super::super::{JournalState, reread};
+    use crate::{Message, RebaseContinueResult, RebaseStartResult};
+    use project_domain::{RefInfo, Status};
+    let error = EngineError::NoRepo.to_string();
+    let (status, status_error) = reread::<Status>(Err(EngineError::NoRepo));
+    let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+    let result = RebaseStartResult {
+        base: oid(1),
+        branch: "main".into(),
+        before: oid(4),
+        after: oid(9),
+        in_progress: false,
+        conflicts: vec![],
+        message: String::new(),
+        backup: "refs/project/backup/rebase-1".into(),
+        warnings: vec![Message::plain("w")],
+        status: status.clone(),
+        status_error: status_error.clone(),
+        refs: refs.clone(),
+        refs_error: refs_error.clone(),
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    for key in ["status", "refs", "next_undo"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: RebaseStartResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+
+    let result = RebaseContinueResult {
+        command: None,
+        base: None,
+        branch: None,
+        before: None,
+        after: oid(9),
+        in_progress: false,
+        conflicts: vec![],
+        message: String::new(),
+        backup: None,
+        warnings: vec![],
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    for key in [
+        "command", "base", "branch", "before", "backup", "status", "refs",
+    ] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: RebaseContinueResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
 }

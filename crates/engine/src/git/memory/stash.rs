@@ -14,12 +14,12 @@ use super::write::{ZERO, entry_order, file_type, tracked_info};
 use super::{HeadRef, MemoryBackend};
 use crate::EngineError;
 use crate::git::{
-    BACKUP_PREFIX, GitBackend, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped,
+    BACKUP_PREFIX, GitRead, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped,
     StashEntry, StashPush, check_stash_apply, check_stash_push, stash_blocked, stash_local_changes,
 };
 use project_domain::{
-    Change, Commit, Conflict, EntryKind, Oid, RepoPath, Signature, StatusEntry, TrackedInfo,
-    UnmergedInfo,
+    Change, Commit, Conflict, EntryKind, Oid, RepoPath, Signature, Status, StatusEntry,
+    TrackedInfo, UnmergedInfo,
 };
 use std::collections::BTreeMap;
 
@@ -102,7 +102,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::stashes`].
+    /// [`GitStash::stashes`].
     pub(super) fn stash_list(&self) -> Vec<StashEntry> {
         self.stashes
             .iter()
@@ -121,7 +121,7 @@ impl MemoryBackend {
             })
     }
 
-    /// [`GitBackend::stash_push`]. An error changes nothing.
+    /// [`GitStash::stash_push`]. An error changes nothing.
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
         let status = self.status()?;
         check_stash_push(&status, request)?;
@@ -190,7 +190,7 @@ impl MemoryBackend {
                     .get(&head)
                     .map(|c| c.summary.clone())
                     .unwrap_or_default();
-                format!("WIP on {branch}: {} {summary}", crate::git::short(&head))
+                format!("WIP on {branch}: {} {summary}", head.short())
             }
         };
         let time = self.next_time();
@@ -281,7 +281,7 @@ impl MemoryBackend {
         }
     }
 
-    /// [`GitBackend::stash_apply`]. A refusal changes nothing.
+    /// [`GitStash::stash_apply`]. A refusal changes nothing.
     pub(super) fn apply_stash(
         &mut self,
         request: &StashApply,
@@ -290,29 +290,7 @@ impl MemoryBackend {
         let stash = self.stashes[position].clone();
         let status = self.status()?;
         check_stash_apply(request.command, &status)?;
-        let (tracked, untracked) = stash.targets();
-        // A staged file with the same index entry the stash saved, and that in the stash
-        // had no unstaged changes, already has the stash's version.
-        let in_stash = |path: &RepoPath, mode: u32, oid: Oid| {
-            stash.saved.iter().any(|e| {
-                e.path == *path
-                    && e.worktree == Change::Unmodified
-                    && tracked_info(e).is_some_and(|i| i.mode_index == mode && i.oid_index == oid)
-            })
-        };
-        let mut blocked = stash_local_changes(&status, &tracked, &untracked, in_stash);
-        for p in &untracked {
-            if self.worktree.contains_key(p) && !blocked.contains(&p.to_string()) {
-                blocked.push(p.to_string());
-            }
-        }
-        if !blocked.is_empty() {
-            return Err(stash_blocked(
-                request.command,
-                &format!("stash@{{{position}}}"),
-                &blocked,
-            ));
-        }
+        self.check_stash_targets(request.command, position, &stash, &status)?;
         let head_tree = self.head_tree();
         let base_tree = self.tree_at(stash.parents[0]);
         let mut conflicts = Vec::new();
@@ -336,32 +314,7 @@ impl MemoryBackend {
             };
             let moved = |p: &RepoPath| head_tree.get(p) != base_tree.get(p);
             if moved(&saved.path) || original.as_ref().is_some_and(moved) {
-                let ours = head_tree.get(&saved.path).copied().unwrap_or((0, ZERO));
-                let base = base_tree.get(&saved.path).copied().unwrap_or((0, ZERO));
-                let theirs = match &content {
-                    Some(c) => (info.mode_worktree, self.store_blob(c.clone())),
-                    None => (0, ZERO),
-                };
-                self.entries.push(StatusEntry {
-                    path: saved.path.clone(),
-                    index: Change::Unmerged,
-                    worktree: Change::Unmerged,
-                    kind: EntryKind::Unmerged(UnmergedInfo {
-                        conflict: Conflict::BothModified,
-                        submodule: None,
-                        mode_base: base.0,
-                        mode_ours: ours.0,
-                        mode_theirs: theirs.0,
-                        mode_worktree: info.mode_worktree,
-                        oid_base: base.1,
-                        oid_ours: ours.1,
-                        oid_theirs: theirs.1,
-                    }),
-                });
-                match content {
-                    Some(c) => self.worktree.insert(saved.path.clone(), c),
-                    None => self.worktree.remove(&saved.path),
-                };
+                self.restore_conflicted(saved, &info, content, &head_tree, &base_tree);
                 conflicts.push(saved.path.to_string());
                 continue;
             }
@@ -373,65 +326,7 @@ impl MemoryBackend {
                 self.entries.push(saved.clone());
                 continue;
             }
-            // Without `restore_index` the index stays as HEAD, except for new files, which git
-            // leaves staged with the worktree content.
-            if let Some(original) = &original
-                && let Some((mode, oid)) = head_tree.get(original).copied()
-            {
-                let entry = StatusEntry {
-                    path: original.clone(),
-                    index: Change::Unmodified,
-                    worktree: Change::Deleted,
-                    kind: EntryKind::Ordinary(TrackedInfo {
-                        submodule: None,
-                        mode_head: mode,
-                        mode_index: mode,
-                        mode_worktree: 0,
-                        oid_head: oid,
-                        oid_index: oid,
-                    }),
-                };
-                self.worktree.remove(original);
-                self.entries.push(entry);
-            }
-            let (mode_head, oid_head) = head_tree.get(&saved.path).copied().unwrap_or((0, ZERO));
-            let absent = info.mode_worktree == 0 || saved.worktree == Change::Deleted;
-            let mut next = TrackedInfo {
-                submodule: info.submodule,
-                mode_head,
-                mode_index: mode_head,
-                mode_worktree: if absent { 0 } else { info.mode_worktree },
-                oid_head,
-                oid_index: oid_head,
-            };
-            let worktree = if mode_head == 0 {
-                if absent {
-                    continue;
-                }
-                next.mode_index = info.mode_worktree;
-                next.oid_index = match &content {
-                    Some(c) => self.store_blob(c.clone()),
-                    None => MemoryBackend::fake_oid(u64::MAX),
-                };
-                Change::Unmodified
-            } else if absent {
-                Change::Deleted
-            } else if file_type(info.mode_worktree) != file_type(mode_head) {
-                Change::TypeChanged
-            } else if info.mode_worktree == mode_head
-                && content.as_ref() == self.blobs.get(&oid_head)
-            {
-                Change::Unmodified
-            } else {
-                Change::Modified
-            };
-            let entry = StatusEntry {
-                path: saved.path.clone(),
-                index: Change::Unmodified,
-                worktree,
-                kind: EntryKind::Ordinary(next.clone()),
-            };
-            self.entries.extend(self.finish(entry, next));
+            self.restore_unstaged(saved, &info, original.as_ref(), content, &head_tree);
         }
         self.entries
             .sort_by(|a, b| entry_order(a).cmp(&entry_order(b)));
@@ -441,13 +336,152 @@ impl MemoryBackend {
         })
     }
 
+    /// The stash's files must not hold local changes, and its untracked ones must not exist.
+    fn check_stash_targets(
+        &self,
+        command: &'static str,
+        position: usize,
+        stash: &MemoryStash,
+        status: &Status,
+    ) -> Result<(), EngineError> {
+        let (tracked, untracked) = stash.targets();
+        // A staged file with the same index entry the stash saved, and that in the stash
+        // had no unstaged changes, already has the stash's version.
+        let in_stash = |path: &RepoPath, mode: u32, oid: Oid| {
+            stash.saved.iter().any(|e| {
+                e.path == *path
+                    && e.worktree == Change::Unmodified
+                    && tracked_info(e).is_some_and(|i| i.mode_index == mode && i.oid_index == oid)
+            })
+        };
+        let mut blocked = stash_local_changes(status, &tracked, &untracked, in_stash);
+        for p in &untracked {
+            if self.worktree.contains_key(p) && !blocked.contains(&p.to_string()) {
+                blocked.push(p.to_string());
+            }
+        }
+        if !blocked.is_empty() {
+            return Err(stash_blocked(
+                command,
+                &format!("stash@{{{position}}}"),
+                &blocked,
+            ));
+        }
+        Ok(())
+    }
+
+    /// A file of the stash that HEAD also changed relative to the base: always a conflict, with
+    /// the stash content in the worktree.
+    fn restore_conflicted(
+        &mut self,
+        saved: &StatusEntry,
+        info: &TrackedInfo,
+        content: Option<Vec<u8>>,
+        head_tree: &Tree,
+        base_tree: &Tree,
+    ) {
+        let ours = head_tree.get(&saved.path).copied().unwrap_or((0, ZERO));
+        let base = base_tree.get(&saved.path).copied().unwrap_or((0, ZERO));
+        let theirs = match &content {
+            Some(c) => (info.mode_worktree, self.store_blob(c.clone())),
+            None => (0, ZERO),
+        };
+        self.entries.push(StatusEntry {
+            path: saved.path.clone(),
+            index: Change::Unmerged,
+            worktree: Change::Unmerged,
+            kind: EntryKind::Unmerged(UnmergedInfo {
+                conflict: Conflict::BothModified,
+                submodule: None,
+                mode_base: base.0,
+                mode_ours: ours.0,
+                mode_theirs: theirs.0,
+                mode_worktree: info.mode_worktree,
+                oid_base: base.1,
+                oid_ours: ours.1,
+                oid_theirs: theirs.1,
+            }),
+        });
+        match content {
+            Some(c) => self.worktree.insert(saved.path.clone(), c),
+            None => self.worktree.remove(&saved.path),
+        };
+    }
+
+    /// Without `restore_index` the index stays as HEAD, except for new files, which git
+    /// leaves staged with the worktree content.
+    fn restore_unstaged(
+        &mut self,
+        saved: &StatusEntry,
+        info: &TrackedInfo,
+        original: Option<&RepoPath>,
+        content: Option<Vec<u8>>,
+        head_tree: &Tree,
+    ) {
+        if let Some(original) = original
+            && let Some((mode, oid)) = head_tree.get(original).copied()
+        {
+            let entry = StatusEntry {
+                path: original.clone(),
+                index: Change::Unmodified,
+                worktree: Change::Deleted,
+                kind: EntryKind::Ordinary(TrackedInfo {
+                    submodule: None,
+                    mode_head: mode,
+                    mode_index: mode,
+                    mode_worktree: 0,
+                    oid_head: oid,
+                    oid_index: oid,
+                }),
+            };
+            self.worktree.remove(original);
+            self.entries.push(entry);
+        }
+        let (mode_head, oid_head) = head_tree.get(&saved.path).copied().unwrap_or((0, ZERO));
+        let absent = info.mode_worktree == 0 || saved.worktree == Change::Deleted;
+        let mut next = TrackedInfo {
+            submodule: info.submodule,
+            mode_head,
+            mode_index: mode_head,
+            mode_worktree: if absent { 0 } else { info.mode_worktree },
+            oid_head,
+            oid_index: oid_head,
+        };
+        let worktree = if mode_head == 0 {
+            if absent {
+                return;
+            }
+            next.mode_index = info.mode_worktree;
+            next.oid_index = match &content {
+                Some(c) => self.store_blob(c.clone()),
+                None => MemoryBackend::fake_oid(u64::MAX),
+            };
+            Change::Unmodified
+        } else if absent {
+            Change::Deleted
+        } else if file_type(info.mode_worktree) != file_type(mode_head) {
+            Change::TypeChanged
+        } else if info.mode_worktree == mode_head && content.as_ref() == self.blobs.get(&oid_head) {
+            Change::Unmodified
+        } else {
+            Change::Modified
+        };
+        let entry = StatusEntry {
+            path: saved.path.clone(),
+            index: Change::Unmodified,
+            worktree,
+            kind: EntryKind::Ordinary(next.clone()),
+        };
+        self.entries.extend(self.finish(entry, next));
+    }
+
     /// Simulates a `git stash drop` that fails (with `Some`): to test a pop that applies the
     /// stash and then fails to remove it.
     pub fn fail_stash_drop(&mut self, message: Option<&str>) {
         self.stash_drop_failure = message.map(str::to_owned);
     }
 
-    /// [`GitBackend::stash_drop`]: the backup goes in `commit_backups`
+    /// [`GitStash::stash_drop`]: the backup goes in `commit_backups`
     /// (`refs/project/backup/<kind>-<n>`).
     pub(super) fn drop_stash(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
         let position = self.stash_position(request.command, &request.id)?;
@@ -477,7 +511,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::stash_store`]: a dropped stash comes back on top with its files; any
+    /// [`GitStash::stash_store`]: a dropped stash comes back on top with its files; any
     /// commit as a stash without files.
     pub(super) fn store_stash(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         let mut stash = match self.dropped_stashes.get(id).cloned() {

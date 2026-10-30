@@ -14,7 +14,7 @@ pub struct BlameQuery {
     pub rev: Option<String>,
 }
 
-/// The result of [`GitBackend::blame`](super::GitBackend::blame): the [`Blame`] with the
+/// The result of [`GitRead::blame`](super::GitRead::blame): the [`Blame`] with the
 /// requested path and the commit `rev` resolved to (`None` for the worktree).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileBlame {
@@ -24,7 +24,7 @@ pub struct FileBlame {
     pub rev: Option<Oid>,
 }
 
-/// A page of the history of one file ([`GitBackend::file_log`](super::GitBackend::file_log)).
+/// A page of the history of one file ([`GitRead::file_log`](super::GitRead::file_log)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileLogQuery {
     pub path: RepoPath,
@@ -69,11 +69,12 @@ pub fn blame_binary(path: &RepoPath) -> EngineError {
 }
 
 /// True if `content` is binary for git: a NUL in the first 8000 bytes.
+#[cfg(any(test, feature = "test-support"))]
 pub fn is_binary_content(content: &[u8]) -> bool {
     content.iter().take(8000).any(|&b| b == 0)
 }
 
-/// True if the file the blame describes is binary ([`is_binary_content`] on its lines).
+/// True if the file the blame describes is binary (`is_binary_content` on its lines).
 pub fn blame_is_binary(blame: &Blame) -> bool {
     let mut seen = 0usize;
     for line in &blame.lines {

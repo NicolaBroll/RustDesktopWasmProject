@@ -332,11 +332,13 @@ Result of undo and redo: `{"undone"|"redone": entry, "backups", "warnings", "sta
 example HEAD changed by another process during the undo itself). During a merge, rebase,
 cherry-pick, revert, bisect or `git am` undo and redo are refused.
 
-The MCP server exposes `list_commands`, `execute_command` and `open_repo`; `list_commands` reports
-`writes: true` for the commands that modify the repository. At startup it opens the
+The MCP server exposes `list_commands`, `execute_command` and `open_repo`; `list_commands` gives
+for every command the JSON Schema of its parameters (`params`, also in `project-cli commands
+--json`) and reports `writes: true` for the commands that modify the repository. At startup it opens the
 repository of `--root` (default: current directory), if there is one. All paths are confined to
 `--root`, including the repository search (git does not climb above the root); a repository is
-opened only with `open_repo`, not with `repo.open`.
+opened only with `open_repo`: the commands with `outside_repo: true` (`repo.open`, `repo.clone`,
+`repo.init`) are refused by `execute_command`.
 
 ## Quality
 

@@ -5,7 +5,7 @@ mod common;
 
 use common::{Repo, repo_with_changes, repo_with_merge_conflict, repo_with_special_names};
 use project_domain::{EntryKind, Operation, RepoPath, Status};
-use project_engine::{DiffSpec, EngineError, GitBackend, Registry, Session};
+use project_engine::{DiffSpec, EngineError, GitIndex, GitRead, Registry, Session};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;

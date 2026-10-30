@@ -1,6 +1,7 @@
 //! Tests of `commit` on the `MemoryBackend`.
 
 use super::*;
+use crate::GitIndex;
 use crate::{DiffSpec, LogQuery};
 use project_domain::Head;
 

@@ -10,7 +10,7 @@ commit-blocked-am = `git am` in corso: si conclude con `git am --continue`, non 
 commit-blocked-operation = Un'operazione in corso impedisce il commit
 commit-blocked-no-commit = Non c'è ancora un commit da modificare
 commit-blocked-nothing-staged = Niente in stage: mettere in stage le modifiche da committare (oppure attivare amend per cambiare solo il messaggio dell'ultimo commit)
-commit-blocked-no-message = Scrivere il messaggio del commit
+commit-blocked-no-message = Scrivi il messaggio del commit
 commit-amend-label = Amend dell'ultimo commit
 commit-label = Commit
 commit-unchanged = Nessun cambiamento: l'ultimo commit { $id } è rimasto uguale
@@ -21,7 +21,6 @@ commit-also-on = ; il commit precedente resta su { $refs }
 commit-git-failed = git commit non riuscito: un hook (pre-commit, commit-msg…), la firma o l'identità (user.name, user.email) hanno fermato il commit. Il messaggio scritto è conservato. Output di git:
 commit-no-output = (nessun output)
 commit-failed-kept = Commit non riuscito: { $error } Il messaggio scritto è conservato.
-commit-unexpected-result = { $command }: risultato inatteso: { $error }
 commit-failed = Commit non riuscito: { $error }
 
 # Commit list and commit menu (view/commits.rs).

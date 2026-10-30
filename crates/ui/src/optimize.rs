@@ -5,11 +5,23 @@
 //! `repo.optimize` is a write ([`CommandSpec::writes`](project_engine::CommandSpec)): while it
 //! runs the other writes and "Refresh" are disabled; it is not offered while another write runs.
 
-use crate::{Action, Done, ErrorKind, Request, Tab, Ticket};
+use crate::running::Running;
+use crate::{Done, ErrorKind, Request, Tab, Ticket};
+use project_engine::RepoOptimizeResult;
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// "Optimize" in the commit-graph notice: `repo.optimize` in the background.
+    Optimize,
+    /// "Stop" the `repo.optimize` in progress.
+    Cancel,
+    /// "Not now" in the commit-graph notice: hidden for this repo view.
+    Dismiss,
+}
 
 /// The id of the Registry command.
 pub const COMMAND: &str = "repo.optimize";
@@ -36,14 +48,6 @@ enum FirstPage {
     Took(Duration),
 }
 
-/// `repo.optimize` in progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: Ticket,
-    /// True after "Stop", until the command answers.
-    pub cancelling: bool,
-}
-
 /// The offer of `repo.optimize` for the repo of the tab.
 #[derive(Debug, Default)]
 pub struct OptimizeBox {
@@ -66,11 +70,6 @@ pub enum Received {
     Cancelled,
     /// Failed or refused: the message for the status bar (also kept in the notice).
     Failed(String),
-}
-
-#[derive(Deserialize)]
-struct OptimizeResult {
-    commit_graph: bool,
 }
 
 impl OptimizeBox {
@@ -143,17 +142,12 @@ impl OptimizeBox {
     /// The command requested with [`OptimizeBox::request`] started with `ticket`.
     pub fn started(&mut self, ticket: Ticket) {
         self.error = None;
-        self.running = Some(Running {
-            ticket,
-            cancelling: false,
-        });
+        self.running = Some(Running::new(ticket));
     }
 
     /// "Stop": the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
-        let running = self.running.as_mut().filter(|r| !r.cancelling)?;
-        running.cancelling = true;
-        Some(running.ticket)
+        self.running.as_mut()?.cancel()
     }
 
     /// The response of `repo.optimize` for `ticket`; `detail`: git's text, if any.
@@ -168,22 +162,18 @@ impl OptimizeBox {
             Some(running) if running.ticket == ticket => {}
             other => {
                 self.running = other;
-                return Received::Failed(tr!("optimize-unexpected-response", command = COMMAND));
+                return Received::Failed(tr!("common-unexpected-response", command = COMMAND));
             }
         }
         let error = match result {
-            Ok(value) => match serde_json::from_value::<OptimizeResult>(value) {
+            Ok(value) => match serde_json::from_value::<RepoOptimizeResult>(value) {
                 Ok(result) => {
                     self.commit_graph = result.commit_graph;
                     // Hidden even if git wrote nothing (a repo without commits).
                     self.dismissed = true;
                     return Received::Done;
                 }
-                Err(e) => tr!(
-                    "common-unexpected-result",
-                    command = COMMAND,
-                    error = e.to_string()
-                ),
+                Err(e) => crate::unexpected_result(COMMAND, e),
             },
             Err(_) if kind == Some(ErrorKind::Cancelled) => return Received::Cancelled,
             Err(error) => match detail {
@@ -222,17 +212,16 @@ impl Tab {
                     repo.optimize.started(ticket);
                 }
             }
-            Action::CancelOptimize => {
+            Action::Cancel => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.optimize.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::DismissOptimize => {
+            Action::Dismiss => {
                 if let Some(repo) = &mut self.repo {
                     repo.optimize.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 

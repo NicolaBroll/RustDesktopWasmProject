@@ -48,19 +48,20 @@
 
 use super::CliBackend;
 use crate::command::{failure, path_from_output};
+use project_domain::HEADS_PREFIX;
 use project_domain::Oid;
 use project_engine::Message;
 use project_engine::{EngineError, HeadState, RefMove, RefRestore, RestoreOutcome};
 use std::collections::BTreeSet;
 
 impl CliBackend {
-    /// [`GitBackend::restore_refs`](project_engine::GitBackend::restore_refs).
+    /// [`GitRefs::restore_refs`](project_engine::GitRefs::restore_refs).
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
         request.check(self.operation())?;
         // A branch open in another worktree is not deleted (e.g. redo of `branch.delete`).
         for r in &request.refs {
             if r.target.is_none()
-                && r.name.starts_with("refs/heads/")
+                && r.name.starts_with(HEADS_PREFIX)
                 && let Some(path) = self.checked_out_elsewhere(&r.name)?
             {
                 return Err(EngineError::NotAllowed(msg!(

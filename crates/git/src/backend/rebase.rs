@@ -7,8 +7,10 @@
 //!
 //! `git -c core.fsmonitor=false -c rebase.updateRefs=false -c rebase.abbreviateCommands=false -c
 //! rebase.missingCommitsCheck=error -c rebase.instructionFormat= -c sequence.editor= rebase -i
-//! --no-autostash --no-autosquash --no-update-refs --no-rerere-autoupdate --empty=keep
-//! --keep-empty --end-of-options <base>`
+//! --no-autostash --no-autosquash --no-rerere-autoupdate --empty=keep --keep-empty
+//! --end-of-options <base>`
+//!
+//! (`rebase.updateRefs=false` and not `--no-update-refs`, which git 2.30 does not know).
 //!
 //! with `GIT_EDITOR=:` (git keeps its default messages) and `GIT_REFLOG_ACTION=project: <id>`.
 //! A `reword`, and a group with a message, is followed by a `break`: at each of these stops the
@@ -231,7 +233,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::rebase`](project_engine::GitBackend::rebase).
+    /// [`GitOperations::rebase`](project_engine::GitOperations::rebase).
     pub(super) fn rebase_onto_base(
         &mut self,
         request: &RebaseRequest,
@@ -295,7 +297,6 @@ impl CliBackend {
             "-i",
             "--no-autostash",
             "--no-autosquash",
-            "--no-update-refs",
             "--no-rerere-autoupdate",
             "--empty=keep",
             "--keep-empty",
@@ -372,7 +373,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::rebase_continue`](project_engine::GitBackend::rebase_continue).
+    /// [`GitOperations::rebase_continue`](project_engine::GitOperations::rebase_continue).
     pub(super) fn rebase_go_on(&mut self) -> Result<MergeOutcome, EngineError> {
         let status = self.status_for_write()?;
         project_engine::check_rebasing("rebase.continue", &status)?;
@@ -386,7 +387,7 @@ impl CliBackend {
         self.check_index_unlocked()?;
         let state = self.read_operation_state();
         let mut record = state.rebase.clone();
-        let branch = state.rebase_branch.clone();
+        let branch = state.rebase_branch;
         let (last, _, breaks) = self.rebase_done();
         let pending = record
             .as_ref()
@@ -456,7 +457,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::rebase_abort`](project_engine::GitBackend::rebase_abort).
+    /// [`GitOperations::rebase_abort`](project_engine::GitOperations::rebase_abort).
     pub(super) fn abort_rebase(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         project_engine::check_rebasing("rebase.abort", &status)?;

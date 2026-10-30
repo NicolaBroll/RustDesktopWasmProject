@@ -25,10 +25,7 @@ fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
 
 /// All the refs with their value (`for-each-ref`) and HEAD, to check that nothing changes.
 fn refs(repo: &Repo) -> String {
-    let head = repo
-        .git_output(&["symbolic-ref", "-q", "HEAD"])
-        .stdout
-        .clone();
+    let head = repo.git_output(&["symbolic-ref", "-q", "HEAD"]).stdout;
     format!(
         "{}\nHEAD -> {}{}",
         repo.git(&["for-each-ref", "--format=%(refname) %(objectname)"]),

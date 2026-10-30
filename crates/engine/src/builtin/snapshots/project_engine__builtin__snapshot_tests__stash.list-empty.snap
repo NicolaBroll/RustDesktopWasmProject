@@ -1,0 +1,7 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "stashes": []
+}

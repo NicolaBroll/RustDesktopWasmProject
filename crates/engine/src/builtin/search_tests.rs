@@ -4,8 +4,8 @@
 //! renamed to `src/bin/app.rs` in 12) plus commit 14 on the unmerged branch `wip`.
 
 use crate::{
-    CancelToken, EngineError, GitBackend, JobContext, LogQuery, MemoryBackend, MemoryOpener,
-    Registry, Session,
+    CancelToken, EngineError, GitRead, JobContext, LogQuery, MemoryBackend, MemoryOpener, Registry,
+    Session,
 };
 use project_domain::{Commit, Oid, Signature};
 use serde_json::{Value, json};
@@ -44,21 +44,16 @@ fn opened() -> (Registry, Session) {
     (r, s)
 }
 
+/// The page of `repo.search`, read through the typed result [`RepoSearchResult`](crate::RepoSearchResult)
+/// (which gives the same JSON again: the UI deserializes into it).
 fn search(r: &Registry, s: &mut Session, params: Value) -> (Vec<Oid>, u64, bool) {
     let out = r
         .run("repo.search", s, params)
         .unwrap_or_else(|e| panic!("{e}"));
-    let ids = out["ids"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap().parse().unwrap())
-        .collect();
-    (
-        ids,
-        out["total"].as_u64().unwrap(),
-        out["has_more"].as_bool().unwrap(),
-    )
+    let typed: crate::RepoSearchResult = serde_json::from_value(out.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+    let total = u64::try_from(typed.total).unwrap();
+    (typed.ids, total, typed.has_more)
 }
 
 fn ids(r: &Registry, s: &mut Session, params: Value) -> Vec<Oid> {

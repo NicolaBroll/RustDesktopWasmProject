@@ -457,3 +457,127 @@ fn continue_resolved_as_head_points_to_abort() {
     assert!(err.to_string().contains("cherry_pick.abort"), "{err}");
     assert_eq!(status(&r, &mut s)["operation"], "CherryPick");
 }
+
+fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+    let typed: T = serde_json::from_value(out.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+    typed
+}
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them. `*.continue` and `*.abort` have the shape of `merge.continue` and
+/// `merge.abort`.
+#[test]
+fn results_round_trip() {
+    use crate::{MergeAbortResult, MergeContinueResult, PickStartResult};
+    // Concluded right away.
+    let (r, mut s) = opened_with(repo());
+    let out = run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "feat" }));
+    assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());
+    let done: PickStartResult = same(out);
+    assert_eq!(done.rev, "feat");
+    assert_eq!(done.commit, oid(4));
+    assert_eq!(done.summary, "new");
+    assert_eq!(done.mainline, None);
+    assert_eq!(done.branch, "main");
+    assert_eq!(done.before, oid(2));
+    assert!(!done.in_progress && done.journal.can_undo);
+    assert_eq!(done.backup, "refs/project/backup/cherry-pick-1");
+    let merged: PickStartResult = same(run(
+        &r,
+        &mut s,
+        "commit.revert",
+        json!({ "rev": "merged", "mainline": 1 }),
+    ));
+    assert_eq!(merged.mainline, Some(1));
+
+    // Cherry-pick stopped, then continued.
+    let (r, mut s) = opened_with(repo());
+    let stopped: PickStartResult = same(run(
+        &r,
+        &mut s,
+        "commit.cherry_pick",
+        json!({ "rev": "other" }),
+    ));
+    assert!(stopped.in_progress && !stopped.journal.can_undo);
+    assert_eq!(stopped.conflicts, vec![RepoPath::from("a.txt")]);
+    assert_eq!(stopped.after, oid(2));
+    run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
+    let out = run(&r, &mut s, "cherry_pick.continue", json!({}));
+    assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());
+    let done: MergeContinueResult = same(out);
+    assert_eq!(done.message, "theirs");
+    assert_eq!(done.previous, Some(oid(2)));
+    assert_eq!(done.branch.as_deref(), Some("refs/heads/main"));
+    assert_eq!(done.backup, None);
+    assert!(done.also_on.is_empty() && done.journal.can_undo);
+
+    // Revert stopped, continued with a message; another one stopped and aborted.
+    let mut base = repo();
+    base.set_branch("main", oid(5));
+    let (r, mut s) = opened_with(base);
+    run(
+        &r,
+        &mut s,
+        "commit.revert",
+        json!({ "rev": oid(2).to_string() }),
+    );
+    run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
+    let done: MergeContinueResult = same(run(
+        &r,
+        &mut s,
+        "revert.continue",
+        json!({ "message": "Undo ours" }),
+    ));
+    assert_eq!(done.message, "Undo ours");
+    assert_eq!(done.commit.parents, vec![oid(5)]);
+    run(&r, &mut s, "commit.cherry_pick", json!({ "rev": "other" }));
+    let aborted: MergeAbortResult = same(run(
+        &r,
+        &mut s,
+        "cherry_pick.abort",
+        json!({ "confirm": true }),
+    ));
+    assert_eq!(aborted.backup, "refs/project/backup/cherry-pick-abort-1");
+    assert_eq!(aborted.files, vec![RepoPath::from("a.txt")]);
+    assert!(aborted.status.is_some_and(|s| s.operation.is_none()));
+}
+
+/// A re-read that fails gives `null` and `<key>_error`.
+#[test]
+fn reread_error_fields() {
+    use super::super::{JournalState, reread};
+    use crate::{Message, PickStartResult};
+    use project_domain::{RefInfo, Status};
+    let error = EngineError::NoRepo.to_string();
+    let (status, status_error) = reread::<Status>(Err(EngineError::NoRepo));
+    let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+    let result = PickStartResult {
+        rev: "feat".into(),
+        commit: oid(4),
+        summary: "new".into(),
+        mainline: Some(2),
+        branch: "main".into(),
+        before: oid(2),
+        after: oid(9),
+        in_progress: false,
+        conflicts: vec![],
+        message: String::new(),
+        backup: "refs/project/backup/cherry-pick-1".into(),
+        warnings: vec![Message::plain("w")],
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    for key in ["status", "refs", "next_undo", "next_redo"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["mainline"], 2);
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: PickStartResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
+}

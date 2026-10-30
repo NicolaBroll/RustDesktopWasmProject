@@ -1,8 +1,10 @@
 //! The "Settings…" window (S49): the sections on the left, the one chosen on the right. Every
-//! change is applied at once (no "Save"): it leaves as an [`Action::Setting`].
+//! change is applied at once (no "Save"): it leaves as an [`settings::Action::Change`].
 
 use super::*;
-use crate::settings::{Change, FetchInterval, Language, Section, Settings, SettingsBox, Theme};
+use crate::settings::{
+    self, Change, FetchInterval, Language, Section, Settings, SettingsBox, Theme,
+};
 use project_i18n::Lang;
 
 /// Width of the column with the sections.
@@ -57,7 +59,7 @@ pub(crate) fn settings_window(
                         .selectable_label(window.section == section, label)
                         .clicked()
                     {
-                        actions.push(Action::SettingsSection(section));
+                        actions.push(Action::Settings(settings::Action::Section(section)));
                     }
                 }
             });
@@ -84,7 +86,7 @@ pub(crate) fn settings_window(
             .1
     });
     if modal.inner || modal.should_close() {
-        actions.push(Action::CloseSettings);
+        actions.push(Action::Settings(settings::Action::Close));
     }
 }
 
@@ -98,7 +100,9 @@ fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 .clicked()
                 && settings.theme != theme
             {
-                actions.push(Action::Setting(Change::Theme(theme)));
+                actions.push(Action::Settings(settings::Action::Change(Change::Theme(
+                    theme,
+                ))));
             }
         }
     });
@@ -111,7 +115,9 @@ fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 .clicked()
                 && settings.language != language
             {
-                actions.push(Action::Setting(Change::Language(language)));
+                actions.push(Action::Settings(settings::Action::Change(
+                    Change::Language(language),
+                )));
             }
         }
     });
@@ -135,7 +141,9 @@ fn remotes(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 .clicked()
                 && settings.fetch_minutes != interval
             {
-                actions.push(Action::Setting(Change::FetchInterval(interval)));
+                actions.push(Action::Settings(settings::Action::Change(
+                    Change::FetchInterval(interval),
+                )));
             }
         }
     });

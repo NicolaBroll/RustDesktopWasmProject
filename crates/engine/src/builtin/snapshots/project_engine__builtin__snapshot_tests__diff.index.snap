@@ -1,0 +1,159 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "files": [
+    {
+      "binary": false,
+      "change": "Modified",
+      "digest": "3dad6358dc2d5711d4cb7ac6ac600441",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "README.md",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "last change: commit 6",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "last change: staged change",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "# README",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            },
+            {
+              "content": "Project documentation.",
+              "kind": "Context",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": 6
+            },
+            {
+              "content": "line added by: commit 6",
+              "kind": "Context",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": 7
+            },
+            {
+              "content": "line added by: staged change",
+              "kind": "Added",
+              "new_line": 8,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 8,
+          "new_start": 1,
+          "old_count": 7,
+          "old_start": 1,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+      "new_path": "README.md",
+      "old_mode": 33188,
+      "old_oid": "01ec15ea7c697801b681b130ce80dd309c16db62",
+      "old_path": "README.md",
+      "similarity": null
+    },
+    {
+      "binary": false,
+      "change": "Added",
+      "digest": "a58af1ad5f87854974ec19eac5382e3f",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "docs/guide.md",
+              "kind": "Added",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "last change: staged change",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Added",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "# guide",
+              "kind": "Added",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Added",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "Project documentation.",
+              "kind": "Added",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 6,
+          "new_start": 1,
+          "old_count": 0,
+          "old_start": 0,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "01eab141a7d7a84cf61ca1c5df7291b4aea79d9b",
+      "new_path": "docs/guide.md",
+      "old_mode": null,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "old_path": "docs/guide.md",
+      "similarity": null
+    }
+  ]
+}

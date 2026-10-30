@@ -1,474 +1,593 @@
 //! Catalog of the built-in commands.
 
-mod branch;
-mod clone;
-mod conflict;
-mod file;
-mod merge;
-mod pick;
-mod pull;
-mod push;
-mod rebase;
-mod remote;
-mod remote_branch;
-mod remote_tag;
-mod remotes;
-mod reset;
-mod search;
-mod stash;
-mod tag;
+pub(crate) mod branch;
+pub(crate) mod clone;
+pub(crate) mod commit;
+pub(crate) mod conflict;
+pub(crate) mod discard;
+pub(crate) mod edit;
+pub(crate) mod file;
+pub(crate) mod merge;
+pub(crate) mod pick;
+pub(crate) mod pull;
+pub(crate) mod push;
+pub(crate) mod rebase;
+pub(crate) mod remote;
+pub(crate) mod remote_branch;
+pub(crate) mod remote_tag;
+pub(crate) mod remotes;
+pub(crate) mod reset;
+pub(crate) mod search;
+pub(crate) mod stage;
+pub(crate) mod stash;
+pub(crate) mod tag;
 
-use crate::commands::parse_params;
 use crate::{
-    CommandSpec, CommitRequest, DiffSpec, EngineError, HeadState, Journal, JournalEntry,
-    LineSelection, LogQuery, Registry, RestoreOutcome, Session, commit_graph_disabled,
-    commit_graph_replaced, commit_graph_shallow, discard_plan, file_digest,
+    Access::{Read, Write},
+    DiffSpec, EngineError, Journal, LogQuery, Message, Registry, Session, commit_graph_disabled,
+    commit_graph_replaced, commit_graph_shallow, file_digest,
 };
-use project_domain::{Diff, LineRef, PatchDirection, RepoPath};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Commit, Diff, FileDiff, Head, RepoPath};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Commits returned by `repo.log` when `limit` is missing.
 pub const DEFAULT_LOG_LIMIT: usize = 200;
 
 impl Registry {
-    /// Registry with all the built-in commands.
+    /// Registry with all the built-in commands, in the order of the catalog.
     pub fn builtin() -> Self {
         let mut r = Self::default();
-        let mut add = |id, title, params_help, handler| {
-            r.register(
-                CommandSpec {
-                    id,
-                    title,
-                    params_help,
-                    writes: WRITES.contains(&id),
-                },
-                handler,
-            )
-        };
-        add(
+        r.add_repo();
+        r.add_changes();
+        r.add_refs();
+        r.add_remotes();
+        r.add_stashes();
+        r.add_merges();
+        r.add_rebase();
+        r.add_edit();
+        r
+    }
+
+    /// The repo, its history and the diffs.
+    fn add_repo(&mut self) {
+        self.add(
             "repo.open",
             "Open repository",
             r#"{"path": string}"#,
+            Read,
             repo_open,
-        );
-        add(
+        )
+        .takes_paths_outside_repo();
+        self.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
             r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
+            Write,
             clone::repo_clone,
-        );
-        add(
+        )
+        .takes_paths_outside_repo();
+        self.add(
             "repo.init",
             "New empty repository in an absent or empty folder, then open it",
             r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
+            Write,
             clone::repo_init,
+        )
+        .takes_paths_outside_repo();
+        self.add("repo.status", "Repository status", "{}", Read, repo_status);
+        self.add(
+            "repo.refs",
+            "Branches, tags and stashes",
+            "{}",
+            Read,
+            repo_refs,
         );
-        add("repo.status", "Repository status", "{}", repo_status);
-        add("repo.refs", "Branches, tags and stashes", "{}", repo_refs);
-        add(
+        self.add(
             "repo.operation",
             "Operation in progress (merge, rebase...) and conflicted files",
             "{}",
+            Read,
             merge::repo_operation,
         );
-        add(
+        self.add(
             "repo.log",
             "Commit history",
             r#"{"skip"?: number, "limit"?: number (200), "rev"?: string, "all"?: bool, "stashes"?: bool (with all: also the stash bases)}"#,
+            Read,
             repo_log,
         );
-        add(
+        self.add(
             "repo.search",
             "Commits whose message, author or id contains a text (literal, case-insensitive), in the order of repo.log",
             r#"{"query": string, "in"?: ["message" | "author" | "id"] (all three), "path"?: path (only commits touching it, no rename following), "all"?: bool, "stashes"?: bool (as in repo.log), "skip"?: number, "limit"?: number (200)} -> {"ids", "total", "has_more"}"#,
+            Read,
             search::repo_search,
         );
-        add(
+        self.add(
             "repo.optimize",
             "Write the commit-graph (fast history on huge repos)",
             "{}",
+            Write,
             repo_optimize,
         );
-        add(
+        self.add(
             "commit.show",
             "Commit details",
             r#"{"id": string}"#,
+            Read,
             commit_show,
         );
-        add(
+        self.add(
             "file.blame",
             "Who last changed each line of a file",
             r#"{"path": path, "rev"?: string (without: the worktree, uncommitted lines have commit null)}"#,
+            Read,
             file::file_blame,
         );
-        add(
+        self.add(
             "file.log",
             "Commits that change a file",
             r#"{"path": path, "rev"?: string, "skip"?: number, "limit"?: number (200), "follow"?: bool (true: across renames)}"#,
+            Read,
             file::file_log,
         );
-        add(
+        self.add(
             "diff.worktree",
             "Diff of the unstaged changes",
             r#"{"path"?: path}"#,
+            Read,
             diff_worktree,
         );
-        add(
+        self.add(
             "diff.index",
             "Diff of the staged changes",
             r#"{"path"?: path}"#,
+            Read,
             diff_index,
         );
-        add(
+        self.add(
             "diff.commit",
             "Commit diff",
             r#"{"id": string, "path"?: path}"#,
+            Read,
             diff_commit,
         );
-        add(
+    }
+
+    /// Stage, commit and discard.
+    fn add_changes(&mut self) {
+        self.add(
             "index.stage",
             "Stage files",
             r#"{"paths": [path, ...]}"#,
-            index_stage,
+            Write,
+            stage::index_stage,
         );
-        add(
+        self.add(
             "index.unstage",
             "Unstage files",
             r#"{"paths": [path, ...]}"#,
-            index_unstage,
+            Write,
+            stage::index_unstage,
         );
-        add(
+        self.add(
             "index.stage_lines",
             "Stage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.worktree)}"#,
-            index_stage_lines,
+            Write,
+            stage::index_stage_lines,
         );
-        add(
+        self.add(
             "index.unstage_lines",
             "Unstage the chosen lines",
             r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.index)}"#,
-            index_unstage_lines,
+            Write,
+            stage::index_unstage_lines,
         );
-        add(
+        self.add(
             "commit.create",
             "Commit the staged changes",
             r#"{"message": string, "amend"?: bool, "confirm"?: bool (amend of a published commit)}"#,
-            commit_create,
+            Write,
+            commit::commit_create,
         );
-        add(
+        self.add(
             "worktree.discard",
             "Discard the unstaged changes",
             r#"{"paths": [path, ...], "confirm": true}"#,
-            worktree_discard,
+            Write,
+            discard::worktree_discard,
         );
-        add(
+    }
+
+    /// Branches, reset and tags.
+    fn add_refs(&mut self) {
+        self.add(
             "branch.create",
             "Create a branch",
             r#"{"name": string, "start"?: string (rev, HEAD)}"#,
+            Write,
             branch::branch_create,
         );
-        add(
+        self.add(
             "branch.checkout",
             "Switch to a branch",
             r#"{"name": string}"#,
+            Write,
             branch::branch_checkout,
         );
-        add(
+        self.add(
             "branch.delete",
             "Delete a branch",
             r#"{"name": string, "confirm"?: bool (unmerged branch), "expected"?: full oid (the branch must point there)}"#,
+            Write,
             branch::branch_delete,
         );
-        add(
+        self.add(
             "branch.rename",
             "Rename a branch",
             r#"{"name": string, "new_name": string}"#,
+            Write,
             branch::branch_rename,
         );
-        add(
+        self.add(
             "branch.reset",
             "Reset the current branch to a commit",
             r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard", "confirm"?: bool (hard with local changes), "expected"?: full oid (HEAD must be there)}"#,
+            Write,
             reset::branch_reset,
         );
-        add(
+        self.add(
             "branch.reset_preview",
             "What a reset would do (files a hard overwrites)",
             r#"{"target": string (rev), "mode": "soft"|"mixed"|"hard"}"#,
+            Read,
             reset::branch_reset_preview,
         );
-        add(
+        self.add(
             "tag.create",
             "Create a tag",
             r#"{"name": string, "target"?: string (rev, HEAD), "message"?: string (annotated tag; without: lightweight)}"#,
+            Write,
             tag::tag_create,
         );
-        add(
+        self.add(
             "tag.delete",
             "Delete a tag",
             r#"{"name": string, "confirm": true (always required; the tag is saved in a backup ref first), "expected"?: string (full id of the value shown in the confirmation)}"#,
+            Write,
             tag::tag_delete,
         );
-        add(
+    }
+
+    /// Fetch, pull, push and the remotes.
+    fn add_remotes(&mut self) {
+        self.add(
             "remote.fetch",
             "Download from the remote (fetch)",
             r#"{"remote"?: string (configured remote; upstream, origin or the only one), "branch"?: string (only that branch), "prune"?: bool (also remove the remote branches gone from the remote; not with branch)}"#,
+            Write,
             remote::remote_fetch,
         );
-        add(
+        self.add(
             "remote.pull",
             "Download and integrate the upstream (pull)",
             r#"{"remote"?: string (the upstream's), "branch"?: string (local branch; HEAD), "strategy"?: "merge" | "rebase" | "ff_only" (instead of the configuration)}"#,
+            Write,
             pull::remote_pull,
         );
-        add(
+        self.add(
             "remote.push",
             "Publish the branch to the remote (push)",
             r#"{"remote"?: string (upstream, origin or the only one), "branch"?: string (local branch; HEAD), "force"?: bool (force-with-lease), "confirm"?: bool (force that removes commits from the remote)}"#,
+            Write,
             push::remote_push,
         );
-        add(
+        self.add(
             "remote.delete_branch",
             "Delete a branch from the remote",
             r#"{"remote": string, "branch": string (name on the remote), "confirm": true, "expected": string (full id of the remote-tracking branch shown in the confirmation)}"#,
+            Write,
             remote_branch::remote_delete_branch,
         );
-        add(
+        self.add(
             "remote.push_tag",
             "Publish a tag to the remote",
             r#"{"remote": string, "name": string (local tag; never overwrites a tag on the remote)}"#,
+            Write,
             remote_tag::remote_push_tag,
         );
-        add(
+        self.add(
             "remote.delete_tag",
             "Delete a tag from the remote",
             r#"{"remote": string, "name": string (tag on the remote), "confirm": true, "expected": string (full id of the remote tag shown in the confirmation)}"#,
+            Write,
             remote_tag::remote_delete_tag,
         );
-        add(
+        self.add(
             "remote.list",
             "Configured remotes",
             "{}",
+            Read,
             remotes::remote_list,
         );
-        add(
+        self.add(
             "remote.add",
             "Add a remote",
             r#"{"name": string, "url": string, "fetch"?: bool (then download)}"#,
+            Write,
             remotes::remote_add,
         );
-        add(
+        self.add(
             "remote.remove",
             "Remove a remote",
             r#"{"name": string, "confirm": true}"#,
+            Write,
             remotes::remote_remove,
         );
-        add("stash.list", "Stashes", "{}", stash::stash_list);
-        add(
+    }
+
+    /// Stashes.
+    fn add_stashes(&mut self) {
+        self.add("stash.list", "Stashes", "{}", Read, stash::stash_list);
+        self.add(
             "stash.push",
             "Stash the changes",
             r#"{"message"?: string (one line), "include_untracked"?: bool, "keep_index"?: bool, "paths"?: [path, ...]}"#,
+            Write,
             stash::stash_push,
         );
-        add(
+        self.add(
             "stash.apply",
             "Apply a stash",
             r#"{"index"?: number (stash@{n}, 0), "expected"?: full oid (the stash seen), "restore_index"?: bool}"#,
+            Write,
             stash::stash_apply,
         );
-        add(
+        self.add(
             "stash.pop",
             "Apply a stash and remove it from the list",
             r#"{"index"?: number (stash@{n}, 0), "expected"?: full oid (the stash seen), "restore_index"?: bool}"#,
+            Write,
             stash::stash_pop,
         );
-        add(
+        self.add(
             "stash.drop",
             "Drop a stash",
             r#"{"index"?: number (stash@{n}, 0), "expected": full oid (the stash to drop; required with confirm), "confirm": true}"#,
+            Write,
             stash::stash_drop,
         );
-        add(
+    }
+
+    /// Merge, cherry-pick and revert.
+    fn add_merges(&mut self) {
+        self.add(
             "merge.start",
             "Merge a branch into the current branch",
             r#"{"rev": string (branch, remote branch, tag or id), "no_ff"?: bool (always a merge commit), "ff_only"?: bool (fast-forward only), "message"?: string (of the merge commit)}"#,
+            Write,
             merge::merge_start,
         );
-        add(
+        self.add(
             "merge.continue",
             "Finish the merge in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
+            Write,
             merge::merge_continue,
         );
-        add(
+        self.add(
             "merge.abort",
             "Abort the merge in progress",
             r#"{"confirm": true}"#,
+            Write,
             merge::merge_abort,
         );
-        add(
+        self.add(
             "commit.cherry_pick",
             "Apply a commit onto the current branch (cherry-pick)",
             r#"{"rev": string (id, branch or tag of the commit), "mainline"?: number (for a merge commit: the parent, from 1)}"#,
+            Write,
             pick::commit_cherry_pick,
         );
-        add(
+        self.add(
             "cherry_pick.continue",
             "Finish the cherry-pick in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
+            Write,
             pick::cherry_pick_continue,
         );
-        add(
+        self.add(
             "cherry_pick.abort",
             "Abort the cherry-pick in progress",
             r#"{"confirm": true}"#,
+            Write,
             pick::cherry_pick_abort,
         );
-        add(
+        self.add(
             "commit.revert",
             "Undo a commit with a new commit (revert)",
             r#"{"rev": string (id, branch or tag of the commit), "mainline"?: number (for a merge commit: the parent, from 1)}"#,
+            Write,
             pick::commit_revert,
         );
-        add(
+        self.add(
             "revert.continue",
             "Finish the revert in progress",
             r#"{"message"?: string (otherwise the one prepared by git)}"#,
+            Write,
             pick::revert_continue,
         );
-        add(
+        self.add(
             "revert.abort",
             "Abort the revert in progress",
             r#"{"confirm": true}"#,
+            Write,
             pick::revert_abort,
         );
-        add(
+    }
+
+    /// Interactive rebase and conflict resolution.
+    fn add_rebase(&mut self) {
+        self.add(
             "rebase.plan",
             "Default plan of an interactive rebase of the current branch",
             r#"{"base": string (the commit to rebuild on, excluded: id, branch or tag)}"#,
+            Read,
             rebase::rebase_plan,
         );
-        add(
+        self.add(
             "rebase.start",
             "Rewrite the commits of the current branch (interactive rebase)",
             r#"{"base": string, "steps": [{"action": "pick" | "reword" | "squash" | "fixup" | "drop", "commit": full oid, "message"?: string}] (oldest first, every commit of base..HEAD once), "confirm"?: bool (rewrites published commits)}"#,
+            Write,
             rebase::rebase_start,
         );
-        add(
+        self.add(
             "rebase.continue",
             "Continue the rebase in progress",
             "{}",
+            Write,
             rebase::rebase_continue,
         );
-        add(
+        self.add(
             "rebase.abort",
             "Abort the rebase in progress",
             r#"{"confirm": true}"#,
+            Write,
             rebase::rebase_abort,
         );
-        add(
+        self.add(
             "conflict.show",
             "Versions of a conflicted file (base, ours, theirs, worktree)",
             r#"{"path": path}"#,
+            Read,
             conflict::conflict_show,
         );
-        add(
+        self.add(
             "conflict.resolve",
             "Resolve a conflicted file and stage it",
             r#"{"path": path, "digest": string (from conflict.show), "content"?: string (the resolved text), "delete"?: bool (deletes the file; instead of content)}"#,
+            Write,
             conflict::conflict_resolve,
         );
-        add("edit.undo", "Undo the last operation", "{}", edit_undo);
-        add("edit.redo", "Redo the undone operation", "{}", edit_redo);
-        add("edit.history", "Operation journal", "{}", edit_history);
-        r
+    }
+
+    /// Undo, redo and the journal.
+    fn add_edit(&mut self) {
+        self.add(
+            "edit.undo",
+            "Undo the last operation",
+            "{}",
+            Write,
+            edit::edit_undo,
+        );
+        self.add(
+            "edit.redo",
+            "Redo the undone operation",
+            "{}",
+            Write,
+            edit::edit_redo,
+        );
+        self.add(
+            "edit.history",
+            "Operation journal",
+            "{}",
+            Read,
+            edit::edit_history,
+        );
     }
 }
 
-/// The commands that modify the repository ([`CommandSpec::writes`]).
-const WRITES: &[&str] = &[
-    "branch.checkout",
-    "branch.create",
-    "branch.delete",
-    "branch.rename",
-    "branch.reset",
-    "cherry_pick.abort",
-    "cherry_pick.continue",
-    "commit.cherry_pick",
-    "commit.create",
-    "commit.revert",
-    "conflict.resolve",
-    "edit.redo",
-    "edit.undo",
-    "index.stage",
-    "index.unstage",
-    "index.stage_lines",
-    "index.unstage_lines",
-    "merge.abort",
-    "merge.continue",
-    "merge.start",
-    "rebase.abort",
-    "rebase.continue",
-    "rebase.start",
-    "remote.add",
-    "remote.delete_branch",
-    "remote.delete_tag",
-    "remote.fetch",
-    "remote.pull",
-    "remote.push",
-    "remote.push_tag",
-    "remote.remove",
-    "repo.clone",
-    "repo.init",
-    "repo.optimize",
-    "revert.abort",
-    "revert.continue",
-    "stash.apply",
-    "stash.drop",
-    "stash.pop",
-    "stash.push",
-    "tag.create",
-    "tag.delete",
-    "worktree.discard",
-];
-
 type Out = Result<Value, EngineError>;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct NoParams {}
+pub(crate) struct NoParams {}
 
-#[derive(Deserialize)]
+/// Parameters of `repo.open`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct PathParam {
-    path: String,
+pub struct RepoOpenParams {
+    /// The folder of the repo (also a subfolder of the worktree).
+    pub path: String,
 }
 
-fn to_json(value: impl serde::Serialize) -> Value {
+fn to_json(value: impl Serialize) -> Value {
     serde_json::to_value(value).expect("the domain types are serializable")
 }
 
-/// `{"path", "head", "commit_graph"}` of the repo just opened. `path`: the worktree root,
-/// absolute ([`GitBackend::root`](crate::GitBackend::root)), so the same repo opened from a
-/// subfolder or a relative path gives the same path; the given path if the backend has none.
-/// `commit_graph`: git reads a
-/// commit-graph for the repo ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log` is slow on
-/// huge histories and the UI can offer `repo.optimize`. A failed check gives `false` (the
-/// repo opens anyway).
-fn repo_open(s: &mut Session, p: Value) -> Out {
-    let PathParam { path } = parse_params("repo.open", p)?;
+/// Result of `repo.open` and `repo.init` (and the first fields of `repo.clone`): the repo just
+/// opened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepoOpenResult {
+    /// The worktree root, absolute ([`GitRead::root`](crate::GitRead::root)), so the same
+    /// repo opened from a subfolder or a relative path gives the same path; the given path if
+    /// the backend has none.
+    pub path: String,
+    /// HEAD of the repo.
+    pub head: Head,
+    /// git reads a commit-graph for the repo
+    /// ([`CommitGraphState::in_use`](crate::CommitGraphState::in_use)); without it `repo.log`
+    /// is slow on huge histories and the UI can offer `repo.optimize`. A failed check gives
+    /// `false` (the repo opens anyway).
+    pub commit_graph: bool,
+}
+
+/// Result of `repo.optimize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoOptimizeResult {
+    /// The state afterwards, as in [`RepoOpenResult::commit_graph`].
+    pub commit_graph: bool,
+}
+
+/// Result of `repo.log`: a page of the history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoLogResult {
+    /// The commits of the page, in log order.
+    pub commits: Vec<Commit>,
+    /// After the last returned commit there are others (the next page starts at `skip +
+    /// limit`).
+    pub has_more: bool,
+}
+
+/// Result of `diff.worktree` and `diff.index`: a [`Diff`] whose files also carry their
+/// `digest`. Whoever reads it as a [`Diff`] ignores the digests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffWithDigests {
+    /// One element per file, in git's order.
+    pub files: Vec<FileDiffWithDigest>,
+}
+
+/// A file of [`DiffWithDigests`]: the fields of [`FileDiff`] and `digest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDiffWithDigest {
+    /// The changes to the file.
+    #[serde(flatten)]
+    pub file: FileDiff,
+    /// [`file_digest`] of the file, to pass to `index.stage_lines`/`index.unstage_lines`.
+    pub digest: String,
+}
+
+/// The repo at `path`, opened: [`RepoOpenResult`].
+fn repo_open(s: &mut Session, RepoOpenParams { path }: RepoOpenParams) -> Out {
     s.open(&path)?;
-    opened(s, path)
+    Ok(to_json(opened(s, path)?))
 }
 
 /// The result of `repo.open` for the repo just opened at `path` (also `repo.clone`, `repo.init`).
-fn opened(s: &Session, path: String) -> Out {
+fn opened(s: &Session, path: String) -> Result<RepoOpenResult, EngineError> {
     let repo = s.repo()?;
     let path = repo.root().unwrap_or(path);
     let head = repo.head()?;
     let commit_graph = repo.commit_graph().is_ok_and(|g| g.in_use());
-    Ok(json!({ "path": path, "head": to_json(head), "commit_graph": commit_graph }))
+    Ok(RepoOpenResult {
+        path,
+        head,
+        commit_graph,
+    })
 }
 
 /// Writes the commit-graph of all reachable commits (`git commit-graph write --reachable`), so
@@ -476,16 +595,15 @@ fn opened(s: &Session, path: String) -> Out {
 ///
 /// A write (it adds or replaces `objects/info/commit-graph`), but it cannot lose data: the file
 /// is a cache that git derives from the objects and that `git gc` itself rewrites. So no
-/// `confirm`, no backup, and no [`JournalEntry`]: no ref, index or worktree file changes.
+/// `confirm`, no backup, and no [`JournalEntry`](crate::JournalEntry): no ref, index or worktree file changes.
 /// Slow (~19 s on the Linux kernel): progress and cancellation from [`Session::job`]. Refused
 /// with `core.commitGraph=false` ([`commit_graph_disabled`]), in a shallow repo
 /// ([`commit_graph_shallow`]) and with replace refs or grafts ([`commit_graph_replaced`]): git
 /// would not read it.
 ///
-/// Result: `{"commit_graph": bool}`, the state afterwards (as in `repo.open`).
-fn repo_optimize(s: &mut Session, p: Value) -> Out {
+/// Result: [`RepoOptimizeResult`], the state afterwards (as in `repo.open`).
+fn repo_optimize(s: &mut Session, NoParams {}: NoParams) -> Out {
     const ID: &str = "repo.optimize";
-    let NoParams {} = parse_params(ID, p)?;
     let job = s.job().clone();
     let repo = s.repo_mut()?;
     let before = repo.commit_graph()?;
@@ -503,50 +621,54 @@ fn repo_optimize(s: &mut Session, p: Value) -> Out {
     }
     repo.write_commit_graph(&job)?;
     let after = repo.commit_graph()?;
-    Ok(json!({ "commit_graph": after.in_use() }))
+    Ok(to_json(RepoOptimizeResult {
+        commit_graph: after.in_use(),
+    }))
 }
 
 /// The [`Status`](project_domain::Status) of the open repo.
-fn repo_status(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("repo.status", p)?;
+fn repo_status(s: &mut Session, NoParams {}: NoParams) -> Out {
     Ok(to_json(s.repo()?.status()?))
 }
 
 /// The [`RefInfo`](project_domain::RefInfo) of the open repo, in name order.
-fn repo_refs(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("repo.refs", p)?;
+fn repo_refs(s: &mut Session, NoParams {}: NoParams) -> Out {
     Ok(to_json(s.repo()?.refs()?))
 }
 
-#[derive(Deserialize)]
+/// Parameters of `commit.show`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct IdParam {
-    id: String,
+pub struct CommitShowParams {
+    /// The commit: an id (also abbreviated) or a ref name.
+    pub id: String,
 }
 
 /// The [`CommitDetails`](project_domain::CommitDetails) of commit `id` (also abbreviated, or a
 /// ref name): `{"commit", "compared_to", "files"}`, with the files compared to the first
 /// parent.
-fn commit_show(s: &mut Session, p: Value) -> Out {
-    let IdParam { id } = parse_params("commit.show", p)?;
+fn commit_show(s: &mut Session, CommitShowParams { id }: CommitShowParams) -> Out {
     Ok(to_json(s.repo()?.show_commit(&id)?))
 }
 
 /// Parameters of `diff.worktree` and `diff.index`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct DiffParams {
-    #[serde(default)]
-    path: Option<RepoPath>,
+pub struct DiffParams {
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
 }
 
 /// Parameters of `diff.commit`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct CommitDiffParams {
-    id: String,
-    #[serde(default)]
-    path: Option<RepoPath>,
+pub struct DiffCommitParams {
+    /// The commit, as in `commit.show`.
+    pub id: String,
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
 }
 
 /// Like [`check_path`], for an optional path.
@@ -562,82 +684,65 @@ fn check_opt_path(
 fn check_path(id: &'static str, path: RepoPath) -> Result<RepoPath, EngineError> {
     let bytes = path.as_bytes();
     let reason = if bytes.is_empty() {
-        Some(msg!("engine-path-empty", path = path))
+        msg!("engine-path-empty", path = path)
     } else if bytes.contains(&0) {
-        Some(msg!("engine-path-nul", path = path))
+        msg!("engine-path-nul", path = path)
     } else if bytes
         .split(|&b| b == b'/')
         .any(|c| c.is_empty() || c == b"." || c == b"..")
     {
-        Some(msg!("engine-path-not-relative", path = path))
+        msg!("engine-path-not-relative", path = path)
     } else {
-        None
+        return Ok(path);
     };
-    match reason {
-        Some(reason) => Err(EngineError::InvalidParams { id, reason }),
-        None => Ok(path),
-    }
+    Err(EngineError::InvalidParams { id, reason })
 }
 
 /// The JSON of a [`Diff`] with, in addition, in every file, the `digest` field ([`file_digest`]) to
-/// pass to `index.stage_lines`/`index.unstage_lines`. Whoever reads the result as a
-/// [`Diff`] ignores it.
-fn diff_with_digests(diff: &Diff) -> Value {
-    let mut out = to_json(diff);
-    if let Some(files) = out["files"].as_array_mut() {
-        for (json, file) in files.iter_mut().zip(&diff.files) {
-            json["digest"] = Value::String(file_digest(file));
-        }
-    }
-    out
+/// pass to `index.stage_lines`/`index.unstage_lines`: [`DiffWithDigests`].
+fn diff_with_digests(diff: Diff) -> Value {
+    let files = diff
+        .files
+        .into_iter()
+        .map(|file| FileDiffWithDigest {
+            digest: file_digest(&file),
+            file,
+        })
+        .collect();
+    to_json(DiffWithDigests { files })
 }
 
 /// The [`Diff`] of the worktree against the index (unstaged changes): `{"files": [...]}`,
 /// each file with its `digest`. Untracked files do not appear.
-fn diff_worktree(s: &mut Session, p: Value) -> Out {
-    let DiffParams { path } = parse_params("diff.worktree", p)?;
+fn diff_worktree(s: &mut Session, DiffParams { path }: DiffParams) -> Out {
     let path = check_opt_path("diff.worktree", path)?;
     Ok(diff_with_digests(
-        &s.repo()?.diff(&DiffSpec::Worktree { path })?,
+        s.repo()?.diff(&DiffSpec::Worktree { path })?,
     ))
 }
 
 /// The [`Diff`] of the index against HEAD (staged changes), each file with its
 /// `digest`.
-fn diff_index(s: &mut Session, p: Value) -> Out {
-    let DiffParams { path } = parse_params("diff.index", p)?;
+fn diff_index(s: &mut Session, DiffParams { path }: DiffParams) -> Out {
     let path = check_opt_path("diff.index", path)?;
     Ok(diff_with_digests(
-        &s.repo()?.diff(&DiffSpec::Index { path })?,
+        s.repo()?.diff(&DiffSpec::Index { path })?,
     ))
 }
 
-/// The [`Diff`](project_domain::Diff) of commit `id` against the first parent (like
+/// The [`Diff`] of commit `id` against the first parent (like
 /// `commit.show`).
-fn diff_commit(s: &mut Session, p: Value) -> Out {
-    let CommitDiffParams { id, path } = parse_params("diff.commit", p)?;
+fn diff_commit(s: &mut Session, DiffCommitParams { id, path }: DiffCommitParams) -> Out {
     let path = check_opt_path("diff.commit", path)?;
     Ok(to_json(
         s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,
     ))
 }
 
-/// Parameters of `index.stage` and `index.unstage`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PathsParams {
-    paths: Vec<RepoPath>,
-}
-
-/// The paths of `index.stage`/`index.unstage`, validated as in `diff.*` and without duplicates
-/// (in the given order). An empty list is an error: for git "no path" would mean
+/// The paths of a command that writes the index or the worktree (`index.stage`,
+/// `index.unstage`, `worktree.discard`, `stash.push`), validated as in `diff.*` and without
+/// duplicates (in the given order). An empty list is an error: for git "no path" would mean
 /// "everything", and it is better that it cannot be asked for by mistake.
-fn check_paths(id: &'static str, p: Value) -> Result<Vec<RepoPath>, EngineError> {
-    let PathsParams { paths } = parse_params(id, p)?;
-    check_path_list(id, paths)
-}
-
-/// Like [`check_paths`], for an already read list.
 fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPath>, EngineError> {
     if paths.is_empty() {
         return Err(EngineError::InvalidParams {
@@ -656,231 +761,49 @@ fn check_path_list(id: &'static str, paths: Vec<RepoPath>) -> Result<Vec<RepoPat
     Ok(out)
 }
 
-/// Stages `paths` (see [`GitBackend::stage`](crate::GitBackend::stage)).
-/// Result: `{"status": Status, "backup": string | null}`, with the new
-/// [`Status`](project_domain::Status) (the caller updates the view without a second command) and
-/// the index backup ref, if before writing staged versions
-/// that existed only in the index were saved.
-fn index_stage(s: &mut Session, p: Value) -> Out {
-    let paths = check_paths("index.stage", p)?;
-    let repo = s.repo_mut()?;
-    let backup = repo.stage(&paths)?;
-    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
-}
-
-/// Unstages `paths` (see [`GitBackend::unstage`](crate::GitBackend::unstage)),
-/// without touching the worktree. Result like `index.stage`.
-fn index_unstage(s: &mut Session, p: Value) -> Out {
-    let paths = check_paths("index.unstage", p)?;
-    let repo = s.repo_mut()?;
-    let backup = repo.unstage(&paths)?;
-    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
-}
-
-/// Parameters of `index.stage_lines` and `index.unstage_lines`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LinesParams {
-    path: RepoPath,
-    lines: Vec<LineRef>,
-    digest: String,
-}
-
-/// The `lines` of file `path` staged or unstaged, with the diff seen identified by
-/// `digest` (see [`GitBackend::apply_lines`](crate::GitBackend::apply_lines)). An empty
-/// selection is an error, not a no-op: it is almost always a mistake by the
-/// caller. Result like `index.stage`.
-fn index_lines(id: &'static str, direction: PatchDirection, s: &mut Session, p: Value) -> Out {
-    let LinesParams {
-        path,
-        lines,
-        digest,
-    } = parse_params(id, p)?;
-    let path = check_path(id, path)?;
-    if lines.is_empty() {
-        return Err(EngineError::InvalidParams {
-            id,
-            reason: msg!("engine-lines-empty"),
-        });
-    }
-    let repo = s.repo_mut()?;
-    let backup = repo.apply_lines(&LineSelection {
-        path,
-        lines,
-        digest,
-        direction,
-    })?;
-    Ok(json!({ "status": to_json(repo.status()?), "backup": backup }))
-}
-
-/// Stages the chosen lines of the worktree diff.
-fn index_stage_lines(s: &mut Session, p: Value) -> Out {
-    index_lines("index.stage_lines", PatchDirection::Stage, s, p)
-}
-
-/// Unstages the chosen lines of the index diff.
-fn index_unstage_lines(s: &mut Session, p: Value) -> Out {
-    index_lines("index.unstage_lines", PatchDirection::Unstage, s, p)
-}
-
-/// Creates a commit with what is staged, or with `amend` rewrites the last one (see
-/// [`GitBackend::commit`](crate::GitBackend::commit)). `confirm` is needed only for `amend` of a
-/// commit already published.
+/// The state of the operation journal after a command, flattened into the results of the
+/// commands that write (`#[serde(flatten)]`): whether `edit.undo`/`edit.redo` have anything to do
+/// and the description of the entry they would touch.
 ///
-/// Result: `{"commit": Commit, "previous": string | null, "branch": string | null, "backup":
-/// string | null, "also_on": [string], "status": Status}`: the created commit (as in `repo.log`), HEAD before
-/// (`null` for the first commit), the moved branch with its full name (`null` with HEAD
-/// detached), the backup ref of the rewritten commit (only with `amend`), the other branches and tags
-/// that remain on the rewritten commit (only with `amend`) and the new state. An error after a
-/// successful commit is [`EngineError::PostCommit`].
-fn commit_create(s: &mut Session, p: Value) -> Out {
-    let request: CommitRequest = parse_params("commit.create", p)?;
-    request.check_message()?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let outcome = repo.commit(&request)?;
-    // The commit is made: it goes into the journal (for `edit.undo`) even if the state cannot be re-read afterwards.
-    if let Some(entry) = JournalEntry::commit(&outcome, request.amend) {
-        journal.record(entry);
-    }
-    // The commit is made: an error from here on must not look like a failed commit.
-    let status = repo.status().map_err(|e| EngineError::PostCommit {
-        commit: Some(outcome.commit.id),
-        backup: outcome.backup.clone(),
-        reason: msg!("engine-status-unreadable", error = e),
-    })?;
-    let mut out = to_json(outcome);
-    out["status"] = to_json(status);
-    Ok(out)
-}
-
-/// Parameters of `worktree.discard`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DiscardParams {
-    paths: Vec<RepoPath>,
+/// JSON: `{"can_undo", "can_redo", "next_undo": Message | null, "next_redo": Message | null}`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct JournalState {
+    /// `edit.undo` has an entry to undo.
+    pub can_undo: bool,
+    /// `edit.redo` has an entry to redo.
+    pub can_redo: bool,
+    /// The description of the entry `edit.undo` would undo (`null` if none).
     #[serde(default)]
-    confirm: bool,
+    pub next_undo: Option<Message>,
+    /// The description of the entry `edit.redo` would redo (`null` if none).
+    #[serde(default)]
+    pub next_redo: Option<Message>,
 }
 
-/// Discards the unstaged changes of the files `paths` (files or folders): the worktree goes back
-/// to the index, the index is not touched (see
-/// [`GitBackend::discard`](crate::GitBackend::discard) and [`discard_plan`]: untracked files are
-/// never touched). Needs `"confirm": true`: without it, [`EngineError::ConfirmRequired`] with the files
-/// that would be lost and nothing changes (the refusals of [`discard_plan`] come first). Before
-/// writing, the worktree is saved with `git stash create` in `refs/project/backup/discard-...`;
-/// the operation goes into the journal and `edit.undo` puts the files back as they were.
-///
-/// Result: `{"files": [{"path", "change", "mode", "oid"}], "backup": string, "stash":
-/// string, "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`; the
-/// state is `null` (with `status_error`) if it cannot be re-read: the discard is done anyway.
-fn worktree_discard(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "worktree.discard";
-    let DiscardParams { paths, confirm } = parse_params(ID, p)?;
-    let paths = check_path_list(ID, paths)?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let status = repo.status()?;
-    let files = discard_plan(&status, &paths)?;
-    if !confirm {
-        let names: Vec<String> = files.iter().map(|f| format!("`{}`", f.path)).collect();
-        return Err(EngineError::ConfirmRequired {
-            command: ID,
-            reason: msg!(
-                "engine-discard-confirm",
-                n = files.len(),
-                files = names.join(", ")
-            ),
-            expected: None,
-        });
-    }
-    // The backend re-reads the state and refuses if the files are no longer these.
-    let outcome = repo.discard(&paths, &files)?;
-    // The files are discarded: the entry goes into the journal even if the state cannot be re-read afterwards.
-    journal.record(JournalEntry::discard(
-        &outcome,
-        HeadState::from_head(&status.head),
-    ));
-    let mut out = journal_state(journal);
-    out["files"] = to_json(&outcome.files);
-    out["backup"] = Value::String(outcome.backup);
-    out["stash"] = Value::String(outcome.stash.to_string());
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
+impl JournalState {
+    /// The state of `journal`.
+    pub(crate) fn of(journal: &Journal) -> Self {
+        Self {
+            can_undo: journal.can_undo(),
+            can_redo: journal.can_redo(),
+            next_undo: journal.done().last().map(|e| e.description.clone()),
+            next_redo: journal.undone().last().map(|e| e.description.clone()),
         }
     }
-    Ok(out)
 }
 
-/// `{"can_undo", "can_redo", "next_undo", "next_redo"}`: whether `edit.undo`/`edit.redo` have
-/// anything to do and the description of the entry they would touch (`null` if none).
-fn journal_state(journal: &Journal) -> Value {
-    json!({
-        "can_undo": journal.can_undo(),
-        "can_redo": journal.can_redo(),
-        "next_undo": journal.done().last().map(|e| e.description.clone()),
-        "next_redo": journal.undone().last().map(|e| e.description.clone()),
-    })
-}
-
-/// Result of `edit.undo`/`edit.redo`: `{<key>: entry, "backups": [string], "warnings":
-/// [string], "status": Status | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
-/// `warnings` reports something unexpected found after the successful move (usually
-/// empty). The state is `null` (with
-/// `status_error`) if it cannot be re-read: the operation is done anyway and must not be repeated (a
-/// second undo would undo the previous entry).
-fn undo_result(s: &mut Session, key: &str, entry: JournalEntry, outcome: RestoreOutcome) -> Out {
-    let mut out = journal_state(s.journal()?);
-    out[key] = to_json(entry);
-    out["backups"] = to_json(outcome.backups);
-    out["warnings"] = to_json(outcome.warnings);
-    match s.repo()?.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
+/// What a command re-reads after a successful write, as the pair of fields `<key>` and
+/// `<key>_error` of a typed result: the value, or `None` and the error text. The operation is
+/// done anyway and must not look failed (or be repeated).
+fn reread<T>(result: Result<T, EngineError>) -> (Option<T>, Option<String>) {
+    match result {
+        Ok(value) => (Some(value), None),
+        Err(e) => (None, Some(e.to_string())),
     }
-    Ok(out)
 }
 
-/// Undoes the last operation of the journal (see [`Journal::undo`]): the refs go back to their previous
-/// values, only if nobody moved them in the meantime ([`EngineError::UndoConflict`]
-/// otherwise, and nothing changes). Index and worktree are not touched. Result: see
-/// [`undo_result`], with the entry in `undone`.
-fn edit_undo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.undo", p)?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let (entry, outcome) = journal.undo(repo)?;
-    undo_result(s, "undone", entry, outcome)
-}
-
-/// Redoes the last undone operation (see [`Journal::redo`]), with the same check.
-/// Result: see [`undo_result`], with the entry in `redone`.
-fn edit_redo(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.redo", p)?;
-    let (repo, journal) = s.repo_and_journal()?;
-    let (entry, outcome) = journal.redo(repo)?;
-    undo_result(s, "redone", entry, outcome)
-}
-
-/// The journal of the open repo: `{"done": [entry], "undone": [entry], "can_undo", "can_redo",
-/// "next_undo", "next_redo"}`. In `done` the last entry is the one `edit.undo` undoes, in
-/// `undone` the last is the one `edit.redo` redoes.
-fn edit_history(s: &mut Session, p: Value) -> Out {
-    let NoParams {} = parse_params("edit.history", p)?;
-    let journal = s.journal()?;
-    let mut out = journal_state(journal);
-    out["done"] = to_json(journal.done());
-    out["undone"] = to_json(journal.undone());
-    Ok(out)
-}
-
-/// A page of the log: `{"commits": [...], "has_more": bool}`. `has_more` says whether after
-/// the last returned commit there are others (the next page starts at `skip + limit`).
-fn repo_log(s: &mut Session, p: Value) -> Out {
-    let query: LogQuery = parse_params("repo.log", p)?;
+/// A page of the log: [`RepoLogResult`].
+fn repo_log(s: &mut Session, query: LogQuery) -> Out {
     let limit = query.limit.unwrap_or(DEFAULT_LOG_LIMIT);
     // One more commit to know whether the page is the last.
     let probe = LogQuery {
@@ -890,14 +813,19 @@ fn repo_log(s: &mut Session, p: Value) -> Out {
     let mut commits = s.repo()?.log(&probe)?;
     let has_more = commits.len() > limit;
     commits.truncate(limit);
-    Ok(json!({ "commits": to_json(commits), "has_more": has_more }))
+    Ok(to_json(RepoLogResult { commits, has_more }))
 }
+
+#[cfg(test)]
+#[path = "builtin/snapshot_tests.rs"]
+mod snapshot_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend, MemoryOpener};
-    use project_domain::{Commit, CommitDetails, Diff, RefInfo, Status};
+    use crate::{GitRead, MemoryBackend, MemoryOpener};
+    use project_domain::{CommitDetails, RefInfo, Status};
+    use serde_json::json;
     use std::sync::Arc;
 
     fn session() -> Session {
@@ -1043,6 +971,27 @@ mod tests {
                 "worktree.discard"
             ]
         );
+        let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();
+        assert_eq!(outside, ["repo.clone", "repo.init", "repo.open"]);
+    }
+
+    #[test]
+    fn every_command_has_a_self_contained_parameter_schema() {
+        let r = Registry::builtin();
+        for spec in r.list() {
+            let schema = &spec.params;
+            assert_eq!(schema["type"], "object", "{}", spec.id);
+            assert_eq!(schema["additionalProperties"], false, "{}", spec.id);
+            let text = schema.to_string();
+            assert!(
+                !text.contains("$ref") && !text.contains("$schema"),
+                "{}: {text}",
+                spec.id
+            );
+        }
+        let open = &r.get("repo.open").unwrap().params;
+        assert_eq!(open["required"], serde_json::json!(["path"]));
+        assert_eq!(open["properties"]["path"]["type"], "string");
     }
 
     #[test]
@@ -1061,6 +1010,56 @@ mod tests {
         assert_eq!(out["head"], to_json(head));
         assert_eq!(s.path(), Some(MemoryOpener::SAMPLE_PATH));
         assert_eq!(out["commit_graph"], false);
+    }
+
+    /// Reads `out` as `T` and checks that `T` gives the same JSON again.
+    fn same<T: serde::de::DeserializeOwned + Serialize>(out: Value) -> T {
+        let typed: T = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(to_json(&typed), out);
+        typed
+    }
+
+    /// The typed results of `repo.open`, `repo.optimize`, `repo.log` and `diff.worktree`/
+    /// `diff.index` read back the JSON of the command and give the same JSON again: the UI
+    /// deserializes into them.
+    #[test]
+    fn read_results_round_trip() {
+        let r = Registry::builtin();
+        let mut s = session();
+        let open: RepoOpenResult = same(
+            r.run(
+                "repo.open",
+                &mut s,
+                json!({ "path": MemoryOpener::SAMPLE_PATH }),
+            )
+            .unwrap(),
+        );
+        assert_eq!(open.path, MemoryOpener::SAMPLE_PATH);
+        assert_eq!(open.head, MemoryBackend::sample().head().unwrap());
+        assert!(!open.commit_graph);
+
+        let log: RepoLogResult = same(r.run("repo.log", &mut s, json!({ "limit": 2 })).unwrap());
+        assert_eq!(log.commits.len(), 2);
+        assert!(log.has_more);
+        let last: RepoLogResult = same(r.run("repo.log", &mut s, json!({ "all": true })).unwrap());
+        assert!(!last.has_more);
+
+        for id in ["diff.worktree", "diff.index"] {
+            let diff: DiffWithDigests = same(r.run(id, &mut s, json!({})).unwrap());
+            assert!(!diff.files.is_empty(), "{id}");
+            for f in &diff.files {
+                assert_eq!(f.digest, file_digest(&f.file), "{id}");
+            }
+            // Read as a plain `Diff`, the digests are ignored.
+            let plain: Diff =
+                serde_json::from_value(r.run(id, &mut s, json!({})).unwrap()).unwrap();
+            let files: Vec<FileDiff> = diff.files.into_iter().map(|f| f.file).collect();
+            assert_eq!(plain.files, files, "{id}");
+        }
+
+        let optimized: RepoOptimizeResult =
+            same(r.run("repo.optimize", &mut s, json!({})).unwrap());
+        assert!(optimized.commit_graph);
     }
 
     /// Session on the sample repo with `core.commitGraph` set to `value` (unset if `None`).
@@ -1476,7 +1475,7 @@ mod tests {
             .run("diff.worktree", &mut s, json!({ "path": "src/lib.rs" }))
             .unwrap();
         let file = &diff["files"][0];
-        let parsed: project_domain::FileDiff = serde_json::from_value(file.clone()).unwrap();
+        let parsed: FileDiff = serde_json::from_value(file.clone()).unwrap();
         assert_eq!(file["digest"], file_digest(&parsed));
         let all = r.run("diff.index", &mut s, json!({})).unwrap();
         assert!(
@@ -1537,8 +1536,7 @@ mod tests {
 
         // Unstage of all the staged lines: back to the initial state, with a backup
         // because the file was `MM`.
-        let parsed: project_domain::FileDiff =
-            serde_json::from_value(diff["files"][0].clone()).unwrap();
+        let parsed: FileDiff = serde_json::from_value(diff["files"][0].clone()).unwrap();
         let out = r
             .run(
                 "index.unstage_lines",
@@ -1815,7 +1813,7 @@ mod tests {
     }
 
     fn to_json_diff(repo: &MemoryBackend, spec: DiffSpec) -> Value {
-        diff_with_digests(&repo.diff(&spec).unwrap())
+        diff_with_digests(repo.diff(&spec).unwrap())
     }
 
     #[test]

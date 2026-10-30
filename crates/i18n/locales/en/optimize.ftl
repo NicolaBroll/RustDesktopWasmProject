@@ -13,4 +13,3 @@ optimize-stop-hint = Stop writing the commit-graph: the repository stays as befo
 optimize-done = Commit-graph written: the history now loads quickly
 optimize-cancelled = Optimization stopped: nothing was changed
 optimize-failed = Optimization failed: { $error }
-optimize-unexpected-response = unexpected response from `{ $command }`

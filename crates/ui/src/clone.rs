@@ -6,11 +6,29 @@
 //! Command contract in `impl-docs/git/clone.md`.
 
 use crate::fetch::{self, Failure};
+use crate::running::Running;
 use crate::{ErrorKind, Ticket};
+use project_engine::{CloneRequest, InitRequest, RepoCloneResult};
 use project_i18n::tr;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::path::Path;
+
+/// The actions of this area, applied by [`App`](crate::App).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the "Clone…" or "New repository…" dialog.
+    Open(Kind),
+    /// The fields of that dialog changed.
+    Fields(Fields),
+    /// "Browse…" in that dialog: the folder dialog, the choice goes into the destination.
+    Browse,
+    /// "Clone"/"Create" in that dialog.
+    Submit,
+    /// "Cancel" the clone in progress.
+    Cancel,
+    /// Closes that dialog (not while its command runs).
+    Close,
+}
 
 /// What the dialog creates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,14 +60,6 @@ pub struct Fields {
     pub branch: String,
     /// Clone: how many commits to download; empty: the whole history.
     pub depth: String,
-}
-
-/// The dialog's command in progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: Ticket,
-    /// True after "Cancel", until the command answers.
-    pub cancelling: bool,
 }
 
 /// The clone or new-repository dialog.
@@ -92,18 +102,19 @@ impl CloneDialog {
             return None;
         }
         let f = &self.fields;
-        let mut params = json!({ "path": f.path.trim() });
-        if self.kind == Kind::Clone {
-            params["url"] = json!(f.url.trim());
-            if let Ok(depth) = f.depth.trim().parse::<u32>() {
-                params["depth"] = json!(depth);
-            }
-        }
-        let branch = f.branch.trim();
-        if !branch.is_empty() {
-            params["branch"] = json!(branch);
-        }
-        Some(params)
+        let path = f.path.trim().to_owned();
+        let branch = Some(f.branch.trim())
+            .filter(|b| !b.is_empty())
+            .map(str::to_owned);
+        Some(match self.kind {
+            Kind::Clone => crate::params(CloneRequest {
+                url: f.url.trim().to_owned(),
+                path,
+                branch,
+                depth: f.depth.trim().parse::<u32>().ok(),
+            }),
+            Kind::Init => crate::params(InitRequest { path, branch }),
+        })
     }
 }
 
@@ -127,12 +138,6 @@ pub enum Received {
     Failed,
     /// Not the answer awaited: ignored.
     Unexpected,
-}
-
-#[derive(Deserialize)]
-struct Messages {
-    #[serde(default)]
-    messages: Vec<String>,
 }
 
 /// The dialog, one at a time.
@@ -207,21 +212,13 @@ impl CloneBox {
         if let Some(d) = &mut self.dialog {
             d.failure = None;
             d.cancelled = false;
-            d.running = Some(Running {
-                ticket,
-                cancelling: false,
-            });
+            d.running = Some(Running::new(ticket));
         }
     }
 
     /// "Cancel" during the clone: the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
-        let running = self.dialog.as_mut()?.running.as_mut()?;
-        if running.cancelling {
-            return None;
-        }
-        running.cancelling = true;
-        Some(running.ticket)
+        self.dialog.as_mut()?.running.as_mut()?.cancel()
     }
 
     /// The answer of the command sent with `ticket`.
@@ -242,9 +239,13 @@ impl CloneBox {
         d.running = None;
         let error = match result {
             Ok(value) => {
-                let messages = serde_json::from_value::<Messages>(value.clone())
-                    .map(|m| m.messages)
-                    .unwrap_or_default();
+                // `repo.init` gives a `RepoOpenResult`, without git's messages.
+                let messages = match d.kind {
+                    Kind::Clone => serde_json::from_value::<RepoCloneResult>(value.clone())
+                        .map(|r| r.messages)
+                        .unwrap_or_default(),
+                    Kind::Init => Vec::new(),
+                };
                 self.dialog = None;
                 return Received::Opened {
                     value,

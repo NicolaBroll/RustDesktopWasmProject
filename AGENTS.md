@@ -23,7 +23,7 @@ A new crate must be declared in `xtask/src/layers.rs`.
 - Every operation on the repository is a `Registry` command (`crates/engine/src/builtin.rs`).
   UI, CLI, MCP and tests invoke it with `Registry::run`; no modification logic in graphical callbacks.
 - Command ids are stable: do not rename them.
-- A command that modifies the repo goes in `WRITES` (`builtin.rs`): `CommandSpec::writes` flags it to
+- A command that modifies the repo is registered with `Access::Write` (`builtin.rs`): `CommandSpec::writes` flags it to
   UI, CLI and MCP. If it can lose data it asks for `"confirm": true` and saves a backup; if it rewrites
   the only copy of something without git asking for confirmation (stage/unstage) it saves a backup on its own
   and does not write if the backup fails (§1 and §7
@@ -55,14 +55,16 @@ The project is becoming a graphical git client: architecture in
 [impl-docs/ARCHITECTURE-git.md](impl-docs/ARCHITECTURE-git.md) (common rules) and in
 [impl-docs/git/](impl-docs/git/) (one file per function: command contract, `CliBackend`, undo
 and backup; a new command goes in the file of its function), steps in
-[impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md). Each step names the agent to use
+[impl-docs/ROADMAP-git.md](impl-docs/ROADMAP-git.md); code-quality steps (no new features) in
+[impl-docs/ROADMAP-quality.md](impl-docs/ROADMAP-quality.md); UI and UX fixes in
+[impl-docs/ROADMAP-ui.md](impl-docs/ROADMAP-ui.md). Each step names the agent to use
 (`.claude/agents/`): `git-domain`, `git-engine`, `egui-ui`, `git-scenarios`; steps that
 write to the user's repo also go through `safety-reviewer`.
 
 ## Before delivering
 
 ```sh
-cargo xtask ci           # fmt, clippy -D warnings, test, layering, cargo deny
+cargo xtask ci           # fmt, clippy -D warnings, test, doc -D warnings, layering, cargo deny
 cargo xtask ci --quiet   # the same, with output only from the step that fails
 ```
 

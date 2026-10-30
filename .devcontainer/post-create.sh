@@ -16,8 +16,10 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     xvfb xauth x11-utils imagemagick xdotool libxkbcommon-x11-0 libgl1-mesa-dri libegl1
 
-# mingw-w64 (gcc + windres) and zip for `make windows` (cross-compiled Windows build).
-sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 zip
+# mingw-w64 (gcc + windres), zip and wixl (the MSI) for `make windows` (cross-compiled Windows
+# build).
+sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 zip \
+    wixl
 rustup target add x86_64-pc-windows-gnu
 
 # clippy and rustfmt for `cargo xtask ci` (see `make setup`).

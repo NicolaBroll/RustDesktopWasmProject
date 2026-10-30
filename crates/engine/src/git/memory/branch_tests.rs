@@ -2,8 +2,8 @@
 //! `builtin/branch.rs`).
 
 use super::*;
-use crate::GitBackend;
 use crate::git::{ConfigEntry, HeadState};
+use crate::{GitRead, GitRefs};
 use project_domain::{Change, EntryKind, Head, StatusEntry};
 
 fn clean() -> MemoryBackend {

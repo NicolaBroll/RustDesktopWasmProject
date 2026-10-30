@@ -3,7 +3,8 @@
 //! tests.
 
 use project_domain::{Commit, GraphLayout, Oid, layout_graph};
-use serde_json::{Value, json};
+use project_engine::LogQuery;
+use serde_json::Value;
 
 /// Commits requested for each page of `repo.log`.
 pub const PAGE: usize = 500;
@@ -29,7 +30,11 @@ impl PageRequest {
     /// HEAD), so unmerged and just-fetched branches show up too, and from the bases
     /// of the stashes, so every stash has its row even if no branch contains it anymore.
     pub fn params(&self) -> Value {
-        json!({ "skip": self.skip, "limit": self.limit, "all": true, "stashes": true })
+        crate::params(LogQuery {
+            all: true,
+            stashes: true,
+            ..LogQuery::page(self.skip, self.limit)
+        })
     }
 }
 
@@ -565,9 +570,8 @@ mod tests {
     mod sample {
         use super::super::*;
         use project_domain::RefInfo;
-        use project_engine::{
-            GitBackend, LogQuery, MemoryBackend, MemoryOpener, Registry, Session,
-        };
+        use project_engine::{GitRead, LogQuery, MemoryBackend, MemoryOpener, Registry, Session};
+        use serde_json::json;
         use std::sync::Arc;
 
         fn open(repo: MemoryBackend) -> (Registry, Session) {

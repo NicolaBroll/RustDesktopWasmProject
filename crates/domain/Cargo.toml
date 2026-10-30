@@ -3,11 +3,13 @@ name = "project-domain"
 description = "L2: data model, file format, domain logic"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+schemars.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -9,14 +9,14 @@
 //!   (`hash-object -w --no-filters --stdin`, tree in a temporary index, `commit-tree` with no
 //!   parents using the backup identity, new ref `refs/project/backup/conflict-...`), temporary
 //!   file in the same directory and `rename` after rechecking the digest, then the stage
-//!   of [`GitBackend::stage`] (`git add` of the path only, with its index backup).
+//!   of [`GitIndex::stage`] (`git add` of the path only, with its index backup).
 
 use super::{BACKUP_IDENTITY, CliBackend};
 use crate::command::os_from_bytes;
 use project_domain::RepoPath;
 use project_engine::{
-    ConflictResolution, ConflictResolved, ConflictVersions, EngineError, GitBackend, Message,
-    StagedVersion, check_conflict, check_digest, marker_size,
+    ConflictResolution, ConflictResolved, ConflictVersions, EngineError, GitIndex, GitRead,
+    Message, StagedVersion, check_conflict, check_digest, marker_size,
 };
 use std::ffi::OsStr;
 use std::io::Write;
@@ -238,7 +238,7 @@ impl CliBackend {
         result
     }
 
-    /// [`GitBackend::conflict_versions`].
+    /// [`GitOperations::conflict_versions`](project_engine::GitOperations::conflict_versions).
     pub(super) fn conflict_files(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
         let status = self.status()?;
         let info = check_conflict("conflict.show", &status, path)?;
@@ -254,7 +254,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::resolve_conflict`].
+    /// [`GitOperations::resolve_conflict`](project_engine::GitOperations::resolve_conflict).
     pub(super) fn resolve_file(
         &mut self,
         request: &ConflictResolution,

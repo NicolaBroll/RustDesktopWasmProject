@@ -3,8 +3,9 @@
 //! Transport: JSON-RPC 2.0, one message per line on stdin/stdout; no network
 //! port. Every path is resolved inside the root given to
 //! [`Server::new`] and rejected if it escapes (also through symbolic links): repositories are
-//! opened only with the `open_repo` tool, not with `repo.open` through `execute_command`;
-//! `repo.clone` and `repo.init` are refused (their paths would not be confined).
+//! opened only with the `open_repo` tool; `execute_command` refuses the commands with
+//! [`CommandSpec::outside_repo`](project_engine::CommandSpec::outside_repo) (`repo.open`,
+//! `repo.clone`, `repo.init`: their paths would not be confined).
 
 mod paths;
 
@@ -133,14 +134,12 @@ impl Server {
             params: Value,
         }
         let Args { id, params } = parse_args(args)?;
-        // `repo.open` accepts any path: from here we go through `open_repo`.
-        if id == "repo.open" {
-            return Err("to open a repository use the `open_repo` tool".to_owned());
-        }
-        // Destination and URL (a local path is a URL) could be anywhere: not confined to the root.
-        if id == "repo.clone" || id == "repo.init" {
+        // Paths outside the repo (`repo.open`, `repo.clone`, `repo.init`) could be anywhere: not
+        // confined to the root. Repositories are opened with `open_repo`.
+        if self.registry.get(&id).is_some_and(|spec| spec.outside_repo) {
             return Err(format!(
-                "`{id}` is not available over MCP: its paths are not confined to the root"
+                "`{id}` is not available over MCP: its paths are not confined to the root \
+                 (to open a repository use the `open_repo` tool)"
             ));
         }
         self.registry
@@ -177,6 +176,19 @@ fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> 
     serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
 
+/// The general rules of `execute_command`; the parameters of each command are in the
+/// `params` schema of `list_commands`.
+const EXECUTE_DESCRIPTION: &str = "Runs a catalog command on the current session. \
+Ids and parameters (`params`, a JSON Schema per command) are in `list_commands`. \
+Commands with `writes: true` change the user's repository; most of them are undone with \
+`edit.undo`. Those that can lose data or rewrite published commits fail with an error that asks \
+for `\"confirm\": true`: pass it only if the user asked for it, and when the error gives a full \
+id pass it back unchanged in `\"expected\"`, so the command acts only on what the user saw. \
+Commands with `outside_repo: true` are not available here: open repositories with `open_repo`. \
+Network commands (`remote.fetch`, `remote.pull`, `remote.push`, `remote.push_tag`, \
+`remote.delete_branch`, `remote.delete_tag`, `remote.add` with `fetch`) take a configured remote \
+by name, never a URL, and can be slow; what they change on the remote cannot be undone.";
+
 fn tools() -> Value {
     let path_schema = json!({
         "type": "object",
@@ -186,7 +198,7 @@ fn tools() -> Value {
     json!([
         {
             "name": "list_commands",
-            "description": "Lists the catalog commands, filtered by text in the id or title.",
+            "description": "Lists the catalog commands, filtered by text in the id or title: `id`, `title`, `params` (JSON Schema of the parameters), `writes` (changes the repository), `outside_repo` (not available here).",
             "inputSchema": {
                 "type": "object",
                 "properties": { "search": { "type": "string" } },
@@ -194,7 +206,7 @@ fn tools() -> Value {
         },
         {
             "name": "execute_command",
-            "description": "Runs a catalog command on the current session. See list_commands for ids and parameters; commands with `writes: true` change the user's repository (e.g. `index.stage`, `commit.create`, `branch.checkout`, `edit.undo`), those that can lose data or rewrite published commits (e.g. `worktree.discard`, `branch.delete` of an unmerged branch, which also accepts `expected` with the full id of the commit seen, `amend` of a published commit) ask for `\"confirm\": true` (pass it only if the user asked for it). `remote.fetch` downloads from a configured remote (by name, never a URL) and updates only remote branches and tags; `remote.pull` downloads and integrates the upstream into the branch (fast-forward, merge or rebase according to the configuration, undoable with `edit.undo`; a merge with conflicts stays in progress as with `merge.start`, `\"in_progress\": true` and the files in `conflicts`, a rebase with conflicts is aborted); `remote.push` publishes the branch to the remote (force, `\"force\": true`, always uses force-with-lease and, if the remote would lose commits, asks for `\"confirm\": true` with `\"expected\"`, the id given by the confirmation error): they use the network and can be slow, and a push cannot be undone. `remote.push_tag` publishes one local tag (never overwrites a tag already on the remote: `tag_exists`); `remote.delete_tag` deletes a tag from the remote and always asks for `\"confirm\": true` with `\"expected\"`, the value given by the confirmation error; `tag.delete` deletes a local tag, always asks for `\"confirm\": true` and is undone with `edit.undo`. `remote.list` lists the remotes (credentials in URLs are always masked), `remote.add` adds a remote by name and URL (with `\"fetch\": true` it then downloads; URLs starting with `-` or with `ext::`/`fd::` are refused), `remote.remove` removes it with its remote branches and the upstream of the branches that use it and always asks for `\"confirm\": true`; both are undone with `edit.undo`. `stash.list` lists the stashes (position `index`, `id`, `base`, message); `stash.push` stashes the changes (undoable with `edit.undo`); `stash.apply`/`stash.pop` apply them again (pass `index` and `expected`, the id of the stash seen; refused if they would touch files with local changes; with conflicts the stash stays); `stash.drop` drops a stash and always asks for `\"confirm\": true` together with `\"expected\"`, the id of the stash given by the confirmation error (it saves a backup, undoable with `edit.undo`). `merge.start` merges a rev (`\"rev\"`: branch, remote branch, tag or id) into the current branch (fast-forward or merge commit; refused with changes to tracked files): with conflicts the merge stays in progress and the result lists the files; `repo.operation` tells the operation in progress, the conflicted files and the incoming commits; `merge.continue` finishes the merge when no conflicts are left (the resolved files must be staged with `index.stage`); `merge.abort` aborts it, always asks for `\"confirm\": true` and first saves index and worktree in a backup. A finished merge is undone with `edit.undo`.",
+            "description": EXECUTE_DESCRIPTION,
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -454,7 +466,7 @@ mod tests {
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let mut sample = MemoryBackend::sample();
-        let head = project_engine::GitBackend::head(&sample)
+        let head = project_engine::GitRead::head(&sample)
             .unwrap()
             .target()
             .unwrap();
@@ -561,14 +573,73 @@ mod tests {
         Server::new(root, Arc::new(MemoryOpener::new())).unwrap()
     }
 
+    /// The catalog of `list_commands` as JSON.
+    fn list(server: &mut Server, search: &str) -> Vec<Value> {
+        let r = call(server, "list_commands", json!({ "search": search }));
+        let text = r["content"][0]["text"].as_str().unwrap();
+        serde_json::from_value(serde_json::from_str(text).unwrap()).unwrap()
+    }
+
     #[test]
-    fn clone_and_init_are_not_available() {
-        let root = temp_root("clone");
+    fn list_commands_gives_the_parameter_schema() {
+        let root = temp_root("schema");
         let mut server = server(&root);
-        for (id, params) in [
-            ("repo.clone", json!({"url": "/", "path": "/tmp/x"})),
-            ("repo.init", json!({"path": "/tmp/x"})),
+        let commands = list(&mut server, "");
+        let schema = |id: &str| {
+            let spec = commands.iter().find(|c| c["id"] == id).unwrap();
+            assert_eq!(spec["params"]["type"], "object", "{id}");
+            assert_eq!(spec["params"]["additionalProperties"], false, "{id}");
+            spec["params"].clone()
+        };
+
+        let reset = schema("branch.reset");
+        assert_eq!(reset["required"], json!(["target", "mode"]));
+        let modes: Vec<_> = reset["properties"]["mode"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["const"].clone())
+            .collect();
+        assert_eq!(modes, [json!("soft"), json!("mixed"), json!("hard")]);
+        assert_eq!(reset["properties"]["confirm"]["type"], "boolean");
+
+        let lines = schema("index.stage_lines");
+        assert_eq!(lines["required"], json!(["path", "lines", "digest"]));
+        let line = &lines["properties"]["lines"]["items"]["oneOf"];
+        assert_eq!(line[0]["required"], json!(["old"]));
+        assert_eq!(line[1]["required"], json!(["new"]));
+
+        // Subschemas inline: an agent reads each command without resolving `$ref`.
+        let rebase = schema("rebase.start");
+        let step = &rebase["properties"]["steps"]["items"];
+        assert_eq!(step["required"], json!(["action", "commit"]));
+        assert_eq!(step["properties"]["commit"]["pattern"], "^[0-9a-fA-F]{40}$");
+        assert!(!rebase.to_string().contains("$ref"), "{rebase}");
+
+        // The commands left out of the old description are there too.
+        for id in [
+            "commit.cherry_pick",
+            "branch.rename",
+            "conflict.resolve",
+            "rebase.continue",
         ] {
+            schema(id);
+        }
+        assert_eq!(schema("repo.status").get("properties"), None);
+    }
+
+    #[test]
+    fn commands_outside_the_repo_are_refused_through_the_flag() {
+        let root = temp_root("outside");
+        let mut server = server(&root);
+        let outside: Vec<_> = list(&mut server, "")
+            .into_iter()
+            .filter(|c| c["outside_repo"] == true)
+            .map(|c| c["id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(outside, ["repo.clone", "repo.init", "repo.open"]);
+        for id in &outside {
+            let params = json!({"url": "/", "path": "/tmp/x"});
             let r = call(
                 &mut server,
                 "execute_command",
@@ -577,25 +648,32 @@ mod tests {
             assert_eq!(r["isError"], true, "{id}");
             let text = r["content"][0]["text"].as_str().unwrap();
             assert!(text.contains("not available over MCP"), "{text}");
+            assert!(text.contains("open_repo"), "{text}");
         }
+        // `open_repo` itself still goes through `repo.open`.
+        let r = call(&mut server, "open_repo", json!({"path": "repo"}));
+        assert_eq!(r["isError"], false, "{r}");
     }
 
     #[test]
-    fn repo_open_is_only_reachable_through_open_repo() {
-        let root = temp_root("bypass");
-        let mut server = server(&root);
-        let r = call(
-            &mut server,
-            "execute_command",
-            json!({"id": "repo.open", "params": {"path": "/"}}),
-        );
-        assert_eq!(r["isError"], true);
-        assert!(
-            r["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("open_repo")
-        );
+    fn execute_command_description_points_to_list_commands() {
+        let tools = tools();
+        let execute = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "execute_command")
+            .unwrap();
+        let text = execute["description"].as_str().unwrap();
+        for rule in [
+            "list_commands",
+            "writes",
+            "confirm",
+            "expected",
+            "outside_repo",
+        ] {
+            assert!(text.contains(rule), "{rule}: {text}");
+        }
     }
 
     #[test]

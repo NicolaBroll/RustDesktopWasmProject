@@ -9,7 +9,7 @@ mod common;
 use common::Repo;
 use project_domain::{FileDiff, LineKind, LineRef, PatchDirection, RepoPath};
 use project_engine::{
-    DiffSpec, EngineError, GitBackend, LineSelection, Registry, Session, file_digest,
+    DiffSpec, EngineError, GitIndex, GitRead, LineSelection, Registry, Session, file_digest,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

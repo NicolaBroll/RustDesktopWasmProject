@@ -1,0 +1,95 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "after": "a198f1d3b72d98ea62f70f1f1feba572f128500d",
+  "backup": "refs/project/backup/pull-1",
+  "base": "362259904816818c04f73460a7fd64854079d22e",
+  "before": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+  "branch": "main",
+  "can_redo": false,
+  "can_undo": true,
+  "command": "remote.pull",
+  "conflicts": [],
+  "in_progress": false,
+  "message": "",
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "after": "a198f1d",
+      "before": "943ff9f",
+      "branch": "main",
+      "how": {
+        "args": {
+          "upstream": "origin/main"
+        },
+        "key": "engine-journal-pull-rebase",
+        "text": "rebase onto origin/main"
+      }
+    },
+    "key": "engine-journal-pull",
+    "text": "Pull of `main` (rebase onto origin/main: from 943ff9f to a198f1d)"
+  },
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "a198f1d3b72d98ea62f70f1f1feba572f128500d",
+      "upstream": {
+        "ahead": 1,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "362259904816818c04f73460a7fd64854079d22e",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    }
+  ],
+  "status": {
+    "entries": [],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "a198f1d3b72d98ea62f70f1f1feba572f128500d"
+      }
+    },
+    "operation": null,
+    "upstream": {
+      "ahead": 1,
+      "behind": 0,
+      "name": "origin/main"
+    }
+  },
+  "warnings": []
+}

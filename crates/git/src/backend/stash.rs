@@ -27,7 +27,7 @@
 use super::CliBackend;
 use super::sync::conflicted_in_output;
 use crate::command::{failure, stderr_text};
-use project_domain::{EntryKind, Oid, RepoPath};
+use project_domain::{EntryKind, Oid, RepoPath, Status};
 use project_engine::{
     EngineError, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPush, check_no_operation, check_stash_apply, check_stash_push, find_stash, path_matches,
@@ -35,9 +35,10 @@ use project_engine::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::process::Output;
 
 impl CliBackend {
-    /// [`GitBackend::stashes`](project_engine::GitBackend::stashes).
+    /// [`GitStash::stashes`](project_engine::GitStash::stashes).
     pub(super) fn stash_entries(&self) -> Result<Vec<StashEntry>, EngineError> {
         if self.ref_value(STASH_REF)?.is_none() {
             return Ok(Vec::new());
@@ -90,7 +91,7 @@ impl CliBackend {
         Ok(list)
     }
 
-    /// [`GitBackend::stash_push`](project_engine::GitBackend::stash_push).
+    /// [`GitStash::stash_push`](project_engine::GitStash::stash_push).
     pub(super) fn push_stash(&mut self, request: &StashPush) -> Result<StashEntry, EngineError> {
         // `git stash push` does not see changes to `--assume-unchanged` files (it does not save them) and
         // then resets the worktree to HEAD: it would lose them. Always refused among the
@@ -287,7 +288,7 @@ impl CliBackend {
         false
     }
 
-    /// [`GitBackend::stash_apply`](project_engine::GitBackend::stash_apply).
+    /// [`GitStash::stash_apply`](project_engine::GitStash::stash_apply).
     pub(super) fn apply_stash(
         &mut self,
         request: &StashApply,
@@ -304,7 +305,41 @@ impl CliBackend {
         })?;
         let status = self.status_for_write()?;
         check_stash_apply(command, &status)?;
-        let (tracked, untracked) = self.stash_targets(&stash)?;
+        self.check_stash_targets(command, &stash, &status)?;
+        self.check_index_unlocked()?;
+
+        let id = stash.id.to_string();
+        // `merge.directoryRenames=false`: with directory-rename detection a file
+        // the stash adds in `old/` would end up in `new/` (if HEAD renamed the
+        // directory) and would overwrite an ignored file there, which the checks above do not see.
+        let mut args = vec![
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "merge.directoryRenames=false",
+            "stash",
+            "apply",
+        ];
+        if request.restore_index {
+            args.push("--index");
+        }
+        args.extend(["--end-of-options", &id]);
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        if out.status.success() {
+            return Ok(StashApplied::default());
+        }
+        self.stash_apply_failed(command, &stash, &args, &out)
+    }
+
+    /// The files the stash restores must not hold local changes (or exist, for the added and
+    /// untracked ones) nor be hidden by assume-unchanged or skip-worktree.
+    fn check_stash_targets(
+        &self,
+        command: &'static str,
+        stash: &StashEntry,
+        status: &Status,
+    ) -> Result<(), EngineError> {
+        let (tracked, untracked) = self.stash_targets(stash)?;
         // The entries of the saved index and worktree: a staged file that already has the same
         // entry in both (e.g. after a push with `keep_index`) does not block.
         let saved_index = self.tree_entries(&format!("{}^2", stash.id))?;
@@ -317,7 +352,7 @@ impl CliBackend {
                 i == Some(&(mode, oid)) && w == Some(&(mode, oid))
             }
         };
-        let mut blocked = stash_local_changes(&status, &tracked, &untracked, in_stash);
+        let mut blocked = stash_local_changes(status, &tracked, &untracked, in_stash);
         let index = self.index_listing()?;
         let in_status: BTreeSet<&RepoPath> = status.entries.iter().map(|e| &e.path).collect();
         // A tracked file the stash adds, if it is in the status, was already seen by
@@ -345,28 +380,18 @@ impl CliBackend {
                 files = hidden.join(", ")
             )));
         }
-        self.check_index_unlocked()?;
+        Ok(())
+    }
 
-        let id = stash.id.to_string();
-        // `merge.directoryRenames=false`: with directory-rename detection a file
-        // the stash adds in `old/` would end up in `new/` (if HEAD renamed the
-        // directory) and would overwrite an ignored file there, which the checks above do not see.
-        let mut args = vec![
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "merge.directoryRenames=false",
-            "stash",
-            "apply",
-        ];
-        if request.restore_index {
-            args.push("--index");
-        }
-        args.extend(["--end-of-options", &id]);
-        let out = self.git.output(Some(&self.workdir), &args)?;
-        if out.status.success() {
-            return Ok(StashApplied::default());
-        }
+    /// `git stash apply` failed: stopped on conflicts (a success with the files), or the
+    /// error that explains it.
+    fn stash_apply_failed(
+        &self,
+        command: &'static str,
+        stash: &StashEntry,
+        args: &[&str],
+        out: &Output,
+    ) -> Result<StashApplied, EngineError> {
         let text = format!(
             "{}\n{}",
             String::from_utf8_lossy(&out.stdout),
@@ -447,10 +472,10 @@ impl CliBackend {
                 )
             }));
         }
-        Err(failure(&args, &out))
+        Err(failure(args, out))
     }
 
-    /// [`GitBackend::stash_drop`](project_engine::GitBackend::stash_drop).
+    /// [`GitStash::stash_drop`](project_engine::GitStash::stash_drop).
     pub(super) fn drop_stash(&mut self, request: &StashDrop) -> Result<StashDropped, EngineError> {
         let command = request.command;
         let list = self.stash_entries()?;
@@ -516,7 +541,7 @@ impl CliBackend {
         Ok(StashDropped { backup, warnings })
     }
 
-    /// [`GitBackend::stash_store`](project_engine::GitBackend::stash_store).
+    /// [`GitStash::stash_store`](project_engine::GitStash::stash_store).
     pub(super) fn store_stash(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         let hex = id.to_string();
         let message = format!("--message={message}");

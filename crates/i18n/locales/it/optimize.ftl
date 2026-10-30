@@ -13,4 +13,3 @@ optimize-stop-hint = Interrompe la scrittura del commit-graph: il repository res
 optimize-done = Commit-graph scritto: ora la cronologia si carica velocemente
 optimize-cancelled = Ottimizzazione interrotta: non è cambiato nulla
 optimize-failed = Ottimizzazione non riuscita: { $error }
-optimize-unexpected-response = risposta inattesa da `{ $command }`

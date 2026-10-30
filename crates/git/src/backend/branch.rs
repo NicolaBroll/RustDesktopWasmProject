@@ -53,6 +53,20 @@ impl CliBackend {
         }
     }
 
+    /// The ref `full` points to if it is a symbolic ref, also to a ref that does not exist
+    /// (`git symbolic-ref -q`: exit 1 for a ref that is not symbolic or does not exist).
+    fn symbolic_target(&self, full: &str) -> Result<Option<String>, EngineError> {
+        let args = ["symbolic-ref", "-q", full];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        match out.status.code() {
+            Some(0) => Ok(Some(
+                String::from_utf8_lossy(&out.stdout).trim_end().to_owned(),
+            )),
+            Some(1) => Ok(None),
+            _ => Err(failure(&args, &out)),
+        }
+    }
+
     /// The worktree (other than this one) in which the branch `full` is the HEAD branch, if any
     /// (`git worktree list --porcelain`).
     pub(super) fn checked_out_elsewhere(&self, full: &str) -> Result<Option<PathBuf>, EngineError> {
@@ -90,7 +104,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::unmerged_count`](project_engine::GitBackend::unmerged_count):
+    /// [`GitRead::unmerged_count`](project_engine::GitRead::unmerged_count):
     /// `rev-list --count <tip> ^<into>...`, without replace objects (counts the real history).
     pub(super) fn count_unmerged(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
         let revs: Vec<String> = std::iter::once(tip.to_string())
@@ -111,7 +125,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::create_branch`](project_engine::GitBackend::create_branch).
+    /// [`GitRefs::create_branch`](project_engine::GitRefs::create_branch).
     pub(super) fn create_local_branch(
         &mut self,
         name: &str,
@@ -121,6 +135,15 @@ impl CliBackend {
         let full = branch_ref(name);
         let oid = target.to_string();
         let reflog = format!("project: branch.create {name} at {oid}");
+        // Older git (2.43 does) overwrites a symbolic ref that points nowhere even with `--no-deref`
+        // and an empty old value: refused here first.
+        if let Some(target) = self.symbolic_target(&full)? {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-name-taken-git",
+                name = name.escape_debug(),
+                stderr = format!("`{full}` is a symbolic ref to `{target}`")
+            )));
+        }
         // Empty old value: the ref is created only if it does not exist. `--no-deref`: a symbolic
         // ref `refs/heads/<name>` (even to a ref that does not exist) is not followed, so
         // exactly `refs/heads/<name>` is created or refused.
@@ -146,7 +169,7 @@ impl CliBackend {
         Err(failure(&args, &out))
     }
 
-    /// [`GitBackend::checkout`](project_engine::GitBackend::checkout) with `git switch`.
+    /// [`GitRefs::checkout`](project_engine::GitRefs::checkout) with `git switch`.
     pub(super) fn switch_to(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
         check_no_operation(
             "branch.checkout",
@@ -297,7 +320,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::delete_branch`](project_engine::GitBackend::delete_branch).
+    /// [`GitRefs::delete_branch`](project_engine::GitRefs::delete_branch).
     pub(super) fn delete_local_branch(
         &mut self,
         name: &str,
@@ -354,7 +377,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::rename_branch`](project_engine::GitBackend::rename_branch) with `git
+    /// [`GitRefs::rename_branch`](project_engine::GitRefs::rename_branch) with `git
     /// branch -m` (never `-M`).
     pub(super) fn rename_local_branch(
         &mut self,
@@ -457,7 +480,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::restore_branch_config`](project_engine::GitBackend::restore_branch_config).
+    /// [`GitRefs::restore_branch_config`](project_engine::GitRefs::restore_branch_config).
     pub(super) fn set_branch_config(
         &mut self,
         name: &str,

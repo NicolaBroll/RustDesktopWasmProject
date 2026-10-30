@@ -24,6 +24,7 @@
 use super::CliBackend;
 use crate::command::{failure, stderr_text};
 use project_domain::{Commit, LOG_ARGS, Oid, parse_log};
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
 use project_engine::{
     CommitOutcome, CommitRequest, EngineError, Message, amend_impact, check_amend_published,
     check_commit_state,
@@ -31,7 +32,7 @@ use project_engine::{
 use std::ffi::OsStr;
 
 impl CliBackend {
-    /// [`GitBackend::commit`](project_engine::GitBackend::commit).
+    /// [`GitIndex::commit`](project_engine::GitIndex::commit).
     pub(super) fn create_commit(
         &mut self,
         request: &CommitRequest,
@@ -82,41 +83,7 @@ impl CliBackend {
             &env,
         )?;
         if !out.status.success() {
-            let mut err = commit_failure(&args, &out);
-            if let (Some(name), Some(old)) = (&backup, previous) {
-                if self.resolve("HEAD")? == Some(old) {
-                    // Nothing committed and HEAD is still the commit read before: the backup is not
-                    // needed. `update-ref -d <ref> <old>` removes the ref only if it still points
-                    // to that commit (only the instant between reading HEAD and this remains, in
-                    // which another process could move HEAD: the backup would vanish but the
-                    // commit would still be in the reflog).
-                    let old = old.to_string();
-                    let _ = self
-                        .git
-                        .output(Some(&self.workdir), &["update-ref", "-d", name, &old]);
-                } else {
-                    // HEAD changed (a hook or another process): the backup stays.
-                    let note = msg!("engine-commit-backup-kept", old = old, name = name);
-                    err = match err {
-                        EngineError::Git { command, stderr } => EngineError::GitWithReason {
-                            command,
-                            reason: msg!("engine-commit-backup-note", text = stderr, note = note),
-                        },
-                        EngineError::GitWithReason { command, reason } => {
-                            EngineError::GitWithReason {
-                                command,
-                                reason: msg!(
-                                    "engine-commit-backup-note",
-                                    text = reason,
-                                    note = note
-                                ),
-                            }
-                        }
-                        other => other,
-                    };
-                }
-            }
-            return Err(err);
+            return Err(self.commit_failed(&args, &out, backup.as_deref(), previous));
         }
 
         // From here the commit is done: every error is `PostCommit`, with the commit and the backup.
@@ -189,6 +156,50 @@ impl CliBackend {
         })
     }
 
+    /// `git commit` failed: the error, and the amend backup removed if nothing was committed
+    /// and HEAD is still the commit read before.
+    fn commit_failed(
+        &self,
+        args: &[&str],
+        out: &std::process::Output,
+        backup: Option<&str>,
+        previous: Option<Oid>,
+    ) -> EngineError {
+        let mut err = commit_failure(args, out);
+        if let (Some(name), Some(old)) = (backup, previous) {
+            let head = match self.resolve("HEAD") {
+                Ok(head) => head,
+                Err(e) => return e,
+            };
+            if head == Some(old) {
+                // Nothing committed and HEAD is still the commit read before: the backup is not
+                // needed. `update-ref -d <ref> <old>` removes the ref only if it still points
+                // to that commit (only the instant between reading HEAD and this remains, in
+                // which another process could move HEAD: the backup would vanish but the
+                // commit would still be in the reflog).
+                let old = old.to_string();
+                let _ = self
+                    .git
+                    .output(Some(&self.workdir), &["update-ref", "-d", name, &old]);
+            } else {
+                // HEAD changed (a hook or another process): the backup stays.
+                let note = msg!("engine-commit-backup-kept", old = old, name = name);
+                err = match err {
+                    EngineError::Git { command, stderr } => EngineError::GitWithReason {
+                        command,
+                        reason: msg!("engine-commit-backup-note", text = stderr, note = note),
+                    },
+                    EngineError::GitWithReason { command, reason } => EngineError::GitWithReason {
+                        command,
+                        reason: msg!("engine-commit-backup-note", text = reason, note = note),
+                    },
+                    other => other,
+                };
+            }
+        }
+        err
+    }
+
     /// After the commit: the last reflog entry of the updated ref (`branch`, or HEAD if
     /// detached) must go from `previous` to `head`. This also detects another process that
     /// moved HEAD between reading `previous` and `git commit` (git would have rewritten that
@@ -244,9 +255,9 @@ impl CliBackend {
             "--format=%(refname)%00%(symref)",
             "--contains",
             &id,
-            "refs/heads/",
-            "refs/remotes/",
-            "refs/tags/",
+            HEADS_PREFIX,
+            REMOTES_PREFIX,
+            TAGS_PREFIX,
         ];
         let out = self.run(&args)?;
         Ok(out

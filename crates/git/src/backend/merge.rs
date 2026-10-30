@@ -73,7 +73,7 @@ pub(super) fn oids(bytes: &[u8]) -> Vec<Oid> {
 }
 
 impl CliBackend {
-    /// [`GitBackend::merge`](project_engine::GitBackend::merge).
+    /// [`GitOperations::merge`](project_engine::GitOperations::merge).
     pub(super) fn merge_into_head(
         &mut self,
         request: &MergeRequest,
@@ -165,45 +165,7 @@ impl CliBackend {
         .to_owned();
         let operation = self.operation();
         if out.status.success() && operation.is_none() {
-            let after = self
-                .ref_value(&full)?
-                .ok_or_else(|| EngineError::GitWithReason {
-                    command: "merge".to_owned(),
-                    reason: msg!("engine-merge-branch-gone", full = full),
-                })?;
-            if after == request.expected {
-                // Git says it finished but the branch did not move (e.g. a `--squash` from the
-                // configuration, or a hook): it is not a successful merge. The backup stays.
-                return Err(EngineError::GitWithReason {
-                    command: "merge".to_owned(),
-                    reason: msg!(
-                        "engine-merge-branch-not-moved",
-                        full = full,
-                        text = text,
-                        backup = backup
-                    ),
-                });
-            }
-            let mut warnings = Vec::new();
-            if self.head_ref_name()?.as_deref() != Some(full.as_str()) {
-                warnings.push(msg!("engine-merge-head-moved-after", full = full));
-            }
-            if !self.is_ancestor(&request.target, &after)? {
-                warnings.push(msg!(
-                    "engine-merge-target-missing",
-                    full = full,
-                    after = after,
-                    target = request.target_name
-                ));
-            }
-            return Ok(MergeOutcome {
-                after,
-                backup,
-                in_progress: false,
-                conflicts: Vec::new(),
-                message: String::new(),
-                warnings,
-            });
+            return self.merge_concluded(request, &full, backup, &text);
         }
         if operation == Some(Operation::Merge) {
             // Stopped: stays in progress. The conflicted files are those still unmerged and those
@@ -229,6 +191,56 @@ impl CliBackend {
         })
     }
 
+    /// Git finished the merge: the branch must have moved, onto a result that contains the
+    /// target.
+    fn merge_concluded(
+        &self,
+        request: &MergeRequest,
+        full: &str,
+        backup: String,
+        text: &str,
+    ) -> Result<MergeOutcome, EngineError> {
+        let after = self
+            .ref_value(full)?
+            .ok_or_else(|| EngineError::GitWithReason {
+                command: "merge".to_owned(),
+                reason: msg!("engine-merge-branch-gone", full = full),
+            })?;
+        if after == request.expected {
+            // Git says it finished but the branch did not move (e.g. a `--squash` from the
+            // configuration, or a hook): it is not a successful merge. The backup stays.
+            return Err(EngineError::GitWithReason {
+                command: "merge".to_owned(),
+                reason: msg!(
+                    "engine-merge-branch-not-moved",
+                    full = full,
+                    text = text,
+                    backup = backup
+                ),
+            });
+        }
+        let mut warnings = Vec::new();
+        if self.head_ref_name()?.as_deref() != Some(full) {
+            warnings.push(msg!("engine-merge-head-moved-after", full = full));
+        }
+        if !self.is_ancestor(&request.target, &after)? {
+            warnings.push(msg!(
+                "engine-merge-target-missing",
+                full = full,
+                after = after,
+                target = request.target_name
+            ));
+        }
+        Ok(MergeOutcome {
+            after,
+            backup,
+            in_progress: false,
+            conflicts: Vec::new(),
+            message: String::new(),
+            warnings,
+        })
+    }
+
     /// Removes the backup `name` if the branch `full` is still `expected` (nothing changed) and
     /// the backup still points there.
     pub(super) fn drop_merge_backup(&self, name: &str, full: &str, expected: &Oid) {
@@ -240,14 +252,14 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::merge_abort`](project_engine::GitBackend::merge_abort).
+    /// [`GitOperations::merge_abort`](project_engine::GitOperations::merge_abort).
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_merging("merge.abort", &status)?;
         self.abort_operation(&status, AbortTarget::MERGE, &[])
     }
 
-    /// [`GitBackend::pick_abort`](project_engine::GitBackend::pick_abort).
+    /// [`GitOperations::pick_abort`](project_engine::GitOperations::pick_abort).
     pub(super) fn abort_pick(&mut self, kind: PickKind) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_picking(
@@ -493,7 +505,7 @@ impl CliBackend {
         )
     }
 
-    /// [`GitBackend::operation_state`](project_engine::GitBackend::operation_state): from the files
+    /// [`GitOperations::operation_state`](project_engine::GitOperations::operation_state): from the files
     /// of the git folder (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_MSG`,
     /// `rebase-merge/` or `rebase-apply/` with `onto` and `head-name`).
     pub(super) fn read_operation_state(&self) -> OperationState {

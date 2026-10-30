@@ -3,10 +3,13 @@
 
 use super::LogQuery;
 use project_domain::{Oid, RepoPath};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Where [`SearchQuery::text`] is looked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchField {
     /// The whole message (subject and body), like `git log --grep`.
@@ -22,7 +25,7 @@ impl SearchField {
     pub const ALL: [SearchField; 3] = [Self::Message, Self::Author, Self::Id];
 }
 
-/// What [`GitBackend::search`](super::GitBackend::search) looks for: `text` taken literally
+/// What [`GitRead::search`](super::GitRead::search) looks for: `text` taken literally
 /// (never a regex), case-insensitive for ASCII letters, in any of `fields` (OR), optionally only
 /// in the commits that touch `path`, over the same commits as `repo.log` with `all`/`stashes`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,26 +72,9 @@ pub fn id_prefix_matches(text: &str, id: &Oid) -> bool {
         && id.to_string().starts_with(&text.to_ascii_lowercase())
 }
 
-/// True if `needle` appears in `haystack` as is, ignoring the case of ASCII letters (what
-/// `git log --fixed-strings --regexp-ignore-case` does with `LC_ALL=C`).
-pub fn contains_literal(haystack: &[u8], needle: &[u8]) -> bool {
-    needle.is_empty()
-        || haystack
-            .windows(needle.len())
-            .any(|w| w.eq_ignore_ascii_case(needle))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn literal_matching() {
-        assert!(contains_literal(b"Fix a.b*[ here", b"A.B*["));
-        assert!(!contains_literal(b"Fix aXb here", b"a.b"));
-        assert!(contains_literal(b"caf\xe9 needle", b"NEEDLE"));
-        assert!(!contains_literal(b"short", b"longer than it"));
-    }
 
     #[test]
     fn id_prefix() {

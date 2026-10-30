@@ -10,7 +10,7 @@ use super::{MemoryBackend, commit::Tree};
 use crate::EngineError;
 use crate::git::{
     BACKUP_PREFIX, ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE,
-    GitBackend, check_conflict, check_digest,
+    GitRead, check_conflict, check_digest,
 };
 use project_domain::{Commit, EntryKind, Oid, RepoPath, Signature};
 
@@ -33,7 +33,7 @@ impl MemoryBackend {
             })
     }
 
-    /// [`GitBackend::conflict_versions`].
+    /// [`GitOperations::conflict_versions`].
     pub(super) fn conflict_files(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
         let status = self.status()?;
         let info = check_conflict("conflict.show", &status, path)?;
@@ -48,7 +48,7 @@ impl MemoryBackend {
         })
     }
 
-    /// [`GitBackend::resolve_conflict`]. An error changes nothing.
+    /// [`GitOperations::resolve_conflict`]. An error changes nothing.
     pub(super) fn resolve_file(
         &mut self,
         request: &ConflictResolution,

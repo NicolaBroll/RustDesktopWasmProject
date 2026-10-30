@@ -1,4 +1,5 @@
 use super::*;
+use crate::{branch, merge, rebase, search};
 
 /// Height of a row of the commit list.
 pub(super) const ROW_HEIGHT: f32 = 22.0;
@@ -31,9 +32,9 @@ pub(crate) fn commit_list(
         return;
     }
     let style = RowStyle {
-        font: FontId::proportional(13.5),
-        mono: FontId::monospace(12.5),
-        label: FontId::proportional(11.5),
+        font: theme::body(),
+        mono: theme::mono(),
+        label: theme::small(),
         text: ui.visuals().text_color(),
         weak: ui.visuals().weak_text_color(),
         tag_fill: ui.visuals().widgets.inactive.bg_fill,
@@ -130,7 +131,10 @@ pub(crate) fn commit_list(
                     .on_hover_text(tr!("commit-new-branch-hint", id = id.short()))
                     .on_disabled_hover_text(wait());
                 if button.clicked() {
-                    actions.push(Action::NewBranch(Start::from_commit(id), String::new()));
+                    actions.push(Action::Branch(branch::Action::NewBranch(
+                        Start::from_commit(id),
+                        String::new(),
+                    )));
                     ui.close();
                 }
                 let button = ui
@@ -138,7 +142,9 @@ pub(crate) fn commit_list(
                     .on_hover_text(tr!("commit-new-tag-hint", id = id.short()))
                     .on_disabled_hover_text(wait());
                 if button.clicked() {
-                    actions.push(Action::NewTag(Start::from_commit(id)));
+                    actions.push(Action::Branch(branch::Action::NewTag(Start::from_commit(
+                        id,
+                    ))));
                     ui.close();
                 }
                 let what = merge::commit_name(id, &repo.refs);
@@ -192,7 +198,10 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
             response.request_focus();
         }
         if response.changed() {
-            actions.push(Action::SearchText(text, ui.input(|i| i.time)));
+            actions.push(Action::Search(search::Action::Text(
+                text,
+                ui.input(|i| i.time),
+            )));
         }
         let (escape, enter, shift) = ui.input(|i| {
             (
@@ -202,12 +211,12 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
             )
         });
         if response.lost_focus() && escape {
-            actions.push(Action::SearchClose);
+            actions.push(Action::Search(search::Action::Close));
         } else if response.lost_focus() && enter {
             actions.push(if shift {
-                Action::SearchPrevious
+                Action::Search(search::Action::Previous)
             } else {
-                Action::SearchNext
+                Action::Search(search::Action::Next)
             });
             // The field keeps the keyboard: Enter again goes to the following match.
             response.request_focus();
@@ -238,19 +247,19 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
             .add_enabled(search.can_previous(), egui::Button::new("↑"))
             .on_hover_text(tr!("search-previous"));
         if previous.clicked() {
-            actions.push(Action::SearchPrevious);
+            actions.push(Action::Search(search::Action::Previous));
         }
         let next = ui
             .add_enabled(search.can_next(), egui::Button::new("↓"))
             .on_hover_text(tr!("search-next"));
         if next.clicked() {
-            actions.push(Action::SearchNext);
+            actions.push(Action::Search(search::Action::Next));
         }
         let close = ui
             .add(egui::Button::new(icons::text(icons::CLOSE, 12.0)).frame(false))
             .on_hover_text(tr!("search-close"));
         if close.clicked() {
-            actions.push(Action::SearchClose);
+            actions.push(Action::Search(search::Action::Close));
         }
     });
     ui.separator();
@@ -652,12 +661,12 @@ fn pick_items(
             .on_disabled_hover_text(blocked.map_or_else(wait, str::to_owned));
 
         if button.clicked() {
-            actions.push(Action::Pick {
+            actions.push(Action::Merge(merge::Action::Pick {
                 pick,
                 rev: commit.id,
                 what: what.to_owned(),
                 parents: commit.parents.clone(),
-            });
+            }));
             ui.close();
         }
     }
@@ -703,10 +712,10 @@ fn rebase_item(
     if button.clicked()
         && let Some(&base) = commit.parents.first()
     {
-        actions.push(Action::OpenRebase {
+        actions.push(Action::Rebase(rebase::Action::Open {
             base,
             what: what.to_owned(),
-        });
+        }));
         ui.close();
     }
 }

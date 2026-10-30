@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows Installer package of BinariGit, compiled on Linux with wixl (msitools) by
+  packaging/windows.sh. Per-user install (no administrator rights, no UAC prompt) into
+  %LOCALAPPDATA%\Programs\BinariGit, one Start menu shortcut, uninstall from "Installed apps".
+  No dialogs: Windows Installer shows only its progress bar.
+
+  Variables (wixl -D): Version (numeric, e.g. 0.5.0), Stage (folder with BinariGit.exe and the
+  .txt files, as staged for the zip), Icon (assets/icon.ico).
+
+  The UpgradeCode and the component GUIDs never change: a newer MSI replaces the installed one
+  (MajorUpgrade), and the ProductCode is new at every build.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="BinariGit" Language="1033" Version="$(var.Version)"
+           Manufacturer="BinariGit" UpgradeCode="4E3C0986-C3D9-4656-95E5-E36781ADBC1D">
+    <!-- perUser: no ALLUSERS, and the package says it needs no elevation. -->
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"
+             Description="BinariGit $(var.Version)" Comments="Graphical git client" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of BinariGit is already installed." />
+    <Media Id="1" Cabinet="binarigit.cab" EmbedCab="yes" />
+
+    <Icon Id="BinariGit.ico" SourceFile="$(var.Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="BinariGit.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/NicolaBroll/RustDesktopWasmProject" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDir" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="BinariGit" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <!-- Files in the user profile: the key path of each component is an HKCU value (a file
+         cannot be the key path of a per-user component). -->
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="App" Guid="EAB47F9A-D8B6-46A1-B728-DD30DCF8FC71">
+        <RegistryValue Root="HKCU" Key="Software\BinariGit" Name="InstallDir" Type="string"
+                       Value="[INSTALLDIR]" KeyPath="yes" />
+        <File Id="BinariGitExe" Name="BinariGit.exe" Source="$(var.Stage)/BinariGit.exe" />
+        <File Id="ReadmeTxt" Name="README.txt" Source="$(var.Stage)/README.txt" />
+        <File Id="LicenseMit" Name="LICENSE-MIT.txt" Source="$(var.Stage)/LICENSE-MIT.txt" />
+        <File Id="LicenseApache" Name="LICENSE-APACHE.txt"
+              Source="$(var.Stage)/LICENSE-APACHE.txt" />
+        <File Id="Attribution" Name="ATTRIBUTION.md.txt"
+              Source="$(var.Stage)/ATTRIBUTION.md.txt" />
+        <!-- Programs stays: other apps install there too. -->
+        <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="BC7BE73A-0065-4EAE-8E6B-07E79436E57E">
+        <Shortcut Id="BinariGitShortcut" Name="BinariGit" Description="Graphical git client"
+                  Target="[INSTALLDIR]BinariGit.exe" WorkingDirectory="INSTALLDIR"
+                  Icon="BinariGit.ico" />
+        <RegistryValue Root="HKCU" Key="Software\BinariGit" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="BinariGit" Level="1">
+      <ComponentRef Id="App" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Product>
+</Wix>

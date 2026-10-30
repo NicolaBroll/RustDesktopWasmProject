@@ -336,7 +336,7 @@ fn cancel_midway_leaves_the_destination_as_it_was() {
     let tmp = tempfile::tempdir().unwrap();
     let existing = tmp.path().join("existing");
     std::fs::create_dir(&existing).unwrap();
-    for (dest, created) in [(tmp.path().join("new"), true), (existing.clone(), false)] {
+    for (dest, created) in [(tmp.path().join("new"), true), (existing, false)] {
         let token = CancelToken::new();
         let canceller = token.clone();
         let start = Instant::now();
@@ -381,10 +381,8 @@ fn cancel_midway_leaves_the_destination_as_it_was() {
 fn init_with_and_without_branch() {
     let tmp = tempfile::tempdir().unwrap();
     // Without `branch`: git's `init.defaultBranch`.
-    let opener = Repo::opener()
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-        .env("GIT_CONFIG_VALUE_0", "default-one");
+    // `GIT_CONFIG_PARAMETERS` and not `GIT_CONFIG_COUNT`, which exists from git 2.31.
+    let opener = Repo::opener().env("GIT_CONFIG_PARAMETERS", "'init.defaultBranch=default-one'");
     let (r, mut s) = (Registry::builtin(), Session::new(Arc::new(opener)));
     let dest = tmp.path().join("plain");
     let out = r

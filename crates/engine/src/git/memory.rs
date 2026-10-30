@@ -30,12 +30,13 @@ use super::line_diff;
 use super::{
     BlameQuery, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution,
     ConflictResolved, ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, FetchOutcome,
-    FetchRequest, FileBlame, FileLogQuery, GitBackend, HeadState, LineSelection, LogQuery,
-    MergeAborted, MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest, PullOutcome,
-    PullRequest, PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore,
-    RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener,
-    RestoreOutcome, StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
-    StashPush, TagPush, TagPushed, UpstreamConfig, WorktreeRestore,
+    FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance, GitOperations,
+    GitRead, GitRefs, GitRemotes, GitStash, HeadState, LineSelection, LogQuery, MergeAborted,
+    MergeOutcome, MergeRequest, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
+    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
+    RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    TagPush, TagPushed, UpstreamConfig, WorktreeRestore,
 };
 use super::{CloneOutcome, CloneRequest, InitRequest, SearchQuery};
 use crate::{CommitGraphState, EngineError, JobContext, Message, Progress};
@@ -107,7 +108,7 @@ pub struct MemoryBackend {
     pull_settings: PullSettings,
     /// If set, a `pre-push` hook that rejects every push with this message.
     pre_push_failure: Option<String>,
-    /// Other configuration keys ([`GitBackend::config_values`]).
+    /// Other configuration keys ([`GitRead::config_values`]).
     config: BTreeMap<String, Vec<String>>,
     /// The "servers" of removed remotes, by URL: a remote added with the same URL finds them again.
     detached_remotes: BTreeMap<String, MemoryRemote>,
@@ -130,8 +131,8 @@ pub struct MemoryBackend {
     merge_state: Option<MemoryMerge>,
     /// The rebase in progress, with `operation` = `Rebase`.
     rebase_state: Option<MemoryRebase>,
-    /// There is a commit-graph ([`GitBackend::commit_graph`]): written by
-    /// [`GitBackend::write_commit_graph`].
+    /// There is a commit-graph ([`GitMaintenance::commit_graph`]): written by
+    /// [`GitMaintenance::write_commit_graph`].
     commit_graph: bool,
     /// The annotated tag objects created by `tag.create`, with the commit they point to: an undo
     /// and redo of the tag put the ref back on the same object.
@@ -204,7 +205,7 @@ impl MemoryBackend {
 
     /// Files changed by commit `id` relative to the first parent (or to the empty tree for a
     /// root commit), in the order git would give them. Returned by
-    /// [`GitBackend::show_commit`]; without this call the commit changes no files.
+    /// [`GitRead::show_commit`]; without this call the commit changes no files.
     pub fn set_changes(&mut self, id: Oid, files: Vec<ChangedFile>) {
         self.changes.insert(id, files);
     }
@@ -613,7 +614,7 @@ impl MemoryBackend {
     }
 }
 
-impl GitBackend for MemoryBackend {
+impl GitRead for MemoryBackend {
     fn head(&self) -> Result<Head, EngineError> {
         Ok(match &self.head {
             HeadRef::Branch(name) => Head::Branch {
@@ -765,33 +766,16 @@ impl GitBackend for MemoryBackend {
         self.memory_file_log(query, job)
     }
 
-    fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
-        // Like git: the last value of `core.commitGraph` wins; `false`, `no`, `off`, `0` and
-        // the empty value disable it.
-        let enabled = self.config_of("core.commitGraph").last().is_none_or(|v| {
-            !matches!(
-                v.to_ascii_lowercase().as_str(),
-                "false" | "no" | "off" | "0" | ""
-            )
-        });
-        Ok(CommitGraphState {
-            present: self.commit_graph,
-            enabled,
-            shallow: false,
-            replaced: false,
-        })
+    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
+        Ok(self.unmerged(tip, into))
     }
 
-    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError> {
-        if job.is_cancelled() {
-            return Err(EngineError::Cancelled {
-                command: "repo.optimize",
-            });
-        }
-        self.commit_graph = true;
-        Ok(())
+    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
+        Ok(self.config_of(key))
     }
+}
 
+impl GitIndex for MemoryBackend {
     fn stage(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
         self.stage_paths(paths)
     }
@@ -808,17 +792,24 @@ impl GitBackend for MemoryBackend {
         self.create_commit(request)
     }
 
-    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
-        self.conflict_files(path)
-    }
-
-    fn resolve_conflict(
+    fn discard(
         &mut self,
-        request: &ConflictResolution,
-    ) -> Result<ConflictResolved, EngineError> {
-        self.resolve_file(request)
+        paths: &[RepoPath],
+        expected: &[DiscardedFile],
+    ) -> Result<DiscardOutcome, EngineError> {
+        self.discard_paths(paths, expected)
     }
 
+    fn restore_worktree(
+        &mut self,
+        request: &WorktreeRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_discarded(request)?;
+        Ok(RestoreOutcome::default())
+    }
+}
+
+impl GitRefs for MemoryBackend {
     fn reset(&mut self, request: &super::ResetRequest) -> Result<super::ResetOutcome, EngineError> {
         self.reset_head(request)
     }
@@ -839,25 +830,55 @@ impl GitBackend for MemoryBackend {
         })
     }
 
-    fn discard(
-        &mut self,
-        paths: &[RepoPath],
-        expected: &[DiscardedFile],
-    ) -> Result<DiscardOutcome, EngineError> {
-        self.discard_paths(paths, expected)
+    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
+        self.create_local_branch(name, target)
     }
 
-    fn restore_worktree(
+    fn create_tag(
         &mut self,
-        request: &WorktreeRestore,
+        name: &str,
+        target: &Oid,
+        message: Option<&str>,
+    ) -> Result<Oid, EngineError> {
+        self.create_tag_ref(name, target, message)
+    }
+
+    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
+        self.reset_keep(request)
+    }
+
+    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
+        self.delete_local_tag(name, expected)
+    }
+
+    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
+        self.checkout_head(target)
+    }
+
+    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError> {
+        self.delete_local_branch(name, expected)
+    }
+
+    fn rename_branch(
+        &mut self,
+        from: &str,
+        to: &str,
+        expected: &Oid,
     ) -> Result<RestoreOutcome, EngineError> {
-        self.restore_discarded(request)?;
-        Ok(RestoreOutcome::default())
-    }
-    fn unmerged_count(&self, tip: &Oid, into: &[Oid]) -> Result<usize, EngineError> {
-        Ok(self.unmerged(tip, into))
+        self.rename_local_branch(from, to, expected)
     }
 
+    fn restore_branch_config(
+        &mut self,
+        name: &str,
+        entries: &[ConfigEntry],
+        remove: bool,
+    ) -> Vec<Message> {
+        self.set_branch_config(name, entries, remove)
+    }
+}
+
+impl GitRemotes for MemoryBackend {
     fn remotes(&self) -> Result<Vec<String>, EngineError> {
         let mut names = self.remote_names();
         names.extend(self.listed_anyway.iter().cloned());
@@ -874,29 +895,12 @@ impl GitBackend for MemoryBackend {
         self.fetch_remote(request, job)
     }
 
-    fn create_branch(&mut self, name: &str, target: &Oid) -> Result<(), EngineError> {
-        self.create_local_branch(name, target)
-    }
-
-    fn create_tag(
-        &mut self,
-        name: &str,
-        target: &Oid,
-        message: Option<&str>,
-    ) -> Result<Oid, EngineError> {
-        self.create_tag_ref(name, target, message)
-    }
-
     fn upstream(&self, branch: &str) -> Result<Option<UpstreamConfig>, EngineError> {
         Ok(self.upstream_config(branch))
     }
 
     fn pull_settings(&self, _branch: &str) -> Result<PullSettings, EngineError> {
         Ok(self.pull_settings.clone())
-    }
-
-    fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
-        Ok(self.config_of(key))
     }
 
     fn missing_commits(
@@ -910,10 +914,6 @@ impl GitBackend for MemoryBackend {
 
     fn pull(&mut self, request: &PullRequest) -> Result<PullOutcome, EngineError> {
         self.pull_upstream(request)
-    }
-
-    fn reset_branch(&mut self, request: &RefRestore) -> Result<RestoreOutcome, EngineError> {
-        self.reset_keep(request)
     }
 
     fn push(
@@ -953,36 +953,6 @@ impl GitBackend for MemoryBackend {
         self.delete_tag_on_remote(request, job)
     }
 
-    fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError> {
-        self.delete_local_tag(name, expected)
-    }
-
-    fn checkout(&mut self, target: &HeadState) -> Result<RestoreOutcome, EngineError> {
-        self.checkout_head(target)
-    }
-
-    fn delete_branch(&mut self, name: &str, expected: &Oid) -> Result<BranchDeleted, EngineError> {
-        self.delete_local_branch(name, expected)
-    }
-
-    fn rename_branch(
-        &mut self,
-        from: &str,
-        to: &str,
-        expected: &Oid,
-    ) -> Result<RestoreOutcome, EngineError> {
-        self.rename_local_branch(from, to, expected)
-    }
-
-    fn restore_branch_config(
-        &mut self,
-        name: &str,
-        entries: &[ConfigEntry],
-        remove: bool,
-    ) -> Vec<Message> {
-        self.set_branch_config(name, entries, remove)
-    }
-
     fn remote_snapshot(&self, name: &str) -> Result<RemoteSnapshot, EngineError> {
         Ok(self.snapshot_of(name))
     }
@@ -1002,7 +972,9 @@ impl GitBackend for MemoryBackend {
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         Ok(self.remote_elsewhere.get(name).cloned().unwrap_or_default())
     }
+}
 
+impl GitStash for MemoryBackend {
     fn stashes(&self) -> Result<Vec<StashEntry>, EngineError> {
         Ok(self.stash_list())
     }
@@ -1021,6 +993,19 @@ impl GitBackend for MemoryBackend {
 
     fn stash_store(&mut self, id: &Oid, message: &str) -> Result<(), EngineError> {
         self.store_stash(id, message)
+    }
+}
+
+impl GitOperations for MemoryBackend {
+    fn conflict_versions(&self, path: &RepoPath) -> Result<ConflictVersions, EngineError> {
+        self.conflict_files(path)
+    }
+
+    fn resolve_conflict(
+        &mut self,
+        request: &ConflictResolution,
+    ) -> Result<ConflictResolved, EngineError> {
+        self.resolve_file(request)
     }
 
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError> {
@@ -1053,6 +1038,35 @@ impl GitBackend for MemoryBackend {
 
     fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.rebase_stop()
+    }
+}
+
+impl GitMaintenance for MemoryBackend {
+    fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
+        // Like git: the last value of `core.commitGraph` wins; `false`, `no`, `off`, `0` and
+        // the empty value disable it.
+        let enabled = self.config_of("core.commitGraph").last().is_none_or(|v| {
+            !matches!(
+                v.to_ascii_lowercase().as_str(),
+                "false" | "no" | "off" | "0" | ""
+            )
+        });
+        Ok(CommitGraphState {
+            present: self.commit_graph,
+            enabled,
+            shallow: false,
+            replaced: false,
+        })
+    }
+
+    fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError> {
+        if job.is_cancelled() {
+            return Err(EngineError::Cancelled {
+                command: "repo.optimize",
+            });
+        }
+        self.commit_graph = true;
+        Ok(())
     }
 }
 

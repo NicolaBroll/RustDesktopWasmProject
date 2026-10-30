@@ -1,4 +1,5 @@
 use super::*;
+use crate::{commit, discard, stage};
 
 /// How many conflicted files to list in the confirmation; the others become "and N more".
 pub(super) const CONFIRM_LIST: usize = 8;
@@ -28,15 +29,15 @@ pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: 
         ui.horizontal(|ui| {
             let label = tr!("confirm-resolve-button", n = n);
             if ui.button(label).clicked() {
-                actions.push(Action::ConfirmWrite);
+                actions.push(Action::Stage(stage::Action::Confirm));
             }
             if ui.button(tr!("confirm-cancel")).clicked() {
-                actions.push(Action::CancelWrite);
+                actions.push(Action::Stage(stage::Action::Cancel));
             }
         });
     });
     if modal.should_close() {
-        actions.push(Action::CancelWrite);
+        actions.push(Action::Stage(stage::Action::Cancel));
     }
 }
 
@@ -73,15 +74,15 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
                 egui::Button::new(RichText::new(label).color(ui.visuals().strong_text_color()))
                     .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
             if ui.add(button).clicked() {
-                actions.push(Action::ConfirmDiscard);
+                actions.push(Action::Discard(discard::Action::Confirm));
             }
             if ui.button(tr!("confirm-discard-keep")).clicked() {
-                actions.push(Action::CancelDiscard);
+                actions.push(Action::Discard(discard::Action::Cancel));
             }
         });
     });
     if modal.should_close() {
-        actions.push(Action::CancelDiscard);
+        actions.push(Action::Discard(discard::Action::Cancel));
     }
 }
 
@@ -116,14 +117,14 @@ pub(crate) fn confirm_amend(
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             if ui.button(tr!("confirm-amend-button")).clicked() {
-                actions.push(Action::ConfirmCommit);
+                actions.push(Action::Commit(commit::Action::Confirm));
             }
             if ui.button(tr!("confirm-cancel")).clicked() {
-                actions.push(Action::CancelCommit);
+                actions.push(Action::Commit(commit::Action::Cancel));
             }
         });
     });
     if modal.should_close() {
-        actions.push(Action::CancelCommit);
+        actions.push(Action::Commit(commit::Action::Cancel));
     }
 }

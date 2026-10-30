@@ -2,66 +2,125 @@
 //! `stash.drop`. Types, checks common to the backends and choices in `git/stash.rs`; here the commands.
 //! `stash.push` and `stash.drop` enter the journal, `stash.apply` and `stash.pop` do not (§7).
 
-use super::{Out, check_path_list, journal_state, to_json};
-use crate::commands::parse_params;
+use super::{JournalState, Out, check_path_list, reread, to_json};
 use crate::{
-    EngineError, GitBackend, HeadState, JournalEntry, Session, StashEntry, StashPush,
+    EngineError, GitBackend, HeadState, JournalEntry, Message, Session, StashEntry, StashPush,
     check_stash_apply, pop_stash,
 };
-use project_domain::Oid;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Oid, Status};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+/// Result of `stash.list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StashListResult {
+    /// The stashes, most recent first.
+    pub stashes: Vec<StashEntry>,
+}
+
+/// Result of `stash.push`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StashPushResult {
+    /// The new stash (`stash@{0}`).
+    pub stash: StashEntry,
+    /// The stashes re-read after the push; `null` if they could not be re-read (see
+    /// `stashes_error`).
+    pub stashes: Option<Vec<StashEntry>>,
+    /// Why the stashes could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stashes_error: Option<String>,
+    /// The status re-read after the push; `null` if it could not be re-read (see `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `stash.apply` and `stash.pop` (same shape; `stash.apply` always has `dropped:
+/// false` and `backup: null`). Neither enters the journal, so there are no journal fields.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StashApplyResult {
+    /// The stash applied, as it was in the list before the command.
+    pub stash: StashEntry,
+    /// The files left with conflicts (empty if none).
+    pub conflicts: Vec<String>,
+    /// The stash was removed from the list (`stash.pop` without conflicts).
+    pub dropped: bool,
+    /// The backup ref of the dropped stash's commit (`refs/project/backup/stash-...`), `null` if
+    /// not dropped or no backup was created.
+    pub backup: Option<String>,
+    /// Warnings: the stash kept because of conflicts or because its drop failed, and the
+    /// warnings of apply and drop.
+    pub warnings: Vec<Message>,
+    /// The stashes re-read after the command; `null` if they could not be re-read (see
+    /// `stashes_error`).
+    pub stashes: Option<Vec<StashEntry>>,
+    /// Why the stashes could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stashes_error: Option<String>,
+    /// The status re-read after the command; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+}
+
+/// Result of `stash.drop`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StashDropResult {
+    /// The dropped stash, as it was in the list before the command.
+    pub stash: StashEntry,
+    /// The backup ref that keeps the stash's commit (`refs/project/backup/stash-...`).
+    pub backup: Option<String>,
+    /// The warnings of the drop.
+    pub warnings: Vec<Message>,
+    /// The stashes re-read after the drop; `null` if they could not be re-read (see
+    /// `stashes_error`).
+    pub stashes: Option<Vec<StashEntry>>,
+    /// Why the stashes could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stashes_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ListParams {}
+pub(crate) struct ListParams {}
 
 /// Parameters of `stash.apply` and `stash.pop`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ApplyParams {
+pub struct StashApplyParams {
     /// The position: `n` of `stash@{n}` (0 if missing).
     #[serde(default)]
-    index: usize,
+    pub index: usize,
     /// The full id of the stash as seen by the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Also restore the staged changes of the stash (`--index`).
     #[serde(default)]
-    expected: Option<String>,
-    #[serde(default)]
-    restore_index: bool,
+    pub restore_index: bool,
 }
 
 /// Parameters of `stash.drop`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct DropParams {
+pub struct StashDropParams {
+    /// The position: `n` of `stash@{n}` (0 if missing).
     #[serde(default)]
-    index: usize,
-    #[serde(default)]
-    expected: Option<String>,
-    #[serde(default)]
-    confirm: bool,
-}
-
-/// The list as JSON, or `null` with `stashes_error` if it cannot be re-read (the operation is done).
-fn with_stashes(out: &mut Value, repo: &dyn GitBackend) {
-    match repo.stashes() {
-        Ok(list) => out["stashes"] = to_json(list),
-        Err(e) => {
-            out["stashes"] = Value::Null;
-            out["stashes_error"] = Value::String(e.to_string());
-        }
-    }
-}
-
-/// The state as JSON, or `null` with `status_error` if it cannot be re-read.
-fn with_status(out: &mut Value, repo: &dyn GitBackend) {
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
+    pub index: usize,
+    /// The full id of the stash to drop; required with `confirm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Always required to drop.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 
 /// `expected` as a full id (40 digits), or [`EngineError::InvalidParams`].
@@ -114,24 +173,25 @@ fn pick(
     Ok(entry.clone())
 }
 
-/// The list of stashes, most recent first: `{"stashes": [StashEntry]}` (see
-/// [`StashEntry`]: `index`, `name`, `id`, `base`, `message`, `branch`, `time`, `untracked`).
-pub(super) fn stash_list(s: &mut Session, p: Value) -> Out {
-    let ListParams {} = parse_params("stash.list", p)?;
-    Ok(json!({ "stashes": to_json(s.repo()?.stashes()?) }))
+/// The list of stashes, most recent first (see [`StashEntry`]: `index`, `name`, `id`, `base`,
+/// `message`, `branch`, `time`, `untracked`).
+///
+/// Result: [`StashListResult`].
+pub(super) fn stash_list(s: &mut Session, ListParams {}: ListParams) -> Out {
+    Ok(to_json(StashListResult {
+        stashes: s.repo()?.stashes()?,
+    }))
 }
 
 /// Sets changes aside in a new stash (see
-/// [`GitBackend::stash_push`](crate::GitBackend::stash_push) and
+/// [`GitStash::stash_push`](crate::GitStash::stash_push) and
 /// [`check_stash_push`](crate::check_stash_push)): nothing is lost, the changes are in the
 /// stash. It goes into the journal: `edit.undo` reapplies it (with the index) and removes it from the list, only
 /// if HEAD has not moved.
 ///
-/// Result: `{"stash": StashEntry, "stashes": [StashEntry], "status": Status, "can_undo",
-/// "can_redo", "next_undo", "next_redo"}`.
-pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
+/// Result: [`StashPushResult`].
+pub(super) fn stash_push(s: &mut Session, mut request: StashPush) -> Out {
     const ID: &str = "stash.push";
-    let mut request: StashPush = parse_params(ID, p)?;
     request.check()?;
     if let Some(paths) = request.paths.take() {
         request.paths = Some(check_path_list(ID, paths)?);
@@ -140,22 +200,31 @@ pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
     let head = HeadState::from_head(&repo.head()?);
     let stash = repo.stash_push(&request)?;
     journal.record(JournalEntry::stash_push(&stash, head, request));
-    let mut out = journal_state(journal);
-    out["stash"] = to_json(stash);
-    with_stashes(&mut out, repo);
-    with_status(&mut out, repo);
-    Ok(out)
+    let (stashes, stashes_error) = reread(repo.stashes());
+    let (status, status_error) = reread(repo.status());
+    Ok(to_json(StashPushResult {
+        stash,
+        stashes,
+        stashes_error,
+        status,
+        status_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// `stash.apply` and `stash.pop`: applies the stash `index` (checked with `expected`) and, for
 /// `pop`, if no conflicts remain removes it from the list after saving its commit in
 /// `refs/project/backup/stash-...`. They do not enter the journal.
-fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
-    let ApplyParams {
+fn apply(
+    id: &'static str,
+    pop: bool,
+    s: &mut Session,
+    StashApplyParams {
         index,
         expected,
         restore_index,
-    } = parse_params(id, p)?;
+    }: StashApplyParams,
+) -> Out {
     let expected = full_id(id, expected)?;
     let repo = s.repo_mut()?;
     let entry = pick(repo, index, expected)?;
@@ -185,32 +254,34 @@ fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
     }
     let backup = dropped.as_ref().and_then(|d| d.backup.clone());
     warnings.extend(dropped.into_iter().flat_map(|d| d.warnings));
-    let mut out = json!({
-        "stash": to_json(&entry),
-        "conflicts": to_json(&applied.conflicts),
-        "dropped": was_dropped,
-        "backup": backup,
-        "warnings": warnings,
-    });
-    with_stashes(&mut out, repo);
-    with_status(&mut out, repo);
-    Ok(out)
+    let (stashes, stashes_error) = reread(repo.stashes());
+    let (status, status_error) = reread(repo.status());
+    Ok(to_json(StashApplyResult {
+        stash: entry,
+        conflicts: applied.conflicts,
+        dropped: was_dropped,
+        backup,
+        warnings,
+        stashes,
+        stashes_error,
+        status,
+        status_error,
+    }))
 }
 
 /// Applies a stash to index and worktree without removing it from the list (see
-/// [`GitBackend::stash_apply`](crate::GitBackend::stash_apply)): never over local changes to the
+/// [`GitStash::stash_apply`](crate::GitStash::stash_apply)): never over local changes to the
 /// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
-/// Result: `{"stash": StashEntry, "conflicts": [string], "dropped": false, "backup": null,
-/// "warnings": [string], "stashes": [StashEntry], "status": Status}`.
-pub(super) fn stash_apply(s: &mut Session, p: Value) -> Out {
+/// Result: [`StashApplyResult`] (`dropped: false`, `backup: null`).
+pub(super) fn stash_apply(s: &mut Session, p: StashApplyParams) -> Out {
     apply("stash.apply", false, s, p)
 }
 
 /// Like `stash.apply`, then, if no conflicts remain, removes the stash from the list (first a
 /// backup of its commit: `backup`). With conflicts the stash stays (`dropped: false`).
-/// Result like `stash.apply`.
-pub(super) fn stash_pop(s: &mut Session, p: Value) -> Out {
+/// Result: [`StashApplyResult`].
+pub(super) fn stash_pop(s: &mut Session, p: StashApplyParams) -> Out {
     apply("stash.pop", true, s, p)
 }
 
@@ -221,15 +292,16 @@ pub(super) fn stash_pop(s: &mut Session, p: Value) -> Out {
 /// in `refs/project/backup/stash-...`; it goes into the journal, and `edit.undo` puts it back at the top
 /// of the list.
 ///
-/// Result: `{"stash": StashEntry, "backup": string, "warnings": [string], "stashes":
-/// [StashEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`.
-pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "stash.drop";
-    let DropParams {
+/// Result: [`StashDropResult`].
+pub(super) fn stash_drop(
+    s: &mut Session,
+    StashDropParams {
         index,
         expected,
         confirm,
-    } = parse_params(ID, p)?;
+    }: StashDropParams,
+) -> Out {
+    const ID: &str = "stash.drop";
     let expected = full_id(ID, expected)?;
     if confirm && expected.is_none() {
         return Err(EngineError::InvalidParams {
@@ -268,12 +340,15 @@ pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
         head,
         dropped.backup.clone(),
     ));
-    let mut out = journal_state(journal);
-    out["stash"] = to_json(&entry);
-    out["backup"] = to_json(&dropped.backup);
-    out["warnings"] = to_json(&dropped.warnings);
-    with_stashes(&mut out, repo);
-    Ok(out)
+    let (stashes, stashes_error) = reread(repo.stashes());
+    Ok(to_json(StashDropResult {
+        stash: entry,
+        backup: dropped.backup,
+        warnings: dropped.warnings,
+        stashes,
+        stashes_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]

@@ -1,0 +1,101 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backups": [],
+  "can_redo": false,
+  "can_undo": true,
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "n": 0.0,
+      "name": "fork",
+      "upstreams": 0.0
+    },
+    "key": "engine-journal-remote-remove",
+    "text": "Remove remote `fork` (0 remote branches)"
+  },
+  "push_default_removed": false,
+  "push_remotes_removed": [],
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": {
+        "ahead": 1,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    }
+  ],
+  "remote": "fork",
+  "remotes": [
+    {
+      "branches": 2,
+      "credentials": false,
+      "default": true,
+      "fetch": [
+        "+refs/heads/*:refs/remotes/origin/*"
+      ],
+      "mirror": false,
+      "name": "origin",
+      "push_default": false,
+      "push_urls": [],
+      "url": "https://example.com/project.git"
+    }
+  ],
+  "removed": {
+    "config": [
+      {
+        "key": "remote.fork.url",
+        "value": "https://example.com/fork.git"
+      },
+      {
+        "key": "remote.fork.fetch",
+        "value": "+refs/heads/*:refs/remotes/fork/*"
+      }
+    ],
+    "head": null,
+    "name": "fork",
+    "push_default": false,
+    "refs": [],
+    "upstreams": []
+  },
+  "upstreams_removed": [],
+  "warnings": []
+}

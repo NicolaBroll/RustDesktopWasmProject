@@ -2,8 +2,48 @@
 //! window's close button, the lanes' color used as text. One place, for the dark and the light
 //! theme (egui follows the system's, or the one chosen in the File menu).
 
-use egui::Color32;
+use egui::{Color32, FontId, TextStyle};
 use project_domain::Change;
+
+/// The text sizes of the app, in points: egui's text styles and the views that paint text
+/// themselves (commit rows, diff, blame) use these and no others.
+pub(crate) mod size {
+    /// Secondary text: status bar, sub-lines, hints, counters, ref badges, toolbar labels.
+    pub const SMALL: f32 = 11.0;
+    /// Body text, buttons, list rows.
+    pub const BODY: f32 = 13.0;
+    /// Code, hashes, diff lines.
+    pub const MONO: f32 = 12.5;
+    /// Panel titles.
+    pub const HEADING: f32 = 18.0;
+}
+
+pub(crate) fn body() -> FontId {
+    FontId::proportional(size::BODY)
+}
+
+pub(crate) fn small() -> FontId {
+    FontId::proportional(size::SMALL)
+}
+
+pub(crate) fn mono() -> FontId {
+    FontId::monospace(size::MONO)
+}
+
+/// egui's text styles on the scale above, in the dark and in the light theme (egui's `Small`
+/// is 9 pt: too small next to the body text).
+pub(crate) fn install_text_styles(ctx: &egui::Context) {
+    ctx.all_styles_mut(|style| {
+        style.text_styles = [
+            (TextStyle::Small, small()),
+            (TextStyle::Body, body()),
+            (TextStyle::Button, body()),
+            (TextStyle::Heading, FontId::proportional(size::HEADING)),
+            (TextStyle::Monospace, mono()),
+        ]
+        .into();
+    });
+}
 
 /// Text on a colored badge (change letters, branch labels): dark on every badge color.
 pub(crate) const ON_BADGE: Color32 = Color32::from_gray(20);

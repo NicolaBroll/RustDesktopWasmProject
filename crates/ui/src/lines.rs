@@ -8,10 +8,27 @@
 //! reload or another file). Only added and removed lines can be selected, never context.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
-use crate::{Action, Drag, Request, Tab, lines};
+use crate::{Drag, Request, Tab};
 use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
+use project_engine::IndexLinesParams;
 use project_i18n::tr;
 use std::collections::BTreeSet;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Click on a diff row (index in `DiffDoc::rows`): selects or deselects it;
+    /// with Shift selects the range from the last clicked one.
+    Select { row: usize, shift: bool },
+    /// Dragging over the diff rows.
+    Drag(Drag),
+    /// Deselects all the diff rows.
+    Clear,
+    /// Stage (worktree diff) or unstage (index diff) the hunk with this index.
+    Hunk(usize),
+    /// Stage or unstage the selected lines.
+    Selected,
+}
 
 /// Whether the shown diff allows staging (or unstaging) hunks and lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,10 +222,10 @@ impl LineWrite {
     }
 
     pub fn params(&self) -> serde_json::Value {
-        serde_json::json!({
-            "path": self.path,
-            "lines": self.lines,
-            "digest": self.digest,
+        crate::params(IndexLinesParams {
+            path: self.path.clone(),
+            lines: self.lines.clone(),
+            digest: self.digest.clone(),
         })
     }
 }
@@ -308,12 +325,12 @@ impl Tab {
     /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_lines(&mut self, action: Action) {
         match action {
-            Action::SelectLine { row, shift } => {
+            Action::Select { row, shift } => {
                 if let Some((_, doc, selection)) = self.selectable_diff() {
                     selection.click(doc, row, shift);
                 }
             }
-            Action::DragLines(step) => {
+            Action::Drag(step) => {
                 if let Some((_, doc, selection)) = self.selectable_diff() {
                     match step {
                         Drag::Start(row) => selection.drag_start(doc, row),
@@ -322,32 +339,37 @@ impl Tab {
                     }
                 }
             }
-            Action::ClearLines => {
+            Action::Clear => {
                 if let Some((_, _, selection)) =
                     self.repo.as_mut().and_then(|r| r.diff.loaded_mut())
                 {
                     selection.clear();
                 }
             }
-            Action::WriteHunk(h) => {
+            Action::Hunk(h) => {
                 let write = self.repo.as_ref().and_then(|r| {
+                    if r.diff.is_reloading() {
+                        return None;
+                    }
                     let (target, doc, _) = r.diff.loaded()?;
-                    lines::plan(doc, target, Pick::Hunk(h))
+                    plan(doc, target, Pick::Hunk(h))
                 });
                 if let Some(write) = write {
                     self.send_line_write(write);
                 }
             }
-            Action::WriteSelectedLines => {
+            Action::Selected => {
                 let write = self.repo.as_ref().and_then(|r| {
+                    if r.diff.is_reloading() {
+                        return None;
+                    }
                     let (target, doc, selection) = r.diff.loaded()?;
-                    lines::plan(doc, target, Pick::Selected(selection))
+                    plan(doc, target, Pick::Selected(selection))
                 });
                 if let Some(write) = write {
                     self.send_line_write(write);
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
@@ -667,8 +689,11 @@ mod tests {
             };
             let (command, params) = target.request();
             let value = registry.run(command, session, params).unwrap();
-            let digest = value["files"][0]["digest"].as_str().map(str::to_owned);
-            let diff: Diff = serde_json::from_value(value).unwrap();
+            let read: project_engine::DiffWithDigests = serde_json::from_value(value).unwrap();
+            let digest = read.files.first().map(|f| f.digest.clone());
+            let diff = Diff {
+                files: read.files.into_iter().map(|f| f.file).collect(),
+            };
             (target, DiffDoc::new(diff, &path), digest)
         };
 

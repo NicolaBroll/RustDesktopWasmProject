@@ -1,7 +1,7 @@
 //! Tests of `apply_lines` (stage and unstage of lines) on the `MemoryBackend`.
 
 use super::*;
-use crate::{DiffSpec, GitBackend, LineSelection, file_digest};
+use crate::{DiffSpec, GitIndex, GitRead, LineSelection, file_digest};
 use project_domain::{FileDiff, LineKind, LineRef, PatchDirection};
 
 fn p(path: &str) -> RepoPath {
@@ -112,7 +112,7 @@ fn stage_and_unstage_of_one_line() {
         .filter(|l| l.kind != LineKind::Context)
         .map(|l| (l.kind, l.content.clone()))
         .collect();
-    assert_eq!(changed, [(LineKind::Added, first_added.content.clone())]);
+    assert_eq!(changed, [(LineKind::Added, first_added.content)]);
 
     // And removed again: back to the starting state. The staged version was only
     // in the index (`MM`): backup.
@@ -230,7 +230,7 @@ fn errors_change_nothing() {
         (
             LineSelection {
                 direction: PatchDirection::Unstage,
-                ..good.clone()
+                ..good
             },
             |e| matches!(e, EngineError::StaleDiff { .. }),
         ),

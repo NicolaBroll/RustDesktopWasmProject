@@ -8,7 +8,7 @@
 
 use super::{MemoryBackend, content_oid};
 use crate::git::{
-    BACKUP_PREFIX, GitBackend, LineSelection, apply_patch, line_patch, versions_at_risk,
+    BACKUP_PREFIX, GitRead, LineSelection, apply_patch, line_patch, versions_at_risk,
 };
 use crate::{EngineError, path_matches as matches};
 use project_domain::{
@@ -146,7 +146,7 @@ impl MemoryBackend {
         Ok(hits)
     }
 
-    /// [`GitBackend::stage`](crate::GitBackend::stage) on the status entries.
+    /// [`GitIndex::stage`](crate::GitIndex::stage) on the status entries.
     /// Saves in a (in-memory) backup the staged versions that stage or unstage of `paths`
     /// would lose; the ref name, if there were any.
     pub(super) fn backup(&mut self, paths: &[RepoPath]) -> Result<Option<String>, EngineError> {
@@ -332,7 +332,7 @@ impl MemoryBackend {
         Some(entry)
     }
 
-    /// [`GitBackend::unstage`](crate::GitBackend::unstage) on the status entries. The
+    /// [`GitIndex::unstage`](crate::GitIndex::unstage) on the status entries. The
     /// worktree does not change (if needed, the content of an unmodified file is copied
     /// from the index to the worktree, which for the `MemoryBackend` is just a map).
     pub(super) fn unstage_paths(
@@ -438,7 +438,7 @@ impl MemoryBackend {
 }
 
 impl MemoryBackend {
-    /// [`GitBackend::apply_lines`](crate::GitBackend::apply_lines): the patch of the chosen lines
+    /// [`GitIndex::apply_lines`](crate::GitIndex::apply_lines): the patch of the chosen lines
     /// applied to the file's staged content, then state and diff recomputed as after a
     /// stage. The worktree does not change.
     pub(super) fn apply_line_patch(

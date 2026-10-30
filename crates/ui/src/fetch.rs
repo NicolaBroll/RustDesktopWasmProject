@@ -6,13 +6,26 @@
 //! so the UI disables the other writes and "Refresh" until it is finished. Authentication and
 //! network errors are explained in a window with git's text.
 
-use crate::{Action, Done, Request, Tab, fetch};
+use crate::running::Running;
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
-use project_domain::{Oid, RefInfo};
-use project_engine::Progress;
+use project_domain::RefInfo;
+use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
+use project_engine::{Progress, RefUpdate, RemoteFetchParams, RemoteFetchResult};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Fetch from the given remote (`None`: the one the engine chooses: upstream, `origin`,
+    /// the only one).
+    Fetch(Option<String>),
+    /// "Stop" the fetch in progress.
+    Cancel,
+    /// Closes the fetch error window.
+    DismissError,
+}
 
 /// The id of the Registry command.
 pub const COMMAND: &str = "remote.fetch";
@@ -25,14 +38,11 @@ pub fn label(remote: Option<&str>) -> String {
     }
 }
 
-/// The fetch in progress.
+/// What the fetch in progress was asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Running {
-    pub ticket: Ticket,
+pub struct Fetching {
     /// The requested remote; `None` = the one chosen by the engine (upstream, `origin`, the only one).
     pub remote: Option<String>,
-    /// True after "Stop", until the command answers.
-    pub cancelling: bool,
     /// Started by the timer of the automatic fetch (S50), not by the button.
     pub auto: bool,
 }
@@ -50,7 +60,7 @@ pub struct Failure {
 /// The fetch: the one in progress and the last error to explain.
 #[derive(Debug, Default)]
 pub struct FetchBox {
-    running: Option<Running>,
+    running: Option<Running<Fetching>>,
     failure: Option<Failure>,
 }
 
@@ -82,7 +92,7 @@ pub struct Outcome {
 
 impl FetchBox {
     /// The fetch in progress, if any.
-    pub fn running(&self) -> Option<&Running> {
+    pub fn running(&self) -> Option<&Running<Fetching>> {
         self.running.as_ref()
     }
 
@@ -103,39 +113,40 @@ impl FetchBox {
         if self.running.is_some() {
             return None;
         }
-        Some(match remote {
-            Some(remote) => json!({ "remote": remote, "prune": true }),
-            None => json!({ "prune": true }),
-        })
+        Some(params(RemoteFetchParams {
+            remote: remote.map(str::to_owned),
+            branch: None,
+            prune: true,
+        }))
     }
 
     /// The fetch requested with [`FetchBox::request`] started with `ticket`.
     pub fn started(&mut self, ticket: Ticket, remote: Option<String>) {
         self.failure = None;
-        self.running = Some(Running {
+        self.running = Some(Running::with(
             ticket,
-            remote,
-            cancelling: false,
-            auto: false,
-        });
+            Fetching {
+                remote,
+                auto: false,
+            },
+        ));
     }
 
     /// The automatic fetch (S50) started with `ticket`, from the remote the engine chooses. It
     /// opens no window: [`FetchBox::receive`] leaves none for it.
     pub fn started_auto(&mut self, ticket: Ticket) {
-        self.running = Some(Running {
+        self.running = Some(Running::with(
             ticket,
-            remote: None,
-            cancelling: false,
-            auto: true,
-        });
+            Fetching {
+                remote: None,
+                auto: true,
+            },
+        ));
     }
 
     /// "Stop": the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
-        let running = self.running.as_mut().filter(|r| !r.cancelling)?;
-        running.cancelling = true;
-        Some(running.ticket)
+        self.running.as_mut()?.cancel()
     }
 
     /// The response of `remote.fetch` for `ticket`.
@@ -147,11 +158,11 @@ impl FetchBox {
         detail: Option<String>,
     ) -> Received {
         let (remote, auto) = match self.running.take() {
-            Some(running) if running.ticket == ticket => (running.remote, running.auto),
+            Some(running) if running.ticket == ticket => (running.extra.remote, running.extra.auto),
             other => {
                 self.running = other;
                 return Received::Failed {
-                    message: tr!("fetch-unexpected-response", command = COMMAND),
+                    message: tr!("common-unexpected-response", command = COMMAND),
                     reload: true,
                 };
             }
@@ -160,14 +171,10 @@ impl FetchBox {
         let label = label(remote.as_deref());
         let error = match result {
             Ok(value) => {
-                return match serde_json::from_value::<FetchResult>(value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome())),
+                return match serde_json::from_value::<RemoteFetchResult>(value) {
+                    Ok(result) => Received::Done(Box::new(outcome(result))),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "fetch-unexpected-result",
-                            command = COMMAND,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(COMMAND, e),
                         reload: true,
                     },
                 };
@@ -206,7 +213,7 @@ impl FetchBox {
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
-                    message: tr!("fetch-failed", label = label, error = error),
+                    message: tr!("common-failed", label = label, error = error),
                     reload: true,
                 }
             }
@@ -259,108 +266,77 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
     }
 }
 
-/// A ref changed by the fetch.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct RefUpdate {
-    pub name: String,
-    pub before: Option<Oid>,
-    pub after: Option<Oid>,
-}
-
-/// Result of `remote.fetch`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct FetchResult {
-    pub remote: String,
-    pub branch: Option<String>,
-    pub updated: Option<Vec<RefUpdate>>,
-    #[serde(default)]
-    pub messages: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub refs: Option<Vec<RefInfo>>,
-    pub refs_error: Option<String>,
-    /// The backups of the remote-tracking branches removed by `prune`.
-    #[serde(default)]
-    pub backups: Vec<String>,
-}
-
 /// How many ref names to list in the notice before "and N more".
 const NAMES_SHOWN: usize = 3;
 
 /// The name of a ref for the notice: `origin/main`, `tag v1`.
 fn ref_text(name: &str) -> String {
-    if let Some(remote) = name.strip_prefix("refs/remotes/") {
+    if let Some(remote) = name.strip_prefix(REMOTES_PREFIX) {
         remote.to_owned()
-    } else if let Some(tag) = name.strip_prefix("refs/tags/") {
+    } else if let Some(tag) = name.strip_prefix(TAGS_PREFIX) {
         tr!("fetch-ref-tag", tag = tag)
     } else {
         name.to_owned()
     }
 }
 
-impl FetchResult {
-    /// The notice for the status bar (also for the fetch of `remote.add`).
-    pub(crate) fn outcome(self) -> Outcome {
-        // git's lines (`From ...`, `* [new branch] ...`) go only in the log.
-        for line in &self.messages {
-            log::info!("{COMMAND}: {line}");
-        }
-        let what = match &self.branch {
-            Some(branch) => tr!("fetch-what-branch", branch = branch, remote = &self.remote),
-            None => tr!("fetch-label-remote", remote = &self.remote),
-        };
-        let summary = match &self.updated {
-            None => tr!("fetch-done", what = what),
-            Some(updated) if updated.is_empty() => tr!("fetch-nothing-new", what = what),
-            Some(updated) => {
-                let mut names: Vec<String> = updated
-                    .iter()
-                    .take(NAMES_SHOWN)
-                    .map(|u| {
-                        let name = ref_text(&u.name);
-                        match (u.before, u.after) {
-                            (None, Some(_)) => tr!("fetch-ref-new", name = name),
-                            (Some(_), None) => tr!("fetch-ref-removed", name = name),
-                            _ => name,
-                        }
-                    })
-                    .collect();
-                if updated.len() > NAMES_SHOWN {
-                    names.push(tr!("fetch-and-more", n = updated.len() - NAMES_SHOWN));
-                }
-                tr!(
-                    "fetch-updated",
-                    what = what,
-                    n = updated.len(),
-                    names = names.join(", ")
-                )
-            }
-        };
-        let warnings: String = self
-            .warnings
-            .iter()
-            .map(|w| tr!("fetch-warning", warning = w))
-            .collect();
-        let backups = if self.backups.is_empty() {
-            String::new()
-        } else {
-            tr!("fetch-pruned-backups", n = self.backups.len())
-        };
-        Outcome {
-            notice: summary + &backups + &warnings,
-            changed: self.updated.as_ref().is_none_or(|u| !u.is_empty()),
-            moved: self
-                .updated
+/// The notice for the status bar (also for the fetch of `remote.add`).
+pub(crate) fn outcome(r: RemoteFetchResult) -> Outcome {
+    // git's lines (`From ...`, `* [new branch] ...`) go only in the log.
+    for line in &r.messages {
+        log::info!("{COMMAND}: {line}");
+    }
+    let what = match &r.branch {
+        Some(branch) => tr!("fetch-what-branch", branch = branch, remote = &r.remote),
+        None => tr!("fetch-label-remote", remote = &r.remote),
+    };
+    let summary = match &r.updated {
+        None => tr!("fetch-done", what = what),
+        Some(updated) if updated.is_empty() => tr!("fetch-nothing-new", what = what),
+        Some(updated) => {
+            let mut names: Vec<String> = updated
                 .iter()
-                .flatten()
-                .filter(|u| u.name.starts_with("refs/remotes/"))
-                .cloned()
-                .collect(),
-            refs: self.refs,
-            warning: self
-                .refs_error
-                .map(|e| tr!("fetch-refs-not-reread", error = e)),
+                .take(NAMES_SHOWN)
+                .map(|u| {
+                    let name = ref_text(&u.name);
+                    match (u.before, u.after) {
+                        (None, Some(_)) => tr!("fetch-ref-new", name = name),
+                        (Some(_), None) => tr!("fetch-ref-removed", name = name),
+                        _ => name,
+                    }
+                })
+                .collect();
+            if updated.len() > NAMES_SHOWN {
+                names.push(tr!("fetch-and-more", n = updated.len() - NAMES_SHOWN));
+            }
+            tr!(
+                "fetch-updated",
+                what = what,
+                n = updated.len(),
+                names = names.join(", ")
+            )
         }
+    };
+    let warnings = crate::messages_text(&r.warnings);
+    let backups = if r.backups.is_empty() {
+        String::new()
+    } else {
+        tr!("fetch-pruned-backups", n = r.backups.len())
+    };
+    Outcome {
+        notice: summary + &backups + &warnings,
+        changed: r.updated.as_ref().is_none_or(|u| !u.is_empty()),
+        moved: r
+            .updated
+            .iter()
+            .flatten()
+            .filter(|u| u.name.starts_with(REMOTES_PREFIX))
+            .cloned()
+            .collect(),
+        refs: r.refs,
+        warning: r
+            .refs_error
+            .map(|e| tr!("fetch-refs-not-reread", error = e)),
     }
 }
 
@@ -416,17 +392,16 @@ impl Tab {
                 repo.write_error = None;
                 self.start_fetch(remote, false);
             }
-            Action::CancelFetch => {
+            Action::Cancel => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.fetch.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::DismissFetchError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.fetch.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
@@ -443,9 +418,9 @@ impl Tab {
         repo.write_label = Some(if auto {
             tr!("fetch-auto-label")
         } else {
-            fetch::label(remote.as_deref())
+            label(remote.as_deref())
         });
-        let ticket = self.executor.submit(fetch::COMMAND, params);
+        let ticket = self.executor.submit(COMMAND, params);
         self.pending.insert(ticket, Request::Fetch(generation));
         if let Some(repo) = &mut self.repo {
             repo.auto_fetch.started();
@@ -464,7 +439,7 @@ impl Tab {
         let auto = self
             .current(generation)
             .and_then(|r| r.fetch.running())
-            .is_some_and(|r| r.auto);
+            .is_some_and(|r| r.extra.auto);
         if auto {
             self.receive_auto_fetch(generation, done);
             return;
@@ -481,7 +456,7 @@ impl Tab {
             repo.fetch
                 .receive(done.ticket, done.result, done.error_kind, done.error_detail);
         match received {
-            fetch::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 let refs_read = outcome.refs.is_some();
                 // The remote answers: the automatic fetch starts again if it had stopped.
@@ -499,14 +474,14 @@ impl Tab {
                     self.reload_after_fetch(generation);
                 }
             }
-            fetch::Received::Cancelled { notice } => {
+            Received::Cancelled { notice } => {
                 self.notice = notice;
                 self.error.clear();
                 // Some remote branch may already be updated.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
                 self.reload_after_fetch(generation);
             }
-            fetch::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();

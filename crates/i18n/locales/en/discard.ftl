@@ -12,10 +12,7 @@ discard-check-label-many = Checking before discarding changes to { $n ->
     [one] 1 file
    *[other] { $n } files
 }
-discard-unexpected-response = unexpected response from `{ $command }`
-discard-unexpected-result = { $command }: unexpected result: { $error }
 discard-not-allowed = { $label } not possible: { $error }
-discard-failed = { $label } failed: { $error }
 discard-done-one = Changes to { $path } discarded; backup in { $backup }. “Undo” brings them back
 discard-done-many = Changes to { $n ->
     [one] 1 file

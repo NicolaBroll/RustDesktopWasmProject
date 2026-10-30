@@ -13,9 +13,11 @@
 //! under the bar with "Retry"; an unreachable remote doubles the wait (up to [`MAX_WAIT`], back to
 //! the interval after a fetch that works) and shows only an icon in the bar.
 
-use crate::fetch::{self, RefUpdate};
+use crate::fetch;
 use crate::{Done, ErrorKind, RepoView, Tab};
+use project_domain::remote_short;
 use project_domain::{Commit, Oid};
+use project_engine::RefUpdate;
 use project_i18n::tr;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -193,7 +195,7 @@ pub fn news_text(moved: &[RefUpdate], commits: &[Commit]) -> String {
         .iter()
         .take(NAMES_SHOWN)
         .map(|u| {
-            let branch = u.name.strip_prefix("refs/remotes/").unwrap_or(&u.name);
+            let branch = remote_short(&u.name);
             match (u.before, u.after) {
                 (None, _) => tr!("fetch-auto-new-branch", branch = branch),
                 (Some(_), None) => tr!("fetch-auto-branch-gone", branch = branch),

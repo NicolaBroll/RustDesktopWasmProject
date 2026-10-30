@@ -3,50 +3,148 @@
 //! under lock are in the backends ([`GitBackend`](crate::GitBackend)). Every successful command that changes
 //! something enters the journal: `edit.undo` undoes it (§7).
 
-use super::{Out, journal_state, to_json};
-use crate::commands::parse_params;
+use super::{JournalState, Out, reread, to_json};
 use crate::{
-    EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Session, branch_ref,
-    check_branch_name, check_new_branch_name, check_no_operation,
+    ConfigEntry, EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Message, Session,
+    branch_ref, check_branch_name, check_new_branch_name, check_no_operation,
 };
-use project_domain::{Head, Oid, RefInfo};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{Head, Oid, RefInfo, Status};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// Parameters of `branch.create`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct CreateParams {
-    name: String,
-    #[serde(default)]
-    start: Option<String>,
+pub struct BranchCreateParams {
+    /// The short name of the new branch.
+    pub name: String,
+    /// Where the branch starts (rev); without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
 }
 
 /// Parameters of `branch.checkout`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct NameParams {
-    name: String,
+pub struct BranchCheckoutParams {
+    /// The short name of the branch.
+    pub name: String,
 }
 
 /// Parameters of `branch.delete`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct DeleteParams {
-    name: String,
-    #[serde(default)]
-    confirm: bool,
+pub struct BranchDeleteParams {
+    /// The short name of the branch.
+    pub name: String,
+    /// Delete also an unmerged branch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
     /// The full id of the commit on which the caller saw the branch.
-    #[serde(default)]
-    expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Parameters of `branch.rename`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct RenameParams {
-    name: String,
-    new_name: String,
+pub struct BranchRenameParams {
+    /// The current short name.
+    pub name: String,
+    /// The new short name.
+    pub new_name: String,
+}
+
+/// Result of `branch.create`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchCreateResult {
+    /// The full name of the new branch, `refs/heads/<name>`.
+    pub branch: String,
+    /// The commit the branch points to.
+    pub target: Oid,
+    /// The refs re-read after the creation; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `branch.checkout`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchCheckoutResult {
+    /// The full name of the branch now active, `refs/heads/<name>`.
+    pub branch: String,
+    /// HEAD before the command.
+    pub previous: HeadState,
+    /// `false` if the branch was already active (nothing done, nothing in the journal).
+    pub changed: bool,
+    /// Something unexpected found after the successful checkout (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The state re-read after the checkout; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the state could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `branch.delete`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchDeleteResult {
+    /// The full name of the deleted branch, `refs/heads/<name>`.
+    pub branch: String,
+    /// The commit the branch pointed to.
+    pub target: Oid,
+    /// The commits of the branch that were neither in HEAD nor in its upstream.
+    pub unmerged: usize,
+    /// The backup ref that keeps the commit (`refs/project/backup/delete-...`).
+    pub backup: String,
+    /// The `branch.<name>.*` configuration removed with the branch (upstream, description):
+    /// `edit.undo` puts it back.
+    #[serde(default)]
+    pub removed_config: Vec<ConfigEntry>,
+    /// Something unexpected found after the successful deletion (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The refs re-read after the deletion; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `branch.rename`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BranchRenameResult {
+    /// The new full name, `refs/heads/<new_name>`.
+    pub branch: String,
+    /// The old full name, `refs/heads/<name>`.
+    pub previous: String,
+    /// The commit the branch points to.
+    pub target: Oid,
+    /// The renamed branch was the active one (HEAD follows it).
+    pub head: bool,
+    /// Something unexpected found after the successful rename (usually empty).
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// The refs re-read after the rename; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
 }
 
 /// The local branch `full` among the refs, `None` if there is none.
@@ -62,29 +160,18 @@ fn taken(name: &str) -> EngineError {
     EngineError::NotAllowed(msg!("engine-branch-exists", name = name.escape_debug()))
 }
 
-/// Adds to `out` the updated refs (as `repo.refs`) or, if they cannot be re-read, `refs: null`
-/// and `refs_error`: the operation is done anyway.
-fn with_refs(out: &mut Value, refs: Result<Vec<RefInfo>, EngineError>) {
-    match refs {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-}
-
 /// Creates the branch `name` at `start` (a rev: id, also abbreviated, branch or tag name;
 /// HEAD if missing), without switching branch (see
-/// [`GitBackend::create_branch`](crate::GitBackend::create_branch)). An existing branch is never
+/// [`GitRefs::create_branch`](crate::GitRefs::create_branch)). An existing branch is never
 /// overwritten. The operation goes into the journal: `edit.undo` deletes the branch, only if in the
 /// meantime it was not moved.
 ///
-/// Result: `{"branch": "refs/heads/<name>", "target": oid, "refs": [RefInfo], "can_undo",
-/// "can_redo", "next_undo", "next_redo"}`.
-pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
+/// Result: [`BranchCreateResult`].
+pub(super) fn branch_create(
+    s: &mut Session,
+    BranchCreateParams { name, start }: BranchCreateParams,
+) -> Out {
     const ID: &str = "branch.create";
-    let CreateParams { name, start } = parse_params(ID, p)?;
     check_new_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let head = repo.head()?;
@@ -110,15 +197,18 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
         target,
         HeadState::from_head(&head),
     ));
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(full);
-    out["target"] = Value::String(target.to_string());
-    with_refs(&mut out, repo.refs());
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchCreateResult {
+        branch: full,
+        target,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Switches to the local branch `name` (`git switch`, see
-/// [`GitBackend::checkout`](crate::GitBackend::checkout)): index and worktree become those
+/// [`GitRefs::checkout`](crate::GitRefs::checkout)): index and worktree become those
 /// of the branch, local changes that do not touch the differing files stay. It never forces: if
 /// a local change (or an untracked or ignored file) would be overwritten,
 /// [`EngineError::CheckoutConflict`] with the files and nothing changes. Refused
@@ -130,12 +220,12 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
 /// emptying the index): `edit.undo` returns to the previous HEAD (branch or detached commit) with another
 /// equally safe checkout, only if HEAD is still on the branch.
 ///
-/// Result: `{"branch": "refs/heads/<name>", "previous": HeadState, "changed": bool,
-/// "warnings": [string], "status": Status | null, "can_undo", "can_redo", "next_undo",
-/// "next_redo"}`.
-pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
+/// Result: [`BranchCheckoutResult`].
+pub(super) fn branch_checkout(
+    s: &mut Session,
+    BranchCheckoutParams { name }: BranchCheckoutParams,
+) -> Out {
     const ID: &str = "branch.checkout";
-    let NameParams { name } = parse_params(ID, p)?;
     check_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
@@ -157,23 +247,20 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
             journal.record(JournalEntry::checkout(before.clone(), target));
         }
     }
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(full);
-    out["previous"] = to_json(&before);
-    out["changed"] = Value::Bool(changed);
-    out["warnings"] = to_json(warnings);
-    match repo.status() {
-        Ok(status) => out["status"] = to_json(status),
-        Err(e) => {
-            out["status"] = Value::Null;
-            out["status_error"] = Value::String(e.to_string());
-        }
-    }
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    Ok(to_json(BranchCheckoutResult {
+        branch: full,
+        previous: before,
+        changed,
+        warnings,
+        status,
+        status_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Deletes the local branch `name` (see
-/// [`GitBackend::delete_branch`](crate::GitBackend::delete_branch)). Refused
+/// [`GitRefs::delete_branch`](crate::GitRefs::delete_branch)). Refused
 /// ([`EngineError::NotAllowed`]) for the branch of HEAD, a branch open in another worktree and
 /// during an operation in progress. If the branch has commits that are neither in HEAD nor in its
 /// upstream (if any), i.e. it is not merged, `"confirm": true` is needed. With `expected` (full id of the
@@ -186,16 +273,16 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
 /// (upstream, description, ...) is removed as with `git branch -d`, but stays in the journal
 /// entry: undo rewrites it (if a new one has not appeared in the meantime), redo removes it.
 ///
-/// Result: `{"branch": "refs/heads/<name>", "target": oid, "unmerged": n, "backup": string,
-/// "removed_config": [{"key", "value"}], "warnings": [string], "refs": [RefInfo], "can_undo", "can_redo", "next_undo",
-/// "next_redo"}`.
-pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "branch.delete";
-    let DeleteParams {
+/// Result: [`BranchDeleteResult`].
+pub(super) fn branch_delete(
+    s: &mut Session,
+    BranchDeleteParams {
         name,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: BranchDeleteParams,
+) -> Out {
+    const ID: &str = "branch.delete";
     check_branch_name(ID, &name)?;
     let expected = expected
         .map(|hex| {
@@ -259,7 +346,7 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
                 "engine-branch-unmerged",
                 name = name.escape_debug(),
                 unmerged = unmerged,
-                tip = crate::git::short(&target),
+                tip = target.short(),
                 reference = reference
             ),
             expected: None,
@@ -273,29 +360,32 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
         deleted.backup.clone(),
         deleted.config.clone(),
     ));
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(full);
-    out["target"] = Value::String(target.to_string());
-    out["unmerged"] = json!(unmerged);
-    out["backup"] = Value::String(deleted.backup);
-    out["removed_config"] = to_json(deleted.config);
-    out["warnings"] = to_json(deleted.warnings);
-    with_refs(&mut out, repo.refs());
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchDeleteResult {
+        branch: full,
+        target,
+        unmerged,
+        backup: deleted.backup,
+        removed_config: deleted.config,
+        warnings: deleted.warnings,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Renames the local branch `name` to `new_name` (see
-/// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch)): never over an
+/// [`GitRefs::rename_branch`](crate::GitRefs::rename_branch)): never over an
 /// existing branch; reflog, upstream and HEAD (if it was the active branch) follow. Refused during
 /// an operation in progress. It goes into the journal: `edit.undo` renames back, only if in the meantime
 /// nobody touched the two names.
 ///
-/// Result: `{"branch": "refs/heads/<new_name>", "previous": "refs/heads/<name>", "target":
-/// oid, "head": bool (it was the active branch), "warnings": [string], "refs": [RefInfo],
-/// "can_undo", "can_redo", "next_undo", "next_redo"}`.
-pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
+/// Result: [`BranchRenameResult`].
+pub(super) fn branch_rename(
+    s: &mut Session,
+    BranchRenameParams { name, new_name }: BranchRenameParams,
+) -> Out {
     const ID: &str = "branch.rename";
-    let RenameParams { name, new_name } = parse_params(ID, p)?;
     check_branch_name(ID, &name)?;
     check_new_branch_name(ID, &new_name)?;
     if name == new_name {
@@ -327,20 +417,23 @@ pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
         target,
         HeadChange { before, after },
     ));
-    let mut out = journal_state(journal);
-    out["branch"] = Value::String(to);
-    out["previous"] = Value::String(from);
-    out["target"] = Value::String(target.to_string());
-    out["head"] = Value::Bool(is_head);
-    out["warnings"] = to_json(outcome.warnings);
-    with_refs(&mut out, repo.refs());
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(BranchRenameResult {
+        branch: to,
+        previous: from,
+        target,
+        head: is_head,
+        warnings: outcome.warnings,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        EngineError, GitBackend, HeadState, MemoryBackend, MemoryOpener, Registry, Session,
+        EngineError, GitIndex, GitRead, HeadState, MemoryBackend, MemoryOpener, Registry, Session,
     };
     use project_domain::{Change, EntryKind, Head, Oid, RepoPath, StatusEntry};
     use serde_json::{Value, json};
@@ -884,5 +977,60 @@ mod tests {
             let err = r.run(id, &mut s, params).unwrap_err();
             assert!(matches!(err, EngineError::NoRepo), "{id}: {err}");
         }
+    }
+
+    /// The typed results read back the JSON of the commands and give the same JSON again: the
+    /// UI deserializes into them.
+    #[test]
+    fn results_round_trip() {
+        use super::{
+            BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
+        };
+        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
+            let typed: T = serde_json::from_value(out.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        }
+        let (r, mut s) = open(clean_sample());
+        let out = run(&r, &mut s, "branch.create", json!({ "name": "x" }));
+        assert!(out.get("refs_error").is_none());
+        same::<BranchCreateResult>(out);
+        let out = run(&r, &mut s, "branch.checkout", json!({ "name": "x" }));
+        assert!(out.get("status_error").is_none());
+        same::<BranchCheckoutResult>(out);
+        let out = run(&r, &mut s, "branch.checkout", json!({ "name": "main" }));
+        same::<BranchCheckoutResult>(out);
+        let out = run(
+            &r,
+            &mut s,
+            "branch.rename",
+            json!({ "name": "x", "new_name": "y" }),
+        );
+        same::<BranchRenameResult>(out);
+        let out = run(
+            &r,
+            &mut s,
+            "branch.delete",
+            json!({ "name": "feature/graph", "confirm": true }),
+        );
+        same::<BranchDeleteResult>(out);
+    }
+
+    /// A re-read that fails gives `null` and `<key>_error`; one that works has no `<key>_error`.
+    #[test]
+    fn reread_error_fields() {
+        use super::{BranchCreateResult, JournalState, reread};
+        let (refs, refs_error) = reread::<Vec<project_domain::RefInfo>>(Err(EngineError::NoRepo));
+        let result = BranchCreateResult {
+            branch: "refs/heads/x".into(),
+            target: Oid::from_bytes([1; 20]),
+            refs,
+            refs_error,
+            journal: JournalState::default(),
+        };
+        let out = serde_json::to_value(&result).unwrap();
+        assert_eq!(out["refs"], Value::Null);
+        assert_eq!(out["refs_error"], EngineError::NoRepo.to_string());
+        let back: BranchCreateResult = serde_json::from_value(out).unwrap();
+        assert_eq!(back, result);
     }
 }

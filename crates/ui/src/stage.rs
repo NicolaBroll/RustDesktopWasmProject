@@ -2,10 +2,24 @@
 //! to send to `index.stage`/`index.unstage` and what to do with the open diff after a write.
 //! Data only, no egui: tested with unit tests.
 
-use crate::{Action, Request, Tab, stage};
+use crate::{Request, Tab};
 use project_domain::{Change, Conflict, EntryKind, RepoPath, Status, StatusEntry};
+use project_engine::IndexPathsParams;
 use project_i18n::tr;
-use serde_json::json;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Stage or unstage the given paths (never empty). Staging conflicted files asks
+    /// for confirmation first.
+    Write(StageOp, Vec<RepoPath>),
+    /// Confirms the pending write.
+    Confirm,
+    /// Cancels the write awaiting confirmation.
+    Cancel,
+    /// Hides the error of the last write.
+    DismissError,
+}
 
 /// One of the two lists of the stage area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -242,7 +256,7 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                if let Some(write) = stage::plan_write(&repo.stage, op, paths) {
+                if let Some(write) = plan_write(&repo.stage, op, paths) {
                     if write.needs_confirm() {
                         repo.confirm = Some(write);
                     } else {
@@ -250,22 +264,21 @@ impl Tab {
                     }
                 }
             }
-            Action::ConfirmWrite => {
+            Action::Confirm => {
                 if let Some(write) = self.repo.as_mut().and_then(|r| r.confirm.take()) {
                     self.send_write(write);
                 }
             }
-            Action::CancelWrite => {
+            Action::Cancel => {
                 if let Some(repo) = &mut self.repo {
                     repo.confirm = None;
                 }
             }
-            Action::DismissWriteError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.write_error = None;
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
@@ -280,7 +293,7 @@ impl Tab {
         };
         repo.write_error = None;
         repo.write_label = Some(write.op.describe(&write.paths));
-        let params = json!({ "paths": write.paths });
+        let params = crate::params(IndexPathsParams { paths: write.paths });
         self.submit(write.op.command(), params, Request::Write(generation));
     }
 }

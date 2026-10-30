@@ -21,7 +21,7 @@ cherry-pick applies the changes of `rev` on top of the HEAD branch with a new co
 commit `This reverts commit <id>, reversing\nchanges made to <parent>.`; the revert of a
 revert is `Reapply "..."`, like git since 2.43).
 
-- `rev` is resolved with `GitBackend::log` (not found → `UnknownRev`); only the id reaches git after
+- `rev` is resolved with `GitRead::log` (not found → `UnknownRev`); only the id reaches git after
   `--end-of-options`. Empty or with NUL → `InvalidParams`.
 - `mainline`: a merge commit requires it (from 1 to the number of parents; without it → `InvalidParams`
   asking for it); on a non-merge commit (even if git would accept it) or out of range →
@@ -47,7 +47,7 @@ Result: `{"rev", "commit", "summary", "mainline", "branch", "before", "after", "
 
 ### `cherry_pick.continue`, `revert.continue`
 
-Parameters: `{"message"?}`. Like `merge.continue`: `GitBackend::commit` with
+Parameters: `{"message"?}`. Like `merge.continue`: `GitIndex::commit` with
 `CommitRequest::concluding(op)` (the only way to pass `check_commit_state` with a cherry-pick
 or revert in progress; `commit.create` stays refused). With `CHERRY_PICK_HEAD` git keeps the original
 author. Message: `message`, otherwise `MERGE_MSG` without the `# Conflicts:` block,

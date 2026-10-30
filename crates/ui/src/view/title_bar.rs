@@ -5,6 +5,7 @@
 use super::settings_view::theme_label;
 use super::*;
 use crate::settings::{self, Change, Theme};
+use crate::tabs;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Stroke, StrokeKind, ViewportCommand};
 
 /// The app icon in the bar (source in `assets/icon.svg`).
@@ -152,17 +153,17 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
                 .on_hover_text(tr!("title-bar-open-hint"))
                 .clicked()
         {
-            actions.push(Action::PickFolder);
+            actions.push(Action::Tabs(tabs::Action::PickFolder));
         }
         create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
         ui.separator();
-        let shortcut = ui.ctx().format_shortcut(&settings::SHORTCUT);
+        let shortcut = shortcut_text(ui.ctx(), &settings::SHORTCUT);
         if ui
             .add(egui::Button::new(tr!("title-bar-settings")).shortcut_text(shortcut))
             .clicked()
         {
-            actions.push(Action::OpenSettings);
+            actions.push(Action::Settings(settings::Action::Open));
             ui.close();
         }
         theme_menu(ui, bar.theme, actions);
@@ -275,7 +276,9 @@ fn theme_menu(ui: &mut Ui, current: Theme, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-theme"), |ui| {
         for choice in Theme::ALL {
             if ui.radio(current == choice, theme_label(choice)).clicked() {
-                actions.push(Action::Setting(Change::Theme(choice)));
+                actions.push(Action::Settings(settings::Action::Change(Change::Theme(
+                    choice,
+                ))));
                 ui.close();
             }
         }
@@ -461,6 +464,19 @@ fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
         ResizeDirection::NorthWest => CursorIcon::ResizeNorthWest,
         ResizeDirection::SouthWest => CursorIcon::ResizeSouthWest,
     }
+}
+
+/// A shortcut as the menus show it: the key's symbol ("Ctrl+,"), where egui writes its name
+/// ("Ctrl+Comma"); on macOS egui's own symbols.
+fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortcut) -> String {
+    if ctx.os().is_mac() {
+        return ctx.format_shortcut(shortcut);
+    }
+    let names = egui::ModifierNames {
+        is_short: true,
+        ..egui::ModifierNames::NAMES
+    };
+    shortcut.format(&names, false)
 }
 
 #[cfg(test)]

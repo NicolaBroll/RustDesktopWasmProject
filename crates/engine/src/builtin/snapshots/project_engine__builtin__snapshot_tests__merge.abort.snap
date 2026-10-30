@@ -1,0 +1,56 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/merge-abort-1",
+  "can_redo": false,
+  "can_undo": false,
+  "files": [
+    "a.txt"
+  ],
+  "next_redo": null,
+  "next_undo": null,
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/ahead",
+      "tag_object": null,
+      "target": "63033b0ca389c35ac097314d939736f83b92d3f0",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feat",
+      "tag_object": null,
+      "target": "6e73e372e2338acae474c66a4b98b030dbef19fc",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "upstream": null
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/other",
+      "tag_object": null,
+      "target": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "upstream": null
+    }
+  ],
+  "status": {
+    "entries": [],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "975835de1c9756cebfc846100bfc1e42987bbcbf"
+      }
+    },
+    "operation": null,
+    "upstream": null
+  },
+  "warnings": []
+}

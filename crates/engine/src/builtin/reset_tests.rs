@@ -316,6 +316,120 @@ fn refusals() {
 }
 
 fn repo_entries(repo: &MemoryBackend) -> Vec<StatusEntry> {
-    use crate::GitBackend;
+    use crate::GitRead;
     repo.status().unwrap().entries
+}
+
+fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+    let typed: T = serde_json::from_value(out.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+    typed
+}
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use crate::{ResetMode, ResetPreviewResult, ResetResult};
+    // `mixed` with published commits: preview, then the reset.
+    let (r, mut s) = opened_with(MemoryBackend::sample());
+    let params = json!({ "target": oid(10).to_string(), "mode": "mixed" });
+    let preview: ResetPreviewResult = same(run(&r, &mut s, "branch.reset_preview", params.clone()));
+    assert_eq!(preview.mode, ResetMode::Mixed);
+    assert_eq!(preview.branch.as_deref(), Some("refs/heads/main"));
+    assert_eq!((preview.before, preview.after), (oid(12), oid(10)));
+    assert_eq!(preview.expected, oid(12));
+    assert!(preview.files.is_empty() && !preview.needs_confirm);
+    assert_eq!(preview.published, 1);
+    assert_eq!(
+        preview.upstream.as_deref(),
+        Some("refs/remotes/origin/main")
+    );
+    assert_eq!(preview.warnings.len(), 1);
+    let out = run(&r, &mut s, "branch.reset", params);
+    assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());
+    let done: ResetResult = same(out);
+    assert_eq!(done.mode, ResetMode::Mixed);
+    assert!(
+        done.index_backup
+            .as_deref()
+            .is_some_and(|b| b.starts_with("refs/project/backup/index-"))
+    );
+    assert_eq!((done.backup, done.stash), (None, None));
+    assert_eq!(done.published, 1);
+    assert!(done.journal.can_undo && done.status.is_some() && done.refs.is_some());
+
+    // `hard` with local changes: preview, then the confirmed reset with its backup.
+    let (r, mut s) = opened_with(MemoryBackend::sample());
+    let target = oid(11).to_string();
+    let preview: ResetPreviewResult = same(run(
+        &r,
+        &mut s,
+        "branch.reset_preview",
+        json!({ "target": target, "mode": "hard" }),
+    ));
+    assert!(preview.needs_confirm);
+    assert_eq!(preview.files.len(), 3);
+    assert_eq!((preview.published, preview.upstream), (0, None));
+    let done: ResetResult = same(run(
+        &r,
+        &mut s,
+        "branch.reset",
+        json!({ "target": target, "mode": "hard", "confirm": true, "expected": preview.expected.to_string() }),
+    ));
+    assert_eq!(done.backup.as_deref(), Some("refs/project/backup/reset-1"));
+    assert!(done.stash.is_some());
+    assert_eq!(done.files, preview.files);
+
+    // Detached HEAD: `branch` is `null`.
+    let mut repo = MemoryBackend::sample();
+    repo.set_entries(Vec::new());
+    repo.detach_head(oid(12));
+    let (r, mut s) = opened_with(repo);
+    let done: ResetResult = same(run(
+        &r,
+        &mut s,
+        "branch.reset",
+        json!({ "target": oid(10).to_string(), "mode": "soft" }),
+    ));
+    assert_eq!(done.branch, None);
+}
+
+/// A re-read that fails gives `null` and `<key>_error`.
+#[test]
+fn reread_error_fields() {
+    use super::super::{JournalState, reread};
+    use crate::{Message, ResetMode, ResetResult};
+    use project_domain::{RefInfo, Status};
+    let error = EngineError::NoRepo.to_string();
+    let (status, status_error) = reread::<Status>(Err(EngineError::NoRepo));
+    let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+    let result = ResetResult {
+        mode: ResetMode::Hard,
+        branch: None,
+        before: oid(12),
+        after: oid(11),
+        files: vec![RepoPath::from("a.txt")],
+        backup: Some("refs/project/backup/reset-1".into()),
+        stash: Some(oid(9)),
+        index_backup: None,
+        backups: vec![],
+        published: 0,
+        warnings: vec![Message::plain("w")],
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&result).unwrap();
+    for key in ["status", "refs", "branch", "index_backup", "next_undo"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["mode"], "hard");
+    assert_eq!(out["stash"], oid(9).to_string());
+    assert_eq!(out["status_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: ResetResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, result);
 }

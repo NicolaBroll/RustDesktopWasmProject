@@ -1,8 +1,8 @@
 //! Drawing of the panels. The functions read the view and produce [`Action`]; they do not change
 //! anything directly.
 
-use crate::branch::{self, Dialog, NameKind, Start};
-use crate::commit::{self, CommitDraft, ConfirmAmend, Gate};
+use crate::branch::{Dialog, NameKind, Start};
+use crate::commit::{CommitDraft, ConfirmAmend, Gate};
 use crate::details::Shown;
 use crate::diff::{DiffSource, DiffTarget};
 use crate::discard::{self, Discard, UndoOp};
@@ -10,19 +10,18 @@ use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
-use crate::merge;
-use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, Remote, RemoveDialog};
+use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, RemoteText, RemoveDialog};
 use crate::search::{SearchBox, State as SearchState};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
-use crate::stash::{self, DropDialog, PushDialog, PushFields, Stash};
-use crate::sync::{self, Window};
+use crate::stash::{DropDialog, PushDialog, PushFields, StashText};
+use crate::sync::Window;
 use crate::{Action, Job, ListViewport, RepoView};
 use crate::{icons, theme};
 use egui::{Align2, Color32, FontId, RichText, Sense, Ui, vec2};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, Head, Oid, RefInfo, RefKind, Signature, Upstream,
 };
-use project_engine::Progress;
+use project_engine::{Progress, RemoteListEntry, StashEntry};
 use project_i18n::tr;
 
 mod auto_fetch_view;

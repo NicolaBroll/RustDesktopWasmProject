@@ -1,45 +1,90 @@
 //! Commands of the local tags: `tag.create`, `tag.delete`. The checks that do not depend on the
 //! backend are here; the writes are in the backends
-//! ([`GitBackend::create_tag`](crate::GitBackend::create_tag),
-//! [`GitBackend::delete_tag`](crate::GitBackend::delete_tag)). Both enter the journal: `edit.undo`
+//! ([`GitRefs::create_tag`](crate::GitRefs::create_tag),
+//! [`GitRefs::delete_tag`](crate::GitRefs::delete_tag)). Both enter the journal: `edit.undo`
 //! deletes the created tag or recreates the deleted one on the same value (§7).
 
-use super::{Out, journal_state, to_json};
-use crate::commands::parse_params;
+use super::{JournalState, Out, reread, to_json};
 use crate::{
     EngineError, HeadState, JournalEntry, LogQuery, Session, check_new_tag_name, check_tag_name,
     tag_ref,
 };
-use project_domain::Oid;
-use serde::Deserialize;
-use serde_json::Value;
+use project_domain::{Oid, RefInfo};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// Parameters of `tag.create`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct CreateParams {
-    name: String,
-    #[serde(default)]
-    target: Option<String>,
-    #[serde(default)]
-    message: Option<String>,
+pub struct TagCreateParams {
+    /// The short name of the new tag.
+    pub name: String,
+    /// The commit to tag (rev); without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// The message of an annotated tag; without: a lightweight tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Result of `tag.create`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TagCreateResult {
+    /// The full name of the new tag, `refs/tags/<name>`.
+    pub tag: String,
+    /// The commit the tag points to.
+    pub target: Oid,
+    /// `true` for an annotated tag (created with a message), `false` for a lightweight one.
+    pub annotated: bool,
+    /// The refs re-read after the creation; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `tag.delete`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TagDeleteResult {
+    /// The full name of the deleted tag, `refs/tags/<name>`.
+    pub tag: String,
+    /// The commit the tag pointed to (peeled, also for an annotated tag).
+    pub target: Oid,
+    /// The tag was annotated (it had a tag object).
+    pub annotated: bool,
+    /// The tag object of an annotated tag, `null` for a lightweight one.
+    pub tag_object: Option<Oid>,
+    /// The backup ref that keeps the deleted value (`refs/project/backup/tag-delete-...`).
+    pub backup: String,
+    /// The refs re-read after the deletion; `null` if they could not be re-read (see `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
 }
 
 /// Creates the tag `name` on `target` (a rev: id, also abbreviated, branch, remote branch or tag;
 /// HEAD if missing): annotated with `message` (not empty after trimming), lightweight without (see
-/// [`GitBackend::create_tag`](crate::GitBackend::create_tag)). An existing tag is never
+/// [`GitRefs::create_tag`](crate::GitRefs::create_tag)). An existing tag is never
 /// overwritten. The operation goes into the journal: `edit.undo` deletes the tag, only if in the
 /// meantime it was not moved.
 ///
-/// Result: `{"tag": "refs/tags/<name>", "target": oid, "annotated": bool, "refs": [RefInfo],
-/// "can_undo", "can_redo", "next_undo", "next_redo"}`.
-pub(super) fn tag_create(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "tag.create";
-    let CreateParams {
+/// Result: [`TagCreateResult`].
+pub(super) fn tag_create(
+    s: &mut Session,
+    TagCreateParams {
         name,
         target,
         message,
-    } = parse_params(ID, p)?;
+    }: TagCreateParams,
+) -> Out {
+    const ID: &str = "tag.create";
     check_new_tag_name(ID, &name)?;
     let message = message.filter(|m| !m.trim().is_empty());
     let (repo, journal) = s.repo_and_journal()?;
@@ -70,29 +115,29 @@ pub(super) fn tag_create(s: &mut Session, p: Value) -> Out {
         target,
         HeadState::from_head(&head),
     ));
-    let mut out = journal_state(journal);
-    out["tag"] = Value::String(full);
-    out["target"] = Value::String(target.to_string());
-    out["annotated"] = Value::Bool(message.is_some());
-    match repo.refs() {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(TagCreateResult {
+        tag: full,
+        target,
+        annotated: message.is_some(),
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 /// Parameters of `tag.delete`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct DeleteParams {
-    name: String,
-    #[serde(default)]
-    confirm: bool,
-    #[serde(default)]
-    expected: Option<String>,
+pub struct TagDeleteParams {
+    /// The short name of the tag.
+    pub name: String,
+    /// Always required to delete.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
+    /// The full id of the value seen in the confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Deletes the local tag `name` (any existing name, even `-x`): **always** needs `"confirm":
@@ -102,20 +147,20 @@ struct DeleteParams {
 /// [`EngineError::NotAllowed`] and nothing changes. Before deleting, the value as git stores
 /// it (the tag object of an annotated tag, the commit of a lightweight one) is saved in
 /// `refs/project/backup/tag-delete-...`; if the backup fails nothing is deleted (see
-/// [`GitBackend::delete_tag`](crate::GitBackend::delete_tag)). The remote is not touched. The
+/// [`GitRefs::delete_tag`](crate::GitRefs::delete_tag)). The remote is not touched. The
 /// operation goes into the journal: `edit.undo` recreates the tag on the same value, only if in the
 /// meantime nobody created one with that name.
 ///
-/// Result: `{"tag": "refs/tags/<name>", "target": oid (the commit), "annotated": bool,
-/// "tag_object": oid | null, "backup": string, "refs": [RefInfo], "can_undo", "can_redo",
-/// "next_undo", "next_redo"}`.
-pub(super) fn tag_delete(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "tag.delete";
-    let DeleteParams {
+/// Result: [`TagDeleteResult`].
+pub(super) fn tag_delete(
+    s: &mut Session,
+    TagDeleteParams {
         name,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: TagDeleteParams,
+) -> Out {
+    const ID: &str = "tag.delete";
     check_tag_name(ID, &name)?;
     let expected = expected
         .map(|hex| {
@@ -180,20 +225,17 @@ pub(super) fn tag_delete(s: &mut Session, p: Value) -> Out {
         HeadState::from_head(&head),
         backup.clone(),
     ));
-    let mut out = journal_state(journal);
-    out["tag"] = Value::String(full);
-    out["target"] = Value::String(target.to_string());
-    out["annotated"] = Value::Bool(tag_object.is_some());
-    out["tag_object"] = tag_object.map_or(Value::Null, |o| Value::String(o.to_string()));
-    out["backup"] = Value::String(backup);
-    match repo.refs() {
-        Ok(refs) => out["refs"] = to_json(refs),
-        Err(e) => {
-            out["refs"] = Value::Null;
-            out["refs_error"] = Value::String(e.to_string());
-        }
-    }
-    Ok(out)
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(TagDeleteResult {
+        tag: full,
+        target,
+        annotated: tag_object.is_some(),
+        tag_object,
+        backup,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]
@@ -402,5 +444,67 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, EngineError::InvalidParams { .. }), "{err}");
+    }
+
+    /// The typed results read back the JSON of the commands and give the same JSON again: the
+    /// UI deserializes into them.
+    #[test]
+    fn results_round_trip() {
+        use super::{TagCreateResult, TagDeleteResult};
+        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
+            let typed: T = serde_json::from_value(out.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+        }
+        let (r, mut s) = sample();
+        let out = r
+            .run("tag.create", &mut s, json!({ "name": "v2" }))
+            .unwrap();
+        assert!(out.get("refs_error").is_none());
+        same::<TagCreateResult>(out);
+        let out = r
+            .run(
+                "tag.create",
+                &mut s,
+                json!({ "name": "v3", "message": "Version 3" }),
+            )
+            .unwrap();
+        same::<TagCreateResult>(out);
+        // Annotated (with a tag object) and lightweight (`tag_object: null`).
+        for name in ["v0.1.0", "v2"] {
+            let out = r
+                .run(
+                    "tag.delete",
+                    &mut s,
+                    json!({ "name": name, "confirm": true }),
+                )
+                .unwrap();
+            assert!(out.get("refs_error").is_none());
+            same::<TagDeleteResult>(out);
+        }
+    }
+
+    /// A re-read that fails gives `null` and `refs_error`.
+    #[test]
+    fn reread_error_fields() {
+        use super::super::{JournalState, reread};
+        use super::TagDeleteResult;
+        use project_domain::{Oid, RefInfo};
+        let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+        let result = TagDeleteResult {
+            tag: "refs/tags/x".into(),
+            target: Oid::from_bytes([1; 20]),
+            annotated: false,
+            tag_object: None,
+            backup: "refs/project/backup/tag-delete-1".into(),
+            refs,
+            refs_error,
+            journal: JournalState::default(),
+        };
+        let out = serde_json::to_value(&result).unwrap();
+        assert_eq!(out["refs"], Value::Null);
+        assert_eq!(out["tag_object"], Value::Null);
+        assert_eq!(out["refs_error"], EngineError::NoRepo.to_string());
+        let back: TagDeleteResult = serde_json::from_value(out).unwrap();
+        assert_eq!(back, result);
     }
 }

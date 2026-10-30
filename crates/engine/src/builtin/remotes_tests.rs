@@ -1,6 +1,6 @@
 //! Tests of `remote.list`, `remote.add`, `remote.remove` on the `MemoryBackend`.
 
-use crate::{EngineError, GitBackend, MemoryBackend, MemoryOpener, Registry, Session};
+use crate::{EngineError, GitRemotes, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::Oid;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -657,4 +657,202 @@ fn a_failed_put_back_writes_the_config_and_keeps_the_journal_entry() {
     );
     let history = run(&r, &mut s, "edit.history", json!({}));
     assert_eq!(history["done"][0]["command"], "remote.remove");
+}
+
+fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
+    let typed: T = serde_json::from_value(out.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
+    typed
+}
+
+/// The typed results read back the JSON of the commands and give the same JSON again: the UI
+/// deserializes into them.
+#[test]
+fn results_round_trip() {
+    use crate::{
+        FetchErrorKind, RemoteAddResult, RemoteListResult, RemoteRemoveResult, RemovedRemote,
+    };
+    // `remote.list` with credentials, push URLs and `remote.pushDefault`.
+    let mut repo = MemoryBackend::sample();
+    repo.add_remote("fork", "https://nicola:secret@example.com/fork.git");
+    repo.set_config("remote.fork.pushurl", &["ssh://git@example.com/fork.git"]);
+    repo.set_config("remote.pushDefault", &["fork"]);
+    repo.set_config("branch.feature/graph.pushRemote", &["origin"]);
+    // A remote whose fetch fails, ready to be added again.
+    repo.add_remote("broken", "/srv/broken.git");
+    repo.fail_fetch("broken", Some(crate::FetchFailure::Auth("HTTP 401".into())));
+    let snapshot = repo.remote_snapshot("broken").unwrap();
+    repo.remove_remote_config(&snapshot);
+    // A remote with a branch, ready to be added again and fetched.
+    repo.add_remote("copy", "https://u:pw@example.com/copy.git");
+    repo.set_branch_on_remote("copy", "main", oid(12));
+    let snapshot = repo.remote_snapshot("copy").unwrap();
+    repo.remove_remote_config(&snapshot);
+    let (r, mut s) = opened_with(repo);
+
+    let list: RemoteListResult = same(run(&r, &mut s, "remote.list", json!({})));
+    assert_eq!(list.push_default.as_deref(), Some("fork"));
+    assert_eq!(list.default.as_deref(), Some("origin"));
+    let fork = &list.remotes[0];
+    assert!(fork.credentials && fork.push_default && !fork.default);
+    assert_eq!(fork.push_urls, ["ssh://git@example.com/fork.git"]);
+
+    // Add with a fetch that succeeds.
+    let add: RemoteAddResult = same(run(
+        &r,
+        &mut s,
+        "remote.add",
+        json!({ "name": "fresh", "url": "https://u:pw@example.com/copy.git", "fetch": true }),
+    ));
+    assert!(add.fetched && add.credentials && add.fetch_error.is_none());
+    let fetch = add.fetch.unwrap();
+    assert_eq!(fetch.updated.len(), 1);
+    assert_eq!(fetch.updated[0].after, Some(oid(12)));
+    assert_eq!(add.warnings.len(), 1);
+    assert!(add.remotes.is_some() && add.remotes_error.is_none());
+    assert!(add.refs.is_some() && add.refs_error.is_none());
+    assert!(add.journal.can_undo);
+
+    // Add with a fetch that fails: the remote stays.
+    let add: RemoteAddResult = same(run(
+        &r,
+        &mut s,
+        "remote.add",
+        json!({ "name": "broken", "url": "/srv/broken.git", "fetch": true }),
+    ));
+    assert!(!add.fetched && add.fetch.is_none());
+    assert_eq!(add.fetch_error.unwrap().kind, FetchErrorKind::Auth);
+
+    // Add without fetch.
+    let add: RemoteAddResult = same(run(
+        &r,
+        &mut s,
+        "remote.add",
+        json!({ "name": "plain", "url": "/srv/plain.git" }),
+    ));
+    assert!(!add.fetched && add.fetch.is_none() && add.fetch_error.is_none());
+
+    // Remove with upstreams, a pushRemote and a backup.
+    run(&r, &mut s, "remote.fetch", json!({ "remote": "origin" }));
+    let removed: RemoteRemoveResult = same(run(
+        &r,
+        &mut s,
+        "remote.remove",
+        json!({ "name": "origin", "confirm": true }),
+    ));
+    assert_eq!(removed.remote, "origin");
+    assert!(!removed.upstreams_removed.is_empty());
+    assert_eq!(removed.push_remotes_removed, ["feature/graph"]);
+    assert!(!removed.push_default_removed);
+    assert_eq!(removed.backups, ["refs/project/backup/remote-1"]);
+    let RemovedRemote { name, refs, .. } = &removed.removed;
+    assert_eq!(name, "origin");
+    assert!(!refs.is_empty());
+
+    // Remove `remote.pushDefault` and a URL with credentials: masked in `removed`.
+    let removed: RemoteRemoveResult = same(run(
+        &r,
+        &mut s,
+        "remote.remove",
+        json!({ "name": "fork", "confirm": true }),
+    ));
+    assert!(removed.push_default_removed && removed.removed.push_default);
+    assert!(!serde_json::to_string(&removed).unwrap().contains("secret"));
+}
+
+/// A re-read that fails gives `null` and `<key>_error`.
+#[test]
+fn reread_error_fields() {
+    use super::super::{JournalState, reread};
+    use crate::{
+        FetchErrorKind, Message, RemoteAddFetchError, RemoteAddResult, RemoteListEntry,
+        RemoteRemoveResult, RemovedRemote,
+    };
+    use project_domain::RefInfo;
+    let error = EngineError::NoRepo.to_string();
+    let (remotes, remotes_error) = reread::<Vec<RemoteListEntry>>(Err(EngineError::NoRepo));
+    let (refs, refs_error) = reread::<Vec<RefInfo>>(Err(EngineError::NoRepo));
+    let add = RemoteAddResult {
+        remote: "x".into(),
+        url: "/srv/x.git".into(),
+        credentials: false,
+        fetched: false,
+        fetch: None,
+        fetch_error: Some(RemoteAddFetchError {
+            kind: FetchErrorKind::Unreachable,
+            message: "down".into(),
+        }),
+        warnings: vec![Message::plain("w")],
+        remotes: remotes.clone(),
+        remotes_error: remotes_error.clone(),
+        refs: refs.clone(),
+        refs_error: refs_error.clone(),
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&add).unwrap();
+    for key in ["remotes", "refs", "fetch", "next_undo"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(
+        out["fetch_error"],
+        json!({ "kind": "unreachable", "message": "down" })
+    );
+    assert_eq!(out["remotes_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: RemoteAddResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, add);
+
+    let remove = RemoteRemoveResult {
+        remote: "x".into(),
+        removed: RemovedRemote {
+            name: "x".into(),
+            config: vec![],
+            refs: vec![],
+            head: None,
+            upstreams: vec![],
+            push_default: false,
+        },
+        upstreams_removed: vec![],
+        push_remotes_removed: vec![],
+        push_default_removed: false,
+        backups: vec![],
+        warnings: vec![],
+        remotes,
+        remotes_error,
+        refs,
+        refs_error,
+        journal: JournalState::default(),
+    };
+    let out = serde_json::to_value(&remove).unwrap();
+    for key in ["remotes", "refs"] {
+        assert_eq!(out[key], Value::Null, "{key}");
+    }
+    assert_eq!(out["remotes_error"], error.as_str());
+    assert_eq!(out["refs_error"], error.as_str());
+    let back: RemoteRemoveResult = serde_json::from_value(out).unwrap();
+    assert_eq!(back, remove);
+
+    // The other kinds of fetch error.
+    for (kind, text) in [
+        (FetchErrorKind::Auth, "auth"),
+        (FetchErrorKind::Cancelled, "cancelled"),
+        (FetchErrorKind::Other, "other"),
+    ] {
+        assert_eq!(serde_json::to_value(kind).unwrap(), text);
+    }
+}
+
+/// `removed` is the same JSON as the `RemoteSnapshot` it comes from (credentials masked).
+#[test]
+fn removed_remote_is_the_snapshot_json() {
+    let mut repo = MemoryBackend::sample();
+    repo.add_remote("fork", "https://nicola:secret@example.com/fork.git");
+    repo.set_branch_on_remote("fork", "main", oid(12));
+    repo.set_config("branch.main.pushRemote", &["fork"]);
+    repo.set_config("remote.pushDefault", &["fork"]);
+    let snapshot = repo.remote_snapshot("fork").unwrap();
+    let view = super::RemovedRemote::of(&snapshot);
+    let out = serde_json::to_value(&view).unwrap();
+    assert_eq!(out, serde_json::to_value(&snapshot).unwrap());
+    assert!(!out.to_string().contains("secret"), "{out}");
 }

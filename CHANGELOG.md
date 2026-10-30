@@ -6,6 +6,56 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
+A Windows installer, the parameter schema for CLI and MCP, and a review of the interface: the
+open diff survives the window losing focus or being resized, panels that follow the window,
+readable small text.
+
+### Added
+
+- **Windows installer**: `BinariGit-<version>-x86_64.msi`, next to the zip. It installs for the
+  current user only (no administrator rights) in `%LOCALAPPDATA%\Programs\BinariGit`, adds
+  BinariGit to the Start menu and is removed from “Installed apps”; a newer MSI replaces the
+  installed version. It is not signed yet and has not been tested on a Windows PC yet.
+- **Parameter schema for CLI and MCP**: `project-cli commands --json` and the MCP `list_commands`
+  give the JSON Schema of every command's parameters (`params`) and flag the commands not
+  available over MCP (`outside_repo`); the description of `execute_command` keeps only the
+  general rules and no longer misses commands.
+
+### Changed
+
+- One scale of text sizes across the app; the small text (status bar, hints, counters, sub-lines)
+  grows from 9 to 11 points.
+- In a narrow stage panel the section titles stay whole and their buttons move to the row below.
+- The diff of a single file shows its path once, in the bar above.
+- The settings shortcut reads “Ctrl+,” in the File menu; clearer Italian texts (“Togli tutto
+  dallo stage”, “Scrivi il messaggio del commit”).
+
+### Fixed
+
+- The open diff no longer reloads when the window gets focus back or is resized: the scroll and
+  the selected lines stay, and the status bar no longer flashes for the automatic refresh.
+- The side panels get their width back when the window grows again after being made smaller; in a
+  narrow window the center keeps at least 40% of the width.
+- In a narrow window the diff bar, the “Stage hunk” button and the split-view hint no longer
+  overlap other text, and the stage lists no longer cover the commit box.
+- The commit box no longer moves when a dialog opens.
+
+### Packages
+
+- Linux: `BinariGit-0.6.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.6.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.6.0-x86_64.msi` and `BinariGit-0.6.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- No macOS build.
+
 ## [0.5.0] - 2026-10-25
 
 Repository management: clone and new repository, reset of the branch, tags deleted and published,
@@ -199,7 +249,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.2.0...v0.3.0

@@ -8,7 +8,7 @@
 mod common;
 
 use common::Repo;
-use project_engine::{EngineError, GitBackend, Registry, Session};
+use project_engine::{EngineError, GitRemotes, Registry, Session};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -541,9 +541,12 @@ fn remove_refuses_unknown_and_global_remotes() {
     assert_eq!(state(&work), before);
 }
 
-/// Session with a global configuration file `global` (in place of `/dev/null`).
-fn open_with_global(repo: &Repo, global: &std::path::Path) -> (Registry, Session) {
-    let opener = Repo::opener().env("GIT_CONFIG_GLOBAL", global);
+/// Session with the global configuration file `<home>/.gitconfig` (in place of `/dev/null`):
+/// `GIT_CONFIG_GLOBAL` for git 2.32 and later, `HOME` for older git.
+fn open_with_global(repo: &Repo, home: &std::path::Path) -> (Registry, Session) {
+    let opener = Repo::opener()
+        .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
+        .env("HOME", home);
     let r = Registry::builtin();
     let mut s = Session::new(Arc::new(opener));
     r.run("repo.open", &mut s, json!({ "path": repo.path_str() }))
@@ -555,13 +558,13 @@ fn open_with_global(repo: &Repo, global: &std::path::Path) -> (Registry, Session
 fn remove_refuses_a_remote_defined_partly_elsewhere() {
     let Setup { remote: _r, work } = setup();
     let home = tempfile::tempdir().unwrap();
-    let global = home.path().join("gitconfig");
+    let global = home.path().join(".gitconfig");
     std::fs::write(
         &global,
         "[remote \"origin\"]\n\tfetch = +refs/pull/*/head:refs/remotes/origin/pr/*\n",
     )
     .unwrap();
-    let (r, mut s) = open_with_global(&work, &global);
+    let (r, mut s) = open_with_global(&work, home.path());
     let before = state(&work);
     let err = r
         .run(

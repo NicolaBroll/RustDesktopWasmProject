@@ -60,7 +60,7 @@ release: ## Optimized build of desktop and CLI
 appimage: ## Linux AppImage -> target/appimage/BinariGit-<version>-x86_64.AppImage + SHA256SUMS.txt
 	packaging/appimage.sh
 
-windows: ## Windows zip (cross-compiled, mingw-w64) -> target/windows/BinariGit-<version>-x86_64-windows.zip
+windows: ## Windows zip and MSI (cross-compiled, mingw-w64, wixl) -> target/windows/BinariGit-<version>-x86_64{-windows.zip,.msi}
 	packaging/windows.sh
 
 # --- Quality ---------------------------------------------------------------

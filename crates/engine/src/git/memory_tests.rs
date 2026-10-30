@@ -1,4 +1,4 @@
-use super::{GitBackend, LogQuery, MemoryBackend, MemoryOpener, RepoOpener};
+use super::{GitBackend, GitRead, LogQuery, MemoryBackend, MemoryOpener, RepoOpener};
 use crate::EngineError;
 use project_domain::{Change, ChangedFile, Commit, Head, Oid, RefKind, Upstream};
 use std::collections::BTreeSet;

@@ -2,7 +2,7 @@
 //! "Continue" without a message (it may stop again on the next commit) and two-step abort.
 
 use super::*;
-use project_domain::{Change, ChangedFile, Signature};
+use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use std::sync::Arc;
 
@@ -118,6 +118,7 @@ fn continue_without_message_stops_again_then_finishes() {
     assert_eq!(dialog.kind, Kind::Rebase);
     assert!(!dialog.is_blank());
     let (op, params, label) = b.submit_continue().unwrap();
+    b.continue_started(Ticket::for_test(1));
     assert_eq!(op, Op::Continue(Kind::Rebase));
     assert_eq!(params, json!({}));
     assert_eq!(label, "Finishing the rebase");
@@ -138,6 +139,7 @@ fn continue_without_message_stops_again_then_finishes() {
     assert!(b.info().unwrap().ready);
     assert!(b.open_continue());
     let (op, params, _) = b.submit_continue().unwrap();
+    b.continue_started(Ticket::for_test(1));
     let outcome = done(run(&r, &mut s, &mut b, op, params));
     assert!(outcome.show_changes);
     assert!(outcome.moved);
@@ -162,6 +164,7 @@ fn continue_without_message_stops_again_then_finishes() {
     refresh(&r, &mut s, &mut b, 4);
     assert!(b.open_continue());
     let (op, params, _) = b.submit_continue().unwrap();
+    b.continue_started(Ticket::for_test(1));
     let outcome = done(run(&r, &mut s, &mut b, op, params));
     assert!(!outcome.show_changes);
     assert!(outcome.moved);

@@ -5,10 +5,10 @@
 //! The model is the S29 merge ([`super::merge`]): the command resolves the rev, picks the
 //! parent (`mainline` for a merge commit) and checks the state ([`check_pick_state`]); the
 //! backend saves the branch in a backup and executes
-//! ([`GitBackend::pick`](super::GitBackend::pick)). **A conflict leaves the operation in
+//! ([`GitOperations::pick`](super::GitOperations::pick)). **A conflict leaves the operation in
 //! progress** (`CHERRY_PICK_HEAD`/`REVERT_HEAD`): it is concluded with `*.continue` (a commit with
 //! [`CommitRequest::concluding`](super::CommitRequest::concluding)) or aborted with
-//! `*.abort` ([`GitBackend::pick_abort`](super::GitBackend::pick_abort)), with a backup of
+//! `*.abort` ([`GitOperations::pick_abort`](super::GitOperations::pick_abort)), with a backup of
 //! index and worktree first. An empty result (commit already applied) leaves nothing in
 //! progress.
 
@@ -128,17 +128,17 @@ pub fn pick_parent(
         (0 | 1, None) => Ok(commit.parents.first().copied()),
         (0 | 1, Some(_)) => Err(invalid(msg!(
             "engine-pick-mainline-not-merge",
-            commit = super::short(&commit.id)
+            commit = commit.id.short()
         ))),
         (n, None) => Err(invalid(msg!(
             "engine-pick-mainline-needed",
-            commit = super::short(&commit.id),
+            commit = commit.id.short(),
             n = n
         ))),
         (n, Some(m)) if m == 0 || m > n => Err(invalid(msg!(
             "engine-pick-mainline-range",
             n = n,
-            commit = super::short(&commit.id),
+            commit = commit.id.short(),
             m = m
         ))),
         (_, Some(m)) => Ok(Some(commit.parents[m - 1])),
@@ -252,7 +252,7 @@ pub fn pick_empty_error(kind: PickKind, commit: &Oid) -> EngineError {
     EngineError::NotAllowed(msg!(
         "engine-pick-empty",
         command = kind.command(),
-        commit = super::short(commit),
+        commit = commit.short(),
         what = what
     ))
 }

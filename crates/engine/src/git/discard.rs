@@ -42,7 +42,7 @@ pub struct DiscardedFile {
     pub oid: Oid,
 }
 
-/// Outcome of [`GitBackend::discard`](crate::GitBackend::discard).
+/// Outcome of [`GitIndex::discard`](crate::GitIndex::discard).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscardOutcome {
     /// The files restored to the staged version, in path order.
@@ -76,7 +76,7 @@ pub struct WorktreeBackup {
 }
 
 /// What `edit.undo`/`edit.redo` of a discard ask of the backend
-/// ([`GitBackend::restore_worktree`](crate::GitBackend::restore_worktree)).
+/// ([`GitIndex::restore_worktree`](crate::GitIndex::restore_worktree)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeRestore {
     /// `edit.undo` or `edit.redo`, for errors.
@@ -317,7 +317,7 @@ fn list(paths: &[&RepoPath]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GitBackend, MemoryBackend};
+    use crate::{GitRead, MemoryBackend};
     use project_domain::{Head, StatusEntry, TrackedInfo, UnmergedInfo};
 
     fn p(s: &str) -> RepoPath {
@@ -414,7 +414,7 @@ mod tests {
             Err(EngineError::NotAllowed(m)) if m.contains("intent-to-add")
         ));
 
-        let mut sub = status.clone();
+        let mut sub = status;
         let mut sub_info = info();
         sub_info.submodule = Some(project_domain::SubmoduleStatus {
             commit_changed: true,

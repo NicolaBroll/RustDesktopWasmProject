@@ -1,6 +1,7 @@
 #!/bin/sh
 # Regenerates file-log-*.bin (used by file_log_tests.rs) in a temporary repo, with the
-# arguments of FILE_LOG_ARGS (LOG_ARGS + --name-status --diff-merges=first-parent --root --no-relative).
+# arguments of FILE_LOG_ARGS (LOG_ARGS + --name-status -m --root --no-relative,
+# with -c log.diffMerges=separate as the backend).
 # Usage: sh file-log.sh <output-folder>
 set -eu
 out=$(cd "$1" && pwd)
@@ -37,8 +38,8 @@ tick; git rm -q "$lat"; git commit -q -m 'Remove latin1'
 
 F='%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b'
 log() {
-    git log -z --date=raw --encoding=UTF-8 --no-show-signature --no-color \
-        --format="tformat:$F" --name-status --diff-merges=first-parent --root --no-relative "$@"
+    git -c log.diffMerges=separate log -z --date=raw --encoding=UTF-8 --no-show-signature --no-color \
+        --format="tformat:$F" --name-status -m --root --no-relative "$@"
 }
 log --follow -- new.txt >"$out/file-log-follow.bin"
 log -- new.txt >"$out/file-log-nofollow.bin"

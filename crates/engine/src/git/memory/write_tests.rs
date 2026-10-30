@@ -1,7 +1,7 @@
 //! Stage and unstage tests on the `MemoryBackend`.
 
 use super::*;
-use crate::{DiffSpec, GitBackend};
+use crate::{DiffSpec, GitIndex, GitRead};
 use project_domain::{Conflict, Diff, LineKind};
 
 fn p(path: &str) -> RepoPath {
@@ -313,7 +313,7 @@ fn staged_rename_splits_on_unstage() {
     assert!(now.contains(&e("src/bin/app.rs", 'D', '.')), "{now:?}");
     assert!(now.contains(&e("src/main.rs", '?', '?')), "{now:?}");
 
-    let mut repo = renamed.clone();
+    let mut repo = renamed;
     repo.unstage(&ps(&["src/bin/app.rs", "src/main.rs"]))
         .unwrap();
     let now = entries(&repo);

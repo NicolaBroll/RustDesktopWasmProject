@@ -19,12 +19,26 @@
 //! - When the log is read again (refs changed) the same query runs again: the highlight stays
 //!   until the new answer arrives, the current match is kept by id.
 
-use crate::{Action, Done, RepoView, Request, Tab, Ticket};
+use crate::{Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
-use project_i18n::tr;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_engine::{RepoSearchParams, RepoSearchResult};
+use serde_json::Value;
 use std::collections::HashSet;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Ctrl+F: opens the search bar above the list and focuses its field.
+    Open,
+    /// The text of the search field, typed at that time (seconds of `egui::InputState::time`).
+    Text(String, f64),
+    /// Selects the next match (button or Enter).
+    Next,
+    /// Selects the previous match (button or Shift+Enter).
+    Previous,
+    /// Escape: closes the search bar and removes the highlight.
+    Close,
+}
 
 /// The id of the command.
 pub const COMMAND: &str = "repo.search";
@@ -80,13 +94,6 @@ pub enum State<'a> {
         total: usize,
     },
     Failed(&'a str),
-}
-
-#[derive(Deserialize)]
-struct Page {
-    ids: Vec<Oid>,
-    total: usize,
-    has_more: bool,
 }
 
 #[derive(Debug, Default)]
@@ -188,12 +195,14 @@ impl SearchBox {
         };
         let seq = self.next;
         self.next += 1;
-        let params = json!({
-            "query": query,
-            "all": true,
-            "stashes": true,
-            "skip": skip,
-            "limit": PAGE,
+        let params = crate::params(RepoSearchParams {
+            query: query.clone(),
+            fields: None,
+            path: None,
+            all: true,
+            stashes: true,
+            skip,
+            limit: Some(PAGE),
         });
         self.job = Some(Job {
             seq,
@@ -222,15 +231,7 @@ impl SearchBox {
     /// query, or the match "next" was waiting for. A stale answer is discarded.
     pub fn receive(&mut self, seq: u64, result: Result<Value, String>) -> Option<Oid> {
         let job = self.job.take_if(|j| j.seq == seq)?;
-        let page = result.and_then(|value| {
-            serde_json::from_value::<Page>(value).map_err(|e| {
-                tr!(
-                    "common-unexpected-result",
-                    command = COMMAND,
-                    error = e.to_string()
-                )
-            })
-        });
+        let page = result.and_then(|value| crate::decode::<RepoSearchResult>(COMMAND, value));
         if job.skip == 0 {
             let previous = self.found.take();
             let mut found = Found {
@@ -408,21 +409,20 @@ impl Tab {
             return;
         };
         let select = match action {
-            Action::SearchOpen => {
+            Action::Open => {
                 repo.search.open();
                 None
             }
-            Action::SearchText(text, now) => {
+            Action::Text(text, now) => {
                 repo.search.edit(text, now);
                 None
             }
-            Action::SearchNext => repo.search.next(),
-            Action::SearchPrevious => repo.search.previous(),
-            Action::SearchClose => {
+            Action::Next => repo.search.next(),
+            Action::Previous => repo.search.previous(),
+            Action::Close => {
                 repo.search.close();
                 None
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         };
         if let Some(id) = select {
             self.select_match(id);

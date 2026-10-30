@@ -9,11 +9,23 @@
 
 use crate::format::change_name;
 use crate::lines::LineSelection;
-use crate::word_diff;
+use crate::{Tab, word_diff};
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
+use project_engine::{DiffCommitParams, DiffParams};
 use project_i18n::tr;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens a file's diff of the selected commit in place of the graph.
+    Open(DiffTarget),
+    /// Closes the diff and returns to the graph.
+    Close,
+    /// Asks again for the open diff after an error.
+    Retry,
+}
 
 /// Where the diff of a file comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,14 +56,17 @@ impl DiffTarget {
 
     /// The command and parameters that request this diff.
     pub fn request(&self) -> (&'static str, serde_json::Value) {
-        let path = serde_json::to_value(&self.path).unwrap_or_default();
+        let path = Some(self.path.clone());
         match self.source {
             DiffSource::Commit(id) => (
                 "diff.commit",
-                serde_json::json!({ "id": id.to_string(), "path": path }),
+                crate::params(DiffCommitParams {
+                    id: id.to_string(),
+                    path,
+                }),
             ),
-            DiffSource::Worktree => ("diff.worktree", serde_json::json!({ "path": path })),
-            DiffSource::Index => ("diff.index", serde_json::json!({ "path": path })),
+            DiffSource::Worktree => ("diff.worktree", crate::params(DiffParams { path })),
+            DiffSource::Index => ("diff.index", crate::params(DiffParams { path })),
         }
     }
 }
@@ -71,8 +86,10 @@ struct Open {
     seq: u64,
     target: DiffTarget,
     answer: Option<Result<DiffDoc, String>>,
-    /// Selected lines of the loaded document; cleared on every new response.
+    /// Selected lines of the loaded document; cleared when a response brings a different diff.
     selection: LineSelection,
+    /// Request `seq` re-reads the loaded diff: until it answers the old one stays on screen.
+    reloading: bool,
 }
 
 #[derive(Debug, Default)]
@@ -98,6 +115,7 @@ impl DiffState {
             target,
             answer: None,
             selection: LineSelection::default(),
+            reloading: false,
         });
         Some(seq)
     }
@@ -110,15 +128,25 @@ impl DiffState {
             .flatten()
     }
 
-    /// Requests the open diff even if it is already loaded (the file changed): returns the
-    /// number of the new request. Until the response arrives the view shows the loading state.
+    /// Requests the open diff even if it is already loaded (the file may have changed): returns
+    /// the number of the new request. A loaded diff and its selection stay on screen until the
+    /// response arrives (the automatic refresh on focus must not blank the view); after an
+    /// error the view shows the loading state.
     pub fn reload(&mut self) -> Option<u64> {
         let open = self.open.as_mut()?;
         open.seq = self.next;
-        open.answer = None;
-        open.selection.clear();
+        open.reloading = matches!(open.answer, Some(Ok(_)));
+        if !open.reloading {
+            open.answer = None;
+        }
         self.next += 1;
         Some(open.seq)
+    }
+
+    /// A loaded diff is on screen while a newer one is on its way: the lines must not be
+    /// written from it.
+    pub fn is_reloading(&self) -> bool {
+        self.open.as_ref().is_some_and(|o| o.reloading)
     }
 
     /// Closes the view: incoming responses will be discarded.
@@ -136,8 +164,15 @@ impl DiffState {
         let Some(open) = &mut self.open else {
             return false;
         };
-        if open.seq != seq || open.answer.is_some() {
+        if open.seq != seq || (open.answer.is_some() && !open.reloading) {
             return false;
+        }
+        open.reloading = false;
+        // The same diff again: document, selection and scroll stay as they are.
+        if let (Some(Ok(doc)), Ok(diff)) = (&open.answer, &result)
+            && doc.diff == *diff
+        {
+            return true;
         }
         open.answer = Some(result.map(|diff| DiffDoc::new(diff, &open.target.path)));
         open.selection.clear();
@@ -207,7 +242,7 @@ pub struct DiffDoc {
     /// Text columns of the widest row (after tabs and any cut).
     pub max_cols: usize,
     /// The changed parts of the paired removed and added lines, in columns, by
-    /// `(file, hunk, line)` (see [`word_diff`](crate::word_diff)).
+    /// `(file, hunk, line)` (see [`word_diff`]).
     pub emphasis: HashMap<(usize, usize, usize), Vec<Range<usize>>>,
     /// The rows of the side by side view.
     pub split: Vec<SplitRow>,
@@ -356,16 +391,22 @@ pub fn file_title(file: &FileDiff) -> String {
 
 /// Kind of change, similarity and changed lines, e.g. `renamed 92%  +1 -1`.
 pub fn file_summary(file: &FileDiff) -> String {
+    let mut summary = file_kind(file);
+    let (added, removed) = file.line_counts();
+    if added + removed > 0 {
+        summary.push_str(&format!("  +{added} -{removed}"));
+    }
+    summary
+}
+
+/// Kind of change and similarity, e.g. `renamed  92%`.
+pub fn file_kind(file: &FileDiff) -> String {
     let mut parts = vec![change_name(file.change)];
     if let Some(similarity) = file.similarity {
         parts.push(format!("{similarity}%"));
     }
     if file.is_submodule() {
         parts.push(tr!("diff-submodule-badge"));
-    }
-    let (added, removed) = file.line_counts();
-    if added + removed > 0 {
-        parts.push(format!("+{added} -{removed}"));
     }
     parts.join("  ")
 }
@@ -504,6 +545,37 @@ pub fn line_number(number: Option<u32>, width: usize) -> String {
 /// The sign of the row as git writes it: ` `, `+`, `-`.
 pub fn line_prefix(kind: LineKind) -> char {
     char::from(kind.prefix())
+}
+
+impl Tab {
+    /// The actions of this area, dispatched by [`Tab::apply`].
+    pub(crate) fn apply_diff(&mut self, action: Action) {
+        match action {
+            Action::Open(target) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.conflict.close();
+                    repo.file.close();
+                }
+                if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
+                    self.request_diff(&target, seq);
+                }
+            }
+            Action::Close => {
+                if let Some(repo) = &mut self.repo {
+                    repo.diff.close();
+                }
+            }
+            Action::Retry => {
+                let repo = self.repo.as_mut();
+                if let Some((seq, target)) = repo.and_then(|r| {
+                    let seq = r.diff.retry()?;
+                    Some((seq, r.diff.target()?.clone()))
+                }) {
+                    self.request_diff(&target, seq);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -654,7 +726,7 @@ mod tests {
         // The engine also returns the copy that starts from `a.rs`.
         let copy = file(Change::Copied, "a.rs", "b.rs", vec![hunk()]);
         let modified = file(Change::Modified, "a.rs", "a.rs", vec![hunk()]);
-        let doc = DiffDoc::new(diff(vec![modified.clone(), copy.clone()]), &"a.rs".into());
+        let doc = DiffDoc::new(diff(vec![modified.clone(), copy]), &"a.rs".into());
         assert_eq!(doc.diff.files, vec![modified]);
         // A type change: two files on the same path, kept separate.
         let deleted = file(Change::Deleted, "l", "l", Vec::new());
@@ -676,6 +748,7 @@ mod tests {
         renamed.similarity = Some(92);
         assert_eq!(file_title(&renamed), "src/main.rs -> src/bin/app.rs");
         assert_eq!(file_summary(&renamed), "renamed  92%  +2 -1");
+        assert_eq!(file_kind(&renamed), "renamed  92%");
         assert!(file_notes(&renamed).is_empty());
 
         renamed.hunks.clear();
@@ -785,11 +858,26 @@ mod tests {
         assert!(state.receive(first, Ok(Diff { files: Vec::new() })));
         let second = state.reload().unwrap();
         assert_ne!(first, second);
-        assert!(matches!(state.pane(), Pane::Loading(_)));
+        assert!(
+            matches!(state.pane(), Pane::Loaded(..)),
+            "the old diff stays"
+        );
+        assert!(state.is_reloading());
         // The response of the old request no longer counts.
         assert!(!state.receive(first, Ok(Diff { files: Vec::new() })));
         assert!(state.receive(second, Ok(Diff { files: Vec::new() })));
         assert!(matches!(state.pane(), Pane::Loaded(..)));
+        assert!(!state.is_reloading());
+    }
+
+    #[test]
+    fn reload_after_an_error_shows_the_loading_state() {
+        let mut state = DiffState::default();
+        let first = state.open(target(1, "a")).unwrap();
+        assert!(state.receive(first, Err("boom".into())));
+        state.reload().unwrap();
+        assert!(matches!(state.pane(), Pane::Loading(_)));
+        assert!(!state.is_reloading());
     }
 
     #[test]
@@ -808,11 +896,24 @@ mod tests {
         selection.click(&doc, 3, false);
         assert_eq!(state.selection().map(LineSelection::len), Some(1));
         let again = state.reload().unwrap();
-        assert!(
-            state.selection().unwrap().is_empty(),
-            "reload: selection cleared"
+        assert_eq!(
+            state.selection().map(LineSelection::len),
+            Some(1),
+            "reload: the selection stays while the old diff is shown"
         );
         assert!(state.receive(again, Ok(one())));
+        assert_eq!(
+            state.selection().map(LineSelection::len),
+            Some(1),
+            "same diff: selection kept"
+        );
+        let changed = state.reload().unwrap();
+        let two = diff(vec![file(Change::Added, "a.rs", "a.rs", vec![hunk()])]);
+        assert!(state.receive(changed, Ok(two)));
+        assert!(
+            state.selection().unwrap().is_empty(),
+            "different diff: selection cleared"
+        );
         let (_, doc, selection) = state.loaded_mut().unwrap();
         let doc = doc.clone();
         selection.click(&doc, 3, false);

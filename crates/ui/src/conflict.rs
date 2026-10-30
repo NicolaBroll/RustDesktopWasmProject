@@ -13,43 +13,50 @@
 //!   remain a two-step confirmation is asked; "Delete the file" also asks for confirmation. A
 //!   `StaleDiff` (the file changed after reading) rereads the file.
 
-use crate::ErrorKind;
-use crate::{Action, Done, Request, Tab};
+use crate::running::Running;
+use crate::{Done, Request, Tab, params};
+use crate::{ErrorKind, Ticket};
 use project_domain::{
     Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
 };
+use project_engine::{
+    ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
+    VersionText,
+};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the stage area and, in the center, the file's conflict editor.
+    Open(RepoPath),
+    /// Closes the conflict editor (unmarked choices are lost).
+    Close,
+    /// "Start over": re-reads the conflicted file.
+    Restart,
+    /// The result of the conflict editor, edited by hand.
+    Text(String),
+    /// Replaces the conflict block with this index with the choice.
+    ChooseBlock(usize, Choice),
+    /// Replaces all conflict blocks with the same choice.
+    ChooseAll(Choice),
+    /// "Mark as resolved" with the result (asks for confirmation if markers remain).
+    Resolve,
+    /// Resolves with the whole version of one side.
+    UseSide(Pick),
+    /// "Delete the file": opens the confirmation.
+    Delete,
+    /// Confirms the pending resolution (remaining markers or deletion).
+    Confirm,
+    /// Gives up the resolution awaiting confirmation.
+    Cancel,
+}
 
 /// The id of the command that reads the versions of the conflicted file.
 pub const SHOW: &str = "conflict.show";
 /// The id of the command that resolves the conflict of a file.
 pub const RESOLVE: &str = "conflict.resolve";
-
-/// A version of the file (`base`, `ours`, `theirs` or `worktree` of `conflict.show`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Version {
-    /// The content, if it is valid UTF-8 without NUL.
-    pub text: Option<String>,
-    #[serde(default)]
-    pub binary: bool,
-    #[serde(default)]
-    pub size: u64,
-}
-
-/// Result of `conflict.show`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Shown {
-    pub path: RepoPath,
-    pub kind: Conflict,
-    pub base: Option<Version>,
-    pub ours: Option<Version>,
-    pub theirs: Option<Version>,
-    pub worktree: Option<Version>,
-    pub marker_size: usize,
-    pub digest: String,
-}
 
 /// One of the three columns on top, already split into lines (the view shows them virtualized).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,15 +65,15 @@ pub enum Column {
     Text(Vec<String>),
     /// The stage is missing (the file was not there on that side).
     Missing,
-    /// The content is not text.
-    Binary(u64),
+    /// The content is not text: its size in bytes.
+    Binary(usize),
 }
 
 impl Column {
-    fn of(version: Option<&Version>) -> Self {
+    fn of(version: Option<&VersionText>) -> Self {
         match version {
             None => Column::Missing,
-            Some(Version {
+            Some(VersionText {
                 text: Some(text), ..
             }) => Column::Text(text.lines().map(str::to_owned).collect()),
             Some(v) => Column::Binary(v.size),
@@ -104,7 +111,7 @@ pub enum Pending {
 /// The versions read and the result being worked on.
 #[derive(Debug, Clone)]
 pub struct Loaded {
-    pub shown: Shown,
+    pub shown: ConflictShowResult,
     pub base: Column,
     pub ours: Column,
     pub theirs: Column,
@@ -120,7 +127,7 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    fn new(shown: Shown) -> Self {
+    fn new(shown: ConflictShowResult) -> Self {
         let worktree_text = shown.worktree.as_ref().and_then(|v| v.text.clone());
         let parsed_worktree = worktree_text
             .as_deref()
@@ -236,8 +243,8 @@ pub struct Editor {
     pub load: Load,
     /// The open two-step confirmation, if any.
     pub pending: Option<Pending>,
-    /// True while `conflict.resolve` is in flight.
-    pub sending: bool,
+    /// `conflict.resolve` in flight.
+    pub running: Option<Running>,
     /// The last error (refusal, changed file), shown in the editor.
     pub error: Option<String>,
 }
@@ -253,7 +260,7 @@ impl Editor {
 
     fn loaded_mut(&mut self) -> Option<&mut Loaded> {
         match &mut self.load {
-            Load::Ready(loaded) if !self.sending => Some(loaded),
+            Load::Ready(loaded) if self.running.is_none() => Some(loaded),
             _ => None,
         }
     }
@@ -273,14 +280,6 @@ pub enum Received {
     },
 }
 
-/// Result of `conflict.resolve`.
-#[derive(Deserialize)]
-struct Resolved {
-    status: Status,
-    backup: Option<String>,
-    index_backup: Option<String>,
-}
-
 /// State of the conflict editor: at most one open file.
 #[derive(Debug, Default)]
 pub struct ConflictBox {
@@ -296,7 +295,7 @@ impl ConflictBox {
 
     /// True while `conflict.resolve` is in flight.
     pub fn busy(&self) -> bool {
-        self.editor.as_ref().is_some_and(|e| e.sending)
+        self.editor.as_ref().is_some_and(|e| e.running.is_some())
     }
 
     /// Opens the editor on `path`: the parameters of `conflict.show` and the reading number.
@@ -317,20 +316,21 @@ impl ConflictBox {
             seq: self.seq,
             load: Load::Loading,
             pending: None,
-            sending: false,
+            running: None,
             error: None,
         });
-        Some((json!({ "path": path }), self.seq))
+        Some((params(ConflictShowParams { path }), self.seq))
     }
 
     /// "Start over": rereads the file, the choices and edits made here are lost.
     pub fn restart(&mut self) -> Option<(Value, u64)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         self.seq += 1;
         editor.seq = self.seq;
         editor.load = Load::Loading;
         editor.pending = None;
-        Some((json!({ "path": editor.path }), self.seq))
+        let path = editor.path.clone();
+        Some((params(ConflictShowParams { path }), self.seq))
     }
 
     /// Closes the editor; not during a send.
@@ -345,18 +345,11 @@ impl ConflictBox {
         let Some(editor) = self.editor.as_mut().filter(|e| e.seq == seq) else {
             return;
         };
-        editor.load = match result.and_then(|value| {
-            serde_json::from_value::<Shown>(value).map_err(|e| {
-                tr!(
-                    "conflict-unexpected-result",
-                    command = SHOW,
-                    error = e.to_string()
-                )
-            })
-        }) {
-            Ok(shown) => Load::Ready(Box::new(Loaded::new(shown))),
-            Err(e) => Load::Failed(e),
-        };
+        editor.load =
+            match result.and_then(|value| crate::decode::<ConflictShowResult>(SHOW, value)) {
+                Ok(shown) => Load::Ready(Box::new(Loaded::new(shown))),
+                Err(e) => Load::Failed(e),
+            };
     }
 
     /// A new state: if the open file is no longer conflicted (resolved elsewhere, merge
@@ -369,7 +362,7 @@ impl ConflictBox {
                 .any(|e| e.is_conflict() && &e.path == path)
         };
         if let Some(editor) = &self.editor
-            && !editor.sending
+            && editor.running.is_none()
             && !still(&editor.path)
         {
             self.editor = None;
@@ -425,7 +418,7 @@ impl ConflictBox {
     /// "Mark as resolved" with the result: the parameters of `conflict.resolve` and the
     /// description. If markers remain `None` and the confirmation opens ([`Pending::Markers`]).
     pub fn resolve(&mut self) -> Option<(Value, String)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         let loaded = editor.loaded()?;
         loaded.result.as_ref()?;
         let left = loaded.parsed.as_ref().map_or(0, ConflictText::block_count);
@@ -438,7 +431,7 @@ impl ConflictBox {
 
     /// "Use ours" / "Use theirs": the text of that side as the result, right away.
     pub fn use_side(&mut self, pick: Pick) -> Option<(Value, String)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         let loaded = editor.loaded()?;
         let content = loaded.side_text(pick)?.to_owned();
         let path = editor.path.to_string();
@@ -446,17 +439,18 @@ impl ConflictBox {
             Pick::Ours => tr!("conflict-label-use-ours", path = path),
             Pick::Theirs => tr!("conflict-label-use-theirs", path = path),
         };
-        let params = json!({
-            "path": editor.path,
-            "digest": loaded.shown.digest,
-            "content": content,
+        let params = params(ConflictResolveParams {
+            path: editor.path.clone(),
+            digest: loaded.shown.digest.clone(),
+            content: Some(content),
+            delete: false,
         });
-        Some(self.sending(params, label))
+        Some(self.send(params, label))
     }
 
     /// "Delete the file": opens the confirmation ([`Pending::Delete`]).
     pub fn delete(&mut self) {
-        if let Some(editor) = self.editor.as_mut().filter(|e| !e.sending)
+        if let Some(editor) = self.editor.as_mut().filter(|e| e.running.is_none())
             && editor.loaded().is_some_and(Loaded::can_delete)
         {
             editor.pending = Some(Pending::Delete);
@@ -465,18 +459,19 @@ impl ConflictBox {
 
     /// The two-step confirmation was given: the parameters to send.
     pub fn confirm(&mut self) -> Option<(Value, String)> {
-        let editor = self.editor.as_mut().filter(|e| !e.sending)?;
+        let editor = self.editor.as_mut().filter(|e| e.running.is_none())?;
         match editor.pending.take()? {
             Pending::Markers(_) => self.send_result(),
             Pending::Delete => {
                 let loaded = editor.loaded()?;
-                let params = json!({
-                    "path": editor.path,
-                    "digest": loaded.shown.digest,
-                    "delete": true,
+                let params = params(ConflictResolveParams {
+                    path: editor.path.clone(),
+                    digest: loaded.shown.digest.clone(),
+                    content: None,
+                    delete: true,
                 });
                 let label = tr!("conflict-label-delete", path = editor.path.to_string());
-                Some(self.sending(params, label))
+                Some(self.send(params, label))
             }
         }
     }
@@ -491,22 +486,29 @@ impl ConflictBox {
     fn send_result(&mut self) -> Option<(Value, String)> {
         let editor = self.editor.as_ref()?;
         let loaded = editor.loaded()?;
-        let params = json!({
-            "path": editor.path,
-            "digest": loaded.shown.digest,
-            "content": loaded.result.as_ref()?,
+        let params = params(ConflictResolveParams {
+            path: editor.path.clone(),
+            digest: loaded.shown.digest.clone(),
+            content: Some(loaded.result.clone()?),
+            delete: false,
         });
         let label = tr!("conflict-label-resolve", path = editor.path.to_string());
-        Some(self.sending(params, label))
+        Some(self.send(params, label))
     }
 
-    fn sending(&mut self, params: Value, label: String) -> (Value, String) {
+    fn send(&mut self, params: Value, label: String) -> (Value, String) {
         if let Some(editor) = &mut self.editor {
-            editor.sending = true;
             editor.pending = None;
             editor.error = None;
         }
         (params, label)
+    }
+
+    /// The `conflict.resolve` given by the calls above started with `ticket`.
+    pub fn started(&mut self, ticket: Ticket) {
+        if let Some(editor) = &mut self.editor {
+            editor.running = Some(Running::new(ticket));
+        }
     }
 
     /// The answer of `conflict.resolve`.
@@ -516,18 +518,11 @@ impl ConflictBox {
         kind: Option<ErrorKind>,
     ) -> Received {
         if let Some(editor) = &mut self.editor {
-            editor.sending = false;
+            editor.running = None;
         }
         let path = self.editor.as_ref().map(|e| e.path.to_string());
-        let result = result.and_then(|value| {
-            serde_json::from_value::<Resolved>(value).map_err(|e| {
-                tr!(
-                    "conflict-unexpected-result",
-                    command = RESOLVE,
-                    error = e.to_string()
-                )
-            })
-        });
+        let result =
+            result.and_then(|value| crate::decode::<ConflictResolveResult>(RESOLVE, value));
         match result {
             Ok(resolved) => {
                 self.editor = None;
@@ -590,32 +585,28 @@ impl Tab {
         let mut send = None;
         let mut read = None;
         match action {
-            Action::OpenConflict(path) => {
+            Action::Open(path) => {
                 repo.stash.select(None);
                 repo.select_worktree(true);
                 repo.diff.close();
                 repo.file.close();
                 read = repo.conflict.open(path);
             }
-            Action::CloseConflict => repo.conflict.close(),
-            Action::RestartConflict => read = repo.conflict.restart(),
-            Action::ConflictText(text) => repo.conflict.set_result(text),
+            Action::Close => repo.conflict.close(),
+            Action::Restart => read = repo.conflict.restart(),
+            Action::Text(text) => repo.conflict.set_result(text),
             Action::ChooseBlock(index, choice) => {
                 repo.conflict.choose(index, choice);
             }
             Action::ChooseAll(choice) => {
                 repo.conflict.choose_all(choice);
             }
-            Action::ResolveConflict if can_write => send = repo.conflict.resolve(),
+            Action::Resolve if can_write => send = repo.conflict.resolve(),
             Action::UseSide(pick) if can_write => send = repo.conflict.use_side(pick),
-            Action::DeleteConflicted if can_write => repo.conflict.delete(),
-            Action::ConfirmConflict if can_write => send = repo.conflict.confirm(),
-            Action::CancelConflict => repo.conflict.cancel(),
-            Action::ResolveConflict
-            | Action::UseSide(_)
-            | Action::DeleteConflicted
-            | Action::ConfirmConflict => {}
-            _ => unreachable!("action dispatched to the wrong function"),
+            Action::Delete if can_write => repo.conflict.delete(),
+            Action::Confirm if can_write => send = repo.conflict.confirm(),
+            Action::Cancel => repo.conflict.cancel(),
+            Action::Resolve | Action::UseSide(_) | Action::Delete | Action::Confirm => {}
         }
         if let Some((params, seq)) = read {
             self.submit(SHOW, params, Request::ConflictShow(generation, seq));
@@ -625,7 +616,10 @@ impl Tab {
         {
             repo.write_error = None;
             repo.write_label = Some(label);
-            self.submit(RESOLVE, params, Request::ConflictResolve(generation));
+            let ticket = self.submit(RESOLVE, params, Request::ConflictResolve(generation));
+            if let Some(repo) = &mut self.repo {
+                repo.conflict.started(ticket);
+            }
         }
     }
 

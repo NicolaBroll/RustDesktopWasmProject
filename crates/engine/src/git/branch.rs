@@ -11,19 +11,12 @@
 use super::valid_ref_name;
 use crate::{EngineError, Message};
 use project_domain::Operation;
+pub use project_domain::{HEADS_PREFIX, branch_short};
 use serde::{Deserialize, Serialize};
-
-/// Prefix of local branches.
-pub const HEADS_PREFIX: &str = "refs/heads/";
 
 /// The full name of the local branch `name` (`refs/heads/<name>`).
 pub fn branch_ref(name: &str) -> String {
     format!("{HEADS_PREFIX}{name}")
-}
-
-/// The short name of a local branch: `refs/heads/x` → `x`; any other name stays as is.
-pub fn branch_short(full: &str) -> &str {
-    full.strip_prefix(HEADS_PREFIX).unwrap_or(full)
 }
 
 /// The name of an existing branch (`branch.checkout`, `branch.delete`, the `name` of
@@ -107,7 +100,7 @@ pub fn check_no_operation(
     )))
 }
 
-/// Outcome of [`GitBackend::delete_branch`](crate::GitBackend::delete_branch).
+/// Outcome of [`GitRefs::delete_branch`](crate::GitRefs::delete_branch).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchDeleted {
     /// The backup ref on the branch's commit (`refs/project/backup/delete-...`), created before

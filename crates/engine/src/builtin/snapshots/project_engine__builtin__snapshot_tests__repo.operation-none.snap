@@ -1,0 +1,21 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "abort": null,
+  "conflicts": [],
+  "continue": null,
+  "head": {
+    "Branch": {
+      "name": "main",
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+    }
+  },
+  "incoming": [],
+  "message": null,
+  "onto": null,
+  "operation": null,
+  "ready": false,
+  "rebase_branch": null
+}

@@ -126,6 +126,17 @@ The patch builder for line staging is in [git/stage.md](git/stage.md).
 
 ### Backend
 
+`GitBackend` is the union of seven traits by area (Q14), each with its methods and their docs in
+`crates/engine/src/git/mod.rs`: `GitRead` (head, refs, log, search, status, show_commit, diff,
+blame, file_log, root, unmerged_count, config_values), `GitIndex` (stage, unstage, apply_lines,
+commit, discard, restore_worktree), `GitRefs` (restore_refs, branches, tags, checkout,
+reset_branch, reset), `GitRemotes` (remotes, fetch, pull, push, remote branches and tags, remote
+configuration), `GitStash`, `GitOperations` (merge, cherry-pick, revert, rebase, conflict editor,
+operation_state) and `GitMaintenance` (commit-graph). A blanket impl makes every type that
+implements all seven a `GitBackend`, so `Session` and the commands keep `Box<dyn GitBackend>`;
+the backends implement the seven traits. The sketch below lists the methods in the order they
+were added.
+
 ```rust
 pub trait GitBackend: Send {
     fn head(&self) -> Result<Head, EngineError>;
@@ -320,6 +331,12 @@ Rules for every call to git:
 - Fetch, pull and push: [git/sync.md](git/sync.md); remotes: [git/remotes.md](git/remotes.md); stash: [git/stash.md](git/stash.md); merge: [git/merge.md](git/merge.md).
 - A command that modifies the repo is marked in `CommandSpec::writes` (CLI `commands`, MCP
   `list_commands`), so the UI disables it during a job and an agent knows what it writes.
+- `CommandSpec::params` is the JSON Schema of the parameters, derived (`schemars`) from the type
+  the handler receives, with subschemas inline: CLI `commands --json` and MCP `list_commands`
+  show it, and the description of the MCP `execute_command` tool keeps only the general rules
+  (`writes`, `confirm`, `expected`, network commands). `CommandSpec::outside_repo` marks the
+  commands that take paths outside the open repo (`repo.open`, `repo.clone`, `repo.init`): the
+  MCP server refuses them.
 - When the repo is opened the git version is checked (minimum 2.30) and a clear error is given if it
   is older.
 - git errors become variants of `EngineError` with the stderr text, so UI and agents
@@ -358,7 +375,7 @@ have updated the branch).
 `Registry::run_with(id, session, params, job: JobContext)`: for the duration of the command the
 session holds `job` (`Session::job()`), the command passes it to the backend, and afterwards an empty
 context returns (`Registry::run` is `run_with` with `JobContext::new()`: no progress, never
-cancelled). This way the extension does not change the signature of commands or `Handler`s.
+cancelled). This way the extension does not change the signature of the command handlers.
 
 - `JobContext::new().with_progress(sink).with_cancel(token)`: `sink` is a
   `Fn(&Progress) + Send + Sync`, called from the job thread; `token` is a `CancelToken`
@@ -425,10 +442,10 @@ Choices:
   commit deletes the branch (`delete` with the old value): HEAD stays on the branch, which returns
   without commits, and the files stay staged as added. Deleting the branch also deletes its
   reflog (like `git update-ref -d`); the entry in HEAD's reflog remains.
-- **Atomic check.** `GitBackend::restore_refs` receives a `RefRestore` (expected and new HEAD and
+- **Atomic check.** `GitRefs::restore_refs` receives a `RefRestore` (expected and new HEAD and
   refs). First: `RefRestore::check` (operations in progress, valid ref names, HEAD branch changes
-  refused: undo and redo of checkout and rename go through `GitBackend::checkout` and
-  `GitBackend::rename_branch`, see [git/branch.md](git/branch.md)), then current HEAD and refs compared with the expected ones
+  refused: undo and redo of checkout and rename go through `GitRefs::checkout` and
+  `GitRefs::rename_branch`, see [git/branch.md](git/branch.md)), then current HEAD and refs compared with the expected ones
   (`RefRestore::conflicts`: if anything changed, `UndoConflict` with one ref per line and nothing
   changes). The `CliBackend` writes with a transaction `git update-ref -m "project: undo <description>"
   -z --stdin`: `start`, then `update <ref> <new> <old>` / `create <ref> <new>` /

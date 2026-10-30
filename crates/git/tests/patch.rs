@@ -10,7 +10,7 @@ use common::{GIT_ENV, Repo};
 use project_domain::{
     APPLY_ARGS, Change, FileDiff, LineKind, LineRef, PatchDirection, RepoPath, build_patch,
 };
-use project_engine::{DiffSpec, GitBackend};
+use project_engine::{DiffSpec, GitRead};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::process::{Command, Stdio};

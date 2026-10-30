@@ -99,11 +99,6 @@ impl JobContext {
     pub fn is_cancelled(&self) -> bool {
         self.cancel.is_cancelled()
     }
-
-    /// The cancellation token.
-    pub fn cancel_token(&self) -> &CancelToken {
-        &self.cancel
-    }
 }
 
 impl fmt::Debug for JobContext {
@@ -142,7 +137,7 @@ mod tests {
         assert!(!job.is_cancelled());
         token.cancel();
         assert!(job.is_cancelled());
-        assert!(job.clone().is_cancelled());
+        assert!(job.is_cancelled());
 
         // The empty context receives nothing and cannot be cancelled.
         let empty = JobContext::new();

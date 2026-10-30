@@ -16,7 +16,7 @@ Slow (§6), writes (`writes`: remote branches, tags, `FETCH_HEAD`). `prune: true
 the column. A removed remote-tracking branch with commits no other ref reaches is saved first in
 `refs/project/backup/prune-...` (result `backups`): the remote no longer has them, the repo keeps
 them. `remote`: the **name** of a configured
-remote (`GitBackend::remotes`, i.e. `git remote`), checked with `check_remote_name` (like
+remote (`GitRemotes::remotes`, i.e. `git remote`), checked with `check_remote_name` (like
 git: `refs/remotes/<name>/x` must be a valid ref name; a leading `-` is allowed) and looked up
 among the configured ones before calling the backend: a name that does not exist → `NotAllowed` with the list of
 remotes (never passed to git, which would use it as a URL or path). Without `remote`: that of the
@@ -47,16 +47,16 @@ wait up to 30 minutes. No engine change.
 Parameters: `{"remote"?, "branch"?, "strategy"?}`.
 
 Slow (§6), writes (`writes`), goes into the journal (§7). Fetch of only the upstream branch with
-`GitBackend::fetch` (progress and cancellation like `remote.fetch`; cancelled during the fetch →
+`GitRemotes::fetch` (progress and cancellation like `remote.fetch`; cancelled during the fetch →
 `Cancelled { command: "remote.pull" }` even if the fetch finished, before integrating), then
-the local integration with `GitBackend::pull`, which is not interrupted. **Choice: not `git pull`**,
+the local integration with `GitRemotes::pull`, which is not interrupted. **Choice: not `git pull`**,
 but fetch + merge/rebase driven by the engine: this way the command knows what arrived before writing,
 chooses the strategy, checks the state and saves the backup. `branch`: short name of the local branch
 (HEAD if missing; detached HEAD without `branch` → `NotAllowed`); a branch that is not HEAD's can
 only be fast-forwarded (ref fast-forward with `update-ref` and the old value, without touching the
 worktree; diverged → `NotAllowed` asking to switch to it; open in another worktree →
 `NotAllowed`). `remote`: if present it must be the upstream's (`NotAllowed` otherwise): the pull
-always integrates the upstream. Upstream from `branch.<name>.remote`/`.merge` (`GitBackend::upstream`);
+always integrates the upstream. Upstream from `branch.<name>.remote`/`.merge` (`GitRemotes::upstream`);
 without → `NotAllowed` saying how to set it (`git branch --set-upstream-to=<remote>/<branch>`) or
 to publish the branch with `remote.push`; local upstream (`.`), `merge` that is not a branch,
 no refspec mapping it into `refs/remotes/` → `NotAllowed`, nothing downloaded. **Strategy**
@@ -202,7 +202,7 @@ annotated tag), "kind": "new" | "up_to_date", "summary", "messages", "refs" | nu
 Parameters: `{"remote", "name", "confirm"?, "expected"?}`.
 
 Like `remote.delete_branch`: slow, writes, not in the journal, same remote checks. There is no
-remote-tracking ref for tags, so the value is **read from the remote** (`GitBackend::remote_tag`,
+remote-tracking ref for tags, so the value is **read from the remote** (`GitRemotes::remote_tag`,
 `git ls-remote`; it contacts the remote even for the confirmation): the value as the remote stores
 it (the tag object of an annotated tag, not the peeled commit). Not on the remote → `NotAllowed`.
 **Always** `"confirm": true` with `"expected"`, the full id read: without them `ConfirmRequired` with
@@ -349,7 +349,7 @@ branch as it was, saved before writing) and the description `Pull of `main` (fas
 a1b2c3d to e4f5a6b)` / `(merge of origin/main: ...)` / `(rebase onto origin/main: ...)`. The fetch
 done by the pull does not, like `remote.fetch`.
 
-- **Active branch: undo and redo with index and worktree** (`GitBackend::reset_branch`): moving
+- **Active branch: undo and redo with index and worktree** (`GitRefs::reset_branch`): moving
   only the ref (as for a commit) would leave the pull's files in the worktree, which would look like
   local changes to undo by hand. First the same checks as `restore_refs`
   (operation in progress, HEAD and branch as the pull left them, otherwise `UndoConflict`) and

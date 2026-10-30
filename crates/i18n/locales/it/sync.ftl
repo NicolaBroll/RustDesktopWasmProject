@@ -8,7 +8,6 @@ sync-label-push-branch = Push di «{ $branch }»
 sync-label-force = Push forzato
 sync-label-force-branch = Push forzato di «{ $branch }»
 sync-unexpected-response = risposta di pull o push inattesa
-sync-unexpected-result = { $command }: risultato inatteso: { $error }
 sync-pull-cancelled = { $label } interrotto: il branch non è stato toccato (i branch remoti già scaricati restano)
 sync-push-cancelled = { $label } interrotto: se l'invio era già finito il remoto potrebbe essere aggiornato; fare Fetch per controllare
 sync-failed-auth = { $label } non riuscito: autenticazione rifiutata o richiesta
@@ -18,7 +17,6 @@ sync-rejected = { $label } rifiutato: { $reason }
 sync-not-possible-title = { $label } non possibile
 sync-not-possible = { $label } non possibile: { $error }
 sync-failed-title = { $label } non riuscito
-sync-failed = { $label } non riuscito: { $error }
 sync-rejection-non-fast-forward = Il remoto ha commit che non hai: fai Pull per integrarli, poi ripeti il push. Niente è cambiato, né sul remoto né in locale.
 sync-rejection-stale-lease = Il branch sul remoto si è spostato dall'ultimo fetch: il push forzato (con lease) è stato rifiutato per non cancellare commit che non hai visto. Fai Fetch e controlla i commit arrivati prima di decidere di nuovo. Niente è cambiato.
 sync-rejection-remote = Il remoto ha rifiutato l'aggiornamento (un branch protetto, un hook pre-receive o update sul server). Il motivo, se il server lo dà, è nel messaggio di git. Niente è cambiato.
@@ -47,11 +45,9 @@ sync-pull-rebase = { $what }: rebase di { $n ->
     [one] 1 commit locale
    *[other] { $n } commit locali
 } su { $upstream } ({ $range })
-sync-pull-other = { $what }: { $kind } ({ $range })
 sync-pull-merge-default = ; merge perché pull.rebase non è configurato (git config pull.rebase true per il rebase)
 sync-pull-backup-in-progress = ; il branch com'era è in { $backup }
 sync-pull-backup = ; backup in { $backup }, «Annulla» lo riporta indietro
-sync-warning = ; attenzione: { $warning }
 sync-pull-status-not-reread = Pull fatto, ma lo stato non si rilegge: { $error }
 sync-pull-refs-not-reread = Pull fatto, ma i ref non si rileggono: { $error }
 # $summary: empty or “ (summary)” with the leading space.
@@ -62,7 +58,6 @@ sync-push-forced = Push forzato di «{ $branch }» su { $target }{ $summary }: {
    *[other] { $n } commit tolti
 } dal remoto
 sync-push-up-to-date = Push di «{ $branch }»: { $target } è già aggiornato
-sync-push-other = Push di «{ $branch }» su { $target }: { $kind }
 sync-push-to-push-remote = ; su «{ $remote }» (branch.{ $branch }.pushRemote)
 sync-push-to-push-default = ; su «{ $remote }» (remote.pushDefault)
 sync-push-backup = ; il remoto com'era è salvato in { $backup }

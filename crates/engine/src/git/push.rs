@@ -10,7 +10,7 @@ use crate::Message;
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
-/// What to publish with [`GitBackend::push`](super::GitBackend::push). Names already checked by the
+/// What to publish with [`GitRemotes::push`](super::GitRemotes::push). Names already checked by the
 /// command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushRequest {
@@ -46,7 +46,7 @@ pub enum PushKind {
     UpToDate,
 }
 
-/// Outcome of [`GitBackend::push`](super::GitBackend::push).
+/// Outcome of [`GitRemotes::push`](super::GitRemotes::push).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushOutcome {
     pub kind: PushKind,
@@ -58,7 +58,7 @@ pub struct PushOutcome {
     pub backup: Option<String>,
 }
 
-/// The deletion of a branch on the remote ([`GitBackend::delete_remote_branch`](super::GitBackend::delete_remote_branch),
+/// The deletion of a branch on the remote ([`GitRemotes::delete_remote_branch`](super::GitRemotes::delete_remote_branch),
 /// `remote.delete_branch`). Names already checked by the command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteBranchDelete {
@@ -72,7 +72,7 @@ pub struct RemoteBranchDelete {
     pub expected: Oid,
 }
 
-/// Outcome of [`GitBackend::delete_remote_branch`](super::GitBackend::delete_remote_branch).
+/// Outcome of [`GitRemotes::delete_remote_branch`](super::GitRemotes::delete_remote_branch).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteBranchDeleted {
     /// The git summary (`[deleted]`).
@@ -87,7 +87,7 @@ pub struct RemoteBranchDeleted {
     pub incomplete: bool,
 }
 
-/// The publication of a tag ([`GitBackend::push_tag`](super::GitBackend::push_tag),
+/// The publication of a tag ([`GitRemotes::push_tag`](super::GitRemotes::push_tag),
 /// `remote.push_tag`). Names already checked by the command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagPush {
@@ -97,7 +97,7 @@ pub struct TagPush {
     pub name: String,
 }
 
-/// Outcome of [`GitBackend::push_tag`](super::GitBackend::push_tag).
+/// Outcome of [`GitRemotes::push_tag`](super::GitRemotes::push_tag).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagPushed {
     /// The remote already had the tag with the same value: nothing published.
@@ -109,7 +109,7 @@ pub struct TagPushed {
 }
 
 /// The deletion of a tag on the remote
-/// ([`GitBackend::delete_remote_tag`](super::GitBackend::delete_remote_tag), `remote.delete_tag`).
+/// ([`GitRemotes::delete_remote_tag`](super::GitRemotes::delete_remote_tag), `remote.delete_tag`).
 /// Names already checked by the command. The outcome is a [`RemoteBranchDeleted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteTagDelete {

@@ -7,7 +7,7 @@ mod common;
 
 use common::{Repo, repo_with_all_refs, repo_with_history};
 use project_domain::{Commit, Oid, layout_graph};
-use project_engine::{EngineError, GitBackend, LogQuery, Registry, Session};
+use project_engine::{EngineError, GitRead, LogQuery, Registry, Session};
 use serde_json::{Value, json};
 use std::sync::Arc;
 

@@ -7,11 +7,25 @@
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
-use crate::{Action, Done, Request, Tab, discard};
-use project_domain::{Change, RepoPath, Status};
+use crate::{Done, Request, Tab};
+use project_domain::{Change, RepoPath};
+use project_engine::{DiscardParams, DiscardResult, UndoResult};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Discards the unstaged changes of the given files (never empty): first the engine checks
+    /// and asks for confirmation, which opens in a dialog.
+    Discard(Vec<RepoPath>),
+    /// Confirms the pending discard: resends with `"confirm": true`.
+    Confirm,
+    /// Closes the discard dialog without discarding anything.
+    Cancel,
+    /// Undoes the last journal operation, or redoes the last undone one.
+    Undo(UndoOp),
+}
 
 /// True if the changes of the file can be discarded: tracked, not conflicted. Untracked files
 /// are never touched (discarding them would mean deleting them, with no backup).
@@ -69,11 +83,10 @@ pub fn describe_check(paths: &[RepoPath]) -> String {
 
 /// The parameters of `worktree.discard`; `confirm` only after the user's confirmation.
 pub fn params(paths: &[RepoPath], confirm: bool) -> Value {
-    let mut params = json!({ "paths": paths });
-    if confirm {
-        params["confirm"] = json!(true);
-    }
-    params
+    crate::params(DiscardParams {
+        paths: paths.to_vec(),
+        confirm,
+    })
 }
 
 /// Where the discard stands.
@@ -165,7 +178,7 @@ impl DiscardBox {
     ) -> Received {
         let Some(discard) = self.current.take() else {
             return Received::Failed {
-                message: tr!("discard-unexpected-response", command = COMMAND),
+                message: tr!("common-unexpected-response", command = COMMAND),
                 reload: true,
             };
         };
@@ -187,17 +200,13 @@ impl DiscardBox {
                 reload: false,
             },
             Err(e) => Received::Failed {
-                message: tr!("discard-failed", label = &label, error = e),
+                message: tr!("common-failed", label = &label, error = e),
                 reload: false,
             },
             Ok(value) => match serde_json::from_value::<DiscardResult>(value) {
                 Ok(result) => Received::Done(Box::new(result)),
                 Err(e) => Received::Failed {
-                    message: tr!(
-                        "discard-unexpected-result",
-                        command = COMMAND,
-                        error = e.to_string()
-                    ),
+                    message: crate::unexpected_result(COMMAND, e),
                     reload: true,
                 },
             },
@@ -205,48 +214,36 @@ impl DiscardBox {
     }
 }
 
-/// A discarded file, as `worktree.discard` lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct DiscardedFile {
-    pub path: RepoPath,
-}
-
-/// Result of `worktree.discard` with `"confirm": true`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct DiscardResult {
-    pub files: Vec<DiscardedFile>,
-    /// The ref of the worktree backup.
-    pub backup: String,
-    /// The new status; `None` if it was not reread (the discard is done anyway).
-    pub status: Option<Status>,
-    pub status_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl DiscardResult {
-    /// The message for the status bar.
-    pub fn notice(&self) -> String {
-        match self.files.as_slice() {
-            [one] => tr!(
-                "discard-done-one",
-                path = one.path.to_string_lossy().into_owned(),
-                backup = &self.backup
-            ),
-            many => tr!("discard-done-many", n = many.len(), backup = &self.backup),
-        }
+/// The message for the status bar after `worktree.discard`.
+fn notice(result: &DiscardResult) -> String {
+    match result.files.as_slice() {
+        [one] => tr!(
+            "discard-done-one",
+            path = one.path.to_string_lossy().into_owned(),
+            backup = &result.backup
+        ),
+        many => tr!("discard-done-many", n = many.len(), backup = &result.backup),
     }
 }
 
 /// The state of the operation journal: what "Undo" would undo and what "Redo" would redo.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct History {
     pub can_undo: bool,
     pub can_redo: bool,
-    #[serde(default, deserialize_with = "crate::engine_text::opt_text")]
     pub next_undo: Option<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::opt_text")]
     pub next_redo: Option<String>,
+}
+
+impl From<project_engine::JournalState> for History {
+    fn from(j: project_engine::JournalState) -> Self {
+        History {
+            can_undo: j.can_undo,
+            can_redo: j.can_redo,
+            next_undo: j.next_undo.as_ref().map(project_engine::Message::text),
+            next_redo: j.next_redo.as_ref().map(project_engine::Message::text),
+        }
+    }
 }
 
 /// Undo or Redo.
@@ -299,44 +296,18 @@ impl UndoOp {
     }
 }
 
-/// The journal entry affected by undo or redo: the description is enough.
-#[derive(Debug, Clone, Deserialize)]
-pub struct EntryName {
-    #[serde(deserialize_with = "crate::engine_text::text")]
-    pub description: String,
-}
-
-/// Result of `edit.undo`/`edit.redo`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct UndoResult {
-    pub undone: Option<EntryName>,
-    pub redone: Option<EntryName>,
-    #[serde(default)]
-    pub backups: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    pub warnings: Vec<String>,
-    pub status: Option<Status>,
-    pub status_error: Option<String>,
-    #[serde(flatten)]
-    pub history: History,
-}
-
-impl UndoResult {
-    /// The message for the status bar.
-    pub fn notice(&self) -> String {
-        let mut text = match (&self.undone, &self.redone) {
-            (Some(entry), _) => tr!("undo-undone", description = &entry.description),
-            (None, Some(entry)) => tr!("undo-redone", description = &entry.description),
-            (None, None) => tr!("undo-done"),
-        };
-        if !self.backups.is_empty() {
-            text.push_str(&tr!("undo-backups", refs = self.backups.join(", ")));
-        }
-        for warning in &self.warnings {
-            text.push_str(&tr!("undo-warning", warning = warning));
-        }
-        text
+/// The message for the status bar after `edit.undo`/`edit.redo`.
+fn undo_notice(result: &UndoResult) -> String {
+    let mut text = match (&result.undone, &result.redone) {
+        (Some(entry), _) => tr!("undo-undone", description = entry.description.text()),
+        (None, Some(entry)) => tr!("undo-redone", description = entry.description.text()),
+        (None, None) => tr!("undo-done"),
+    };
+    if !result.backups.is_empty() {
+        text.push_str(&tr!("undo-backups", refs = result.backups.join(", ")));
     }
+    text.push_str(&crate::messages_text(&result.warnings));
+    text
 }
 
 impl Tab {
@@ -351,14 +322,14 @@ impl Tab {
                 if self.executor.writing().is_some() || repo.modal_open() {
                     return;
                 }
-                let label = discard::describe_check(&paths);
+                let label = describe_check(&paths);
                 if let Some(params) = repo.discard.start(paths) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                    self.submit(COMMAND, params, Request::Discard(generation));
                 }
             }
-            Action::ConfirmDiscard => {
+            Action::Confirm => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -366,13 +337,13 @@ impl Tab {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                let label = repo.discard.confirm().map(|d| discard::describe(&d.paths));
+                let label = repo.discard.confirm().map(|d| describe(&d.paths));
                 if let Some(params) = repo.discard.confirmed() {
                     repo.write_label = label;
-                    self.submit(discard::COMMAND, params, Request::Discard(generation));
+                    self.submit(COMMAND, params, Request::Discard(generation));
                 }
             }
-            Action::CancelDiscard => {
+            Action::Cancel => {
                 if let Some(repo) = &mut self.repo {
                     repo.discard.cancel();
                 }
@@ -392,7 +363,6 @@ impl Tab {
                 repo.write_label = Some(op.hint(&repo.history));
                 self.submit(op.command(), json!({}), Request::Undo(generation));
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
@@ -409,16 +379,22 @@ impl Tab {
         {
             Received::Confirm => {}
             Received::Done(result) => {
-                repo.history = result.history.clone();
-                let notice = result.notice();
-                match result.status {
+                let notice = notice(&result);
+                let DiscardResult {
+                    status,
+                    status_error,
+                    journal,
+                    ..
+                } = *result;
+                repo.history = journal.into();
+                match status {
                     Some(status) => {
                         repo.set_status(status);
                         self.error.clear();
                         self.follow_diff();
                     }
                     None => {
-                        let reason = result.status_error.unwrap_or_default();
+                        let reason = status_error.unwrap_or_default();
                         self.error = tr!("discard-status-not-reread", reason = reason);
                         self.submit("repo.status", json!({}), Request::Status(generation));
                     }
@@ -440,15 +416,9 @@ impl Tab {
     /// Response of `edit.undo`/`edit.redo`: the updated journal, then everything is reread (an
     /// undo may move branches or put files back).
     pub(crate) fn receive_undo(&mut self, generation: u64, done: Done) {
-        let result = done.result.and_then(|value| {
-            serde_json::from_value::<UndoResult>(value).map_err(|e| {
-                tr!(
-                    "common-unexpected-result",
-                    command = &done.command,
-                    error = e.to_string()
-                )
-            })
-        });
+        let result = done
+            .result
+            .and_then(|value| crate::decode::<UndoResult>(&done.command, value));
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -458,13 +428,19 @@ impl Tab {
             .unwrap_or_else(|| done.command.clone());
         match result {
             Ok(result) => {
-                repo.history = result.history.clone();
-                if let Some(status) = result.status.clone() {
+                let notice = undo_notice(&result);
+                let UndoResult {
+                    status,
+                    status_error,
+                    journal,
+                    ..
+                } = result;
+                repo.history = journal.into();
+                if let Some(status) = status {
                     repo.set_status(status);
                 }
-                self.notice = result.notice();
-                self.error = result
-                    .status_error
+                self.notice = notice;
+                self.error = status_error
                     .map(|e| tr!("app-done-status-unread", error = e))
                     .unwrap_or_default();
                 self.follow_diff();
@@ -486,6 +462,7 @@ mod tests {
     use super::*;
     use crate::stage::{Side, StageLists};
     use project_domain::Conflict;
+    use project_engine::HistoryResult;
 
     fn item(path: &str, change: Change, conflict: Option<Conflict>) -> StageItem {
         StageItem {
@@ -633,13 +610,13 @@ mod tests {
         registry
             .run("repo.open", &mut session, json!({ "path": path }))
             .unwrap();
-        let history: History = serde_json::from_value(
+        let history: HistoryResult = serde_json::from_value(
             registry
                 .run("edit.history", &mut session, json!({}))
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(history, History::default());
+        assert_eq!(History::from(history.journal), History::default());
         let status = registry
             .run("repo.status", &mut session, json!({}))
             .unwrap();
@@ -678,18 +655,16 @@ mod tests {
             panic!()
         };
         assert!(result.backup.starts_with("refs/project/backup/discard-"));
+        let paths: Vec<&RepoPath> = result.files.iter().map(|f| &f.path).collect();
+        assert_eq!(paths, [&RepoPath::from("src/lib.rs")]);
+        let notice = notice(&result);
+        let history = History::from(result.journal);
+        assert!(history.can_undo);
         assert_eq!(
-            result.files,
-            [DiscardedFile {
-                path: "src/lib.rs".into()
-            }]
-        );
-        assert!(result.history.can_undo);
-        assert_eq!(
-            UndoOp::Undo.next(&result.history),
+            UndoOp::Undo.next(&history),
             Some("Discard changes to “src/lib.rs”")
         );
-        assert!(result.notice().contains("Undo"), "{}", result.notice());
+        assert!(notice.contains("Undo"), "{notice}");
 
         // Undo: the file comes back with its changes, identical.
         let out = registry
@@ -697,12 +672,9 @@ mod tests {
             .unwrap();
         assert!(statuses(&out).contains(Side::Unstaged, &"src/lib.rs".into()));
         let undo: UndoResult = serde_json::from_value(out).unwrap();
-        assert!(
-            undo.notice().starts_with("Undone: Discard"),
-            "{}",
-            undo.notice()
-        );
-        assert!(undo.history.can_redo && !undo.history.can_undo);
+        let notice = undo_notice(&undo);
+        assert!(notice.starts_with("Undone: Discard"), "{notice}");
+        assert!(undo.journal.can_redo && !undo.journal.can_undo);
         let diff_after = registry
             .run(
                 "diff.worktree",
@@ -718,7 +690,8 @@ mod tests {
             .unwrap();
         assert!(!statuses(&out).contains(Side::Unstaged, &"src/lib.rs".into()));
         let redo: UndoResult = serde_json::from_value(out).unwrap();
-        assert!(redo.notice().starts_with("Redone: "), "{}", redo.notice());
+        let notice = undo_notice(&redo);
+        assert!(notice.starts_with("Redone: "), "{notice}");
     }
 
     #[test]

@@ -1,0 +1,59 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "commit": {
+    "author": {
+      "email": "bruno@example.com",
+      "name": "Bruno Verdi",
+      "offset_min": -300,
+      "time": 1700039600
+    },
+    "body": "",
+    "committer": {
+      "email": "bruno@example.com",
+      "name": "Bruno Verdi",
+      "offset_min": -300,
+      "time": 1700039600
+    },
+    "id": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+    "parents": [
+      "50f5647d2380309d432a5cd27a6b13a1a356be30"
+    ],
+    "summary": "Commit panel"
+  },
+  "compared_to": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+  "files": [
+    {
+      "change": "Renamed",
+      "new_mode": 33188,
+      "new_oid": "dd2e56f8e882f3c361be74de44e3ac6c6fc71113",
+      "old_mode": 33188,
+      "old_oid": "bd9a24dfb1af55b35a27cad1520c49a22f81031d",
+      "original": "src/main.rs",
+      "path": "src/bin/app.rs",
+      "score": 92
+    },
+    {
+      "change": "Modified",
+      "new_mode": 33188,
+      "new_oid": "e9c0628467d997c984596f4235c6a7eb0159b975",
+      "old_mode": 33188,
+      "old_oid": "e85c93593c1b7b0e693eb8bdb77651fe4a0679c2",
+      "original": null,
+      "path": "src/lib.rs",
+      "score": null
+    },
+    {
+      "change": "Added",
+      "new_mode": 33188,
+      "new_oid": "436a18cf50168a6ff934e0e36b74cd0b64e17510",
+      "old_mode": 0,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "original": null,
+      "path": "src/panel.rs",
+      "score": null
+    }
+  ]
+}

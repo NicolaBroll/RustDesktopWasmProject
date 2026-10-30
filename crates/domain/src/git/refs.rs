@@ -33,6 +33,29 @@ use super::log::parse_digits;
 use super::{Oid, RefInfo, RefKind, Upstream};
 use crate::DomainError;
 
+/// Prefix of local branches.
+pub const HEADS_PREFIX: &str = "refs/heads/";
+/// Prefix of remote branches.
+pub const REMOTES_PREFIX: &str = "refs/remotes/";
+/// Prefix of tags.
+pub const TAGS_PREFIX: &str = "refs/tags/";
+
+/// The short name of a local branch: `refs/heads/x` → `x`; any other name stays as is.
+pub fn branch_short(full: &str) -> &str {
+    full.strip_prefix(HEADS_PREFIX).unwrap_or(full)
+}
+
+/// The short name of a remote branch: `refs/remotes/origin/x` → `origin/x`; any other name
+/// stays as is.
+pub fn remote_short(full: &str) -> &str {
+    full.strip_prefix(REMOTES_PREFIX).unwrap_or(full)
+}
+
+/// The short name of a tag: `refs/tags/v1` → `v1`; any other name stays as is.
+pub fn tag_short(full: &str) -> &str {
+    full.strip_prefix(TAGS_PREFIX).unwrap_or(full)
+}
+
 /// Number of fields per ref in the [`REFS_FORMAT`] format.
 pub const REFS_FIELDS: usize = 6;
 
@@ -54,9 +77,9 @@ pub const REFS_FORMAT: &str = refs_format!();
 /// The order is git's default, by ref name (byte by byte).
 pub const REFS_ARGS: &[&str] = &[
     concat!("--format=", refs_format!()),
-    "refs/heads/",
-    "refs/remotes/",
-    "refs/tags/",
+    HEADS_PREFIX,
+    REMOTES_PREFIX,
+    TAGS_PREFIX,
     "refs/stash",
 ];
 
@@ -170,11 +193,11 @@ fn parse_record(f: &[&[u8]; REFS_FIELDS], first: bool) -> Result<Option<RefInfo>
 fn kind_of(name: &str) -> Option<RefKind> {
     if name == "refs/stash" {
         Some(RefKind::Stash)
-    } else if name.starts_with("refs/heads/") {
+    } else if name.starts_with(HEADS_PREFIX) {
         Some(RefKind::LocalBranch)
-    } else if name.starts_with("refs/remotes/") {
+    } else if name.starts_with(REMOTES_PREFIX) {
         Some(RefKind::RemoteBranch)
-    } else if name.starts_with("refs/tags/") {
+    } else if name.starts_with(TAGS_PREFIX) {
         Some(RefKind::Tag)
     } else {
         None

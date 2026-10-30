@@ -8,12 +8,13 @@
 //! `drop` steps do not interrupt a group (the dropped commit simply disappears).
 
 use super::Oid;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
 
 /// What to do with a commit, as in the todo of `git rebase -i`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RebaseAction {
     /// Keep the commit with its message.
@@ -36,7 +37,7 @@ impl RebaseAction {
 }
 
 /// One step of the plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RebaseStep {
     pub action: RebaseAction,

@@ -10,15 +10,36 @@
 //! Stopped on a conflict, the rebase stays in progress and the panel of the operation (`merge.rs`,
 //! `Kind::Rebase`) finishes or aborts it.
 
-use crate::discard::History;
-use crate::merge::{Outcome, Received, reread_warning};
-use crate::{Action, Done, ErrorKind, Request, Tab};
-use project_domain::{
-    Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep, RefInfo, RepoPath, Status,
-};
+use crate::merge::{Outcome, Received, message_texts, reread_warning};
+use crate::{Done, ErrorKind, Request, Tab};
+use project_domain::{Oid, PlanErrorReason, RebaseAction, RebasePlan, RebaseStep};
+use project_engine::{RebasePlanParams, RebasePlanResult, RebaseStartParams, RebaseStartResult};
 use project_i18n::tr;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the interactive rebase editor for the commits after `base` (the parent of the chosen
+    /// commit, shown as `what`).
+    Open { base: Oid, what: String },
+    /// Moves step `from` into the gap above row `to` of the rebase plan (`len` = at the bottom).
+    Move { from: usize, to: usize },
+    /// The action of a step of the rebase plan.
+    Choose(usize, RebaseAction),
+    /// The message of a step of the rebase plan.
+    Message(usize, String),
+    /// Selects the step whose message is edited.
+    Select(usize),
+    /// "Run rebase" (`rebase.start`).
+    Run,
+    /// Confirms rewriting published commits (`"confirm": true`).
+    Confirm,
+    /// "Back to the plan" from the confirmation.
+    CancelConfirm,
+    /// Closes the rebase editor.
+    Close,
+}
 
 /// The command that reads the default plan.
 pub const PLAN: &str = "rebase.plan";
@@ -289,21 +310,6 @@ pub struct RebaseBox {
     editor: Option<Editor>,
 }
 
-/// Result of `rebase.plan`.
-#[derive(Debug, Deserialize)]
-struct PlanResult {
-    branch: String,
-    steps: Vec<PlanStep>,
-    #[serde(default)]
-    published: Vec<Oid>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PlanStep {
-    commit: Oid,
-    summary: String,
-}
-
 impl RebaseBox {
     /// The open editor.
     pub fn editor(&self) -> Option<&Editor> {
@@ -331,7 +337,9 @@ impl RebaseBox {
             phase: Phase::Loading,
             error: None,
         });
-        Some(json!({ "base": base.to_string() }))
+        Some(crate::params(RebasePlanParams {
+            base: base.to_string(),
+        }))
     }
 
     /// The response of `rebase.plan`: the rows, or the reason (e.g. merges in the range).
@@ -339,22 +347,10 @@ impl RebaseBox {
         let Some(editor) = self.editor.as_mut().filter(|e| e.phase == Phase::Loading) else {
             return;
         };
-        let plan = result.and_then(|value| {
-            serde_json::from_value::<PlanResult>(value).map_err(|e| {
-                tr!(
-                    "common-unexpected-result",
-                    command = PLAN,
-                    error = e.to_string()
-                )
-            })
-        });
+        let plan = result.and_then(|value| crate::decode::<RebasePlanResult>(PLAN, value));
         match plan {
             Ok(plan) => {
-                editor.branch = plan
-                    .branch
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(&plan.branch)
-                    .to_owned();
+                editor.branch = plan.branch;
                 editor.original = plan.steps.iter().map(|s| s.commit).collect();
                 editor.rows = plan
                     .steps
@@ -457,13 +453,11 @@ impl RebaseBox {
 
     fn params(editor: &Editor, confirm: bool) -> (Value, String) {
         let plan = editor.plan();
-        let mut params = json!({
-            "base": plan.base.to_string(),
-            "steps": serde_json::to_value(&plan.steps).unwrap_or_default(),
+        let params = crate::params(RebaseStartParams {
+            base: plan.base.to_string(),
+            steps: plan.steps,
+            confirm,
         });
-        if confirm {
-            params["confirm"] = json!(true);
-        }
         (params, tr!("rebase-label", branch = &editor.branch))
     }
 
@@ -476,7 +470,7 @@ impl RebaseBox {
     ) -> Received {
         let Some(editor) = self.editor.as_mut().filter(|e| e.phase == Phase::Sending) else {
             return Received::Failed {
-                message: tr!("merge-unexpected-response", command = START),
+                message: tr!("common-unexpected-response", command = START),
                 reload: true,
             };
         };
@@ -515,14 +509,10 @@ impl RebaseBox {
                 let rows = editor.rows.len();
                 let produced = editor.plan().result().len();
                 self.editor = None;
-                match serde_json::from_value::<StartResult>(value) {
-                    Ok(result) => Received::Done(Box::new(result.outcome(rows, produced))),
+                match serde_json::from_value::<RebaseStartResult>(value) {
+                    Ok(result) => Received::Done(Box::new(start_outcome(result, rows, produced))),
                     Err(e) => Received::Failed {
-                        message: tr!(
-                            "common-unexpected-result",
-                            command = START,
-                            error = e.to_string()
-                        ),
+                        message: crate::unexpected_result(START, e),
                         reload: true,
                     },
                 }
@@ -531,78 +521,51 @@ impl RebaseBox {
     }
 }
 
-/// Result of `rebase.start`.
-#[derive(Debug, Clone, Deserialize)]
-struct StartResult {
-    branch: String,
-    before: Oid,
-    after: Oid,
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    #[serde(default)]
-    message: Option<String>,
-    backup: String,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
-impl StartResult {
-    /// `rows` the commits of the range, `produced` those the plan produces.
-    fn outcome(self, rows: usize, produced: usize) -> Outcome {
-        let branch = self
-            .branch
-            .strip_prefix("refs/heads/")
-            .unwrap_or(&self.branch)
-            .to_owned();
-        let mut warnings = self.warnings;
-        let notice = if self.in_progress {
-            match self.conflicts.len() {
-                0 => {
-                    let message = self.message.as_deref().map(str::trim).unwrap_or_default();
-                    if !message.is_empty() {
-                        warnings.push(message.to_owned());
-                    }
-                    tr!("rebase-stopped-before-commit", branch = &branch)
+/// The outcome of `rebase.start`: `rows` the commits of the range, `produced` those the plan
+/// produces.
+fn start_outcome(r: RebaseStartResult, rows: usize, produced: usize) -> Outcome {
+    let branch = &r.branch;
+    let mut warnings = message_texts(&r.warnings);
+    let notice = if r.in_progress {
+        match r.conflicts.len() {
+            0 => {
+                let message = r.message.trim();
+                if !message.is_empty() {
+                    warnings.push(message.to_owned());
                 }
-                n => tr!(
-                    "rebase-stopped",
-                    branch = &branch,
-                    files = tr!("merge-conflict-files", n = n)
-                ),
+                tr!("rebase-stopped-before-commit", branch = branch)
             }
-        } else {
-            tr!(
-                "rebase-done",
-                branch = &branch,
-                before = rows,
-                after = produced,
-                id = self.after.short(),
-                backup = &self.backup
-            )
-        };
-        let what = if self.in_progress {
-            tr!("rebase-stopped-short")
-        } else {
-            tr!("merge-done", title = "Rebase")
-        };
-        let warning = reread_warning(&what, &warnings, self.status_error, self.refs_error);
-        Outcome {
-            notice,
-            show_changes: self.in_progress && !self.conflicts.is_empty(),
-            status: self.status,
-            refs: self.refs,
-            history: self.history,
-            warning,
-            // Stopped, HEAD is detached on the commits applied so far.
-            moved: self.in_progress || self.after != self.before,
+            n => tr!(
+                "rebase-stopped",
+                branch = branch,
+                files = tr!("merge-conflict-files", n = n)
+            ),
         }
+    } else {
+        tr!(
+            "rebase-done",
+            branch = branch,
+            before = rows,
+            after = produced,
+            id = r.after.short(),
+            backup = &r.backup
+        )
+    };
+    let what = if r.in_progress {
+        tr!("rebase-stopped-short")
+    } else {
+        tr!("merge-done", title = "Rebase")
+    };
+    let warning = reread_warning(&what, &warnings, r.status_error, r.refs_error);
+    Outcome {
+        notice,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+        // Stopped, HEAD is detached on the commits applied so far.
+        moved: r.in_progress || r.after != r.before,
     }
 }
 
@@ -619,7 +582,7 @@ impl Tab {
             return;
         };
         match action {
-            Action::OpenRebase { base, what } => {
+            Action::Open { base, what } => {
                 if writing || repo.modal_open() {
                     return;
                 }
@@ -627,15 +590,15 @@ impl Tab {
                     self.submit(PLAN, params, Request::RebasePlan(generation));
                 }
             }
-            Action::RebaseMove { from, to } => repo.rebase.move_step(from, to),
-            Action::RebaseChoose(i, action) => repo.rebase.set_action(i, action),
-            Action::RebaseMessage(i, message) => repo.rebase.set_message(i, message),
-            Action::RebaseSelect(i) => repo.rebase.select(i),
-            Action::RunRebase | Action::ConfirmRebase => {
+            Action::Move { from, to } => repo.rebase.move_step(from, to),
+            Action::Choose(i, action) => repo.rebase.set_action(i, action),
+            Action::Message(i, message) => repo.rebase.set_message(i, message),
+            Action::Select(i) => repo.rebase.select(i),
+            Action::Run | Action::Confirm => {
                 if writing {
                     return;
                 }
-                let sent = if matches!(action, Action::RunRebase) {
+                let sent = if matches!(action, Action::Run) {
                     repo.rebase.run()
                 } else {
                     repo.rebase.confirm()
@@ -646,9 +609,8 @@ impl Tab {
                     self.submit(START, params, Request::Rebase(generation));
                 }
             }
-            Action::CancelRebaseConfirm => repo.rebase.cancel_confirm(),
-            Action::CloseRebase => repo.rebase.close(),
-            _ => unreachable!("action routed to the wrong function"),
+            Action::CancelConfirm => repo.rebase.cancel_confirm(),
+            Action::Close => repo.rebase.close(),
         }
     }
 

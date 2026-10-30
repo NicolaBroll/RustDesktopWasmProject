@@ -2,38 +2,110 @@
 //! `branch.reset_preview`. Types and checks shared by the backends in `git/reset.rs`; contract in
 //! `impl-docs/git/reset.md`.
 
-use super::merge::finish;
-use super::{Out, to_json};
-use crate::commands::parse_params;
+use super::{JournalState, Out, reread, to_json};
 use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, LogQuery, Message, RefMove, RefRestore,
     ResetMode, ResetRequest, Session, branch_short, check_no_operation, reset_files,
 };
-use project_domain::{Head, Oid, RepoPath, Status};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::remote_short;
+use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Result of `branch.reset_preview`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResetPreviewResult {
+    /// The mode, as given.
+    pub mode: ResetMode,
+    /// Full name of the branch of HEAD; `null` with detached HEAD.
+    pub branch: Option<String>,
+    /// The commit HEAD is on.
+    pub before: Oid,
+    /// The commit the reset would move to.
+    pub after: Oid,
+    /// `hard`: the files whose local changes would be overwritten (empty for `soft`/`mixed`).
+    pub files: Vec<RepoPath>,
+    /// `branch.reset` needs `"confirm": true`.
+    pub needs_confirm: bool,
+    /// The value to repeat in the `expected` of `branch.reset` (the commit HEAD is on).
+    pub expected: Oid,
+    /// How many commits leaving the branch are already on its upstream (0 if none).
+    pub published: usize,
+    /// The upstream (full name) when `published` is not 0; `null` otherwise.
+    pub upstream: Option<String>,
+    /// Warnings (commits leaving the branch already published).
+    pub warnings: Vec<Message>,
+}
+
+/// Result of `branch.reset`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResetResult {
+    /// The mode, as given.
+    pub mode: ResetMode,
+    /// Full name of the branch moved; `null` with detached HEAD.
+    pub branch: Option<String>,
+    /// The commit before the reset.
+    pub before: Oid,
+    /// The commit after the reset.
+    pub after: Oid,
+    /// `hard`: the files whose local changes were overwritten (and saved in `backup`).
+    pub files: Vec<RepoPath>,
+    /// `hard` with local changes: the backup ref `refs/project/backup/reset-...`; `null`
+    /// otherwise.
+    pub backup: Option<String>,
+    /// The commit of `git stash create` with those changes; `null` without a backup.
+    pub stash: Option<Oid>,
+    /// `mixed`: the ref `refs/project/backup/index-...` with the staged versions that existed
+    /// only in the index; `null` otherwise.
+    pub index_backup: Option<String>,
+    /// The backup refs of the commits that are no longer reachable.
+    pub backups: Vec<String>,
+    /// How many commits leaving the branch are already on its upstream (0 if none).
+    pub published: usize,
+    /// Warnings after the write and about published commits.
+    pub warnings: Vec<Message>,
+    /// The status re-read after the reset; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the status could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The refs re-read after the reset; `null` if they could not be re-read (see
+    /// `refs_error`).
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
 
 /// Parameters of `branch.reset`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ResetParams {
+pub struct ResetParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.
-    target: String,
-    mode: ResetMode,
-    #[serde(default)]
-    confirm: bool,
+    pub target: String,
+    /// What the reset moves besides the branch.
+    pub mode: ResetMode,
+    /// A `hard` reset that overwrites local changes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
     /// The full id of the commit HEAD was on when the reset was confirmed (the `expected` of the
     /// confirmation request): HEAD must still be there.
-    #[serde(default)]
-    expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Parameters of `branch.reset_preview`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct PreviewParams {
-    target: String,
-    mode: ResetMode,
+pub struct ResetPreviewParams {
+    /// The commit, as in `branch.reset`.
+    pub target: String,
+    /// The mode, as in `branch.reset`.
+    pub mode: ResetMode,
 }
 
 /// What a reset would do, read before writing: shared by the command and its preview.
@@ -147,7 +219,7 @@ fn published_warning(plan: &Plan) -> Option<Message> {
         "engine-reset-published",
         n = *n,
         branch = branch_short(plan.branch.as_deref().unwrap_or_default()),
-        upstream = upstream.strip_prefix("refs/remotes/").unwrap_or(upstream)
+        upstream = remote_short(upstream)
     ))
 }
 
@@ -164,31 +236,32 @@ fn file_list(files: &[RepoPath]) -> String {
 /// local changes a `hard` overwrites, `needs_confirm` says whether the command needs `"confirm":
 /// true`, `expected` is the value to repeat in the command's `expected`.
 ///
-/// Result: `{"mode", "branch": string | null, "before", "after", "files": [path],
-/// "needs_confirm", "expected", "published": n, "upstream": string | null, "warnings":
-/// [Message]}`.
-pub(super) fn branch_reset_preview(s: &mut Session, p: Value) -> Out {
+/// Result: [`ResetPreviewResult`].
+pub(super) fn branch_reset_preview(
+    s: &mut Session,
+    ResetPreviewParams { target, mode }: ResetPreviewParams,
+) -> Out {
     const ID: &str = "branch.reset_preview";
-    let PreviewParams { target, mode } = parse_params(ID, p)?;
     let repo = s.repo()?;
     let status = repo.status()?;
     let plan = plan(ID, repo, &status, &target, mode)?;
-    Ok(json!({
-        "mode": mode,
-        "branch": plan.branch,
-        "before": plan.before.to_string(),
-        "after": plan.after.to_string(),
-        "files": to_json(&plan.files),
-        "needs_confirm": plan.needs_confirm(mode),
-        "expected": plan.before.to_string(),
-        "published": plan.published.as_ref().map_or(0, |(_, n)| *n),
-        "upstream": plan.published.as_ref().map(|(u, _)| u.clone()),
-        "warnings": to_json(published_warning(&plan).into_iter().collect::<Vec<_>>()),
+    let warnings = published_warning(&plan).into_iter().collect();
+    Ok(to_json(ResetPreviewResult {
+        mode,
+        needs_confirm: plan.needs_confirm(mode),
+        expected: plan.before,
+        published: plan.published.as_ref().map_or(0, |(_, n)| *n),
+        upstream: plan.published.map(|(u, _)| u),
+        branch: plan.branch,
+        before: plan.before,
+        after: plan.after,
+        files: plan.files,
+        warnings,
     }))
 }
 
 /// Moves the branch of HEAD (or a detached HEAD) to `target`, like `git reset --<mode>` (see
-/// [`GitBackend::reset`](crate::GitBackend::reset) and `impl-docs/git/reset.md`): `soft` only the
+/// [`GitRefs::reset`](crate::GitRefs::reset) and `impl-docs/git/reset.md`): `soft` only the
 /// ref, `mixed` also the index (the staged versions that exist only there first saved in
 /// `refs/project/backup/index-...`), `hard` also the worktree of the tracked files. Untracked
 /// and ignored files are never touched.
@@ -207,18 +280,17 @@ pub(super) fn branch_reset_preview(s: &mut Session, p: Value) -> Out {
 /// `hard` stay in the backup, and the undo says so. `warnings` says when commits leaving the branch
 /// are already on its upstream: the next push will need `--force-with-lease`.
 ///
-/// Result: `{"mode", "branch": string | null, "before", "after", "files": [path], "backup":
-/// string | null, "stash": oid | null, "index_backup": string | null, "backups": [string],
-/// "published": n, "warnings": [Message], "status", "refs", "can_undo", "can_redo",
-/// "next_undo", "next_redo"}`.
-pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "branch.reset";
-    let ResetParams {
+/// Result: [`ResetResult`].
+pub(super) fn branch_reset(
+    s: &mut Session,
+    ResetParams {
         target,
         mode,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: ResetParams,
+) -> Out {
+    const ID: &str = "branch.reset";
     let expected = expected
         .map(|hex| {
             let full = hex.len() == Oid::HEX_LEN && hex.bytes().all(|b| b.is_ascii_hexdigit());
@@ -253,7 +325,7 @@ pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
                 "engine-reset-confirm",
                 n = plan.files.len(),
                 files = file_list(&plan.files),
-                after = crate::git::short(&plan.after)
+                after = plan.after.short()
             ),
             expected: Some(plan.before.to_string()),
         });
@@ -300,23 +372,28 @@ pub(super) fn branch_reset(s: &mut Session, p: Value) -> Out {
             outcome.stash,
         ));
     }
-    let mut warnings = outcome.warnings.clone();
+    let mut warnings = outcome.warnings;
     warnings.extend(published_warning(&plan));
-    let mut out = json!({
-        "mode": mode,
-        "branch": plan.branch,
-        "before": plan.before.to_string(),
-        "after": plan.after.to_string(),
-        "files": to_json(&outcome.files),
-        "backup": outcome.backup,
-        "stash": outcome.stash.map(|o| o.to_string()),
-        "index_backup": outcome.index_backup,
-        "backups": outcome.backups,
-        "published": plan.published.as_ref().map_or(0, |(_, n)| *n),
-        "warnings": to_json(&warnings),
-    });
-    finish(&mut out, repo, journal);
-    Ok(out)
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(ResetResult {
+        mode,
+        branch: plan.branch,
+        before: plan.before,
+        after: plan.after,
+        files: outcome.files,
+        backup: outcome.backup,
+        stash: outcome.stash,
+        index_backup: outcome.index_backup,
+        backups: outcome.backups,
+        published: plan.published.as_ref().map_or(0, |(_, n)| *n),
+        warnings,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
 }
 
 #[cfg(test)]

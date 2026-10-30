@@ -5,7 +5,7 @@ mod common;
 
 use common::{Repo, repo_with_merge_conflict};
 use project_domain::RepoPath;
-use project_engine::{EngineError, GitBackend};
+use project_engine::{EngineError, GitIndex, GitRead};
 
 fn paths(list: &[&str]) -> Vec<RepoPath> {
     list.iter().map(|p| RepoPath::from(*p)).collect()

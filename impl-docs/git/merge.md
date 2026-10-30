@@ -18,7 +18,7 @@ Parameters: `{"rev", "no_ff"?, "ff_only"?, "message"?}`.
 
 Writes (`writes`), goes into the journal when the merge concludes (§7). Merges `rev` into the HEAD
 branch. `rev`: a local or remote branch, a tag, an id (even abbreviated) or another rev; it is resolved
-to the commit with `GitBackend::log` (a rev that does not exist → `UnknownRev`) and **only the id reaches git**,
+to the commit with `GitRead::log` (a rev that does not exist → `UnknownRev`) and **only the id reaches git**,
 after `--end-of-options` (a branch `-x` does not become an option). Empty or with NUL → `InvalidParams`.
 
 - **Mode** (from `unmerged_count`): nothing to do if the branch already contains the commit
@@ -63,7 +63,7 @@ string | null, "warnings", "status" | null, "refs" | null, "can_undo", "can_redo
 Parameters: `{"message"?}`.
 
 Writes (`writes`), goes into the journal. Concludes the merge in progress with the merge commit (parents
-HEAD and `MERGE_HEAD`): goes through `GitBackend::commit` (`git commit -F -`, like `commit.create`: hooks
+HEAD and `MERGE_HEAD`): goes through `GitIndex::commit` (`git commit -F -`, like `commit.create`: hooks
 and signing according to configuration, same errors, `PostCommit` after a successful commit). Refusals
 (`NotAllowed`, nothing committed): no merge in progress, another operation in progress, **files
 still conflicted** (the error lists them: they must be resolved and staged with `index.stage`).
@@ -191,7 +191,7 @@ change a file (which `reset --merge` would bring back to HEAD without it being i
 `CHERRY_PICK_HEAD` / `REVERT_HEAD` (one per line), `MERGE_MSG`, and for the rebase `onto` and
 `head-name` of `rebase-merge/` or `rebase-apply/` (`head-name` counts only if it starts with `refs/`).
 
-**Continue**: `GitBackend::commit` (see [commit.md](commit.md)); with `MERGE_HEAD` git creates the
+**Continue**: `GitIndex::commit` (see [commit.md](commit.md)); with `MERGE_HEAD` git creates the
 merge commit and removes the merge state.
 
 ## Undo and backup
@@ -201,7 +201,7 @@ merge commit and removes the merge state.
   backup `refs/project/backup/merge-...` (only `merge.start`; for `merge.continue` the previous
   commit is the first parent of the merge) and the description `Merge of <name> into `<branch>`
   (fast-forward | merge commit: from a1b2c3d to e4f5a6b)`. Undo and redo like the pull of the active
-  branch (see [sync.md](sync.md)): `GitBackend::reset_branch`, i.e. `git reset --keep` with the
+  branch (see [sync.md](sync.md)): `GitRefs::reset_branch`, i.e. `git reset --keep` with the
   same checks (HEAD and branch as the merge left them, otherwise `UndoConflict`; files to
   restore with local changes → `NotAllowed`, the entry stays) and the backup of the abandoned merge commit
   in `refs/project/backup/undo-...`. `merge.continue` with detached HEAD (merge started

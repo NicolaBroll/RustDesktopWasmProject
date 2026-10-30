@@ -9,6 +9,7 @@
 //! reject the same cases with the same errors.
 
 use crate::{EngineError, Message, MessageArg, ToArg};
+use project_domain::HEADS_PREFIX;
 use project_domain::{Oid, Operation};
 
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,7 @@ pub enum HeadState {
 }
 
 impl HeadState {
-    /// HEAD as read from [`GitBackend::head`](crate::GitBackend::head): the branch with its full
+    /// HEAD as read from [`GitRead::head`](crate::GitRead::head): the branch with its full
     /// name (`refs/heads/<name>`), or detached.
     pub fn from_head(head: &project_domain::Head) -> Self {
         match head {
@@ -33,7 +34,7 @@ impl HeadState {
                 HeadState::Branch(name.clone())
             }
             project_domain::Head::Branch { name, .. } => {
-                HeadState::Branch(format!("refs/heads/{name}"))
+                HeadState::Branch(format!("{HEADS_PREFIX}{name}"))
             }
             project_domain::Head::Detached(oid) => HeadState::Detached(*oid),
         }
@@ -45,7 +46,7 @@ impl HeadState {
     pub fn message(&self) -> Message {
         match self {
             HeadState::Branch(name) => msg!("engine-head-branch", name = name),
-            HeadState::Detached(oid) => msg!("engine-head-detached", id = short(oid)),
+            HeadState::Detached(oid) => msg!("engine-head-detached", id = oid.short()),
         }
     }
 }
@@ -60,7 +61,7 @@ impl std::fmt::Display for HeadState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HeadState::Branch(name) => write!(f, "on branch `{name}`"),
-            HeadState::Detached(oid) => write!(f, "detached at {}", short(oid)),
+            HeadState::Detached(oid) => write!(f, "detached at {}", oid.short()),
         }
     }
 }
@@ -75,10 +76,10 @@ pub struct RefMove {
     pub target: Option<Oid>,
 }
 
-/// What `edit.undo`/`edit.redo` ask of the backend ([`GitBackend::restore_refs`]): HEAD and the
+/// What `edit.undo`/`edit.redo` ask of the backend ([`GitRefs::restore_refs`]): HEAD and the
 /// refs must now equal `expected`, and must be moved to `target` all together or none.
 ///
-/// [`GitBackend::restore_refs`]: crate::GitBackend::restore_refs
+/// [`GitRefs::restore_refs`]: crate::GitRefs::restore_refs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefRestore {
     /// `edit.undo` or `edit.redo`: in errors and in the name of the backup refs.
@@ -88,8 +89,8 @@ pub struct RefRestore {
     /// HEAD as it must become: only the same branch as `head_expected` (HEAD is not touched)
     /// or another commit with detached HEAD. A branch change does not go through here: undo and redo
     /// of `branch.checkout` and `branch.rename` use
-    /// [`GitBackend::checkout`](crate::GitBackend::checkout) and
-    /// [`GitBackend::rename_branch`](crate::GitBackend::rename_branch), which also update the
+    /// [`GitRefs::checkout`](crate::GitRefs::checkout) and
+    /// [`GitRefs::rename_branch`](crate::GitRefs::rename_branch), which also update the
     /// worktree, reflog and configuration.
     pub head_target: HeadState,
     pub refs: Vec<RefMove>,
@@ -219,7 +220,7 @@ impl RefRestore {
     }
 }
 
-/// Outcome of [`GitBackend::restore_refs`](crate::GitBackend::restore_refs).
+/// Outcome of [`GitRefs::restore_refs`](crate::GitRefs::restore_refs).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreOutcome {
     /// The backup refs created for the commits that would no longer be reachable.
@@ -253,15 +254,9 @@ pub fn valid_ref_name(name: &str) -> bool {
         .all(|c| !c.is_empty() && !c.starts_with('.') && !c.ends_with(".lock"))
 }
 
-/// The first 7 digits of an id, like `git log --oneline`.
-pub(crate) fn short(oid: &Oid) -> String {
-    let hex = oid.to_string();
-    hex[..7.min(hex.len())].to_owned()
-}
-
 fn describe(value: Option<Oid>) -> Message {
     match value {
-        Some(oid) => msg!("engine-ref-value", id = short(&oid)),
+        Some(oid) => msg!("engine-ref-value", id = oid.short()),
         None => msg!("engine-ref-missing"),
     }
 }

@@ -1,0 +1,251 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "files": [
+    {
+      "binary": false,
+      "change": "Renamed",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "// src/main.rs",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "// last change: commit 3",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "// last change: commit 12",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "pub fn main() -> &'static str {",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "    \"src/main.rs\"",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            },
+            {
+              "content": "}",
+              "kind": "Context",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": 6
+            },
+            {
+              "content": "// line added by: commit 12",
+              "kind": "Added",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 7,
+          "new_start": 1,
+          "old_count": 6,
+          "old_start": 1,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "dd2e56f8e882f3c361be74de44e3ac6c6fc71113",
+      "new_path": "src/bin/app.rs",
+      "old_mode": 33188,
+      "old_oid": "bd9a24dfb1af55b35a27cad1520c49a22f81031d",
+      "old_path": "src/main.rs",
+      "similarity": 92
+    },
+    {
+      "binary": false,
+      "change": "Modified",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "// src/lib.rs",
+              "kind": "Context",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": 1
+            },
+            {
+              "content": "// last change: commit 11",
+              "kind": "Removed",
+              "new_line": null,
+              "no_newline": false,
+              "old_line": 2
+            },
+            {
+              "content": "// last change: commit 12",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Context",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": 3
+            },
+            {
+              "content": "pub fn lib() -> &'static str {",
+              "kind": "Context",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": 4
+            },
+            {
+              "content": "    \"src/lib.rs\"",
+              "kind": "Context",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": 5
+            }
+          ],
+          "new_count": 5,
+          "new_start": 1,
+          "old_count": 5,
+          "old_start": 1,
+          "section": ""
+        },
+        {
+          "lines": [
+            {
+              "content": "// line added by: commit 4",
+              "kind": "Context",
+              "new_line": 7,
+              "no_newline": false,
+              "old_line": 7
+            },
+            {
+              "content": "// line added by: commit 8",
+              "kind": "Context",
+              "new_line": 8,
+              "no_newline": false,
+              "old_line": 8
+            },
+            {
+              "content": "// line added by: commit 11",
+              "kind": "Context",
+              "new_line": 9,
+              "no_newline": false,
+              "old_line": 9
+            },
+            {
+              "content": "// line added by: commit 12",
+              "kind": "Added",
+              "new_line": 10,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 4,
+          "new_start": 7,
+          "old_count": 3,
+          "old_start": 7,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "e9c0628467d997c984596f4235c6a7eb0159b975",
+      "new_path": "src/lib.rs",
+      "old_mode": 33188,
+      "old_oid": "e85c93593c1b7b0e693eb8bdb77651fe4a0679c2",
+      "old_path": "src/lib.rs",
+      "similarity": null
+    },
+    {
+      "binary": false,
+      "change": "Added",
+      "hunks": [
+        {
+          "lines": [
+            {
+              "content": "// src/panel.rs",
+              "kind": "Added",
+              "new_line": 1,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "// last change: commit 12",
+              "kind": "Added",
+              "new_line": 2,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "",
+              "kind": "Added",
+              "new_line": 3,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "pub fn panel() -> &'static str {",
+              "kind": "Added",
+              "new_line": 4,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "    \"src/panel.rs\"",
+              "kind": "Added",
+              "new_line": 5,
+              "no_newline": false,
+              "old_line": null
+            },
+            {
+              "content": "}",
+              "kind": "Added",
+              "new_line": 6,
+              "no_newline": false,
+              "old_line": null
+            }
+          ],
+          "new_count": 6,
+          "new_start": 1,
+          "old_count": 0,
+          "old_start": 0,
+          "section": ""
+        }
+      ],
+      "new_mode": 33188,
+      "new_oid": "436a18cf50168a6ff934e0e36b74cd0b64e17510",
+      "new_path": "src/panel.rs",
+      "old_mode": null,
+      "old_oid": "0000000000000000000000000000000000000000",
+      "old_path": "src/panel.rs",
+      "similarity": null
+    }
+  ]
+}

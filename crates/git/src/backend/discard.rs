@@ -48,7 +48,7 @@ fn os_bytes(s: &OsStr) -> Vec<u8> {
 const STASH_MESSAGE: &str = "project: backup of the worktree before worktree.discard";
 
 impl CliBackend {
-    /// [`GitBackend::discard`](project_engine::GitBackend::discard).
+    /// [`GitIndex::discard`](project_engine::GitIndex::discard).
     pub(super) fn discard_paths(
         &mut self,
         paths: &[RepoPath],
@@ -93,7 +93,7 @@ impl CliBackend {
         })
     }
 
-    /// [`GitBackend::restore_worktree`](project_engine::GitBackend::restore_worktree).
+    /// [`GitIndex::restore_worktree`](project_engine::GitIndex::restore_worktree).
     pub(super) fn restore_discarded(
         &mut self,
         request: &WorktreeRestore,

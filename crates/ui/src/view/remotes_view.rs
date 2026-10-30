@@ -1,11 +1,12 @@
 use super::*;
+use crate::{fetch, remotes};
 
 /// A remote, at the top of its branches in the "Remotes" section: caret, name (in the warning
 /// color if its URL holds credentials), labels, how many branches, and "…" with its menu. The URL
 /// is in the tooltip. Returns whether it was clicked (to open or close its branches).
 pub(super) fn remote_row(
     ui: &mut Ui,
-    remote: &Remote,
+    remote: &RemoteListEntry,
     open: bool,
     count: usize,
     can_write: bool,
@@ -47,7 +48,7 @@ pub(super) fn remote_row(
 /// The menu of a remote: fetch and removal.
 pub(super) fn remote_menu(
     ui: &mut Ui,
-    remote: &Remote,
+    remote: &RemoteListEntry,
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -57,7 +58,7 @@ pub(super) fn remote_menu(
         .on_hover_text(tr!("remotes-fetch-button-hint", name = name))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::Fetch(Some(name.clone())));
+        actions.push(Action::Fetch(fetch::Action::Fetch(Some(name.clone()))));
         ui.close();
     }
     ui.separator();
@@ -74,7 +75,7 @@ pub(super) fn remote_menu(
         .on_hover_text(tr!("remotes-remove-button-hint"))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::RemoveRemote(name.clone()));
+        actions.push(Action::Remotes(remotes::Action::Remove(name.clone())));
         ui.close();
     }
 }
@@ -106,7 +107,7 @@ pub(crate) fn remote_dialog(
         }
     });
     if modal.should_close() {
-        actions.push(Action::CloseRemoteDialog);
+        actions.push(Action::Remotes(remotes::Action::CloseDialog));
     }
 }
 
@@ -133,9 +134,9 @@ pub(super) fn add_remote_dialog(
                     .id(ui.make_persistent_id("remote-name"))
                     .hint_text(tr!("remotes-add-name-hint"))
                     .desired_width(320.0)
-                    .interactive(!dialog.sending),
+                    .interactive(dialog.running.is_none()),
             );
-            if !dialog.sending && ui.memory(|m| m.focused().is_none()) {
+            if dialog.running.is_none() && ui.memory(|m| m.focused().is_none()) {
                 name.request_focus();
             }
             changed |= name.changed();
@@ -156,7 +157,7 @@ pub(super) fn add_remote_dialog(
                         .id(ui.make_persistent_id("remote-url"))
                         .hint_text(tr!("remotes-add-url-hint"))
                         .desired_width(320.0)
-                        .interactive(!dialog.sending),
+                        .interactive(dialog.running.is_none()),
                 );
                 changed |= url.changed();
             }
@@ -165,7 +166,7 @@ pub(super) fn add_remote_dialog(
     if let Some(warning) = dialog.credentials_warning() {
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(warning).color(ui.visuals().warn_fg_color)).wrap());
-        if !dialog.sending {
+        if dialog.running.is_none() {
             let (label, hint) = if dialog.hide_url {
                 (tr!("remotes-show-url"), tr!("remotes-show-url-hint"))
             } else {
@@ -175,20 +176,20 @@ pub(super) fn add_remote_dialog(
                 )
             };
             if ui.small_button(label).on_hover_text(hint).clicked() {
-                actions.push(Action::HideRemoteUrl(!dialog.hide_url));
+                actions.push(Action::Remotes(remotes::Action::HideUrl(!dialog.hide_url)));
             }
         }
     }
     ui.add_space(4.0);
     let check = ui
         .add_enabled(
-            !dialog.sending,
+            dialog.running.is_none(),
             egui::Checkbox::new(&mut fields.fetch, tr!("remotes-add-fetch")),
         )
         .on_hover_text(tr!("remotes-add-fetch-hint"));
     changed |= check.changed();
     if changed {
-        actions.push(Action::AddRemoteFields(fields));
+        actions.push(Action::Remotes(remotes::Action::AddFields(fields)));
     }
     if let Some(error) = &dialog.error {
         ui.add_space(4.0);
@@ -203,22 +204,25 @@ pub(super) fn add_remote_dialog(
             )
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
-            actions.push(Action::SubmitAddRemote);
+            actions.push(Action::Remotes(remotes::Action::SubmitAdd));
         }
         if ui
-            .add_enabled(!dialog.sending, egui::Button::new(tr!("remotes-close")))
+            .add_enabled(
+                dialog.running.is_none(),
+                egui::Button::new(tr!("remotes-close")),
+            )
             .clicked()
         {
-            actions.push(Action::CloseRemoteDialog);
+            actions.push(Action::Remotes(remotes::Action::CloseDialog));
         }
-        if dialog.sending {
+        if dialog.running.is_some() {
             ui.spinner();
-            if !dialog.fetching {
+            if !dialog.fetching() {
                 ui.label(tr!("remotes-adding"));
             }
         }
     });
-    if dialog.sending && dialog.fetching {
+    if let Some(running) = dialog.running.filter(|_| dialog.fetching()) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let (text, fraction) = match progress {
@@ -234,11 +238,14 @@ pub(super) fn add_remote_dialog(
                 );
             }
             let stop = ui
-                .add_enabled(!dialog.cancelling, egui::Button::new(tr!("remotes-cancel")))
+                .add_enabled(
+                    !running.cancelling,
+                    egui::Button::new(tr!("remotes-cancel")),
+                )
                 .on_hover_text(tr!("remotes-cancel-hint"))
                 .on_disabled_hover_text(tr!("remotes-cancelling"));
             if stop.clicked() {
-                actions.push(Action::CancelAddRemote);
+                actions.push(Action::Remotes(remotes::Action::CancelAdd));
             }
         });
     }
@@ -261,7 +268,7 @@ pub(super) fn delete_branch_dialog(
                 remote = remote
             ),
             tr!("remotes-delete-tag-undo"),
-            Action::ConfirmDeleteRemoteTag,
+            Action::Remotes(remotes::Action::ConfirmDeleteTag),
         )
     } else {
         (
@@ -272,7 +279,7 @@ pub(super) fn delete_branch_dialog(
                 remote = remote
             ),
             tr!("remotes-delete-branch-undo"),
-            Action::ConfirmDeleteRemoteBranch,
+            Action::Remotes(remotes::Action::ConfirmDeleteBranch),
         )
     };
     ui.heading(RichText::new(title).color(ui.visuals().error_fg_color));
@@ -294,7 +301,7 @@ pub(super) fn delete_branch_dialog(
             actions.push(confirm);
         }
         if ui.button(tr!("remotes-delete-branch-cancel")).clicked() {
-            actions.push(Action::CloseRemoteDialog);
+            actions.push(Action::Remotes(remotes::Action::CloseDialog));
         }
     });
 }
@@ -323,10 +330,10 @@ pub(super) fn remove_remote_dialog(
         )
         .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
         if ui.add(button).clicked() {
-            actions.push(Action::ConfirmRemoveRemote);
+            actions.push(Action::Remotes(remotes::Action::ConfirmRemove));
         }
         if ui.button(tr!("remotes-remove-cancel")).clicked() {
-            actions.push(Action::CloseRemoteDialog);
+            actions.push(Action::Remotes(remotes::Action::CloseDialog));
         }
     });
 }

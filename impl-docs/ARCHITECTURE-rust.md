@@ -172,10 +172,14 @@ impl Session {
 ### Command catalog
 
 A command has a stable id and JSON parameters. UI, CLI, MCP and tests use the same registry.
+The registry deserializes the parameters into the handler's type, so the handler never parses
+JSON and an invalid parameter is an `InvalidParams` error with the command's id.
 
 ```rust
 // crates/engine/src/commands.rs
 use crate::{EngineError, Session};
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -183,9 +187,14 @@ pub struct CommandSpec {
     pub id: &'static str,
     pub title: &'static str,
     pub params_help: &'static str,
+    /// JSON Schema of `P`, for CLI and MCP.
+    pub params: Value,
+    pub writes: bool,
 }
 
-pub type Handler = fn(&mut Session, Value) -> Result<Value, EngineError>;
+pub enum Access { Read, Write }
+
+type Handler = Box<dyn Fn(&mut Session, Value) -> Result<Value, EngineError> + Send + Sync>;
 
 #[derive(Default)]
 pub struct Registry {
@@ -193,8 +202,22 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn register(&mut self, spec: CommandSpec, handler: Handler) {
-        self.map.insert(spec.id, (spec, handler));
+    pub fn add<P: DeserializeOwned + JsonSchema + 'static>(
+        &mut self,
+        id: &'static str,
+        title: &'static str,
+        params_help: &'static str,
+        access: Access,
+        handler: fn(&mut Session, P) -> Result<Value, EngineError>,
+    ) {
+        let params = schemars::schema_for!(P).into();
+        let spec = CommandSpec { id, title, params_help, params, writes: matches!(access, Access::Write) };
+        let run: Handler = Box::new(move |session, params| {
+            let params = serde_json::from_value(params)
+                .map_err(|e| EngineError::InvalidParams { id, reason: e.to_string() })?;
+            handler(session, params)
+        });
+        self.map.insert(id, (spec, run));
     }
 
     pub fn list(&self) -> impl Iterator<Item = &CommandSpec> {

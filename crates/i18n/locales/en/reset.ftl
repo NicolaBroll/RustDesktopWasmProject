@@ -26,7 +26,6 @@ reset-cancel = Cancel
 reset-sending = Resetting…
 reset-label = Reset ({ $mode }) of { $moving } to { $id }
 reset-refused = The reset was refused, nothing changed: { $error }
-reset-failed = { $label } failed: { $error }
 reset-done = { $moving } reset ({ $mode }) to { $id }
 reset-done-backup = ; the local changes of { $n ->
     [one] 1 file are
@@ -35,4 +34,3 @@ reset-done-backup = ; the local changes of { $n ->
 reset-done-index-backup = ; the previous stage is saved in { $backup }
 reset-done-commit-backups = ; commits no longer reachable saved in { $refs }
 reset-done-short = Reset done
-reset-done-warning = ; warning: { $warning }

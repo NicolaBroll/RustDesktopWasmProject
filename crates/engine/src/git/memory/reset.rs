@@ -13,12 +13,12 @@ use crate::git::{
     BACKUP_PREFIX, ResetMode, ResetOutcome, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
 };
-use crate::{EngineError, GitBackend};
+use crate::{EngineError, GitRead};
 use project_domain::{Change, EntryKind, RepoPath, StatusEntry};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MemoryBackend {
-    /// [`GitBackend::reset`].
+    /// [`GitRefs::reset`].
     pub(super) fn reset_head(
         &mut self,
         request: &ResetRequest,

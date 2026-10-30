@@ -1,4 +1,4 @@
-# Text shared by several areas (view.rs).
+# Text shared by several areas.
 
 common-wait = Aspettare l'operazione in corso (o chiudere il dialogo aperto)
 common-git-message = Messaggio di git:
@@ -7,3 +7,5 @@ common-oid-hint =
     Clic: seleziona il commit
 common-unexpected-result = { $command }: risultato inatteso: { $error }
 common-failed = { $label } non riuscito: { $error }
+common-unexpected-response = risposta di `{ $command }` inattesa
+common-warning = ; attenzione: { $warning }

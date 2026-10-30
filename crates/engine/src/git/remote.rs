@@ -3,15 +3,16 @@
 //!
 //! A remote is always given by the **name** of a configured remote (`origin`), never by a
 //! URL or a path: `git fetch <x>` with an `x` that is not a remote would use it as a URL, so
-//! the command checks that the name is among those of [`GitBackend::remotes`](super::GitBackend)
+//! the command checks that the name is among those of [`GitRemotes::remotes`](super::GitRemotes::remotes)
 //! before calling the backend.
 
 use super::valid_ref_name;
 use crate::EngineError;
+use project_domain::REMOTES_PREFIX;
 use project_domain::Status;
 use serde::{Deserialize, Serialize};
 
-/// What to download with [`GitBackend::fetch`](super::GitBackend::fetch). Names already checked by the
+/// What to download with [`GitRemotes::fetch`](super::GitRemotes::fetch). Names already checked by the
 /// command: `remote` is a configured remote, `branch` a valid short branch name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchRequest {
@@ -26,7 +27,7 @@ pub struct FetchRequest {
     pub prune: bool,
 }
 
-/// The result of [`GitBackend::fetch`](super::GitBackend::fetch). The updated refs are computed by
+/// The result of [`GitRemotes::fetch`](super::GitRemotes::fetch). The updated refs are computed by
 /// the command comparing the refs before and after.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchOutcome {
@@ -48,7 +49,7 @@ pub fn check_remote_name(id: &'static str, name: &str) -> Result<(), EngineError
         Some(msg!("engine-remote-name-empty"))
     } else if name.chars().any(char::is_control) {
         Some(msg!("engine-remote-name-control"))
-    } else if !valid_ref_name(&format!("refs/remotes/{name}/x")) {
+    } else if !valid_ref_name(&format!("{REMOTES_PREFIX}{name}/x")) {
         Some(msg!("engine-remote-name-invalid"))
     } else {
         None

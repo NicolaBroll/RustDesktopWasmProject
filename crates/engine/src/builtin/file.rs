@@ -2,19 +2,29 @@
 //! histories (§6): cancellation arrives from [`Session::job`].
 
 use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
-use crate::commands::parse_params;
 use crate::{BlameQuery, FileLogQuery, Session};
-use project_domain::RepoPath;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use project_domain::{FileLogEntry, RepoPath};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Result of `file.log`: a page of the history of a file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileLogResult {
+    /// The commits that change the file, newest first.
+    pub commits: Vec<FileLogEntry>,
+    /// After the last returned commit there are others (as in `repo.log`).
+    pub has_more: bool,
+}
 
 /// Parameters of `file.blame`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct BlameParams {
-    path: RepoPath,
-    #[serde(default)]
-    rev: Option<String>,
+pub struct FileBlameParams {
+    /// The file.
+    pub path: RepoPath,
+    /// The commit (rev); without: the worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
 }
 
 /// Who last changed each line of `path`: in the worktree (lines not yet committed have
@@ -22,9 +32,8 @@ struct BlameParams {
 ///
 /// Result: the [`Blame`](project_domain::Blame) (`{"lines", "commits"}`) plus `{"path", "rev":
 /// oid | null}`.
-pub(super) fn file_blame(s: &mut Session, p: Value) -> Out {
+pub(super) fn file_blame(s: &mut Session, FileBlameParams { path, rev }: FileBlameParams) -> Out {
     const ID: &str = "file.blame";
-    let BlameParams { path, rev } = parse_params(ID, p)?;
     let path = check_path(ID, path)?;
     let job = s.job().clone();
     let query = BlameQuery { path, rev };
@@ -36,32 +45,39 @@ fn default_follow() -> bool {
 }
 
 /// Parameters of `file.log`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct FileLogParams {
-    path: RepoPath,
+pub struct FileLogParams {
+    /// The file.
+    pub path: RepoPath,
+    /// Where to start (rev); without: HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    /// Commits to skip from the start.
     #[serde(default)]
-    rev: Option<String>,
-    #[serde(default)]
-    skip: usize,
-    #[serde(default)]
-    limit: Option<usize>,
+    pub skip: usize,
+    /// Maximum number of commits; without: 200.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Follow the file across renames (default `true`).
     #[serde(default = "default_follow")]
-    follow: bool,
+    pub follow: bool,
 }
 
 /// The commits that change `path`, newest first (paginated like `repo.log`, `limit` 200).
 ///
-/// Result: `{"commits": [{"commit", "path", "old_path", "status"}], "has_more"}`.
-pub(super) fn file_log(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "file.log";
-    let FileLogParams {
+/// Result: [`FileLogResult`].
+pub(super) fn file_log(
+    s: &mut Session,
+    FileLogParams {
         path,
         rev,
         skip,
         limit,
         follow,
-    } = parse_params(ID, p)?;
+    }: FileLogParams,
+) -> Out {
+    const ID: &str = "file.log";
     let path = check_path(ID, path)?;
     let limit = limit.unwrap_or(DEFAULT_LOG_LIMIT);
     let job = s.job().clone();
@@ -76,7 +92,7 @@ pub(super) fn file_log(s: &mut Session, p: Value) -> Out {
     let mut commits = s.repo()?.file_log(&query, &job)?;
     let has_more = commits.len() > limit;
     commits.truncate(limit);
-    Ok(json!({ "commits": to_json(commits), "has_more": has_more }))
+    Ok(to_json(FileLogResult { commits, has_more }))
 }
 
 #[cfg(test)]

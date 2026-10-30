@@ -14,23 +14,68 @@ mod journal;
 mod platform;
 mod session;
 
-pub use builtin::DEFAULT_LOG_LIMIT;
-pub use commands::{CommandSpec, Handler, Registry};
+pub use builtin::branch::{
+    BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
+    BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
+};
+pub use builtin::clone::RepoCloneResult;
+pub use builtin::commit::CommitCreateResult;
+pub use builtin::conflict::{
+    ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
+};
+pub use builtin::discard::{DiscardParams, DiscardResult};
+pub use builtin::edit::{HistoryResult, UndoResult};
+pub use builtin::file::{FileBlameParams, FileLogParams, FileLogResult};
+pub use builtin::merge::{
+    IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
+    MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
+};
+pub use builtin::pick::{PickStartParams, PickStartResult};
+pub use builtin::pull::{PullApplied, PullFetch, RemotePullParams, RemotePullResult};
+pub use builtin::push::{PushRemoteSource, RemotePushParams, RemotePushResult};
+pub use builtin::rebase::{
+    RebaseContinueResult, RebasePlanParams, RebasePlanResult, RebasePlanStep, RebaseStartParams,
+    RebaseStartResult,
+};
+pub use builtin::remote::{RefUpdate, RemoteFetchParams, RemoteFetchResult};
+pub use builtin::remote_branch::{RemoteDeleteBranchParams, RemoteDeleteBranchResult};
+pub use builtin::remote_tag::{
+    RemoteDeleteTagParams, RemoteDeleteTagResult, RemotePushTagParams, RemotePushTagResult,
+    TagPushKind,
+};
+pub use builtin::remotes::{
+    FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddParams, RemoteAddResult,
+    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemovedRemote,
+};
+pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
+pub use builtin::search::{RepoSearchParams, RepoSearchResult};
+pub use builtin::stage::{IndexLinesParams, IndexPathsParams, IndexWriteResult};
+pub use builtin::stash::{
+    StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashListResult,
+    StashPushResult,
+};
+pub use builtin::tag::{TagCreateParams, TagCreateResult, TagDeleteParams, TagDeleteResult};
+pub use builtin::{
+    CommitShowParams, DEFAULT_LOG_LIMIT, DiffCommitParams, DiffParams, DiffWithDigests,
+    FileDiffWithDigest, JournalState, RepoLogResult, RepoOpenParams, RepoOpenResult,
+    RepoOptimizeResult,
+};
+pub use commands::{Access, CommandSpec, Registry};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, FetchFailure, FetchOutcome, FetchRequest, GitBackend,
-    HEADS_PREFIX, HeadState, LinePatch, LineSelection, LogQuery, MemoryBackend, MemoryOpener,
-    RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery, StagedVersion,
-    StashedFile, WorktreeBackup, WorktreeRestore, WorktreeStash, amend_impact, apply_patch,
-    backup_message, branch_ref, branch_short, check_amend_published, check_branch_name,
-    check_commit_state, check_new_branch_name, check_no_operation, check_remote_name,
-    check_same_plan, cleanup_message, default_remote, discard_description, discard_plan,
-    file_digest, line_patch, path_matches, split_message, unknown_remote, valid_ref_name,
-    versions_at_risk, versions_at_risk_hidden,
+    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
+    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
+    LinePatch, LineSelection, LogQuery, RefMove, RefRestore, RepoOpener, RestoreOutcome,
+    SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore, amend_impact,
+    apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
+    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
+    check_remote_name, check_same_plan, default_remote, discard_description, discard_plan,
+    file_digest, line_patch, path_matches, unknown_remote, valid_ref_name, versions_at_risk,
+    versions_at_risk_hidden,
 };
 pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
-    blame_missing_worktree, blame_no_commits, is_binary_content,
+    blame_missing_worktree, blame_no_commits,
 };
 pub use git::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
@@ -42,6 +87,12 @@ pub use git::{
 pub use git::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,
+};
+/// The in-memory repo for tests (UI, MCP): not in the app binaries.
+#[cfg(any(test, feature = "test-support"))]
+pub use git::{
+    FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash, cleanup_message,
+    is_binary_content, split_message,
 };
 pub use git::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
@@ -79,7 +130,7 @@ pub use git::{
 };
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
-pub use journal::{HeadChange, Journal, JournalEntry, RefChange};
+pub use journal::{BranchMove, HeadChange, Integration, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};
 pub use platform::{Capabilities, OnChange, Platform, Watch};
 pub use project_core::Invocation;

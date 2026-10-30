@@ -1,4 +1,5 @@
 use super::*;
+use crate::{discard, fetch, sync, tabs};
 
 /// Last component of the path, for the title.
 pub(crate) fn repo_name(path: &str) -> &str {
@@ -120,7 +121,7 @@ impl egui::Widget for ToolButton<'_> {
         let icon = ui
             .painter()
             .layout_no_wrap(self.icon.to_owned(), icons::font(20.0), color);
-        let font = egui::FontId::proportional(11.0);
+        let font = theme::small();
         let label = ui
             .painter()
             .layout_no_wrap(self.label.to_owned(), font, color);
@@ -183,7 +184,7 @@ fn undo_buttons(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &mut Vec<A
             button.on_hover_text(&hint).on_disabled_hover_text(&hint)
         };
         if button.clicked() {
-            actions.push(Action::Undo(op));
+            actions.push(Action::Discard(discard::Action::Undo(op)));
         }
     }
 }
@@ -205,7 +206,7 @@ pub(super) fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<
                     .add_enabled(!repo.missing, egui::Button::new(recent_text(repo)))
                     .on_disabled_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
                 if button.clicked() {
-                    actions.push(Action::Open(repo.path.clone()));
+                    actions.push(Action::Tabs(tabs::Action::Open(repo.path.clone())));
                     ui.close();
                 }
             }
@@ -216,7 +217,7 @@ pub(super) fn recent_menu(ui: &mut Ui, recent: &[RecentRepo], actions: &mut Vec<
                     .on_hover_text(tr!("top-bar-recent-forget-hint"))
                     .clicked()
                 {
-                    actions.push(Action::ForgetMissing);
+                    actions.push(Action::Tabs(tabs::Action::ForgetMissing));
                 }
             }
         })
@@ -251,7 +252,7 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
         .on_hover_text(tr!("top-bar-fetch-hint"))
         .on_disabled_hover_text(wait());
     if button.clicked() {
-        actions.push(Action::Fetch(None));
+        actions.push(Action::Fetch(fetch::Action::Fetch(None)));
     }
     let remotes = repo.remotes.names();
     if remotes.len() > 1 {
@@ -263,7 +264,7 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
                         .button(tr!("top-bar-fetch-from", remote = &remote))
                         .clicked()
                     {
-                        actions.push(Action::Fetch(Some(remote)));
+                        actions.push(Action::Fetch(fetch::Action::Fetch(Some(remote))));
                         ui.close();
                     }
                 }
@@ -310,7 +311,7 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
         pull.on_disabled_hover_text(&pull_hint)
     };
     if pull.clicked() {
-        actions.push(Action::Pull(None, None));
+        actions.push(Action::Sync(sync::Action::Pull(None, None)));
     }
     let push = ui
         .add_enabled(enabled, ToolButton::new(icons::PUSH, &tr!("top-bar-push")))
@@ -321,7 +322,7 @@ fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<A
         push.on_disabled_hover_text(&push_hint)
     };
     if push.clicked() {
-        actions.push(Action::Push(None));
+        actions.push(Action::Sync(sync::Action::Push(None)));
     }
 }
 
@@ -358,6 +359,23 @@ fn network_progress(ui: &mut Ui, network: Network, actions: &mut Vec<Action>) {
     }
 }
 
+/// A read shorter than this does not reach the status bar: the automatic refresh on focus would
+/// make it flash.
+const QUIET_READ: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The command to show as in progress: a write at once, a read once it has run for
+/// [`QUIET_READ`] (a repaint is asked for that moment).
+fn slow_job<'a>(ui: &Ui, running: &'a [Job]) -> Option<&'a Job> {
+    let now = std::time::Instant::now();
+    let shown = running
+        .iter()
+        .find(|job| job.writes || now.duration_since(job.started) >= QUIET_READ);
+    if shown.is_none() && !running.is_empty() {
+        ui.ctx().request_repaint_after(QUIET_READ);
+    }
+    shown
+}
+
 /// `write` is the write in progress, described: it takes precedence over the other commands. `notice`
 /// is an informational message, shown if there is nothing in progress and no error. `repo`: the repo
 /// shown, for the changed files and its path on the right.
@@ -373,7 +391,7 @@ pub(crate) fn status_bar(
         if let Some(write) = write {
             ui.spinner();
             ui.label(tr!("top-bar-running", what = write));
-        } else if let Some(job) = running.first() {
+        } else if let Some(job) = slow_job(ui, running) {
             ui.spinner();
             let text = match running.len() - 1 {
                 0 => tr!("top-bar-running", what = &job.command),
@@ -418,7 +436,7 @@ pub(crate) fn welcome(
             ui.heading(tr!("top-bar-no-repo"));
             ui.add_space(8.0);
             if ui.button(tr!("top-bar-open-repo")).clicked() {
-                actions.push(Action::PickFolder);
+                actions.push(Action::Tabs(tabs::Action::PickFolder));
             }
             create_buttons(ui, actions);
         } else {
@@ -434,7 +452,7 @@ pub(crate) fn welcome(
                     ui.label(recent_text(repo))
                         .on_hover_text(tr!("top-bar-recent-missing-hint", path = &repo.path));
                 } else if ui.link(recent_item(&repo.path)).clicked() {
-                    actions.push(Action::Open(repo.path.clone()));
+                    actions.push(Action::Tabs(tabs::Action::Open(repo.path.clone())));
                 }
             }
             if recent.iter().any(|r| r.missing)
@@ -443,7 +461,7 @@ pub(crate) fn welcome(
                     .on_hover_text(tr!("top-bar-recent-forget-hint"))
                     .clicked()
             {
-                actions.push(Action::ForgetMissing);
+                actions.push(Action::Tabs(tabs::Action::ForgetMissing));
             }
         }
     });

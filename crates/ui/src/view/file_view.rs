@@ -25,10 +25,12 @@ pub(super) fn file_menu_entries(
     blame_off: Option<String>,
     actions: &mut Vec<Action>,
 ) {
-    let open = |mode| Action::OpenFile {
-        path: path.clone(),
-        rev,
-        mode,
+    let open = |mode| {
+        Action::File(file::Action::Open {
+            path: path.clone(),
+            rev,
+            mode,
+        })
     };
     let blame = ui
         .add_enabled(
@@ -80,7 +82,7 @@ fn toolbar(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
             .on_hover_text(tr!("file-close-hint"))
             .clicked()
         {
-            actions.push(Action::CloseFile);
+            actions.push(Action::File(file::Action::Close));
         }
         ui.separator();
         for (mode, label) in [
@@ -88,7 +90,7 @@ fn toolbar(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
             (Mode::History, tr!("file-tab-history")),
         ] {
             if ui.selectable_label(view.mode == mode, label).clicked() && view.mode != mode {
-                actions.push(Action::FileMode(mode));
+                actions.push(Action::File(file::Action::Mode(mode)));
             }
         }
         ui.separator();
@@ -111,7 +113,7 @@ fn toolbar(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
                     .on_hover_text(tr!("file-follow-hint"))
                     .changed()
                 {
-                    actions.push(Action::FileFollow(follow));
+                    actions.push(Action::File(file::Action::Follow(follow)));
                 }
             });
         }
@@ -129,7 +131,7 @@ fn loading(ui: &mut Ui, text: String) {
 fn failed(ui: &mut Ui, error: &str, actions: &mut Vec<Action>) {
     ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
     if ui.button(tr!("file-retry")).clicked() {
-        actions.push(Action::FileRetry);
+        actions.push(Action::File(file::Action::Retry));
     }
 }
 
@@ -160,11 +162,11 @@ struct Style {
 }
 
 fn blame_rows(ui: &mut Ui, doc: &BlameDoc, actions: &mut Vec<Action>) {
-    let mono = FontId::monospace(12.5);
+    let mono = theme::mono();
     let char_w = ui.ctx().fonts_mut(|f| f.glyph_width(&mono, '0'));
     let numbers_w = (doc.number_width as f32) * char_w + 2.0 * PAD;
     let style = Style {
-        small: FontId::proportional(12.5),
+        small: theme::small(),
         char_w,
         text: ui.visuals().text_color(),
         weak: ui.visuals().weak_text_color(),
@@ -266,7 +268,7 @@ fn info_job(commit: Option<&BlameCommit>, style: &Style, width: f32) -> egui::te
     match commit {
         Some(c) => {
             job.append(&c.id.short(), 0.0, format(&style.mono, style.accent));
-            let date = format::date_time(&c.author);
+            let date = date_time(&c.author);
             let date = date.split(' ').next().unwrap_or_default();
             job.append(date, 2.0 * PAD, format(&style.small, style.weak));
             job.append(&c.author.name, 2.0 * PAD, format(&style.small, style.weak));
@@ -292,14 +294,14 @@ fn commit_tooltip(c: &BlameCommit) -> String {
         tr!(
             "file-tooltip-author",
             author = signer(&c.author),
-            date = format::date_time_zone(&c.author)
+            date = date_time_zone(&c.author)
         ),
     ];
     if c.committer.name != c.author.name || c.committer.email != c.author.email {
         lines.push(tr!(
             "file-tooltip-committer",
             committer = signer(&c.committer),
-            date = format::date_time_zone(&c.committer)
+            date = date_time_zone(&c.committer)
         ));
     }
     if c.boundary {
@@ -377,7 +379,7 @@ fn history(
 fn history_list(
     ui: &mut Ui,
     view: &FileView,
-    open: Option<&crate::diff::DiffTarget>,
+    open: Option<&DiffTarget>,
     actions: &mut Vec<Action>,
 ) {
     let history = &view.history;
@@ -396,8 +398,8 @@ fn history_list(
     }
     let tail = history.has_more || history.error.is_some() || view.log_loading();
     let count = history.entries.len() + usize::from(tail);
-    let font = FontId::proportional(13.0);
-    let mono = FontId::monospace(12.0);
+    let font = theme::body();
+    let mono = theme::mono();
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     egui::ScrollArea::vertical()
@@ -420,7 +422,7 @@ fn history_list(
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
                 let painter = ui.painter_at(rect);
-                let badge = egui::Rect::from_center_size(
+                let badge = Rect::from_center_size(
                     pos2(rect.left() + 11.0, rect.top() + 11.0),
                     vec2(18.0, 16.0),
                 );
@@ -447,7 +449,7 @@ fn history_list(
                 painter.galley(pos2(left, y), bottom, text);
                 let response = response.on_hover_text(entry_tooltip(entry));
                 if response.clicked() {
-                    actions.push(Action::FileSelect(index));
+                    actions.push(Action::File(file::Action::Select(index)));
                 }
                 response.context_menu(|ui| {
                     if ui.button(tr!("file-select-commit")).clicked() {
@@ -470,10 +472,10 @@ fn tail_row(ui: &mut Ui, view: &FileView, actions: &mut Vec<Action>) {
                 ui.colored_label(ui.visuals().error_fg_color, tr!("file-history-page-error"))
                     .on_hover_text(error);
                 if ui.small_button(tr!("file-retry")).clicked() {
-                    actions.push(Action::FileRetry);
+                    actions.push(Action::File(file::Action::Retry));
                 }
             } else if ui.small_button(tr!("file-load-more")).clicked() {
-                actions.push(Action::FileMore);
+                actions.push(Action::File(file::Action::More));
             }
         });
     });
@@ -510,10 +512,10 @@ fn entry_jobs(
     if !notes.is_empty() {
         top.append(&format!("({})", notes.join(", ")), PAD, format(font, weak));
     }
-    let small = FontId::proportional(12.0);
+    let small = theme::small();
     let mut bottom = egui::text::LayoutJob::default();
     bottom.append(&c.id.short(), 0.0, format(mono, weak));
-    bottom.append(&format::date_time(&c.author), PAD, format(&small, weak));
+    bottom.append(&date_time(&c.author), PAD, format(&small, weak));
     bottom.append(&c.author.name, PAD, format(&small, weak));
     (one_line(top), one_line(bottom))
 }
@@ -526,7 +528,7 @@ fn entry_tooltip(entry: &FileLogEntry) -> String {
         tr!(
             "file-tooltip-author",
             author = signer(&c.author),
-            date = format::date_time_zone(&c.author)
+            date = date_time_zone(&c.author)
         ),
         format!(
             "{} ({})",

@@ -19,14 +19,56 @@
 //! confirm is the one the engine read from the remote.
 
 use crate::discard::{History, Phase};
-use crate::fetch::{self, Failure, FetchResult, RefUpdate};
-use crate::{Action, Done, Request, Tab, remotes};
+use crate::fetch::{self, Failure};
+use crate::messages_text;
+use crate::running::Running;
+use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
+use project_domain::remote_short;
 use project_domain::{RefInfo, Upstream};
-use project_engine::mask_url;
+use project_engine::{
+    FetchErrorKind, RemoteAddParams, RemoteAddResult, RemoteDeleteBranchParams,
+    RemoteDeleteBranchResult, RemoteDeleteTagParams, RemoteDeleteTagResult, RemoteFetchResult,
+    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, mask_url,
+};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
+#[derive(Debug, Clone)]
+pub(crate) enum Action {
+    /// Opens the "Add remote" dialog.
+    Add,
+    /// The fields of the "Add remote" dialog changed.
+    AddFields(AddFields),
+    /// "Hide" (`true`) or "Show" the URL with credentials in the "Add remote" dialog.
+    HideUrl(bool),
+    /// Submits the "Add remote" dialog.
+    SubmitAdd,
+    /// "Stop" the fetch of the add in progress (the remote stays added).
+    CancelAdd,
+    /// Removes the given remote: first without confirmation, the engine always asks and the
+    /// dialog opens.
+    Remove(String),
+    /// Confirms the pending removal: resends with `"confirm": true`.
+    ConfirmRemove,
+    /// Deletes the branch (second value) from the remote (first value): first without
+    /// confirmation, the engine always asks and the dialog opens.
+    DeleteBranch(String, String),
+    /// Confirms the pending deletion of the remote branch: resends with `"confirm": true` and the
+    /// commit seen.
+    ConfirmDeleteBranch,
+    /// Deletes the tag (second value) from the remote (first value): first without confirmation,
+    /// the engine always asks and the dialog opens.
+    DeleteTag(String, String),
+    /// Confirms the pending deletion of the remote tag: resends with `"confirm": true` and the
+    /// value seen.
+    ConfirmDeleteTag,
+    /// Closes the open remotes dialog without sending anything.
+    CloseDialog,
+    /// Closes the fetch error window after the add.
+    DismissError,
+}
 
 /// The id of the command that lists the remotes.
 pub const LIST: &str = "remote.list";
@@ -52,49 +94,34 @@ impl Op {
     }
 }
 
-/// A configured remote, as `remote.list` gives it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Remote {
-    pub name: String,
-    /// The fetch URL, with credentials masked; `None` for a remote without URL.
-    pub url: Option<String>,
-    /// Where the push goes if it is not `url` (masked).
-    #[serde(default)]
-    pub push_urls: Vec<String>,
-    #[serde(default)]
-    pub mirror: bool,
-    /// How many remote branches `refs/remotes/<name>/...` there are.
-    pub branches: usize,
-    /// It is the remote of "Fetch" without a choice.
-    #[serde(default)]
-    pub default: bool,
-    /// It is `remote.pushDefault`.
-    #[serde(default)]
-    pub push_default: bool,
-    /// The configured URL contains credentials (saved in clear text by git).
-    #[serde(default)]
-    pub credentials: bool,
+/// The texts of a remote ([`RemoteListEntry`], as given by `remote.list`) shown by the UI.
+pub trait RemoteText {
+    /// The URL to show.
+    fn url_text(&self) -> String;
+    /// `no branches`, `1 branch`, `3 branches`.
+    fn branches_text(&self) -> String;
+    /// The labels next to the name, with their explanation.
+    fn badges(&self) -> Vec<(String, String)>;
+    /// The text of the row tooltip.
+    fn tooltip(&self) -> String;
 }
 
-impl Remote {
-    /// The URL to show.
-    pub fn url_text(&self) -> String {
+impl RemoteText for RemoteListEntry {
+    fn url_text(&self) -> String {
         match &self.url {
             Some(url) => url.clone(),
             None => tr!("remotes-no-url"),
         }
     }
 
-    /// `no branches`, `1 branch`, `3 branches`.
-    pub fn branches_text(&self) -> String {
+    fn branches_text(&self) -> String {
         match self.branches {
             0 => tr!("remotes-no-branches"),
             n => tr!("remotes-branches", n = n),
         }
     }
 
-    /// The labels next to the name, with their explanation.
-    pub fn badges(&self) -> Vec<(String, String)> {
+    fn badges(&self) -> Vec<(String, String)> {
         let mut badges = Vec::new();
         if self.default {
             badges.push((
@@ -117,8 +144,7 @@ impl Remote {
         badges
     }
 
-    /// The text of the row tooltip.
-    pub fn tooltip(&self) -> String {
+    fn tooltip(&self) -> String {
         let mut text = tr!("remotes-tooltip", name = &self.name, url = self.url_text());
         for url in &self.push_urls {
             text.push('\n');
@@ -132,12 +158,6 @@ impl Remote {
         }
         text
     }
-}
-
-/// Result of `remote.list`.
-#[derive(Debug, Clone, Deserialize)]
-struct ListResult {
-    remotes: Vec<Remote>,
 }
 
 /// True if the typed URL contains credentials, with the same rule as the engine
@@ -162,14 +182,8 @@ pub struct AddDialog {
     pub fields: AddFields,
     /// The engine error from the last submit, shown in the dialog.
     pub error: Option<String>,
-    /// True while the command is running.
-    pub sending: bool,
-    /// The ticket of the running command (for progress and "Cancel").
-    pub ticket: Option<Ticket>,
-    /// True after "Cancel", until the command answers.
-    pub cancelling: bool,
-    /// True if the running submit also asked for the fetch.
-    pub fetching: bool,
+    /// The running command (for progress and "Cancel").
+    pub running: Option<Running>,
     /// "Hide": the URL with credentials is shown masked even while typing.
     pub hide_url: bool,
 }
@@ -178,13 +192,15 @@ impl AddDialog {
     /// True if the button is enabled: name and URL typed, no submit in progress. The rest is
     /// checked by the engine.
     pub fn can_submit(&self) -> bool {
-        !self.sending && !self.fields.name.trim().is_empty() && !self.fields.url.trim().is_empty()
+        self.running.is_none()
+            && !self.fields.name.trim().is_empty()
+            && !self.fields.url.trim().is_empty()
     }
 
     /// True if the URL is shown masked in a read-only field: during the submit (the
     /// fetch can take long, the token does not stay in clear on screen) or after "Hide".
     pub fn url_masked(&self) -> bool {
-        (self.sending || self.hide_url) && looks_like_credentials(&self.fields.url)
+        (self.running.is_some() || self.hide_url) && looks_like_credentials(&self.fields.url)
     }
 
     /// The URL as shown in the field: masked as the engine shows it ([`mask_url`]) if
@@ -202,10 +218,16 @@ impl AddDialog {
         looks_like_credentials(&self.fields.url).then(|| tr!("remotes-credentials-warning"))
     }
 
+    /// True if the running submit also asked for the fetch (the fields do not change while it
+    /// runs).
+    pub fn fetching(&self) -> bool {
+        self.running.is_some() && self.fields.fetch
+    }
+
     /// The remote being added, for the status bar.
     pub fn label(&self) -> String {
         let name = self.fields.name.trim();
-        if self.fetching {
+        if self.fields.fetch {
             tr!("remotes-add-label-fetch", name = name)
         } else {
             tr!("remotes-add-label", name = name)
@@ -287,7 +309,7 @@ pub fn split_remote_branch(short: &str, remotes: &[String]) -> Option<(String, S
 #[derive(Debug, Default)]
 pub struct RemotesBox {
     /// The last list read; `None` until it arrives.
-    list: Option<Vec<Remote>>,
+    list: Option<Vec<RemoteListEntry>>,
     /// The error of the last list read.
     list_error: Option<String>,
     dialog: Option<Dialog>,
@@ -315,7 +337,7 @@ pub struct Outcome {
     /// The new refs, if the command reloaded them.
     pub refs: Option<Vec<RefInfo>>,
     /// The new list of remotes, if the command reloaded it.
-    pub remotes: Option<Vec<Remote>>,
+    pub remotes: Option<Vec<RemoteListEntry>>,
     /// A problem after the successful operation (refs or remotes not reread, fetch failed).
     pub warning: Option<String>,
     /// The journal state, if the command goes into the journal.
@@ -324,7 +346,7 @@ pub struct Outcome {
 
 impl RemotesBox {
     /// The list of remotes, if it arrived.
-    pub fn list(&self) -> Option<&[Remote]> {
+    pub fn list(&self) -> Option<&[RemoteListEntry]> {
         self.list.as_deref()
     }
 
@@ -340,15 +362,7 @@ impl RemotesBox {
 
     /// The answer of `remote.list`.
     pub fn receive_list(&mut self, result: Result<Value, String>) {
-        match result.and_then(|value| {
-            serde_json::from_value::<ListResult>(value).map_err(|e| {
-                tr!(
-                    "remotes-unexpected-result",
-                    command = LIST,
-                    error = e.to_string()
-                )
-            })
-        }) {
+        match result.and_then(|value| crate::decode::<RemoteListResult>(LIST, value)) {
             Ok(list) => {
                 self.list = Some(list.remotes);
                 self.list_error = None;
@@ -357,7 +371,7 @@ impl RemotesBox {
         }
     }
 
-    fn set_list(&mut self, remotes: Vec<Remote>) {
+    fn set_list(&mut self, remotes: Vec<RemoteListEntry>) {
         self.list = Some(remotes);
         self.list_error = None;
     }
@@ -404,10 +418,7 @@ impl RemotesBox {
                 fetch: true,
             },
             error: None,
-            sending: false,
-            ticket: None,
-            cancelling: false,
-            fetching: false,
+            running: None,
             hide_url: false,
         }));
         true
@@ -416,7 +427,7 @@ impl RemotesBox {
     /// The fields of the add dialog changed.
     pub fn set_fields(&mut self, fields: AddFields) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog
-            && !dialog.sending
+            && dialog.running.is_none()
         {
             dialog.fields = fields;
         }
@@ -437,15 +448,12 @@ impl RemotesBox {
         if !dialog.can_submit() {
             return None;
         }
-        dialog.sending = true;
         dialog.error = None;
-        dialog.cancelling = false;
-        dialog.fetching = dialog.fields.fetch;
         self.failure = None;
-        let params = json!({
-            "name": dialog.fields.name.trim(),
-            "url": dialog.fields.url.trim(),
-            "fetch": dialog.fields.fetch,
+        let params = params(RemoteAddParams {
+            name: dialog.fields.name.trim().to_owned(),
+            url: dialog.fields.url.trim().to_owned(),
+            fetch: dialog.fields.fetch,
         });
         Some((params, dialog.label()))
     }
@@ -453,14 +461,14 @@ impl RemotesBox {
     /// The add sent with [`RemotesBox::submit_add`] started with `ticket`.
     pub fn add_started(&mut self, ticket: Ticket) {
         if let Some(Dialog::Add(dialog)) = &mut self.dialog {
-            dialog.ticket = Some(ticket);
+            dialog.running = Some(Running::new(ticket));
         }
     }
 
     /// The add in progress with the fetch: the ticket for progress.
     pub fn running_fetch(&self) -> Option<&AddDialog> {
         match &self.dialog {
-            Some(Dialog::Add(dialog)) if dialog.sending && dialog.fetching => Some(dialog),
+            Some(Dialog::Add(dialog)) if dialog.fetching() => Some(dialog),
             _ => None,
         }
     }
@@ -471,11 +479,10 @@ impl RemotesBox {
         let Some(Dialog::Add(dialog)) = &mut self.dialog else {
             return None;
         };
-        if !dialog.sending || !dialog.fetching || dialog.cancelling {
+        if !dialog.fetching() {
             return None;
         }
-        dialog.cancelling = true;
-        dialog.ticket
+        dialog.running.as_mut()?.cancel()
     }
 
     /// Starts the removal of the remote `name`: the parameters of the first submit, without `confirm`
@@ -484,7 +491,10 @@ impl RemotesBox {
         if self.dialog.is_some() {
             return None;
         }
-        let params = json!({ "name": name });
+        let params = params(RemoteRemoveParams {
+            name: name.clone(),
+            confirm: false,
+        });
         self.dialog = Some(Dialog::Remove(RemoveDialog {
             name,
             phase: Phase::Checking,
@@ -502,7 +512,10 @@ impl RemotesBox {
         }
         remove.phase = Phase::Sending;
         Some((
-            json!({ "name": remove.name, "confirm": true }),
+            params(RemoteRemoveParams {
+                name: remove.name.clone(),
+                confirm: true,
+            }),
             tr!("remotes-remove-label", name = &remove.name),
         ))
     }
@@ -513,7 +526,12 @@ impl RemotesBox {
         if self.dialog.is_some() {
             return None;
         }
-        let params = json!({ "remote": remote, "branch": branch });
+        let params = params(RemoteDeleteBranchParams {
+            remote: remote.clone(),
+            branch: branch.clone(),
+            confirm: false,
+            expected: None,
+        });
         self.dialog = Some(Dialog::DeleteBranch(DeleteBranchDialog {
             remote,
             branch,
@@ -530,7 +548,12 @@ impl RemotesBox {
         if self.dialog.is_some() {
             return None;
         }
-        let params = json!({ "remote": remote, "name": name });
+        let params = params(RemoteDeleteTagParams {
+            remote: remote.clone(),
+            name: name.clone(),
+            confirm: false,
+            expected: None,
+        });
         self.dialog = Some(Dialog::DeleteBranch(DeleteBranchDialog {
             remote,
             branch: name,
@@ -553,20 +576,29 @@ impl RemotesBox {
         }
         let expected = delete.expected.clone()?;
         delete.phase = Phase::Sending;
-        let what = if delete.tag { "name" } else { "branch" };
-        let mut params = json!({
-            "remote": delete.remote,
-            "confirm": true,
-            "expected": expected,
-        });
-        params[what] = json!(delete.branch);
+        let remote = delete.remote.clone();
+        let params = if delete.tag {
+            params(RemoteDeleteTagParams {
+                remote,
+                name: delete.branch.clone(),
+                confirm: true,
+                expected: Some(expected),
+            })
+        } else {
+            params(RemoteDeleteBranchParams {
+                remote,
+                branch: delete.branch.clone(),
+                confirm: true,
+                expected: Some(expected),
+            })
+        };
         Some((delete.op(), params, delete.label()))
     }
 
     /// Closes the open dialog without sending anything; not during a submit.
     pub fn close(&mut self) {
         let closable = match &self.dialog {
-            Some(Dialog::Add(dialog)) => !dialog.sending,
+            Some(Dialog::Add(dialog)) => dialog.running.is_none(),
             Some(Dialog::Remove(remove)) => matches!(remove.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteBranch(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             None => false,
@@ -604,15 +636,13 @@ impl RemotesBox {
         let Some(Dialog::Add(dialog)) = &mut self.dialog else {
             return unexpected(Op::Add);
         };
-        if !dialog.sending {
+        if dialog.running.is_none() {
             return unexpected(Op::Add);
         }
         match result {
             // Name or URL refused, name already taken: nothing changed, fixed in the dialog.
             Err(e) if matches!(kind, Some(ErrorKind::InvalidParams | ErrorKind::NotAllowed)) => {
-                dialog.sending = false;
-                dialog.ticket = None;
-                dialog.fetching = false;
+                dialog.running = None;
                 dialog.error = Some(e);
                 Received::Inline
             }
@@ -627,9 +657,9 @@ impl RemotesBox {
             }
             Ok(value) => {
                 self.dialog = None;
-                match parse::<AddResult>(Op::Add, value) {
+                match crate::decode::<RemoteAddResult>(Op::Add.command(), value) {
                     Ok(result) => {
-                        let (outcome, failure) = result.outcome();
+                        let (outcome, failure) = add_outcome(result);
                         self.failure = failure;
                         Received::Done(Box::new(outcome))
                     }
@@ -675,8 +705,8 @@ impl RemotesBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<RemoveResult>(Op::Remove, value) {
-                Ok(result) => Received::Done(Box::new(result.outcome())),
+            Ok(value) => match crate::decode::<RemoteRemoveResult>(Op::Remove.command(), value) {
+                Ok(result) => Received::Done(Box::new(remove_outcome(result))),
                 Err(message) => Received::Failed {
                     message,
                     reload: true,
@@ -749,9 +779,11 @@ impl RemotesBox {
             }
             Ok(value) => {
                 let outcome = if delete.tag {
-                    parse::<DeleteTagResult>(op, value).map(DeleteTagResult::outcome)
+                    crate::decode::<RemoteDeleteTagResult>(op.command(), value)
+                        .map(delete_tag_outcome)
                 } else {
-                    parse::<DeleteBranchResult>(op, value).map(DeleteBranchResult::outcome)
+                    crate::decode::<RemoteDeleteBranchResult>(op.command(), value)
+                        .map(delete_branch_outcome)
                 };
                 match outcome {
                     Ok(outcome) => Received::Done(Box::new(outcome)),
@@ -765,101 +797,49 @@ impl RemotesBox {
     }
 }
 
-/// Result of `remote.delete_branch`.
-#[derive(Debug, Clone, Deserialize)]
-struct DeleteBranchResult {
-    remote: String,
-    branch: String,
-    backup: String,
-    #[serde(default)]
-    only_here: usize,
-    #[serde(default)]
-    upstream_of: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-}
-
-impl DeleteBranchResult {
-    fn outcome(self) -> Outcome {
-        let name = format!("{}/{}", self.remote, self.branch);
-        let mut notice = tr!("remotes-branch-deleted", name = &name);
-        if self.only_here > 0 {
-            notice.push_str(&tr!("remotes-branch-deleted-only-here", n = self.only_here));
-        }
-        notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &self.backup));
-        if !self.upstream_of.is_empty() {
-            notice.push_str(&tr!(
-                "remotes-branch-deleted-upstreams",
-                names = quoted(&self.upstream_of)
-            ));
-        }
-        notice.push_str(&warnings_text(&self.warnings));
-        Outcome {
-            notice,
-            refs: self.refs,
-            remotes: None,
-            warning: reread_warning(&tr!("remotes-branch-deleted-short"), self.refs_error, None),
-            history: None,
-        }
+/// The outcome of `remote.delete_branch`.
+fn delete_branch_outcome(r: RemoteDeleteBranchResult) -> Outcome {
+    let name = format!("{}/{}", r.remote, r.branch);
+    let mut notice = tr!("remotes-branch-deleted", name = &name);
+    if r.only_here > 0 {
+        notice.push_str(&tr!("remotes-branch-deleted-only-here", n = r.only_here));
+    }
+    notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &r.backup));
+    if !r.upstream_of.is_empty() {
+        notice.push_str(&tr!(
+            "remotes-branch-deleted-upstreams",
+            names = quoted(&r.upstream_of)
+        ));
+    }
+    notice.push_str(&messages_text(&r.warnings));
+    Outcome {
+        notice,
+        refs: r.refs,
+        remotes: None,
+        warning: reread_warning(&tr!("remotes-branch-deleted-short"), r.refs_error, None),
+        history: None,
     }
 }
 
-/// Result of `remote.delete_tag`.
-#[derive(Debug, Clone, Deserialize)]
-struct DeleteTagResult {
-    remote: String,
-    name: String,
-    backup: String,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-}
-
-impl DeleteTagResult {
-    fn outcome(self) -> Outcome {
-        let mut notice = tr!(
-            "remotes-tag-deleted",
-            name = &self.name,
-            remote = &self.remote
-        );
-        notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &self.backup));
-        notice.push_str(&warnings_text(&self.warnings));
-        Outcome {
-            notice,
-            refs: self.refs,
-            remotes: None,
-            warning: reread_warning(&tr!("remotes-tag-deleted-short"), self.refs_error, None),
-            history: None,
-        }
+/// The outcome of `remote.delete_tag`.
+fn delete_tag_outcome(r: RemoteDeleteTagResult) -> Outcome {
+    let mut notice = tr!("remotes-tag-deleted", name = &r.name, remote = &r.remote);
+    notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &r.backup));
+    notice.push_str(&messages_text(&r.warnings));
+    Outcome {
+        notice,
+        refs: r.refs,
+        remotes: None,
+        warning: reread_warning(&tr!("remotes-tag-deleted-short"), r.refs_error, None),
+        history: None,
     }
 }
 
 fn unexpected(op: Op) -> Received {
     Received::Failed {
-        message: tr!("remotes-unexpected-response", command = op.command()),
+        message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(op: Op, value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| {
-        tr!(
-            "remotes-unexpected-result",
-            command = op.command(),
-            error = e.to_string()
-        )
-    })
-}
-
-/// `; warning: ...` for each warning.
-fn warnings_text(warnings: &[String]) -> String {
-    warnings
-        .iter()
-        .map(|w| tr!("remotes-warning", warning = w))
-        .collect()
 }
 
 /// The problem after a successful operation: refs or remotes not reread.
@@ -880,139 +860,70 @@ fn reread_warning(what: &str, refs: Option<String>, remotes: Option<String>) -> 
     })
 }
 
-/// The fetch done after the add.
-#[derive(Debug, Clone, Deserialize)]
-struct FetchPart {
-    updated: Option<Vec<RefUpdate>>,
-    #[serde(default)]
-    messages: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-}
-
-/// The failed fetch after the add.
-#[derive(Debug, Clone, Deserialize)]
-struct FetchError {
-    kind: String,
-    message: String,
-}
-
-/// Result of `remote.add`.
-#[derive(Debug, Clone, Deserialize)]
-struct AddResult {
-    remote: String,
-    url: String,
-    fetch: Option<FetchPart>,
-    fetch_error: Option<FetchError>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    remotes: Option<Vec<Remote>>,
-    remotes_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
-}
-
 /// What to say in the window when the fetch after the add fails: the remote is there.
 fn added_anyway() -> String {
     tr!("remotes-added-anyway")
 }
 
-impl AddResult {
-    fn outcome(self) -> (Outcome, Option<Failure>) {
-        let name = &self.remote;
-        let mut notice = tr!("remotes-added", name = name, url = &self.url);
-        let mut failure = None;
-        if let Some(fetch) = self.fetch {
-            let summary = FetchResult {
-                remote: name.clone(),
-                branch: None,
-                updated: fetch.updated,
-                messages: fetch.messages,
-                warnings: fetch.warnings,
-                refs: None,
-                refs_error: None,
-                backups: Vec::new(),
-            }
-            .outcome()
-            .notice;
-            notice.push_str(&format!("; {}", crate::lowercase_first(&summary)));
-        }
-        if let Some(error) = self.fetch_error {
-            let who = fetch::who(Some(name));
-            let detail = Some(error.message.clone());
-            let window = |mut f: Failure| {
-                f.explanation = f
-                    .explanation
-                    .replace(&fetch::nothing_changed(), &added_anyway());
-                f
-            };
-            match error.kind.as_str() {
-                "cancelled" => notice.push_str(&tr!("remotes-added-fetch-cancelled")),
-                "auth" => {
-                    failure = Some(window(fetch::auth_failure(&who, detail)));
-                    notice.push_str(&tr!("remotes-added-fetch-auth"));
-                }
-                "unreachable" => {
-                    failure = Some(window(fetch::unreachable_failure(&who, detail)));
-                    notice.push_str(&tr!("remotes-added-fetch-unreachable"));
-                }
-                _ => {
-                    failure = Some(Failure {
-                        title: tr!("remotes-fetch-failed-title"),
-                        explanation: format!("{} {}", error.message, added_anyway()),
-                        git: None,
-                    });
-                    notice.push_str(&tr!("remotes-added-fetch-failed"));
-                }
-            }
-        }
-        notice.push_str(&tr!("remotes-added-undo"));
-        notice.push_str(&warnings_text(&self.warnings));
-        let outcome = Outcome {
-            notice,
-            refs: self.refs,
-            remotes: self.remotes,
-            warning: reread_warning(
-                &tr!("remotes-added-short"),
-                self.refs_error,
-                self.remotes_error,
-            ),
-            history: Some(self.history),
-        };
-        (outcome, failure)
+/// The outcome of `remote.add`, and the window to show if the fetch after it failed.
+fn add_outcome(r: RemoteAddResult) -> (Outcome, Option<Failure>) {
+    let name = &r.remote;
+    let mut notice = tr!("remotes-added", name = name, url = &r.url);
+    let mut failure = None;
+    if let Some(fetch) = r.fetch {
+        let summary = fetch::outcome(RemoteFetchResult {
+            remote: name.clone(),
+            branch: None,
+            prune: false,
+            updated: Some(fetch.updated),
+            messages: fetch.messages,
+            warnings: fetch.warnings,
+            backups: Vec::new(),
+            refs: None,
+            refs_error: None,
+        })
+        .notice;
+        notice.push_str(&format!("; {}", crate::lowercase_first(&summary)));
     }
-}
-
-/// The removed remote, as the engine photographs it (the number of remote branches is enough).
-#[derive(Debug, Clone, Deserialize)]
-struct Removed {
-    #[serde(default)]
-    refs: Vec<Value>,
-}
-
-/// Result of `remote.remove`.
-#[derive(Debug, Clone, Deserialize)]
-struct RemoveResult {
-    remote: String,
-    removed: Removed,
-    #[serde(default)]
-    upstreams_removed: Vec<String>,
-    #[serde(default)]
-    push_remotes_removed: Vec<String>,
-    #[serde(default)]
-    push_default_removed: bool,
-    #[serde(default)]
-    backups: Vec<String>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    remotes: Option<Vec<Remote>>,
-    remotes_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
+    if let Some(error) = r.fetch_error {
+        let who = fetch::who(Some(name));
+        let detail = Some(error.message.clone());
+        let window = |mut f: Failure| {
+            f.explanation = f
+                .explanation
+                .replace(&fetch::nothing_changed(), &added_anyway());
+            f
+        };
+        match error.kind {
+            FetchErrorKind::Cancelled => notice.push_str(&tr!("remotes-added-fetch-cancelled")),
+            FetchErrorKind::Auth => {
+                failure = Some(window(fetch::auth_failure(&who, detail)));
+                notice.push_str(&tr!("remotes-added-fetch-auth"));
+            }
+            FetchErrorKind::Unreachable => {
+                failure = Some(window(fetch::unreachable_failure(&who, detail)));
+                notice.push_str(&tr!("remotes-added-fetch-unreachable"));
+            }
+            FetchErrorKind::Other => {
+                failure = Some(Failure {
+                    title: tr!("remotes-fetch-failed-title"),
+                    explanation: format!("{} {}", error.message, added_anyway()),
+                    git: None,
+                });
+                notice.push_str(&tr!("remotes-added-fetch-failed"));
+            }
+        }
+    }
+    notice.push_str(&tr!("remotes-added-undo"));
+    notice.push_str(&messages_text(&r.warnings));
+    let outcome = Outcome {
+        notice,
+        refs: r.refs,
+        remotes: r.remotes,
+        warning: reread_warning(&tr!("remotes-added-short"), r.refs_error, r.remotes_error),
+        history: Some(r.journal.into()),
+    };
+    (outcome, failure)
 }
 
 /// `“a”, “b”`.
@@ -1024,55 +935,47 @@ fn quoted(names: &[String]) -> String {
         .join(", ")
 }
 
-impl RemoveResult {
-    fn outcome(self) -> Outcome {
-        let mut notice = tr!(
-            "remotes-removed",
-            name = &self.remote,
-            n = self.removed.refs.len()
-        );
-        if !self.upstreams_removed.is_empty() {
-            notice.push_str(&tr!(
-                "remotes-removed-upstreams",
-                names = quoted(&self.upstreams_removed)
-            ));
-        }
-        if !self.push_remotes_removed.is_empty() {
-            notice.push_str(&tr!(
-                "remotes-removed-push-remotes",
-                names = quoted(&self.push_remotes_removed)
-            ));
-        }
-        if self.push_default_removed {
-            notice.push_str(&tr!("remotes-removed-push-default"));
-        }
-        match self.backups.len() {
-            0 => {}
-            1 => notice.push_str(&tr!("remotes-removed-backup", backup = &self.backups[0])),
-            n => notice.push_str(&tr!("remotes-removed-backups", n = n)),
-        }
-        notice.push_str(&tr!("remotes-removed-undo"));
-        notice.push_str(&warnings_text(&self.warnings));
-        Outcome {
-            notice,
-            refs: self.refs,
-            remotes: self.remotes,
-            warning: reread_warning(
-                &tr!("remotes-removed-short"),
-                self.refs_error,
-                self.remotes_error,
-            ),
-            history: Some(self.history),
-        }
+/// The outcome of `remote.remove`.
+fn remove_outcome(r: RemoteRemoveResult) -> Outcome {
+    let mut notice = tr!(
+        "remotes-removed",
+        name = &r.remote,
+        n = r.removed.refs.len()
+    );
+    if !r.upstreams_removed.is_empty() {
+        notice.push_str(&tr!(
+            "remotes-removed-upstreams",
+            names = quoted(&r.upstreams_removed)
+        ));
+    }
+    if !r.push_remotes_removed.is_empty() {
+        notice.push_str(&tr!(
+            "remotes-removed-push-remotes",
+            names = quoted(&r.push_remotes_removed)
+        ));
+    }
+    if r.push_default_removed {
+        notice.push_str(&tr!("remotes-removed-push-default"));
+    }
+    match r.backups.len() {
+        0 => {}
+        1 => notice.push_str(&tr!("remotes-removed-backup", backup = &r.backups[0])),
+        n => notice.push_str(&tr!("remotes-removed-backups", n = n)),
+    }
+    notice.push_str(&tr!("remotes-removed-undo"));
+    notice.push_str(&messages_text(&r.warnings));
+    Outcome {
+        notice,
+        refs: r.refs,
+        remotes: r.remotes,
+        warning: reread_warning(&tr!("remotes-removed-short"), r.refs_error, r.remotes_error),
+        history: Some(r.journal.into()),
     }
 }
 
 /// The short name of the upstream: `origin/main`.
 pub fn upstream_name(upstream: &Upstream) -> &str {
-    upstream
-        .name
-        .strip_prefix("refs/remotes/")
-        .unwrap_or(&upstream.name)
+    remote_short(&upstream.name)
 }
 
 /// Ahead and behind relative to the upstream, next to a branch: the short text (`↑2 ↓1`,
@@ -1109,7 +1012,7 @@ impl Tab {
     /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_remotes(&mut self, action: Action) {
         match action {
-            Action::AddRemote => {
+            Action::Add => {
                 if let Some(repo) = &mut self.repo
                     && self.executor.writing().is_none()
                     && !repo.modal_open()
@@ -1117,17 +1020,17 @@ impl Tab {
                     repo.remotes.open_add();
                 }
             }
-            Action::AddRemoteFields(fields) => {
+            Action::AddFields(fields) => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.set_fields(fields);
                 }
             }
-            Action::HideRemoteUrl(hide) => {
+            Action::HideUrl(hide) => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.hide_url(hide);
                 }
             }
-            Action::SubmitAddRemote => {
+            Action::SubmitAdd => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1140,19 +1043,19 @@ impl Tab {
                 };
                 repo.write_error = None;
                 repo.write_label = Some(label);
-                let op = remotes::Op::Add;
+                let op = Op::Add;
                 let ticket = self.executor.submit(op.command(), params);
                 self.pending.insert(ticket, Request::Remote(generation, op));
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.add_started(ticket);
                 }
             }
-            Action::CancelAddRemote => {
+            Action::CancelAdd => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.remotes.cancel()) {
                     self.executor.cancel(ticket);
                 }
             }
-            Action::RemoveRemote(name) => {
+            Action::Remove(name) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1164,11 +1067,11 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_remove(name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::Remove;
+                    let op = Op::Remove;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::ConfirmRemoveRemote => {
+            Action::ConfirmRemove => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1178,11 +1081,11 @@ impl Tab {
                 };
                 if let Some((params, label)) = repo.remotes.confirm_remove() {
                     repo.write_label = Some(label);
-                    let op = remotes::Op::Remove;
+                    let op = Op::Remove;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::DeleteRemoteBranch(remote, branch) => {
+            Action::DeleteBranch(remote, branch) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1197,11 +1100,11 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_delete_branch(remote, branch) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteBranch;
+                    let op = Op::DeleteBranch;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::DeleteRemoteTag(remote, name) => {
+            Action::DeleteTag(remote, name) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1217,11 +1120,11 @@ impl Tab {
                 if let Some(params) = repo.remotes.start_delete_tag(remote, name) {
                     repo.write_error = None;
                     repo.write_label = Some(label);
-                    let op = remotes::Op::DeleteTag;
+                    let op = Op::DeleteTag;
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::ConfirmDeleteRemoteBranch | Action::ConfirmDeleteRemoteTag => {
+            Action::ConfirmDeleteBranch | Action::ConfirmDeleteTag => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -1234,24 +1137,23 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::CloseRemoteDialog => {
+            Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.close();
                 }
             }
-            Action::DismissRemoteError => {
+            Action::DismissError => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.dismiss();
                 }
             }
-            _ => unreachable!("action dispatched to the wrong function"),
         }
     }
 
     /// Answer of `remote.add`/`remote.remove`: list of remotes, refs and journal from the
     /// answer, then the status and log reread (fetched or removed remote branches change the
     /// graph and the upstream of the current branch). A refused name or URL stays in the dialog.
-    pub(crate) fn receive_remote(&mut self, generation: u64, op: remotes::Op, done: Done) {
+    pub(crate) fn receive_remote(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
         };
@@ -1263,11 +1165,11 @@ impl Tab {
             done.error_detail,
             done.confirm_expected,
         ) {
-            remotes::Received::Inline | remotes::Received::Confirm => {
+            Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
             }
-            remotes::Received::Done(outcome) => {
+            Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);
                 if let Some(history) = &outcome.history {
                     repo.history = history.clone();
@@ -1288,7 +1190,7 @@ impl Tab {
                 }
                 self.reload_after_fetch(generation);
             }
-            remotes::Received::Failed { message, reload } => {
+            Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);
                 self.error = message;
                 self.notice.clear();
@@ -1563,13 +1465,14 @@ mod tests {
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let r = run(&registry, &mut session, &mut b, Op::Add, params);
         assert!(matches!(r, Received::Inline), "{r:?}");
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
         assert!(dialog.error.as_deref().unwrap().contains("already exists"));
-        assert!(!dialog.sending);
+        assert!(dialog.running.is_none());
 
         // URL with credentials: warning in the dialog and after.
         b.set_fields(AddFields {
@@ -1589,6 +1492,7 @@ mod tests {
         assert_eq!(dialog.shown_url(), "https://anna:***@example.com/fork.git");
         b.hide_url(false);
         let (params, label) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let Some(Dialog::Add(dialog)) = b.dialog() else {
             panic!()
         };
@@ -1651,6 +1555,7 @@ mod tests {
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Add, params) else {
             panic!()
         };
@@ -1687,6 +1592,7 @@ mod tests {
             fetch: true,
         });
         let (params, _) = b.submit_add().unwrap();
+        b.add_started(Ticket::for_test(1));
         let Received::Done(outcome) = run(&registry, &mut session, &mut b, Op::Add, params) else {
             panic!()
         };

@@ -3,7 +3,7 @@
 //!
 //! In this order, and nothing is written if a step before the ref move fails:
 //!
-//! 1. [`RefRestore::check`] (operation in progress), HEAD and the branch equal to the expected
+//! 1. [`RefRestore::check`](project_engine::RefRestore::check) (operation in progress), HEAD and the branch equal to the expected
 //!    values, the target a commit (`rev-parse --verify <oid>^{commit}`);
 //! 2. status without `core.fsmonitor`; `strict` (undo/redo): nothing that would need a backup;
 //! 3. `mixed`/`hard`: no `--assume-unchanged`/`--skip-worktree` file whose index entry differs
@@ -36,7 +36,7 @@ use project_engine::{
 const STASH_MESSAGE: &str = "project: backup of the worktree before branch.reset";
 
 impl CliBackend {
-    /// [`GitBackend::reset`](project_engine::GitBackend::reset).
+    /// [`GitRefs::reset`](project_engine::GitRefs::reset).
     pub(super) fn reset_head(
         &mut self,
         request: &ResetRequest,

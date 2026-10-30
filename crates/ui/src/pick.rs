@@ -8,13 +8,13 @@
 //! panel with `cherry_pick.continue`/`revert.continue` and `*.abort`, like the merge.
 
 use super::{
-    Dialog, ErrorKind, Failure, History, Kind, MergeBox, Op, Outcome, Received, Starting, parse,
+    Dialog, ErrorKind, Failure, Kind, MergeBox, Op, Outcome, Received, Starting, message_texts,
     reread_warning, unexpected,
 };
-use project_domain::{Oid, RefInfo, RepoPath, Status};
+use project_domain::Oid;
+use project_engine::{PickStartParams, PickStartResult};
 use project_i18n::tr;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Cherry-pick or revert of a commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,10 +120,10 @@ impl MergeBox {
         into: String,
         mainline: Option<usize>,
     ) -> (Value, String) {
-        let mut params = json!({ "rev": rev.to_string() });
-        if let Some(mainline) = mainline {
-            params["mainline"] = json!(mainline);
-        }
+        let params = crate::params(PickStartParams {
+            rev: rev.to_string(),
+            mainline,
+        });
         let label = tr!(
             "merge-pick-label",
             title = pick.kind().title(),
@@ -182,24 +182,8 @@ impl MergeBox {
                     reload: !refused,
                 }
             }
-            Ok(value) => match parse::<PickResult>(Op::Pick(pick), value) {
-                Ok(result) => {
-                    let warning = reread_warning(
-                        &tr!("merge-done", title = title),
-                        &result.warnings,
-                        result.status_error.clone(),
-                        result.refs_error.clone(),
-                    );
-                    Received::Done(Box::new(Outcome {
-                        notice: result.notice(pick, &starting),
-                        moved: result.after != result.before,
-                        show_changes: result.in_progress && !result.conflicts.is_empty(),
-                        status: result.status,
-                        refs: result.refs,
-                        history: result.history,
-                        warning,
-                    }))
-                }
+            Ok(value) => match crate::decode::<PickStartResult>(Op::Pick(pick).command(), value) {
+                Ok(result) => Received::Done(Box::new(start_outcome(result, pick, &starting))),
                 Err(message) => Received::Failed {
                     message,
                     reload: true,
@@ -209,62 +193,56 @@ impl MergeBox {
     }
 }
 
-/// Result of `commit.cherry_pick` and `commit.revert`.
-#[derive(Debug, Clone, Deserialize)]
-struct PickResult {
-    branch: String,
-    before: Oid,
-    after: Oid,
-    in_progress: bool,
-    #[serde(default)]
-    conflicts: Vec<RepoPath>,
-    #[serde(default, deserialize_with = "crate::engine_text::texts")]
-    warnings: Vec<String>,
-    status: Option<Status>,
-    status_error: Option<String>,
-    refs: Option<Vec<RefInfo>>,
-    refs_error: Option<String>,
-    #[serde(flatten)]
-    history: History,
+/// The outcome of `commit.cherry_pick` and `commit.revert`.
+fn start_outcome(r: PickStartResult, pick: Pick, starting: &Starting) -> Outcome {
+    let notice = start_notice(&r, pick, starting);
+    let warning = reread_warning(
+        &tr!("merge-done", title = pick.kind().title()),
+        &message_texts(&r.warnings),
+        r.status_error,
+        r.refs_error,
+    );
+    Outcome {
+        notice,
+        moved: r.after != r.before,
+        show_changes: r.in_progress && !r.conflicts.is_empty(),
+        status: r.status,
+        refs: r.refs,
+        history: r.journal.into(),
+        warning,
+    }
 }
 
-impl PickResult {
-    /// The message for the status bar.
-    fn notice(&self, pick: Pick, starting: &Starting) -> String {
-        let kind = pick.kind();
-        let title = kind.title();
-        let name = kind.name();
-        let what = &starting.what;
-        let branch = self
-            .branch
-            .strip_prefix("refs/heads/")
-            .unwrap_or(&self.branch);
-        if self.in_progress {
-            return match self.conflicts.len() {
-                0 => tr!(
-                    "merge-pick-stopped-before-commit",
-                    title = title,
-                    what = what,
-                    branch = branch,
-                    name = name
-                ),
-                n => tr!(
-                    "merge-pick-stopped",
-                    title = title,
-                    what = what,
-                    branch = branch,
-                    files = tr!("merge-conflict-files", n = n),
-                    name = name
-                ),
-            };
-        }
-        let id = self.after.short();
-        match pick {
-            Pick::CherryPick => {
-                tr!("merge-cherry-picked", what = what, branch = branch, id = id)
-            }
-            Pick::Revert => tr!("merge-reverted", what = what, branch = branch, id = id),
-        }
+/// The message of `commit.cherry_pick` and `commit.revert` for the status bar.
+fn start_notice(r: &PickStartResult, pick: Pick, starting: &Starting) -> String {
+    let kind = pick.kind();
+    let title = kind.title();
+    let name = kind.name();
+    let what = &starting.what;
+    let branch = &r.branch;
+    if r.in_progress {
+        return match r.conflicts.len() {
+            0 => tr!(
+                "merge-pick-stopped-before-commit",
+                title = title,
+                what = what,
+                branch = branch,
+                name = name
+            ),
+            n => tr!(
+                "merge-pick-stopped",
+                title = title,
+                what = what,
+                branch = branch,
+                files = tr!("merge-conflict-files", n = n),
+                name = name
+            ),
+        };
+    }
+    let id = r.after.short();
+    match pick {
+        Pick::CherryPick => tr!("merge-cherry-picked", what = what, branch = branch, id = id),
+        Pick::Revert => tr!("merge-reverted", what = what, branch = branch, id = id),
     }
 }
 

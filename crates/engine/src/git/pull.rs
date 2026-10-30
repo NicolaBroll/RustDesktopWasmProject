@@ -2,15 +2,17 @@
 //! (`impl-docs/git/sync.md`).
 //!
 //! The pull is driven by the engine in two steps: first the fetch of only the upstream's branch
-//! ([`GitBackend::fetch`](super::GitBackend::fetch), slow and cancellable), then the local
-//! integration ([`GitBackend::pull`](super::GitBackend::pull): fast-forward, merge or rebase), which
+//! ([`GitRemotes::fetch`](super::GitRemotes::fetch), slow and cancellable), then the local
+//! integration ([`GitRemotes::pull`](super::GitRemotes::pull): fast-forward, merge or rebase), which
 //! cannot be cancelled midway. So the command knows what arrived before writing, decides the
 //! strategy ([`PullSettings::policy`], [`pull_mode`]), checks the repo state
 //! ([`check_pull_state`]) and records the branch move in the journal.
 
 use super::{HEADS_PREFIX, check_no_operation};
 use crate::{EngineError, Message};
+use project_domain::remote_short;
 use project_domain::{EntryKind, Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The configured upstream of a local branch (`branch.<name>.remote` and `branch.<name>.merge`).
@@ -45,7 +47,7 @@ pub struct PullSettings {
 
 /// The strategy requested with the `strategy` parameter of `remote.pull`, which replaces the
 /// configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PullStrategy {
     /// Fast-forward if possible, otherwise a merge commit.
@@ -163,7 +165,7 @@ impl PullSettings {
     }
 }
 
-/// How to integrate the upstream into the branch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// How to integrate the upstream into the branch ([`GitRemotes::pull`](super::GitRemotes::pull)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullMode {
     /// The branch advances to the upstream (`git merge --ff-only`, or `update-ref` for a branch that
@@ -284,7 +286,7 @@ pub fn check_pull_state(status: &Status, mode: &PullMode) -> Result<(), EngineEr
 /// (`Merge remote-tracking branch 'origin/main'`), with ` into <branch>` if the branch is not
 /// `main` or `master` (as git does with the default `merge.suppressDest`).
 pub fn merge_message(upstream: &str, branch: &str) -> String {
-    let short = upstream.strip_prefix("refs/remotes/").unwrap_or(upstream);
+    let short = remote_short(upstream);
     let mut message = format!("Merge remote-tracking branch '{short}'");
     if branch != "main" && branch != "master" {
         message.push_str(&format!(" into {branch}"));
@@ -292,7 +294,7 @@ pub fn merge_message(upstream: &str, branch: &str) -> String {
     message
 }
 
-/// What `remote.pull` asks of the backend after the fetch ([`GitBackend::pull`](super::GitBackend::pull)).
+/// What `remote.pull` asks of the backend after the fetch ([`GitRemotes::pull`](super::GitRemotes::pull)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequest {
     /// The local branch (short name).
@@ -311,7 +313,7 @@ pub struct PullRequest {
     pub message: String,
 }
 
-/// Outcome of [`GitBackend::pull`](super::GitBackend::pull).
+/// Outcome of [`GitRemotes::pull`](super::GitRemotes::pull).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullOutcome {
     /// The value of the branch afterwards; if the merge is stopped ([`PullOutcome::in_progress`]) the one

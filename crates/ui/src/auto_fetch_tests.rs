@@ -5,6 +5,7 @@
 use super::*;
 use crate::Action;
 use crate::executor::Executor;
+use crate::fetch;
 use project_engine::{
     Capabilities, FetchFailure, MemoryBackend, MemoryOpener, Platform, Registry, Session,
 };
@@ -145,8 +146,8 @@ fn the_interval_starts_a_fetch_with_the_parameters_of_the_button() {
     frame(&mut tab, t0 + 5 * MINUTE);
     assert_eq!(fetching(&tab), 1);
     let running = tab.repo.as_ref().unwrap().fetch.running().unwrap().clone();
-    assert!(running.auto);
-    assert_eq!(running.remote, None, "the remote the engine chooses");
+    assert!(running.extra.auto);
+    assert_eq!(running.extra.remote, None, "the remote the engine chooses");
     // Same parameters as "Fetch": `prune` as the button.
     assert_eq!(
         tab.repo.as_ref().unwrap().fetch.request(None),
@@ -154,7 +155,7 @@ fn the_interval_starts_a_fetch_with_the_parameters_of_the_button() {
         "one in progress"
     );
     assert_eq!(
-        crate::fetch::FetchBox::default().request(None),
+        fetch::FetchBox::default().request(None),
         Some(serde_json::json!({ "prune": true }))
     );
     let seen = settle(&mut tab);
@@ -285,8 +286,17 @@ fn a_manual_fetch_restarts_the_timer() {
     let mut tab = tab();
     let t0 = Instant::now();
     frame(&mut tab, t0);
-    tab.apply(Action::Fetch(None));
-    assert!(!tab.repo.as_ref().unwrap().fetch.running().unwrap().auto);
+    tab.apply(Action::Fetch(fetch::Action::Fetch(None)));
+    assert!(
+        !tab.repo
+            .as_ref()
+            .unwrap()
+            .fetch
+            .running()
+            .unwrap()
+            .extra
+            .auto
+    );
     let t1 = t0 + 4 * MINUTE;
     frame(&mut tab, t1);
     settle(&mut tab);
@@ -310,7 +320,7 @@ fn never_two_fetches_of_the_same_tab() {
     // Still running long after: no second one, and the bar's Fetch does nothing either.
     tab.receive();
     frame(&mut tab, t0 + 60 * MINUTE);
-    tab.apply(Action::Fetch(None));
+    tab.apply(Action::Fetch(fetch::Action::Fetch(None)));
     assert_eq!(fetching(&tab), 1);
     platform.release();
     settle(&mut tab);
@@ -409,7 +419,7 @@ fn a_manual_fetch_that_works_resets_the_backoff() {
         a.unreachable("x".into());
         a.suspend(None);
     }
-    tab.apply(Action::Fetch(None));
+    tab.apply(Action::Fetch(fetch::Action::Fetch(None)));
     settle(&mut tab);
     let a = auto(&tab);
     assert_eq!(a.wait(), Some(5 * MINUTE));

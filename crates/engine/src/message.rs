@@ -256,7 +256,7 @@ macro_rules! display_arg_borrowed {
 }
 display_arg_borrowed!(
     std::str::EscapeDebug<'_>,
-    std::borrow::Cow<'_, str>,
+    Cow<'_, str>,
     std::path::Display<'_>
 );
 

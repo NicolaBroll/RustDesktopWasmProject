@@ -6,7 +6,7 @@
 mod common;
 
 use common::Repo;
-use project_engine::{EngineError, GitBackend, Registry, Session};
+use project_engine::{EngineError, GitRefs, Registry, Session};
 use serde_json::{Value, json};
 use std::sync::Arc;
 

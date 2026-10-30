@@ -3,15 +3,12 @@ name = "project-i18n"
 description = "L0: UI translations (Fluent), Italian and English"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
 fluent-bundle.workspace = true
-unic-langid.workspace = true
-
-[features]
-# Only for the UI tests, which compare the Italian texts: they start in Italian.
 
 [dev-dependencies]
 fluent-syntax.workspace = true

@@ -45,6 +45,7 @@ use super::CliBackend;
 use crate::command::{Segment, Streamed, failure};
 use crate::progress::{parse_progress, remote_error};
 use project_domain::Oid;
+use project_domain::{HEADS_PREFIX, REMOTES_PREFIX};
 use project_engine::{
     EngineError, FetchOutcome, FetchRequest, JobContext, PushKind, PushOutcome, PushRejection,
     PushRequest, RemoteBranchDelete, RemoteBranchDeleted, RemoteTagDelete, TagPush, TagPushed,
@@ -73,7 +74,10 @@ impl CliBackend {
         request: &FetchRequest,
         job: &JobContext,
     ) -> Result<FetchOutcome, EngineError> {
-        let refspec = request.branch.as_ref().map(|b| format!("refs/heads/{b}"));
+        let refspec = request
+            .branch
+            .as_ref()
+            .map(|b| format!("{HEADS_PREFIX}{b}"));
         let prune = request.prune && request.branch.is_none();
         let before = if prune {
             self.ref_values("refs/")?
@@ -176,7 +180,7 @@ impl CliBackend {
     /// branch only if some of its commits are no longer reachable from any ref; any other ref always.
     fn save_pruned(&self, name: &str, oid: &str) -> Result<Option<String>, EngineError> {
         let reflog = format!("project: backup of {name} removed by fetch --prune");
-        if !name.starts_with("refs/remotes/") {
+        if !name.starts_with(REMOTES_PREFIX) {
             return self.create_backup_ref("prune", oid, &reflog).map(Some);
         }
         let out = self.run(&["rev-list", "--count", oid, "--not", "--all"])?;
@@ -189,14 +193,14 @@ impl CliBackend {
 }
 
 impl CliBackend {
-    /// [`GitBackend::push`](project_engine::GitBackend::push).
+    /// [`GitRemotes::push`](project_engine::GitRemotes::push).
     pub(super) fn push_branch(
         &self,
         request: &PushRequest,
         job: &JobContext,
     ) -> Result<PushOutcome, EngineError> {
-        let dst = format!("refs/heads/{}", request.remote_branch);
-        let refspec = format!("refs/heads/{}:{dst}", request.branch);
+        let dst = format!("{HEADS_PREFIX}{}", request.remote_branch);
+        let refspec = format!("{HEADS_PREFIX}{}:{dst}", request.branch);
         let lease = request.lease.map(|expected| {
             format!(
                 "--force-with-lease={dst}:{}",
@@ -338,7 +342,7 @@ impl CliBackend {
 }
 
 impl CliBackend {
-    /// [`GitBackend::delete_remote_branch`](project_engine::GitBackend::delete_remote_branch).
+    /// [`GitRemotes::delete_remote_branch`](project_engine::GitRemotes::delete_remote_branch).
     pub(super) fn delete_branch_on_remote(
         &self,
         request: &RemoteBranchDelete,
@@ -354,18 +358,17 @@ impl CliBackend {
                 request.remote, request.branch
             ),
         )?;
-        self.delete_on_remote(
-            "remote.delete_branch",
-            &request.remote,
-            &format!("refs/heads/{}", request.branch),
-            &request.branch,
-            &expected,
-            backup,
-            job,
-        )
+        let target = RemoteDeletion {
+            id: "remote.delete_branch",
+            remote: &request.remote,
+            dst: &format!("{HEADS_PREFIX}{}", request.branch),
+            label: &request.branch,
+            expected: &expected,
+        };
+        self.delete_on_remote(&target, backup, job)
     }
 
-    /// [`GitBackend::remote_tag`](project_engine::GitBackend::remote_tag): `git ls-remote --tags
+    /// [`GitRemotes::remote_tag`](project_engine::GitRemotes::remote_tag): `git ls-remote --tags
     /// --refs --end-of-options <remote> refs/tags/<name>`. `--refs` leaves out the peeled lines
     /// (`^{}`), so the value is the one the remote stores (the tag object of an annotated tag);
     /// the pattern matches the tail of the names, so only the line with exactly `refs/tags/<name>`
@@ -409,7 +412,7 @@ impl CliBackend {
         Ok(None)
     }
 
-    /// [`GitBackend::push_tag`](project_engine::GitBackend::push_tag): `git push --porcelain
+    /// [`GitRemotes::push_tag`](project_engine::GitRemotes::push_tag): `git push --porcelain
     /// --progress --no-follow-tags --recurse-submodules=check --end-of-options <remote>
     /// refs/tags/<name>:refs/tags/<name>`, never `--force`.
     pub(super) fn push_tag_to_remote(
@@ -501,7 +504,7 @@ impl CliBackend {
         }
     }
 
-    /// [`GitBackend::delete_remote_tag`](project_engine::GitBackend::delete_remote_tag).
+    /// [`GitRemotes::delete_remote_tag`](project_engine::GitRemotes::delete_remote_tag).
     pub(super) fn delete_tag_on_remote(
         &self,
         request: &RemoteTagDelete,
@@ -527,7 +530,14 @@ impl CliBackend {
         } else {
             self.fetch_into_backup(ID, &request.remote, &dst, &expected, job)?
         };
-        self.delete_on_remote(ID, &request.remote, &dst, &dst, &expected, backup, job)
+        let target = RemoteDeletion {
+            id: ID,
+            remote: &request.remote,
+            dst: &dst,
+            label: &dst,
+            expected: &expected,
+        };
+        self.delete_on_remote(&target, backup, job)
     }
 
     /// The remote value of `dst` (a tag whose object is not here) fetched straight into a new
@@ -635,17 +645,19 @@ impl CliBackend {
     /// --force-with-lease=<dst>:<expected> --end-of-options <remote> :<dst>`. `label` names the
     /// ref in [`EngineError::PushRejected`]. The backup is removed only when nothing was certainly
     /// deleted.
-    #[allow(clippy::too_many_arguments)]
     fn delete_on_remote(
         &self,
-        id: &'static str,
-        remote: &str,
-        dst: &str,
-        label: &str,
-        expected: &str,
+        target: &RemoteDeletion<'_>,
         backup: String,
         job: &JobContext,
     ) -> Result<RemoteBranchDeleted, EngineError> {
+        let RemoteDeletion {
+            id,
+            remote,
+            dst,
+            label,
+            expected,
+        } = *target;
         let refspec = format!(":{dst}");
         let lease = format!("--force-with-lease={dst}:{expected}");
         let args = [
@@ -745,6 +757,17 @@ impl CliBackend {
             }
         }
     }
+}
+
+/// What [`CliBackend::delete_on_remote`] deletes: `dst` (full name) on `remote`, if it is still
+/// `expected` there; `label` names it in the errors.
+#[derive(Clone, Copy)]
+struct RemoteDeletion<'a> {
+    id: &'static str,
+    remote: &'a str,
+    dst: &'a str,
+    label: &'a str,
+    expected: &'a str,
 }
 
 /// The error of a failed command that contacts `remote`: [`EngineError::Auth`] /

@@ -1,0 +1,12 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "can_redo": false,
+  "can_undo": false,
+  "done": [],
+  "next_redo": null,
+  "next_undo": null,
+  "undone": []
+}

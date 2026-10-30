@@ -1,3 +1,4 @@
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
@@ -89,6 +90,26 @@ impl Serialize for RepoPath {
 impl<'de> Deserialize<'de> for RepoPath {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserialize_bytes(deserializer, "a path as a string or as a byte array").map(Self)
+    }
+}
+
+impl JsonSchema for RepoPath {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "RepoPath".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "Path relative to the root of the worktree, with `/`; a byte array if it is not UTF-8",
+            "anyOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 255 } },
+            ],
+        })
     }
 }
 

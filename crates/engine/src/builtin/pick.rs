@@ -62,21 +62,21 @@ pub struct PickStartResult {
 }
 
 /// Parameters of `commit.cherry_pick` and `commit.revert`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct StartParams {
+pub struct PickStartParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.
-    rev: String,
+    pub rev: String,
     /// For a merge commit: the parent (from 1) relative to which to take the changes.
-    #[serde(default)]
-    mainline: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mainline: Option<usize>,
 }
 
-pub(super) fn commit_cherry_pick(s: &mut Session, p: StartParams) -> Out {
+pub(super) fn commit_cherry_pick(s: &mut Session, p: PickStartParams) -> Out {
     pick_start(s, p, PickKind::CherryPick)
 }
 
-pub(super) fn commit_revert(s: &mut Session, p: StartParams) -> Out {
+pub(super) fn commit_revert(s: &mut Session, p: PickStartParams) -> Out {
     pick_start(s, p, PickKind::Revert)
 }
 
@@ -113,7 +113,11 @@ pub(super) fn revert_abort(s: &mut Session, p: MergeAbortParams) -> Out {
 /// `edit.undo` brings the branch, with index and worktree, back to where it was.
 ///
 /// Result: [`PickStartResult`].
-fn pick_start(s: &mut Session, StartParams { rev, mainline }: StartParams, kind: PickKind) -> Out {
+fn pick_start(
+    s: &mut Session,
+    PickStartParams { rev, mainline }: PickStartParams,
+    kind: PickKind,
+) -> Out {
     let id = kind.command();
     if rev.trim().is_empty() || rev.contains('\0') {
         return Err(EngineError::InvalidParams {

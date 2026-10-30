@@ -30,7 +30,7 @@ pub use builtin::merge::{
     IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
     MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
 };
-pub use builtin::pick::PickStartResult;
+pub use builtin::pick::{PickStartParams, PickStartResult};
 pub use builtin::pull::{PullApplied, PullFetch, RemotePullParams, RemotePullResult};
 pub use builtin::push::{PushRemoteSource, RemotePushParams, RemotePushResult};
 pub use builtin::rebase::{

@@ -21,6 +21,7 @@ engine-post-commit = il commit è stato creato, ma { $reason }: non ripetere il 
 engine-undo-conflict = `{ $command }` rifiutato: i ref sono cambiati dopo l'operazione ({ $refs }). Niente modificato: per non sovrascrivere lavoro fatto altrove, l'operazione va annullata a mano
 engine-checkout-conflict = checkout di `{ $target }` rifiutato: sovrascriverebbe modifiche locali ({ $files }). Niente modificato: committare, mettere da parte o scartare queste modifiche e riprovare
 engine-auth = autenticazione con il remoto `{ $remote }` non riuscita: { $message }. Niente modificato: controllare le credenziali (credential helper, chiave SSH caricata nell'agent, host noto in `known_hosts`)
+engine-auth-cancelled = autenticazione con il remoto `{ $remote }` annullata: le credenziali non sono state inserite. Niente modificato
 engine-remote-unreachable = il remoto `{ $remote }` non è raggiungibile: { $message }. Niente modificato
 engine-cancelled = `{ $command }` annullato
 engine-pull-conflict = pull di `{ $branch }` interrotto: il { $operation } con `{ $upstream }` ha conflitti in { $files }. Il { $operation } è stato annullato e il branch è com'era (il fetch è fatto): per integrare `{ $upstream }` risolvendo i conflitti, `git { $operation } { $upstream }` da terminale, oppure usare l'altra strategia (`strategy`)

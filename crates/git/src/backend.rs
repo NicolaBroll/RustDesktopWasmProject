@@ -33,20 +33,21 @@ use project_domain::{
 use project_engine::{
     BACKUP_PREFIX, BlameQuery, BranchDeleted, CloneOutcome, CloneRequest, CommitGraphState,
     CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
-    ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError, FetchOutcome,
-    FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance, GitOperations,
-    GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext, LinePatch,
-    LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message, OperationState,
-    PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest,
-    RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot,
-    RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion, StashApplied,
-    StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed, UpstreamConfig,
-    WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    ConflictVersions, CredentialPrompter, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
+    FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance,
+    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext,
+    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
+    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
+    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
+    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
+    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
     versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Opens repositories with the system `git`. It is the [`RepoOpener`] of the desktop and the CLI.
@@ -80,6 +81,26 @@ impl CliOpener {
     /// Used by tests for a deterministic environment (e.g. `GIT_CONFIG_GLOBAL=/dev/null`).
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.git.set_env(key.into(), value.into());
+        self
+    }
+
+    /// Network commands (fetch, pull, push, tags and branches on the remote, clone) ask
+    /// `prompter` when git or ssh need a user name, password, passphrase or host key
+    /// confirmation (askpass bridge, `impl-docs/git/sync.md` "Credential prompts"). git and ssh
+    /// start this executable ([`std::env::current_exe`]) as askpass: its `main` must call
+    /// [`askpass_client`](crate::askpass_client) first. Set by the desktop app only; without it
+    /// (MCP, tests) nothing is ever asked. If the executable path cannot be found, no prompter.
+    pub fn credential_prompter(self, prompter: Arc<dyn CredentialPrompter>) -> Self {
+        match std::env::current_exe() {
+            Ok(program) => self.askpass(prompter, program.into_os_string()),
+            Err(_) => self,
+        }
+    }
+
+    /// Like [`CliOpener::credential_prompter`], with `program` as git's askpass (it must call
+    /// [`askpass_client`](crate::askpass_client) in its `main`).
+    pub fn askpass(mut self, prompter: Arc<dyn CredentialPrompter>, program: OsString) -> Self {
+        self.git.set_prompter(prompter, program);
         self
     }
 

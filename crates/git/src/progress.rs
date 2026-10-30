@@ -1,6 +1,7 @@
 //! Reading the stderr of `git fetch --progress` (§6) and `git commit-graph write --progress`:
 //! progress lines and remote errors. Pure functions, tested with the text git writes with `LC_ALL=C`.
 
+use crate::command::Streamed;
 use project_engine::{EngineError, Progress};
 
 /// A git progress line, as `progress.c` writes it: `<phase>: <n>` or
@@ -112,6 +113,24 @@ const UNREACHABLE: &[&str] = &[
     "could not read from remote repository",
 ];
 
+impl Streamed {
+    /// [`remote_error`] of this run's stderr; an [`EngineError::Auth`] becomes
+    /// [`EngineError::AuthCancelled`] if the user cancelled a credential question
+    /// ([`Streamed::auth_cancelled`]). Only `Auth`: after a cancelled question ssh may still
+    /// authenticate another way and git fail for another reason (connection lost after the
+    /// remote changed a ref), which keeps its own error and its backup handling.
+    pub(crate) fn remote_error(&self, remote: &str, stderr: &str) -> Option<EngineError> {
+        match remote_error(remote, stderr) {
+            Some(EngineError::Auth { .. }) if self.auth_cancelled => {
+                Some(EngineError::AuthCancelled {
+                    remote: remote.to_owned(),
+                })
+            }
+            other => other,
+        }
+    }
+}
+
 /// The error of a failed `git fetch` from `remote`, from its stderr (without the progress
 /// lines): [`EngineError::Auth`], [`EngineError::RemoteUnreachable`],
 /// [`EngineError::NotAllowed`] for a branch the remote does not have (`couldn't find remote ref`),
@@ -147,6 +166,43 @@ mod tests {
 
     fn progress(line: &str) -> Progress {
         parse_progress(line).unwrap_or_else(|| panic!("unreadable: {line:?}"))
+    }
+
+    /// A cancelled question turns only an `Auth` failure into `AuthCancelled`: any other
+    /// failure (the remote may have changed something) keeps its error.
+    #[cfg(unix)]
+    #[test]
+    fn a_cancelled_question_changes_only_auth_errors() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let streamed = Streamed {
+            status: std::process::ExitStatus::from_raw(128 << 8),
+            cancelled: false,
+            stdout: Vec::new(),
+            auth_cancelled: true,
+        };
+        let auth = "fatal: could not read Username for 'http://h': terminal prompts disabled";
+        assert!(matches!(
+            streamed.remote_error("origin", auth),
+            Some(EngineError::AuthCancelled { remote }) if remote == "origin"
+        ));
+        let lost = "fatal: Could not read from remote repository.";
+        assert!(matches!(
+            streamed.remote_error("origin", lost),
+            Some(EngineError::RemoteUnreachable { .. })
+        ));
+        assert!(
+            streamed
+                .remote_error("origin", "fatal: something else")
+                .is_none()
+        );
+        let answered = Streamed {
+            auth_cancelled: false,
+            ..streamed
+        };
+        assert!(matches!(
+            answered.remote_error("origin", auth),
+            Some(EngineError::Auth { .. })
+        ));
     }
 
     #[test]

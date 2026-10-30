@@ -311,7 +311,11 @@ Rules for every call to git:
   `GIT_*_PATHSPECS` variables are removed.
 - Environment: `GIT_TERMINAL_PROMPT=0` (git must never wait for input from a terminal that is
   not there), `LC_ALL=C` for the error messages to be recognized. The rest of the environment is inherited
-  (SSH agent, credential helper).
+  (SSH agent, credential helper). Credentials are asked only through askpass: the network
+  commands of an opener with a `CredentialPrompter` (desktop app) run with `GIT_ASKPASS` and
+  `SSH_ASKPASS` = the app's executable and a per-command bridge on `127.0.0.1` with a random
+  token ([git/sync.md](git/sync.md), "Credential prompts"); without one (MCP, tests) nothing
+  is ever asked.
 - Commit messages via stdin (`git commit -F -`), never as an argument (details in [git/commit.md](git/commit.md)).
 - Path lists for writes go via stdin (`--pathspec-from-file=-
   --pathspec-file-nul`, with `--literal-pathspecs`): no command-line limit and no

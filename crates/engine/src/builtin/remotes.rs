@@ -316,7 +316,7 @@ impl RemoteAddFetchError {
     /// The `fetch_error` of a failed fetch.
     fn of(e: &EngineError) -> Self {
         let kind = match e {
-            EngineError::Auth { .. } => FetchErrorKind::Auth,
+            EngineError::Auth { .. } | EngineError::AuthCancelled { .. } => FetchErrorKind::Auth,
             EngineError::RemoteUnreachable { .. } => FetchErrorKind::Unreachable,
             EngineError::Cancelled { .. } => FetchErrorKind::Cancelled,
             _ => FetchErrorKind::Other,

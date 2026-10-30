@@ -21,6 +21,7 @@ engine-post-commit = the commit was created, but { $reason }: do not repeat the 
 engine-undo-conflict = `{ $command }` refused: the refs changed after the operation ({ $refs }). Nothing changed: so as not to overwrite work done elsewhere, the operation must be undone by hand
 engine-checkout-conflict = checkout of `{ $target }` refused: it would overwrite local changes ({ $files }). Nothing changed: commit, stash or discard these changes and try again
 engine-auth = authentication with remote `{ $remote }` failed: { $message }. Nothing changed: check the credentials (credential helper, SSH key loaded in the agent, host listed in `known_hosts`)
+engine-auth-cancelled = authentication with remote `{ $remote }` cancelled: the credentials were not given. Nothing changed
 engine-remote-unreachable = remote `{ $remote }` cannot be reached: { $message }. Nothing changed
 engine-cancelled = `{ $command }` cancelled
 engine-pull-conflict = pull of `{ $branch }` stopped: the { $operation } with `{ $upstream }` has conflicts in { $files }. The { $operation } was aborted and the branch is as it was (the fetch is done): to integrate `{ $upstream }` resolving the conflicts, run `git { $operation } { $upstream }` from a terminal, or use the other strategy (`strategy`)

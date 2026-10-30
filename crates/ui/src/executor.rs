@@ -129,7 +129,9 @@ impl ErrorKind {
             EngineError::Git { .. } | EngineError::GitWithReason { .. } => ErrorKind::Git,
             EngineError::PostCommit { .. } => ErrorKind::PostCommit,
             EngineError::CheckoutConflict { .. } => ErrorKind::CheckoutConflict,
-            EngineError::Auth { .. } => ErrorKind::Auth,
+            // A cancelled credential question counts as an authentication failure (auto fetch
+            // suspends instead of asking again at every tick).
+            EngineError::Auth { .. } | EngineError::AuthCancelled { .. } => ErrorKind::Auth,
             EngineError::RemoteUnreachable { .. } => ErrorKind::RemoteUnreachable,
             EngineError::Cancelled { .. } => ErrorKind::Cancelled,
             EngineError::PullConflict { operation, .. } => ErrorKind::PullConflict(*operation),

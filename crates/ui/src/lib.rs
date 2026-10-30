@@ -18,6 +18,7 @@ mod clone;
 mod commit;
 mod compare;
 mod conflict;
+mod credentials;
 mod details;
 mod diff;
 mod diff_view;
@@ -52,6 +53,7 @@ mod tracking;
 mod view;
 mod word_diff;
 
+pub use credentials::CredentialDialog;
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
 use branch::BranchBox;

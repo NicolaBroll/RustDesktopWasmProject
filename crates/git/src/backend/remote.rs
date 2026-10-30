@@ -15,8 +15,10 @@
 //!   commits, any other ref (a refspec toward `refs/heads/`, a mirror) always; without it pruning
 //!   follows `fetch.prune`;
 //! - stdin closed, `GIT_TERMINAL_PROMPT=0` and no controlling terminal (`setsid`): the fetch
-//!   never waits for an answer from the keyboard (see `Git::run_streaming`); credential helpers,
-//!   `ssh-agent` and `SSH_ASKPASS` work as usual;
+//!   never waits for an answer from the keyboard (see `Git::run_network`); credential helpers,
+//!   `ssh-agent` and `SSH_ASKPASS` work as usual; with a `CredentialPrompter` set on the opener
+//!   git and ssh ask the user through the app (askpass bridge, S52), and a cancelled question
+//!   gives `EngineError::AuthCancelled`;
 //! - stderr read while git runs: progress lines (`\r`) go to the `JobContext`, the
 //!   other lines into the result or the error.
 //!
@@ -43,7 +45,7 @@
 
 use super::CliBackend;
 use crate::command::{Segment, Streamed, failure};
-use crate::progress::{parse_progress, remote_error};
+use crate::progress::parse_progress;
 use project_domain::Oid;
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX};
 use project_engine::{
@@ -99,10 +101,11 @@ impl CliBackend {
         args.extend(refspec.as_deref());
 
         let mut lines = Vec::new();
-        let streamed = self.git.run_streaming(
+        let streamed = self.git.run_network(
             &self.workdir,
             &args,
             false,
+            &request.remote,
             |Segment { text, newline }| match parse_progress(&text) {
                 Some(progress) => job.report(&progress),
                 // A line rewritten with `\r` that is not progress (rare) is not kept: the
@@ -121,7 +124,7 @@ impl CliBackend {
         }
         if !streamed.status.success() {
             let stderr = lines.join("\n");
-            if let Some(error) = remote_error(&request.remote, &stderr) {
+            if let Some(error) = streamed.remote_error(&request.remote, &stderr) {
                 return Err(error);
             }
             // `failure` replaces empty text with the exit code.
@@ -247,10 +250,11 @@ impl CliBackend {
         };
 
         let mut lines = Vec::new();
-        let streamed = self.git.run_streaming(
+        let streamed = self.git.run_network(
             &self.workdir,
             &args,
             true,
+            &request.remote,
             |Segment { text, newline }| match parse_progress(&text) {
                 Some(progress) => job.report(&progress),
                 None if newline && !text.trim().is_empty() => {
@@ -317,7 +321,7 @@ impl CliBackend {
                 Err(reject(reason, message))
             }
             _ => {
-                if let Some(error) = remote_error(&request.remote, &stderr) {
+                if let Some(error) = streamed.remote_error(&request.remote, &stderr) {
                     return Err(error);
                 }
                 if stderr.contains("failed to push some refs") {
@@ -392,14 +396,14 @@ impl CliBackend {
             remote,
             &full,
         ];
-        let (streamed, lines) = self.stream_remote(&args, job)?;
+        let (streamed, lines) = self.stream_remote(remote, &args, job)?;
         if streamed.cancelled {
             return Err(EngineError::Cancelled {
                 command: "remote.delete_tag",
             });
         }
         if !streamed.status.success() {
-            return Err(remote_failure(remote, &args, streamed.status, lines));
+            return Err(remote_failure(remote, &args, &streamed, lines));
         }
         for line in streamed.stdout.split(|&b| b == b'\n') {
             let Some(tab) = line.iter().position(|&b| b == b'\t') else {
@@ -436,7 +440,7 @@ impl CliBackend {
             &request.remote,
             &refspec,
         ];
-        let (streamed, lines) = self.stream_remote(&args, job)?;
+        let (streamed, lines) = self.stream_remote(&request.remote, &args, job)?;
         if streamed.cancelled {
             return Err(EngineError::Cancelled {
                 command: "remote.push_tag",
@@ -483,7 +487,7 @@ impl CliBackend {
                 Err(reject(reason, message))
             }
             _ => {
-                if let Some(error) = remote_error(&request.remote, &stderr) {
+                if let Some(error) = streamed.remote_error(&request.remote, &stderr) {
                     return Err(error);
                 }
                 if stderr.contains("failed to push some refs") {
@@ -497,7 +501,7 @@ impl CliBackend {
                 Err(remote_failure(
                     &request.remote,
                     &args,
-                    streamed.status,
+                    &streamed,
                     Vec::from([stderr]),
                 ))
             }
@@ -574,7 +578,7 @@ impl CliBackend {
             remote,
             &refspec,
         ];
-        let (streamed, lines) = self.stream_remote(&args, job)?;
+        let (streamed, lines) = self.stream_remote(remote, &args, job)?;
         if streamed.cancelled {
             return Err(EngineError::Cancelled { command: id });
         }
@@ -592,7 +596,7 @@ impl CliBackend {
                     message: stderr,
                 });
             }
-            return Err(remote_failure(remote, &args, streamed.status, vec![stderr]));
+            return Err(remote_failure(remote, &args, &streamed, vec![stderr]));
         }
         match self.ref_value(&backup)? {
             Some(oid) if oid.to_string() == expected => Ok(backup),
@@ -617,17 +621,19 @@ impl CliBackend {
     }
 
     /// A git command that contacts the remote, with the environment of the fetch (see
-    /// `Git::run_streaming`): progress to `job`, the other stderr lines returned; stdout captured.
+    /// `Git::run_network`): progress to `job`, the other stderr lines returned; stdout captured.
     fn stream_remote(
         &self,
+        remote: &str,
         args: &[&str],
         job: &JobContext,
     ) -> Result<(Streamed, Vec<String>), EngineError> {
         let mut lines = Vec::new();
-        let streamed = self.git.run_streaming(
+        let streamed = self.git.run_network(
             &self.workdir,
             args,
             true,
+            remote,
             |Segment { text, newline }| match parse_progress(&text) {
                 Some(progress) => job.report(&progress),
                 None if newline && !text.trim().is_empty() => {
@@ -680,7 +686,7 @@ impl CliBackend {
                 &["update-ref", "-d", &backup, expected],
             );
         };
-        let (streamed, lines) = match self.stream_remote(&args, job) {
+        let (streamed, lines) = match self.stream_remote(remote, &args, job) {
             Ok(result) => result,
             Err(e) => {
                 drop_backup();
@@ -736,8 +742,11 @@ impl CliBackend {
                 Err(reject(rejection(&summary), message))
             }
             _ => {
-                if let Some(error) = remote_error(remote, &stderr) {
-                    if matches!(error, EngineError::Auth { .. }) {
+                if let Some(error) = streamed.remote_error(remote, &stderr) {
+                    if matches!(
+                        error,
+                        EngineError::Auth { .. } | EngineError::AuthCancelled { .. }
+                    ) {
                         drop_backup();
                     }
                     return Err(error);
@@ -775,17 +784,17 @@ struct RemoteDeletion<'a> {
 fn remote_failure(
     remote: &str,
     args: &[&str],
-    status: std::process::ExitStatus,
+    streamed: &Streamed,
     lines: Vec<String>,
 ) -> EngineError {
     let stderr = lines.join("\n");
-    if let Some(error) = remote_error(remote, &stderr) {
+    if let Some(error) = streamed.remote_error(remote, &stderr) {
         return error;
     }
     failure(
         args,
         &Output {
-            status,
+            status: streamed.status,
             stdout: Vec::new(),
             stderr: stderr.into_bytes(),
         },

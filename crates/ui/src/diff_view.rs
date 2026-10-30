@@ -277,7 +277,7 @@ struct Style {
 
 impl Style {
     fn new(ui: &Ui, doc: &DiffDoc) -> Self {
-        let mono = FontId::monospace(12.5);
+        let mono = crate::theme::mono();
         let char_w = ui.ctx().fonts_mut(|f| f.glyph_width(&mono, '0'));
         let dark = ui.visuals().dark_mode;
         let alpha = |r, g, b, a| Color32::from_rgba_unmultiplied(r, g, b, a);
@@ -301,7 +301,7 @@ impl Style {
         let gutter_w = (2 * number_w + 2) as f32 * char_w + 4.0 * PAD;
         Self {
             mono,
-            title: FontId::proportional(13.5),
+            title: crate::theme::body(),
             char_w,
             text: ui.visuals().text_color(),
             weak: ui.visuals().weak_text_color(),

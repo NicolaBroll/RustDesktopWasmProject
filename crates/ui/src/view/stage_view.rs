@@ -385,8 +385,8 @@ pub(super) fn stage_section(
         Side::Staged => DiffSource::Index,
         Side::Unstaged => DiffSource::Worktree,
     };
-    let font = FontId::proportional(13.0);
-    let mono = FontId::monospace(12.0);
+    let font = theme::body();
+    let mono = theme::mono();
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     let button_label = match op {

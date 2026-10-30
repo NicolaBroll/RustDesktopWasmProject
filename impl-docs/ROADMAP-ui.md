@@ -86,7 +86,7 @@ Rules that apply to every step:
 ## Phase U2 — Text
 
 ### U20 — A type scale
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the font sizes are written by hand in each view (11, 11.5, 12, 12.5, 13, 13.5) and
   `TextStyle::Small` is egui's default 9 pt, used for the status bar, the branch label at the top
   left, the stash sub-line, the commit hint and counter: too small next to the body text. The
@@ -94,6 +94,10 @@ Rules that apply to every step:
   use them.
 - **Done when:** no `FontId::proportional(<number>)` / `monospace(<number>)` left outside the
   theme; the small texts are readable on the Xvfb screenshot; CI green.
+- **Done:** `theme::size` (small 11, body 13, mono 12.5, heading 18) with `theme::body()`,
+  `small()`, `mono()`; `theme::install_text_styles` sets egui's text styles on it at startup
+  (`Small` was 9 pt). Commit rows, diff, blame, details, stage list and toolbar labels use the
+  scale; the only literal sizes left are the icon-font checks in the `icons` tests.
 
 ### U21 — Wording and repeated header
 - [ ] **Agent:** `egui-ui`

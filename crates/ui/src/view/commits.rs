@@ -32,9 +32,9 @@ pub(crate) fn commit_list(
         return;
     }
     let style = RowStyle {
-        font: FontId::proportional(13.5),
-        mono: FontId::monospace(12.5),
-        label: FontId::proportional(11.5),
+        font: theme::body(),
+        mono: theme::mono(),
+        label: theme::small(),
         text: ui.visuals().text_color(),
         weak: ui.visuals().weak_text_color(),
         tag_fill: ui.visuals().widgets.inactive.bg_fill,

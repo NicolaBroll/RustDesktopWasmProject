@@ -27,6 +27,7 @@ mod file;
 mod format;
 mod graph;
 mod icons;
+mod keys;
 mod lines;
 mod list;
 mod merge;
@@ -57,7 +58,7 @@ use conflict::ConflictBox;
 use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
-use discard::{DiscardBox, History};
+use discard::{DiscardBox, History, UndoOp};
 use fetch::FetchBox;
 use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
@@ -73,7 +74,7 @@ use project_i18n::tr;
 use rebase::RebaseBox;
 use remotes::RemotesBox;
 use serde_json::{Value, json};
-use stage::{Follow, PendingWrite, Side, StageLists};
+use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
 use stash::StashBox;
 use std::collections::HashMap;
 
@@ -540,6 +541,18 @@ impl Tab {
     /// Applies an action of the frame: the list selection here, the rest in its area's
     /// `apply_*` function.
     fn apply(&mut self, action: Action) {
+        // A result chosen in the list: closing the search keeps it.
+        if matches!(
+            action,
+            Action::Select(_)
+                | Action::SelectWorktree
+                | Action::SelectCommit(_)
+                | Action::Move(_)
+                | Action::Edge(_)
+        ) && let Some(repo) = &mut self.repo
+        {
+            repo.search.keep();
+        }
         match action {
             // The tabs, the folder dialog, clone and settings belong to `App`.
             Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) => {}
@@ -741,25 +754,29 @@ impl Tab {
         }
     }
 
-    /// List key actions: arrows, Page up/down, Home/End. With the diff open,
-    /// Esc closes it and the arrows stay with the diff view. Only if no text field is
-    /// receiving the keyboard.
-    fn keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+    /// The tab's shortcuts ([`keys`]) and the list keys: arrows, Page up/down, Home/End. With
+    /// the diff open, Esc closes it and the arrows stay with the diff view. Only if no text field
+    /// is receiving the keyboard (Ctrl+F also from a field); nothing with a menu or a
+    /// confirmation open: the keys, Esc too, are theirs.
+    fn keyboard(&self, ctx: &egui::Context, pressed: &keys::Pressed, actions: &mut Vec<Action>) {
         let Some(repo) = &self.repo else {
             return;
         };
-        // With the confirmation open the keys go only to it.
-        if repo.modal_open() {
+        if pressed.popup || repo.modal_open() {
             return;
         }
         let list_in_view = repo.conflict.editor().is_none()
             && repo.file.view().is_none()
             && repo.diff.target().is_none();
-        // Ctrl+F also from another field (e.g. the commit message): the search field takes the keyboard.
-        let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
-        if list_in_view && ctx.input_mut(|i| i.consume_shortcut(&find)) {
-            actions.push(Action::Search(search::Action::Open));
-            return;
+        for &command in &pressed.commands {
+            // Ctrl+F: the search field takes the keyboard.
+            if command == keys::Command::Find {
+                if list_in_view {
+                    actions.push(Action::Search(search::Action::Open));
+                }
+            } else if let Some(action) = self.shortcut(repo, command) {
+                actions.push(action);
+            }
         }
         if ctx.egui_wants_keyboard_input() {
             return;
@@ -811,6 +828,51 @@ impl Tab {
                 }
             }
         });
+    }
+
+    /// The action of a toolbar or stage panel shortcut, with the same gates as its button; `None`
+    /// when the button would be disabled.
+    fn shortcut(&self, repo: &RepoView, command: keys::Command) -> Option<Action> {
+        use keys::Command;
+        let writing = self.executor.writing().is_some();
+        let network = !writing && self.network().is_none();
+        let branch = view::current_branch(&repo.head).is_some();
+        match command {
+            Command::Undo | Command::Redo => {
+                let op = if command == Command::Undo {
+                    UndoOp::Undo
+                } else {
+                    UndoOp::Redo
+                };
+                view::undo_enabled(repo, op, writing)
+                    .then_some(Action::Discard(discard::Action::Undo(op)))
+            }
+            Command::Refresh => (!writing).then_some(Action::Refresh),
+            Command::Fetch => network.then_some(Action::Fetch(fetch::Action::Fetch(None))),
+            Command::Pull => {
+                (network && branch).then_some(Action::Sync(sync::Action::Pull(None, None)))
+            }
+            Command::Push => (network && branch).then_some(Action::Sync(sync::Action::Push(None))),
+            Command::ToggleStage => {
+                let target = repo.diff.target().filter(|_| !writing)?;
+                let (op, list) = match target.source {
+                    DiffSource::Worktree => (StageOp::Stage, &repo.stage.unstaged),
+                    DiffSource::Index => (StageOp::Unstage, &repo.stage.staged),
+                    DiffSource::Commit(_) => return None,
+                };
+                list.iter()
+                    .any(|item| item.path == target.path)
+                    .then(|| Action::Stage(stage::Action::Write(op, vec![target.path.clone()])))
+            }
+            // Find is the tab's own (above), the others belong to `App`.
+            Command::Find
+            | Command::Settings
+            | Command::NextTab
+            | Command::PreviousTab
+            | Command::ZoomIn
+            | Command::ZoomOut
+            | Command::ZoomReset => None,
+        }
     }
 
     /// Asks for refs, status and log of the open repo.
@@ -1198,10 +1260,11 @@ impl Tab {
         can_pick: bool,
         recent: &[view::RecentRepo],
         settings: &settings::Settings,
+        pressed: &keys::Pressed,
     ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
-        self.keyboard(&ctx, &mut actions);
+        self.keyboard(&ctx, pressed, &mut actions);
         let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
@@ -1221,6 +1284,7 @@ impl Tab {
                     writing,
                     focus_search,
                     split: settings.diff_split,
+                    dates: settings.dates,
                 };
                 central_panel(ui, repo, &mut self.viewport, center, &mut actions);
             }
@@ -1429,6 +1493,8 @@ struct Center {
     focus_search: bool,
     /// Diffs side by side.
     split: bool,
+    /// The dates of the commit list.
+    dates: settings::DateFormat,
 }
 
 /// The center: conflict editor, blame and history, the open diff or the commit list.
@@ -1443,6 +1509,7 @@ fn central_panel(
         writing,
         focus_search,
         split,
+        dates,
     } = center;
     let incoming = repo
         .merge
@@ -1462,7 +1529,14 @@ fn central_panel(
                 view::file_view(ui, file, repo.diff.pane(), can_write, split, actions);
             }
         }
-        Pane::Closed => view::commit_list(ui, repo, viewport, writing, focus_search, actions),
+        Pane::Closed => {
+            let list = view::ListOptions {
+                writing,
+                focus_search,
+                dates,
+            };
+            view::commit_list(ui, repo, viewport, list, actions);
+        }
         pane => {
             let lines = diff_view::LinesUi {
                 selection: repo.diff.selection(),

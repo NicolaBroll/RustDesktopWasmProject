@@ -616,15 +616,11 @@ pub(super) fn ref_menu(
             name = name
         ),
     };
-    let label = if is_head {
-        tr!("refs-pull")
-    } else {
-        tr!("refs-pull-ff")
-    };
+    // One name everywhere: the tooltip says whether it is a fast-forward only.
     let button = ui
         .add_enabled(
             can_write && info.upstream.is_some(),
-            egui::Button::new(label),
+            egui::Button::new(tr!("refs-pull")),
         )
         .on_hover_text(&pull_hint)
         .on_disabled_hover_text(if info.upstream.is_some() {

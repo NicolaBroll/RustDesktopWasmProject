@@ -18,6 +18,9 @@
 //!   around would load every page of ids and of commits).
 //! - When the log is read again (refs changed) the same query runs again: the highlight stays
 //!   until the new answer arrives, the current match is kept by id.
+//! - **Selection** (U47): the bar remembers what was selected when it opened ([`Before`]).
+//!   Closing it (Esc, ×) gives that back, unless a result was chosen: Enter, ↑/↓ or a click or
+//!   key in the list ([`SearchBox::keep`]).
 
 use crate::{Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
@@ -36,8 +39,19 @@ pub(crate) enum Action {
     Next,
     /// Selects the previous match (button or Shift+Enter).
     Previous,
-    /// Escape: closes the search bar and removes the highlight.
+    /// Escape: closes the search bar and removes the highlight; gives back the selection from
+    /// before the search unless a result was chosen.
     Close,
+}
+
+/// What was selected when the search opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Before {
+    /// The "Uncommitted changes" row.
+    Worktree,
+    Commit(Oid),
+    Stash(Oid),
+    Nothing,
 }
 
 /// The id of the command.
@@ -114,6 +128,8 @@ pub struct SearchBox {
     job: Option<Job>,
     found: Option<Found>,
     cancel: Vec<Ticket>,
+    /// The selection to give back on close; `None` once a result was chosen.
+    before: Option<Before>,
 }
 
 impl SearchBox {
@@ -125,10 +141,19 @@ impl SearchBox {
         &self.text
     }
 
-    /// Ctrl+F: opens the bar and gives the field the keyboard.
-    pub fn open(&mut self) {
+    /// Ctrl+F: opens the bar and gives the field the keyboard. `before`: what is selected now,
+    /// given back on close (Ctrl+F with the bar already open keeps the first one).
+    pub fn open(&mut self, before: Before) {
+        if !self.open {
+            self.before = Some(before);
+        }
         self.open = true;
         self.focus = true;
+    }
+
+    /// A result was chosen (Enter, ↑/↓, a click in the list): closing keeps the selection.
+    pub fn keep(&mut self) {
+        self.before = None;
     }
 
     /// True once after [`SearchBox::open`]: the view focuses the field.
@@ -137,14 +162,16 @@ impl SearchBox {
     }
 
     /// Escape: closes the bar, empties the field, removes the highlight and cancels the request
-    /// in flight.
-    pub fn close(&mut self) {
+    /// in flight. Returns the selection to give back, if no result was chosen.
+    pub fn close(&mut self) -> Option<Before> {
         self.forget();
+        let before = self.before.take().filter(|_| self.open);
         *self = Self {
             next: self.next,
             cancel: std::mem::take(&mut self.cancel),
             ..Self::default()
         };
+        before
     }
 
     /// The text typed at time `now` (seconds): searched after [`DEBOUNCE`]. A text that cannot be
@@ -290,6 +317,7 @@ impl SearchBox {
     /// page and moves when it arrives (`None` now). With the text still being typed it searches
     /// at once.
     pub fn next(&mut self) -> Option<Oid> {
+        self.keep();
         if self.due.is_some() {
             self.due = Some(f64::NEG_INFINITY);
             return None;
@@ -309,6 +337,7 @@ impl SearchBox {
 
     /// "Previous" (Shift+Enter): the match before the selected one; on the first it stays.
     pub fn previous(&mut self) -> Option<Oid> {
+        self.keep();
         if self.due.is_some() {
             self.due = Some(f64::NEG_INFINITY);
             return None;
@@ -410,7 +439,16 @@ impl Tab {
         };
         let select = match action {
             Action::Open => {
-                repo.search.open();
+                let before = if repo.worktree_selected {
+                    Before::Worktree
+                } else if let Some(stash) = repo.stash.selected() {
+                    Before::Stash(stash.id)
+                } else {
+                    repo.list
+                        .selected_commit()
+                        .map_or(Before::Nothing, |c| Before::Commit(c.id))
+                };
+                repo.search.open(before);
                 None
             }
             Action::Text(text, now) => {
@@ -420,12 +458,33 @@ impl Tab {
             Action::Next => repo.search.next(),
             Action::Previous => repo.search.previous(),
             Action::Close => {
-                repo.search.close();
+                if let Some(before) = repo.search.close() {
+                    self.restore_selection(before);
+                }
                 None
             }
         };
         if let Some(id) = select {
             self.select_match(id);
+        }
+    }
+
+    /// The selection from before the search, back.
+    fn restore_selection(&mut self, before: Before) {
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        match before {
+            Before::Worktree => repo.select_worktree(true),
+            Before::Commit(id) => {
+                repo.stash.select(None);
+                self.seek(id);
+            }
+            Before::Stash(id) => {
+                repo.select_worktree(false);
+                repo.stash.select(Some(id));
+            }
+            Before::Nothing => {}
         }
     }
 

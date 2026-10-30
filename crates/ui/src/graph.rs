@@ -3,7 +3,7 @@
 //! functions that can be tested without opening a window.
 
 use egui::{Color32, Pos2, pos2};
-use project_domain::{GraphSegment, Head, Oid, RefInfo, RefKind};
+use project_domain::{GraphLayout, GraphSegment, Head, Oid, RefInfo, RefKind};
 use std::collections::HashMap;
 
 /// Width of a lane, in points.
@@ -29,6 +29,141 @@ const PALETTE: [Color32; 8] = [
 /// The color of lane `lane` (stable as long as the lane stays open).
 pub fn lane_color(lane: usize) -> Color32 {
     PALETTE[lane % PALETTE.len()]
+}
+
+/// The color of a branch name: the same name always gets the same color, whatever lane it is
+/// on (FNV-1a hash of the name, stable across runs).
+pub fn name_color(name: &str) -> Color32 {
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    PALETTE[(hash % PALETTE.len() as u64) as usize]
+}
+
+/// The branch name a label gives to its lane: local branches as they are, remote branches without
+/// `<remote>/` (one of `remotes`), so `main` and `origin/main` share a color. Tags, stashes and
+/// a detached HEAD name no lane.
+fn lane_name<'a>(label: &'a RefLabel, remotes: &[String]) -> Option<&'a str> {
+    match label.kind {
+        LabelKind::CurrentBranch | LabelKind::Branch => Some(&label.text),
+        LabelKind::Remote => Some(
+            remotes
+                .iter()
+                .find_map(|remote| {
+                    label
+                        .text
+                        .strip_prefix(remote.as_str())
+                        .and_then(|rest| rest.strip_prefix('/'))
+                })
+                .unwrap_or(&label.text),
+        ),
+        LabelKind::Head | LabelKind::Tag | LabelKind::Stash => None,
+    }
+}
+
+/// The colors of the graph, row by row: the dot of each commit and each of its segments (in the
+/// order of [`project_domain::GraphRow::segments`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LaneColors {
+    pub commits: Vec<Color32>,
+    pub segments: Vec<Vec<Color32>>,
+}
+
+impl LaneColors {
+    /// The color of the commit of row `row` (the first lane's for a row out of range).
+    pub fn commit(&self, row: usize) -> Color32 {
+        self.commits.get(row).copied().unwrap_or(PALETTE[0])
+    }
+
+    /// The color of segment `segment` of row `row`.
+    pub fn segment(&self, row: usize, segment: usize) -> Color32 {
+        self.segments
+            .get(row)
+            .and_then(|s| s.get(segment))
+            .copied()
+            .unwrap_or(PALETTE[0])
+    }
+}
+
+/// The colors of `layout` (rows of the commits `ids`, same order). A lane keeps one color from
+/// where it opens to where it closes: that of the first branch found on it from the top (see
+/// [`name_color`]), so adding a commit on another lane does not repaint it; a lane without a
+/// branch takes the color of its column.
+pub fn lane_colors(
+    layout: &GraphLayout,
+    ids: &[Oid],
+    labels: &HashMap<Oid, Vec<RefLabel>>,
+    remotes: &[String],
+) -> LaneColors {
+    // A run is one opening of a lane: its column and the name of the first branch on it.
+    let mut runs: Vec<(usize, Option<&str>)> = Vec::new();
+    let mut commit_runs = Vec::with_capacity(layout.rows.len());
+    let mut segment_runs = Vec::with_capacity(layout.rows.len());
+    // The run entering each lane from the row above.
+    let mut incoming: HashMap<usize, usize> = HashMap::new();
+    for (index, row) in layout.rows.iter().enumerate() {
+        let column = row.column;
+        let run = match incoming.get(&column) {
+            Some(&run) => run,
+            None => open_run(&mut runs, column),
+        };
+        if runs[run].1.is_none() {
+            runs[run].1 = ids
+                .get(index)
+                .and_then(|id| labels.get(id))
+                .and_then(|list| list.iter().find_map(|l| lane_name(l, remotes)));
+        }
+        commit_runs.push(run);
+        let mut outgoing: HashMap<usize, usize> = HashMap::new();
+        let mut row_runs = Vec::with_capacity(row.segments.len());
+        for segment in &row.segments {
+            let lane = segment.lane;
+            let seg_run = if lane == column {
+                run
+            } else if let Some(&r) = outgoing.get(&lane) {
+                r
+            } else if row
+                .segments
+                .iter()
+                .any(|s| s.from == lane && s.lane == lane)
+            {
+                // A lane passing by (also when a second parent joins it).
+                match incoming.get(&lane) {
+                    Some(&r) => r,
+                    None => open_run(&mut runs, lane),
+                }
+            } else {
+                // A fork: a lane opens for a parent.
+                open_run(&mut runs, lane)
+            };
+            outgoing.insert(lane, seg_run);
+            row_runs.push(seg_run);
+        }
+        segment_runs.push(row_runs);
+        incoming = row
+            .segments
+            .iter()
+            .filter(|s| s.to == s.lane)
+            .map(|s| (s.lane, outgoing[&s.lane]))
+            .collect();
+    }
+    let color = |run: usize| {
+        let (lane, name) = runs[run];
+        name.map_or_else(|| lane_color(lane), name_color)
+    };
+    LaneColors {
+        commits: commit_runs.into_iter().map(color).collect(),
+        segments: segment_runs
+            .into_iter()
+            .map(|row| row.into_iter().map(color).collect())
+            .collect(),
+    }
+}
+
+/// A new run of the lane `lane`, without a name yet.
+fn open_run(runs: &mut Vec<(usize, Option<&str>)>, lane: usize) -> usize {
+    runs.push((lane, None));
+    runs.len() - 1
 }
 
 /// Width of the graph column for `lanes` lanes, with a margin on each side.
@@ -182,6 +317,79 @@ mod tests {
             tag_object: None,
             upstream: None::<Upstream>,
         }
+    }
+
+    /// The colors of the commits `(id, parents)` (most recent first) with `refs` as labels.
+    fn commit_colors(nodes: &[(u8, &[u8])], refs: &[RefInfo]) -> HashMap<u8, Color32> {
+        let ids: Vec<Oid> = nodes.iter().map(|&(id, _)| oid(id)).collect();
+        let parents: Vec<Vec<Oid>> = nodes
+            .iter()
+            .map(|&(_, p)| p.iter().map(|&n| oid(n)).collect())
+            .collect();
+        let layout =
+            project_domain::layout_graph_nodes(ids.iter().zip(parents.iter().map(Vec::as_slice)));
+        let head = Head::Branch {
+            name: "main".to_owned(),
+            target: None,
+        };
+        let labels = ref_labels(refs, &head);
+        let colors = lane_colors(&layout, &ids, &labels, &["origin".to_owned()]);
+        nodes
+            .iter()
+            .enumerate()
+            .map(|(row, &(id, _))| (id, colors.commit(row)))
+            .collect()
+    }
+
+    #[test]
+    fn a_branch_keeps_its_color_when_another_lane_moves() {
+        let feature = || info("refs/heads/feature/docs", RefKind::LocalBranch, 3);
+        let origin = || info("refs/remotes/origin/main", RefKind::RemoteBranch, 2);
+        // main and origin/main on 2, feature/docs on 3, both from 1.
+        let before = commit_colors(
+            &[(2, &[1]), (3, &[1]), (1, &[])],
+            &[
+                info("refs/heads/main", RefKind::LocalBranch, 2),
+                origin(),
+                feature(),
+            ],
+        );
+        // A commit on main: feature/docs is now the first lane and main the second.
+        let after = commit_colors(
+            &[(4, &[2]), (3, &[1]), (2, &[1]), (1, &[])],
+            &[
+                info("refs/heads/main", RefKind::LocalBranch, 4),
+                origin(),
+                feature(),
+            ],
+        );
+        let (main, docs) = (name_color("main"), name_color("feature/docs"));
+        assert_ne!(main, docs, "the test needs two different colors");
+        assert_eq!((before[&2], before[&3]), (main, docs));
+        assert_eq!((after[&4], after[&2], after[&3]), (main, main, docs));
+        // A commit on feature/docs, now first in the list.
+        let after = commit_colors(
+            &[(5, &[3]), (3, &[1]), (2, &[1]), (1, &[])],
+            &[
+                info("refs/heads/main", RefKind::LocalBranch, 2),
+                origin(),
+                info("refs/heads/feature/docs", RefKind::LocalBranch, 5),
+            ],
+        );
+        assert_eq!((after[&5], after[&3], after[&2]), (docs, docs, main));
+    }
+
+    #[test]
+    fn a_remote_branch_shares_the_color_of_the_local_one() {
+        let colors = commit_colors(
+            &[(2, &[1]), (3, &[1]), (1, &[])],
+            &[
+                info("refs/remotes/origin/main", RefKind::RemoteBranch, 3),
+                info("refs/heads/topic", RefKind::LocalBranch, 2),
+            ],
+        );
+        assert_eq!(colors[&3], name_color("main"));
+        assert_eq!(colors[&2], name_color("topic"));
     }
 
     #[test]

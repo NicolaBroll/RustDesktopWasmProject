@@ -55,6 +55,15 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
         ui.add(egui::Label::new(tr!("confirm-discard-body")).wrap());
         ui.add_space(4.0);
         ui.add(egui::Label::new(tr!("confirm-discard-backup")).wrap());
+        egui::CollapsingHeader::new(tr!("confirm-discard-details"))
+            .id_salt("discard-details")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(tr!("confirm-discard-details-body")).weak())
+                        .wrap(),
+                );
+            });
         ui.add_space(6.0);
         ui.strong(tr!("confirm-discard-files", n = n));
         let row = ui.text_style_height(&egui::TextStyle::Monospace);

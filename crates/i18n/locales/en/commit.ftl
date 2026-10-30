@@ -32,6 +32,8 @@ commit-new-branch = New branch from here…
 commit-new-branch-hint = Creates a branch at { $id } without switching to it
 commit-new-tag = New tag here…
 commit-new-tag-hint = Creates a tag at { $id }
+commit-copy-id = Copy commit id
+commit-copy-id-hint = Copies { $id } to the clipboard
 commit-list-changes = Uncommitted changes
 commit-list-changes-count = { $n ->
         [one] 1 file

@@ -41,6 +41,7 @@ stage-stage-all-help = Stages all the files in this list
 stage-section-title = { $title } ({ $n })
 stage-discard-all = Discard all…
 stage-discard-all-help = Discards the unstaged changes of all the tracked files in this list (asks for confirmation, can be undone). Untracked files are not touched
+stage-more-hint = More actions on this list
 stage-empty-staged = No staged files.
 stage-empty-unstaged = No unstaged changes.
 stage-stage = Stage

@@ -1,18 +1,31 @@
 use super::*;
+use crate::settings::DateFormat;
 use crate::{branch, merge, rebase, search};
 
 /// Height of a row of the commit list.
 pub(super) const ROW_HEIGHT: f32 = 22.0;
 
-/// `writing`: a write is in progress, the menu entries that write wait.
+/// How the commit list is drawn in this frame.
+pub(crate) struct ListOptions {
+    /// A write is in progress: the menu entries that write wait.
+    pub(crate) writing: bool,
+    /// The search field takes the keyboard.
+    pub(crate) focus_search: bool,
+    pub(crate) dates: DateFormat,
+}
+
 pub(crate) fn commit_list(
     ui: &mut Ui,
     repo: &RepoView,
     viewport: &mut ListViewport,
-    writing: bool,
-    focus_search: bool,
+    options: ListOptions,
     actions: &mut Vec<Action>,
 ) {
+    let ListOptions {
+        writing,
+        focus_search,
+        dates,
+    } = options;
     if repo.search.is_open() {
         search_bar(ui, &repo.search, focus_search, actions);
     }
@@ -40,6 +53,10 @@ pub(crate) fn commit_list(
         tag_fill: ui.visuals().widgets.inactive.bg_fill,
         head_fill: ui.visuals().strong_text_color(),
         head_text: ui.visuals().panel_fill,
+        now: match dates {
+            DateFormat::Absolute => None,
+            DateFormat::Relative => Some(unix_now()),
+        },
     };
     // On the selected row the text takes the selection's color: gray on blue is hard to read.
     let on_selection = RowStyle {
@@ -52,6 +69,7 @@ pub(crate) fn commit_list(
     let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
     // The graph takes at most two fifths of the list: beyond that it is cut on the right.
     let graph_w = graph::graph_width(list.graph().width).min(ui.available_width() * 0.4);
+    let colors = lane_colors(ui, repo);
 
     let mut area = egui::ScrollArea::vertical().auto_shrink(false);
     let wanted = if repo.scroll_header {
@@ -126,6 +144,15 @@ pub(crate) fn commit_list(
             }
             let id = commit.id;
             response.context_menu(|ui| {
+                if ui
+                    .button(tr!("commit-copy-id"))
+                    .on_hover_text(tr!("commit-copy-id-hint", id = id.to_string()))
+                    .clicked()
+                {
+                    ui.ctx().copy_text(id.to_string());
+                    ui.close();
+                }
+                ui.separator();
                 let button = ui
                     .add_enabled(can_write, egui::Button::new(tr!("commit-new-branch")))
                     .on_hover_text(tr!("commit-new-branch-hint", id = id.short()))
@@ -148,12 +175,15 @@ pub(crate) fn commit_list(
                     ui.close();
                 }
                 let what = merge::commit_name(id, &repo.refs);
-                merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
-                pick_items(ui, commit, &what, &merge, can_write, actions);
+                // Already in HEAD: merging or cherry-picking it would change nothing.
+                let in_head = in_head_history(repo, id);
+                if !in_head {
+                    merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
+                }
+                pick_items(ui, commit, &what, &merge, !in_head, can_write, actions);
                 rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
                 reset_item(ui, repo, commit, &what, can_write, actions);
             });
-            let lane = list.graph().rows.get(index).map_or(0, |row| row.column);
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
             let text_rect = rect.with_min_x(rect.left() + graph_w);
             let more = commit_row(
@@ -161,7 +191,7 @@ pub(crate) fn commit_list(
                 text_rect,
                 commit,
                 labels,
-                graph::lane_color(lane),
+                colors.commit(index),
                 if selected { &on_selection } else { &style },
             );
             if let Some(more) = more {
@@ -173,7 +203,7 @@ pub(crate) fn commit_list(
         if let (Some(rect), Some(anchor)) = (header_rect, anchor) {
             paint_changes_link(ui, rect, anchor, graph_w, step, style.weak);
         }
-        paint_graph(ui, list, &drawn, graph_w, step);
+        paint_graph(ui, list, &colors, &drawn, graph_w, step);
         range
     });
     viewport.rows = output.inner;
@@ -354,6 +384,7 @@ pub(super) fn changes_row(
 pub(super) fn paint_graph(
     ui: &Ui,
     list: &CommitList,
+    colors: &graph::LaneColors,
     rows: &[(usize, egui::Rect)],
     width: f32,
     step: f32,
@@ -376,8 +407,8 @@ pub(super) fn paint_graph(
         let Some(row) = layout.rows.get(index) else {
             continue;
         };
-        for segment in &row.segments {
-            let stroke = egui::Stroke::new(graph::EDGE_WIDTH, graph::lane_color(segment.lane));
+        for (n, segment) in row.segments.iter().enumerate() {
+            let stroke = egui::Stroke::new(graph::EDGE_WIDTH, colors.segment(index, n));
             match graph::segment_edge(segment, left, y, step) {
                 graph::Edge::Line(points) => {
                     painter.line_segment(points, stroke);
@@ -400,7 +431,7 @@ pub(super) fn paint_graph(
             continue;
         };
         let center = egui::pos2(graph::column_x(left, row.column), rect.center().y);
-        let color = graph::lane_color(row.column);
+        let color = colors.commit(index);
         if commit.is_merge() {
             painter.circle(
                 center,
@@ -412,6 +443,30 @@ pub(super) fn paint_graph(
             painter.circle_filled(center, graph::NODE_RADIUS, color);
         }
     }
+}
+
+/// The colors of the graph's lanes ([`graph::lane_colors`]), computed again only when the graph,
+/// the refs or the remotes change.
+fn lane_colors(ui: &Ui, repo: &RepoView) -> std::sync::Arc<graph::LaneColors> {
+    type Key = (u64, u64, Vec<String>);
+    let remotes = repo.remotes.names();
+    let key: Key = (repo.list.graph_version(), repo.refs_version, remotes);
+    let id = ui.make_persistent_id(("lane-colors", &repo.path));
+    if let Some((cached, colors)) =
+        ui.data(|d| d.get_temp::<(Key, std::sync::Arc<graph::LaneColors>)>(id))
+        && cached == key
+    {
+        return colors;
+    }
+    let ids: Vec<_> = repo.list.commits().iter().map(|c| c.id).collect();
+    let colors = std::sync::Arc::new(graph::lane_colors(
+        repo.list.graph(),
+        &ids,
+        &repo.labels,
+        &key.2,
+    ));
+    ui.data_mut(|d| d.insert_temp(id, (key, colors.clone())));
+    colors
 }
 
 /// The row (of the view) to bring into view, if it is not already fully visible.
@@ -432,6 +487,17 @@ pub(super) struct RowStyle {
     tag_fill: Color32,
     head_fill: Color32,
     head_text: Color32,
+    /// Dates relative to this moment (seconds since the epoch); `None`: date and time.
+    now: Option<i64>,
+}
+
+/// Seconds since the epoch now (0 if the clock is before it).
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 /// Width of the id column.
@@ -451,6 +517,14 @@ pub(super) fn side_columns(width: f32) -> (f32, f32) {
         (0.0, DATE_W)
     } else {
         (0.0, 0.0)
+    }
+}
+
+/// The date of the list: relative to `now` if given, otherwise date and time.
+fn commit_date(sig: &Signature, now: Option<i64>) -> String {
+    match now {
+        Some(now) => format::relative(sig, now),
+        None => date_time(sig),
     }
 }
 
@@ -475,7 +549,12 @@ pub(super) fn commit_row(
             &style.font,
             style.weak,
         ),
-        (date_w, date_time(&commit.author), &style.font, style.weak),
+        (
+            date_w,
+            commit_date(&commit.author, style.now),
+            &style.font,
+            style.weak,
+        ),
     ];
     let mut x = rect.left() + 8.0;
     let mut more = None;
@@ -488,7 +567,12 @@ pub(super) fn commit_row(
         let painter = ui.painter_at(cell);
         let mut start = cell.left_top();
         if i == 1 {
-            let (used, hidden) = ref_labels(&painter, cell, labels, lane, style);
+            // The subject keeps its first characters; the labels take the rest.
+            let summary = painter.layout_no_wrap(value.clone(), font.clone(), color);
+            let prefix: String = value.chars().take(SUMMARY_CHARS).chain(['…']).collect();
+            let prefix = painter.layout_no_wrap(prefix, font.clone(), color);
+            let room = cell.width() - summary.size().x.min(prefix.size().x) - LABEL_GAP;
+            let (used, hidden) = ref_labels(&painter, cell, labels, lane, style, room);
             start.x += used;
             more = hidden;
         }
@@ -498,6 +582,15 @@ pub(super) fn commit_row(
         x += width;
     }
     more
+}
+
+/// Characters of the subject that stay before the ref labels collapse into "+N".
+const SUMMARY_CHARS: usize = 8;
+
+/// How many ref labels (`widths`, gap included) a row shows in `room`: all if they fit,
+/// otherwise as many as fit next to the `+N` (`more` wide), and at least the first one.
+pub(super) fn shown_labels(widths: &[f32], room: f32, more: f32) -> usize {
+    graph::labels_that_fit(widths, room, more).max(widths.len().min(1))
 }
 
 /// `text` on one line, cut with "…" if wider than `width`.
@@ -528,14 +621,15 @@ pub(super) const LABEL_GAP: f32 = 4.0;
 pub(super) const LABEL_PAD: f32 = 4.0;
 
 /// Draws the ref labels at the start of `cell`, in the color of the commit's lane, and
-/// returns the width used and where the `+N` is. They take at most half the cell; those that do
-/// not fit become `+N`.
+/// returns the width used and where the `+N` is. They take at most `room`; those that do not
+/// fit become `+N`, but the first one is always drawn.
 pub(super) fn ref_labels(
     painter: &egui::Painter,
     cell: egui::Rect,
     labels: &[RefLabel],
     lane: Color32,
     style: &RowStyle,
+    room: f32,
 ) -> (f32, Option<egui::Rect>) {
     if labels.is_empty() {
         return (0.0, None);
@@ -579,7 +673,7 @@ pub(super) fn ref_labels(
         .collect();
     let hidden_text = |n: usize| format!("+{n}");
     let more = painter.layout_no_wrap(hidden_text(labels.len()), style.label.clone(), style.weak);
-    let shown = graph::labels_that_fit(&widths, cell.width() / 2.0, more.size().x + LABEL_GAP);
+    let shown = shown_labels(&widths, room, more.size().x + LABEL_GAP);
 
     let height = style.label.size + 4.0;
     let mut x = cell.left();
@@ -612,12 +706,14 @@ pub(super) fn ref_labels(
 
 /// "Cherry-pick onto «branch»" and "Revert" of the commit menu: off like merge (detached
 /// HEAD, operation in progress, write or open dialog). For a merge commit the parent's
-/// dialog is opened first.
+/// dialog is opened first. `cherry_pick`: false for a commit already in HEAD, which only
+/// gets "Revert".
 fn pick_items(
     ui: &mut Ui,
     commit: &Commit,
     what: &str,
     gate: &merge::Gate,
+    cherry_pick: bool,
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -655,6 +751,9 @@ fn pick_items(
         ]
     };
     for (pick, label, hint) in items {
+        if pick == merge::Pick::CherryPick && !cherry_pick {
+            continue;
+        }
         let button = ui
             .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
             .on_hover_text(hint)
@@ -720,6 +819,29 @@ fn rebase_item(
     }
 }
 
+/// True if `id` is HEAD or one of its ancestors among the loaded commits (all parents). Only
+/// computed while the commit menu is open, on the list already loaded: no git call.
+fn in_head_history(repo: &RepoView, id: Oid) -> bool {
+    let Some(head) = repo.head.target() else {
+        return false;
+    };
+    let by_id: std::collections::HashMap<Oid, &Commit> =
+        repo.list.commits().iter().map(|c| (c.id, c)).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut next = vec![head];
+    while let Some(current) = next.pop() {
+        if current == id {
+            return true;
+        }
+        if seen.insert(current)
+            && let Some(commit) = by_id.get(&current)
+        {
+            next.extend(commit.parents.iter().copied());
+        }
+    }
+    false
+}
+
 /// True if `id` is reached from HEAD following first parents among the loaded commits.
 fn on_first_parent_history(repo: &RepoView, id: Oid) -> bool {
     let commits = repo.list.commits();
@@ -738,6 +860,15 @@ fn on_first_parent_history(repo: &RepoView, id: Oid) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_labels_collapse_to_the_first_one_and_the_count() {
+        assert_eq!(shown_labels(&[40.0, 40.0], 100.0, 20.0), 2);
+        assert_eq!(shown_labels(&[40.0, 40.0, 40.0], 70.0, 20.0), 1);
+        // Too narrow even for one: the first stays, the others go into "+N".
+        assert_eq!(shown_labels(&[80.0, 40.0], 30.0, 20.0), 1);
+        assert_eq!(shown_labels(&[], 30.0, 20.0), 0);
+    }
 
     #[test]
     fn a_narrow_list_hides_the_author_then_the_date() {

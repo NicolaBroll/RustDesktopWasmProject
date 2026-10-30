@@ -1,4 +1,4 @@
-# Settings window: sections, theme and language (settings.rs, view/settings_view.rs).
+# Settings window: sections, theme, language, scale and dates (settings.rs, view/settings_view.rs).
 
 settings-title = Settings
 settings-close = Close
@@ -18,3 +18,9 @@ settings-fetch-minutes = { $n ->
    *[other] Every { $n } minutes
 }
 settings-fetch-hint = Every open tab downloads from its remote in the background (fetch, never pull): local branches and files are not touched. It waits while a dialog, a command or an operation is in progress.
+settings-scale = Interface size
+settings-scale-value = { $n }%
+settings-scale-hint = Also { $larger } and { $smaller }; { $reset } goes back to 100%.
+settings-dates = Dates in the commit list
+settings-dates-absolute = Date and time
+settings-dates-relative = Relative (“3 h ago”)

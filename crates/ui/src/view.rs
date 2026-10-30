@@ -50,7 +50,7 @@ use auto_fetch_view::offline_icon;
 pub(crate) use branches::branch_dialog;
 pub(crate) use clone_view::clone_dialog;
 use clone_view::create_buttons;
-pub(crate) use commits::commit_list;
+pub(crate) use commits::{ListOptions, commit_list};
 pub(crate) use confirm::{confirm_amend, confirm_discard, confirm_write};
 pub(crate) use conflict_view::conflict_editor;
 pub(crate) use details_view::details_panel;
@@ -75,7 +75,9 @@ pub(crate) use tab_strip::{TabLabel, tab_strip_panel};
 pub use title_bar::WindowFrame;
 pub(crate) use title_bar::{TitleBar, end_window_move, title_bar_panel, window_edges};
 use top_bar::*;
-pub(crate) use top_bar::{RecentRepo, repo_name, status_bar, top_bar, welcome};
+pub(crate) use top_bar::{
+    RecentRepo, current_branch, repo_name, status_bar, top_bar, undo_enabled, welcome,
+};
 
 /// The network operation in progress (fetch, pull or push), for the bar.
 pub(crate) struct Network {

@@ -24,8 +24,14 @@ pub(crate) fn details_panel(
         Shown::Loaded(details) => (Some(&details.commit), Some(details.compared_to)),
         Shown::Loading(id) | Shown::Failed(id, _) => (selected.filter(|c| c.id == *id), None),
     };
-    // The message can be long: it scrolls on its own and leaves at least half the panel to the files.
-    let max_header = (ui.available_height() * 0.5).max(120.0);
+    // The message can be long: it scrolls on its own and leaves the files their rows, at least
+    // half the panel when they are many.
+    let files = match &shown {
+        Shown::Loaded(details) => details.files.len().max(1),
+        _ => 1,
+    };
+    let files_h = FILES_TITLE + files as f32 * (FILE_ROW_HEIGHT + ui.spacing().item_spacing.y);
+    let max_header = (ui.available_height() - files_h.min(ui.available_height() * 0.5)).max(120.0);
     egui::ScrollArea::vertical()
         .id_salt("details-head")
         .max_height(max_header)
@@ -114,7 +120,8 @@ pub(super) fn commit_header(
             ] {
                 ui.weak(title);
                 ui.vertical(|ui| {
-                    ui.add(egui::Label::new(signer(sig)).wrap());
+                    // One line, cut with "…" in a narrow panel: the whole text on hover.
+                    ui.add(egui::Label::new(signer(sig)).truncate());
                     ui.weak(date_time_zone(sig));
                 });
                 ui.end_row();
@@ -145,6 +152,9 @@ pub(super) fn commit_header(
     }
     ui.add_space(4.0);
 }
+
+/// Height of the files' title and the separator above it.
+const FILES_TITLE: f32 = 32.0;
 
 /// Height of a row of the file list.
 pub(super) const FILE_ROW_HEIGHT: f32 = 20.0;

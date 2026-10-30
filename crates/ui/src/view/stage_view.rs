@@ -12,16 +12,35 @@ pub(crate) fn stage_panel(
     writing: bool,
     actions: &mut Vec<Action>,
 ) {
-    egui::Panel::bottom("commit-message")
+    // The commit box takes what the part above leaves, measured in the previous frame: headers
+    // and one row per list stay visible, and in a low window the box's body loses rows.
+    let layout_id = ui.make_persistent_id("stage-layout");
+    let mut layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
+    let room = ui.available_height() - layout.upper_min - layout.box_frame - layout.box_fixed;
+    let row = ui.text_style_height(&egui::TextStyle::Body);
+    let body_rows = ((room - BODY_MARGIN) / row)
+        .floor()
+        .clamp(1.0, BODY_ROWS as f32) as usize;
+    let panel = egui::Panel::bottom("commit-message")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
-        .show(ui, |ui| commit_box(ui, repo, draft, writing, actions));
+        .show(ui, |ui| {
+            let top = ui.cursor().top();
+            let body = commit_box(ui, repo, draft, writing, body_rows, actions);
+            (ui.cursor().top() - top, body)
+        });
+    let (content, body) = panel.inner;
+    layout.box_fixed = content - body;
+    layout.box_frame = panel.response.rect.height() - content;
+    let top = ui.cursor().top();
+    let mut lists = 0.0;
     ui.add_space(4.0);
     let stash = tr!("stage-stash-button");
     title_row(
         ui,
         RichText::new(tr!("stage-heading")).heading().into(),
         &[&stash],
+        0.0,
         |ui| {
             stash_push_button(
                 ui,
@@ -79,25 +98,69 @@ pub(crate) fn stage_panel(
             ui.separator();
         }
         let space = Space { height, below };
-        stage_section(ui, side, items, open, enabled, space, actions);
+        let shown = stage_section(ui, side, items, open, enabled, space, actions);
+        // A list needs one row; beyond that it can give its room to the commit box.
+        let least = if items.is_empty() {
+            0.0
+        } else {
+            FILE_ROW_HEIGHT
+        };
+        lists += shown - least;
+    }
+    layout.upper_min = ui.cursor().top() - top - lists;
+    let before: Option<StageLayout> = ui.data(|d| d.get_temp(layout_id));
+    if before.is_none_or(|before| before.differs(&layout)) {
+        ui.data_mut(|d| d.insert_temp(layout_id, layout));
+        // Measured anew: this frame is laid out again with the new heights.
+        ui.ctx().request_discard("stage panel layout");
+        ui.ctx().request_repaint();
     }
 }
 
-/// Rows of the message body.
+/// The heights the stage panel measures in a frame for the next one.
+#[derive(Clone, Copy, Default)]
+struct StageLayout {
+    /// The part above the commit box with one row per list.
+    upper_min: f32,
+    /// The commit box without its body field.
+    box_fixed: f32,
+    /// The panel of the commit box around its content: margins and separator.
+    box_frame: f32,
+}
+
+impl StageLayout {
+    /// More than half a point apart: below that a new pass would change nothing.
+    fn differs(&self, other: &Self) -> bool {
+        [
+            self.upper_min - other.upper_min,
+            self.box_fixed - other.box_fixed,
+            self.box_frame - other.box_frame,
+        ]
+        .iter()
+        .any(|d| d.abs() > 0.5)
+    }
+}
+
+/// The vertical margin of a text field around its rows (egui's default).
+const BODY_MARGIN: f32 = 4.0;
+
+/// Rows of the message body, when the window has room for them.
 pub(super) const BODY_ROWS: usize = 4;
 
 /// Maximum height of git's output after a failed commit; beyond that it scrolls.
 pub(super) const OUTPUT_HEIGHT: f32 = 140.0;
 
-/// Commit message box: subject with the counter, body, amend, "Commit" button
-/// (also Ctrl+Enter) and the error of the last commit.
+/// Commit message box: subject with the counter, body with `body_rows` rows, amend, "Commit"
+/// button (also Ctrl+Enter) and the error of the last commit. Returns the height of the body
+/// field.
 pub(super) fn commit_box(
     ui: &mut Ui,
     repo: &RepoView,
     draft: &mut CommitDraft,
     writing: bool,
+    body_rows: usize,
     actions: &mut Vec<Action>,
-) {
+) -> f32 {
     let sending = repo.commit.sending().is_some();
     let gate = Gate {
         draft,
@@ -135,14 +198,15 @@ pub(super) fn commit_box(
             .hint_text(tr!("stage-subject-hint"))
             .desired_width(f32::INFINITY),
     );
-    ui.add_enabled(
+    let body = ui.add_enabled(
         !sending,
         egui::TextEdit::multiline(&mut draft.body)
             .id_salt("commit-body")
             .hint_text(tr!("stage-body-hint"))
-            .desired_rows(BODY_ROWS)
+            .desired_rows(body_rows)
             .desired_width(f32::INFINITY),
     );
+    let body_height = body.rect.height();
 
     let mut amend = draft.amend();
     let toggle = ui
@@ -187,7 +251,14 @@ pub(super) fn commit_box(
         } else {
             tr!("stage-commit-button")
         };
-        let button = ui.add_enabled(gate.is_ok(), egui::Button::new(label));
+        // The primary action: the accent fill when it can go, egui's grey when it cannot.
+        let button = if gate.is_ok() {
+            let (fill, text) = theme::primary(ui.visuals());
+            egui::Button::new(RichText::new(label).color(text)).fill(fill)
+        } else {
+            egui::Button::new(label)
+        };
+        let button = ui.add_enabled(gate.is_ok(), button);
         let button = match gate {
             Ok(()) => button.on_hover_text(tr!("stage-commit-help")),
             Err(blocked) => button.on_disabled_hover_text(blocked.hint()),
@@ -206,17 +277,14 @@ pub(super) fn commit_box(
             ui.weak(tr!("stage-commit-shortcut"));
         }
     });
-    // Why the button is disabled, without having to hover (not during work: then its row stays
-    // empty, so the box does not move when a dialog opens).
-    match gate {
-        Err(commit::Blocked::Busy) => {
-            ui.add_space(ui.text_style_height(&egui::TextStyle::Small));
-        }
-        Err(blocked) => {
-            ui.add(egui::Label::new(RichText::new(blocked.hint()).small().weak()).wrap());
-        }
-        Ok(()) => {}
-    }
+    // Why the button is disabled, without having to hover, on one row cut to the width (the
+    // whole text is in the button's tooltip). During work and when the commit can go the row
+    // stays empty: the box does not move while typing, after a commit or when a dialog opens.
+    let hint = match gate {
+        Err(commit::Blocked::Busy) | Ok(()) => " ".to_owned(),
+        Err(blocked) => blocked.hint(),
+    };
+    ui.add(egui::Label::new(RichText::new(hint).small().weak()).truncate());
 
     if let Some(error) = repo.commit.error() {
         ui.add_space(4.0);
@@ -257,15 +325,17 @@ pub(super) fn commit_box(
             }
         }
     }
+    body_height
 }
 
-/// The title on the left and the buttons (`labels`, added by `add_buttons` from the right) on
-/// one row when the title fits whole; otherwise the title on its own row and the buttons under
-/// it, so neither is cut.
+/// The title on the left and the buttons (`labels`, plus `extra` points of icon buttons, added
+/// by `add_buttons` from the right) on one row when the title fits whole; otherwise the title
+/// on its own row and the buttons under it, so neither is cut.
 fn title_row(
     ui: &mut Ui,
     title: egui::WidgetText,
     labels: &[&str],
+    extra: f32,
     add_buttons: impl FnOnce(&mut Ui),
 ) {
     let width = |text: egui::WidgetText| {
@@ -283,7 +353,8 @@ fn title_row(
     let buttons: f32 = labels
         .iter()
         .map(|label| width((*label).into()) + 2.0 * padding + spacing)
-        .sum();
+        .sum::<f32>()
+        + extra;
     let fits = width(title.clone()) + spacing + buttons <= ui.available_width();
     if fits {
         egui::Sides::new().show(ui, |ui| ui.label(title), add_buttons);
@@ -307,7 +378,8 @@ pub(super) fn list_height(rows: usize) -> f32 {
     rows.max(1) as f32 * (FILE_ROW_HEIGHT + 2.0)
 }
 
-/// Title with the count, button for the whole list, then the files.
+/// Title with the count, button for the whole list (and for the unstaged one the "⋯" menu with
+/// "Discard all…"), then the files. Returns the height given to the list, 0 when it is empty.
 pub(super) fn stage_section(
     ui: &mut Ui,
     side: Side,
@@ -316,7 +388,7 @@ pub(super) fn stage_section(
     enabled: bool,
     space: Space,
     actions: &mut Vec<Action>,
-) {
+) -> f32 {
     let (title, op, all_label, all_help) = match side {
         Side::Staged => (
             tr!("stage-staged-title"),
@@ -331,13 +403,21 @@ pub(super) fn stage_section(
             tr!("stage-stage-all-help"),
         ),
     };
-    let discard_label = tr!("stage-discard-all");
-    let labels: &[&str] = match side {
-        Side::Staged => &[&all_label],
-        Side::Unstaged => &[&all_label, &discard_label],
+    // The "⋯" icon button: the icon and the button's padding.
+    let more_width = match side {
+        Side::Staged => 0.0,
+        Side::Unstaged => {
+            MORE_ICON + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x
+        }
     };
     let heading = tr!("stage-section-title", title = &title, n = items.len());
-    title_row(ui, RichText::new(heading).strong().into(), labels, |ui| {
+    let title = RichText::new(heading).strong().into();
+    title_row(ui, title, &[&all_label], more_width, |ui| {
+        // Right to left: the menu at the edge, "Stage all" before it, apart from the
+        // destructive entry.
+        if side == Side::Unstaged {
+            unstaged_menu(ui, items, enabled, actions);
+        }
         let button = ui
             .add_enabled(
                 enabled && !items.is_empty(),
@@ -349,20 +429,6 @@ pub(super) fn stage_section(
         {
             actions.push(Action::Stage(stage::Action::Write(op, paths)));
         }
-        if side == Side::Unstaged {
-            let paths = discard::discardable_paths(items);
-            let button = ui
-                .add_enabled(
-                    enabled && paths.is_some(),
-                    egui::Button::new(discard_label.as_str()).small(),
-                )
-                .on_hover_text(tr!("stage-discard-all-help"));
-            if button.clicked()
-                && let Some(paths) = paths
-            {
-                actions.push(Action::Discard(discard::Action::Discard(paths)));
-            }
-        }
     });
     if items.is_empty() {
         let text = match side {
@@ -370,7 +436,7 @@ pub(super) fn stage_section(
             Side::Unstaged => tr!("stage-empty-unstaged"),
         };
         ui.weak(text);
-        return;
+        return 0.0;
     }
     // After the header, whose height depends on the width; at least a row, but never over the
     // commit box under it: in a low window the list scrolls.
@@ -393,7 +459,7 @@ pub(super) fn stage_section(
         StageOp::Stage => tr!("stage-stage"),
         StageOp::Unstage => tr!("stage-unstage"),
     };
-    egui::ScrollArea::vertical()
+    let output = egui::ScrollArea::vertical()
         .id_salt(("stage-area", side == Side::Staged))
         .auto_shrink([false, true])
         .max_height(height)
@@ -485,6 +551,38 @@ pub(super) fn stage_section(
                 });
             }
         });
+    output.inner_rect.height()
+}
+
+/// Size of the "⋯" icon of the section menu.
+const MORE_ICON: f32 = 14.0;
+
+/// The "⋯" menu of the unstaged list: "Discard all…", in the destructive red as in the file
+/// context menu, kept away from "Stage all" so a misclick does not open its dialog.
+fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut Vec<Action>) {
+    let more = egui::Button::new(icons::text(icons::MORE, MORE_ICON)).small();
+    egui::containers::menu::MenuButton::from_button(more)
+        .ui(ui, |ui| {
+            let paths = discard::discardable_paths(items);
+            let can = enabled && paths.is_some();
+            let color = if can {
+                ui.visuals().error_fg_color
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let label = RichText::new(tr!("stage-discard-all")).color(color);
+            let button = ui
+                .add_enabled(can, egui::Button::new(label))
+                .on_hover_text(tr!("stage-discard-all-help"));
+            if button.clicked()
+                && let Some(paths) = paths
+            {
+                actions.push(Action::Discard(discard::Action::Discard(paths)));
+                ui.close();
+            }
+        })
+        .0
+        .on_hover_text(tr!("stage-more-hint"));
 }
 
 /// The context menu of a file of the stage area: diff, stage/unstage and, when unstaged,

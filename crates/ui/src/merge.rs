@@ -20,7 +20,7 @@
 //!   may stop again on the next conflict, and the panel stays) and `rebase.abort` like the others.
 
 use crate::discard::{History, Phase};
-use crate::fetch::Failure;
+use crate::fetch::{self, Failure};
 use crate::running::Running;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
@@ -651,9 +651,12 @@ impl MergeBox {
             into = &starting.into
         );
         match result {
+            Err(_) if kind == Some(ErrorKind::LocalChanges) => {
+                local_changes(&mut self.failure, "Merge", &what, detail.as_deref())
+            }
             Err(e) => {
-                // Engine refusals (local changes, detached HEAD, operation in progress,
-                // rev that does not exist): nothing changed. Other errors (git): maybe, so it rereads.
+                // Engine refusals (detached HEAD, operation in progress, rev that does not
+                // exist): nothing changed. Other errors (git): maybe, so it rereads.
                 let refused = matches!(
                     kind,
                     Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams | ErrorKind::UnknownRev)
@@ -674,6 +677,7 @@ impl MergeBox {
                     title,
                     explanation: explanation.clone(),
                     git,
+                    stash: false,
                 });
                 Received::Failed {
                     message: explanation,
@@ -791,6 +795,23 @@ impl MergeBox {
                 },
             },
         }
+    }
+}
+
+/// A start (`title`: Merge, Cherry-pick, Revert; `what`: its description) refused for
+/// uncommitted local changes: the window with "Stash…"; nothing changed.
+fn local_changes(
+    failure: &mut Option<Failure>,
+    title: &str,
+    what: &str,
+    files: Option<&str>,
+) -> Received {
+    let window = fetch::local_changes_failure(tr!("merge-refused-title", title = title), files);
+    let message = tr!("merge-refused", what = what, error = &window.explanation);
+    *failure = Some(window);
+    Received::Failed {
+        message,
+        reload: false,
     }
 }
 
@@ -1292,6 +1313,11 @@ mod tests {
     /// `c1` base; `main` on `c2` (a.txt “ours”); `other` on `c3` from `c1` (a.txt “theirs”:
     /// conflict); `ahead` on `c4` from `c2` (fast-forward).
     fn opened() -> (Registry, Session) {
+        opened_with(|_| {})
+    }
+
+    /// Like [`opened`], with `edit` applied to the repo before opening it.
+    fn opened_with(edit: impl FnOnce(&mut MemoryBackend)) -> (Registry, Session) {
         let mut repo = MemoryBackend::new();
         repo.set_identity("Ada", "ada@example.com");
         commit(&mut repo, 1, None, "base", ("a.txt", None, 1));
@@ -1302,6 +1328,7 @@ mod tests {
         repo.set_branch("other", oid(3));
         repo.set_branch("ahead", oid(4));
         repo.set_head_branch("main");
+        edit(&mut repo);
         let mut opener = MemoryOpener::new();
         opener.insert("r", repo);
         let registry = Registry::builtin();
@@ -1537,6 +1564,40 @@ mod tests {
             "{}",
             outcome.notice
         );
+    }
+
+    #[test]
+    fn local_changes_offer_the_stash() {
+        let (r, mut s) = opened_with(|repo| {
+            repo.set_worktree_file("a.txt", "edited\n");
+            repo.set_entries(vec![project_domain::StatusEntry {
+                path: RepoPath::from("a.txt"),
+                index: Change::Unmodified,
+                worktree: Change::Modified,
+                kind: project_domain::EntryKind::Ordinary(project_domain::TrackedInfo {
+                    submodule: None,
+                    mode_head: 0o100644,
+                    mode_index: 0o100644,
+                    mode_worktree: 0o100644,
+                    oid_head: oid(2),
+                    oid_index: oid(2),
+                }),
+            }]);
+        });
+        let mut b = MergeBox::default();
+        let params = start(&mut b, "other");
+        let Received::Failed { reload, message } = run(&r, &mut s, &mut b, Op::Start, params)
+        else {
+            panic!("refused");
+        };
+        assert!(!reload);
+        let failure = b.failure().expect("window");
+        assert!(failure.stash);
+        assert_eq!(
+            failure.explanation,
+            "You have uncommitted changes in a.txt: commit or stash them, then try again."
+        );
+        assert!(message.contains(&failure.explanation), "{message}");
     }
 
     #[test]

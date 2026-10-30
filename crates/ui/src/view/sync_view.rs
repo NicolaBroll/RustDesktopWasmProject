@@ -1,8 +1,9 @@
 use super::*;
-use crate::{fetch, sync};
+use crate::{fetch, stash, sync};
 
-/// The window of a failed operation: what happened, what to do, git's text. It does not
-/// block the rest of the window; `dismiss` closes it.
+/// The window of a failed operation: what happened, what to do, git's text, and "Stash…"
+/// for a refusal because of local changes. It does not block the rest of the window;
+/// `dismiss` closes it.
 pub(crate) fn failure_window(
     ctx: &egui::Context,
     id: &str,
@@ -16,15 +17,26 @@ pub(crate) fn failure_window(
         .collapsible(false)
         .resizable(false)
         .default_width(420.0)
-        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .open(&mut open)
         .show(ctx, |ui| {
             ui.add(egui::Label::new(&failure.explanation).wrap());
             git_text(ui, failure.git.as_deref());
             ui.add_space(6.0);
-            if ui.button(tr!("sync-close")).clicked() {
-                actions.push(dismiss.clone());
-            }
+            ui.horizontal(|ui| {
+                if failure.stash
+                    && ui
+                        .button(tr!("stage-stash-button"))
+                        .on_hover_text(tr!("common-stash-button-help"))
+                        .clicked()
+                {
+                    actions.push(dismiss.clone());
+                    actions.push(Action::Stash(stash::Action::Open));
+                }
+                if ui.button(tr!("sync-close")).clicked() {
+                    actions.push(dismiss.clone());
+                }
+            });
         });
     if !open {
         actions.push(dismiss);

@@ -15,7 +15,7 @@ const PAD: f32 = 6.0;
 /// Width of the commit column of the blame.
 const INFO_W: f32 = 360.0;
 
-/// "Blame" and "File history" in the context menu of a file. `rev`: the commit (blame at it,
+/// "Blame", "File history" and "Copy path" in the context menu of a file. `rev`: the commit (blame at it,
 /// history from it), `None` for the working tree (history from HEAD). `blame_off`: why the
 /// blame cannot be asked for (e.g. a deleted file).
 pub(super) fn file_menu_entries(
@@ -54,6 +54,14 @@ pub(super) fn file_menu_entries(
         });
     if history.clicked() {
         actions.push(open(Mode::History));
+        ui.close();
+    }
+    if ui
+        .button(tr!("file-menu-copy-path"))
+        .on_hover_text(tr!("file-menu-copy-path-hint"))
+        .clicked()
+    {
+        ui.ctx().copy_text(path.to_string());
         ui.close();
     }
 }

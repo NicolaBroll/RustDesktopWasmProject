@@ -10,8 +10,8 @@
 //! cancels it (S25, `remote.fetch`). Commands that are not slow ignore both.
 
 use project_engine::{
-    CancelToken, EngineError, JobContext, Platform, Progress, PullOperation, PushRejection,
-    Registry, Session,
+    CancelToken, EngineError, JobContext, Message, MessageArg, Platform, Progress, PullOperation,
+    PushRejection, Registry, Session,
 };
 use project_i18n::tr;
 use serde_json::Value;
@@ -67,6 +67,10 @@ pub enum ErrorKind {
     StaleDiff,
     /// [`EngineError::NotAllowed`]: operation refused in the repo's current state.
     NotAllowed,
+    /// [`EngineError::NotAllowed`] because of uncommitted changes to tracked files (merge,
+    /// cherry-pick, revert, rebase, pull: keys `engine-*-local-changes`); the files are in
+    /// [`Done::error_detail`]. Nothing changed: the UI offers to stash them.
+    LocalChanges,
     /// [`EngineError::InvalidParams`].
     InvalidParams,
     /// [`EngineError::IndexLocked`].
@@ -112,6 +116,9 @@ impl ErrorKind {
     pub fn of(error: &EngineError) -> Self {
         match error {
             EngineError::StaleDiff { .. } => ErrorKind::StaleDiff,
+            EngineError::NotAllowed(m) if local_changes_files(m).is_some() => {
+                ErrorKind::LocalChanges
+            }
             EngineError::NotAllowed(_) => ErrorKind::NotAllowed,
             EngineError::RepoNotFound { .. } => ErrorKind::RepoNotFound,
             EngineError::InvalidParams { .. } => ErrorKind::InvalidParams,
@@ -153,9 +160,30 @@ impl ErrorKind {
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
             EngineError::PullConflict { files, .. }
             | EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
+            EngineError::NotAllowed(m) => local_changes_files(m),
             _ => None,
         }
     }
+}
+
+/// The refusals for uncommitted local changes, which the UI explains with its own text.
+const LOCAL_CHANGES_KEYS: [&str; 4] = [
+    "engine-merge-local-changes",
+    "engine-pick-local-changes",
+    "engine-pull-local-changes",
+    "engine-rebase-local-changes",
+];
+
+/// The files of a refusal for local changes (`a.rs, b.rs`, without the engine's backticks),
+/// `None` for other messages.
+fn local_changes_files(message: &Message) -> Option<String> {
+    if !LOCAL_CHANGES_KEYS.contains(&message.key()) {
+        return None;
+    }
+    message.args().iter().find_map(|(name, arg)| match arg {
+        MessageArg::Text(files) if name == "files" => Some(files.replace('`', "")),
+        _ => None,
+    })
 }
 
 /// A command error, as it comes from the job.

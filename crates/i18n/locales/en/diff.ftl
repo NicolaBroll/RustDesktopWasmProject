@@ -30,6 +30,7 @@ diff-unstage-selected = Unstage selected lines ({ $n })
 diff-stage-selected-hint = Stages only the selected lines; the rest of the file stays out
 diff-unstage-selected-hint = Unstages only the selected lines; the working tree does not change
 diff-no-lines-selected = No lines selected: click a + or - line to select it, Shift+click for a range, drag for more lines
+diff-select-lines-hint = Click lines to select them
 diff-wait-write = Wait for the current write to finish
 diff-clear = Deselect
 diff-clear-hint = Deselect all lines (Esc)

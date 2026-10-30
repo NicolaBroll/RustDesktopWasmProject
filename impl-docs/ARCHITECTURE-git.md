@@ -358,7 +358,7 @@ have updated the branch).
 `Registry::run_with(id, session, params, job: JobContext)`: for the duration of the command the
 session holds `job` (`Session::job()`), the command passes it to the backend, and afterwards an empty
 context returns (`Registry::run` is `run_with` with `JobContext::new()`: no progress, never
-cancelled). This way the extension does not change the signature of commands or `Handler`s.
+cancelled). This way the extension does not change the signature of the command handlers.
 
 - `JobContext::new().with_progress(sink).with_cancel(token)`: `sink` is a
   `Fn(&Progress) + Send + Sync`, called from the job thread; `token` is a `CancelToken`

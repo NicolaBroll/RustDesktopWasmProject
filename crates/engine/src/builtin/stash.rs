@@ -3,14 +3,12 @@
 //! `stash.push` and `stash.drop` enter the journal, `stash.apply` and `stash.pop` do not (§7).
 
 use super::{JournalState, Out, check_path_list, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, GitBackend, HeadState, JournalEntry, Message, Session, StashEntry, StashPush,
     check_stash_apply, pop_stash,
 };
 use project_domain::{Oid, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `stash.list`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,12 +90,12 @@ pub struct StashDropResult {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ListParams {}
+pub(crate) struct ListParams {}
 
 /// Parameters of `stash.apply` and `stash.pop`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ApplyParams {
+pub(crate) struct ApplyParams {
     /// The position: `n` of `stash@{n}` (0 if missing).
     #[serde(default)]
     index: usize,
@@ -111,7 +109,7 @@ struct ApplyParams {
 /// Parameters of `stash.drop`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DropParams {
+pub(crate) struct DropParams {
     #[serde(default)]
     index: usize,
     #[serde(default)]
@@ -174,8 +172,7 @@ fn pick(
 /// `message`, `branch`, `time`, `untracked`).
 ///
 /// Result: [`StashListResult`].
-pub(super) fn stash_list(s: &mut Session, p: Value) -> Out {
-    let ListParams {} = parse_params("stash.list", p)?;
+pub(super) fn stash_list(s: &mut Session, ListParams {}: ListParams) -> Out {
     Ok(to_json(StashListResult {
         stashes: s.repo()?.stashes()?,
     }))
@@ -188,9 +185,8 @@ pub(super) fn stash_list(s: &mut Session, p: Value) -> Out {
 /// if HEAD has not moved.
 ///
 /// Result: [`StashPushResult`].
-pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
+pub(super) fn stash_push(s: &mut Session, mut request: StashPush) -> Out {
     const ID: &str = "stash.push";
-    let mut request: StashPush = parse_params(ID, p)?;
     request.check()?;
     if let Some(paths) = request.paths.take() {
         request.paths = Some(check_path_list(ID, paths)?);
@@ -214,12 +210,16 @@ pub(super) fn stash_push(s: &mut Session, p: Value) -> Out {
 /// `stash.apply` and `stash.pop`: applies the stash `index` (checked with `expected`) and, for
 /// `pop`, if no conflicts remain removes it from the list after saving its commit in
 /// `refs/project/backup/stash-...`. They do not enter the journal.
-fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
-    let ApplyParams {
+fn apply(
+    id: &'static str,
+    pop: bool,
+    s: &mut Session,
+    ApplyParams {
         index,
         expected,
         restore_index,
-    } = parse_params(id, p)?;
+    }: ApplyParams,
+) -> Out {
     let expected = full_id(id, expected)?;
     let repo = s.repo_mut()?;
     let entry = pick(repo, index, expected)?;
@@ -269,14 +269,14 @@ fn apply(id: &'static str, pop: bool, s: &mut Session, p: Value) -> Out {
 /// files it changes. Conflicts stay in the files (`conflicts`), the stash stays.
 ///
 /// Result: [`StashApplyResult`] (`dropped: false`, `backup: null`).
-pub(super) fn stash_apply(s: &mut Session, p: Value) -> Out {
+pub(super) fn stash_apply(s: &mut Session, p: ApplyParams) -> Out {
     apply("stash.apply", false, s, p)
 }
 
 /// Like `stash.apply`, then, if no conflicts remain, removes the stash from the list (first a
 /// backup of its commit: `backup`). With conflicts the stash stays (`dropped: false`).
 /// Result: [`StashApplyResult`].
-pub(super) fn stash_pop(s: &mut Session, p: Value) -> Out {
+pub(super) fn stash_pop(s: &mut Session, p: ApplyParams) -> Out {
     apply("stash.pop", true, s, p)
 }
 
@@ -288,13 +288,15 @@ pub(super) fn stash_pop(s: &mut Session, p: Value) -> Out {
 /// of the list.
 ///
 /// Result: [`StashDropResult`].
-pub(super) fn stash_drop(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "stash.drop";
-    let DropParams {
+pub(super) fn stash_drop(
+    s: &mut Session,
+    DropParams {
         index,
         expected,
         confirm,
-    } = parse_params(ID, p)?;
+    }: DropParams,
+) -> Out {
+    const ID: &str = "stash.drop";
     let expected = full_id(ID, expected)?;
     if confirm && expected.is_none() {
         return Err(EngineError::InvalidParams {

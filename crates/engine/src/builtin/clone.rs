@@ -4,10 +4,8 @@
 //! of an open repo moves; the new repo starts with an empty journal).
 
 use super::{Out, RepoOpenResult, opened, to_json};
-use crate::commands::parse_params;
 use crate::{CloneRequest, EngineError, InitRequest, Session};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `repo.clone`: the repo opened, as in `repo.open`, and git's messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,9 +20,8 @@ pub struct RepoCloneResult {
 /// Clones `url` into `path` and opens it. Slow: progress and cancellation from [`Session::job`].
 ///
 /// Result: [`RepoCloneResult`].
-pub(super) fn repo_clone(s: &mut Session, p: Value) -> Out {
+pub(super) fn repo_clone(s: &mut Session, request: CloneRequest) -> Out {
     const ID: &str = "repo.clone";
-    let request: CloneRequest = parse_params(ID, p)?;
     request.check()?;
     if s.job().is_cancelled() {
         return Err(EngineError::Cancelled { command: ID });
@@ -40,8 +37,7 @@ pub(super) fn repo_clone(s: &mut Session, p: Value) -> Out {
 /// `git init` in `path` (initial branch `branch`, otherwise `init.defaultBranch`) and opens it.
 ///
 /// Result: [`RepoOpenResult`], as in `repo.open`.
-pub(super) fn repo_init(s: &mut Session, p: Value) -> Out {
-    let request: InitRequest = parse_params("repo.init", p)?;
+pub(super) fn repo_init(s: &mut Session, request: InitRequest) -> Out {
     request.check()?;
     s.init_repo(&request)?;
     Ok(to_json(opened(s, request.path)?))

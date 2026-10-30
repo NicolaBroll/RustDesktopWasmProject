@@ -4,19 +4,17 @@
 //! something enters the journal: `edit.undo` undoes it (§7).
 
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     ConfigEntry, EngineError, HeadChange, HeadState, JournalEntry, LogQuery, Message, Session,
     branch_ref, check_branch_name, check_new_branch_name, check_no_operation,
 };
 use project_domain::{Head, Oid, RefInfo, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Parameters of `branch.create`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateParams {
+pub(crate) struct CreateParams {
     name: String,
     #[serde(default)]
     start: Option<String>,
@@ -25,14 +23,14 @@ struct CreateParams {
 /// Parameters of `branch.checkout`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NameParams {
+pub(crate) struct NameParams {
     name: String,
 }
 
 /// Parameters of `branch.delete`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DeleteParams {
+pub(crate) struct DeleteParams {
     name: String,
     #[serde(default)]
     confirm: bool,
@@ -44,7 +42,7 @@ struct DeleteParams {
 /// Parameters of `branch.rename`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RenameParams {
+pub(crate) struct RenameParams {
     name: String,
     new_name: String,
 }
@@ -161,9 +159,8 @@ fn taken(name: &str) -> EngineError {
 /// meantime it was not moved.
 ///
 /// Result: [`BranchCreateResult`].
-pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
+pub(super) fn branch_create(s: &mut Session, CreateParams { name, start }: CreateParams) -> Out {
     const ID: &str = "branch.create";
-    let CreateParams { name, start } = parse_params(ID, p)?;
     check_new_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let head = repo.head()?;
@@ -213,9 +210,8 @@ pub(super) fn branch_create(s: &mut Session, p: Value) -> Out {
 /// equally safe checkout, only if HEAD is still on the branch.
 ///
 /// Result: [`BranchCheckoutResult`].
-pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
+pub(super) fn branch_checkout(s: &mut Session, NameParams { name }: NameParams) -> Out {
     const ID: &str = "branch.checkout";
-    let NameParams { name } = parse_params(ID, p)?;
     check_branch_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
@@ -264,13 +260,15 @@ pub(super) fn branch_checkout(s: &mut Session, p: Value) -> Out {
 /// entry: undo rewrites it (if a new one has not appeared in the meantime), redo removes it.
 ///
 /// Result: [`BranchDeleteResult`].
-pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "branch.delete";
-    let DeleteParams {
+pub(super) fn branch_delete(
+    s: &mut Session,
+    DeleteParams {
         name,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: DeleteParams,
+) -> Out {
+    const ID: &str = "branch.delete";
     check_branch_name(ID, &name)?;
     let expected = expected
         .map(|hex| {
@@ -369,9 +367,8 @@ pub(super) fn branch_delete(s: &mut Session, p: Value) -> Out {
 /// nobody touched the two names.
 ///
 /// Result: [`BranchRenameResult`].
-pub(super) fn branch_rename(s: &mut Session, p: Value) -> Out {
+pub(super) fn branch_rename(s: &mut Session, RenameParams { name, new_name }: RenameParams) -> Out {
     const ID: &str = "branch.rename";
-    let RenameParams { name, new_name } = parse_params(ID, p)?;
     check_branch_name(ID, &name)?;
     check_new_branch_name(ID, &new_name)?;
     if name == new_name {

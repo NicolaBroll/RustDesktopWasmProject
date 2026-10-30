@@ -17,7 +17,17 @@ pub struct CommandSpec {
     pub writes: bool,
 }
 
-pub type Handler = fn(&mut Session, Value) -> Result<Value, EngineError>;
+/// What a command does to the repository ([`CommandSpec::writes`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// Only reads.
+    Read,
+    /// Modifies the repository (index, worktree, refs).
+    Write,
+}
+
+/// A registered command: deserializes the parameters, then runs the typed handler.
+type Handler = Box<dyn Fn(&mut Session, Value) -> Result<Value, EngineError> + Send + Sync>;
 
 #[derive(Default)]
 pub struct Registry {
@@ -25,8 +35,32 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn register(&mut self, spec: CommandSpec, handler: Handler) {
-        let previous = self.map.insert(spec.id, (spec, handler));
+    /// Registers command `id`. The registry deserializes the JSON parameters into `P` (an error
+    /// is [`EngineError::InvalidParams`] with `id`) and passes them to `handler`; `P` =
+    /// [`Value`] takes them as they are.
+    pub fn add<P: DeserializeOwned + 'static>(
+        &mut self,
+        id: &'static str,
+        title: &'static str,
+        params_help: &'static str,
+        access: Access,
+        handler: fn(&mut Session, P) -> Result<Value, EngineError>,
+    ) {
+        let spec = CommandSpec {
+            id,
+            title,
+            params_help,
+            writes: access == Access::Write,
+        };
+        let run: Handler = Box::new(move |session, params| {
+            let params =
+                serde_json::from_value(params).map_err(|e| EngineError::InvalidParams {
+                    id,
+                    reason: msg!("engine-params", error = e.to_string()),
+                })?;
+            handler(session, params)
+        });
+        let previous = self.map.insert(id, (spec, run));
         assert!(previous.is_none(), "command registered twice");
     }
 
@@ -85,17 +119,6 @@ impl Registry {
     }
 }
 
-/// Deserializes a command's parameters into its dedicated type.
-pub(crate) fn parse_params<T: DeserializeOwned>(
-    id: &'static str,
-    params: Value,
-) -> Result<T, EngineError> {
-    serde_json::from_value(params).map_err(|e| EngineError::InvalidParams {
-        id,
-        reason: msg!("engine-params", error = e.to_string()),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,15 +132,7 @@ mod tests {
     #[test]
     fn a_panicking_command_leaves_an_empty_job_context() {
         let mut r = Registry::default();
-        r.register(
-            CommandSpec {
-                id: "test.boom",
-                title: "Panics",
-                params_help: "{}",
-                writes: false,
-            },
-            boom,
-        );
+        r.add("test.boom", "Panics", "{}", Access::Read, boom);
         let mut s = Session::new(Arc::new(MemoryOpener::new()));
         let cancel = CancelToken::new();
         cancel.cancel();

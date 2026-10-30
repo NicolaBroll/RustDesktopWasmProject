@@ -6,11 +6,9 @@
 //! worktree (`git show <backup>:<path>`) or `git checkout -m <path>` while the merge is in progress.
 
 use super::{Out, check_path, to_json};
-use crate::commands::parse_params;
 use crate::{ConflictResolution, EngineError, Session, VersionText, worktree_digest};
 use project_domain::{Conflict, RepoPath, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `conflict.show`: the versions of the conflicted file (see
 /// [`GitBackend::conflict_versions`](crate::GitBackend::conflict_versions)).
@@ -51,14 +49,14 @@ pub struct ConflictResolveResult {
 /// Parameters of `conflict.show`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ShowParams {
+pub(crate) struct ShowParams {
     path: RepoPath,
 }
 
 /// Parameters of `conflict.resolve`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResolveParams {
+pub(crate) struct ResolveParams {
     path: RepoPath,
     digest: String,
     #[serde(default)]
@@ -69,8 +67,7 @@ struct ResolveParams {
 
 /// The versions of the conflicted file `path`, each `{"text", "binary", "size"}` or `null`, and
 /// the worktree digest to pass again to `conflict.resolve`. Result: [`ConflictShowResult`].
-pub(super) fn conflict_show(s: &mut Session, p: Value) -> Out {
-    let ShowParams { path } = parse_params("conflict.show", p)?;
+pub(super) fn conflict_show(s: &mut Session, ShowParams { path }: ShowParams) -> Out {
     let path = check_path("conflict.show", path)?;
     let v = s.repo()?.conflict_versions(&path)?;
     let version = |b: &Option<Vec<u8>>| b.as_deref().map(VersionText::of);
@@ -89,14 +86,16 @@ pub(super) fn conflict_show(s: &mut Session, p: Value) -> Out {
 /// Resolves the conflict of `path` with `content` or `delete` (see
 /// [`GitBackend::resolve_conflict`](crate::GitBackend::resolve_conflict)). Result:
 /// [`ConflictResolveResult`].
-pub(super) fn conflict_resolve(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "conflict.resolve";
-    let ResolveParams {
+pub(super) fn conflict_resolve(
+    s: &mut Session,
+    ResolveParams {
         path,
         digest,
         content,
         delete,
-    } = parse_params(ID, p)?;
+    }: ResolveParams,
+) -> Out {
+    const ID: &str = "conflict.resolve";
     let path = check_path(ID, path)?;
     let content = match (content, delete) {
         (Some(c), false) => Some(c.into_bytes()),

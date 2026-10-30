@@ -2,7 +2,6 @@
 //! cancellation arrive from [`Session::job`].
 
 use super::{Out, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, FetchRequest, Message, Session, check_branch_name, check_remote_name,
     default_remote, unknown_remote,
@@ -10,7 +9,6 @@ use crate::{
 use project_domain::{Oid, RefInfo};
 use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Result of `remote.fetch`.
@@ -83,7 +81,7 @@ impl RefsAfter {
 /// Parameters of `remote.fetch`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FetchParams {
+pub(crate) struct FetchParams {
     #[serde(default)]
     remote: Option<String>,
     #[serde(default)]
@@ -168,13 +166,15 @@ pub(super) fn unexpected(update: &RefUpdate) -> Option<Message> {
 /// [`EngineError::Cancelled`] (the refs already updated by git stay).
 ///
 /// Result: [`RemoteFetchResult`].
-pub(super) fn remote_fetch(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "remote.fetch";
-    let FetchParams {
+pub(super) fn remote_fetch(
+    s: &mut Session,
+    FetchParams {
         remote,
         branch,
         prune,
-    } = parse_params(ID, p)?;
+    }: FetchParams,
+) -> Out {
+    const ID: &str = "remote.fetch";
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;
     }

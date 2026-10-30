@@ -10,7 +10,6 @@
 
 use super::merge::abort_confirm;
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::git::check_in_progress;
 use crate::{
     EngineError, GitBackend, JournalEntry, LogQuery, MergeAbortResult, Message, RebaseRecord,
@@ -21,7 +20,6 @@ use project_domain::{
     Head, Oid, Operation, RebaseAction, RebasePlan, RebaseStep, RefInfo, RefKind, RepoPath, Status,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashSet;
 
 /// One step of the default plan of `rebase.plan`.
@@ -130,7 +128,7 @@ pub struct RebaseContinueResult {
 /// Parameters of `rebase.plan`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PlanParams {
+pub(crate) struct PlanParams {
     /// The commit the branch is rebuilt on (excluded): an id, a branch, a tag or another rev.
     base: String,
 }
@@ -138,7 +136,7 @@ struct PlanParams {
 /// Parameters of `rebase.start`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StartParams {
+pub(crate) struct StartParams {
     base: String,
     steps: Vec<RebaseStep>,
     #[serde(default)]
@@ -147,12 +145,12 @@ struct StartParams {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NoParams {}
+pub(crate) struct NoParams {}
 
 /// Parameters of `rebase.abort`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AbortParams {
+pub(crate) struct AbortParams {
     #[serde(default)]
     confirm: bool,
 }
@@ -223,9 +221,8 @@ fn published(
 /// merge commits in the range; `base` that does not exist → [`EngineError::UnknownRev`].
 ///
 /// Result: [`RebasePlanResult`].
-pub(super) fn rebase_plan(s: &mut Session, p: Value) -> Out {
+pub(super) fn rebase_plan(s: &mut Session, PlanParams { base }: PlanParams) -> Out {
     const ID: &str = "rebase.plan";
-    let PlanParams { base } = parse_params(ID, p)?;
     let repo = s.repo()?;
     let (branch, head) = head_branch(ID, &repo.head()?)?;
     let base = resolve_base(repo, ID, &base)?;
@@ -295,13 +292,15 @@ fn check_result(repo: &dyn GitBackend, record: &RebaseRecord, after: &Oid) -> Ve
 /// and worktree, back to where it was.
 ///
 /// Result: [`RebaseStartResult`].
-pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "rebase.start";
-    let StartParams {
+pub(super) fn rebase_start(
+    s: &mut Session,
+    StartParams {
         base,
         steps,
         confirm,
-    } = parse_params(ID, p)?;
+    }: StartParams,
+) -> Out {
+    const ID: &str = "rebase.start";
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
     let (branch, before) = head_branch(ID, &status.head)?;
@@ -389,9 +388,8 @@ pub(super) fn rebase_start(s: &mut Session, p: Value) -> Out {
 ///
 /// Result: [`RebaseContinueResult`] (`command`/`before`/`backup` `null` for a rebase started from
 /// the terminal).
-pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
+pub(super) fn rebase_continue(s: &mut Session, NoParams {}: NoParams) -> Out {
     const ID: &str = "rebase.continue";
-    let NoParams {} = parse_params(ID, p)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
     check_in_progress(ID, Operation::Rebase, &status)?;
@@ -481,9 +479,8 @@ pub(super) fn rebase_continue(s: &mut Session, p: Value) -> Out {
 /// [`EngineError::NotAllowed`]. It does not enter the journal.
 ///
 /// Result: [`MergeAbortResult`] (the same shape as `merge.abort`).
-pub(super) fn rebase_abort(s: &mut Session, p: Value) -> Out {
+pub(super) fn rebase_abort(s: &mut Session, AbortParams { confirm }: AbortParams) -> Out {
     const ID: &str = "rebase.abort";
-    let AbortParams { confirm } = parse_params(ID, p)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
     check_in_progress(ID, Operation::Rebase, &status)?;

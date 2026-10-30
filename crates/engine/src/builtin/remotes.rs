@@ -4,7 +4,6 @@
 
 use super::remote::{RefUpdate, changes, unexpected};
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     ConfigEntry, EngineError, FetchRequest, GitBackend, HeadState, JobContext, JournalEntry,
     Message, MessageArg, RemoteRef, RemoteSnapshot, Session, check_new_remote_name,
@@ -13,7 +12,6 @@ use crate::{
 };
 use project_domain::{RefInfo, RefKind};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// A configured remote, as `remote.list` gives it (see there).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,12 +183,12 @@ pub struct RemoteRemoveResult {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ListParams {}
+pub(crate) struct ListParams {}
 
 /// Parameters of `remote.add`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AddParams {
+pub(crate) struct AddParams {
     name: String,
     url: String,
     #[serde(default)]
@@ -200,7 +198,7 @@ struct AddParams {
 /// Parameters of `remote.remove`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RemoveParams {
+pub(crate) struct RemoveParams {
     name: String,
     #[serde(default)]
     confirm: bool,
@@ -304,8 +302,7 @@ fn remotes_and_refs(repo: &dyn GitBackend) -> Reread {
 /// - `default`: the remote `remote.fetch` uses without `remote` (upstream of the active branch,
 ///   `origin`, the only remote; `null` if ambiguous); `push_default`: `remote.pushDefault`
 ///   (the last value, even if it is not a configured remote).
-pub(super) fn remote_list(s: &mut Session, p: Value) -> Out {
-    let ListParams {} = parse_params("remote.list", p)?;
+pub(super) fn remote_list(s: &mut Session, ListParams {}: ListParams) -> Out {
     remote_items(s.repo()?).map(to_json)
 }
 
@@ -376,9 +373,8 @@ fn fetch_all(
 /// undo the addition: the remote stays (and is in the journal) and the error is in `fetch_error`.
 ///
 /// Result: [`RemoteAddResult`].
-pub(super) fn remote_add(s: &mut Session, p: Value) -> Out {
+pub(super) fn remote_add(s: &mut Session, AddParams { name, url, fetch }: AddParams) -> Out {
     const ID: &str = "remote.add";
-    let AddParams { name, url, fetch } = parse_params(ID, p)?;
     check_new_remote_name(ID, &name)?;
     check_remote_url(ID, &url)?;
     let job = s.job().clone();
@@ -501,9 +497,8 @@ fn removal_summary(snapshot: &RemoteSnapshot) -> MessageArg {
 /// that in the meantime was set elsewhere stays, with a warning.
 ///
 /// Result: [`RemoteRemoveResult`].
-pub(super) fn remote_remove(s: &mut Session, p: Value) -> Out {
+pub(super) fn remote_remove(s: &mut Session, RemoveParams { name, confirm }: RemoveParams) -> Out {
     const ID: &str = "remote.remove";
-    let RemoveParams { name, confirm } = parse_params(ID, p)?;
     check_remote_name(ID, &name)?;
     let (repo, journal) = s.repo_and_journal()?;
     let remotes = repo.remotes()?;

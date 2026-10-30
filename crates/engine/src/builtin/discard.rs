@@ -2,11 +2,9 @@
 //! shared by the backends are in `git/discard.rs`; contract in `impl-docs/git/discard.md`.
 
 use super::{JournalState, Out, check_path_list, reread, to_json};
-use crate::commands::parse_params;
 use crate::{DiscardedFile, EngineError, HeadState, JournalEntry, Session, discard_plan};
 use project_domain::{Oid, RepoPath, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `worktree.discard` (with `"confirm": true`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,7 +29,7 @@ pub struct DiscardResult {
 /// Parameters of `worktree.discard`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DiscardParams {
+pub(crate) struct DiscardParams {
     paths: Vec<RepoPath>,
     #[serde(default)]
     confirm: bool,
@@ -46,9 +44,11 @@ struct DiscardParams {
 /// the operation goes into the journal and `edit.undo` puts the files back as they were.
 ///
 /// Result: [`DiscardResult`].
-pub(super) fn worktree_discard(s: &mut Session, p: Value) -> Out {
+pub(super) fn worktree_discard(
+    s: &mut Session,
+    DiscardParams { paths, confirm }: DiscardParams,
+) -> Out {
     const ID: &str = "worktree.discard";
-    let DiscardParams { paths, confirm } = parse_params(ID, p)?;
     let paths = check_path_list(ID, paths)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;

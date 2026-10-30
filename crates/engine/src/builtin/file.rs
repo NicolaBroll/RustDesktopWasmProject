@@ -2,11 +2,9 @@
 //! histories (§6): cancellation arrives from [`Session::job`].
 
 use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
-use crate::commands::parse_params;
 use crate::{BlameQuery, FileLogQuery, Session};
 use project_domain::{FileLogEntry, RepoPath};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Result of `file.log`: a page of the history of a file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,7 +18,7 @@ pub struct FileLogResult {
 /// Parameters of `file.blame`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BlameParams {
+pub(crate) struct BlameParams {
     path: RepoPath,
     #[serde(default)]
     rev: Option<String>,
@@ -31,9 +29,8 @@ struct BlameParams {
 ///
 /// Result: the [`Blame`](project_domain::Blame) (`{"lines", "commits"}`) plus `{"path", "rev":
 /// oid | null}`.
-pub(super) fn file_blame(s: &mut Session, p: Value) -> Out {
+pub(super) fn file_blame(s: &mut Session, BlameParams { path, rev }: BlameParams) -> Out {
     const ID: &str = "file.blame";
-    let BlameParams { path, rev } = parse_params(ID, p)?;
     let path = check_path(ID, path)?;
     let job = s.job().clone();
     let query = BlameQuery { path, rev };
@@ -47,7 +44,7 @@ fn default_follow() -> bool {
 /// Parameters of `file.log`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FileLogParams {
+pub(crate) struct FileLogParams {
     path: RepoPath,
     #[serde(default)]
     rev: Option<String>,
@@ -62,15 +59,17 @@ struct FileLogParams {
 /// The commits that change `path`, newest first (paginated like `repo.log`, `limit` 200).
 ///
 /// Result: [`FileLogResult`].
-pub(super) fn file_log(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "file.log";
-    let FileLogParams {
+pub(super) fn file_log(
+    s: &mut Session,
+    FileLogParams {
         path,
         rev,
         skip,
         limit,
         follow,
-    } = parse_params(ID, p)?;
+    }: FileLogParams,
+) -> Out {
+    const ID: &str = "file.log";
     let path = check_path(ID, path)?;
     let limit = limit.unwrap_or(DEFAULT_LOG_LIMIT);
     let job = s.job().clone();

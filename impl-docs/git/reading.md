@@ -46,8 +46,8 @@ so the pages are contiguous.
 
 ### `repo.search`
 
-Parameters: `{"query", "in"?, "path"?, "all"?, "stashes"?, "skip"?, "limit"?}` (S48). A read (not in
-`WRITES`). Result `{"ids": [oid], "total": number, "has_more": bool}`: the page `skip..skip + limit`
+Parameters: `{"query", "in"?, "path"?, "all"?, "stashes"?, "skip"?, "limit"?}` (S48). A read
+(`Access::Read`). Result `{"ids": [oid], "total": number, "has_more": bool}`: the page `skip..skip + limit`
 (`limit` 200 if missing) of the ids of the matching commits, in the order of `repo.log` with the same
 `all`/`stashes` (from HEAD, or from all refs; `stashes` without `all` → `InvalidParams`), so the UI
 highlights the matches in the graph instead of filtering it; `total` = all the matches, `has_more` =
@@ -127,7 +127,7 @@ anyway); the fix is the commit-graph, which git itself writes in `git gc`/`git m
 
 ### `repo.optimize`
 
-Parameters: `{}`. A write (in `WRITES`): `git commit-graph write --reachable --progress` (no
+Parameters: `{}`. A write (`Access::Write`): `git commit-graph write --reachable --progress` (no
 `--changed-paths`, no `--split`) through `GitBackend::write_commit_graph`. Result `{"commit_graph":
 bool}`, the state afterwards (as in `repo.open`; `false` for a repo without commits, where git writes
 nothing).
@@ -171,7 +171,7 @@ The notice is described in [ARCHITECTURE-git.md](../ARCHITECTURE-git.md) §8 ("C
 ## Blame and file history (S34)
 
 Pure parsers in `crates/domain/src/git/blame.rs` and `crates/domain/src/git/file_log.rs`; commands in
-`crates/engine/src/builtin/file.rs`. Both are reads (not in `WRITES`) and slow on large histories
+`crates/engine/src/builtin/file.rs`. Both are reads (`Access::Read`) and slow on large histories
 (§6: run in the background by the UI with `Registry::run_with`; the job's `CancelToken` stops git).
 
 ### `file.blame`

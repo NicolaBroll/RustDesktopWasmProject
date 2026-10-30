@@ -7,7 +7,8 @@ are opened only for the part being touched (the section cited here, the function
 ## Invariants
 
 - Every operation is a `Registry` command with a stable id (never renamed) and JSON parameters
-  `deny_unknown_fields`; writers go in `WRITES`. UI, CLI, MCP and tests go through
+  `deny_unknown_fields`, deserialized by the `Registry` into the handler's type; writers are
+  registered with `Access::Write`. UI, CLI, MCP and tests go through
   `Registry::run`.
 - **Do not lose data** (§1, §7): anything that can delete work requires `"confirm": true` and first
   saves a backup in `refs/project/backup/<type>-...`; if the backup fails, nothing is written.

@@ -2,14 +2,12 @@
 
 use super::remote::{RefUpdate, RefsAfter};
 use super::{Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, Message, MessageArg, PushKind, PushRequest, Session, branch_ref,
     check_branch_name, check_remote_name, default_remote, tracking_ref, unknown_remote,
 };
 use project_domain::{Commit, Head, Oid, RefInfo, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Where the remote of `remote.push` comes from (`remote_source` of [`RemotePushResult`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +81,7 @@ const LOST_LIMIT: usize = 10;
 /// Parameters of `remote.push`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PushParams {
+pub(crate) struct PushParams {
     #[serde(default)]
     remote: Option<String>,
     #[serde(default)]
@@ -134,14 +132,16 @@ fn config_true(value: &str) -> bool {
 /// Result: [`RemotePushResult`]: `before` is the local remote-tracking branch before the push, `after`
 /// the published commit, `lost` the commits removed from the remote by a force, `updated` the
 /// local refs changed (the local remote-tracking branch).
-pub(super) fn remote_push(s: &mut Session, p: Value) -> Out {
-    let PushParams {
+pub(super) fn remote_push(
+    s: &mut Session,
+    PushParams {
         remote,
         branch,
         force,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: PushParams,
+) -> Out {
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;
     }

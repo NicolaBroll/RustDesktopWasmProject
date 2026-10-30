@@ -5,19 +5,17 @@
 //! deletes the created tag or recreates the deleted one on the same value (§7).
 
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, HeadState, JournalEntry, LogQuery, Session, check_new_tag_name, check_tag_name,
     tag_ref,
 };
 use project_domain::{Oid, RefInfo};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Parameters of `tag.create`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateParams {
+pub(crate) struct CreateParams {
     name: String,
     #[serde(default)]
     target: Option<String>,
@@ -74,13 +72,15 @@ pub struct TagDeleteResult {
 /// meantime it was not moved.
 ///
 /// Result: [`TagCreateResult`].
-pub(super) fn tag_create(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "tag.create";
-    let CreateParams {
+pub(super) fn tag_create(
+    s: &mut Session,
+    CreateParams {
         name,
         target,
         message,
-    } = parse_params(ID, p)?;
+    }: CreateParams,
+) -> Out {
+    const ID: &str = "tag.create";
     check_new_tag_name(ID, &name)?;
     let message = message.filter(|m| !m.trim().is_empty());
     let (repo, journal) = s.repo_and_journal()?;
@@ -125,7 +125,7 @@ pub(super) fn tag_create(s: &mut Session, p: Value) -> Out {
 /// Parameters of `tag.delete`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DeleteParams {
+pub(crate) struct DeleteParams {
     name: String,
     #[serde(default)]
     confirm: bool,
@@ -145,13 +145,15 @@ struct DeleteParams {
 /// meantime nobody created one with that name.
 ///
 /// Result: [`TagDeleteResult`].
-pub(super) fn tag_delete(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "tag.delete";
-    let DeleteParams {
+pub(super) fn tag_delete(
+    s: &mut Session,
+    DeleteParams {
         name,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: DeleteParams,
+) -> Out {
+    const ID: &str = "tag.delete";
     check_tag_name(ID, &name)?;
     let expected = expected
         .map(|hex| {

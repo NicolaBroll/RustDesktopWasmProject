@@ -4,14 +4,12 @@
 //! into the journal: the remote belongs to others.
 
 use super::{Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, Message, RemoteTagDelete, Session, TagPush, check_remote_name, check_tag_name,
     tag_ref, unknown_remote,
 };
 use project_domain::{Oid, RefInfo};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// How `remote.push_tag` updated the remote (`kind` of [`RemotePushTagResult`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +112,7 @@ fn refs(s: &Session) -> (Option<Vec<RefInfo>>, Option<String>) {
 /// Parameters of `remote.push_tag`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PushParams {
+pub(crate) struct PushParams {
     remote: String,
     name: String,
 }
@@ -128,9 +126,8 @@ struct PushParams {
 /// `remote.push`. Slow, does not go into the journal.
 ///
 /// Result: [`RemotePushTagResult`].
-pub(super) fn remote_push_tag(s: &mut Session, p: Value) -> Out {
+pub(super) fn remote_push_tag(s: &mut Session, PushParams { remote, name }: PushParams) -> Out {
     const ID: &str = "remote.push_tag";
-    let PushParams { remote, name } = parse_params(ID, p)?;
     check_remote_name(ID, &remote)?;
     check_tag_name(ID, &name)?;
     let job = s.job().clone();
@@ -177,7 +174,7 @@ pub(super) fn remote_push_tag(s: &mut Session, p: Value) -> Out {
 /// Parameters of `remote.delete_tag`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DeleteParams {
+pub(crate) struct DeleteParams {
     remote: String,
     name: String,
     #[serde(default)]
@@ -202,14 +199,16 @@ struct DeleteParams {
 /// [`GitBackend::delete_remote_tag`](crate::GitBackend::delete_remote_tag)). Slow, not in the journal.
 ///
 /// Result: [`RemoteDeleteTagResult`].
-pub(super) fn remote_delete_tag(s: &mut Session, p: Value) -> Out {
-    const ID: &str = "remote.delete_tag";
-    let DeleteParams {
+pub(super) fn remote_delete_tag(
+    s: &mut Session,
+    DeleteParams {
         remote,
         name,
         confirm,
         expected,
-    } = parse_params(ID, p)?;
+    }: DeleteParams,
+) -> Out {
+    const ID: &str = "remote.delete_tag";
     check_remote_name(ID, &remote)?;
     check_tag_name(ID, &name)?;
     if confirm && expected.is_none() {

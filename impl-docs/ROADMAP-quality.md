@@ -117,6 +117,12 @@ Rules that apply to every step:
   request, after Q11).
 - **Done when:** no `parse_params` call left in the handlers; the catalog (`project-cli
   commands`) unchanged; CI green.
+- **Progress:** registry done: `Registry::add::<P>(id, title, params_help, Access, handler)`
+  deserializes the parameters (error with the registered id) and the 61 handlers receive their
+  struct; `register`, `parse_params` and `WRITES` are gone, the catalog is unchanged. The
+  parameter structs are `pub(crate)` for now: still to do, one function per pull request, make
+  them `pub` + `Serialize` (exported with a unique name, e.g. `BranchCreateParams`) and build
+  the UI parameters with them instead of `json!`.
 
 ### Q13 — Parameter schema for CLI and MCP
 - [ ] **Agent:** `git-engine`

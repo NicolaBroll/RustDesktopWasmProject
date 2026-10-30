@@ -8,7 +8,6 @@
 
 use super::remote::{RefUpdate, changes, unexpected};
 use super::{JournalState, Out, reread, to_json};
-use crate::commands::parse_params;
 use crate::{
     EngineError, FetchRequest, HeadState, JournalEntry, Message, PullMode, PullPolicy, PullRequest,
     PullStrategy, Session, StrategySource, branch_ref, check_branch_name, check_pull_state,
@@ -17,7 +16,6 @@ use crate::{
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// How `remote.pull` integrated the upstream (`strategy` of [`RemotePullResult`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +105,7 @@ const ID: &str = "remote.pull";
 /// Parameters of `remote.pull`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PullParams {
+pub(crate) struct PullParams {
     #[serde(default)]
     remote: Option<String>,
     #[serde(default)]
@@ -151,12 +149,14 @@ fn no_upstream(branch: &str) -> EngineError {
 /// merge or rebase (the entry arrives with `merge.continue`/`rebase.continue`).
 ///
 /// Result: [`RemotePullResult`].
-pub(super) fn remote_pull(s: &mut Session, p: Value) -> Out {
-    let PullParams {
+pub(super) fn remote_pull(
+    s: &mut Session,
+    PullParams {
         remote,
         branch,
         strategy,
-    } = parse_params(ID, p)?;
+    }: PullParams,
+) -> Out {
     if let Some(remote) = &remote {
         check_remote_name(ID, remote)?;
     }

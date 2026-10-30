@@ -12,9 +12,9 @@ use super::{
     reread_warning, unexpected,
 };
 use project_domain::Oid;
-use project_engine::PickStartResult;
+use project_engine::{PickStartParams, PickStartResult};
 use project_i18n::tr;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Cherry-pick or revert of a commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,10 +120,10 @@ impl MergeBox {
         into: String,
         mainline: Option<usize>,
     ) -> (Value, String) {
-        let mut params = json!({ "rev": rev.to_string() });
-        if let Some(mainline) = mainline {
-            params["mainline"] = json!(mainline);
-        }
+        let params = crate::params(PickStartParams {
+            rev: rev.to_string(),
+            mainline,
+        });
         let label = tr!(
             "merge-pick-label",
             title = pick.kind().title(),

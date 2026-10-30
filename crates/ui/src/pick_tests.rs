@@ -6,6 +6,7 @@ use super::*;
 use crate::discard::Phase;
 use project_domain::{Change, ChangedFile, Commit, Operation, RepoPath, Signature, Status};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
+use serde_json::json;
 use std::sync::Arc;
 
 fn oid(n: u64) -> Oid {

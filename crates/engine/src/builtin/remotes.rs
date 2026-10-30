@@ -11,6 +11,7 @@ use crate::{
     mask_url, masked_entry, owned_by, remove_remote,
 };
 use project_domain::{RefInfo, RefKind};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A configured remote, as `remote.list` gives it (see there).
@@ -181,12 +182,12 @@ pub struct RemoteRemoveResult {
     pub journal: JournalState,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ListParams {}
 
 /// Parameters of `remote.add`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteAddParams {
     /// The name of the new remote.
@@ -199,7 +200,7 @@ pub struct RemoteAddParams {
 }
 
 /// Parameters of `remote.remove`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteRemoveParams {
     /// The remote.

@@ -4,6 +4,7 @@
 use super::{JournalState, Out, check_path_list, reread, to_json};
 use crate::{DiscardedFile, EngineError, HeadState, JournalEntry, Session, discard_plan};
 use project_domain::{Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `worktree.discard` (with `"confirm": true`).
@@ -27,7 +28,7 @@ pub struct DiscardResult {
 }
 
 /// Parameters of `worktree.discard`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DiscardParams {
     /// The files or folders.

@@ -20,12 +20,13 @@
 
 use crate::{EngineError, Message, MessageArg, RefRestore};
 use project_domain::{Change, EntryKind, Oid, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The three modes of `git reset`.
 ///
 /// JSON: `"soft"`, `"mixed"`, `"hard"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetMode {
     /// Only the ref.

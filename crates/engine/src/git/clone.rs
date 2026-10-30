@@ -3,10 +3,11 @@
 
 use super::branch::{check_branch_name, check_new_branch_name};
 use crate::EngineError;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Parameters of `repo.clone`, passed as they are to [`RepoOpener::clone_repo`](crate::RepoOpener::clone_repo).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloneRequest {
     /// What `git clone` accepts: a URL or a local path (never an option, even with `-`).
@@ -29,7 +30,7 @@ pub struct CloneOutcome {
 }
 
 /// Parameters of `repo.init`, passed to [`RepoOpener::init_repo`](crate::RepoOpener::init_repo).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InitRequest {
     /// Destination folder: absent or empty.

@@ -120,6 +120,7 @@ use crate::{EngineError, JobContext, Message};
 use project_domain::{
     Commit, CommitDetails, Diff, FileLogEntry, Head, Oid, RefInfo, RepoPath, Status,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// An open repository: reads and, one step at a time, writes (stage and unstage for now).
@@ -788,7 +789,7 @@ pub trait RepoOpener: Send + Sync {
 
 /// A page of the log: parameters of `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,
 /// "stashes"?}`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogQuery {
     /// Commits to skip from the start of the log.

@@ -7,6 +7,7 @@ use crate::{
     check_remote_name, tracking_ref, unknown_remote,
 };
 use project_domain::{Commit, Oid, RefInfo, RefKind, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `remote.delete_branch`.
@@ -60,7 +61,7 @@ const ID: &str = "remote.delete_branch";
 const LOST_LIMIT: usize = 10;
 
 /// Parameters of `remote.delete_branch`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteDeleteBranchParams {
     /// The remote.

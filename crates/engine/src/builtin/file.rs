@@ -4,6 +4,7 @@
 use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
 use crate::{BlameQuery, FileLogQuery, Session};
 use project_domain::{FileLogEntry, RepoPath};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `file.log`: a page of the history of a file.
@@ -16,7 +17,7 @@ pub struct FileLogResult {
 }
 
 /// Parameters of `file.blame`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FileBlameParams {
     /// The file.
@@ -44,7 +45,7 @@ fn default_follow() -> bool {
 }
 
 /// Parameters of `file.log`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FileLogParams {
     /// The file.

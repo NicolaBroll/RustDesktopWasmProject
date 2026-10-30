@@ -9,6 +9,7 @@ use crate::{
 };
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `branch.reset_preview`.
@@ -81,7 +82,7 @@ pub struct ResetResult {
 }
 
 /// Parameters of `branch.reset`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResetParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.
@@ -98,7 +99,7 @@ pub struct ResetParams {
 }
 
 /// Parameters of `branch.reset_preview`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResetPreviewParams {
     /// The commit, as in `branch.reset`.

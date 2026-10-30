@@ -15,6 +15,7 @@ use crate::{
 };
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// How `merge.start` integrated the rev (`strategy` of [`MergeStartResult`]).
@@ -143,7 +144,7 @@ pub struct MergeAbortResult {
 }
 
 /// Parameters of `merge.start`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MergeStartParams {
     /// What to merge: a local or remote branch, a tag, an id or another rev.
@@ -161,7 +162,7 @@ pub struct MergeStartParams {
 
 /// Parameters of `merge.abort`, also of `cherry_pick.abort`, `revert.abort` and
 /// `rebase.abort`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MergeAbortParams {
     /// Always required to abort.
@@ -170,7 +171,7 @@ pub struct MergeAbortParams {
 }
 
 /// Parameters of `merge.continue`, also of `cherry_pick.continue` and `revert.continue`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MergeContinueParams {
     /// The message of the commit; without: the one prepared by git.
@@ -178,7 +179,7 @@ pub struct MergeContinueParams {
     pub message: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoParams {}
 

@@ -14,6 +14,7 @@ use crate::{
     check_picking, clean_merge_message, conflicted_paths, pick_message, pick_parent,
 };
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Result of `commit.cherry_pick` and `commit.revert`.
@@ -62,7 +63,7 @@ pub struct PickStartResult {
 }
 
 /// Parameters of `commit.cherry_pick` and `commit.revert`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PickStartParams {
     /// The commit: an id (also abbreviated), a branch, a tag or another rev.

@@ -28,6 +28,7 @@ use crate::{
     commit_graph_replaced, commit_graph_shallow, file_digest,
 };
 use project_domain::{Commit, Diff, FileDiff, Head, RepoPath};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -44,21 +45,24 @@ impl Registry {
             r#"{"path": string}"#,
             Read,
             repo_open,
-        );
+        )
+        .takes_paths_outside_repo();
         r.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
             r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
             Write,
             clone::repo_clone,
-        );
+        )
+        .takes_paths_outside_repo();
         r.add(
             "repo.init",
             "New empty repository in an absent or empty folder, then open it",
             r#"{"path": string, "branch"?: string (without: init.defaultBranch)}"#,
             Write,
             clone::repo_init,
-        );
+        )
+        .takes_paths_outside_repo();
         r.add("repo.status", "Repository status", "{}", Read, repo_status);
         r.add(
             "repo.refs",
@@ -459,12 +463,12 @@ impl Registry {
 
 type Out = Result<Value, EngineError>;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoParams {}
 
 /// Parameters of `repo.open`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoOpenParams {
     /// The folder of the repo (also a subfolder of the worktree).
@@ -593,7 +597,7 @@ fn repo_refs(s: &mut Session, NoParams {}: NoParams) -> Out {
 }
 
 /// Parameters of `commit.show`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitShowParams {
     /// The commit: an id (also abbreviated) or a ref name.
@@ -608,7 +612,7 @@ fn commit_show(s: &mut Session, CommitShowParams { id }: CommitShowParams) -> Ou
 }
 
 /// Parameters of `diff.worktree` and `diff.index`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DiffParams {
     /// Only this file.
@@ -617,7 +621,7 @@ pub struct DiffParams {
 }
 
 /// Parameters of `diff.commit`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DiffCommitParams {
     /// The commit, as in `commit.show`.
@@ -927,6 +931,27 @@ mod tests {
                 "worktree.discard"
             ]
         );
+        let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();
+        assert_eq!(outside, ["repo.clone", "repo.init", "repo.open"]);
+    }
+
+    #[test]
+    fn every_command_has_a_self_contained_parameter_schema() {
+        let r = Registry::builtin();
+        for spec in r.list() {
+            let schema = &spec.params;
+            assert_eq!(schema["type"], "object", "{}", spec.id);
+            assert_eq!(schema["additionalProperties"], false, "{}", spec.id);
+            let text = schema.to_string();
+            assert!(
+                !text.contains("$ref") && !text.contains("$schema"),
+                "{}: {text}",
+                spec.id
+            );
+        }
+        let open = &r.get("repo.open").unwrap().params;
+        assert_eq!(open["required"], serde_json::json!(["path"]));
+        assert_eq!(open["properties"]["path"]["type"], "string");
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use crate::DomainError;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
@@ -87,6 +89,24 @@ impl FromStr for Oid {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::from_hex(s.as_bytes())
+    }
+}
+
+impl JsonSchema for Oid {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "Oid".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "Full commit id (40 hex digits)",
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{40}$",
+        })
     }
 }
 

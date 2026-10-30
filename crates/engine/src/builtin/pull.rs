@@ -15,6 +15,7 @@ use crate::{
 };
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, RepoPath, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// How `remote.pull` integrated the upstream (`strategy` of [`RemotePullResult`]).
@@ -103,7 +104,7 @@ pub struct RemotePullResult {
 const ID: &str = "remote.pull";
 
 /// Parameters of `remote.pull`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemotePullParams {
     /// The remote; without: the upstream's.

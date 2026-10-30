@@ -4,12 +4,13 @@
 use super::{DEFAULT_LOG_LIMIT, Out, check_path, to_json};
 use crate::{EngineError, SearchField, SearchQuery, Session};
 use project_domain::{Oid, RepoPath};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 const ID: &str = "repo.search";
 
 /// Parameters of `repo.search`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSearchParams {
     /// The text to look for (literal, case-insensitive).

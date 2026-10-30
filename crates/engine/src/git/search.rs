@@ -3,10 +3,13 @@
 
 use super::LogQuery;
 use project_domain::{Oid, RepoPath};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Where [`SearchQuery::text`] is looked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchField {
     /// The whole message (subject and body), like `git log --grep`.

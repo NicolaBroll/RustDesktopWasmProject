@@ -8,6 +8,7 @@ use crate::{
 };
 use project_domain::{Oid, RefInfo};
 use project_domain::{REMOTES_PREFIX, TAGS_PREFIX};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -79,7 +80,7 @@ impl RefsAfter {
 }
 
 /// Parameters of `remote.fetch`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteFetchParams {
     /// The configured remote; without: upstream, `origin` or the only one.

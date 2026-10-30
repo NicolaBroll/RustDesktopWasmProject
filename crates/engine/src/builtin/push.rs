@@ -7,6 +7,7 @@ use crate::{
     check_branch_name, check_remote_name, default_remote, tracking_ref, unknown_remote,
 };
 use project_domain::{Commit, Head, Oid, RefInfo, Status};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Where the remote of `remote.push` comes from (`remote_source` of [`RemotePushResult`]).
@@ -79,7 +80,7 @@ const ID: &str = "remote.push";
 const LOST_LIMIT: usize = 10;
 
 /// Parameters of `remote.push`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemotePushParams {
     /// The remote; without: upstream, `origin` or the only one.

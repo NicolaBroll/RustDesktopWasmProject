@@ -129,7 +129,7 @@ Rules that apply to every step:
   `MergeContinueParams`/`MergeAbortParams` also serve cherry-pick, revert and rebase.
 
 ### Q13 — Parameter schema for CLI and MCP
-- [ ] **Agent:** `git-engine`
+- [x] **Agent:** `git-engine`
 - **Goal:** `params_help` is free text, and the description of the MCP `execute_command` tool is
   one long hand-written paragraph that repeats it and is already incomplete (rebase,
   cherry-pick, reset, `conflict.resolve`, `branch.rename` missing). JSON Schema of the parameters
@@ -140,6 +140,14 @@ Rules that apply to every step:
   flag of `CommandSpec`, not ids compared in `crates/mcp`.
 - **Done when:** MCP tests check the schema of a few commands and the refusal through the flag;
   CI green.
+- **Done:** `Registry::add` requires `P: JsonSchema` (`schemars` 1, workspace dependency) and
+  puts the schema in `CommandSpec::params` (draft 2020-12, subschemas inline, no `$ref`, field
+  descriptions from the docs); `Oid`, `RepoPath`, `LineRef`, `RebaseStep` in `project-domain`
+  have their schema too. `project-cli commands --json` prints the catalog with `params`; the text
+  catalog (`params_help`) is unchanged. `CommandSpec::outside_repo` (set with
+  `takes_paths_outside_repo()` on `repo.open`, `repo.clone`, `repo.init`) replaces the ids
+  compared in `crates/mcp`; the `execute_command` description keeps the general rules and points
+  to `list_commands`.
 
 ### Q14 — `GitBackend` split by area
 - [ ] **Agent:** `git-engine`

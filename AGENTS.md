@@ -97,8 +97,9 @@ screen stays black (the target does this on its own).
 
 ## Releases
 
-- `dev` goes into `master` with a pull request closed with a **merge commit** (not squash), so
-  `master` keeps the same commits as `dev`; step PRs to `dev` stay squash.
+- `dev` goes into `master` with a pull request closed with **squash** (the repository allows
+  only squash), like the step PRs to `dev`. `dev` is not deleted after the merge: GitHub offers
+  "Delete branch" on that PR too.
 - The release is a `v<version>` tag on `master` (version = `[workspace.package]` in `Cargo.toml`,
   section `## [<version>]` in `CHANGELOG.md`): `.github/workflows/package.yml` builds the
   packages and creates the GitHub Release.

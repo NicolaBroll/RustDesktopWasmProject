@@ -762,3 +762,33 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `CheckoutConflict` dialog of `branch.checkout`, "Detached at <id>" in the top bar with "Create
   branch here…" (`branch.create` without `start`, then `branch.checkout`), commits saved when
   leaving a detached HEAD named in the notice of both checkouts.
+
+### S56 — Discard by hunk and by line
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** stage and unstage work by line, but `worktree.discard` only takes whole files. Add
+  `worktree.discard_lines {"path", "lines", "digest", "confirm"}` (`Access::Write`): the selected
+  changed lines of the `diff.worktree` diff of `path` go back to the index version, the others stay
+  in the worktree. Same selection and digest as `index.stage_lines` (`StaleDiff` if the diff
+  changed); the reverse patch is the `build_patch` "unstage" rule applied to the worktree diff (the
+  worktree is its new side), computed with the strict `apply_patch` on the worktree content.
+  - Only a tracked file with unstaged changes; the same refusals as `index.stage_lines`
+    (binaries, links, submodules, conflicts, intent-to-add/new files, renames) and as
+    `worktree.discard` (no initial commit, conflicts in the repo, a non-directory in the path).
+  - **Filters and line endings:** the diff is of the clean content; the new worktree bytes are the
+    smudged form of the new content (`hash-object -w` of it, then `cat-file --filters
+    --path=<path>`), and only if the current worktree bytes clean to the diff's new side;
+    otherwise `NotAllowed` (discard the whole file instead).
+  - Always `confirm` (without it: `ConfirmRequired` with the lines that would be lost). Backup
+    before writing, as `worktree.discard` (the exact current bytes and mode in
+    `refs/project/backup/discard-...`); no backup → nothing written; re-check the bytes right
+    before writing (a file changed since the read → `StaleDiff`, nothing written); the mode is kept.
+  - `JournalEntry` so `edit.undo` puts the old bytes back only if the file still has the bytes
+    written (otherwise `UndoConflict`), and redo writes them again only if it still has the old ones.
+  - Result: `{"status", "backup", ...journal}`. Docs: section in `impl-docs/git/discard.md`, CLI
+    example in `impl-docs/git/cli.md`, README.
+  - UI: in the unstaged diff, "Discard lines…"/"Discard hunk…" next to "Stage lines"/"Stage hunk",
+    with the confirmation dialog (Cancel focused, Enter never confirms).
+- **Done when:** integration tests (one line of a hunk, a whole hunk, added/removed/modified lines,
+  end of file without newline, CRLF with `core.autocrlf`, a clean/smudge filter, executable bit
+  kept, file changed after the read, stale digest, backup failure → nothing written, undo/redo,
+  file changed before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.

@@ -19,7 +19,8 @@
 //!   and `git symbolic-ref -m <reflog> refs/remotes/<name>/HEAD <ref>`;
 //! - changing in place (S59): `git remote set-url [--push] --end-of-options <name> <url>` (or
 //!   `git config --local --unset-all` to remove a push URL on undo) and `git remote rename
-//!   --end-of-options <from> <to>` (no `--no-progress`: only from git 2.41).
+//!   [--end-of-options] <from> <to>` (`--end-of-options` only for a name starting with `-`: git
+//!   older than 2.41 refuses any option there; no `--no-progress`, also from 2.41).
 
 use super::CliBackend;
 use super::branch::regex_escape;
@@ -207,7 +208,13 @@ impl CliBackend {
         from: &str,
         to: &str,
     ) -> Result<Vec<Message>, EngineError> {
-        let args = ["remote", "rename", "--end-of-options", from, to];
+        // Git older than 2.41 takes the two names literally and refuses any option, even
+        // `--end-of-options`; newer git parses options, so a name starting with `-` needs it.
+        let mut args = vec!["remote", "rename"];
+        if from.starts_with('-') || to.starts_with('-') {
+            args.push("--end-of-options");
+        }
+        args.extend([from, to]);
         let out = self.git.output(Some(&self.workdir), &args)?;
         let stderr = String::from_utf8_lossy(&out.stderr);
         if out.status.success() {

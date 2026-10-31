@@ -21,6 +21,7 @@ engine-journal-pull = Pull di `{ $branch }` ({ $how }: da { $before } a { $after
 engine-journal-reset = Reset ({ $mode }) di `{ $branch }` da { $before } a { $after }
 engine-journal-merge = Merge di { $source } in `{ $branch }` ({ $strategy ->
     [fast_forward] fast-forward
+    [squash] squash in un solo commit
    *[other] commit di merge
 }: da { $before } a { $after })
 engine-journal-pick = { $kind ->

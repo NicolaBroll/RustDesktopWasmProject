@@ -309,14 +309,18 @@ deletes a stash (without `confirm` the error says what would be lost and gives t
 `expected`; `confirm` without `expected` is an error), with the backup in `refs/project/backup/stash-...`: it goes into the journal and the undo
 puts it back at the top of the list. Result: `{"stash", "backup", "warnings", "stashes"}`.
 
-`merge.start {"rev", "no_ff"?, "ff_only"?, "message"?}` merges `rev` (local or remote branch,
+`merge.start {"rev", "no_ff"?, "ff_only"?, "squash"?, "message"?}` merges `rev` (local or remote branch,
 tag, id) into the active branch: fast-forward if possible (`no_ff`: always a merge commit;
 `ff_only`: fast-forward only), otherwise a merge commit with `message` or git's message
-(`Merge branch 'x'`). Refused with a detached HEAD, an operation in progress, conflicted files and,
+(`Merge branch 'x'`). `squash` (not with `no_ff`/`ff_only`): the changes of `rev` as **one
+ordinary commit** (one parent) with `message` or `Squashed branch 'x'` and the subjects of the
+squashed commits; the branch is not recorded as merged (merging it again later may conflict); a
+squash stopped on conflicts or by a hook stays in progress (`operation: "Squash"`), concluded with
+`merge.continue` or aborted with `merge.abort`. Refused with a detached HEAD, an operation in progress, conflicted files and,
 for a merge commit, any change to tracked files (never `--autostash`); it first saves the
 branch in `refs/project/backup/merge-...`. **With conflicts the merge stays in progress**: the result
 has `in_progress: true` and the files in `conflicts`. Result: `{"rev", "source", "target", "branch",
-"strategy": "fast_forward"|"merge"|"up_to_date", "before", "after", "ahead", "behind",
+"strategy": "fast_forward"|"merge"|"squash"|"up_to_date", "before", "after", "ahead", "behind",
 "in_progress", "conflicts", "message", "backup", "warnings", "status", "refs"}`. `merge.continue
 {"message"?}` concludes the merge when no conflicted files remain (resolved and staged with
 `index.stage`; otherwise the error lists them), with the message prepared by git without the

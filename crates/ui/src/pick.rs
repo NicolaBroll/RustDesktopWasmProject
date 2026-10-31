@@ -131,7 +131,11 @@ impl MergeBox {
             into = &into
         );
         self.failure = None;
-        self.starting = Some(Starting { what, into });
+        self.starting = Some(Starting {
+            what,
+            into,
+            squash: false,
+        });
         (params, label)
     }
 

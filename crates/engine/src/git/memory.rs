@@ -145,6 +145,8 @@ pub struct MemoryBackend {
     merge_state: Option<MemoryMerge>,
     /// The rebase in progress, with `operation` = `Rebase`.
     rebase_state: Option<MemoryRebase>,
+    /// The squash merge in progress, with `operation` = `Squash`.
+    squash_state: Option<crate::git::SquashRecord>,
     /// There is a commit-graph ([`GitMaintenance::commit_graph`]): written by
     /// [`GitMaintenance::write_commit_graph`].
     commit_graph: bool,
@@ -197,6 +199,7 @@ impl MemoryBackend {
             config_write_failure: None,
             merge_state: None,
             rebase_state: None,
+            squash_state: None,
             commit_graph: false,
             tag_objects: BTreeMap::new(),
             exclude: None,
@@ -319,6 +322,7 @@ impl MemoryBackend {
         self.operation = operation;
         self.merge_state = None;
         self.rebase_state = None;
+        self.squash_state = None;
     }
 
     fn set_ref(&mut self, name: String, target: Oid, tag_object: Option<Oid>) {

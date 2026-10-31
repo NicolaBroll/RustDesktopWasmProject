@@ -19,6 +19,7 @@ mod remote_admin;
 mod reset;
 mod restore;
 mod search;
+mod squash;
 mod stash;
 mod sync;
 mod tag;
@@ -963,7 +964,8 @@ impl CliBackend {
     /// stopped between one commit and the next (after `git commit` of a resolution, or with
     /// an empty commit) leaves `sequencer/` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`: it is still in
     /// progress, and the kind is read from the first line of `sequencer/todo` (`revert ...` →
-    /// [`Operation::Revert`], otherwise [`Operation::CherryPick`]).
+    /// [`Operation::Revert`], otherwise [`Operation::CherryPick`]). A squash merge started by the
+    /// app ([`Operation::Squash`]) from its record, if still valid (`squash_record`).
     fn operation(&self) -> Option<Operation> {
         let has = |name: &str| self.git_dir.join(name).exists();
         if has("MERGE_HEAD") {
@@ -980,6 +982,8 @@ impl CliBackend {
             Some(sequencer_operation(
                 &std::fs::read(self.git_dir.join("sequencer/todo")).unwrap_or_default(),
             ))
+        } else if has(project_engine::SQUASH_RECORD) && self.squash_record().is_some() {
+            Some(Operation::Squash)
         } else if has("BISECT_LOG") {
             Some(Operation::Bisect)
         } else {

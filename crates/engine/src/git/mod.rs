@@ -95,8 +95,8 @@ pub use memory::{
 pub(crate) use merge::check_in_progress;
 pub use merge::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
-    OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
-    merge_source,
+    OperationState, SQUASH_RECORD, SQUASH_SUBJECTS, SquashRecord, check_merge_state, check_merging,
+    clean_merge_message, conflicted_paths, merge_source, squash_message,
 };
 pub use pick::{
     PickKind, PickRequest, check_pick_state, check_picking, pick_empty_error, pick_message,
@@ -792,6 +792,9 @@ pub trait GitOperations {
     /// would overwrite changes or untracked files → [`EngineError::NotAllowed`] with the files, nothing
     /// changes. **A merge that stops (conflicts, `pre-merge-commit` hook) stays in progress**:
     /// it is not an error, [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`].
+    /// [`MergeMode::Squash`]: `git merge --squash` then an ordinary commit with
+    /// `request.message`; a stop (conflicts, a rejected commit) leaves [`Operation::Squash`](project_domain::Operation::Squash) in
+    /// progress with its [`SquashRecord`].
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
 
     /// Aborts the merge in progress (`merge.abort`, `git merge --abort`): index and worktree go back

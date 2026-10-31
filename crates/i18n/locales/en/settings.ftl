@@ -26,3 +26,6 @@ settings-dates-absolute = Date and time
 settings-dates-relative = Relative (“3 h ago”)
 settings-ask-detach = Ask before checking out a commit (detached HEAD)
 settings-ask-detach-hint = “Check out this commit” first explains that you will not be on a branch.
+settings-editor = External editor
+settings-editor-placeholder = The system's default application
+settings-editor-hint = A command line, for example: code -g {"{file}"}. {"{file}"} is the file's path (without it the path goes at the end); quote words with spaces. Run without a shell. Empty: the system's default application.

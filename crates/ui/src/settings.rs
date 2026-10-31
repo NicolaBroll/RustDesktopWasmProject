@@ -292,10 +292,13 @@ pub(crate) struct Settings {
     pub dates: DateFormat,
     /// "Don't ask again" in the confirmation of "Check out this commit" (detached HEAD).
     pub skip_detach_confirm: bool,
+    /// The "External editor" command line (S60): `{file}` stands for the file's path; blank: the
+    /// system's default application (see `Platform::open_file`).
+    pub editor: String,
 }
 
 /// One setting changed, from the window, the theme menu or the diff view.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Change {
     Theme(Theme),
     Language(Language),
@@ -305,6 +308,8 @@ pub(crate) enum Change {
     Dates(DateFormat),
     /// Check out a commit without the detached HEAD confirmation.
     SkipDetachConfirm(bool),
+    /// The "External editor" command line.
+    Editor(String),
 }
 
 impl Settings {
@@ -325,6 +330,7 @@ impl Settings {
             scale: Scale::default(),
             dates: DateFormat::default(),
             skip_detach_confirm: false,
+            editor: String::new(),
         }
     }
 
@@ -337,6 +343,7 @@ impl Settings {
             Change::Scale(scale) => self.scale = scale,
             Change::Dates(dates) => self.dates = dates,
             Change::SkipDetachConfirm(skip) => self.skip_detach_confirm = skip,
+            Change::Editor(editor) => self.editor = editor,
         }
     }
 
@@ -386,11 +393,12 @@ mod tests {
             scale: Scale(120),
             dates: DateFormat::Relative,
             skip_detach_confirm: true,
+            editor: "code -g '{file}'".to_owned(),
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(
             json,
-            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15,"scale":120,"dates":"relative","skip_detach_confirm":true}"#
+            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15,"scale":120,"dates":"relative","skip_detach_confirm":true,"editor":"code -g '{file}'"}"#
         );
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
     }

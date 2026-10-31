@@ -91,7 +91,7 @@ pub(crate) fn settings_window(
     }
 }
 
-/// Theme, language, UI scale and dates.
+/// Theme, language, UI scale, dates, the detached HEAD confirmation and the external editor.
 fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     ui.strong(tr!("settings-theme"));
     ui.horizontal(|ui| {
@@ -151,6 +151,24 @@ fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
             Change::SkipDetachConfirm(!ask),
         )));
     }
+    ui.add_space(10.0);
+    editor(ui, &settings.editor, actions);
+}
+
+/// The "External editor" command line (S60): every key leaves as a change, applied at once.
+fn editor(ui: &mut Ui, current: &str, actions: &mut Vec<Action>) {
+    ui.strong(tr!("settings-editor"));
+    let mut text = current.to_owned();
+    let edit = egui::TextEdit::singleline(&mut text)
+        .id_salt("settings-editor")
+        .hint_text(tr!("settings-editor-placeholder"))
+        .desired_width(f32::INFINITY);
+    if ui.add(edit).changed() && text != current {
+        actions.push(Action::Settings(settings::Action::Change(Change::Editor(
+            text,
+        ))));
+    }
+    ui.weak(tr!("settings-editor-hint"));
 }
 
 /// The UI scale, with the keys that change it too.

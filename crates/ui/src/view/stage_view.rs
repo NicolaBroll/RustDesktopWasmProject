@@ -632,6 +632,7 @@ pub(super) fn file_menu(
         _ => None,
     };
     file_menu_entries(ui, &item.path, None, blame_off, actions);
+    launch_entries(ui, &item.path, item.change == Change::Deleted, actions);
     ui.separator();
     let label = match op {
         StageOp::Stage if item.is_conflict() => tr!("stage-mark-resolved"),

@@ -132,6 +132,10 @@ impl Platform for NativePlatform {
     fn open_terminal(&self, folder: &Path) -> std::io::Result<()> {
         launch::open_terminal(folder)
     }
+
+    fn open_file(&self, file: &Path, editor: &str) -> std::io::Result<()> {
+        launch::open_file(file, editor)
+    }
 }
 
 /// The language of the POSIX locale variables, in their order of precedence (`LC_ALL`,

@@ -992,7 +992,7 @@ file of its function in [git/](git/) before the code.
   the invalid regex is shown in the bar. A log refresh does not run a content search again.
 
 ### S62 — Submodules: clone, update, open
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** submodules are recognised (status, `[submodule]` badge in the diff, refused by the line
   operations) but cannot be set up or updated: after a clone they are empty, after a pull that
   moves them they stay "modified" with no way out but the terminal. Add:
@@ -1037,7 +1037,7 @@ file of its function in [git/](git/) before the code.
   has the counts and the refused ones with the engine's reason (also kept in the section), then
   status and list are read again. The list is read on open and Refresh, then with every status
   only if the repo has submodules or the status shows `.gitmodules` or a gitlink. "With
-  submodules" in the clone dialog. Review to do.
+  submodules" in the clone dialog. `safety-reviewer` reviews done (the fixes above).
 
 ### S62b — Submodules out of date after checkout, pull and merge
 - [ ] **Agent:** `egui-ui` (engine only if a field is missing)

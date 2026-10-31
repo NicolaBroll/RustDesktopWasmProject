@@ -6,6 +6,69 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-31
+
+The fundamental operations that were missing: local branches that follow a remote branch,
+credential prompts, comparing two revisions, deleting untracked files and checking out a commit;
+plus a second review of the interface.
+
+### Added
+
+- **Branches that follow a remote branch**: “Checkout” on a remote branch (menu or double click)
+  creates the local branch with its upstream and switches to it, or switches to the local branch
+  that already follows it; the new-branch dialog started from a remote branch has a “Track …”
+  checkbox. “Set upstream…” and “Unset upstream” in the menu of a local branch, both undoable
+  (`branch.create` with `track`, new `branch.set_upstream`).
+- **Credential prompts**: when git or ssh ask for a username, password, key passphrase or the
+  confirmation of an unknown host key during fetch, pull, push or clone, a dialog asks for it
+  (masked field for secrets; a host key is trusted only with “Trust and continue”). Credentials
+  are saved only by the user's git credential helper; an askpass the user configured
+  (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`) is used as before. Automatic fetch never asks: it
+  pauses with “Retry”. CLI and MCP do not ask.
+- **Compare two revisions**: Ctrl+click (Cmd on macOS) a second commit shows the files changed
+  between the two and their diff, with “Swap”; “Compare with <current branch>” in the branch menu
+  shows what the branch brings since it diverged (`diff.range`).
+- **Delete untracked files**: “Delete…” on an untracked file and “Delete all N untracked
+  files…” in the “⋯” menu of the unstaged list, with a confirmation listing the files. Their exact
+  content is kept first in a backup (`refs/project/backup/clean-…`) and “Undo” puts them back
+  (`worktree.clean`).
+- **Check out a commit**: “Check out this commit…” in the commit menu (detached HEAD), with
+  “Detached at <id>” and “Create branch here…” in the top bar (`commit.checkout`). Commits that
+  no branch or tag reaches are saved in `refs/project/backup/detached-…` before HEAD leaves them.
+- Keyboard shortcuts listed under Help → Keyboard shortcuts; UI scale and relative dates in the
+  settings; “Copy commit id” and “Copy path”.
+
+### Changed
+
+- ↓n / ↑n badges on Pull and Push and the time of the last fetch; lane colors follow the branch.
+- Refusals because of local changes show a readable text with “Stash…”; failure windows are
+  centered.
+- The commit menu offers only the entries that apply; “Discard all…” moves into a “⋯” menu;
+  Commit is the primary button.
+- Esc with a menu open closes only the menu; closing the search gives back the previous
+  selection.
+
+### Fixed
+
+- The stage panel works at 760x520 (also in Italian) and the commit box no longer moves; narrow
+  rows cut the message before the ref labels; the details panel no longer clips.
+- Contrast of the light theme.
+
+### Packages
+
+- Linux: `BinariGit-0.7.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.7.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.7.0-x86_64.msi` and `BinariGit-0.7.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- The ssh passphrase and host-key prompts need OpenSSH 8.4 or newer.
+- No macOS build.
+
 ## [0.6.0] - 2026-10-30
 
 A Windows installer, the parameter schema for CLI and MCP, and a review of the interface: the
@@ -249,7 +312,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.3.0...v0.4.0

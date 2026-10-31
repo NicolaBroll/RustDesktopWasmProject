@@ -1,12 +1,12 @@
 ---
 name: release
-description: Cut a BinariGit release — version bump and CHANGELOG on dev, dev into master with a merge commit, annotated v<version> tag that starts package.yml, then check the GitHub Release. Use when the user asks for a release, a new version or a tag.
+description: Cut a BinariGit release — version bump and CHANGELOG on dev, dev into master with a squash merge, annotated v<version> tag that starts package.yml, then check the GitHub Release. Use when the user asks for a release, a new version or a tag.
 ---
 
 # Release
 
-The rules are in `AGENTS.md` ("Releases"): `dev` goes into `master` with a **merge commit**
-(never squash), the release is an annotated `v<version>` tag on `master`, and
+The rules are in `AGENTS.md` ("Releases"): `dev` goes into `master` with a **squash
+merge** (the repository allows only squash; never delete `dev` afterwards), the release is an annotated `v<version>` tag on `master`, and
 `.github/workflows/package.yml` builds AppImage, zip and MSI and creates the GitHub Release with
 the notes taken from the `## [<version>]` section of `CHANGELOG.md`.
 
@@ -19,8 +19,10 @@ request for a release covers them, but stop and ask if something does not match 
 ```sh
 git fetch -q origin --tags
 git tag --sort=-creatordate | head -3              # last version
-git log --oneline origin/dev..origin/master        # only merge commits of past releases
-git log --oneline <last tag>..origin/dev           # what goes in the release
+git diff --stat origin/master <last tag>          # empty: master is the last release
+prep=$(git log --format=%h -1 --grep='^Release .* preparation' origin/dev)
+git log --oneline $prep..origin/dev                # what goes in the release (the tag is on
+                                                   # master's squash, not an ancestor of dev)
 gh pr list --state merged --base master --limit 1 --json number,title,body   # last release PR
 ```
 
@@ -50,16 +52,17 @@ git checkout -b release-<version> origin/dev
 - Commit `Release <version> preparation: version and CHANGELOG`, push, PR to `dev`, wait for
   the checks (`gh pr checks <n> --watch`), squash-merge.
 
-## 2. dev into master (merge commit)
+## 2. dev into master (squash)
 
 ```sh
 gh pr create --base master --head dev --title "Release <version>" --body "…"
 gh pr checks <n> --watch
-gh pr merge <n> --merge          # merge commit, NOT --squash
+gh pr merge <n> --squash         # squash, and NOT --delete-branch: dev stays
+git fetch -q origin && git diff --stat origin/master origin/dev   # must be empty
 ```
 
-Body as the previous ones: "Brings `dev` into `master` for <version> (merge commit, not squash, so
-`master` keeps the same commits as `dev`): #a, #b, … After the merge, the `v<version>` tag on
+Body as the previous ones: "Brings `dev` into `master` for <version> (squash: one commit
+on `master` per release): #a, #b, … After the merge, the `v<version>` tag on
 `master` starts `package.yml`." plus the PR attribution line.
 
 ## 3. Tag

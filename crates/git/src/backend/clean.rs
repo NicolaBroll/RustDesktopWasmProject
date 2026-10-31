@@ -24,7 +24,6 @@
 
 use super::CliBackend;
 use super::discard::os_bytes;
-use crate::command::os_from_bytes;
 use project_domain::{EntryKind, Oid, RepoPath};
 use project_engine::{
     CleanOutcome, CleanRestore, CleanedFile, EngineError, Message, RestoreOutcome,
@@ -531,7 +530,7 @@ pub(super) fn file_mode(meta: &std::fs::Metadata) -> u32 {
 }
 
 #[cfg(not(unix))]
-fn file_mode(_meta: &std::fs::Metadata) -> u32 {
+pub(super) fn file_mode(_meta: &std::fs::Metadata) -> u32 {
     REGULAR
 }
 
@@ -552,7 +551,7 @@ fn set_executable(_path: &std::path::Path) -> std::io::Result<()> {
 
 #[cfg(unix)]
 fn make_link(target: &[u8], path: &std::path::Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(os_from_bytes(target), path)
+    std::os::unix::fs::symlink(crate::command::os_from_bytes(target), path)
 }
 
 #[cfg(not(unix))]

@@ -898,3 +898,146 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `commit.create` during a squash stays possible (one parent, journaled as a commit, no `amend`);
   the abort runs `git reset --merge`; the journal text reads `Merge of x into `b` (squash into one
   commit: …)`.
+
+## Phase 8 — Gaps for everyday and larger projects
+
+Analysis of 2026-10-31 (after 0.9.0), in order of usefulness over cost. Each command goes in the
+file of its function in [git/](git/) before the code.
+
+### S59 — Remotes: change URL and rename
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** today a remote's URL can only be changed by removing and adding it again, which deletes
+  its remote-tracking branches and the upstream of the local branches. Add (`Access::Write`):
+  - `remote.set_url {"name", "url", "push"?: bool}`: `git remote set-url [--push] --end-of-options
+    <name> <url>`; same URL checks as `remote.add` (no NUL/newline, a leading `-` refused, a
+    `file://`/local path accepted); `push: true` sets only `remote.<name>.pushurl`. Unknown remote
+    → `NotAllowed`. A URL equal to the current one → `changed: false`, nothing written.
+  - `remote.rename {"name", "new_name"}`: `git remote rename --no-progress`; refused if `new_name`
+    is not a valid remote name (`check-ref-format refs/remotes/<new>/x`) or already exists, and
+    during an operation in progress. git moves `refs/remotes/<name>/*`, the fetch refspecs and
+    `branch.<b>.remote`; afterwards verify that every upstream that pointed to `name` points to
+    `new_name` (otherwise a warning listing them).
+  - Both in the journal (old and new values in the `remote` entry, as `remote.add`/`remove`): undo
+    restores the previous URL/name only if the current one is still the one written (otherwise
+    `UndoConflict`).
+  - Result: `{"remote", "url", "push_url", "changed", "warnings", "refs", ...journal}` /
+    `{"from", "to", "moved_refs", "upstreams", "warnings", "refs", ...journal}`.
+  - Docs in `impl-docs/git/remotes.md`, examples in `impl-docs/git/cli.md`, README.
+  - UI: in the remote's "⋯" menu of the side panel, "Edit URL…" (fetch URL, optional separate push
+    URL) and "Rename…", with the credentials note when switching between https and ssh.
+- **Done when:** integration tests (set fetch URL, push URL only, same URL, unknown remote, URL
+  starting with `-`, rename with upstreams and tags, rename to an existing name, invalid name,
+  rename with an operation in progress refused, undo/redo, URL changed from the terminal before
+  undo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+
+### S60 — Open a file in the external editor
+- [ ] **Agent:** `egui-ui` (and the L7 app for the `Platform` implementation)
+- **Goal:** there is no way to go from a changed file to the editor. Add `Platform::open_file(path)`
+  (default: unsupported) implemented in the desktop app: the editor set in Settings → General
+  ("External editor": a command line with `{file}`, run without a shell, arguments split as a
+  `Vec` by a small quote-aware splitter, tested), otherwise the system's default application
+  (`xdg-open`, `open`, `ShellExecute`). `$VISUAL`/`$EDITOR` are not used: they are often terminal
+  editors, which would start with no terminal. The program is spawned detached, never waited on; a
+  failure to start goes to the status bar (as "Open terminal here").
+  - UI: "Open in editor" and "Show in file manager" (selects the file's folder) in the context menu
+    of the files of the stage area, of a commit's file list and of the diff header; double click on
+    a stage-area file keeps its current action. Disabled for a deleted file.
+  - No repository write: no `safety-reviewer` review. Never pass the path through a shell; a path
+    starting with `-` gets `./` in front.
+- **Done when:** unit tests of the command-line splitter and of the menu wiring; tried on the
+  desktop app on Xvfb with an editor command that writes a marker file; CI green.
+
+### S61 — Search in the content of the changes (pickaxe)
+- [ ] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `repo.search` finds commits by message, author and id, not by what they changed
+  ("when did this function disappear?"). Add `"content"` to `in` (read-only), alone (it cannot be
+  ANDed with the others by git: refuse the mix with `InvalidParams`):
+  - literal text: `git log -S<text>` (commits that change the number of occurrences of the text;
+    `-S` is literal by default); `"regex": true` uses `-G<regex>` (commits whose added or removed
+    lines match, POSIX extended; an invalid regex → `InvalidParams` with git's text);
+    `"ignore_case": true` adds `--regexp-ignore-case`, for `-G` only (`-S` has no such option).
+  - Same `path`, `all`, `stashes`, `skip`, `limit` and result `{"ids", "total", "has_more"}` as
+    today, but `total` is not computed for content (it would mean scanning the whole history: `null`,
+    `has_more` from `limit + 1`).
+  - Slow on big histories: the command runs in the background like the others and must be
+    cancellable from the UI (the running search is dropped and its git process killed when a new one
+    starts or the box is closed); document the cost in `impl-docs/git/reading.md`.
+  - UI: in the search box a "Content" toggle (with "Regex" next to it), a spinner while it runs and
+    "Stop".
+- **Done when:** integration tests (text added, text removed, text only moved inside a file: not a
+  match for `-S`, regex, invalid regex, path filter, `all`, non-UTF-8 text in the file, pagination)
+  and on the `MemoryBackend` (a simple added/removed-count scan); UI test of the cancel; CI green.
+
+### S62 — Submodules: clone, update, open
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** submodules are recognised (status, `[submodule]` badge in the diff, refused by the line
+  operations) but cannot be set up or updated: after a clone they are empty, after a pull that
+  moves them they stay "modified" with no way out but the terminal. Add:
+  - `repo.clone` with `"submodules"?: bool` (`--recurse-submodules`; credentials of the submodule
+    hosts go through the same askpass bridge).
+  - `submodule.list {}` (read-only): path, name, URL, the commit recorded in HEAD/index, the commit
+    checked out, state `uninitialized` / `in_sync` / `different_commit` / `local_changes` /
+    `conflict` (from `git submodule status` and `status --porcelain=v2`), and whether its HEAD has
+    commits not on any of its refs.
+  - `submodule.update {"paths"?: [path], "init"?: bool}` (`Access::Write`): `git -c
+    protocol.file.allow=user submodule update [--init] --no-recommend-shallow --checkout --
+    <paths>`, never `--force`, `--remote`, `--merge` or `--rebase`. **Refused per submodule**
+    (nothing run for it, listed in the result) when it has local changes or untracked files, an
+    operation in progress inside it, or a HEAD with commits not reachable from its branches, tags
+    or remote branches (they would be left behind on a detached HEAD); recursive submodules only
+    with an explicit `"recursive": true`. No journal (the superproject's refs do not move); the
+    submodule's previous HEAD is in the result and in a backup ref inside the submodule
+    (`refs/project/backup/submodule-...`) when it was detached.
+  - Docs: new `impl-docs/git/submodules.md`, `cli.md`, README.
+  - UI: a "Submodules" section in the side panel (only when there are any) with the state, "Update",
+    "Initialize and update", "Open in a new tab" (multi-repo tabs exist); "with submodules"
+    checkbox in the clone dialog.
+- **Done when:** integration tests on real repos with a submodule served from a local path
+  (clone with and without, uninitialized → init, superproject pull that moves the submodule →
+  `different_commit` → update, submodule with local changes refused, with commits not on a ref
+  refused, nested submodule without `recursive`, path with spaces/non-UTF-8, URL starting with
+  `-` refused) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+
+### S62b — Submodules out of date after checkout, pull and merge
+- [ ] **Agent:** `egui-ui` (engine only if a field is missing)
+- **Goal:** after `branch.checkout`, `commit.checkout`, `remote.pull`, `merge.*`, `branch.reset` and
+  `stash.*` the submodules whose recorded commit changed stay at the old one (we never pass
+  `--recurse-submodules`, and `submodule.recurse` in the user's config must not change that
+  silently: check that every command that checks out passes `--no-recurse-submodules` and
+  document it). After those commands, if `submodule.list` reports `different_commit`, a notice
+  "N submodules are not at the recorded commit" with "Update" (`submodule.update` of exactly
+  those).
+- **Done when:** UI tests on the `MemoryBackend` and an integration test that `submodule.recurse=true`
+  does not make a checkout touch a submodule; CI green.
+
+### S63 — Git LFS: verify and mark
+- [ ] **Agent:** `git-scenarios`, then `egui-ui`
+- **Goal:** the app never bypasses filters or hooks, so with `git-lfs` installed clone, pull,
+  push, stage and checkout should work as in the terminal; verify it and fix what does not. Install
+  `git-lfs` in the devcontainer and in CI; scenarios with a local LFS server-less setup
+  (`lfs.url` pointing to a file-based or `lfs.standalonetransferagent` local store) covering clone,
+  stage, commit, push, pull, checkout, `worktree.discard`, `worktree.discard_lines` (must refuse an
+  LFS file: its bytes do not round-trip), `stash`, the credential prompt for the LFS endpoint.
+  - Domain/UI: a file whose `filter` attribute is `lfs` (`git check-attr filter -z --stdin`) gets an
+    "LFS" badge in the stage area and the diff, and the diff shows "Stored in Git LFS (<size>)"
+    instead of the pointer text; line operations hidden for it.
+  - Without `git-lfs` installed and a repo that uses it: a notice once per repo ("this repository
+    uses Git LFS: install git-lfs, otherwise files stay as pointers").
+- **Done when:** the scenarios pass with git-lfs installed (skipped with a message when it is not);
+  UI tests of the badge and the notice; CI green.
+
+### S64 — Worktrees (only if needed)
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** today `git worktree list` is only read to refuse checking out a branch that is used
+  elsewhere. Add `worktree.list {}` (path, branch or detached HEAD, locked, prunable),
+  `worktree.add {"path", "branch"?: string, "new_branch"?: string, "start"?: rev}` (path absent or
+  empty, as `repo.clone`; never `--force`) that then opens it in a new tab, and `worktree.remove
+  {"path", "confirm": true}`: refused with changes or untracked files in it (or saved first with
+  the `worktree.clean` backup), never the main worktree, never `--force`. The journal records the
+  branch created by `add`.
+  - UI: "Worktrees" in the side panel (only when there is more than one), "New worktree from this
+    branch…" in the branch menu, "Open" and "Remove…".
+- **Done when:** integration tests (add with an existing branch, with a new branch, branch already
+  checked out elsewhere refused, path not empty refused, remove clean, remove with changes refused,
+  locked worktree refused, main worktree refused, prunable entry) and on the `MemoryBackend`;
+  `safety-reviewer` review; CI green.

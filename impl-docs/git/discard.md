@@ -131,6 +131,13 @@ directory is never removed, and neither is the worktree root). If any step befor
 backup (read-only directory) stays and goes into `warnings` with the backup ref; if none could be
 deleted, error with the backup ref. The repo may have no commits and HEAD may be detached.
 
+**Residual race.** Between the last verification of a file (and of the directories on its path)
+and its `remove_file` there is an instant that cannot be closed: std has no `unlinkat` relative to
+a directory handle held open since the check, so the deletion goes by path. A file rewritten by
+another process (an editor saving) in that instant loses the new bytes (the backup has the ones
+verified just before); a directory swapped for a link in that instant would make the removal
+follow it. The window is the time of one `lstat` + `remove_file` per file.
+
 Result: `{"deleted": [path], "files": [{"path", "mode", "size"}], "dirs": [path], "backup",
 "commit", "bytes", "warnings", "status", "status_error"?, "can_undo", "can_redo", "next_undo",
 "next_redo"}` (`dirs` deepest first, `bytes` the total size of the deleted files).
@@ -139,10 +146,14 @@ The journal entry has `"clean": {"commit", "files": [{"path", "mode", "size"}]}`
 actually deleted) and `"backup"`. Undo and redo do not look at HEAD (untracked files do not depend
 on it) but are refused during an operation in progress, like the others.
 
-- **undo**: every path must be absent (`lstat`) and every existing directory on its way a real
-  directory; otherwise `UndoConflict` with one line per file and nothing changes. Then each file is
-  recreated from the backup tree: missing directories created, the file opened with `create_new`
-  (never overwriting, even a file that appeared in the meantime), the execute bit set for
+- **undo**: every path must be absent (`lstat` gives `NotFound`; any other error is a refusal)
+  and every existing directory on its way a real directory (not a link, not a file), or already
+  hold exactly the backup's entry (kind, mode, bytes: what an earlier undo that stopped midway
+  wrote, so the undo can be retried); otherwise `UndoConflict` with one line per file and nothing
+  changes. Then each file not yet restored is recreated from the backup tree: missing directories
+  created one level at a time, each checked right after to be a real directory (never written
+  through a link), the file opened with `create_new` (never overwriting, even a file that
+  appeared in the meantime), the execute bit set for
   `100755`, links recreated as links. Re-read afterwards: a file not as in the backup goes in
   `warnings`.
 - **redo**: every file must still be untracked in the status and have the backup's kind, mode and

@@ -547,3 +547,66 @@ fn a_file_that_cannot_be_deleted_is_a_warning() {
     );
     assert_eq!(bytes(&repo, "ro/x.txt").unwrap(), b"x\n");
 }
+
+/// A folder of the path replaced by a link to a folder outside the worktree: the undo refuses
+/// and writes nothing through the link.
+#[cfg(unix)]
+#[test]
+fn undo_never_writes_through_a_linked_folder() {
+    let repo = base();
+    repo.write("n/m/b.txt", "b\n");
+    let (r, mut s) = open(&repo);
+    clean(&r, &mut s, json!(["n"])).unwrap();
+    assert!(!exists(&repo, "n"));
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), repo.path().join("n")).unwrap();
+    assert!(matches!(
+        r.run("edit.undo", &mut s, json!({})),
+        Err(EngineError::UndoConflict { .. })
+    ));
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    // A link one level down, inside a real folder.
+    std::fs::remove_file(repo.path().join("n")).unwrap();
+    std::fs::create_dir(repo.path().join("n")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), repo.path().join("n/m")).unwrap();
+    assert!(matches!(
+        r.run("edit.undo", &mut s, json!({})),
+        Err(EngineError::UndoConflict { .. })
+    ));
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    std::fs::remove_file(repo.path().join("n/m")).unwrap();
+    run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(bytes(&repo, "n/m/b.txt").unwrap(), b"b\n");
+}
+
+/// An undo that stops midway (a read-only folder) can be retried: the files it already wrote
+/// are equal to the backup and count as restored.
+#[cfg(unix)]
+#[test]
+fn an_interrupted_undo_can_be_retried() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = base();
+    repo.write("a.txt", "a\n");
+    repo.write("z/x.txt", "x\n");
+    let (r, mut s) = open(&repo);
+    clean(&r, &mut s, json!(["a.txt", "z"])).unwrap();
+    let z = repo.path().join("z");
+    std::fs::create_dir(&z).unwrap();
+    let set = |mode| std::fs::set_permissions(&z, std::fs::Permissions::from_mode(mode)).unwrap();
+    set(0o555);
+    if std::fs::write(z.join("probe"), "").is_ok() {
+        // root: the folder stays writable, the case cannot be triggered.
+        std::fs::remove_file(z.join("probe")).unwrap();
+        set(0o755);
+        return;
+    }
+    let err = r.run("edit.undo", &mut s, json!({}));
+    set(0o755);
+    assert!(err.is_err());
+    assert_eq!(bytes(&repo, "a.txt").unwrap(), b"a\n");
+    assert!(!exists(&repo, "z/x.txt"));
+    let undo = run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(undo["warnings"], json!([]));
+    assert_eq!(bytes(&repo, "a.txt").unwrap(), b"a\n");
+    assert_eq!(bytes(&repo, "z/x.txt").unwrap(), b"x\n");
+}

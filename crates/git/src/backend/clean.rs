@@ -172,10 +172,18 @@ impl CliBackend {
                 }
             }
         } else {
-            // As the clean left it: nothing at the path, nothing but folders on the way.
+            // As the clean left it: nothing at the path, nothing but folders on the way. A file
+            // already equal to the backup (an earlier undo that stopped midway) counts as
+            // restored, so the undo can be retried.
             for path in &paths {
-                let absent = std::fs::symlink_metadata(self.worktree_path(path)).is_err();
-                if !absent || !self.parents_absent_or_dirs(path) {
+                let ok = match std::fs::symlink_metadata(self.worktree_path(path)) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        self.parents_absent_or_dirs(path)
+                    }
+                    Err(_) => false,
+                    Ok(_) => self.already_restored(path, &tree)?,
+                };
+                if !ok {
                     conflicts.push(path.clone());
                 }
             }
@@ -220,6 +228,9 @@ impl CliBackend {
             ));
         }
         for path in &paths {
+            if self.already_restored(path, &tree)? {
+                continue;
+            }
             let (mode, oid) = &tree[path];
             let content = self.blob(oid)?;
             self.recreate(path, *mode, &content)
@@ -401,26 +412,64 @@ impl CliBackend {
         })
     }
 
-    /// True if every folder in the path of `path` is either missing (the undo creates it) or a
-    /// real folder: never a file or a link that the undo would write through.
+    /// True if what is at `path` (below real folders) is already the backup's entry: kind, mode
+    /// and bytes. An entry missing from `tree` is never restored.
+    fn already_restored(
+        &self,
+        path: &RepoPath,
+        tree: &std::collections::BTreeMap<RepoPath, (u32, Oid)>,
+    ) -> Result<bool, EngineError> {
+        match tree.get(path) {
+            Some((mode, oid)) => Ok(self.real_parents(path) && self.same_as(path, *mode, oid)?),
+            None => Ok(false),
+        }
+    }
+
+    /// True if every folder in the path of `path` is either missing (`NotFound`: the undo
+    /// creates it) or a real folder: never a file or a link that the undo would write through,
+    /// and any other error (permissions...) is a refusal.
     fn parents_absent_or_dirs(&self, path: &RepoPath) -> bool {
         for dir in parents(path) {
             match std::fs::symlink_metadata(self.worktree_path(&dir)) {
                 Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
                 Ok(_) => return false,
-                Err(_) => return true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+                Err(_) => return false,
             }
         }
         true
+    }
+
+    /// Creates the missing folders in the path of `path` one level at a time, checking right
+    /// after finding or creating each one that it is a real folder (not a link, not a file):
+    /// nothing is ever written through a link.
+    fn create_real_parents(&self, path: &RepoPath) -> std::io::Result<()> {
+        for dir in parents(path) {
+            let full = self.worktree_path(&dir);
+            match std::fs::symlink_metadata(&full) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    match std::fs::create_dir(&full) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+            let meta = std::fs::symlink_metadata(&full)?;
+            if !meta.is_dir() || meta.file_type().is_symlink() {
+                return Err(std::io::ErrorKind::NotADirectory.into());
+            }
+        }
+        Ok(())
     }
 
     /// Writes `content` at `path` with git mode `mode` (a link for `0o120000`), creating the
     /// missing folders; fails if anything is already there.
     fn recreate(&self, path: &RepoPath, mode: u32, content: &[u8]) -> std::io::Result<()> {
         let full = self.worktree_path(path);
-        if let Some(parent) = full.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        self.create_real_parents(path)?;
         if mode == LINK {
             return make_link(content, &full);
         }

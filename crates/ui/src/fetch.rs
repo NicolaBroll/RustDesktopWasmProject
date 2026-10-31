@@ -187,6 +187,10 @@ impl FetchBox {
             Some(ErrorKind::Cancelled) => Received::Cancelled {
                 notice: tr!("fetch-cancelled", label = label),
             },
+            // The user said no to git's question: a notice, not an error window.
+            Some(ErrorKind::AuthCancelled) => Received::Cancelled {
+                notice: auth_cancelled(detail.as_deref().or(remote.as_deref())),
+            },
             Some(ErrorKind::Auth) => {
                 self.failure = Some(auth_failure(&who, detail));
                 Received::Failed {
@@ -234,6 +238,14 @@ pub fn who(remote: Option<&str>) -> String {
     match remote {
         Some(remote) => tr!("fetch-who-remote", remote = remote),
         None => tr!("fetch-who"),
+    }
+}
+
+/// The notice of a cancelled credential question: "Cancelled: authentication for origin".
+pub fn auth_cancelled(remote: Option<&str>) -> String {
+    match remote {
+        Some(remote) => tr!("credentials-cancelled-remote", remote = remote),
+        None => tr!("credentials-cancelled"),
     }
 }
 
@@ -615,6 +627,27 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_credential_question_is_a_notice() {
+        let mut f = FetchBox::default();
+        let ticket = Ticket::for_test(1);
+        f.started(ticket, None);
+        let r = f.receive(
+            ticket,
+            Err("authentication cancelled".into()),
+            Some(ErrorKind::AuthCancelled),
+            Some("origin".into()),
+        );
+        let Received::Cancelled { notice } = r else {
+            panic!("{r:?}")
+        };
+        assert!(
+            notice.starts_with("Cancelled: authentication for origin"),
+            "{notice}"
+        );
+        assert!(f.failure().is_none());
+    }
+
+    #[test]
     fn auth_and_network_errors_are_explained() {
         let mut f = FetchBox::default();
         let ticket = Ticket::for_test(1);
@@ -632,7 +665,6 @@ mod tests {
         assert!(message.contains("authentication"), "{message}");
         let failure = f.failure().unwrap();
         assert_eq!(failure.title, "Authentication failed");
-        assert!(failure.explanation.contains("never asks for credentials"));
         assert!(failure.explanation.contains("credential helper"));
         assert!(failure.explanation.contains("ssh-agent"));
         assert_eq!(

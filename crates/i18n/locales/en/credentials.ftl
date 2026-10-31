@@ -1,0 +1,17 @@
+credentials-the-remote = the remote
+credentials-title-username = Username for { $target }
+credentials-title-password = Password for { $target }
+credentials-title-passphrase = Key passphrase
+credentials-title-host-key = Unknown host key
+credentials-title-other = Question from git
+credentials-remote = Remote: { $remote }
+credentials-host-key-explanation = ssh does not know this server yet. Trust it only if the fingerprint above matches the one published by the server's owner.
+credentials-trust = Trust and continue
+credentials-ok = OK
+credentials-cancel = Cancel
+credentials-show = Show
+credentials-hide = Hide
+credentials-hint-helper = Saved only by your git credential helper: without one you will be asked again next time.
+credentials-hint-passphrase = Not saved by the app: an ssh-agent can keep the key unlocked.
+credentials-cancelled-remote = Cancelled: authentication for { $remote }. Nothing changed.
+credentials-cancelled = Cancelled: authentication for the remote. Nothing changed.

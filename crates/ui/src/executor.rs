@@ -94,6 +94,9 @@ pub enum ErrorKind {
     /// [`EngineError::Auth`]: the remote rejected the credentials or they would have to be asked for;
     /// git's text is in [`Done::error_detail`].
     Auth,
+    /// [`EngineError::AuthCancelled`]: the user cancelled a credential question; nothing
+    /// changed. The remote is in [`Done::error_detail`]. Shown as a notice, not as an error.
+    AuthCancelled,
     /// [`EngineError::RemoteUnreachable`]: the remote cannot be reached; git's text is in
     /// [`Done::error_detail`].
     RemoteUnreachable,
@@ -129,9 +132,8 @@ impl ErrorKind {
             EngineError::Git { .. } | EngineError::GitWithReason { .. } => ErrorKind::Git,
             EngineError::PostCommit { .. } => ErrorKind::PostCommit,
             EngineError::CheckoutConflict { .. } => ErrorKind::CheckoutConflict,
-            // A cancelled credential question counts as an authentication failure (auto fetch
-            // suspends instead of asking again at every tick).
-            EngineError::Auth { .. } | EngineError::AuthCancelled { .. } => ErrorKind::Auth,
+            EngineError::Auth { .. } => ErrorKind::Auth,
+            EngineError::AuthCancelled { .. } => ErrorKind::AuthCancelled,
             EngineError::RemoteUnreachable { .. } => ErrorKind::RemoteUnreachable,
             EngineError::Cancelled { .. } => ErrorKind::Cancelled,
             EngineError::PullConflict { operation, .. } => ErrorKind::PullConflict(*operation),
@@ -160,6 +162,7 @@ impl ErrorKind {
             EngineError::Auth { message, .. }
             | EngineError::RemoteUnreachable { message, .. }
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
+            EngineError::AuthCancelled { remote } => Some(remote.clone()),
             EngineError::PullConflict { files, .. }
             | EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
             EngineError::NotAllowed(m) => local_changes_files(m),
@@ -679,6 +682,11 @@ mod tests {
             message: "fatal: Authentication failed".into(),
         };
         assert_eq!(ErrorKind::of(&auth), ErrorKind::Auth);
+        let cancelled = EngineError::AuthCancelled {
+            remote: "origin".into(),
+        };
+        assert_eq!(ErrorKind::of(&cancelled), ErrorKind::AuthCancelled);
+        assert_eq!(ErrorKind::detail(&cancelled).as_deref(), Some("origin"));
         assert_eq!(
             ErrorKind::detail(&auth).as_deref(),
             Some("fatal: Authentication failed")

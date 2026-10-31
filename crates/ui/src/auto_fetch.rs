@@ -304,6 +304,10 @@ impl Tab {
                 }
             }
             fetch::Received::Cancelled { notice } => {
+                // A credential question cancelled: not asked again at every tick.
+                if kind == Some(ErrorKind::AuthCancelled) {
+                    repo.auto_fetch.suspend(None);
+                }
                 self.notice = notice;
                 self.refresh_light();
             }

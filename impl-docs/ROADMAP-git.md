@@ -635,7 +635,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   upstream" in the local branch menu.
 
 ### S52 — Credential prompts
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** network commands (fetch, pull, push, push_tag, delete_branch, delete_tag, clone) run
   with stdin closed, `GIT_TERMINAL_PROMPT=0` and `setsid`: without a configured credential helper
   or ssh-agent they only fail with `Auth`. The app asks the user instead
@@ -652,9 +652,12 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   gets Username and Password, git sends the answers; cancel → error; no prompter → unchanged),
   wrong token rejected; desktop dialog (egui-ui) fills the stub prompter; `safety-reviewer`
   review; CI green.
-- **Status:** engine, backend and L7 wiring done; the desktop prompter is a stub that returns
-  `None` (`project_ui::CredentialDialog`) until the egui-ui dialog; the CLI has no prompter yet (no
-  echo-off crate in the workspace).
+- **Status:** done. Desktop dialog (`crates/ui/src/credentials.rs`, `view/credentials_view.rs`):
+  `ask` queues the question to the App (one modal at a time, above every dialog), masked field
+  with Show/Hide for secrets, "Trust and continue" for host keys (no default), Enter/Escape;
+  the typed text is wiped on close, the field's egui state dropped; a question left open after
+  its command ended closes with no answer. `AuthCancelled` is a notice (auto fetch suspends).
+  The CLI has no prompter yet (no echo-off crate in the workspace).
 
 ### S53 — Compare two revisions
 - [x] **Agent:** `git-engine`, then `egui-ui`

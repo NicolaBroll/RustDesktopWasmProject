@@ -53,7 +53,7 @@ mod tracking;
 mod view;
 mod word_diff;
 
-pub use credentials::CredentialDialog;
+pub use credentials::{CredentialBox, CredentialDialog};
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
 use branch::BranchBox;
@@ -114,6 +114,8 @@ enum Action {
     Clone(clone::Action),
     /// The "Settings…" window and the settings: applied by [`App`].
     Settings(settings::Action),
+    /// The credential modal (S52): applied by [`App`].
+    Credentials(credentials::Action),
     /// Opening and closing a file's diff.
     Diff(diff::Action),
     /// Stage and unstage of whole files.
@@ -567,8 +569,8 @@ impl Tab {
             repo.compare.close();
         }
         match action {
-            // The tabs, the folder dialog, clone and settings belong to `App`.
-            Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) => {}
+            // The tabs, the folder dialog, clone, settings and credentials belong to `App`.
+            Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) | Action::Credentials(_) => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {

@@ -453,6 +453,11 @@ impl SyncBox {
                 },
                 reload: true,
             },
+            // Nothing was fetched or sent: a notice, not an error window.
+            Some(ErrorKind::AuthCancelled) => Received::Cancelled {
+                notice: fetch::auth_cancelled(detail.as_deref()),
+                reload: false,
+            },
             Some(ErrorKind::Auth) => {
                 self.window = Some(Window::Failure(fetch::auth_failure(
                     &fetch::who(None),

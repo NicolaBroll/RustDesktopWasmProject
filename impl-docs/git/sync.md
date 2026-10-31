@@ -300,6 +300,12 @@ input without a new dependency).
   without prompter and token). After a successful command git's credential helper stores it,
   as in a terminal. Any process git starts (hooks included) inherits `PROJECT_ASKPASS` and could
   ask the user something: they already run with the user's rights.
+- **Desktop dialog** (`project_ui::CredentialDialog`, built before the window and connected to
+  it by `App::with_credentials`): `ask` sends the question with a one-shot reply channel and
+  wakes the UI; no UI yet or UI gone → `None`. One app-level modal at a time: title by kind,
+  git's text verbatim and selectable, masked field with Show/Hide for secret kinds, host key
+  only with "Trust and continue" (`yes`) or Cancel. The text is wiped on close; a question left
+  open after every command ended is closed with `None`. `AuthCancelled` is a status-bar notice.
 - **Tests**: `crates/git/tests/askpass.rs` (`harness = false`: the test binary is git's askpass)
   against a dummy HTTP server that asks for Basic auth: answers reach git, cancel on fetch,
   clone and tag push, no prompter → `Auth`; unit tests in `askpass.rs` for wrong token, cancel,

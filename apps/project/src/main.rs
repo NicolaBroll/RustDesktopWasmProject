@@ -19,9 +19,9 @@ fn main() -> eframe::Result {
     env_logger::init();
 
     // Network commands ask for credentials through the UI.
-    let opener = Arc::new(
-        CliOpener::new().credential_prompter(Arc::new(project_ui::CredentialDialog::new())),
-    );
+    // The dialog gets the window's context when the App is created.
+    let credentials = Arc::new(project_ui::CredentialDialog::new());
+    let opener = Arc::new(CliOpener::new().credential_prompter(credentials.clone()));
     // `project <path>` opens a repository right away (`repo.open` returns the absolute root, which
     // is what the tabs and the recent repos save).
     let repo = std::env::args().nth(1);
@@ -56,7 +56,9 @@ fn main() -> eframe::Result {
             // Built here: the dialogs need the window, which exists only now.
             let platform = Arc::new(NativePlatform::new(cc));
             Ok(Box::new(
-                project_ui::App::new(cc, platform, opener, repo).with_window_frame(frame),
+                project_ui::App::new(cc, platform, opener, repo)
+                    .with_window_frame(frame)
+                    .with_credentials(credentials.connect(&cc.egui_ctx)),
             ))
         }),
     )

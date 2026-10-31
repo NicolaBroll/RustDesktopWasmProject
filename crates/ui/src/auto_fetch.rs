@@ -54,6 +54,8 @@ pub struct AutoFetch {
     suspended: Option<Suspended>,
     /// "Retry": fetch at the next tick that can.
     now: bool,
+    /// "Retry": the next automatic fetch may ask for credentials (the others never do).
+    ask: bool,
     /// A fetch started since the last tick (it may have already ended).
     restart: bool,
     /// The remote branches moved by the last automatic fetch: the notice is written once the log
@@ -146,6 +148,13 @@ impl AutoFetch {
     pub fn retry(&mut self) {
         self.suspended = None;
         self.now = true;
+        self.ask = true;
+    }
+
+    /// Whether the automatic fetch starting now may ask for credentials: only the one of
+    /// "Retry".
+    pub fn take_ask(&mut self) -> bool {
+        std::mem::take(&mut self.ask)
     }
 
     /// The notice under the bar, unless the automatic fetch is off.
@@ -304,6 +313,10 @@ impl Tab {
                 }
             }
             fetch::Received::Cancelled { notice } => {
+                // A credential question cancelled: not asked again at every tick.
+                if kind == Some(ErrorKind::AuthCancelled) {
+                    repo.auto_fetch.suspend(None);
+                }
                 self.notice = notice;
                 self.refresh_light();
             }

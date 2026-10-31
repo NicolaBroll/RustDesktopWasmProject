@@ -634,6 +634,31 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   upstream…" window (filter, virtualized list, `<remote>/<same name>` preselected) and "Unset
   upstream" in the local branch menu.
 
+### S52 — Credential prompts
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** network commands (fetch, pull, push, push_tag, delete_branch, delete_tag, clone) run
+  with stdin closed, `GIT_TERMINAL_PROMPT=0` and `setsid`: without a configured credential helper
+  or ssh-agent they only fail with `Auth`. The app asks the user instead
+  ([git/sync.md](git/sync.md), "Credential prompts"). L5: trait `CredentialPrompter` (`ask` gets a
+  `CredentialRequest {kind: Username | Password | Passphrase | HostKey | Other, prompt, remote,
+  url}`, returns the answer or `None` = cancelled), optional on `CliOpener` (set by the L7 app;
+  absent in MCP and tests → today's behaviour). L6: askpass bridge for the network calls (listener
+  on `127.0.0.1:0` per command, 32-byte random token, `GIT_ASKPASS`/`SSH_ASKPASS` = the app's own
+  executable, `SSH_ASKPASS_REQUIRE=force`, `PROJECT_ASKPASS=<port>:<token>`); cancel →
+  `EngineError::AuthCancelled`, never retried. L7: both apps run as askpass client first thing in
+  `main` when `PROJECT_ASKPASS` is set. Secrets never logged, in errors, journal, progress or
+  `Debug`; not stored by the app (git's credential helper stores them after success).
+- **Done when:** integration tests against a dummy HTTP server that asks for Basic auth (prompter
+  gets Username and Password, git sends the answers; cancel → error; no prompter → unchanged),
+  wrong token rejected; desktop dialog (egui-ui) fills the stub prompter; `safety-reviewer`
+  review; CI green.
+- **Status:** done. Desktop dialog (`crates/ui/src/credentials.rs`, `view/credentials_view.rs`):
+  `ask` queues the question to the App (one modal at a time, above every dialog), masked field
+  with Show/Hide for secrets, "Trust and continue" for host keys (no default), Enter/Escape;
+  the typed text is wiped on close, the field's egui state dropped; a question left open after
+  its command ended closes with no answer. `AuthCancelled` is a notice (auto fetch suspends).
+  The CLI has no prompter yet (no echo-off crate in the workspace).
+
 ### S53 — Compare two revisions
 - [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** `diff.commit` only compares a commit with its parent. Add the read-only `diff.range

@@ -8,6 +8,7 @@
 mod message;
 mod builtin;
 mod commands;
+mod credentials;
 mod git;
 mod job;
 mod journal;
@@ -62,6 +63,7 @@ pub use builtin::{
     RepoOpenParams, RepoOpenResult, RepoOptimizeResult,
 };
 pub use commands::{Access, CommandSpec, Registry};
+pub use credentials::{CredentialKind, CredentialPrompter, CredentialRequest};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
     DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
@@ -253,6 +255,12 @@ pub enum EngineError {
         remote: String,
         message: String,
     },
+    /// git asked for credentials (user name, password, passphrase, host key) through the app's
+    /// [`CredentialPrompter`] and the user cancelled: git stopped before contacting the remote
+    /// for anything else. Nothing was modified; the command is not retried by itself.
+    AuthCancelled {
+        remote: String,
+    },
     /// The command was cancelled by whoever launched it
     /// ([`CancelToken::cancel`](crate::CancelToken::cancel)). What the command says about itself
     /// applies here too (e.g. `remote.fetch` cancelled: the refs already updated stay, no
@@ -387,6 +395,7 @@ impl EngineError {
             E::Auth { remote, message } => {
                 msg!("engine-auth", remote = remote, message = message)
             }
+            E::AuthCancelled { remote } => msg!("engine-auth-cancelled", remote = remote),
             E::RemoteUnreachable { remote, message } => {
                 msg!(
                     "engine-remote-unreachable",

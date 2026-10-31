@@ -256,7 +256,8 @@ impl CloneBox {
         };
         let who = tr!("clone-who", url = d.fields.url.trim());
         d.failure = match kind {
-            Some(ErrorKind::Cancelled) => {
+            // A credential question cancelled: as "Cancel", the folder is put back.
+            Some(ErrorKind::Cancelled | ErrorKind::AuthCancelled) => {
                 d.cancelled = true;
                 None
             }

@@ -89,6 +89,16 @@ fn frame(tab: &mut Tab, now: Instant) {
     tab.tick_fetch(now, true, Some(5 * MINUTE), false);
 }
 
+/// Whether the fetch in progress may open the credential dialog.
+fn asks(tab: &Tab) -> bool {
+    tab.executor
+        .running()
+        .iter()
+        .find(|j| j.command == fetch::COMMAND)
+        .expect("a fetch")
+        .asks
+}
+
 fn auto(tab: &Tab) -> &AutoFetch {
     &tab.repo.as_ref().unwrap().auto_fetch
 }
@@ -336,10 +346,16 @@ fn an_authentication_error_suspends_the_timer_until_retry() {
             "fatal: Authentication failed for 'https://example.com'".into(),
         )),
     );
-    let mut tab = tab_with(repo, &Arc::default());
+    let platform = Arc::new(Jobs::default());
+    let mut tab = tab_with(repo, &platform);
     let t0 = Instant::now();
     frame(&mut tab, t0);
+    *platform.hold.lock().unwrap() = true;
     frame(&mut tab, t0 + 5 * MINUTE);
+    // The tick's fetch never opens the credential dialog: git gets no answer (`Auth`).
+    assert_eq!(fetching(&tab), 1);
+    assert!(!asks(&tab), "the automatic fetch never asks");
+    platform.release();
     settle(&mut tab);
     frame(&mut tab, t0 + 5 * MINUTE);
     let repo = tab.repo.as_ref().unwrap();
@@ -365,15 +381,25 @@ fn an_authentication_error_suspends_the_timer_until_retry() {
     assert!(auto(&tab).suspended().is_none());
     frame(&mut tab, t0 + 601 * MINUTE);
     assert!(auto(&tab).suspended().is_some());
-    // "Retry": a fetch at once, suspended again since the remote still refuses.
+    // "Retry": a fetch at once, which may ask for credentials (the dialog); suspended again
+    // since the remote still refuses.
     tab.apply(Action::RetryAutoFetch);
     assert!(auto(&tab).suspended().is_none());
     frame(&mut tab, t0 + 601 * MINUTE);
     assert_eq!(fetching(&tab), 1);
+    assert!(asks(&tab), "after Retry the fetch may ask");
     settle(&mut tab);
     frame(&mut tab, t0 + 601 * MINUTE);
     assert!(auto(&tab).suspended().is_some());
     assert!(tab.repo.as_ref().unwrap().fetch.failure().is_none());
+    // Only that one: the next ticks are quiet again.
+    tab.apply(Action::RetryAutoFetch);
+    *platform.hold.lock().unwrap() = true;
+    frame(&mut tab, t0 + 602 * MINUTE);
+    assert!(asks(&tab));
+    platform.release();
+    settle(&mut tab);
+    assert!(!auto(&tab).ask);
 }
 
 #[test]

@@ -5,6 +5,7 @@
 //! open tabs, the one shown and the recent repos; at startup the tabs reopen.
 
 use crate::clone::{self, CloneBox, Received};
+use crate::credentials::CredentialBox;
 use crate::executor::{Executor, Wake};
 use crate::keys::{self, Command};
 use crate::settings::{self, Change, Scale, Settings, SettingsBox};
@@ -92,6 +93,8 @@ pub struct App {
     settings_saved: Option<Settings>,
     /// The "Settings…" window.
     settings_box: SettingsBox,
+    /// The questions of git and ssh for the user (S52), one modal at a time.
+    credentials: CredentialBox,
 }
 
 /// What the folder chosen in the dialog is for.
@@ -144,6 +147,16 @@ impl App {
         self
     }
 
+    /// The questions of git and ssh for the user, from
+    /// [`CredentialDialog::connect`](crate::CredentialDialog::connect) (`None`: none ever come).
+    #[must_use]
+    pub fn with_credentials(mut self, credentials: Option<CredentialBox>) -> Self {
+        if let Some(credentials) = credentials {
+            self.credentials = credentials;
+        }
+        self
+    }
+
     fn restore(
         platform: Arc<dyn Platform>,
         opener: Arc<dyn RepoOpener>,
@@ -171,6 +184,7 @@ impl App {
             settings: Settings::default(),
             settings_saved: Some(Settings::default()),
             settings_box: SettingsBox::default(),
+            credentials: CredentialBox::default(),
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -242,6 +256,15 @@ impl App {
     /// Collects the results of every tab, shown or not, and the repos just opened: they enter the
     /// recent list; the same repo already open in another tab (reached by another path) closes the
     /// new tab and shows the other one.
+    /// Opens the next question of git or ssh. A question whose command has ended (stopped with
+    /// "Stop" while it was asking: git is gone) is closed with no answer.
+    fn receive_credentials(&mut self, ctx: &egui::Context) {
+        if self.credentials.stale() && self.credentials.cancel() {
+            forget_field(ctx);
+        }
+        self.credentials.receive();
+    }
+
     fn receive(&mut self) {
         let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
         match folder {
@@ -334,6 +357,11 @@ impl App {
             crate::Action::Tabs(action) => self.apply_tabs(ctx, action),
             crate::Action::Clone(action) => self.apply_clone(ctx, action),
             crate::Action::Settings(action) => self.apply_settings(ctx, action),
+            crate::Action::Credentials(action) => {
+                if self.credentials.apply(action) {
+                    forget_field(ctx);
+                }
+            }
             action => self.tabs[self.active].apply(action),
         }
     }
@@ -493,6 +521,7 @@ impl App {
         let popup = egui::Popup::is_any_open(ctx);
         let modal = self.clone.dialog().is_some()
             || self.settings_box.open
+            || self.credentials.open().is_some()
             || ctx.memory(|m| m.top_modal_layer().is_some())
             || self.tabs[self.active]
                 .repo
@@ -547,6 +576,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive();
+        self.receive_credentials(&ctx);
         self.auto_refresh(&ctx);
         // Before anything is drawn: a menu open now closes on this frame's Esc, which must not
         // reach the tab too (U31).
@@ -591,6 +621,13 @@ impl eframe::App for App {
                 .and_then(|(running, tab)| tab.executor.progress(running.ticket));
             view::clone_dialog(&ctx, dialog, progress.as_ref(), can_pick, &mut actions);
         }
+        if let Some(prompt) = self.credentials.open_mut() {
+            // Over everything, the tab's dialogs and clone included: what happened under it is
+            // dropped.
+            actions.clear();
+            strip.clear();
+            view::credential_dialog(&ctx, prompt, &mut actions);
+        }
         for action in actions.into_iter().chain(strip) {
             self.apply(&ctx, action);
         }
@@ -609,6 +646,11 @@ impl eframe::App for App {
         eframe::set_value(storage, settings::KEY, &self.settings);
         self.settings_saved = Some(self.settings.clone());
     }
+}
+
+/// Drops the egui state of the credential field: its undo history holds copies of the text.
+fn forget_field(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(view::credential_field_id()));
 }
 
 /// `path` at the top of the recent list, without duplicates and at most [`MAX_RECENT`].

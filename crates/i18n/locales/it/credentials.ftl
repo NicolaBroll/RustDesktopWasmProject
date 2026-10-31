@@ -1,0 +1,17 @@
+credentials-the-remote = il remoto
+credentials-title-username = Nome utente per { $target }
+credentials-title-password = Password per { $target }
+credentials-title-passphrase = Passphrase della chiave
+credentials-title-host-key = Chiave dell'host sconosciuta
+credentials-title-other = Domanda di git
+credentials-remote = Remoto: { $remote }
+credentials-host-key-explanation = ssh non conosce ancora questo server. Fidati solo se l'impronta qui sopra coincide con quella pubblicata da chi gestisce il server.
+credentials-trust = Fidati e continua
+credentials-ok = OK
+credentials-cancel = Annulla
+credentials-show = Mostra
+credentials-hide = Nascondi
+credentials-hint-helper = Salvate solo dal credential helper di git: senza, ti verranno chieste di nuovo la prossima volta.
+credentials-hint-passphrase = L'app non la salva: un ssh-agent può tenere la chiave sbloccata.
+credentials-cancelled-remote = Annullato: autenticazione per { $remote }. Niente modificato.
+credentials-cancelled = Annullato: autenticazione con il remoto. Niente modificato.

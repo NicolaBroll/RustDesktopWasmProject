@@ -38,7 +38,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends zlib1g-dev
+          sudo apt-get install -y --no-install-recommends zlib1g-dev libcurl4-openssl-dev
           .github/scripts/build-git.sh "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.prefix }}"
       - run: echo "${{ steps.version.outputs.prefix }}/bin" >> "$GITHUB_PATH"
       - run: git --version

@@ -40,6 +40,8 @@ pub struct Job {
     pub writes: bool,
     /// When it was sent: the status bar shows a read only once it takes a while.
     pub started: std::time::Instant,
+    /// False if git's credential questions get no dialog (the automatic fetch).
+    pub asks: bool,
 }
 
 /// A finished command.
@@ -94,6 +96,9 @@ pub enum ErrorKind {
     /// [`EngineError::Auth`]: the remote rejected the credentials or they would have to be asked for;
     /// git's text is in [`Done::error_detail`].
     Auth,
+    /// [`EngineError::AuthCancelled`]: the user cancelled a credential question; nothing
+    /// changed. The remote is in [`Done::error_detail`]. Shown as a notice, not as an error.
+    AuthCancelled,
     /// [`EngineError::RemoteUnreachable`]: the remote cannot be reached; git's text is in
     /// [`Done::error_detail`].
     RemoteUnreachable,
@@ -130,6 +135,7 @@ impl ErrorKind {
             EngineError::PostCommit { .. } => ErrorKind::PostCommit,
             EngineError::CheckoutConflict { .. } => ErrorKind::CheckoutConflict,
             EngineError::Auth { .. } => ErrorKind::Auth,
+            EngineError::AuthCancelled { .. } => ErrorKind::AuthCancelled,
             EngineError::RemoteUnreachable { .. } => ErrorKind::RemoteUnreachable,
             EngineError::Cancelled { .. } => ErrorKind::Cancelled,
             EngineError::PullConflict { operation, .. } => ErrorKind::PullConflict(*operation),
@@ -158,6 +164,7 @@ impl ErrorKind {
             EngineError::Auth { message, .. }
             | EngineError::RemoteUnreachable { message, .. }
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
+            EngineError::AuthCancelled { remote } => Some(remote.clone()),
             EngineError::PullConflict { files, .. }
             | EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
             EngineError::NotAllowed(m) => local_changes_files(m),
@@ -252,6 +259,12 @@ impl Executor {
     /// Sends the command `command` with `params` and returns at once (after running it, if the
     /// platform runs jobs inside `spawn`). The result arrives from [`Executor::poll`].
     pub fn submit(&mut self, command: &str, params: Value) -> Ticket {
+        self.submit_with(command, params, true)
+    }
+
+    /// Like [`Executor::submit`]; with `asks` false git's credential questions get no dialog
+    /// (the automatic fetch): a missing credential is an authentication error.
+    pub fn submit_with(&mut self, command: &str, params: Value, asks: bool) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
         let writes = self.registry.get(command).is_some_and(|spec| spec.writes);
@@ -261,6 +274,7 @@ impl Executor {
             command: command.to_owned(),
             writes,
             started: std::time::Instant::now(),
+            asks,
         });
 
         // Before starting the job: a platform may run the command (and send progress) inside
@@ -291,6 +305,7 @@ impl Executor {
         self.platform.spawn(Box::new(move || {
             // A job that ended badly poisons the lock, but the session stays valid: every command
             // leaves it consistent even when it fails.
+            let _job = crate::credentials::Job::start(asks);
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run_with(&reply.command, &mut session, params, job)
@@ -677,6 +692,11 @@ mod tests {
             message: "fatal: Authentication failed".into(),
         };
         assert_eq!(ErrorKind::of(&auth), ErrorKind::Auth);
+        let cancelled = EngineError::AuthCancelled {
+            remote: "origin".into(),
+        };
+        assert_eq!(ErrorKind::of(&cancelled), ErrorKind::AuthCancelled);
+        assert_eq!(ErrorKind::detail(&cancelled).as_deref(), Some("origin"));
         assert_eq!(
             ErrorKind::detail(&auth).as_deref(),
             Some("fatal: Authentication failed")

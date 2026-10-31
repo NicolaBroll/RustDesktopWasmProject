@@ -1,5 +1,6 @@
 //! Stage and unstage of hunks and single lines from the diff view (`index.stage_lines`,
-//! `index.unstage_lines`): which lines are selected, whether the file allows partial
+//! `index.unstage_lines`), and their discard from the unstaged diff (`worktree.discard_lines`,
+//! confirmed in the discard dialog, see [`crate::discard`]): which lines are selected, whether the file allows partial
 //! selection, the references to send to the engine and the state of the buttons. Data only, no egui:
 //! tested with unit tests.
 //!
@@ -8,8 +9,11 @@
 //! reload or another file). Only added and removed lines can be selected, never context.
 
 use crate::diff::{DiffDoc, DiffSource, DiffTarget, Row};
+use crate::discard::LinesPick;
 use crate::{Drag, Request, Tab};
-use project_domain::{DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch};
+use project_domain::{
+    Change, DomainError, FileDiff, LineRef, PatchDirection, RepoPath, build_patch,
+};
 use project_engine::IndexLinesParams;
 use project_i18n::tr;
 use std::collections::BTreeSet;
@@ -28,6 +32,10 @@ pub(crate) enum Action {
     Hunk(usize),
     /// Stage or unstage the selected lines.
     Selected,
+    /// Discard the hunk with this index of the unstaged diff (after the confirmation).
+    DiscardHunk(usize),
+    /// Discard the selected lines of the unstaged diff (after the confirmation).
+    DiscardSelected,
 }
 
 /// Whether the shown diff allows staging (or unstaging) hunks and lines.
@@ -70,6 +78,23 @@ pub fn partial(doc: &DiffDoc, source: DiffSource) -> Partial {
         Ok(_) if file.line_refs().is_empty() => Partial::Hidden,
         Ok(_) => Partial::Available(direction),
     }
+}
+
+/// Whether hunks and lines of the diff `doc` of `source` can be discarded: `None` where there is
+/// no discard (staged side, commits, no partial selection); `Some(false)` if the file is not a
+/// plain modified file (deleted, renamed, new or `intent-to-add`), which the engine refuses:
+/// the button is disabled with [`discard_unavailable`] as the reason.
+pub fn discard_lines(doc: &DiffDoc, source: DiffSource) -> Option<bool> {
+    if partial(doc, source) != Partial::Available(PatchDirection::Stage) {
+        return None;
+    }
+    let file = single_file(doc)?;
+    Some(file.change == Change::Modified && file.old_path == file.new_path)
+}
+
+/// Why the lines of this file cannot be discarded one by one.
+pub fn discard_unavailable() -> String {
+    tr!("diff-discard-not-modified")
 }
 
 /// The file that lines and hunks refer to: the only one of the document.
@@ -287,6 +312,31 @@ pub fn plan(doc: &DiffDoc, target: &DiffTarget, pick: Pick<'_>) -> Option<LineWr
     })
 }
 
+/// The lines to discard for `pick` in the unstaged diff `doc`: `None` if the file does not allow
+/// it (see [`discard_lines`]) or there is nothing to discard.
+pub fn discard_plan(
+    doc: &DiffDoc,
+    target: &DiffTarget,
+    pick: Pick<'_>,
+) -> Option<(RepoPath, LinesPick)> {
+    if discard_lines(doc, target.source) != Some(true) {
+        return None;
+    }
+    let write = plan(doc, target, pick)?;
+    let hunk = match pick {
+        Pick::Hunk(h) => Some(h),
+        Pick::Selected(_) => None,
+    };
+    Some((
+        write.path,
+        LinesPick {
+            lines: write.lines,
+            digest: write.digest,
+            hunk,
+        },
+    ))
+}
+
 /// State of the partial selection buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineButtons {
@@ -299,12 +349,29 @@ pub struct LineButtons {
     pub clear: bool,
     /// Selected lines.
     pub count: usize,
+    /// "Discard hunk…"/"Discard lines…": `None` not shown (staged side), `Some(false)` shown
+    /// disabled (the file cannot be discarded by line), `Some(true)` usable like `hunks` and
+    /// `selected`.
+    pub discard: Option<bool>,
 }
 
-/// The buttons to show, `None` if the diff does not allow partial selection. `can_write` is
-/// false during a write or with a confirmation open.
+impl LineButtons {
+    /// "Discard hunk…" can be clicked.
+    pub fn discard_hunk(&self) -> bool {
+        self.hunks && self.discard == Some(true)
+    }
+
+    /// "Discard lines…" can be clicked.
+    pub fn discard_selected(&self) -> bool {
+        self.selected && self.discard == Some(true)
+    }
+}
+
+/// The buttons to show, `None` if the diff does not allow partial selection. `discard` is
+/// [`discard_lines`]; `can_write` is false during a write or with a confirmation open.
 pub fn buttons(
     partial: &Partial,
+    discard: Option<bool>,
     selection: &LineSelection,
     can_write: bool,
 ) -> Option<LineButtons> {
@@ -318,6 +385,7 @@ pub fn buttons(
         selected: can_write && count > 0,
         clear: count > 0,
         count,
+        discard,
     })
 }
 
@@ -370,6 +438,31 @@ impl Tab {
                     self.send_line_write(write);
                 }
             }
+            Action::DiscardHunk(h) => self.discard_lines(Pick::Hunk(h)),
+            Action::DiscardSelected => {
+                let selection = self
+                    .repo
+                    .as_ref()
+                    .and_then(|r| r.diff.loaded())
+                    .map(|(_, _, selection)| selection.clone());
+                if let Some(selection) = selection {
+                    self.discard_lines(Pick::Selected(&selection));
+                }
+            }
+        }
+    }
+
+    /// Starts discarding `pick` from the loaded unstaged diff: the check, then the dialog.
+    fn discard_lines(&mut self, pick: Pick<'_>) {
+        let found = self.repo.as_ref().and_then(|r| {
+            if r.diff.is_reloading() {
+                return None;
+            }
+            let (target, doc, _) = r.diff.loaded()?;
+            discard_plan(doc, target, pick)
+        });
+        if let Some((path, pick)) = found {
+            self.start_discard(vec![path], Some(pick));
         }
     }
 
@@ -642,23 +735,68 @@ mod tests {
     fn buttons_follow_selection_and_writes() {
         let d = doc(vec![two_hunks()]);
         let available = partial(&d, DiffSource::Worktree);
+        let discard = discard_lines(&d, DiffSource::Worktree);
+        assert_eq!(discard, Some(true));
         let mut s = LineSelection::default();
-        let b = buttons(&available, &s, true).unwrap();
+        let b = buttons(&available, discard, &s, true).unwrap();
         assert!(b.hunks && !b.selected && !b.clear);
+        assert!(b.discard_hunk() && !b.discard_selected());
         assert_eq!(b.count, 0);
         s.click(&d, 3, false);
         s.click(&d, 4, false);
-        let b = buttons(&available, &s, true).unwrap();
+        let b = buttons(&available, discard, &s, true).unwrap();
         assert!(b.hunks && b.selected && b.clear);
+        assert!(b.discard_hunk() && b.discard_selected());
         assert_eq!(b.count, 2);
         // During a write one can only deselect.
-        let b = buttons(&available, &s, false).unwrap();
+        let b = buttons(&available, discard, &s, false).unwrap();
         assert!(!b.hunks && !b.selected && b.clear);
-        assert_eq!(buttons(&Partial::Hidden, &s, true), None);
+        assert!(!b.discard_hunk() && !b.discard_selected());
+        // A file that cannot be discarded by line: stage yes, discard no.
+        let b = buttons(&available, Some(false), &s, true).unwrap();
+        assert!(b.hunks && b.selected && !b.discard_hunk() && !b.discard_selected());
+        assert_eq!(buttons(&Partial::Hidden, None, &s, true), None);
         assert_eq!(
-            buttons(&Partial::Unavailable("binary".to_owned()), &s, true),
+            buttons(&Partial::Unavailable("binary".to_owned()), None, &s, true),
             None
         );
+    }
+
+    #[test]
+    fn only_modified_files_in_the_unstaged_diff_are_discarded_by_line() {
+        let d = doc(vec![two_hunks()]);
+        let target = worktree();
+        let index = DiffTarget {
+            source: DiffSource::Index,
+            path: "a.rs".into(),
+        };
+        // Staged side and commits: no discard.
+        assert_eq!(discard_lines(&d, DiffSource::Index), None);
+        assert!(discard_plan(&d, &index, Pick::Hunk(0)).is_none());
+        let commit = DiffTarget::commit(Oid::from_bytes([3; 20]), "a.rs".into());
+        assert!(discard_plan(&d, &commit, Pick::Hunk(0)).is_none());
+
+        let (path, pick) = discard_plan(&d, &target, Pick::Hunk(1)).unwrap();
+        assert_eq!(path, RepoPath::from("a.rs"));
+        assert_eq!(pick.lines, [LineRef::Old(9), LineRef::New(10)]);
+        assert_eq!(pick.hunk, Some(1));
+        assert_eq!(pick.digest, project_engine::file_digest(&d.diff.files[0]));
+
+        let mut s = LineSelection::default();
+        assert!(discard_plan(&d, &target, Pick::Selected(&s)).is_none());
+        s.click(&d, 3, false);
+        let (_, pick) = discard_plan(&d, &target, Pick::Selected(&s)).unwrap();
+        assert_eq!((pick.lines, pick.hunk), (vec![LineRef::Old(2)], None));
+
+        // Deleted or new in the worktree: the stage buttons stay, discard is disabled.
+        for change in [Change::Deleted, Change::Added] {
+            let mut other = two_hunks();
+            other.change = change;
+            let d = doc(vec![other]);
+            assert_eq!(discard_lines(&d, DiffSource::Worktree), Some(false));
+            assert!(discard_plan(&d, &target, Pick::Hunk(0)).is_none());
+        }
+        assert!(discard_unavailable().contains("modified"));
     }
 
     /// The full path with the sample repo, as the UI does it: `diff.worktree` of

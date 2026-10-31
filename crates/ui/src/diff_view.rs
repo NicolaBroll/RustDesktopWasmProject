@@ -53,7 +53,8 @@ pub(crate) fn diff_panel(
         Pane::Loaded(target, doc) => {
             let partial = lines::partial(doc, target.source);
             let selection = lines_ui.selection.unwrap_or(&empty);
-            let buttons = lines::buttons(&partial, selection, lines_ui.can_write);
+            let discard = lines::discard_lines(doc, target.source);
+            let buttons = lines::buttons(&partial, discard, selection, lines_ui.can_write);
             Some(LineState {
                 partial,
                 selection,
@@ -231,6 +232,22 @@ fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
             .on_disabled_hover_text(tr!("diff-wait-write"));
         if button.clicked() {
             actions.push(Action::Lines(lines::Action::Selected));
+        }
+        if let Some(allowed) = b.discard {
+            let discard = ui
+                .add_enabled(
+                    b.discard_selected(),
+                    egui::Button::new(tr!("diff-discard-selected", n = b.count)),
+                )
+                .on_hover_text(tr!("diff-discard-selected-hint"))
+                .on_disabled_hover_text(if allowed {
+                    tr!("diff-wait-write")
+                } else {
+                    lines::discard_unavailable()
+                });
+            if discard.clicked() {
+                actions.push(Action::Lines(lines::Action::DiscardSelected));
+            }
         }
         let clear = ui
             .add_enabled(b.clear, egui::Button::new(tr!("diff-clear")))
@@ -422,7 +439,7 @@ enum Mark {
     Selected,
 }
 
-/// "Stage hunk"/"Unstage hunk" on the right of the header, in the visible part, over a strip
+/// "Stage hunk"/"Unstage hunk" (and "Discard hunk…" in the unstaged diff) on the right of the header, in the visible part, over a strip
 /// of `background` that cuts the header text before it.
 fn hunk_button(
     ui: &mut Ui,
@@ -434,7 +451,8 @@ fn hunk_button(
 ) {
     let behind = ui.painter().add(egui::Shape::Noop);
     let right = rect.right().min(ui.clip_rect().right()) - PAD;
-    let cell = Rect::from_min_max(pos2(right - 140.0, rect.top()), pos2(right, rect.bottom()));
+    let width = if b.discard.is_some() { 260.0 } else { 140.0 };
+    let cell = Rect::from_min_max(pos2(right - width, rect.top()), pos2(right, rect.bottom()));
     let mut cell = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(cell)
@@ -448,6 +466,19 @@ fn hunk_button(
             (tr!("diff-unstage-hunk"), tr!("diff-unstage-hunk-hint"))
         }
     };
+    // Right to left: "Discard hunk…" is the rightmost, "Stage hunk" next to it.
+    let discard = b.discard.map(|allowed| {
+        cell.add_enabled(
+            b.discard_hunk(),
+            egui::Button::new(tr!("diff-discard-hunk")).small(),
+        )
+        .on_hover_text(tr!("diff-discard-hunk-hint"))
+        .on_disabled_hover_text(if allowed {
+            tr!("diff-wait-write")
+        } else {
+            lines::discard_unavailable()
+        })
+    });
     let button = cell
         .add_enabled(b.hunks, egui::Button::new(label).small())
         .on_hover_text(help)
@@ -460,6 +491,9 @@ fn hunk_button(
         .set(behind, egui::Shape::Vec(vec![under, over]));
     if button.clicked() {
         actions.push(Action::Lines(lines::Action::Hunk(hunk)));
+    }
+    if discard.is_some_and(|d| d.clicked()) {
+        actions.push(Action::Lines(lines::Action::DiscardHunk(hunk)));
     }
 }
 

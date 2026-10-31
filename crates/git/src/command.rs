@@ -209,6 +209,26 @@ impl Git {
         input: &[u8],
         env: &[(&str, &OsStr)],
     ) -> Result<Output, EngineError> {
+        let mut cmd = self.command(dir, args, &[]);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        self.pipe(cmd, input)
+    }
+
+    /// Like [`Git::output_with_input`], with arguments that are not UTF-8 (e.g.
+    /// `--path=<path>`).
+    pub(crate) fn output_os_with_input(
+        &self,
+        dir: Option<&Path>,
+        args: &[&OsStr],
+        input: &[u8],
+    ) -> Result<Output, EngineError> {
+        self.pipe(self.command(dir, &[], args), input)
+    }
+
+    /// Runs `cmd` with `input` on stdin, written by a separate thread.
+    fn pipe(&self, mut cmd: Command, input: &[u8]) -> Result<Output, EngineError> {
         let not_found = |e: std::io::Error| {
             EngineError::GitNotFound(msg!(
                 "engine-git-spawn",
@@ -216,10 +236,6 @@ impl Git {
                 error = e
             ))
         };
-        let mut cmd = self.command(dir, args, &[]);
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
         let mut child = cmd.stdin(Stdio::piped()).spawn().map_err(not_found)?;
         let mut stdin = child
             .stdin

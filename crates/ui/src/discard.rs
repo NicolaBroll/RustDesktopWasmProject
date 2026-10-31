@@ -4,12 +4,16 @@
 //! Discarding happens in two steps: first `worktree.discard` without `confirm`, which changes nothing and
 //! answers with `ConfirmRequired` (or refuses at once with `NotAllowed`, e.g. a conflicted file in the
 //! repo); then, only if the user confirms in the dialog, the same command with `"confirm": true`.
+//! Discarding a hunk or the selected lines of the unstaged diff (`worktree.discard_lines`) goes
+//! through the same two steps, with the lines and the digest of the diff seen.
 
 use crate::ErrorKind;
 use crate::stage::StageItem;
 use crate::{Done, Request, Tab};
-use project_domain::{Change, RepoPath};
-use project_engine::{DiscardParams, DiscardResult, UndoResult};
+use project_domain::{Change, LineRef, RepoPath, Status};
+use project_engine::{
+    DiscardLinesParams, DiscardLinesResult, DiscardParams, DiscardResult, JournalState, UndoResult,
+};
 use project_i18n::tr;
 use serde_json::{Value, json};
 
@@ -59,6 +63,20 @@ pub fn discardable_paths(items: &[StageItem]) -> Option<Vec<RepoPath>> {
 /// The id of the Registry command.
 pub const COMMAND: &str = "worktree.discard";
 
+/// The id of the Registry command that discards some lines of one file.
+pub const LINES_COMMAND: &str = "worktree.discard_lines";
+
+/// Some lines of one file to discard (`worktree.discard_lines`), chosen in its unstaged diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinesPick {
+    /// The changed lines, never empty.
+    pub lines: Vec<LineRef>,
+    /// The digest of the `diff.worktree` diff seen.
+    pub digest: String,
+    /// The hunk (index in the file) when it is a whole hunk: only for the texts.
+    pub hunk: Option<usize>,
+}
+
 /// Name of the operation for messages, e.g. "Discarding changes to README.md".
 pub fn describe(paths: &[RepoPath]) -> String {
     match paths {
@@ -104,7 +122,59 @@ pub enum Phase {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discard {
     pub paths: Vec<RepoPath>,
+    /// Only these lines of the one file in `paths` (`worktree.discard_lines`); `None`: the
+    /// whole files (`worktree.discard`).
+    pub lines: Option<LinesPick>,
     pub phase: Phase,
+}
+
+impl Discard {
+    /// The id of the Registry command.
+    pub fn command(&self) -> &'static str {
+        if self.lines.is_some() {
+            LINES_COMMAND
+        } else {
+            COMMAND
+        }
+    }
+
+    /// The parameters of the command; `confirm` only after the user's confirmation.
+    pub fn params(&self, confirm: bool) -> Value {
+        match (&self.lines, self.paths.as_slice()) {
+            (Some(pick), [path]) => crate::params(DiscardLinesParams {
+                path: path.clone(),
+                lines: pick.lines.clone(),
+                digest: pick.digest.clone(),
+                confirm,
+            }),
+            _ => params(&self.paths, confirm),
+        }
+    }
+
+    /// Name of the operation for messages, e.g. "Discarding hunk 1 of README.md".
+    pub fn label(&self) -> String {
+        match (&self.lines, self.paths.as_slice()) {
+            (Some(pick), [path]) => {
+                let path = path.to_string_lossy().into_owned();
+                match pick.hunk {
+                    Some(h) => tr!("discard-lines-label-hunk", hunk = h + 1, path = path),
+                    None => tr!("discard-lines-label", n = pick.lines.len(), path = path),
+                }
+            }
+            _ => describe(&self.paths),
+        }
+    }
+
+    /// The check before discarding, e.g. "Checking before discarding lines of README.md".
+    pub fn check_label(&self) -> String {
+        match (&self.lines, self.paths.as_slice()) {
+            (Some(_), [path]) => tr!(
+                "discard-lines-check-label",
+                path = path.to_string_lossy().into_owned()
+            ),
+            _ => describe_check(&self.paths),
+        }
+    }
 }
 
 /// Discarding the changes, from the check to the response. Only one at a time.
@@ -113,16 +183,69 @@ pub struct DiscardBox {
     current: Option<Discard>,
 }
 
-/// What came back from `worktree.discard`.
+/// A completed discard, of files or of lines.
+#[derive(Debug)]
+pub struct Finished {
+    /// The message for the status bar, with the backup ref.
+    pub notice: String,
+    pub status: Option<Status>,
+    pub status_error: Option<String>,
+    pub journal: JournalState,
+}
+
+impl From<DiscardResult> for Finished {
+    fn from(result: DiscardResult) -> Self {
+        Finished {
+            notice: notice(&result),
+            status: result.status,
+            status_error: result.status_error,
+            journal: result.journal,
+        }
+    }
+}
+
+impl Finished {
+    fn lines(result: DiscardLinesResult, pick: &LinesPick) -> Self {
+        let path = result.file.path.to_string_lossy().into_owned();
+        let mut notice = match pick.hunk {
+            Some(h) => tr!(
+                "discard-lines-done-hunk",
+                hunk = h + 1,
+                path = path,
+                backup = &result.backup
+            ),
+            None => tr!(
+                "discard-lines-done",
+                n = pick.lines.len(),
+                path = path,
+                backup = &result.backup
+            ),
+        };
+        notice.push_str(&crate::messages_text(&result.warnings));
+        Finished {
+            notice,
+            status: result.status,
+            status_error: result.status_error,
+            journal: result.journal,
+        }
+    }
+}
+
+/// What came back from `worktree.discard` or `worktree.discard_lines`.
 #[derive(Debug)]
 pub enum Received {
     /// Confirmation needed: the dialog opens.
     Confirm,
     /// The changes are discarded.
-    Done(Box<DiscardResult>),
+    Done(Box<Finished>),
     /// Refused or failed: the message to show. Nothing changed, except if the
     /// result cannot be read (then the discard may have happened: the status is reread).
-    Failed { message: String, reload: bool },
+    /// `stale`: the diff seen is no longer the current one (lines only): it is reread.
+    Failed {
+        message: String,
+        reload: bool,
+        stale: bool,
+    },
 }
 
 impl DiscardBox {
@@ -141,15 +264,38 @@ impl DiscardBox {
     /// Starts a discard: the parameters of the check (without `confirm`). `None` if there is already
     /// one or if there is nothing to discard.
     pub fn start(&mut self, paths: Vec<RepoPath>) -> Option<Value> {
-        if self.current.is_some() || paths.is_empty() {
+        self.begin(Discard {
+            paths,
+            lines: None,
+            phase: Phase::Checking,
+        })
+    }
+
+    /// Starts discarding some lines of `path`: the parameters of the check (without
+    /// `confirm`). `None` if there is already a discard or no line.
+    pub fn start_lines(&mut self, path: RepoPath, pick: LinesPick) -> Option<Value> {
+        if pick.lines.is_empty() {
             return None;
         }
-        let params = params(&paths, false);
-        self.current = Some(Discard {
-            paths,
+        self.begin(Discard {
+            paths: vec![path],
+            lines: Some(pick),
             phase: Phase::Checking,
-        });
+        })
+    }
+
+    fn begin(&mut self, discard: Discard) -> Option<Value> {
+        if self.current.is_some() || discard.paths.is_empty() {
+            return None;
+        }
+        let params = discard.params(false);
+        self.current = Some(discard);
         Some(params)
+    }
+
+    /// The discard in progress (checking, to confirm or sending).
+    pub fn pending(&self) -> Option<&Discard> {
+        self.current.as_ref()
     }
 
     /// The user confirmed: the parameters with `"confirm": true`.
@@ -159,7 +305,7 @@ impl DiscardBox {
             return None;
         }
         discard.phase = Phase::Sending;
-        Some(params(&discard.paths, true))
+        Some(discard.params(true))
     }
 
     /// Closes the dialog without discarding anything.
@@ -180,36 +326,52 @@ impl DiscardBox {
             return Received::Failed {
                 message: tr!("common-unexpected-response", command = COMMAND),
                 reload: true,
+                stale: false,
             };
         };
-        let label = describe(&discard.paths);
+        let label = discard.label();
+        let failed = |message| Received::Failed {
+            message,
+            reload: false,
+            stale: false,
+        };
         match result {
             Err(_)
                 if kind == Some(ErrorKind::ConfirmRequired) && discard.phase == Phase::Checking =>
             {
                 self.current = Some(Discard {
-                    paths: discard.paths,
                     phase: Phase::Confirm {
                         reason: detail.unwrap_or_default(),
                     },
+                    ..discard
                 });
                 Received::Confirm
             }
-            Err(e) if kind == Some(ErrorKind::NotAllowed) => Received::Failed {
-                message: tr!("discard-not-allowed", label = &label, error = e),
+            Err(_) if kind == Some(ErrorKind::StaleDiff) => Received::Failed {
+                message: tr!("app-write-stale", label = &label),
                 reload: false,
+                stale: true,
             },
-            Err(e) => Received::Failed {
-                message: tr!("common-failed", label = &label, error = e),
-                reload: false,
-            },
-            Ok(value) => match serde_json::from_value::<DiscardResult>(value) {
-                Ok(result) => Received::Done(Box::new(result)),
-                Err(e) => Received::Failed {
-                    message: crate::unexpected_result(COMMAND, e),
-                    reload: true,
-                },
-            },
+            Err(e) if kind == Some(ErrorKind::NotAllowed) => {
+                failed(tr!("discard-not-allowed", label = &label, error = e))
+            }
+            Err(e) => failed(tr!("common-failed", label = &label, error = e)),
+            Ok(value) => {
+                let command = discard.command();
+                let finished = match &discard.lines {
+                    Some(pick) => serde_json::from_value::<DiscardLinesResult>(value)
+                        .map(|r| Finished::lines(r, pick)),
+                    None => serde_json::from_value::<DiscardResult>(value).map(Finished::from),
+                };
+                match finished {
+                    Ok(finished) => Received::Done(Box::new(finished)),
+                    Err(e) => Received::Failed {
+                        message: crate::unexpected_result(command, e),
+                        reload: true,
+                        stale: false,
+                    },
+                }
+            }
         }
     }
 }
@@ -235,8 +397,8 @@ pub struct History {
     pub next_redo: Option<String>,
 }
 
-impl From<project_engine::JournalState> for History {
-    fn from(j: project_engine::JournalState) -> Self {
+impl From<JournalState> for History {
+    fn from(j: JournalState) -> Self {
         History {
             can_undo: j.can_undo,
             can_redo: j.can_redo,
@@ -314,21 +476,7 @@ impl Tab {
     /// The actions of this function, dispatched by [`Tab::apply`].
     pub(crate) fn apply_discard(&mut self, action: Action) {
         match action {
-            Action::Discard(paths) => {
-                let generation = self.generation;
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                if self.executor.writing().is_some() || repo.modal_open() {
-                    return;
-                }
-                let label = describe_check(&paths);
-                if let Some(params) = repo.discard.start(paths) {
-                    repo.write_error = None;
-                    repo.write_label = Some(label);
-                    self.submit(COMMAND, params, Request::Discard(generation));
-                }
-            }
+            Action::Discard(paths) => self.start_discard(paths, None),
             Action::Confirm => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
@@ -337,10 +485,13 @@ impl Tab {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                let label = repo.discard.confirm().map(|d| describe(&d.paths));
+                let Some(pending) = repo.discard.confirm() else {
+                    return;
+                };
+                let (label, command) = (pending.label(), pending.command());
                 if let Some(params) = repo.discard.confirmed() {
-                    repo.write_label = label;
-                    self.submit(COMMAND, params, Request::Discard(generation));
+                    repo.write_label = Some(label);
+                    self.submit(command, params, Request::Discard(generation));
                 }
             }
             Action::Cancel => {
@@ -366,6 +517,34 @@ impl Tab {
         }
     }
 
+    /// Starts discarding the changes of `paths`, or only the `lines` of the one file in
+    /// `paths`: the check, then the confirmation dialog. Never two writes together, nor with a
+    /// confirmation open.
+    pub(crate) fn start_discard(&mut self, paths: Vec<RepoPath>, lines: Option<LinesPick>) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || repo.modal_open() {
+            return;
+        }
+        let params = match (lines, paths.as_slice()) {
+            (Some(pick), [path]) => repo.discard.start_lines(path.clone(), pick),
+            (Some(_), _) => None,
+            (None, _) => repo.discard.start(paths),
+        };
+        let Some(params) = params else {
+            return;
+        };
+        let Some(pending) = repo.discard.pending() else {
+            return;
+        };
+        let (label, command) = (pending.check_label(), pending.command());
+        repo.write_error = None;
+        repo.write_label = Some(label);
+        self.submit(command, params, Request::Discard(generation));
+    }
+
     /// Response of `worktree.discard`: the check opens the confirmation dialog, the completed
     /// discard brings the new status and the Undo/Redo buttons; a refusal goes in the stage area.
     pub(crate) fn receive_discard(&mut self, generation: u64, done: Done) {
@@ -379,12 +558,11 @@ impl Tab {
         {
             Received::Confirm => {}
             Received::Done(result) => {
-                let notice = notice(&result);
-                let DiscardResult {
+                let Finished {
+                    notice,
                     status,
                     status_error,
                     journal,
-                    ..
                 } = *result;
                 repo.history = journal.into();
                 match status {
@@ -401,13 +579,24 @@ impl Tab {
                 }
                 self.notice = notice;
             }
-            Received::Failed { message, reload } => {
+            Received::Failed {
+                message,
+                reload,
+                stale,
+            } => {
                 log::warn!("{}: {message}", done.command);
                 repo.write_error = Some(message.clone());
+                // The diff seen is no longer the current one: the selection is cleared, status
+                // and diff are reread (the diff follows the status).
+                if stale && let Some((_, _, selection)) = repo.diff.loaded_mut() {
+                    selection.clear();
+                }
                 self.error = message;
                 self.notice.clear();
                 if reload {
                     self.load();
+                } else if stale {
+                    self.submit("repo.status", json!({}), Request::Status(generation));
                 }
             }
         }
@@ -554,7 +743,12 @@ mod tests {
             Some(ErrorKind::NotAllowed),
             None,
         );
-        let Received::Failed { message, reload } = r else {
+        let Received::Failed {
+            message,
+            reload,
+            stale,
+        } = r
+        else {
             panic!("{r:?}");
         };
         assert_eq!(
@@ -562,7 +756,7 @@ mod tests {
             "Discarding changes to README.md not possible: operation refused: there are \
              conflicted files"
         );
-        assert!(!reload);
+        assert!(!reload && !stale);
         assert!(b.current().is_none());
 
         // A confirmation requested again after `confirm: true` does not reopen the dialog forever.
@@ -654,10 +848,9 @@ mod tests {
         let Received::Done(result) = b.receive(Ok(out), None, None) else {
             panic!()
         };
-        assert!(result.backup.starts_with("refs/project/backup/discard-"));
-        let paths: Vec<&RepoPath> = result.files.iter().map(|f| &f.path).collect();
-        assert_eq!(paths, [&RepoPath::from("src/lib.rs")]);
-        let notice = notice(&result);
+        let notice = result.notice;
+        assert!(notice.contains("refs/project/backup/discard-"), "{notice}");
+        assert!(notice.contains("src/lib.rs"), "{notice}");
         let history = History::from(result.journal);
         assert!(history.can_undo);
         assert_eq!(
@@ -717,5 +910,133 @@ mod tests {
         };
         assert!(message.contains("not possible"), "{message}");
         assert!(b.confirm().is_none());
+    }
+
+    #[test]
+    fn discarding_lines_asks_with_lines_and_digest() {
+        let mut b = DiscardBox::default();
+        let pick = LinesPick {
+            lines: vec![LineRef::Old(2), LineRef::New(2)],
+            digest: "d".to_owned(),
+            hunk: None,
+        };
+        let empty = LinesPick {
+            lines: Vec::new(),
+            ..pick.clone()
+        };
+        assert_eq!(b.start_lines("a.rs".into(), empty), None);
+        let check = b.start_lines("a.rs".into(), pick.clone()).unwrap();
+        assert_eq!(
+            check,
+            json!({ "path": "a.rs", "lines": [{ "old": 2 }, { "new": 2 }], "digest": "d" })
+        );
+        let pending = b.pending().unwrap();
+        assert_eq!(pending.command(), LINES_COMMAND);
+        assert_eq!(pending.label(), "Discarding 2 lines of a.rs");
+        assert_eq!(
+            pending.check_label(),
+            "Checking before discarding lines of a.rs"
+        );
+        // One at a time.
+        assert_eq!(b.start(vec!["b".into()]), None);
+        b.receive(Err(String::new()), Some(ErrorKind::ConfirmRequired), None);
+        assert_eq!(b.confirm().unwrap().lines.as_ref(), Some(&pick));
+        let send = b.confirmed().unwrap();
+        assert_eq!(send["confirm"], json!(true));
+        assert_eq!(send["digest"], json!("d"));
+
+        // The diff changed meanwhile: the selection is redone.
+        let r = b.receive(Err("stale".to_owned()), Some(ErrorKind::StaleDiff), None);
+        let Received::Failed { stale, reload, .. } = r else {
+            panic!("{r:?}")
+        };
+        assert!(stale && !reload);
+        assert!(b.current().is_none());
+
+        let hunk = LinesPick {
+            hunk: Some(0),
+            ..pick
+        };
+        b.start_lines("a.rs".into(), hunk).unwrap();
+        assert_eq!(b.pending().unwrap().label(), "Discarding hunk 1 of a.rs");
+    }
+
+    /// The full path with the sample repo: the first hunk of the unstaged diff of `src/lib.rs`
+    /// chosen as the diff view does, check, confirmation, discard, then undo.
+    #[test]
+    fn discarding_a_hunk_with_the_sample_repo_then_undo() {
+        use crate::diff::{DiffDoc, DiffSource, DiffTarget};
+        use crate::lines::{Pick, discard_plan};
+        use project_domain::Diff;
+        use project_engine::{DiffWithDigests, EngineError, MemoryOpener, Registry, Session};
+        use std::sync::Arc;
+
+        let registry = Registry::builtin();
+        let mut session = Session::new(Arc::new(MemoryOpener::sample()));
+        registry
+            .run(
+                "repo.open",
+                &mut session,
+                json!({ "path": MemoryOpener::SAMPLE_PATH }),
+            )
+            .unwrap();
+        let path = RepoPath::from("src/lib.rs");
+        let target = DiffTarget {
+            source: DiffSource::Worktree,
+            path: path.clone(),
+        };
+        let read = |session: &mut Session| {
+            let (command, params) = target.request();
+            let value = registry.run(command, session, params).unwrap();
+            let read: DiffWithDigests = serde_json::from_value(value.clone()).unwrap();
+            let diff = Diff {
+                files: read.files.into_iter().map(|f| f.file).collect(),
+            };
+            (DiffDoc::new(diff, &path), value)
+        };
+        let (doc, before) = read(&mut session);
+        assert_eq!(doc.diff.files[0].hunks.len(), 2);
+        let (file, pick) = discard_plan(&doc, &target, Pick::Hunk(0)).unwrap();
+
+        let mut b = DiscardBox::default();
+        let check = b.start_lines(file, pick).unwrap();
+        let err = registry
+            .run(LINES_COMMAND, &mut session, check)
+            .unwrap_err();
+        assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+        let r = b.receive(
+            Err(err.text()),
+            Some(ErrorKind::of(&err)),
+            ErrorKind::detail(&err),
+        );
+        assert!(matches!(r, Received::Confirm));
+        let Phase::Confirm { reason } = &b.confirm().unwrap().phase else {
+            unreachable!()
+        };
+        assert!(reason.contains("src/lib.rs"), "{reason}");
+
+        let send = b.confirmed().unwrap();
+        let out = registry.run(LINES_COMMAND, &mut session, send).unwrap();
+        assert!(
+            statuses(&out).contains(Side::Unstaged, &path),
+            "one hunk left"
+        );
+        let Received::Done(result) = b.receive(Ok(out), None, None) else {
+            panic!()
+        };
+        assert!(
+            result.notice.starts_with("Hunk 1 of src/lib.rs discarded")
+                && result.notice.contains("refs/project/backup/discard-"),
+            "{}",
+            result.notice
+        );
+        assert!(History::from(result.journal).can_undo);
+        let (doc, _) = read(&mut session);
+        assert_eq!(doc.diff.files[0].hunks.len(), 1, "the second hunk remains");
+
+        registry
+            .run(UndoOp::Undo.command(), &mut session, json!({}))
+            .unwrap();
+        assert_eq!(read(&mut session).1, before);
     }
 }

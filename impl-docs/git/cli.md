@@ -35,6 +35,9 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Title\
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Fixed title","amend":true}'
 # discards unstaged changes (worktree like the index): needs "confirm":true, saves a backup
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
+# discards only some unstaged lines (numbers and digest from diff.worktree); without "confirm" the error
+# says how many lines would be lost; the file's bytes go to refs/project/backup/discard-..., edit.undo puts them back
+cargo run -p project-cli -- --repo . run --cmd 'worktree.discard_lines={"path":"README.md","lines":[{"new":3},{"old":4}],"digest":"<from diff.worktree>","confirm":true}' --cmd edit.undo
 # deletes untracked files (a folder = the untracked files under it): without "confirm" the error lists
 # them with their total size; the exact bytes go to refs/project/backup/clean-..., edit.undo recreates them
 cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"]}'

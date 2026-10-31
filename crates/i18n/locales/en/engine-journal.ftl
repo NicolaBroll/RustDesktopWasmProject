@@ -2,6 +2,7 @@ engine-journal-amend = Amend { $id } “{ $summary }” (was { $old })
 engine-journal-commit = Commit { $id } “{ $summary }”
 engine-journal-discard-one = Discard changes to “{ $path }”
 engine-journal-discard-many = Discard changes to { $n } files ({ $names })
+engine-journal-discard-lines = Discard lines of “{ $path }”
 engine-journal-clean-one = Delete “{ $path }”
 engine-journal-clean-many = Delete { $n } untracked files ({ $names })
 engine-journal-quoted = “{ $name }”

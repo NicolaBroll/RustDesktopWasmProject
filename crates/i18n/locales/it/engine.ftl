@@ -38,6 +38,7 @@ engine-path-empty = il percorso è vuoto: `{ $path }`
 engine-path-nul = il percorso contiene un byte NUL: `{ $path }`
 engine-path-not-relative = il percorso deve essere relativo alla radice del repo, con `/` come separatore e senza componenti vuoti, `.` o `..`: `{ $path }`
 engine-discard-confirm = le modifiche non in stage di { $n } file andrebbero perse ({ $files }): il worktree tornerebbe come l'indice. Prima si salverebbe un backup in `refs/project/backup/discard-...`, e `edit.undo` le rimetterebbe
+engine-discard-lines-confirm = { $lost } righe cambiate di `{ $path }` andrebbero perse e { $back } righe della versione nell'indice tornerebbero: le altre modifiche restano. Prima si salverebbe un backup del file in `refs/project/backup/discard-...`, e `edit.undo` lo rimetterebbe
 engine-status-unreadable = lo stato non si rilegge ({ $error })
 engine-lines-empty = `lines` è vuoto: indicare almeno una riga cambiata del diff
 engine-paths-empty = `paths` è vuoto: indicare almeno un percorso

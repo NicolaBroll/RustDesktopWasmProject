@@ -111,6 +111,20 @@ redo of a discard are refused even if HEAD has changed. Result: `{"files": [{"pa
 "mode", "oid"}], "backup", "stash", "status", "can_undo", "can_redo", "next_undo",
 "next_redo"}`.
 
+`worktree.discard_lines {"path", "lines", "digest", "confirm"}` discards only the chosen changed
+lines of the `diff.worktree` diff of one file (numbers and `digest` as for `index.stage_lines`): they
+go back to the index version, the other changes stay; the index and the file mode are not touched.
+Only a modified tracked file (not deleted, renamed, `intent-to-add`, binary, link, submodule), with
+the refusals of `worktree.discard`; `StaleDiff` if the diff is no longer the one of `digest` or the
+file changes while it is prepared. With filters or `core.autocrlf` the bytes written are the
+smudged form of the new content; a file whose bytes do not round-trip through git's filters (e.g.
+CRLF with `core.autocrlf=input`) is refused: discard the whole file. Without `"confirm": true` the
+error says how many lines would be lost. Before writing (atomically, temporary file and rename) it
+saves the exact bytes and mode in `refs/project/backup/discard-...`; `edit.undo` writes them back only if
+the file still has the bytes written, `edit.redo` the other way round. Result: `{"path", "mode",
+"before", "after", "backup", "warnings", "status", "can_undo", "can_redo", "next_undo", "next_redo"}`
+(`before`/`after`: blobs with the bytes before and after).
+
 `worktree.clean {"paths", "confirm"}` deletes untracked files (a directory means the untracked files
 under it, as `repo.status` lists them; ignored, tracked and conflicted files stay). A path with no
 untracked file, or a nested git repository, is refused and nothing is deleted. Without `"confirm":
@@ -342,7 +356,7 @@ stages it like `index.stage`; refused with `StaleDiff` if the file is no longer 
 <ref>:<path>`). Result: `{"status", "backup", "index_backup"}`. It does not go into the journal.
 
 `edit.undo {}` undoes the last operation in the journal (currently `commit.create`, also with `amend`,
-`branch.*`, `worktree.discard`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
+`branch.*`, `worktree.discard`, `worktree.discard_lines`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
 `stash.drop` and the concluded merge, `merge.start` and `merge.continue`) and `edit.redo {}` redoes it; `edit.history {}` (read-only) lists the journal. The undo
 returns the branch (or detached HEAD) to the previous value only if nobody has moved it in the
 meantime (a `git commit` or `git reset` from the terminal): otherwise error and nothing changes.

@@ -209,6 +209,13 @@ impl Registry {
             discard::worktree_discard,
         );
         self.add(
+            "worktree.discard_lines",
+            "Discard the chosen unstaged lines",
+            r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.worktree), "confirm": true}"#,
+            Write,
+            discard::worktree_discard_lines,
+        );
+        self.add(
             "worktree.clean",
             "Delete untracked files (with backup)",
             r#"{"paths": [path, ...], "confirm": true}"#,
@@ -1031,7 +1038,8 @@ mod tests {
                 "tag.create",
                 "tag.delete",
                 "worktree.clean",
-                "worktree.discard"
+                "worktree.discard",
+                "worktree.discard_lines"
             ]
         );
         let ids: Vec<_> = r.search("COMMIT HISTORY").map(|c| c.id).collect();
@@ -1085,7 +1093,8 @@ mod tests {
                 "tag.create",
                 "tag.delete",
                 "worktree.clean",
-                "worktree.discard"
+                "worktree.discard",
+                "worktree.discard_lines"
             ]
         );
         let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();

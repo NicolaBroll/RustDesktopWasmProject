@@ -2,6 +2,7 @@ engine-journal-amend = Amend { $id } «{ $summary }» (era { $old })
 engine-journal-commit = Commit { $id } «{ $summary }»
 engine-journal-discard-one = Scarta le modifiche di «{ $path }»
 engine-journal-discard-many = Scarta le modifiche di { $n } file ({ $names })
+engine-journal-discard-lines = Scarta righe di «{ $path }»
 engine-journal-clean-one = Cancella «{ $path }»
 engine-journal-clean-many = Cancella { $n } file non tracciati ({ $names })
 engine-journal-quoted = «{ $name }»

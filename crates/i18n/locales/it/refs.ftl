@@ -25,6 +25,11 @@ refs-tooltip-stash =
     Clic: seleziona il commit
 refs-checkout = Checkout
 refs-checkout-hint = Passa a «{ $name }»: le modifiche locali restano, se non toccano file diversi nel branch (altrimenti niente cambia)
+refs-checkout-remote-hint = Passa al branch locale che segue «{ $name }», creandolo con lo stesso nome se non c'è
+refs-set-upstream = Imposta upstream…
+refs-set-upstream-hint = Sceglie il branch remoto che Pull e Push di «{ $name }» usano
+refs-unset-upstream = Rimuovi upstream
+refs-unset-upstream-hint = «{ $name }» smette di seguire { $upstream } (il branch remoto non viene toccato). «Annulla» lo ripristina
 refs-already-active = È già il branch attivo
 refs-new-branch = Nuovo branch da qui…
 refs-new-branch-hint = Crea un branch su { $id } senza passarci

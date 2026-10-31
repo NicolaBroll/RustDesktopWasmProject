@@ -70,3 +70,25 @@ branch-tag-delete-heading = Delete tag “{ $name }”?
 branch-tag-delete-text = The tag is deleted only here: the remotes keep their copy (use “Delete from the remote…” for that).
 branch-tag-delete-backup = Before deleting, the tag is saved in a backup (refs/project/backup/tag-delete-…), with the message and author of an annotated tag: “Undo” in the top bar recreates it on the same value, as long as the app stays open.
 branch-tag-delete-button = Delete tag
+
+# Tracking branches and upstream (tracking.rs).
+branch-created-tracking = Branch “{ $branch }” created at { $id }, tracking { $upstream }. “Undo” deletes it with its upstream
+branch-track-label = Creating “{ $name }” tracking { $upstream }
+branch-track-failed = Cannot create the local branch “{ $name }”: { $error }
+branch-track-name-taken = A local branch “{ $name }” already exists and does not track this remote branch: choose another name.
+branch-track-checkbox = Track { $upstream }
+branch-track-hint = Sets it as the upstream of the new branch: Pull and Push use it, and the branch shows ahead/behind
+branch-upstream-label = Setting the upstream of “{ $name }” to { $upstream }
+branch-upstream-unset-label = Removing the upstream of “{ $name }”
+branch-upstream-unset-failed = Cannot remove the upstream of “{ $name }”: { $error }
+branch-upstream-set = “{ $branch }” now tracks { $upstream }. “Undo” restores the previous upstream
+branch-upstream-unset = “{ $branch }” no longer tracks { $previous }. “Undo” restores it
+branch-upstream-unchanged = The upstream of “{ $branch }” did not change
+branch-upstream-title = Upstream of “{ $name }”
+branch-upstream-text-current = Now it tracks { $upstream }. Pick the remote branch that Pull and Push should use.
+branch-upstream-text-none = It has no upstream. Pick the remote branch that Pull and Push should use.
+branch-upstream-filter-hint = Filter remote branches
+branch-upstream-no-remote-branches = No remote branches: add a remote and fetch it first.
+branch-upstream-no-match = No remote branch matches the filter.
+branch-upstream-current-mark = { $upstream } (current)
+branch-upstream-button = Set upstream

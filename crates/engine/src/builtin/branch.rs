@@ -404,8 +404,9 @@ pub(super) fn branch_set_upstream(
     let changed = before != after;
     let mut warnings = Vec::new();
     if changed {
-        warnings = repo.write_upstream(&name, &before, &after)?;
+        // HEAD read before writing: an error after the write would leave a change without an undo.
         let head = HeadState::from_head(&repo.head()?);
+        warnings = repo.write_upstream(&name, &before, &after)?;
         journal.record(JournalEntry::set_upstream(
             &full,
             head,

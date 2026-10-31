@@ -48,6 +48,7 @@ mod stash;
 mod sync;
 mod tabs;
 mod theme;
+mod tracking;
 mod view;
 mod word_diff;
 

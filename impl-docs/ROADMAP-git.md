@@ -600,7 +600,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   remote from a terminal shows up in the graph without pressing Fetch; CI green.
 
 ### S51 — Tracking branches and upstream
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** today a remote branch (`origin/feature`) cannot become a local branch that pulls from
   it: `branch.checkout` uses `--no-guess`, `branch.create` never sets an upstream, and
   `remote.pull` then refuses ("set the upstream"). Add:
@@ -626,8 +626,13 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   local start refused, name starting with `-`, set/unset upstream, undo/redo of both, config
   changed from outside before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI
   green.
-- **Status:** engine part done (`branch.create` `track`, `branch.set_upstream`, journal field
-  `upstream`, `GitRead::local_upstream`, `GitRefs::write_upstream`); UI missing.
+- **Status:** done. Engine: `branch.create` `track`, `branch.set_upstream`, journal field
+  `upstream`, `GitRead::local_upstream`, `GitRefs::write_upstream`. UI (`crates/ui/src/tracking.rs`):
+  "Checkout" (menu and double click) on a remote branch reuses the local branch that tracks it or
+  creates `<branch>` with `track` and checks it out, name taken → new-branch dialog prefilled;
+  "Track `<remote>/<branch>`" checkbox in the new-branch dialog from a remote branch; "Set
+  upstream…" window (filter, virtualized list, `<remote>/<same name>` preselected) and "Unset
+  upstream" in the local branch menu.
 
 ### S53 — Compare two revisions
 - [x] **Agent:** `git-engine`, then `egui-ui`

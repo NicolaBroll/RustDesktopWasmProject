@@ -25,6 +25,11 @@ refs-tooltip-stash =
     Click: select the commit
 refs-checkout = Checkout
 refs-checkout-hint = Switches to “{ $name }”: local changes are kept, unless they touch files that differ in the branch (then nothing changes)
+refs-checkout-remote-hint = Switches to the local branch that tracks “{ $name }”, creating it with the same name if there is none
+refs-set-upstream = Set upstream…
+refs-set-upstream-hint = Picks the remote branch that Pull and Push of “{ $name }” use
+refs-unset-upstream = Unset upstream
+refs-unset-upstream-hint = “{ $name }” stops tracking { $upstream } (the remote branch is not touched). “Undo” restores it
 refs-already-active = It is already the current branch
 refs-new-branch = New branch from here…
 refs-new-branch-hint = Creates a branch at { $id } without switching to it

@@ -363,9 +363,14 @@ impl Column<'_> {
             upstream_label(ui, upstream);
         }
         let local = info.kind == RefKind::LocalBranch;
+        let remote = info.kind == RefKind::RemoteBranch;
         if response.double_clicked() && local && !is_head && self.can_write {
             actions.push(Action::Branch(branch::Action::Checkout(
                 info.short_name().to_owned(),
+            )));
+        } else if response.double_clicked() && remote && self.can_write {
+            actions.push(Action::Branch(branch::Action::CheckoutRemote(
+                info.name.clone(),
             )));
         } else if response.clicked() {
             actions.push(Action::SelectCommit(info.target));
@@ -531,6 +536,18 @@ pub(super) fn ref_menu(
     actions: &mut Vec<Action>,
 ) {
     let name = info.short_name();
+    if info.kind == RefKind::RemoteBranch && !name.ends_with("/HEAD") {
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(tr!("refs-checkout")))
+            .on_hover_text(tr!("refs-checkout-remote-hint", name = name))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::CheckoutRemote(
+                info.name.clone(),
+            )));
+            ui.close();
+        }
+    }
     if info.kind == RefKind::LocalBranch {
         let button = ui
             .add_enabled(
@@ -657,6 +674,7 @@ pub(super) fn ref_menu(
         actions.push(Action::Sync(sync::Action::Push(Some(name.to_owned()))));
         ui.close();
     }
+    upstream_items(ui, info, can_write, actions);
     ui.separator();
     let enabled = can_write && !is_head;
     let color = if enabled {
@@ -681,6 +699,35 @@ pub(super) fn ref_menu(
             info.target,
         )));
         ui.close();
+    }
+}
+
+/// "Set upstream…" and, if it has one, "Unset upstream" of a local branch.
+fn upstream_items(ui: &mut Ui, info: &RefInfo, can_write: bool, actions: &mut Vec<Action>) {
+    let name = info.short_name();
+    let button = ui
+        .add_enabled(can_write, egui::Button::new(tr!("refs-set-upstream")))
+        .on_hover_text(tr!("refs-set-upstream-hint", name = name))
+        .on_disabled_hover_text(wait());
+    if button.clicked() {
+        actions.push(Action::Branch(branch::Action::SetUpstream(name.to_owned())));
+        ui.close();
+    }
+    if let Some(up) = &info.upstream {
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(tr!("refs-unset-upstream")))
+            .on_hover_text(tr!(
+                "refs-unset-upstream-hint",
+                name = name,
+                upstream = remote_short(&up.name)
+            ))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::UnsetUpstream(
+                name.to_owned(),
+            )));
+            ui.close();
+        }
     }
 }
 

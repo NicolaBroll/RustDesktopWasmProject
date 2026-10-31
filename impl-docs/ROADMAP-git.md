@@ -764,7 +764,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   leaving a detached HEAD named in the notice of both checkouts.
 
 ### S56 — Discard by hunk and by line
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** stage and unstage work by line, but `worktree.discard` only takes whole files. Add
   `worktree.discard_lines {"path", "lines", "digest", "confirm"}` (`Access::Write`): the selected
   changed lines of the `diff.worktree` diff of `path` go back to the index version, the others stay
@@ -792,7 +792,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   end of file without newline, CRLF with `core.autocrlf`, a clean/smudge filter, executable bit
   kept, file changed after the read, stale digest, backup failure → nothing written, undo/redo,
   file changed before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
-- **Status:** engine and UI done. `worktree.discard_lines` in `crates/engine/src/builtin/discard.rs`;
+- **Status:** done. `worktree.discard_lines` in `crates/engine/src/builtin/discard.rs`;
   `discard_line_patch` (in `git/lines.rs`), `discard_lines_target`, `LinesBackup`/`LinesRestore` in
   `git/discard_lines.rs`; `GitIndex::discard_lines`/`restore_lines` on both backends
   (`crates/git/src/backend/discard_lines.rs`, `git/memory/discard_lines.rs`); journal field
@@ -800,5 +800,6 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   lines… (N)" in the selection bar and "Discard hunk…" on each hunk header of the unstaged diff
   only (disabled with the reason for a file that is not plainly modified), `lines::discard_plan`,
   `DiscardBox::start_lines` and the `confirm_discard_lines` dialog (Cancel focused, Enter never
-  confirms; notice with the backup, status and diff reread, `StaleDiff` rereads them). Next: the
-  `safety-reviewer` review.
+  confirms; notice with the backup, status and diff reread, `StaleDiff` rereads them). `safety-reviewer`
+  review done (the recorded mode is git's, so `core.fileMode=false` works; short temporary name).
+  The backup records git's mode: with `core.fileMode=false` an executable file is `100644` there.

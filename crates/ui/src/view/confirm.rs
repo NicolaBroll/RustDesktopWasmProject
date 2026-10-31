@@ -101,8 +101,8 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
 }
 
 /// Confirmation before discarding a hunk or some lines of the unstaged diff: names the file and
-/// how many lines, with the engine's count of what is lost and comes back, and says that a backup
-/// is kept and Undo puts the file back. "Cancel" has the focus and Enter never discards.
+/// how many lines, and says that a backup is kept and Undo puts the file back (the engine's
+/// confirmation text would repeat it). "Cancel" has the focus and Enter never discards.
 fn confirm_discard_lines(
     ctx: &egui::Context,
     pending: &Discard,
@@ -136,12 +136,6 @@ fn confirm_discard_lines(
         ui.add(egui::Label::new(tr!("confirm-discard-lines-body")).wrap());
         ui.add_space(4.0);
         ui.add(egui::Label::new(tr!("confirm-discard-lines-backup")).wrap());
-        if let discard::Phase::Confirm { reason } = &pending.phase
-            && !reason.is_empty()
-        {
-            ui.add_space(6.0);
-            ui.add(egui::Label::new(RichText::new(reason).weak()).wrap());
-        }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let button =

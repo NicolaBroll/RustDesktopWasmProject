@@ -77,6 +77,7 @@ pub(crate) use settings_view::settings_window;
 pub(crate) use stage_view::stage_panel;
 use stash_view::*;
 pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
+pub(crate) use submodule_view::outdated_notice;
 use submodule_view::submodule_section;
 use sync_view::*;
 pub(crate) use sync_view::{failure_window, sync_window};

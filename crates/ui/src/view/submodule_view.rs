@@ -180,3 +180,58 @@ fn submodule_menu(ui: &mut Ui, info: &SubmoduleInfo, can_update: bool, actions: 
         ui.close();
     }
 }
+
+/// The notice under the bar after a command left submodules on another commit than the recorded
+/// one (S62b): "Update" of exactly those and "Not now". `can_write`: no write or dialog in
+/// progress.
+pub(crate) fn outdated_notice(
+    ui: &mut Ui,
+    paths: &[project_domain::RepoPath],
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    let warn = ui.visuals().warn_fg_color;
+    let list = paths
+        .iter()
+        .map(|p| format!("“{p}”"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    egui::Frame::new()
+        .fill(warn.gamma_multiply(0.10))
+        .stroke(egui::Stroke::new(1.0, warn.gamma_multiply(0.5)))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .outer_margin(egui::Margin::symmetric(0, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let hint = tr!("submodule-outdated-hint", list = list.as_str());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(tr!("submodule-outdated", n = paths.len())).strong(),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(hint.as_str());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(tr!("submodule-outdated-dismiss"))
+                        .on_hover_text(tr!("submodule-outdated-dismiss-hint"))
+                        .clicked()
+                    {
+                        actions.push(Action::Submodule(submodule::Action::Dismiss));
+                    }
+                    let button = ui
+                        .add_enabled(
+                            can_write,
+                            egui::Button::new(tr!("submodule-outdated-update")),
+                        )
+                        .on_hover_text(hint.as_str())
+                        .on_disabled_hover_text(wait());
+                    if button.clicked() {
+                        actions.push(Action::Submodule(submodule::Action::UpdateOutdated));
+                    }
+                });
+            });
+        });
+}

@@ -223,7 +223,7 @@ enum Request {
     /// `stash.list`.
     Stashes(u64),
     /// `submodule.list`.
-    Submodules(u64),
+    Submodules(u64, bool),
     /// `submodule.update` (the state is in [`submodule::SubmoduleBox`]).
     Submodule(u64),
     /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (the state is in [`StashBox`]).
@@ -942,7 +942,7 @@ impl Tab {
         self.submit("edit.history", json!({}), Request::History(generation));
         self.request_remotes(generation);
         self.submit(stash::LIST, json!({}), Request::Stashes(generation));
-        self.request_submodules(generation);
+        self.request_submodules(generation, false);
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
@@ -980,6 +980,28 @@ impl Tab {
     /// The answer `done` to `request`: each area takes its own, the reads of the view are
     /// stored by [`Tab::store`].
     fn receive_one(&mut self, request: Request, done: Done) {
+        // Submodules left behind by a checkout, pull, merge...: the notice (S62b).
+        let moved = match request {
+            Request::Branch(g, _)
+            | Request::Merge(g, _)
+            | Request::Stash(g, _)
+            | Request::Sync(g)
+            | Request::Rebase(g)
+            | Request::Reset(g)
+            | Request::Undo(g)
+                if submodule::moves_submodules(&done.command) && done.result.is_ok() =>
+            {
+                Some(g)
+            }
+            _ => None,
+        };
+        if let Some(generation) = moved {
+            self.check_submodules(generation);
+        }
+        self.receive_request(request, done);
+    }
+
+    fn receive_request(&mut self, request: Request, done: Done) {
         match request {
             Request::Clone => self.clone_done = Some(done),
             // Details have their own state, errors included: the panel shows them.
@@ -1023,10 +1045,10 @@ impl Tab {
             }
             Request::Stash(generation, op) => self.receive_stash(generation, op, done),
             // The submodule list also has its own error, in its section.
-            Request::Submodules(generation) => {
+            Request::Submodules(generation, check) => {
                 log_failure(&done);
                 if let Some(repo) = self.current(generation) {
-                    repo.submodules.receive_list(done.result);
+                    repo.submodules.receive_list(done.result, check);
                 }
             }
             Request::Submodule(generation) => self.receive_submodule(generation, done),
@@ -1199,7 +1221,7 @@ impl Tab {
                     repo.set_status(status);
                     self.follow_diff();
                     if submodules {
-                        self.request_submodules(generation);
+                        self.request_submodules(generation, false);
                     }
                     if matches!(request, Request::AutoStatus(_)) {
                         self.after_auto_status(generation);
@@ -1428,6 +1450,15 @@ impl Tab {
             let can_write = !writing && !repo.modal_open();
             egui::Panel::top("optimize").show(ui, |ui| {
                 view::optimize_notice(ui, &repo.optimize, can_write, actions);
+            });
+        }
+        // Submodules left on another commit by the last checkout, pull, merge... (S62b).
+        if let Some(repo) = &self.repo
+            && !repo.submodules.outdated().is_empty()
+        {
+            let can_write = !writing && !repo.modal_open() && repo.submodules.running().is_none();
+            egui::Panel::top("submodule-outdated").show(ui, |ui| {
+                view::outdated_notice(ui, repo.submodules.outdated(), can_write, actions);
             });
         }
         // The automatic fetch suspended by an authentication error (S50), under the bar too.

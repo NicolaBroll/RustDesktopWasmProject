@@ -7,6 +7,12 @@
 //! The list is read when the repo opens and on "Refresh"; afterwards, with every new status, only
 //! if the repo has submodules or the status shows `.gitmodules` or a submodule changed: a repo
 //! without submodules never pays for it again.
+//!
+//! After a command that can move the recorded commits (checkout, pull, merge, reset, stash
+//! apply/pop, rebase, cherry-pick, revert, undo/redo: [`moves_submodules`]) the list is read
+//! again (S62b): the submodules that now are on another commit than the recorded one, and were
+//! not like that already, give the notice "N submodules are not at the recorded commit" with
+//! "Update" of exactly those. One notice per command, until dismissed or updated.
 
 use crate::running::Running;
 use crate::{Done, ErrorKind, Request, Tab, Ticket, messages_text, params};
@@ -24,8 +30,42 @@ pub(crate) enum Action {
     /// `submodule.update` of that submodule (`None`: all); with `init` the uninitialized ones are
     /// cloned too.
     Update { path: Option<RepoPath>, init: bool },
+    /// "Update" of the notice: `submodule.update` of the submodules it names.
+    UpdateOutdated,
+    /// Closes the notice.
+    Dismiss,
     /// "Stop" the update in progress.
     Cancel,
+}
+
+/// The commands after which the recorded commits of the submodules may have changed while the
+/// submodules stayed where they were (we never pass `--recurse-submodules`).
+const MOVERS: &[&str] = &[
+    "branch.checkout",
+    "branch.reset",
+    "commit.checkout",
+    "commit.cherry_pick",
+    "commit.revert",
+    "remote.pull",
+    "merge.start",
+    "merge.continue",
+    "merge.abort",
+    "stash.apply",
+    "stash.pop",
+    "rebase.start",
+    "rebase.continue",
+    "rebase.abort",
+    "cherry_pick.continue",
+    "cherry_pick.abort",
+    "revert.continue",
+    "revert.abort",
+    "edit.undo",
+    "edit.redo",
+];
+
+/// True if `command` can leave submodules on another commit than the recorded one.
+pub(crate) fn moves_submodules(command: &str) -> bool {
+    MOVERS.contains(&command)
 }
 
 /// The id of the command that lists the submodules.
@@ -146,6 +186,12 @@ pub struct SubmoduleBox {
     /// What the last update could not do (refused submodules, warnings, the failure): shown in
     /// the section until the next update, since the reads that follow clear the status bar error.
     problems: Option<String>,
+    /// The submodules of the notice: left on another commit than the recorded one by the last
+    /// command that moves them; empty: no notice.
+    outdated: Vec<RepoPath>,
+    /// The list as it was when such a command answered, for the check that follows (the
+    /// command's own refresh may read the list again before it).
+    baseline: Option<Vec<SubmoduleInfo>>,
 }
 
 impl SubmoduleBox {
@@ -168,6 +214,16 @@ impl SubmoduleBox {
     /// What the last update could not do, if anything.
     pub fn problems(&self) -> Option<&str> {
         self.problems.as_deref()
+    }
+
+    /// The submodules of the "not at the recorded commit" notice (empty: no notice).
+    pub fn outdated(&self) -> &[RepoPath] {
+        &self.outdated
+    }
+
+    /// Closes the notice.
+    pub fn dismiss(&mut self) {
+        self.outdated.clear();
     }
 
     /// The update in progress, if any.
@@ -194,11 +250,38 @@ impl SubmoduleBox {
                 .any(|e| e.path.as_bytes() == GITMODULES || e.submodule().is_some())
     }
 
-    /// The answer of `submodule.list`. A failure keeps the last list (with the error).
-    pub fn receive_list(&mut self, result: Result<Value, String>) {
+    /// The answer of `submodule.list`. A failure keeps the last list (with the error). With
+    /// `check` (read after a command of [`moves_submodules`]) the submodules that now are on
+    /// another commit than the recorded one, and were not on that same pair before, become the
+    /// notice; every list drops from the notice the ones no longer out of date.
+    pub fn receive_list(&mut self, result: Result<Value, String>, check: bool) {
         self.loading = false;
         match result.and_then(|value| crate::decode::<ListResult>(LIST, value)) {
             Ok(ListResult { submodules }) => {
+                let outdated = |s: &&SubmoduleInfo| s.state == SubmoduleState::DifferentCommit;
+                if check {
+                    let baseline = self.baseline.take();
+                    let before = baseline.as_deref().or(self.list.as_deref());
+                    let before = before.unwrap_or_default();
+                    let new: Vec<RepoPath> = submodules
+                        .iter()
+                        .filter(outdated)
+                        .filter(|s| {
+                            !before.iter().any(|b| {
+                                b.path == s.path
+                                    && b.state == SubmoduleState::DifferentCommit
+                                    && b.recorded == s.recorded
+                                    && b.head == s.head
+                            })
+                        })
+                        .map(|s| s.path.clone())
+                        .collect();
+                    if !new.is_empty() {
+                        self.outdated = new;
+                    }
+                }
+                self.outdated
+                    .retain(|p| submodules.iter().filter(outdated).any(|s| &s.path == p));
                 self.list = Some(submodules);
                 self.list_error = None;
             }
@@ -206,13 +289,19 @@ impl SubmoduleBox {
         }
     }
 
-    /// The parameters of `submodule.update` for `path` (`None`: all), if no update is running.
-    pub fn request(&self, path: Option<&RepoPath>, init: bool) -> Option<Value> {
+    /// A command of [`moves_submodules`] answered: the list as it is now is what the check
+    /// compares with.
+    pub fn command_done(&mut self) {
+        self.baseline = self.list.clone();
+    }
+
+    /// The parameters of `submodule.update` for `paths` (`None`: all), if no update is running.
+    pub fn request(&self, paths: Option<Vec<RepoPath>>, init: bool) -> Option<Value> {
         if self.running.is_some() {
             return None;
         }
         Some(params(SubmoduleUpdate {
-            paths: path.map(|p| vec![p.clone()]),
+            paths,
             init,
             recursive: false,
         }))
@@ -334,23 +423,27 @@ impl Tab {
     pub(crate) fn apply_submodule(&mut self, action: Action) {
         match action {
             Action::Update { path, init } => {
-                let generation = self.generation;
+                let label = SubmoduleBox::label(path.as_ref(), init);
+                self.start_update(path.map(|p| vec![p]), init, label);
+            }
+            Action::UpdateOutdated => {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                if self.executor.writing().is_some() || repo.modal_open() {
+                let paths = repo.submodules.outdated().to_vec();
+                if paths.is_empty() {
                     return;
                 }
-                let Some(params) = repo.submodules.request(path.as_ref(), init) else {
-                    return;
-                };
-                let label = SubmoduleBox::label(path.as_ref(), init);
-                repo.write_error = None;
-                repo.write_label = Some(label.clone());
-                let ticket = self.executor.submit(UPDATE, params);
-                self.pending.insert(ticket, Request::Submodule(generation));
+                let label = tr!("submodule-outdated-label", n = paths.len());
+                if self.start_update(Some(paths), false, label)
+                    && let Some(repo) = &mut self.repo
+                {
+                    repo.submodules.dismiss();
+                }
+            }
+            Action::Dismiss => {
                 if let Some(repo) = &mut self.repo {
-                    repo.submodules.started(ticket, label);
+                    repo.submodules.dismiss();
                 }
             }
             Action::Cancel => {
@@ -361,11 +454,46 @@ impl Tab {
         }
     }
 
-    /// Asks for `submodule.list`.
-    pub(crate) fn request_submodules(&mut self, generation: u64) {
+    /// Sends `submodule.update` of `paths` (`None`: all) unless a write or a dialog is in the
+    /// way; true if sent.
+    fn start_update(&mut self, paths: Option<Vec<RepoPath>>, init: bool, label: String) -> bool {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return false;
+        };
+        if self.executor.writing().is_some() || repo.modal_open() {
+            return false;
+        }
+        let Some(params) = repo.submodules.request(paths, init) else {
+            return false;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(label.clone());
+        let ticket = self.executor.submit(UPDATE, params);
+        self.pending.insert(ticket, Request::Submodule(generation));
+        if let Some(repo) = &mut self.repo {
+            repo.submodules.started(ticket, label);
+        }
+        true
+    }
+
+    /// Asks for `submodule.list`; with `check`, for the notice of [`moves_submodules`].
+    pub(crate) fn request_submodules(&mut self, generation: u64, check: bool) {
         if let Some(repo) = self.current(generation) {
             repo.submodules.list_sent();
-            self.submit(LIST, json!({}), Request::Submodules(generation));
+            self.submit(LIST, json!({}), Request::Submodules(generation, check));
+        }
+    }
+
+    /// A command of [`moves_submodules`] succeeded: if the repo has submodules, the list as it
+    /// is now is kept and the list read again for the notice. Called before the command's own
+    /// answer is handled (which may read the list again too).
+    pub(crate) fn check_submodules(&mut self, generation: u64) {
+        if let Some(repo) = self.current(generation)
+            && repo.submodules.shown()
+        {
+            repo.submodules.command_done();
+            self.request_submodules(generation, true);
         }
     }
 
@@ -401,7 +529,7 @@ impl Tab {
             }
         }
         self.submit("repo.status", json!({}), Request::Status(generation));
-        self.request_submodules(generation);
+        self.request_submodules(generation, false);
     }
 }
 

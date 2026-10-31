@@ -306,7 +306,8 @@ the index), `head` (checked out), `detached`, `state` (`uninitialized`, `in_sync
 commits on no branch, tag or remote branch). `submodule.update {"paths"?, "init"?, "recursive"?}`
 checks out the recorded commit (`git submodule update --checkout`, never `--force`, `--remote`,
 `--merge` or `--rebase`; may fetch). Each submodule with local changes, untracked files, an operation
-in progress, unreferenced commits, a conflict, no `.gitmodules` entry or a URL starting with `-` is
+in progress, unreferenced commits (also in a git directory left by `deinit`), ignored files the
+checkout would overwrite, a conflict, no `.gitmodules` entry or a URL starting with `-` is
 refused (listed in `refused`, nothing run for it); uninitialized ones only with `init`, nested ones
 only with `recursive`. A detached HEAD is saved first in `refs/project/backup/submodule-...` inside
 the submodule. Result: `{"updated": [{"path", "from", "to", "backup"}], "unchanged", "refused":

@@ -59,8 +59,15 @@ pub struct SubmoduleInfo {
     /// Operation in progress inside the submodule (merge, rebase, ...).
     pub operation: Option<Operation>,
     /// The detached HEAD has commits not reachable from the submodule's branches, tags or remote
-    /// branches: an update would leave them behind.
+    /// branches: an update would leave them behind. Also for an uninitialized submodule whose git
+    /// directory is still in the superproject (`.git/modules/<name>`, after `deinit`): `--init`
+    /// would reuse it and move its HEAD.
     pub unreferenced: bool,
+    /// An ignored file sits at a path (or at a parent folder of a path) that the recorded commit
+    /// adds: the checkout would overwrite it. Only known when the recorded commit is already in
+    /// the submodule (otherwise `false`).
+    #[serde(default)]
+    pub ignored_overwritten: bool,
 }
 
 /// Parameters of `submodule.update`.
@@ -98,6 +105,10 @@ pub enum SubmoduleRefusalReason {
     UntrackedFiles,
     /// The detached HEAD has commits on no branch, tag or remote branch.
     UnreferencedCommits,
+    /// Ignored files the checkout of the recorded commit would overwrite.
+    IgnoredOverwritten,
+    /// HEAD or the files of the submodule changed between the checks and the backup.
+    ChangedMeanwhile,
 }
 
 /// A submodule left as it was, and why.
@@ -192,9 +203,10 @@ pub fn update_refusal(info: &SubmoduleInfo, init: bool) -> Option<SubmoduleRefus
     if info.url.as_deref().is_some_and(|u| u.starts_with('-')) {
         return Some(R::SuspiciousUrl);
     }
-    if info.state == SubmoduleState::Uninitialized {
-        return (!init).then_some(R::NotInitialized);
+    if info.state == SubmoduleState::Uninitialized && !init {
+        return Some(R::NotInitialized);
     }
+    // For an uninitialized submodule these come from its leftover git directory, if any.
     if info.operation.is_some() {
         Some(R::OperationInProgress)
     } else if info.changes {
@@ -203,6 +215,8 @@ pub fn update_refusal(info: &SubmoduleInfo, init: bool) -> Option<SubmoduleRefus
         Some(R::UntrackedFiles)
     } else if info.unreferenced {
         Some(R::UnreferencedCommits)
+    } else if info.ignored_overwritten {
+        Some(R::IgnoredOverwritten)
     } else {
         None
     }
@@ -221,6 +235,8 @@ pub fn refusal_message(path: &RepoPath, reason: SubmoduleRefusalReason) -> Messa
         R::LocalChanges => msg!("engine-submodule-local-changes", path = path),
         R::UntrackedFiles => msg!("engine-submodule-untracked", path = path),
         R::UnreferencedCommits => msg!("engine-submodule-unreferenced", path = path),
+        R::IgnoredOverwritten => msg!("engine-submodule-ignored", path = path),
+        R::ChangedMeanwhile => msg!("engine-submodule-changed", path = path),
     }
 }
 
@@ -339,6 +355,7 @@ mod tests {
             untracked: false,
             operation: None,
             unreferenced: false,
+            ignored_overwritten: false,
         }
     }
 
@@ -386,6 +403,10 @@ mod tests {
             with(&|i| i.unreferenced = true),
             Some(R::UnreferencedCommits)
         );
+        assert_eq!(
+            with(&|i| i.ignored_overwritten = true),
+            Some(R::IgnoredOverwritten)
+        );
         assert_eq!(with(&|i| i.name = None), Some(R::NoMapping));
         assert_eq!(
             with(&|i| i.url = Some("--upload-pack=x".into())),
@@ -401,6 +422,13 @@ mod tests {
         let uninit = info("u", None);
         assert_eq!(update_refusal(&uninit, false), Some(R::NotInitialized));
         assert_eq!(update_refusal(&uninit, true), None);
+        // A leftover git directory with commits on no ref: refused even with `init`.
+        let mut leftover = uninit;
+        leftover.unreferenced = true;
+        assert_eq!(
+            update_refusal(&leftover, true),
+            Some(R::UnreferencedCommits)
+        );
     }
 
     #[test]

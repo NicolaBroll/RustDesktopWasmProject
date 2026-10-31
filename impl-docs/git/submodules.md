@@ -19,7 +19,8 @@ repo has none). Each `SubmoduleInfo`:
 - `path`: the gitlink in the superproject's index (string, or byte array if not UTF-8);
 - `name`: the name in the worktree's `.gitmodules` (`submodule.<name>.path`), `null` if `.gitmodules`
   does not map the path; `url`: `submodule.<name>.url` of the repo configuration (written by init),
-  otherwise the one in `.gitmodules` as written (a relative URL stays relative);
+  otherwise the one in `.gitmodules` as written (a relative URL stays relative); credentials in it
+  are masked as in `remote.list` (`https://user:***@host`);
 - `recorded`: the commit recorded in the **index** (what an update checks out; equals HEAD's unless
   the gitlink is staged), `null` when conflicted; `head`: the commit checked out in the submodule,
   `null` if not checked out; `detached`: its HEAD is detached;
@@ -28,7 +29,11 @@ repo has none). Each `SubmoduleInfo`:
 - `changes` (tracked files modified or staged, nested submodules included), `untracked`
   (untracked files; ignored ones do not count), `operation` (`"Merge"`, `"Rebase"`, ... in progress
   inside it, or `null`), `unreferenced` (the detached HEAD has commits on no branch, tag or remote
-  branch of the submodule).
+  branch of the submodule), `ignored_overwritten` (an ignored file sits at a path, or at a parent
+  folder of a path, the recorded commit adds: the checkout would overwrite it; only known when the
+  recorded commit is already in the submodule). For an `uninitialized` submodule whose git directory
+  is still in the superproject (`.git/modules/<name>`, after `deinit -f` or deleting the folder),
+  `head`, `detached`, `operation` and `unreferenced` describe that directory: `--init` would reuse it.
 
 ### `submodule.update`
 
@@ -47,7 +52,9 @@ cancellation from `Session::job`; may fetch (credentials through the prompter, a
 `conflict` (unmerged in the superproject), `no_mapping` (no `.gitmodules` entry: git cannot update
 it), `suspicious_url` (URL starting with `-`), `not_initialized`, `operation_in_progress`,
 `local_changes`, `untracked_files`, `unreferenced_commits` (they would be left behind on a detached
-HEAD, reachable only from the reflog). A submodule already on the recorded commit is `unchanged`,
+HEAD, reachable only from the reflog; also in a leftover git directory, even with `init`),
+`ignored_overwritten`, `changed_meanwhile` (HEAD or state different when re-read just before the
+backup). A submodule already on the recorded commit is `unchanged`,
 never refused: git would do nothing for it, whatever its worktree holds.
 
 Result: `{"updated": [{"path", "from", "to", "backup"}], "unchanged": [path], "refused": [{"path",
@@ -66,9 +73,18 @@ successful run is not on the recorded commit (a hook, another process).
    --porcelain=v2 --untracked-files=normal --ignore-submodules=none` (overrides
    `status.showUntrackedFiles` and `submodule.<name>.ignore`), the operation files of its git
    directory, and when detached `rev-list --max-count=1 HEAD --not --branches --tags --remotes`.
+   Not checked out: the leftover git directory `git rev-parse --git-path modules/<name>` (a name
+   with a `..` component is ignored), read with git run inside it (HEAD, `symbolic-ref`,
+   operation files, the same `rev-list`).
+   Ignored files in the way, when HEAD differs from the recorded commit and that commit is in the
+   submodule (`rev-parse --verify <id>^{commit}`): `diff-tree -r --name-only -z --no-renames
+   --diff-filter=A HEAD <recorded>`; for each added path the first existing component on disk that
+   is the path itself or not a folder is "in the way"; `check-ignore -z --stdin` on those says
+   whether one is ignored (tracked files are not reported, untracked ones are refused anyway).
 2. Plan (`plan_update`, shared with the `MemoryBackend`): unchanged / refused / to run.
-3. Backups: for each submodule to run whose HEAD is detached, `update-ref
-   refs/project/backup/submodule-<s>-<ns> <head> ""` **inside the submodule** (create-only). If one
+3. Each submodule to run is read again (step 1); a different HEAD, detachment or state →
+   `changed_meanwhile`, a new refusal → that reason. Backups: for each submodule to run whose HEAD is detached, `update-ref
+   refs/project/backup/submodule-<s>-<ns> <head> ""` **inside the submodule** (or its leftover git directory; create-only). If one
    fails the command fails and **nothing runs** (backups already written stay).
 4. `git -c protocol.ext.allow=never -c protocol.fd.allow=never [-c protocol.file.allow=user]
    --literal-pathspecs submodule update [--init] --no-recommend-shallow --checkout --progress --
@@ -93,10 +109,16 @@ successful run is not on the recorded commit (a hook, another process).
 
 Not handled on purpose: a race between the checks and git's checkout (another process writing in
 the submodule meanwhile) cannot be prevented, `git submodule update` takes no expected value;
-`to` and `warnings` report what happened. Ignored files in the submodule follow git's checkout rules:
-an ignored file at a path the recorded commit tracks is overwritten, as `git checkout` does in a
-terminal (git treats ignored files as expendable; the recorded commit may not even be fetched yet
-when the checks run, so the overlap cannot be computed beforehand).
+`to` and `warnings` report what happened. Ignored files are checked only when the recorded commit is
+already in the submodule: when it still has to be fetched, the overlap cannot be computed before
+`git submodule update` (which fetches and checks out in one run), and an ignored file at a path the
+new commit adds is overwritten, as `git checkout` does in a terminal.
+
+`submodule.recurse`: every git run of the app gets `-c submodule.recurse=false` (`Git::command`), so
+a user's `submodule.recurse=true` never makes `submodule update`, a checkout, reset, merge, rebase,
+cherry-pick, revert, stash or pull move nested or superproject submodules behind the checks above
+(explicit flags such as `push --recurse-submodules=check` still apply). Side effect: `remote.fetch`
+no longer fetches inside submodules "on demand"; `submodule.update` fetches what it needs.
 
 The `MemoryBackend` keeps the list as the test sets it (`MemoryBackend::set_submodules`): update
 applies the same plan, moves HEAD to `recorded` (detached), records a backup

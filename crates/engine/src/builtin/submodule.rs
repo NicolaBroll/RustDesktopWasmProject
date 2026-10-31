@@ -65,6 +65,7 @@ mod tests {
             untracked: false,
             operation: None,
             unreferenced: false,
+            ignored_overwritten: false,
         };
         f(&mut info);
         info.state = submodule_state(

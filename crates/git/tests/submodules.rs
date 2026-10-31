@@ -115,6 +115,16 @@ fn clone_with(upstream: &Repo, submodules: bool, opener: CliOpener) -> Clone {
     clone
 }
 
+/// [`opener`] plus `submodule.recurse=true` in the user's configuration.
+fn opener_recursing() -> CliOpener {
+    Repo::opener()
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
+        .env("GIT_CONFIG_VALUE_0", "always")
+        .env("GIT_CONFIG_KEY_1", "submodule.recurse")
+        .env("GIT_CONFIG_VALUE_1", "true")
+}
+
 fn clone_of(upstream: &Repo, submodules: bool) -> Clone {
     clone_with(upstream, submodules, opener())
 }
@@ -232,11 +242,17 @@ fn pull_that_moves_the_submodule_then_update_saves_the_detached_head() {
 
 /// A clone whose `lib` is one commit behind the recorded one: ready to update.
 fn behind() -> (Repo, Repo, Clone, project_domain::Oid) {
+    behind_adding("lib.txt", opener())
+}
+
+/// Like [`behind`], with the library's new commit writing `file` and the clone opened with
+/// `opener`.
+fn behind_adding(file: &str, opener: CliOpener) -> (Repo, Repo, Clone, project_domain::Oid) {
     let lib = library("lib");
     let upstream = superproject(&lib, "lib");
-    let c = clone_of(&upstream, true);
+    let c = clone_with(&upstream, true, opener);
     let old = lib.rev("HEAD");
-    lib.commit_file("lib.txt", "lib 2\n", "lib 2");
+    lib.commit_file(file, "lib 2\n", "lib 2");
     git(
         &upstream.path().join("lib"),
         &["pull", "--quiet", "--ff-only"],
@@ -470,4 +486,139 @@ fn a_failing_hook_inside_the_submodule_is_reported_with_the_backup() {
     );
     let list = c.ok("submodule.list", json!({}));
     assert_eq!(list["submodules"][0]["state"], "in_sync");
+}
+
+#[test]
+fn the_users_submodule_recurse_moves_no_nested_submodule() {
+    let inner = library("inner");
+    let middle = superproject(&inner, "inner");
+    let upstream = superproject(&middle, "middle");
+    let mut c = clone_with(&upstream, true, opener_recursing());
+    let inner_old = git(&c.sub("middle/inner"), &["rev-parse", "HEAD"]);
+    // The middle repo records a new inner commit; the superproject records the new middle.
+    inner.commit_file("lib.txt", "inner 2\n", "inner 2");
+    git(
+        &middle.path().join("inner"),
+        &["pull", "--quiet", "--ff-only"],
+    );
+    git(middle.path(), &["commit", "--quiet", "-am", "move inner"]);
+    git(
+        &upstream.path().join("middle"),
+        &["pull", "--quiet", "--ff-only"],
+    );
+    git(
+        upstream.path(),
+        &["commit", "--quiet", "-am", "move middle"],
+    );
+    git(&c.path, &["pull", "--quiet", "--no-recurse-submodules"]);
+
+    let out = c.ok("submodule.update", json!({}));
+    assert_eq!(out["updated"][0]["path"], "middle");
+    // Not recursive: the nested submodule is where it was, without checks or backup.
+    assert_eq!(
+        git(&c.sub("middle/inner"), &["rev-parse", "HEAD"]),
+        inner_old
+    );
+
+    // A checkout of the superproject does not touch the submodules either.
+    let middle_now = git(&c.sub("middle"), &["rev-parse", "HEAD"]);
+    c.ok("branch.create", json!({"name": "prev", "start": "HEAD~1"}));
+    c.ok("branch.checkout", json!({"name": "prev"}));
+    assert_eq!(git(&c.sub("middle"), &["rev-parse", "HEAD"]), middle_now);
+    assert_eq!(
+        git(&c.sub("middle/inner"), &["rev-parse", "HEAD"]),
+        inner_old
+    );
+}
+
+#[test]
+fn a_leftover_git_dir_after_deinit_is_checked_and_backed_up() {
+    // Commits on no ref in the leftover git directory: refused even with `init`.
+    let (_lib, _up, mut c, _old) = behind();
+    git(
+        &c.sub("lib"),
+        &["commit", "--quiet", "--allow-empty", "-m", "lost"],
+    );
+    let lost = git(&c.sub("lib"), &["rev-parse", "HEAD"]);
+    git(&c.path, &["submodule", "deinit", "--quiet", "-f", "lib"]);
+    let modules = std::path::PathBuf::from(git(&c.path, &["rev-parse", "--absolute-git-dir"]))
+        .join("modules/lib");
+    let list = c.ok("submodule.list", json!({}));
+    let info = &list["submodules"][0];
+    assert_eq!(info["state"], "uninitialized");
+    assert_eq!(info["head"], lost);
+    assert_eq!(info["unreferenced"], true);
+    let out = c.ok("submodule.update", json!({"init": true}));
+    assert_eq!(reasons(&out), [pair("lib", "unreferenced_commits")]);
+    let head = |dir: &Path| {
+        git(
+            Path::new("/"),
+            &["--git-dir", dir.to_str().unwrap(), "rev-parse", "HEAD"],
+        )
+    };
+    assert_eq!(head(&modules), lost);
+
+    // Detached on a referenced commit: updated, the old HEAD saved in the leftover git dir.
+    let (_lib, _up, mut c, old) = behind();
+    git(&c.path, &["submodule", "deinit", "--quiet", "-f", "lib"]);
+    let out = c.ok("submodule.update", json!({"init": true}));
+    assert_eq!(out["updated"][0]["from"], old.to_string());
+    let backup = out["updated"][0]["backup"].as_str().unwrap().to_owned();
+    assert_eq!(git(&c.sub("lib"), &["rev-parse", &backup]), old.to_string());
+}
+
+#[test]
+fn ignored_files_the_checkout_would_overwrite_are_refused() {
+    // An ignored file where the recorded commit adds one.
+    let (_lib, _up, mut c, old) = behind_adding("build.txt", opener());
+    let lib = c.sub("lib");
+    git(&lib, &["fetch", "--quiet", "origin"]);
+    let exclude = Path::new(&git(&lib, &["rev-parse", "--absolute-git-dir"])).join("info/exclude");
+    std::fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    std::fs::write(&exclude, "build.txt\nout\n").unwrap();
+    std::fs::write(lib.join("build.txt"), "mine\n").unwrap();
+    let out = c.ok("submodule.update", json!({}));
+    assert_eq!(reasons(&out), [pair("lib", "ignored_overwritten")]);
+    assert_eq!(
+        std::fs::read_to_string(lib.join("build.txt")).unwrap(),
+        "mine\n"
+    );
+    assert_eq!(git(&lib, &["rev-parse", "HEAD"]), old.to_string());
+    // Elsewhere an ignored file is no obstacle.
+    std::fs::remove_file(lib.join("build.txt")).unwrap();
+    std::fs::write(lib.join("out"), "x").unwrap();
+    let out = c.ok("submodule.update", json!({}));
+    assert_eq!(out["refused"], json!([]));
+
+    // An ignored file where the recorded commit needs a folder.
+    let (_lib, _up, mut c, _old) = behind_adding("out/x.txt", opener());
+    let lib = c.sub("lib");
+    git(&lib, &["fetch", "--quiet", "origin"]);
+    let exclude = Path::new(&git(&lib, &["rev-parse", "--absolute-git-dir"])).join("info/exclude");
+    std::fs::write(&exclude, "out\n").unwrap();
+    std::fs::write(lib.join("out"), "mine\n").unwrap();
+    let out = c.ok("submodule.update", json!({}));
+    assert_eq!(reasons(&out), [pair("lib", "ignored_overwritten")]);
+    assert_eq!(std::fs::read_to_string(lib.join("out")).unwrap(), "mine\n");
+}
+
+#[test]
+fn credentials_in_urls_are_masked() {
+    let lib = library("lib");
+    let upstream = superproject(&lib, "lib");
+    let mut c = clone_of(&upstream, false);
+    git(
+        &c.path,
+        &[
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.lib.url",
+            "https://me:s3cret@example.com/lib.git",
+        ],
+    );
+    let list = c.ok("submodule.list", json!({}));
+    let url = list["submodules"][0]["url"].as_str().unwrap();
+    assert!(!url.contains("s3cret"), "{url}");
+    assert!(url.contains("example.com/lib.git"), "{url}");
 }

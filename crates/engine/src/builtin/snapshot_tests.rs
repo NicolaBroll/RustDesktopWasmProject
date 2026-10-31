@@ -895,6 +895,7 @@ fn submodules() {
         untracked,
         operation: None,
         unreferenced: false,
+        ignored_overwritten: false,
     };
     let mut repo = clean_sample();
     repo.set_submodules(vec![

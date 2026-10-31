@@ -13,12 +13,13 @@
 //!   of each one is saved first in a backup ref inside it; if a backup fails nothing runs.
 
 use super::{CliBackend, CliOpener};
-use crate::command::{Git, Segment, failure, os_from_bytes};
+use crate::command::{Git, Segment, failure, os_from_bytes, path_from_output};
 use crate::progress::parse_progress;
 use project_domain::{EntryKind, Head, Oid, RepoPath, parse_status};
 use project_engine::{
-    EngineError, JobContext, SUBMODULE_BACKUP_KIND, SubmoduleInfo, SubmoduleMoved, SubmoduleUpdate,
-    SubmoduleUpdated, not_at_recorded, plan_update, submodule_state,
+    EngineError, JobContext, SUBMODULE_BACKUP_KIND, SubmoduleInfo, SubmoduleMoved,
+    SubmoduleRefusal, SubmoduleRefusalReason, SubmoduleState, SubmoduleUpdate, SubmoduleUpdated,
+    mask_url, not_at_recorded, plan_update, refusal_message, submodule_state, update_refusal,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -131,10 +132,46 @@ impl CliBackend {
         same.then_some(sub)
     }
 
+    /// The git directory a removed checkout left in the superproject (`git rev-parse --git-path
+    /// modules/<name>`, after `git submodule deinit -f` or deleting the folder), as a repo whose
+    /// commands run inside that directory. `git submodule update --init` would reuse it and move
+    /// its HEAD. `None` if there is none (or the name could leave `modules/`).
+    fn leftover_git_dir(&self, name: &str) -> Option<CliBackend> {
+        if name.is_empty()
+            || name.starts_with('/')
+            || name.split(['/', '\\']).any(|part| part == "..")
+        {
+            return None;
+        }
+        let arg = format!("modules/{name}");
+        let out = self
+            .git
+            .output(Some(&self.workdir), &["rev-parse", "--git-path", &arg])
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let dir = path_from_output(out.stdout.trim_ascii_end());
+        let dir = if dir.is_absolute() {
+            dir
+        } else {
+            self.workdir.join(dir)
+        };
+        if !dir.join("HEAD").is_file() {
+            return None;
+        }
+        Some(CliBackend {
+            git: self.git.clone(),
+            workdir: dir.clone(),
+            git_dir: dir,
+            empty_tree: self.empty_tree,
+            empty_blob: self.empty_blob,
+        })
+    }
+
     /// The state of a checked-out submodule, read inside it: `(head, detached, changes,
     /// untracked)`.
     fn submodule_worktree(
-        &self,
         sub: &CliBackend,
     ) -> Result<(Option<Oid>, bool, bool, bool), EngineError> {
         let args = [
@@ -174,6 +211,138 @@ impl CliBackend {
         Ok(!out.trim_ascii().is_empty())
     }
 
+    /// True if checking out `recorded` (already in the submodule) over `head` would overwrite an
+    /// ignored file: one at a path `recorded` adds, or at a parent folder of such a path. The
+    /// paths in the way are found on disk, then `git check-ignore` says which are ignored
+    /// (untracked ones are refused on their own, tracked ones are git's to replace). `false`
+    /// when `recorded` is not in the submodule yet: it cannot be known before the fetch.
+    fn ignored_in_the_way(sub: &CliBackend, head: Oid, recorded: Oid) -> Result<bool, EngineError> {
+        if sub.resolve(&recorded.to_string())?.is_none() {
+            return Ok(false);
+        }
+        let (head, recorded) = (head.to_string(), recorded.to_string());
+        let added = sub.run(&[
+            "diff-tree",
+            "-r",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--diff-filter=A",
+            &head,
+            &recorded,
+            "--",
+        ])?;
+        let mut in_the_way: Vec<&[u8]> = Vec::new();
+        for path in added.split(|&b| b == 0).filter(|p| !p.is_empty()) {
+            let mut end = 0;
+            loop {
+                end = match path[end..].iter().position(|&b| b == b'/') {
+                    Some(slash) => end + slash,
+                    None => path.len(),
+                };
+                let prefix = &path[..end];
+                let Ok(meta) = std::fs::symlink_metadata(sub.workdir.join(os_from_bytes(prefix)))
+                else {
+                    break;
+                };
+                if end == path.len() || !meta.is_dir() {
+                    in_the_way.push(prefix);
+                    break;
+                }
+                end += 1;
+            }
+        }
+        if in_the_way.is_empty() {
+            return Ok(false);
+        }
+        in_the_way.sort();
+        in_the_way.dedup();
+        let input = in_the_way.join(&0u8);
+        let args = ["check-ignore", "-z", "--stdin"];
+        let out = sub
+            .git
+            .output_with_input(Some(&sub.workdir), &args, &input)?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(failure(&args, &out)),
+        }
+    }
+
+    /// Reads one submodule: inside its checkout, or in its leftover git directory when it is
+    /// not checked out.
+    fn inspect_submodule(
+        &self,
+        path: RepoPath,
+        name: Option<String>,
+        url: Option<String>,
+        recorded: Option<Oid>,
+    ) -> Result<SubmoduleInfo, EngineError> {
+        let mut info = SubmoduleInfo {
+            path,
+            name,
+            url,
+            recorded,
+            head: None,
+            detached: false,
+            state: SubmoduleState::Uninitialized,
+            changes: false,
+            untracked: false,
+            operation: None,
+            unreferenced: false,
+            ignored_overwritten: false,
+        };
+        let checked_out = match self.submodule_repo(&info.path) {
+            Some(sub) => {
+                let (head, detached, changes, untracked) = Self::submodule_worktree(&sub)?;
+                info.head = head;
+                info.detached = detached;
+                info.changes = changes;
+                info.untracked = untracked;
+                info.operation = sub.operation();
+                info.unreferenced = detached && Self::unreferenced_head(&sub)?;
+                if let (Some(head), Some(recorded)) = (head, recorded)
+                    && head != recorded
+                {
+                    info.ignored_overwritten = Self::ignored_in_the_way(&sub, head, recorded)?;
+                }
+                true
+            }
+            None => {
+                if let Some(leftover) = info.name.as_deref().and_then(|n| self.leftover_git_dir(n))
+                {
+                    info.head = leftover.resolve("HEAD")?;
+                    let on_branch = leftover
+                        .git
+                        .output(Some(&leftover.workdir), &["symbolic-ref", "-q", "HEAD"])?
+                        .status
+                        .success();
+                    info.detached = !on_branch && info.head.is_some();
+                    info.operation = leftover.operation();
+                    info.unreferenced = info.detached && Self::unreferenced_head(&leftover)?;
+                }
+                false
+            }
+        };
+        info.state = submodule_state(
+            recorded.is_none(),
+            checked_out,
+            info.changes || info.untracked,
+            info.head,
+            recorded,
+        );
+        Ok(info)
+    }
+
+    /// The repo where a submodule's HEAD lives: its checkout, or its leftover git directory.
+    fn submodule_head_repo(&self, info: &SubmoduleInfo) -> Option<CliBackend> {
+        self.submodule_repo(&info.path).or_else(|| {
+            info.name
+                .as_deref()
+                .and_then(|name| self.leftover_git_dir(name))
+        })
+    }
+
     /// [`GitSubmodules::submodules`](project_engine::GitSubmodules::submodules).
     pub(super) fn list_submodules(&self) -> Result<Vec<SubmoduleInfo>, EngineError> {
         let links = self.gitlinks()?;
@@ -204,45 +373,12 @@ impl CliBackend {
         let mut list = Vec::new();
         for (path, recorded) in links {
             let name = names.get(&path).cloned();
+            // Credentials in URLs are never shown (as `remote.list`).
             let url = name
                 .as_ref()
-                .and_then(|n| urls.get(n).or_else(|| module_urls.get(n)).cloned());
-            let sub = self.submodule_repo(&path);
-            let (head, detached, changes, untracked, operation, unreferenced) = match &sub {
-                Some(sub) => {
-                    let (head, detached, changes, untracked) = self.submodule_worktree(sub)?;
-                    let unreferenced = detached && Self::unreferenced_head(sub)?;
-                    (
-                        head,
-                        detached,
-                        changes,
-                        untracked,
-                        sub.operation(),
-                        unreferenced,
-                    )
-                }
-                None => (None, false, false, false, None, false),
-            };
-            let state = submodule_state(
-                recorded.is_none(),
-                sub.is_some(),
-                changes || untracked,
-                head,
-                recorded,
-            );
-            list.push(SubmoduleInfo {
-                path,
-                name,
-                url,
-                recorded,
-                head,
-                detached,
-                state,
-                changes,
-                untracked,
-                operation,
-                unreferenced,
-            });
+                .and_then(|n| urls.get(n).or_else(|| module_urls.get(n)))
+                .map(|u| mask_url(u).0);
+            list.push(self.inspect_submodule(path, name, url, recorded)?);
         }
         Ok(list)
     }
@@ -261,34 +397,59 @@ impl CliBackend {
             ..SubmoduleUpdated::default()
         };
 
-        // The detached HEADs about to move, saved inside each submodule. A HEAD on a branch
-        // stays on that branch.
+        // Each submodule is read again just before its backup: one that changed since the
+        // checks is refused. The detached HEADs about to move are saved inside each submodule
+        // (or its leftover git directory); a HEAD on a branch stays on that branch.
         let mut backups: BTreeMap<RepoPath, String> = BTreeMap::new();
-        for info in &plan.run {
-            let (true, Some(head)) = (info.detached, info.head) else {
-                continue;
-            };
-            let sub = self.submodule_repo(&info.path).ok_or_else(|| {
-                EngineError::NotAllowed(msg!(
-                    "engine-other",
-                    text = format!("{}: no longer checked out", info.path)
-                ))
-            })?;
-            let name = sub.create_backup_ref(
-                SUBMODULE_BACKUP_KIND,
-                &head.to_string(),
-                "project: backup of the submodule HEAD before submodule.update",
+        let mut run = Vec::new();
+        for info in plan.run {
+            let fresh = self.inspect_submodule(
+                info.path.clone(),
+                info.name.clone(),
+                info.url.clone(),
+                info.recorded,
             )?;
-            backups.insert(info.path.clone(), name);
+            let reason = if fresh.head != info.head
+                || fresh.detached != info.detached
+                || fresh.state != info.state
+            {
+                Some(SubmoduleRefusalReason::ChangedMeanwhile)
+            } else {
+                update_refusal(&fresh, request.init)
+            };
+            if let Some(reason) = reason {
+                result.refused.push(SubmoduleRefusal {
+                    message: refusal_message(&info.path, reason),
+                    path: info.path,
+                    reason,
+                });
+                continue;
+            }
+            if let (true, Some(head)) = (info.detached, info.head) {
+                let repo = self.submodule_head_repo(&info).ok_or_else(|| {
+                    EngineError::NotAllowed(refusal_message(
+                        &info.path,
+                        SubmoduleRefusalReason::ChangedMeanwhile,
+                    ))
+                })?;
+                let name = repo.create_backup_ref(
+                    SUBMODULE_BACKUP_KIND,
+                    &head.to_string(),
+                    "project: backup of the submodule HEAD before submodule.update",
+                )?;
+                backups.insert(info.path.clone(), name);
+            }
+            run.push(info);
         }
+        result.refused.sort_by(|a, b| a.path.cmp(&b.path));
 
-        if !plan.run.is_empty() {
+        if !run.is_empty() {
             if job.is_cancelled() {
                 return Err(EngineError::Cancelled { command: ID });
             }
-            result.messages = self.run_submodule_update(&plan.run, request.init, job, &backups)?;
+            result.messages = self.run_submodule_update(&run, request.init, job, &backups)?;
         }
-        for info in plan.run {
+        for info in run {
             let to = self
                 .submodule_repo(&info.path)
                 .map(|sub| sub.resolve("HEAD"))

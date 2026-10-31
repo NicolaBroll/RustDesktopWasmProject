@@ -1026,7 +1026,9 @@ file of its function in [git/](git/) before the code.
   never refused), `repo.clone` `"submodules"`. `-c protocol.file.allow=user` only when the user's
   configuration sets neither `protocol.file.allow` nor `protocol.allow` (their `always` stands; tests
   set it through `GIT_CONFIG_COUNT`). `recursive` re-applies the same checks level by level instead of
-  `--recursive`. UI to do.
+  `--recursive`. Review fixes: `-c submodule.recurse=false` on every git run (covers S62b's check
+  for all checkout commands, test in `submodules.rs`), leftover `.git/modules/<name>` checked and
+  backed up, `ignored_overwritten` and `changed_meanwhile` refusals, URLs masked. UI to do.
 
 ### S62b — Submodules out of date after checkout, pull and merge
 - [ ] **Agent:** `egui-ui` (engine only if a field is missing)

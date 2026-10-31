@@ -39,6 +39,7 @@ impl MemoryBackend {
                     untracked: false,
                     operation: None,
                     unreferenced: false,
+                    ignored_overwritten: false,
                     ..s.clone()
                 }
             })
@@ -82,6 +83,7 @@ impl MemoryBackend {
             sub.head = sub.recorded;
             sub.detached = true;
             sub.unreferenced = false;
+            sub.ignored_overwritten = false;
             sub.state = submodule_state(
                 false,
                 true,

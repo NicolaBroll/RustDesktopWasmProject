@@ -94,8 +94,11 @@ impl Git {
         self.askpass = Some(Askpass { program, prompter });
     }
 
-    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args> <paths>`, with empty
-    /// stdin, `GIT_TERMINAL_PROMPT=0` and `LC_ALL=C`. The rest of the environment is inherited (SSH
+    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false -c submodule.recurse=false <args>
+    /// <paths>`, with empty stdin, `GIT_TERMINAL_PROMPT=0` and `LC_ALL=C`. `submodule.recurse=false`:
+    /// no command recurses into submodules because of the user's configuration (a checkout, reset,
+    /// merge, rebase, stash or `git submodule update` would otherwise move nested submodules
+    /// without the checks of `submodule.update`); explicit `--recurse-submodules` flags still apply. The rest of the environment is inherited (SSH
     /// agent, credential helper). `paths` go after a `--` that the caller puts at the end of
     /// `args`.
     fn command(&self, dir: Option<&Path>, args: &[&str], paths: &[&OsStr]) -> Command {
@@ -103,14 +106,21 @@ impl Git {
         if let Some(dir) = dir {
             cmd.arg("-C").arg(dir);
         }
-        cmd.args(["-c", "core.quotePath=false", "-c", "color.ui=false"])
-            .args(args)
-            .args(paths)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C");
+        cmd.args([
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "color.ui=false",
+            "-c",
+            "submodule.recurse=false",
+        ])
+        .args(args)
+        .args(paths)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C");
         no_console_window(&mut cmd);
         for key in REPO_ENV
             .iter()
@@ -777,6 +787,8 @@ mod tests {
                 "core.quotePath=false",
                 "-c",
                 "color.ui=false",
+                "-c",
+                "submodule.recurse=false",
                 "diff",
                 "--",
                 "a b.txt"

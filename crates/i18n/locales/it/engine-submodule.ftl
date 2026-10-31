@@ -12,3 +12,5 @@ engine-submodule-untracked = `{ $path }` ha file non tracciati: fai commit, spos
 engine-submodule-unreferenced = il commit attivo di `{ $path }` ha commit che non sono su nessun branch, tag o branch remoto: crea prima un branch lì, altrimenti l'aggiornamento li lascerebbe indietro
 engine-submodule-not-at-recorded = dopo l'aggiornamento `{ $path }` è su { $head }, non sul commit registrato { $recorded }
 engine-submodule-update-failed = { $error } (gli HEAD precedenti dei sottomoduli sono salvati in: { $backups })
+engine-submodule-ignored = in `{ $path }` ci sono file ignorati dove il commit registrato aggiunge file: il checkout li sovrascriverebbe; spostali prima
+engine-submodule-changed = `{ $path }` è cambiato mentre si preparava l'aggiornamento: controllalo e riprova

@@ -65,3 +65,11 @@ stage-tooltip-right-discard = Clic destro: altre azioni, anche scartare le modif
 stage-tooltip-right = Clic destro: altre azioni
 stage-blame-untracked = Il file non è ancora tracciato: il blame vuole un file in HEAD o nell'indice
 stage-blame-deleted = Il file è eliminato: non c'è niente su cui fare il blame
+stage-delete-file = Elimina…
+stage-delete-file-help = Elimina questo file non tracciato (chiede conferma; si tiene un backup e «Annulla» lo rimette)
+stage-delete-untracked = { $n ->
+    [one] Elimina il file non tracciato…
+   *[other] Elimina tutti i { $n } file non tracciati…
+}
+stage-delete-untracked-help = Elimina i file non tracciati di questa lista (chiede conferma; si tiene un backup e «Annulla» li rimette). I file tracciati non si toccano
+stage-tooltip-right-delete = Clic destro: altre azioni, anche eliminare il file

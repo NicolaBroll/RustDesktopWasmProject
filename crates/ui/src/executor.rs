@@ -60,6 +60,9 @@ pub struct Done {
     /// The full id to send back as `"expected"` with `"confirm": true`, if the command
     /// gave it with [`ErrorKind::ConfirmRequired`] (the force of `remote.push`).
     pub confirm_expected: Option<String>,
+    /// The `bytes` number of a [`ErrorKind::ConfirmRequired`] reason, if it has one: the total
+    /// size of the files `worktree.clean` would delete.
+    pub confirm_bytes: Option<u64>,
 }
 
 /// The kind of an engine error, for UI reactions that do not depend on the text.
@@ -152,6 +155,17 @@ impl ErrorKind {
         }
     }
 
+    /// The number to put in [`Done::confirm_bytes`]: the `bytes` argument of a confirmation.
+    pub fn bytes(error: &EngineError) -> Option<u64> {
+        let EngineError::ConfirmRequired { reason, .. } = error else {
+            return None;
+        };
+        reason.args().iter().find_map(|(name, arg)| match arg {
+            MessageArg::Number(n) if name == "bytes" && *n >= 0.0 => Some(*n as u64),
+            _ => None,
+        })
+    }
+
     /// The detail to put in [`Done::error_detail`]: the reason of a confirmation, git's stderr,
     /// the files a checkout would overwrite (one per line), git's text for a remote that
     /// rejects the credentials or cannot be reached, the conflicted files of a pull (one per
@@ -199,6 +213,7 @@ struct Failure {
     detail: Option<String>,
     message: String,
     expected: Option<String>,
+    bytes: Option<u64>,
 }
 
 impl Failure {
@@ -209,6 +224,7 @@ impl Failure {
             // In the UI language; `Display` is the English of CLI and MCP.
             message: error.text(),
             expected: ErrorKind::expected(error),
+            bytes: ErrorKind::bytes(error),
         }
     }
 }
@@ -388,9 +404,9 @@ impl Reply {
 
     fn deliver(&mut self, result: Result<Value, Failure>) {
         self.sent = true;
-        let (error_kind, error_detail, confirm_expected) = match &result {
-            Ok(_) => (None, None, None),
-            Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone()),
+        let (error_kind, error_detail, confirm_expected, confirm_bytes) = match &result {
+            Ok(_) => (None, None, None, None),
+            Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone(), f.bytes),
         };
         // If the UI is already closed nobody is waiting for the result.
         let _ = self.sender.send(Done {
@@ -400,6 +416,7 @@ impl Reply {
             error_kind,
             error_detail,
             confirm_expected,
+            confirm_bytes,
         });
         (self.wake)();
     }
@@ -413,6 +430,7 @@ impl Drop for Reply {
                 detail: None,
                 message: tr!("app-no-result", command = &self.command),
                 expected: None,
+                bytes: None,
             }));
         }
     }

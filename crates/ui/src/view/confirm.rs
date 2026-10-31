@@ -1,4 +1,5 @@
 use super::*;
+use crate::clean::{self, Clean};
 use crate::{commit, discard, stage};
 
 /// How many conflicted files to list in the confirmation; the others become "and N more".
@@ -92,6 +93,64 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
     });
     if modal.should_close() {
         actions.push(Action::Discard(discard::Action::Cancel));
+    }
+}
+
+/// Confirmation before deleting untracked files: lists them with the count and the total size,
+/// and says that a backup is kept and Undo puts them back. "Cancel" has the focus and Enter
+/// never deletes: only a click (or Space on the focused button) does.
+pub(crate) fn confirm_clean(ctx: &egui::Context, pending: &Clean, actions: &mut Vec<Action>) {
+    let modal = egui::Modal::new(egui::Id::unique("clean-confirm")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        let n = pending.paths.len();
+        ui.heading(tr!("clean-confirm-title", n = n));
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(tr!("clean-confirm-body", n = n)).wrap());
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(tr!("clean-confirm-backup")).wrap());
+        ui.add_space(6.0);
+        let files = match pending.phase {
+            clean::Phase::Confirm { bytes: Some(bytes) } => {
+                tr!(
+                    "clean-confirm-files-size",
+                    n = n,
+                    size = clean::size_text(bytes)
+                )
+            }
+            _ => tr!("clean-confirm-files", n = n),
+        };
+        ui.strong(files);
+        let row = ui.text_style_height(&egui::TextStyle::Monospace);
+        egui::ScrollArea::vertical()
+            .id_salt("clean-files")
+            .max_height(DISCARD_LIST_HEIGHT)
+            .auto_shrink([false, true])
+            .show_rows(ui, row, n, |ui, range| {
+                for path in &pending.paths[range] {
+                    ui.monospace(path.to_string_lossy());
+                }
+            });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let label = tr!("clean-confirm-button", n = n);
+            let button =
+                egui::Button::new(RichText::new(label).color(ui.visuals().strong_text_color()))
+                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.add(button).clicked() && !enter {
+                actions.push(Action::Clean(clean::Action::Confirm));
+            }
+            let cancel = ui.button(tr!("confirm-cancel"));
+            if ui.memory(|m| m.focused().is_none()) {
+                cancel.request_focus();
+            }
+            if cancel.clicked() {
+                actions.push(Action::Clean(clean::Action::Cancel));
+            }
+        });
+    });
+    if modal.should_close() {
+        actions.push(Action::Clean(clean::Action::Cancel));
     }
 }
 

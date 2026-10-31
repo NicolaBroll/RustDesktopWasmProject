@@ -54,7 +54,7 @@ pub(crate) use clone_view::clone_dialog;
 use clone_view::create_buttons;
 pub(crate) use commits::{ListOptions, commit_list};
 pub(crate) use compare_view::compare_panel;
-pub(crate) use confirm::{confirm_amend, confirm_discard, confirm_write};
+pub(crate) use confirm::{confirm_amend, confirm_clean, confirm_discard, confirm_write};
 pub(crate) use conflict_view::conflict_editor;
 pub(crate) use credentials_view::{credential_dialog, credential_field_id};
 pub(crate) use details_view::details_panel;

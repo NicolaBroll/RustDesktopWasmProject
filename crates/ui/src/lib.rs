@@ -14,6 +14,7 @@
 
 mod auto_fetch;
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod compare;
@@ -123,6 +124,8 @@ enum Action {
     Stage(stage::Action),
     /// Discarding changes, undo and redo.
     Discard(discard::Action),
+    /// Deleting untracked files.
+    Clean(clean::Action),
     /// Selecting diff rows and staging hunks or lines.
     Lines(lines::Action),
     /// The commit message box.
@@ -191,6 +194,8 @@ enum Request {
     HeadMessage(u64),
     /// `worktree.discard`, without or with `confirm` (the phase is in [`DiscardBox`]).
     Discard(u64),
+    /// `worktree.clean`, without or with `confirm` (the phase is in [`clean::CleanBox`]).
+    Clean(u64),
     /// `edit.undo`/`edit.redo`.
     Undo(u64),
     /// `edit.history`: the state of the Undo and Redo buttons.
@@ -269,6 +274,8 @@ struct RepoView {
     commit: CommitBox,
     /// Discarding changes: check, confirmation, submission.
     discard: DiscardBox,
+    /// Deleting untracked files: check, confirmation, submission.
+    clean: clean::CleanBox,
     /// Branch commands: name dialogs, deletion confirmation, checkout.
     branch: BranchBox,
     /// The fetch in progress and the last error to explain.
@@ -330,6 +337,7 @@ impl RepoView {
             compare: compare::CompareBox::default(),
             commit: CommitBox::default(),
             discard: DiscardBox::default(),
+            clean: clean::CleanBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
             auto_fetch: auto_fetch::AutoFetch::default(),
@@ -374,6 +382,7 @@ impl RepoView {
             self.worktree_selected = false;
             self.confirm = None;
             self.discard.cancel();
+            self.clean.cancel();
         }
         self.update_labels();
     }
@@ -384,6 +393,7 @@ impl RepoView {
         self.confirm.is_some()
             || self.commit.confirm().is_some()
             || self.discard.confirm().is_some()
+            || self.clean.confirm().is_some()
             || self.branch.modal_open()
             || self.sync.modal_open()
             || self.remotes.modal_open()
@@ -631,6 +641,7 @@ impl Tab {
             Action::Diff(action) => self.apply_diff(action),
             Action::Stage(action) => self.apply_stage(action),
             Action::Discard(action) => self.apply_discard(action),
+            Action::Clean(action) => self.apply_clean(action),
             Action::Lines(action) => self.apply_lines(action),
             Action::Commit(action) => self.apply_commit(action),
             Action::Branch(action) => self.apply_branch(action),
@@ -960,6 +971,7 @@ impl Tab {
             Request::Write(generation) => self.receive_write(generation, done),
             Request::Commit(generation) => self.receive_commit(generation, done),
             Request::Discard(generation) => self.receive_discard(generation, done),
+            Request::Clean(generation) => self.receive_clean(generation, done),
             Request::Undo(generation) => self.receive_undo(generation, done),
             Request::ResetPreview(generation, seq) => {
                 self.receive_reset_preview(generation, seq, done);
@@ -1203,6 +1215,7 @@ impl Tab {
             | Request::Write(..)
             | Request::Commit(..)
             | Request::Discard(..)
+            | Request::Clean(..)
             | Request::Undo(..)
             | Request::Branch(..)
             | Request::Fetch(..)
@@ -1392,6 +1405,9 @@ impl Tab {
         }
         if let Some(pending) = repo.discard.confirm() {
             view::confirm_discard(ctx, pending, actions);
+        }
+        if let Some(pending) = repo.clean.confirm() {
+            view::confirm_clean(ctx, pending, actions);
         }
         if let Some(failure) = repo.fetch.failure() {
             view::failure_window(

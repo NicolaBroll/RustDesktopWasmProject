@@ -683,7 +683,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `crates/ui/src/compare_tests.rs`.
 
 ### S54 — Delete untracked files
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** `worktree.discard` never touches untracked files (by design, `impl-docs/git/discard.md`),
   so a new file the user wants gone can only be deleted outside the app. Add `worktree.clean
   {"paths": [path, ...], "confirm": true}` (`Access::Write`), the safe `git clean` for named files:
@@ -713,12 +713,17 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   starting with `-`, non-UTF-8 name if the helper supports it, backup failure → nothing deleted,
   undo/redo, file recreated before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI
   green.
-- **Status:** engine done, UI to do. `worktree.clean`, `GitIndex::clean_plan`/`clean`/
+- **Status:** done. `worktree.clean`, `GitIndex::clean_plan`/`clean`/
   `restore_cleaned`, `JournalEntry::clean`; plan in `crates/engine/src/git/clean.rs`, `CliBackend`
   in `crates/git/src/backend/clean.rs` (status is read with `--untracked-files=all`, so no
   `ls-files` expansion is needed; backup commit has no parent; undo/redo ignore HEAD); tests in
   `crates/git/tests/clean.rs`, `crates/engine/src/git/memory/clean.rs`,
-  `crates/engine/src/builtin/clean.rs`. Waiting for the `safety-reviewer` review and the UI.
+  `crates/engine/src/builtin/clean.rs`. UI: `crates/ui/src/clean.rs` (`CleanBox`, tests in
+  `clean_tests.rs`), "Delete…" in the context menu of untracked files and "Delete all untracked
+  files…" in the "⋯" menu of the unstaged list (`view/stage_view.rs`; the stage area has no
+  multi-selection), dialog `confirm_clean` in `view/confirm.rs` (scrollable list, count and total
+  size from the `bytes` of the confirmation, `Done::confirm_bytes`; "Delete N files", Cancel
+  focused, Enter never confirms); notice with the count and the `warnings`.
 
 ### S55 — Check out a commit (detached HEAD)
 - [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`

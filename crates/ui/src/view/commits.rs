@@ -276,17 +276,24 @@ fn compare_item(ui: &mut Ui, repo: &RepoView, index: usize, id: Oid, actions: &m
     ui.separator();
 }
 
-/// The search bar above the list: field, number of matches, previous/next, close. Enter and
-/// Shift+Enter in the field move between the matches, Esc closes the bar.
+/// The search bar above the list: field, the toggles "Content", "Regex" and "Aa", number of
+/// matches (or spinner and "Stop" while a content search runs), previous/next, close. Enter and
+/// Shift+Enter in the field move between the matches (content: Enter searches), Esc closes the bar.
 fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         ui.label(icons::text(icons::SEARCH, 14.0).weak());
         let mut text = search.text().to_owned();
-        // Room on the right for the count and the three buttons.
-        let width = (ui.available_width() - 260.0).max(120.0);
+        let options = search.options();
+        // Room on the right for the toggles, the count and the three buttons.
+        let width = (ui.available_width() - 420.0).max(120.0);
+        let hint = if options.content {
+            tr!("search-hint-content")
+        } else {
+            tr!("search-hint")
+        };
         let edit = egui::TextEdit::singleline(&mut text)
             .id_salt("search-field")
-            .hint_text(tr!("search-hint"))
+            .hint_text(hint)
             .desired_width(width);
         let response = ui.add(edit);
         if focus {
@@ -316,9 +323,22 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
             // The field keeps the keyboard: Enter again goes to the following match.
             response.request_focus();
         }
+        search_options(ui, options, actions);
+        if search.running() {
+            ui.add(egui::Spinner::new().size(12.0));
+            if ui
+                .button(tr!("search-stop"))
+                .on_hover_text(tr!("search-stop-tip"))
+                .clicked()
+            {
+                actions.push(Action::Search(search::Action::Stop));
+            }
+        }
         let status = match search.state() {
             SearchState::Idle => RichText::new(""),
             SearchState::Searching => RichText::new(tr!("search-searching")).weak(),
+            SearchState::Ready => RichText::new(tr!("search-press-enter")).weak(),
+            SearchState::Stopped => RichText::new(tr!("search-stopped")).weak(),
             SearchState::NoMatches => {
                 RichText::new(tr!("search-no-matches")).color(ui.visuals().warn_fg_color)
             }
@@ -330,12 +350,43 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
                 current: None,
                 total,
             } => RichText::new(tr!("search-count", total = total)),
-            SearchState::Failed(_) => {
-                RichText::new(tr!("search-failed")).color(ui.visuals().error_fg_color)
+            SearchState::Found {
+                current: Some(current),
+                count,
+                more,
+            } => RichText::new(if more {
+                tr!("search-position-more", n = current + 1, total = count)
+            } else {
+                tr!("search-position", n = current + 1, total = count)
+            }),
+            SearchState::Found {
+                current: None,
+                count,
+                more,
+            } => RichText::new(if more {
+                tr!("search-found-more", count = count)
+            } else {
+                tr!("search-found", count = count)
+            }),
+            SearchState::Failed { error, inline } => {
+                RichText::new(if inline {
+                    // The reason only, without "invalid parameters for `repo.search`: ".
+                    error.split_once("`: ").map_or(error, |(_, r)| r).to_owned()
+                } else {
+                    tr!("search-failed")
+                })
+                .color(ui.visuals().error_fg_color)
             }
         };
-        let label = ui.label(status);
-        if let SearchState::Failed(error) = search.state() {
+        // Room for the three buttons: a long error is cut, its whole text on hover.
+        let room = (ui.available_width() - 90.0).max(40.0);
+        let label = ui
+            .scope(|ui| {
+                ui.set_max_width(room);
+                ui.add(egui::Label::new(status).truncate())
+            })
+            .inner;
+        if let SearchState::Failed { error, .. } = search.state() {
             label.on_hover_text(error);
         }
         let previous = ui
@@ -358,6 +409,25 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
         }
     });
     ui.separator();
+}
+
+/// The toggles "Content", "Regex" and "Aa" (the last two only for content).
+fn search_options(ui: &mut Ui, options: search::Options, actions: &mut Vec<Action>) {
+    let mut next = options;
+    ui.toggle_value(&mut next.content, tr!("search-content"))
+        .on_hover_text(tr!("search-content-tip"));
+    ui.add_enabled_ui(options.content, |ui| {
+        ui.toggle_value(&mut next.regex, tr!("search-regex"))
+            .on_hover_text(tr!("search-regex-tip"));
+        ui.toggle_value(&mut next.ignore_case, "Aa")
+            .on_hover_text(tr!("search-ignore-case-tip"));
+    });
+    if next != options {
+        actions.push(Action::Search(search::Action::Options(
+            next,
+            ui.input(|i| i.time),
+        )));
+    }
 }
 
 /// The stroke from the changes ring down to HEAD's dot, if HEAD's column is

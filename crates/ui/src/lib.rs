@@ -525,6 +525,8 @@ impl Tab {
 
     /// Opens `path` in this tab, in the background.
     fn open(&mut self, path: String) {
+        // A content search running would hold the session until it ends.
+        self.stop_search();
         let params = params(RepoOpenParams { path: path.clone() });
         self.submit("repo.open", params, Request::Open);
         self.requested = Some(path);

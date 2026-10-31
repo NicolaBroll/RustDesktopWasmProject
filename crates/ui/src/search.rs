@@ -18,13 +18,19 @@
 //!   around would load every page of ids and of commits).
 //! - When the log is read again (refs changed) the same query runs again: the highlight stays
 //!   until the new answer arrives, the current match is kept by id.
+//! - **Content** (S61): with the "Content" toggle the text is searched in what the commits
+//!   changed (`"in": ["content"]`, with "Regex" and "Aa"). It is slow, so it is not debounced: it
+//!   runs on Enter ([`State::Ready`] until then), shows a spinner and "Stop" while it runs
+//!   ([`SearchBox::running`]), and is cancelled when a new search starts, the bar closes, the
+//!   repo changes or the tab is hidden ([`SearchBox::stop`]). `total` is `null`: the count is that
+//!   of the ids loaded ([`State::Found`]). A refresh of the log does not run it again.
 //! - **Selection** (U47): the bar remembers what was selected when it opened ([`Before`]).
 //!   Closing it (Esc, ×) gives that back, unless a result was chosen: Enter, ↑/↓ or a click or
 //!   key in the list ([`SearchBox::keep`]).
 
 use crate::{Done, RepoView, Request, Tab, Ticket};
 use project_domain::Oid;
-use project_engine::{RepoSearchParams, RepoSearchResult};
+use project_engine::{RepoSearchParams, RepoSearchResult, SearchField};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -39,9 +45,31 @@ pub(crate) enum Action {
     Next,
     /// Selects the previous match (button or Shift+Enter).
     Previous,
+    /// The toggles "Content", "Regex" and "Aa", at that time (seconds).
+    Options(Options, f64),
+    /// "Stop": cancels the content search running.
+    Stop,
     /// Escape: closes the search bar and removes the highlight; gives back the selection from
     /// before the search unless a result was chosen.
     Close,
+}
+
+/// Where and how the text is searched.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Options {
+    /// In what the commits changed instead of message, author and id.
+    pub content: bool,
+    /// Content only: the text is a regex (`git log -G`).
+    pub regex: bool,
+    /// Content only: case-insensitive.
+    pub ignore_case: bool,
+}
+
+/// A text with its options.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Query {
+    text: String,
+    options: Options,
 }
 
 /// What was selected when the search opened.
@@ -77,17 +105,18 @@ pub struct Want {
 struct Job {
     seq: u64,
     ticket: Option<Ticket>,
-    query: String,
+    query: Query,
     skip: usize,
 }
 
 /// The matches of a query read so far.
 #[derive(Debug, Default)]
 struct Found {
-    query: String,
+    query: Query,
     ids: Vec<Oid>,
     set: HashSet<Oid>,
-    total: usize,
+    /// `None` for content searches (not counted).
+    total: Option<usize>,
     has_more: bool,
     /// Index in `ids` of the match selected with next/previous.
     current: Option<usize>,
@@ -107,19 +136,36 @@ pub enum State<'a> {
         current: Option<usize>,
         total: usize,
     },
-    Failed(&'a str),
+    /// The matches of a content search, not counted: `count` loaded, `more` if others follow.
+    Found {
+        current: Option<usize>,
+        count: usize,
+        more: bool,
+    },
+    /// Content: the text is typed, Enter searches it.
+    Ready,
+    /// The content search was stopped before its first answer.
+    Stopped,
+    /// The error; `inline` (content searches, e.g. an invalid regex): shown in the bar.
+    Failed {
+        error: &'a str,
+        inline: bool,
+    },
 }
 
 #[derive(Debug, Default)]
 pub struct SearchBox {
     open: bool,
     text: String,
+    options: Options,
+    /// The content search was stopped before its first answer.
+    stopped: bool,
     /// The field takes the keyboard on the next frame.
     focus: bool,
-    /// When the text typed is to be searched.
+    /// When the text typed is to be searched; `INFINITY`: on Enter (content).
     due: Option<f64>,
     /// This query runs again (log read again).
-    rerun: Option<String>,
+    rerun: Option<Query>,
     /// The next page of ids is asked for.
     more: bool,
     /// When the asked page arrives, "next" moves onto its first id.
@@ -139,6 +185,15 @@ impl SearchBox {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    pub fn options(&self) -> Options {
+        self.options
+    }
+
+    /// True while a content search runs: the bar shows a spinner and "Stop".
+    pub fn running(&self) -> bool {
+        self.job.as_ref().is_some_and(|j| j.query.options.content)
     }
 
     /// Ctrl+F: opens the bar and gives the field the keyboard. `before`: what is selected now,
@@ -168,6 +223,8 @@ impl SearchBox {
         let before = self.before.take().filter(|_| self.open);
         *self = Self {
             next: self.next,
+            // The toggles stay as they were for the next search.
+            options: self.options,
             cancel: std::mem::take(&mut self.cancel),
             ..Self::default()
         };
@@ -181,23 +238,62 @@ impl SearchBox {
             return;
         }
         self.text = text;
-        if valid(&self.text) {
-            self.due = Some(now + DEBOUNCE);
-        } else {
+        self.schedule(now);
+    }
+
+    /// The toggles changed at time `now`: the matches of the old options are dropped, the text
+    /// is searched again (content: on Enter).
+    pub fn set_options(&mut self, options: Options, now: f64) {
+        if options == self.options {
+            return;
+        }
+        self.options = options;
+        self.reset();
+        self.schedule(now);
+    }
+
+    /// "Stop" (or the repo/tab changed): cancels the content search running. False if none ran.
+    pub fn stop(&mut self) -> bool {
+        if !self.running() {
+            return false;
+        }
+        self.forget();
+        self.more = false;
+        self.advance = false;
+        self.stopped = self.found.is_none();
+        true
+    }
+
+    /// When the text is to be searched: after [`DEBOUNCE`], on Enter for content. A text that
+    /// cannot be searched removes the previous matches at once.
+    fn schedule(&mut self, now: f64) {
+        self.stopped = false;
+        if !valid(&self.text) {
             self.due = None;
             self.reset();
+        } else if self.options.content {
+            self.due = Some(f64::INFINITY);
+        } else {
+            self.due = Some(now + DEBOUNCE);
         }
     }
 
-    /// The log was read again: the query searched so far runs again.
+    /// The log was read again: the query searched so far runs again (not a content search:
+    /// it is slow and holds the session, its matches stay).
     pub fn refresh(&mut self) {
         let query = self.found.as_ref().map(|f| &f.query);
-        self.rerun = query.or(self.job.as_ref().map(|j| &j.query)).cloned();
+        self.rerun = query
+            .or(self.job.as_ref().map(|j| &j.query))
+            .filter(|q| !q.options.content)
+            .cloned();
     }
 
-    /// Seconds to wait before the typed text is due, to repaint then.
+    /// Seconds to wait before the typed text is due, to repaint then (none while it waits for
+    /// Enter).
     pub fn wait(&self, now: f64) -> Option<f64> {
-        self.due.map(|due| (due - now).max(0.0))
+        self.due
+            .filter(|due| due.is_finite())
+            .map(|due| (due - now).max(0.0))
     }
 
     /// The request to send at time `now`, if any. Called on every frame.
@@ -205,7 +301,11 @@ impl SearchBox {
         let (query, skip) = if self.due.is_some_and(|due| due <= now) {
             self.due = None;
             self.reset();
-            (self.text.clone(), 0)
+            let query = Query {
+                text: self.text.clone(),
+                options: self.options,
+            };
+            (query, 0)
         } else if self.due.is_none()
             && let Some(query) = self.rerun.take()
         {
@@ -220,18 +320,24 @@ impl SearchBox {
         } else {
             return None;
         };
+        self.stopped = false;
         let seq = self.next;
         self.next += 1;
+        let Options {
+            content,
+            regex,
+            ignore_case,
+        } = query.options;
         let params = crate::params(RepoSearchParams {
-            query: query.clone(),
-            fields: None,
+            query: query.text.clone(),
+            fields: content.then(|| vec![SearchField::Content]),
             path: None,
             all: true,
             stashes: true,
             skip,
             limit: Some(PAGE),
-            regex: false,
-            ignore_case: false,
+            regex: content && regex,
+            ignore_case: content && ignore_case,
         });
         self.job = Some(Job {
             seq,
@@ -272,8 +378,7 @@ impl SearchBox {
                 Ok(page) => {
                     found.set = page.ids.iter().copied().collect();
                     found.ids = page.ids;
-                    // `None` only for content searches (S61), not sent yet.
-                    found.total = page.total.unwrap_or(found.ids.len());
+                    found.total = page.total;
                     found.has_more = page.has_more;
                     match previous.filter(|p| p.query == found.query) {
                         // The same query again (log read again): the selection does not move.
@@ -300,7 +405,7 @@ impl SearchBox {
                 found.ids.truncate(job.skip);
                 found.set.extend(page.ids.iter().copied());
                 found.ids.extend(page.ids);
-                found.total = page.total.unwrap_or(found.ids.len());
+                found.total = page.total;
                 found.has_more = page.has_more;
                 found.error = None;
                 if advance {
@@ -321,6 +426,10 @@ impl SearchBox {
     /// at once.
     pub fn next(&mut self) -> Option<Oid> {
         self.keep();
+        if self.due.is_none() && self.unsearched() {
+            // Stopped: Enter searches again.
+            self.due = Some(f64::NEG_INFINITY);
+        }
         if self.due.is_some() {
             self.due = Some(f64::NEG_INFINITY);
             return None;
@@ -349,6 +458,14 @@ impl SearchBox {
         let index = found.current?.checked_sub(1)?;
         found.current = Some(index);
         found.ids.get(index).copied()
+    }
+
+    /// True if the text with its options can be searched and is neither searched nor running.
+    fn unsearched(&self) -> bool {
+        let same = |q: &Query| q.text == self.text && q.options == self.options;
+        valid(&self.text)
+            && self.job.is_none()
+            && !self.found.as_ref().is_some_and(|f| same(&f.query))
     }
 
     pub fn can_next(&self) -> bool {
@@ -387,21 +504,35 @@ impl SearchBox {
     }
 
     pub fn state(&self) -> State<'_> {
-        if self.due.is_some() {
-            return State::Searching;
+        match self.due {
+            Some(due) if due == f64::INFINITY => return State::Ready,
+            Some(_) => return State::Searching,
+            None => {}
         }
         match &self.found {
+            None if self.stopped => State::Stopped,
             None if valid(&self.text) => State::Searching,
             None => State::Idle,
             Some(Found {
                 error: Some(e),
                 ids,
+                query,
                 ..
-            }) if ids.is_empty() => State::Failed(e),
-            Some(f) if f.total == 0 => State::NoMatches,
-            Some(f) => State::Matches {
-                current: f.current,
-                total: f.total,
+            }) if ids.is_empty() => State::Failed {
+                error: e,
+                inline: query.options.content,
+            },
+            Some(f) if f.ids.is_empty() && f.total.unwrap_or(0) == 0 => State::NoMatches,
+            Some(f) => match f.total {
+                Some(total) => State::Matches {
+                    current: f.current,
+                    total,
+                },
+                None => State::Found {
+                    current: f.current,
+                    count: f.ids.len(),
+                    more: f.has_more,
+                },
             },
         }
     }
@@ -456,6 +587,14 @@ impl Tab {
             }
             Action::Text(text, now) => {
                 repo.search.edit(text, now);
+                None
+            }
+            Action::Options(options, now) => {
+                repo.search.set_options(options, now);
+                None
+            }
+            Action::Stop => {
+                repo.search.stop();
                 None
             }
             Action::Next => repo.search.next(),
@@ -521,6 +660,18 @@ impl Tab {
                 .insert(ticket, Request::Search(generation, want.seq));
             if let Some(repo) = &mut self.repo {
                 repo.search.sent(want.seq, ticket);
+            }
+        }
+    }
+
+    /// Cancels the content search running, if any (the repo or the tab changes: it would hold
+    /// the session).
+    pub(crate) fn stop_search(&mut self) {
+        if let Some(repo) = &mut self.repo
+            && repo.search.stop()
+        {
+            for ticket in repo.search.take_cancel() {
+                self.executor.cancel(ticket);
             }
         }
     }

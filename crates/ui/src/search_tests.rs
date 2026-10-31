@@ -159,7 +159,13 @@ fn stale_answers_are_ignored_and_cancelled() {
     b.edit("fix".into(), 5.0);
     let want = b.want(6.0).unwrap();
     assert_eq!(b.receive(want.seq, Err("boom".into())), None);
-    assert_eq!(b.state(), State::Failed("boom"));
+    assert_eq!(
+        b.state(),
+        State::Failed {
+            error: "boom",
+            inline: false
+        }
+    );
 }
 
 #[test]
@@ -337,4 +343,235 @@ fn enter_or_a_click_on_a_result_keeps_it() {
     // Opened again after being kept: the new selection is remembered.
     b.open(Before::Stash(oid(7)));
     assert_eq!(b.close(), Some(Before::Stash(oid(7))));
+}
+
+// ---- Content (S61) ----
+
+const CONTENT: Options = Options {
+    content: true,
+    regex: false,
+    ignore_case: false,
+};
+
+/// A linear history of commits `1..=n` on `main`: commit `k` adds `f<k>.txt`, with `Needle <k>` in
+/// it when `k` is a multiple of `every`, `hay` otherwise.
+fn content_repo(n: u64, every: u64) -> (Registry, Session) {
+    use project_domain::{Change, ChangedFile, RepoPath};
+    let mut repo = MemoryBackend::new();
+    let zero = Oid::from_bytes([0; Oid::LEN]);
+    for k in 1..=n {
+        let sig = Signature {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+            time: 1_700_000_000 + i64::try_from(k).unwrap() * 60,
+            offset_min: 0,
+        };
+        repo.insert_commit(Commit {
+            id: oid(k),
+            parents: if k > 1 { vec![oid(k - 1)] } else { Vec::new() },
+            author: sig.clone(),
+            committer: sig,
+            summary: format!("commit {k}"),
+            body: String::new(),
+        });
+        let blob = oid(100_000 + k);
+        let text = if k % every == 0 {
+            format!("Needle {k}\n")
+        } else {
+            "hay\n".into()
+        };
+        repo.set_blob(blob, text);
+        repo.set_changes(
+            oid(k),
+            vec![ChangedFile {
+                path: RepoPath::from(format!("f{k}.txt").as_str()),
+                change: Change::Added,
+                original: None,
+                score: None,
+                old_mode: 0,
+                new_mode: 0o100_644,
+                old_oid: zero,
+                new_oid: blob,
+            }],
+        );
+    }
+    repo.set_branch("main", oid(n));
+    repo.set_head_branch("main");
+    let mut opener = MemoryOpener::new();
+    opener.insert("r", repo);
+    let registry = Registry::builtin();
+    let mut session = Session::new(Arc::new(opener));
+    registry
+        .run("repo.open", &mut session, json!({ "path": "r" }))
+        .unwrap();
+    (registry, session)
+}
+
+/// Opens the bar with `options`, types `text` and presses Enter.
+fn content_search(b: &mut SearchBox, options: Options, text: &str) {
+    b.open(Before::Nothing);
+    b.set_options(options, 0.0);
+    b.edit(text.into(), 0.0);
+    b.next();
+}
+
+#[test]
+fn the_toggles_go_into_the_params_and_content_waits_for_enter() {
+    let mut b = SearchBox::default();
+    b.open(Before::Nothing);
+    // Regex and Aa without Content are not sent.
+    b.set_options(
+        Options {
+            content: false,
+            regex: true,
+            ignore_case: true,
+        },
+        0.0,
+    );
+    b.edit("fix".into(), 0.0);
+    let want = b.want(DEBOUNCE).unwrap();
+    assert_eq!(want.params["query"], "fix");
+    assert!(want.params.get("in").is_none());
+    assert!(want.params.get("regex").is_none() && want.params.get("ignore_case").is_none());
+
+    // Content on: the text is searched only on Enter, the old matches go.
+    let options = Options {
+        content: true,
+        regex: true,
+        ignore_case: true,
+    };
+    b.set_options(options, 1.0);
+    assert_eq!(b.state(), State::Ready);
+    assert_eq!(b.want(100.0), None, "no debounce for content");
+    assert_eq!(b.wait(100.0), None, "nothing to repaint for");
+    b.edit("ne+dle".into(), 100.0);
+    assert_eq!(b.want(200.0), None);
+    assert_eq!(b.next(), None);
+    let want = b.want(200.0).unwrap();
+    assert_eq!(want.params["query"], "ne+dle");
+    assert_eq!(want.params["in"], json!(["content"]));
+    assert_eq!(want.params["regex"], true);
+    assert_eq!(want.params["ignore_case"], true);
+    assert_eq!(b.state(), State::Searching);
+    // The toggles stay after closing.
+    b.close();
+    assert_eq!(b.options(), options);
+}
+
+#[test]
+fn content_matches_are_counted_without_a_total() {
+    let (r, mut s) = content_repo(210, 1);
+    let mut b = SearchBox::default();
+    content_search(&mut b, CONTENT, "Needle");
+    assert_eq!(step(&r, &mut s, &mut b, 0.0), Some(oid(210)));
+    assert!(!b.running());
+    assert_eq!(
+        b.state(),
+        State::Found {
+            current: Some(0),
+            count: PAGE,
+            more: true
+        }
+    );
+    b.load_more();
+    step(&r, &mut s, &mut b, 0.0);
+    assert_eq!(
+        b.state(),
+        State::Found {
+            current: Some(0),
+            count: 210,
+            more: false
+        }
+    );
+    // The log read again does not run the slow search again.
+    b.refresh();
+    assert_eq!(b.want(1000.0), None);
+    assert!(b.is_match(oid(1)));
+
+    // Literal: case-sensitive unless "Aa"; no match is "No matches".
+    let (r, mut s) = content_repo(10, 5);
+    content_search(&mut b, CONTENT, "needle");
+    step(&r, &mut s, &mut b, 0.0);
+    assert_eq!(b.state(), State::NoMatches);
+    let ignore_case = Options {
+        ignore_case: true,
+        ..CONTENT
+    };
+    content_search(&mut b, ignore_case, "needle");
+    assert_eq!(step(&r, &mut s, &mut b, 0.0), Some(oid(10)));
+    assert_eq!(
+        b.state(),
+        State::Found {
+            current: Some(0),
+            count: 2,
+            more: false
+        }
+    );
+    assert!(b.is_match(oid(5)) && !b.is_match(oid(4)));
+}
+
+#[test]
+fn an_invalid_regex_is_shown_in_the_bar() {
+    let (r, mut s) = content_repo(3, 1);
+    let mut b = SearchBox::default();
+    let regex = Options {
+        regex: true,
+        ..CONTENT
+    };
+    content_search(&mut b, regex, "Ne(");
+    assert_eq!(step(&r, &mut s, &mut b, 0.0), None);
+    let State::Failed { error, inline } = b.state() else {
+        panic!("{:?}", b.state());
+    };
+    assert!(inline, "content errors are shown in the bar");
+    assert!(error.contains("regex"), "{error}");
+    // A valid one replaces the error.
+    b.edit("Ne+dle [0-9]".into(), 1.0);
+    b.next();
+    assert_eq!(step(&r, &mut s, &mut b, 1.0), Some(oid(3)));
+}
+
+#[test]
+fn a_new_search_stop_or_close_cancels_the_running_one() {
+    let (r, mut s) = content_repo(10, 2);
+    let mut b = SearchBox::default();
+    content_search(&mut b, CONTENT, "Needle");
+    let (first, answer) = send(&r, &mut s, &mut b, 0.0);
+    assert!(b.running());
+
+    // A new text searched with Enter: the running one is cancelled, its answer discarded.
+    b.edit("Needle 4".into(), 1.0);
+    assert_eq!(b.take_cancel(), Vec::<Ticket>::new(), "not while typing");
+    b.next();
+    let (second, _) = send(&r, &mut s, &mut b, 1.0);
+    assert_eq!(b.take_cancel(), vec![Ticket::for_test(first)]);
+    assert_eq!(b.receive(first, answer), None, "stale");
+
+    // "Stop": cancelled, "Stopped" until the next search; its answer is discarded.
+    assert!(b.stop());
+    assert!(!b.running());
+    assert!(!b.stop(), "only once");
+    assert_eq!(b.take_cancel(), vec![Ticket::for_test(second)]);
+    assert_eq!(b.state(), State::Stopped);
+    assert_eq!(
+        b.receive(second, Err("cancelled".into())),
+        None,
+        "discarded"
+    );
+    assert_eq!(b.state(), State::Stopped);
+
+    // Enter searches again; closing the bar cancels it.
+    b.next();
+    let (third, _) = send(&r, &mut s, &mut b, 2.0);
+    assert_eq!(b.state(), State::Searching);
+    b.close();
+    assert_eq!(b.take_cancel(), vec![Ticket::for_test(third)]);
+    assert!(!b.running());
+
+    // A message search is not stopped by "Stop" (it is quick).
+    b.open(Before::Nothing);
+    b.set_options(Options::default(), 3.0);
+    b.edit("commit".into(), 3.0);
+    let _ = send(&r, &mut s, &mut b, 10.0);
+    assert!(!b.stop());
 }

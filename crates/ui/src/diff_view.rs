@@ -182,6 +182,9 @@ fn toolbar(
                     .context_menu(|ui| {
                         crate::view::launch_entries(ui, &target.path, deleted, actions);
                     });
+                if matches!(pane, Pane::Loaded(_, doc) if doc.lfs) {
+                    crate::view::lfs_badge(ui);
+                }
                 // The description whole or not at all: a lone "…" says nothing.
                 let description = egui::WidgetText::from(egui::RichText::new(text).weak())
                     .into_galley(

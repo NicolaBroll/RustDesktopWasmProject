@@ -30,11 +30,12 @@ stage-staged-title = In stage
 stage-unstage-all = Togli tutto dallo stage
 stage-unstage-all-help = Toglie dallo stage tutti i file di questa lista; il worktree non cambia
 stage-unstaged-title = Non in stage
-stage-stage-all = Stage di tutto
+stage-stage-all = Metti tutto in stage
 stage-stage-all-help = Mette in stage tutti i file di questa lista
 stage-section-title = { $title } ({ $n })
 stage-discard-all = Scarta tutto…
 stage-discard-all-help = Scarta le modifiche fuori stage di tutti i file tracciati di questa lista (chiede conferma, si può annullare). I file non tracciati non si toccano
+stage-more-hint = Altre azioni su questa lista
 stage-empty-staged = Nessun file in stage.
 stage-empty-unstaged = Nessuna modifica fuori dallo stage.
 stage-stage = Stage
@@ -64,3 +65,11 @@ stage-tooltip-right-discard = Clic destro: altre azioni, anche scartare le modif
 stage-tooltip-right = Clic destro: altre azioni
 stage-blame-untracked = Il file non è ancora tracciato: il blame vuole un file in HEAD o nell'indice
 stage-blame-deleted = Il file è eliminato: non c'è niente su cui fare il blame
+stage-delete-file = Elimina…
+stage-delete-file-help = Elimina questo file non tracciato (chiede conferma; si tiene un backup e «Annulla» lo rimette)
+stage-delete-untracked = { $n ->
+    [one] Elimina il file non tracciato…
+   *[other] Elimina tutti i { $n } file non tracciati…
+}
+stage-delete-untracked-help = Elimina i file non tracciati di questa lista (chiede conferma; si tiene un backup e «Annulla» li rimette). I file tracciati non si toccano
+stage-tooltip-right-delete = Clic destro: altre azioni, anche eliminare il file

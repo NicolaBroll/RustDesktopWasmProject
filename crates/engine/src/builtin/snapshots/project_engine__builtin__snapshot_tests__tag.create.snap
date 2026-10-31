@@ -29,6 +29,17 @@ expression: out
     },
     {
       "kind": "LocalBranch",
+      "name": "refs/heads/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": {
+        "ahead": 0,
+        "behind": 0,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
       "name": "refs/heads/main",
       "tag_object": null,
       "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
@@ -43,7 +54,11 @@ expression: out
       "name": "refs/heads/topic",
       "tag_object": null,
       "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
-      "upstream": null
+      "upstream": {
+        "ahead": 1,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
     },
     {
       "kind": "RemoteBranch",

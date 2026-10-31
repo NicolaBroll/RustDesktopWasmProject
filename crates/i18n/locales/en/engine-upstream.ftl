@@ -1,0 +1,9 @@
+engine-upstream-not-remote-branch = `{ $spec }` is not a remote branch (`refs/remotes/<remote>/<branch>`): fetch it first, or check the name
+engine-upstream-no-remote = `{ $spec }` belongs to no configured remote
+engine-upstream-ambiguous = `{ $spec }` could belong to more than one remote ({ $remotes }): git cannot tell which one, nothing changed
+engine-upstream-empty = `upstream` is empty: give `<remote>/<branch>`, or `null` to remove the upstream
+engine-upstream-changed = the upstream of `{ $name }` changed in the meantime (expected { $expected }, now { $now }): nothing changed
+engine-upstream-not-written = the upstream of `{ $name }` could not be written, the previous one was put back: { $error }
+engine-upstream-partly-written = the upstream of `{ $name }` was only partly written ({ $error }) and the previous one could not be put back ({ $restore }); the previous values were: { $entries }
+engine-upstream-reread-differs = after the write the upstream of `{ $name }` is { $now } instead of { $expected }: another process changed the configuration at the same time
+engine-upstream-reread-failed = the upstream of `{ $name }` was written but cannot be re-read: { $error }

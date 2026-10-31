@@ -1,0 +1,92 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/clean-1",
+  "bytes": 19,
+  "can_redo": false,
+  "can_undo": true,
+  "commit": "9b5cc54191275a7f296fe9d505b350cc9fc5536f",
+  "deleted": [
+    "note.txt"
+  ],
+  "dirs": [],
+  "files": [
+    {
+      "mode": 33188,
+      "path": "note.txt",
+      "size": 19
+    }
+  ],
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "path": "note.txt"
+    },
+    "key": "engine-journal-clean-one",
+    "text": "Delete “note.txt”"
+  },
+  "status": {
+    "entries": [
+      {
+        "index": "Modified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "01ec15ea7c697801b681b130ce80dd309c16db62",
+            "oid_index": "bcdf3a4c768f92d30c43e7b011b2bb4b1a2c3506",
+            "submodule": null
+          }
+        },
+        "path": "README.md",
+        "worktree": "Modified"
+      },
+      {
+        "index": "Added",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 0,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "0000000000000000000000000000000000000000",
+            "oid_index": "01eab141a7d7a84cf61ca1c5df7291b4aea79d9b",
+            "submodule": null
+          }
+        },
+        "path": "docs/guide.md",
+        "worktree": "Unmodified"
+      },
+      {
+        "index": "Unmodified",
+        "kind": {
+          "Ordinary": {
+            "mode_head": 33188,
+            "mode_index": 33188,
+            "mode_worktree": 33188,
+            "oid_head": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "oid_index": "e9c0628467d997c984596f4235c6a7eb0159b975",
+            "submodule": null
+          }
+        },
+        "path": "src/lib.rs",
+        "worktree": "Modified"
+      }
+    ],
+    "head": {
+      "Branch": {
+        "name": "main",
+        "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7"
+      }
+    },
+    "operation": null,
+    "upstream": {
+      "ahead": 1,
+      "behind": 0,
+      "name": "origin/main"
+    }
+  },
+  "warnings": []
+}

@@ -50,6 +50,30 @@ pub(crate) enum Action {
     DeleteTag(String),
     /// Confirms the pending tag deletion: resends with `"confirm": true`.
     ConfirmDeleteTag,
+    /// The "Track" checkbox of the new-branch dialog (from a remote branch) changed.
+    Track(bool),
+    /// "Check out" on a remote branch (full name, `refs/remotes/...`): switches to the local
+    /// branch that tracks it, creating it if needed (see [`crate::tracking`]).
+    CheckoutRemote(String),
+    /// Opens the "Set upstream" window for the local branch (short name).
+    SetUpstream(String),
+    /// The filter of the "Set upstream" window changed.
+    UpstreamFilter(String),
+    /// A remote branch (full name) picked in the "Set upstream" window.
+    UpstreamPick(String),
+    /// Submits the "Set upstream" window.
+    SubmitUpstream,
+    /// Removes the upstream of the local branch (short name): no confirmation, it is undoable.
+    UnsetUpstream(String),
+    /// "Check out this commit" (S55): with `ask` the detached HEAD confirmation opens first,
+    /// otherwise `commit.checkout` starts at once.
+    CheckoutCommit { id: Oid, ask: bool },
+    /// The "Don't ask again" checkbox of the detached HEAD confirmation changed.
+    DetachDontAsk(bool),
+    /// "Check out" in the detached HEAD confirmation.
+    ConfirmCheckoutCommit,
+    /// "Create branch here…" with a detached HEAD: the new-branch dialog without `start`.
+    CreateBranchHere,
     /// Closes the open branch dialog without sending anything.
     CloseDialog,
 }
@@ -65,6 +89,10 @@ pub enum Op {
     CreateTag,
     /// `tag.delete`: always confirmed, like a branch with unmerged commits.
     DeleteTag,
+    /// `branch.set_upstream`: sets or removes the upstream.
+    SetUpstream,
+    /// `commit.checkout`: a commit with detached HEAD (S55).
+    CheckoutCommit,
 }
 
 impl Op {
@@ -77,6 +105,8 @@ impl Op {
             Op::Rename => "branch.rename",
             Op::CreateTag => "tag.create",
             Op::DeleteTag => "tag.delete",
+            Op::SetUpstream => "branch.set_upstream",
+            Op::CheckoutCommit => "commit.checkout",
         }
     }
 }
@@ -89,6 +119,8 @@ pub struct Start {
     pub target: Oid,
     /// How to show it in the dialog, e.g. `origin/main` or `commit 1a2b3c4`.
     pub label: String,
+    /// The full name (`refs/remotes/...`) when it is a remote branch: the new branch can track it.
+    pub remote: Option<String>,
 }
 
 impl Start {
@@ -106,9 +138,12 @@ impl Start {
                 .to_owned(),
             RefKind::LocalBranch | RefKind::Tag | RefKind::Stash => String::new(),
         };
+        let remote = (info.kind == RefKind::RemoteBranch && !label.ends_with("/HEAD"))
+            .then(|| info.name.clone());
         let start = Start {
             target: info.target,
             label,
+            remote,
         };
         (start, name)
     }
@@ -118,6 +153,7 @@ impl Start {
         Start {
             target: id,
             label: tr!("branch-start-commit", id = id.short()),
+            remote: None,
         }
     }
 }
@@ -130,6 +166,9 @@ pub enum NameKind {
     Rename(String),
     /// A new tag on the commit of `Start`.
     Tag(Start),
+    /// A new branch at the detached HEAD, shown at that commit: `branch.create` without `start`,
+    /// then checked out (S55).
+    Here(Oid),
 }
 
 /// The dialog to type the name of a branch.
@@ -144,9 +183,21 @@ pub struct NameDialog {
     pub error: Option<String>,
     /// The running command.
     pub running: Option<Running>,
+    /// "Track `<remote>/<branch>`": only for a new branch from a remote branch, on by default.
+    pub track: bool,
+    /// Switch to the new branch once created ("Check out" on a remote branch whose name is taken).
+    pub checkout_after: bool,
 }
 
 impl NameDialog {
+    /// The remote branch the new branch can track (full name), if the dialog offers it.
+    pub fn trackable(&self) -> Option<&str> {
+        match &self.kind {
+            NameKind::Create(start) => start.remote.as_deref(),
+            NameKind::Rename(_) | NameKind::Tag(_) | NameKind::Here(_) => None,
+        }
+    }
+
     /// The name to send: without surrounding spaces.
     fn trimmed(&self) -> &str {
         self.name.trim()
@@ -159,14 +210,14 @@ impl NameDialog {
         self.running.is_none()
             && !name.is_empty()
             && match &self.kind {
-                NameKind::Create(_) | NameKind::Tag(_) => true,
+                NameKind::Create(_) | NameKind::Tag(_) | NameKind::Here(_) => true,
                 NameKind::Rename(old) => name != old,
             }
     }
 
     fn op(&self) -> Op {
         match self.kind {
-            NameKind::Create(_) => Op::Create,
+            NameKind::Create(_) | NameKind::Here(_) => Op::Create,
             NameKind::Rename(_) => Op::Rename,
             NameKind::Tag(_) => Op::CreateTag,
         }
@@ -175,9 +226,24 @@ impl NameDialog {
     fn params(&self) -> Value {
         let name = self.trimmed();
         match &self.kind {
-            NameKind::Create(start) => params(BranchCreateParams {
+            NameKind::Create(start) => match start.remote.as_ref().filter(|_| self.track) {
+                // The full remote ref: never ambiguous with a tag or a local branch.
+                Some(remote) => params(BranchCreateParams {
+                    name: name.to_owned(),
+                    start: Some(remote.clone()),
+                    track: true,
+                }),
+                None => params(BranchCreateParams {
+                    name: name.to_owned(),
+                    start: Some(start.target.to_string()),
+                    track: false,
+                }),
+            },
+            // Without `start`: the engine creates it where HEAD is now.
+            NameKind::Here(_) => params(BranchCreateParams {
                 name: name.to_owned(),
-                start: Some(start.target.to_string()),
+                start: None,
+                track: false,
             }),
             NameKind::Rename(old) => params(BranchRenameParams {
                 name: old.clone(),
@@ -197,7 +263,9 @@ impl NameDialog {
     /// The description of the operation for the status bar.
     pub fn label(&self) -> String {
         match &self.kind {
-            NameKind::Create(_) => tr!("branch-create-label", name = self.trimmed()),
+            NameKind::Create(_) | NameKind::Here(_) => {
+                tr!("branch-create-label", name = self.trimmed())
+            }
             NameKind::Rename(old) => tr!("branch-rename-label", name = old),
             NameKind::Tag(_) => tr!("branch-tag-label", name = self.trimmed()),
         }
@@ -244,14 +312,23 @@ pub enum Dialog {
     Delete(DeleteDialog),
     DeleteTag(DeleteTagDialog),
     Refused(Refused),
+    /// The "Set upstream" window.
+    Upstream(crate::tracking::UpstreamDialog),
+    /// The confirmation of "Check out this commit" (S55).
+    Detach(crate::detach::DetachDialog),
 }
 
 /// Commands on branches: one dialog at a time, one command at a time.
 #[derive(Debug, Default)]
 pub struct BranchBox {
-    dialog: Option<Dialog>,
-    /// The checkout in progress, short name (it has no dialog).
-    checkout: Option<String>,
+    pub(crate) dialog: Option<Dialog>,
+    /// The checkout in progress, short name of the branch or `commit <id>` (it has no dialog).
+    pub(crate) checkout: Option<String>,
+    /// The tracking branch being created by "Check out" on a remote branch, short name (no
+    /// dialog): once created it is checked out.
+    pub(crate) track: Option<String>,
+    /// The upstream removal in progress, short name of the branch (no dialog).
+    pub(crate) unset: Option<String>,
 }
 
 /// What came back from a `branch.*` command.
@@ -282,6 +359,8 @@ pub struct Outcome {
     /// A problem after the successful operation (refs or status not reloaded).
     pub warning: Option<String>,
     pub history: History,
+    /// The branch (short name) to check out now: created by "Check out" on a remote branch.
+    pub then_checkout: Option<String>,
 }
 
 impl BranchBox {
@@ -290,7 +369,7 @@ impl BranchBox {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Delete(delete) => matches!(delete.phase, Phase::Confirm { .. }),
             Dialog::DeleteTag(delete) => matches!(delete.phase, Phase::Confirm { .. }),
-            Dialog::Name(_) | Dialog::Refused(_) => true,
+            Dialog::Name(_) | Dialog::Refused(_) | Dialog::Upstream(_) | Dialog::Detach(_) => true,
         })
     }
 
@@ -300,8 +379,11 @@ impl BranchBox {
     }
 
     /// True if there is a dialog or a branch command in progress: no other one is opened.
-    fn busy(&self) -> bool {
-        self.dialog.is_some() || self.checkout.is_some()
+    pub(crate) fn busy(&self) -> bool {
+        self.dialog.is_some()
+            || self.checkout.is_some()
+            || self.track.is_some()
+            || self.unset.is_some()
     }
 
     /// Opens the dialog for a new branch from `start`, with the proposed name `name`.
@@ -319,7 +401,7 @@ impl BranchBox {
         self.open_name(NameKind::Rename(name.clone()), name)
     }
 
-    fn open_name(&mut self, kind: NameKind, name: String) -> bool {
+    pub(crate) fn open_name(&mut self, kind: NameKind, name: String) -> bool {
         if self.busy() {
             return false;
         }
@@ -329,8 +411,19 @@ impl BranchBox {
             message: String::new(),
             error: None,
             running: None,
+            track: true,
+            checkout_after: false,
         }));
         true
+    }
+
+    /// The "Track" checkbox of the name dialog changed.
+    pub fn set_track(&mut self, track: bool) {
+        if let Some(Dialog::Name(dialog)) = &mut self.dialog
+            && dialog.running.is_none()
+        {
+            dialog.track = track;
+        }
     }
 
     /// The text of the name dialog changed.
@@ -458,7 +551,8 @@ impl BranchBox {
             Some(Dialog::Name(dialog)) => dialog.running.is_none(),
             Some(Dialog::Delete(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteTag(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
-            Some(Dialog::Refused(_)) => true,
+            Some(Dialog::Refused(_) | Dialog::Detach(_)) => true,
+            Some(Dialog::Upstream(dialog)) => dialog.running.is_none(),
             None => false,
         };
         if closable {
@@ -476,8 +570,10 @@ impl BranchBox {
         expected: Option<String>,
     ) -> Received {
         match op {
+            Op::Create if self.track.is_some() => self.receive_track(result, kind),
+            Op::SetUpstream => self.receive_upstream(result, kind),
             Op::Create | Op::Rename | Op::CreateTag => self.receive_name(op, result),
-            Op::Checkout => self.receive_checkout(result, kind, detail),
+            Op::Checkout | Op::CheckoutCommit => self.receive_checkout(op, result, kind, detail),
             Op::Delete => self.receive_delete(result, kind, detail),
             Op::DeleteTag => self.receive_delete_tag(result, kind, detail, expected),
         }
@@ -499,29 +595,32 @@ impl BranchBox {
                 Received::Inline
             }
             Ok(value) => {
+                let checkout_after = dialog.checkout_after;
                 self.dialog = None;
-                let outcome =
-                    match op {
-                        Op::Create => crate::decode::<BranchCreateResult>(op.command(), value)
-                            .map(create_outcome),
-                        Op::CreateTag => crate::decode::<TagCreateResult>(op.command(), value)
-                            .map(tag_create_outcome),
-                        _ => crate::decode::<BranchRenameResult>(op.command(), value)
-                            .map(rename_outcome),
-                    };
+                let outcome = match op {
+                    Op::Create => crate::decode::<BranchCreateResult>(op.command(), value)
+                        .map(|r| create_outcome(r, checkout_after)),
+                    Op::CreateTag => crate::decode::<TagCreateResult>(op.command(), value)
+                        .map(tag_create_outcome),
+                    _ => {
+                        crate::decode::<BranchRenameResult>(op.command(), value).map(rename_outcome)
+                    }
+                };
                 done(outcome)
             }
         }
     }
 
+    /// The answer of `branch.checkout` or `commit.checkout`: the same refusals and dialog.
     fn receive_checkout(
         &mut self,
+        op: Op,
         result: Result<Value, String>,
         kind: Option<ErrorKind>,
         detail: Option<String>,
     ) -> Received {
         let Some(name) = self.checkout.take() else {
-            return unexpected(Op::Checkout);
+            return unexpected(op);
         };
         match result {
             Err(_) if kind == Some(ErrorKind::CheckoutConflict) => {
@@ -549,6 +648,7 @@ impl BranchBox {
                     reload: !refused,
                 }
             }
+            Ok(value) if op == Op::CheckoutCommit => done(crate::detach::outcome(value)),
             Ok(value) => done(
                 crate::decode::<BranchCheckoutResult>(Op::Checkout.command(), value)
                     .map(checkout_outcome),
@@ -640,7 +740,7 @@ impl BranchBox {
     }
 }
 
-fn unexpected(op: Op) -> Received {
+pub(crate) fn unexpected(op: Op) -> Received {
     Received::Failed {
         message: tr!("common-unexpected-response", command = op.command()),
         reload: true,
@@ -648,7 +748,7 @@ fn unexpected(op: Op) -> Received {
 }
 
 /// A result that cannot be read: the operation is probably done, everything is reloaded.
-fn done(outcome: Result<Outcome, String>) -> Received {
+pub(crate) fn done(outcome: Result<Outcome, String>) -> Received {
     match outcome {
         Ok(outcome) => Received::Done(Box::new(outcome)),
         Err(message) => Received::Failed {
@@ -674,6 +774,7 @@ fn tag_create_outcome(r: TagCreateResult) -> Outcome {
         status: None,
         warning: r.refs_error.map(refs_warning),
         history: r.journal.into(),
+        then_checkout: None,
     }
 }
 
@@ -698,22 +799,31 @@ fn tag_delete_outcome(r: TagDeleteResult) -> Outcome {
         status: None,
         warning: r.refs_error.map(refs_warning),
         history: r.journal.into(),
+        then_checkout: None,
     }
 }
 
-/// The outcome of `branch.create`.
-fn create_outcome(r: BranchCreateResult) -> Outcome {
+/// The outcome of `branch.create`; with `checkout` the new branch is checked out next.
+pub(crate) fn create_outcome(r: BranchCreateResult, checkout: bool) -> Outcome {
+    let branch = branch_short(&r.branch);
+    let id = r.target.short();
+    let notice = match &r.upstream {
+        Some(upstream) => tr!(
+            "branch-created-tracking",
+            branch = branch,
+            id = id,
+            upstream = upstream
+        ),
+        None => tr!("branch-created", branch = branch, id = id),
+    };
     Outcome {
         op: Op::Create,
-        notice: tr!(
-            "branch-created",
-            branch = branch_short(&r.branch),
-            id = r.target.short()
-        ),
+        notice: notice + &messages_text(&r.warnings),
         refs: r.refs,
         status: None,
         warning: r.refs_error.map(refs_warning),
         history: r.journal.into(),
+        then_checkout: checkout.then(|| branch.to_owned()),
     }
 }
 
@@ -727,13 +837,14 @@ fn checkout_outcome(r: BranchCheckoutResult) -> Outcome {
     };
     Outcome {
         op: Op::Checkout,
-        notice: notice + &messages_text(&r.warnings),
+        notice: notice + &crate::detach::backup_text(&r.warnings, r.backup.as_deref()),
         refs: None,
         status: r.status,
         warning: r
             .status_error
             .map(|e| tr!("branch-checkout-status-error", error = e)),
         history: r.journal.into(),
+        then_checkout: None,
     }
 }
 
@@ -785,6 +896,7 @@ fn delete_outcome(r: BranchDeleteResult) -> Outcome {
         status: None,
         warning: r.refs_error.map(refs_warning),
         history: r.journal.into(),
+        then_checkout: None,
     }
 }
 
@@ -801,10 +913,11 @@ fn rename_outcome(r: BranchRenameResult) -> Outcome {
         status: None,
         warning: r.refs_error.map(refs_warning),
         history: r.journal.into(),
+        then_checkout: None,
     }
 }
 
-fn refs_warning(error: String) -> String {
+pub(crate) fn refs_warning(error: String) -> String {
     tr!("branch-refs-warning", error = error)
 }
 
@@ -955,6 +1068,21 @@ impl Tab {
                     repo.branch.close();
                 }
             }
+            Action::Track(track) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.set_track(track);
+                }
+            }
+            Action::CheckoutRemote(_)
+            | Action::SetUpstream(_)
+            | Action::UpstreamFilter(_)
+            | Action::UpstreamPick(_)
+            | Action::SubmitUpstream
+            | Action::UnsetUpstream(_) => self.apply_tracking(action),
+            Action::CheckoutCommit { .. }
+            | Action::DetachDontAsk(_)
+            | Action::ConfirmCheckoutCommit
+            | Action::CreateBranchHere => self.apply_detach(action),
         }
     }
 
@@ -987,7 +1115,8 @@ impl Tab {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                let checkout = outcome.op == Op::Checkout;
+                let checkout = matches!(outcome.op, Op::Checkout | Op::CheckoutCommit);
+                let then_checkout = outcome.then_checkout.clone();
                 // After a checkout the new HEAD is selected as soon as the log arrives.
                 if checkout && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
@@ -997,6 +1126,11 @@ impl Tab {
                 if checkout {
                     self.follow_diff();
                     self.load();
+                } else if outcome.op == Op::SetUpstream {
+                    // Only the configuration changed: the refs (with ahead/behind) came back.
+                    if !refs_read {
+                        self.submit("repo.refs", json!({}), Request::Refs(generation));
+                    }
                 } else {
                     // Usually the refs arrive with the answer: the log is enough.
                     if !refs_read {
@@ -1006,6 +1140,10 @@ impl Tab {
                         let first = repo.list.reset();
                         self.request_page(first);
                     }
+                }
+                // "Check out" on a remote branch: the tracking branch exists, now switch to it.
+                if let Some(name) = then_checkout {
+                    self.apply_branch(Action::Checkout(name));
                 }
             }
             Received::Failed { message, reload } => {

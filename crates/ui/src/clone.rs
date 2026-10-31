@@ -256,7 +256,8 @@ impl CloneBox {
         };
         let who = tr!("clone-who", url = d.fields.url.trim());
         d.failure = match kind {
-            Some(ErrorKind::Cancelled) => {
+            // A credential question cancelled: as "Cancel", the folder is put back.
+            Some(ErrorKind::Cancelled | ErrorKind::AuthCancelled) => {
                 d.cancelled = true;
                 None
             }
@@ -266,6 +267,7 @@ impl CloneBox {
                 title: tr!("clone-not-possible-title"),
                 explanation: error,
                 git: detail,
+                stash: false,
             }),
             _ => Some(Failure {
                 title: match d.kind {
@@ -274,6 +276,7 @@ impl CloneBox {
                 },
                 explanation: error,
                 git: detail,
+                stash: false,
             }),
         };
         Received::Failed

@@ -344,6 +344,13 @@ fn diffs() {
         "path",
         json!({ "id": id(4), "path": "src/lib.rs" }),
     );
+    snap(
+        &r,
+        &mut s,
+        "diff.range",
+        "",
+        json!({ "from": id(8), "to": id(9), "merge_base": true, "path": "src/graph.rs" }),
+    );
 }
 
 /// The `digest` and the first added line of `path` in the diff `diff_id`.
@@ -439,6 +446,20 @@ fn branch_and_tag_writes() {
     snap(
         &r,
         &mut s,
+        "branch.create",
+        "track",
+        json!({ "name": "graph", "start": "origin/feature/graph", "track": true }),
+    );
+    snap(
+        &r,
+        &mut s,
+        "branch.set_upstream",
+        "",
+        json!({ "name": "topic", "upstream": "origin/main" }),
+    );
+    snap(
+        &r,
+        &mut s,
         "branch.rename",
         "",
         json!({ "name": "old", "new_name": "older" }),
@@ -466,6 +487,7 @@ fn branch_and_tag_writes() {
         "",
         json!({ "name": "v0.1.0", "confirm": true }),
     );
+    snap(&r, &mut s, "commit.checkout", "", json!({ "rev": "main" }));
 }
 
 #[test]
@@ -791,5 +813,17 @@ fn clone_and_init() {
         "repo.init",
         "branch",
         json!({ "path": "new2", "branch": "trunk" }),
+    );
+}
+
+#[test]
+fn clean_untracked() {
+    let (r, mut s) = sample();
+    snap(
+        &r,
+        &mut s,
+        "worktree.clean",
+        "",
+        json!({ "paths": ["note.txt"], "confirm": true }),
     );
 }

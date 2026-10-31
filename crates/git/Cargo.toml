@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 project-domain.workspace = true
 project-engine.workspace = true
+getrandom.workspace = true
 
 # `setsid` and signals for slow commands (fetch): no controlling terminal, cancellation
 # with SIGTERM to the process group.
@@ -22,3 +23,8 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+# Its own `main`: git starts this binary as askpass (S52).
+name = "askpass"
+harness = false

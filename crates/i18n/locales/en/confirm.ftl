@@ -20,8 +20,10 @@ confirm-resolve-button = { $n ->
 }
 confirm-cancel = Cancel
 confirm-discard-title = Discard changes?
-confirm-discard-body = Unstaged changes are removed from the working tree: each file goes back to how it is in the index, that is the staged version, or the one in the last commit if nothing is staged. What is staged stays as it is; untracked files are not touched.
-confirm-discard-backup = A backup is saved before discarding (refs/project/backup/discard-…): with “Undo” in the top bar the files come back as they are now, as long as they are not modified again.
+confirm-discard-body = Unstaged changes are removed: each file goes back to its staged version, or to the last commit if nothing of it is staged. Staged changes and untracked files are not touched.
+confirm-discard-backup = “Undo” in the top bar brings the files back as they are now, as long as they are not modified again.
+confirm-discard-details = Details
+confirm-discard-details-body = Before discarding, a backup is saved in refs/project/backup/discard-…; then each file is restored from the git index (the staging area).
 confirm-discard-files = { $n ->
     [one] File:
    *[other] { $n } files:

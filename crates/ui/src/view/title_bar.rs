@@ -1,10 +1,10 @@
 //! The bar at the top of the window, VS Code style: the app icon, the "File" menu (open a repo, the
-//! recent ones), the "Help" menu (about) and, when the app draws the window frame itself, the title,
+//! recent ones), the "Help" menu (keyboard shortcuts, about) and, when the app draws the window frame itself, the title,
 //! the drag area, the minimize, maximize and close buttons and the edges to resize the window.
 
-use super::settings_view::theme_label;
 use super::*;
-use crate::settings::{self, Change, Theme};
+use crate::keys::{self, SHORTCUTS};
+use crate::settings;
 use crate::tabs;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Stroke, StrokeKind, ViewportCommand};
 
@@ -44,8 +44,6 @@ pub(crate) struct TitleBar<'a> {
     pub(crate) repo: Option<&'a RepoView>,
     pub(crate) can_pick: bool,
     pub(crate) recent: &'a [RecentRepo],
-    /// The theme setting, for the shortcut menu.
-    pub(crate) theme: Theme,
 }
 
 /// The bar in its own panel, above everything else.
@@ -63,6 +61,7 @@ pub(crate) fn title_bar_panel(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec
         .frame(frame)
         .show(ui, |ui| title_bar(ui, bar, actions));
     about_dialog(ui.ctx());
+    shortcuts_dialog(ui.ctx());
 }
 
 fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
@@ -147,6 +146,8 @@ fn title(ui: &Ui, bar: &TitleBar<'_>, bar_rect: Rect, free: Rect) {
 /// Only what is not about the repo shown: its commands are in the toolbar.
 fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-file"), |ui| {
+        // Room for the shortcut of "Settings…" after the longest item.
+        ui.set_min_width(190.0);
         if bar.can_pick
             && ui
                 .button(tr!("title-bar-open"))
@@ -158,7 +159,7 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
         ui.separator();
-        let shortcut = shortcut_text(ui.ctx(), &settings::SHORTCUT);
+        let shortcut = keys::shortcut_text(ui.ctx(), &settings::SHORTCUT);
         if ui
             .add(egui::Button::new(tr!("title-bar-settings")).shortcut_text(shortcut))
             .clicked()
@@ -166,9 +167,12 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
             actions.push(Action::Settings(settings::Action::Open));
             ui.close();
         }
-        theme_menu(ui, bar.theme, actions);
     });
     ui.menu_button(tr!("title-bar-help"), |ui| {
+        if ui.button(tr!("title-bar-shortcuts")).clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(shortcuts_id(), true));
+            ui.close();
+        }
         if ui.button(tr!("title-bar-about")).clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(about_id(), true));
             ui.close();
@@ -233,6 +237,52 @@ fn about_dialog(ctx: &egui::Context) {
     }
 }
 
+fn shortcuts_id() -> egui::Id {
+    egui::Id::unique("title-bar-shortcuts")
+}
+
+/// Help → "Keyboard shortcuts": every shortcut of [`SHORTCUTS`], those of one command on one row.
+fn shortcuts_dialog(ctx: &egui::Context) {
+    if !ctx.data(|d| d.get_temp::<bool>(shortcuts_id()).unwrap_or(false)) {
+        return;
+    }
+    let modal = egui::Modal::new(egui::Id::unique("shortcuts-dialog")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.heading(tr!("keys-title"));
+        ui.add_space(6.0);
+        egui::Grid::new("shortcuts-grid")
+            .num_columns(2)
+            .spacing(vec2(24.0, 6.0))
+            .striped(true)
+            .show(ui, |ui| {
+                let mut shown = Vec::new();
+                for (command, _) in SHORTCUTS {
+                    if shown.contains(&command) {
+                        continue;
+                    }
+                    shown.push(command);
+                    let keys: Vec<String> = SHORTCUTS
+                        .iter()
+                        .filter(|(c, _)| *c == command)
+                        .map(|(_, s)| keys::shortcut_text(ctx, s))
+                        .collect();
+                    ui.label(RichText::new(keys.join(" · ")).monospace());
+                    ui.label(command.label());
+                    ui.end_row();
+                }
+            });
+        ui.add_space(6.0);
+        ui.weak(tr!("keys-list-hint"));
+        ui.add_space(8.0);
+        egui::Sides::new()
+            .show(ui, |_| {}, |ui| ui.button(tr!("keys-close")).clicked())
+            .1
+    });
+    if modal.inner || modal.should_close() {
+        ctx.data_mut(|d| d.remove_temp::<bool>(shortcuts_id()));
+    }
+}
+
 /// Set when the app hands the move or the resize of the window to the system: from then on the
 /// system has the mouse, and the release of the button never reaches the app.
 fn moving_id() -> egui::Id {
@@ -269,20 +319,6 @@ pub(crate) fn end_window_move(ctx: &egui::Context, input: &mut egui::RawInput) {
         },
         egui::Event::PointerGone,
     ]);
-}
-
-/// System, light or dark: a shortcut to the same setting of the "Settings…" window.
-fn theme_menu(ui: &mut Ui, current: Theme, actions: &mut Vec<Action>) {
-    ui.menu_button(tr!("title-bar-theme"), |ui| {
-        for choice in Theme::ALL {
-            if ui.radio(current == choice, theme_label(choice)).clicked() {
-                actions.push(Action::Settings(settings::Action::Change(Change::Theme(
-                    choice,
-                ))));
-                ui.close();
-            }
-        }
-    });
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -464,19 +500,6 @@ fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
         ResizeDirection::NorthWest => CursorIcon::ResizeNorthWest,
         ResizeDirection::SouthWest => CursorIcon::ResizeSouthWest,
     }
-}
-
-/// A shortcut as the menus show it: the key's symbol ("Ctrl+,"), where egui writes its name
-/// ("Ctrl+Comma"); on macOS egui's own symbols.
-fn shortcut_text(ctx: &egui::Context, shortcut: &egui::KeyboardShortcut) -> String {
-    if ctx.os().is_mac() {
-        return ctx.format_shortcut(shortcut);
-    }
-    let names = egui::ModifierNames {
-        is_short: true,
-        ..egui::ModifierNames::NAMES
-    };
-    shortcut.format(&names, false)
 }
 
 #[cfg(test)]

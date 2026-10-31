@@ -34,13 +34,13 @@ use std::path::{Path, PathBuf};
 
 /// The bytes of a system path (the target of a link), as git stores them.
 #[cfg(unix)]
-fn os_bytes(s: &OsStr) -> Vec<u8> {
+pub(super) fn os_bytes(s: &OsStr) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     s.as_bytes().to_vec()
 }
 
 #[cfg(not(unix))]
-fn os_bytes(s: &OsStr) -> Vec<u8> {
+pub(super) fn os_bytes(s: &OsStr) -> Vec<u8> {
     s.to_string_lossy().replace('\\', "/").into_bytes()
 }
 
@@ -201,7 +201,7 @@ impl CliBackend {
         })
     }
 
-    fn worktree_path(&self, path: &RepoPath) -> PathBuf {
+    pub(super) fn worktree_path(&self, path: &RepoPath) -> PathBuf {
         self.workdir.join(os_from_bytes(path.as_bytes()))
     }
 
@@ -338,7 +338,7 @@ impl CliBackend {
 
     /// The entries (mode, id) of `paths` in the tree of commit `commit` (`ls-tree -r -z
     /// --full-tree`, paths literal); a path that does not exist is missing.
-    fn ls_tree(
+    pub(super) fn ls_tree(
         &self,
         commit: &Oid,
         paths: &[RepoPath],

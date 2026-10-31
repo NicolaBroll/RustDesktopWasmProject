@@ -1,5 +1,5 @@
-//! The app's preferences (theme, language, diff layout, automatic fetch), the "Settings…" window that changes them
-//! and their persistence between launches.
+//! The app's preferences (theme, language, diff layout, automatic fetch, UI scale, dates of the
+//! commit list), the "Settings…" window that changes them and their persistence between launches.
 //!
 //! They live in the eframe storage under their own key, next to the tabs, and never go through
 //! the `Registry`: they do not touch the repo. Every field has a default and unknown fields or
@@ -185,6 +185,97 @@ impl From<FetchInterval> for u32 {
     }
 }
 
+/// The size of the whole UI in percent, from [`Scale::MIN`] to [`Scale::MAX`] in steps of
+/// [`Scale::STEP`] (Ctrl+= / Ctrl+- / Ctrl+0 too). Saved as the percent; a value out of range or
+/// off the steps (a newer version's) is the default, 100%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "u32", into = "u32")]
+pub(crate) struct Scale(u32);
+
+impl Scale {
+    pub(crate) const MIN: u32 = 90;
+    pub(crate) const MAX: u32 = 150;
+    pub(crate) const STEP: u32 = 10;
+    /// 100%.
+    pub(crate) const NORMAL: Scale = Scale(100);
+
+    pub(crate) fn percent(self) -> u32 {
+        self.0
+    }
+
+    /// Every value, from the smallest.
+    pub(crate) fn all() -> impl Iterator<Item = Scale> {
+        (Self::MIN..=Self::MAX)
+            .step_by(Self::STEP as usize)
+            .map(Scale)
+    }
+
+    /// The egui zoom factor.
+    pub(crate) fn factor(self) -> f32 {
+        // At most 150: exact in an f32.
+        u16::try_from(self.0).map_or(1.0, f32::from) / 100.0
+    }
+
+    /// One step larger, up to the maximum.
+    pub(crate) fn larger(self) -> Scale {
+        Scale((self.0 + Self::STEP).min(Self::MAX))
+    }
+
+    /// One step smaller, down to the minimum.
+    pub(crate) fn smaller(self) -> Scale {
+        Scale(self.0.saturating_sub(Self::STEP).max(Self::MIN))
+    }
+}
+
+impl Default for Scale {
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
+
+impl From<u32> for Scale {
+    fn from(percent: u32) -> Self {
+        Scale::all().find(|s| s.0 == percent).unwrap_or_default()
+    }
+}
+
+impl From<Scale> for u32 {
+    fn from(scale: Scale) -> Self {
+        scale.0
+    }
+}
+
+/// How the commit list writes dates: `2023-11-14 22:13` or "3 h ago".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "&'static str")]
+pub(crate) enum DateFormat {
+    #[default]
+    Absolute,
+    Relative,
+}
+
+impl DateFormat {
+    pub(crate) const ALL: [DateFormat; 2] = [DateFormat::Absolute, DateFormat::Relative];
+}
+
+impl From<String> for DateFormat {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "relative" => DateFormat::Relative,
+            _ => DateFormat::Absolute,
+        }
+    }
+}
+
+impl From<DateFormat> for &'static str {
+    fn from(format: DateFormat) -> Self {
+        match format {
+            DateFormat::Absolute => "absolute",
+            DateFormat::Relative => "relative",
+        }
+    }
+}
+
 /// What survives between launches; missing fields take their default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -195,6 +286,12 @@ pub(crate) struct Settings {
     pub diff_split: bool,
     /// The automatic fetch of every tab.
     pub fetch_minutes: FetchInterval,
+    /// The size of the UI.
+    pub scale: Scale,
+    /// The dates of the commit list.
+    pub dates: DateFormat,
+    /// "Don't ask again" in the confirmation of "Check out this commit" (detached HEAD).
+    pub skip_detach_confirm: bool,
 }
 
 /// One setting changed, from the window, the theme menu or the diff view.
@@ -204,6 +301,10 @@ pub(crate) enum Change {
     Language(Language),
     DiffSplit(bool),
     FetchInterval(FetchInterval),
+    Scale(Scale),
+    Dates(DateFormat),
+    /// Check out a commit without the detached HEAD confirmation.
+    SkipDetachConfirm(bool),
 }
 
 impl Settings {
@@ -221,6 +322,9 @@ impl Settings {
                     .unwrap_or(false)
             }),
             fetch_minutes: FetchInterval::default(),
+            scale: Scale::default(),
+            dates: DateFormat::default(),
+            skip_detach_confirm: false,
         }
     }
 
@@ -230,12 +334,19 @@ impl Settings {
             Change::Language(language) => self.language = language,
             Change::DiffSplit(split) => self.diff_split = split,
             Change::FetchInterval(interval) => self.fetch_minutes = interval,
+            Change::Scale(scale) => self.scale = scale,
+            Change::Dates(dates) => self.dates = dates,
+            Change::SkipDetachConfirm(skip) => self.skip_detach_confirm = skip,
         }
     }
 
-    /// Theme and language take effect at once: the texts change from the next frame.
+    /// Theme, language and scale take effect at once: the texts change from the next frame.
+    /// egui's own zoom keys are off: Ctrl+= / Ctrl+- / Ctrl+0 change [`Settings::scale`], so the
+    /// setting and the keys agree and the zoom is saved.
     pub(crate) fn apply(&self, ctx: &egui::Context, platform: &dyn Platform) {
         ctx.set_theme(self.theme.preference());
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        ctx.set_zoom_factor(self.scale.factor());
         let lang = self.language.resolve(platform.system_language().as_deref());
         project_i18n::set_lang(lang);
         ctx.request_repaint();
@@ -272,11 +383,14 @@ mod tests {
             language: Language::Fixed(Lang::It),
             diff_split: true,
             fetch_minutes: FetchInterval::Fifteen,
+            scale: Scale(120),
+            dates: DateFormat::Relative,
+            skip_detach_confirm: true,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(
             json,
-            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15}"#
+            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15,"scale":120,"dates":"relative","skip_detach_confirm":true}"#
         );
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
     }
@@ -295,7 +409,7 @@ mod tests {
         assert_eq!(old.fetch_minutes, FetchInterval::Five, "default 5 minutes");
         // From a newer version: unknown fields and values are ignored.
         let newer: Settings = serde_json::from_str(
-            r#"{"theme":"sepia","language":"de","diff_split":true,"fetch_minutes":7,"x":1}"#,
+            r#"{"theme":"sepia","language":"de","diff_split":true,"fetch_minutes":7,"scale":95,"dates":"fuzzy","x":1}"#,
         )
         .unwrap();
         assert_eq!(
@@ -320,6 +434,18 @@ mod tests {
         );
         let off: Settings = serde_json::from_str(r#"{"fetch_minutes":0}"#).unwrap();
         assert_eq!(off.fetch_minutes, FetchInterval::Off);
+    }
+
+    #[test]
+    fn the_scale_moves_by_steps_within_its_range() {
+        assert_eq!(Scale::default().percent(), 100);
+        assert_eq!(Scale::NORMAL.larger().percent(), 110);
+        assert_eq!(Scale(Scale::MAX).larger().percent(), Scale::MAX);
+        assert_eq!(Scale(Scale::MIN).smaller().percent(), Scale::MIN);
+        assert_eq!(Scale::NORMAL.smaller().percent(), 90);
+        assert_eq!(Scale::all().count(), 7);
+        assert!((Scale(150).factor() - 1.5).abs() < f32::EPSILON);
+        assert_eq!(Scale::from(300), Scale::NORMAL, "out of range: the default");
     }
 
     #[test]

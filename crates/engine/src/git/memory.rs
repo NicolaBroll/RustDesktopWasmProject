@@ -1,6 +1,7 @@
 //! In-memory fake repository: for command and UI tests.
 
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod conflict;
@@ -19,6 +20,7 @@ mod sync;
 mod tags;
 mod write;
 
+pub use clean::CleanStash;
 pub use discard::{StashedFile, WorktreeStash};
 use merge::MemoryMerge;
 use rebase::MemoryRebase;
@@ -100,6 +102,8 @@ pub struct MemoryBackend {
     commit_backups: Vec<(String, Oid)>,
     /// Worktree backups saved by `worktree.discard`.
     worktree_backups: Vec<WorktreeStash>,
+    /// Backups saved by `worktree.clean`.
+    clean_backups: Vec<CleanStash>,
     /// Name and email of the committer (`user.name`/`user.email`); `None` = not configured.
     identity: Option<(String, String)>,
     /// Configured remotes, by name.
@@ -127,6 +131,9 @@ pub struct MemoryBackend {
     /// If set, every `stash_drop` fails with this message
     /// ([`MemoryBackend::fail_stash_drop`]).
     stash_drop_failure: Option<String>,
+    /// If set, every write of the upstream configuration fails with this message
+    /// ([`MemoryBackend::fail_config_writes`]).
+    config_write_failure: Option<String>,
     /// The merge in progress (`MERGE_HEAD`, `MERGE_MSG`), with `operation` = `Merge`.
     merge_state: Option<MemoryMerge>,
     /// The rebase in progress, with `operation` = `Rebase`.
@@ -161,6 +168,7 @@ impl MemoryBackend {
             backups: Vec::new(),
             commit_backups: Vec::new(),
             worktree_backups: Vec::new(),
+            clean_backups: Vec::new(),
             identity: None,
             remotes: BTreeMap::new(),
             pull_settings: PullSettings::default(),
@@ -173,6 +181,7 @@ impl MemoryBackend {
             stashes: Vec::new(),
             dropped_stashes: BTreeMap::new(),
             stash_drop_failure: None,
+            config_write_failure: None,
             merge_state: None,
             rebase_state: None,
             commit_graph: false,
@@ -510,8 +519,50 @@ impl MemoryBackend {
     /// The files of commit `rev` relative to the first parent, from the files of `show_commit`.
     fn commit_diff(&self, rev: &str) -> Result<Vec<FileDiff>, EngineError> {
         let details = self.show_commit(rev)?;
-        Ok(details
-            .files
+        Ok(self.changes_diff(&details.files))
+    }
+
+    /// Commit `to` relative to commit `from`, from their trees. Renames: only exact ones (a
+    /// deleted file and an added file with the same blob), paired by path order.
+    fn range_diff(&self, from: Oid, to: Oid) -> Vec<FileDiff> {
+        // `from` is the first parent: the changes of the commit (with its renames), as `diff.commit`.
+        if self.commits.get(&to).and_then(|c| c.parents.first()) == Some(&from) {
+            return self.changes_diff(self.changes.get(&to).map_or(&[], Vec::as_slice));
+        }
+        let mut changes = commit::tree_changes(&self.tree_at(from), &self.tree_at(to));
+        let mut i = 0;
+        while i < changes.len() {
+            let added = &changes[i];
+            let source = (added.change == Change::Added)
+                .then(|| {
+                    changes.iter().position(|d| {
+                        d.change == Change::Deleted
+                            && d.old_oid == added.new_oid
+                            && d.old_mode == added.new_mode
+                    })
+                })
+                .flatten();
+            match source {
+                Some(d) => {
+                    let deleted = changes.remove(d);
+                    let i_now = if d < i { i - 1 } else { i };
+                    let file = &mut changes[i_now];
+                    file.change = Change::Renamed;
+                    file.original = Some(deleted.path);
+                    file.score = Some(100);
+                    file.old_mode = deleted.old_mode;
+                    file.old_oid = deleted.old_oid;
+                    i = i_now + 1;
+                }
+                None => i += 1,
+            }
+        }
+        self.changes_diff(&changes)
+    }
+
+    /// The [`FileDiff`]s of the files `changes`, with the contents of the known blobs.
+    fn changes_diff(&self, changes: &[ChangedFile]) -> Vec<FileDiff> {
+        changes
             .iter()
             .map(|f| {
                 file_diff(
@@ -523,7 +574,7 @@ impl MemoryBackend {
                     self.side(f.new_mode, f.new_oid),
                 )
             })
-            .collect())
+            .collect()
     }
 
     /// Index relative to HEAD, from the status entries.
@@ -747,6 +798,7 @@ impl GitRead for MemoryBackend {
             DiffSpec::Worktree { .. } => self.worktree_diff(),
             DiffSpec::Index { .. } => self.index_diff(),
             DiffSpec::Commit { rev, .. } => self.commit_diff(rev)?,
+            DiffSpec::Range { from, to, .. } => self.range_diff(*from, *to),
         };
         if let Some(path) = spec.path() {
             files.retain(|f| f.new_path == *path || f.old_path == *path);
@@ -772,6 +824,21 @@ impl GitRead for MemoryBackend {
 
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
         Ok(self.config_of(key))
+    }
+
+    fn commit_id(&self, rev: &str) -> Result<Option<Oid>, EngineError> {
+        Ok(self
+            .resolve(rev)
+            .ok()
+            .filter(|id| self.commits.contains_key(id)))
+    }
+
+    fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError> {
+        Ok(self.merge_base(*a, *b))
+    }
+
+    fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
+        Ok(self.upstream_entries(name))
     }
 }
 
@@ -806,6 +873,25 @@ impl GitIndex for MemoryBackend {
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)?;
         Ok(RestoreOutcome::default())
+    }
+
+    fn clean_plan(&self, paths: &[RepoPath]) -> Result<Vec<super::CleanedFile>, EngineError> {
+        self.plan_clean(paths)
+    }
+
+    fn clean(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[super::CleanedFile],
+    ) -> Result<super::CleanOutcome, EngineError> {
+        self.clean_paths(paths, expected)
+    }
+
+    fn restore_cleaned(
+        &mut self,
+        request: &super::CleanRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_clean(request)
     }
 }
 
@@ -875,6 +961,15 @@ impl GitRefs for MemoryBackend {
         remove: bool,
     ) -> Vec<Message> {
         self.set_branch_config(name, entries, remove)
+    }
+
+    fn write_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError> {
+        self.replace_upstream(name, expected, entries)
     }
 }
 

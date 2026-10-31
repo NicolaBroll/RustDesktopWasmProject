@@ -363,15 +363,27 @@ impl Column<'_> {
             upstream_label(ui, upstream);
         }
         let local = info.kind == RefKind::LocalBranch;
+        let remote = info.kind == RefKind::RemoteBranch;
         if response.double_clicked() && local && !is_head && self.can_write {
             actions.push(Action::Branch(branch::Action::Checkout(
                 info.short_name().to_owned(),
+            )));
+        } else if response.double_clicked() && remote && self.can_write {
+            actions.push(Action::Branch(branch::Action::CheckoutRemote(
+                info.name.clone(),
             )));
         } else if response.clicked() {
             actions.push(Action::SelectCommit(info.target));
         }
         let response = response.on_hover_text(ref_tooltip(info, is_head));
         response.context_menu(|ui| {
+            let branch = matches!(info.kind, RefKind::LocalBranch | RefKind::RemoteBranch);
+            if branch && !is_head {
+                let current = self
+                    .current
+                    .map_or("HEAD", |c| c.strip_prefix(HEADS_PREFIX).unwrap_or(c));
+                compare_item(ui, info, current, actions);
+            }
             let on_remote = (info.kind == RefKind::RemoteBranch)
                 .then(|| {
                     remotes::split_remote_branch(info.short_name(), &self.repo.remotes.names())
@@ -524,6 +536,18 @@ pub(super) fn ref_menu(
     actions: &mut Vec<Action>,
 ) {
     let name = info.short_name();
+    if info.kind == RefKind::RemoteBranch && !name.ends_with("/HEAD") {
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(tr!("refs-checkout")))
+            .on_hover_text(tr!("refs-checkout-remote-hint", name = name))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::CheckoutRemote(
+                info.name.clone(),
+            )));
+            ui.close();
+        }
+    }
     if info.kind == RefKind::LocalBranch {
         let button = ui
             .add_enabled(
@@ -616,15 +640,11 @@ pub(super) fn ref_menu(
             name = name
         ),
     };
-    let label = if is_head {
-        tr!("refs-pull")
-    } else {
-        tr!("refs-pull-ff")
-    };
+    // One name everywhere: the tooltip says whether it is a fast-forward only.
     let button = ui
         .add_enabled(
             can_write && info.upstream.is_some(),
-            egui::Button::new(label),
+            egui::Button::new(tr!("refs-pull")),
         )
         .on_hover_text(&pull_hint)
         .on_disabled_hover_text(if info.upstream.is_some() {
@@ -654,6 +674,7 @@ pub(super) fn ref_menu(
         actions.push(Action::Sync(sync::Action::Push(Some(name.to_owned()))));
         ui.close();
     }
+    upstream_items(ui, info, can_write, actions);
     ui.separator();
     let enabled = can_write && !is_head;
     let color = if enabled {
@@ -678,6 +699,35 @@ pub(super) fn ref_menu(
             info.target,
         )));
         ui.close();
+    }
+}
+
+/// "Set upstream…" and, if it has one, "Unset upstream" of a local branch.
+fn upstream_items(ui: &mut Ui, info: &RefInfo, can_write: bool, actions: &mut Vec<Action>) {
+    let name = info.short_name();
+    let button = ui
+        .add_enabled(can_write, egui::Button::new(tr!("refs-set-upstream")))
+        .on_hover_text(tr!("refs-set-upstream-hint", name = name))
+        .on_disabled_hover_text(wait());
+    if button.clicked() {
+        actions.push(Action::Branch(branch::Action::SetUpstream(name.to_owned())));
+        ui.close();
+    }
+    if let Some(up) = &info.upstream {
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(tr!("refs-unset-upstream")))
+            .on_hover_text(tr!(
+                "refs-unset-upstream-hint",
+                name = name,
+                upstream = remote_short(&up.name)
+            ))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::UnsetUpstream(
+                name.to_owned(),
+            )));
+            ui.close();
+        }
     }
 }
 
@@ -750,6 +800,27 @@ fn tag_items(
             ui.close();
         }
     }
+}
+
+/// "Compare with `<current branch>`": what the branch brings since it diverged from HEAD.
+/// `current` is the short name of the current branch, or `HEAD` when detached.
+fn compare_item(ui: &mut Ui, info: &RefInfo, current: &str, actions: &mut Vec<Action>) {
+    let name = info.short_name();
+    let button = ui
+        .button(tr!("compare-with-current", current = current))
+        .on_hover_text(tr!(
+            "compare-with-current-hint",
+            name = name,
+            current = current
+        ));
+    if button.clicked() {
+        actions.push(Action::Compare(crate::compare::Action::Branch {
+            rev: info.name.clone(),
+            name: name.to_owned(),
+        }));
+        ui.close();
+    }
+    ui.separator();
 }
 
 /// The "Merge into `<branch>`" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for

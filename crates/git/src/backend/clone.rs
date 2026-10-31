@@ -6,15 +6,15 @@
 //!   existing empty folder and the command knows which folder is its own;
 //! - `git clone --progress [--branch=<b>] [--depth=<n>] --end-of-options <url> <abs path>`: a URL
 //!   starting with `-` is never an option; `-c protocol.ext.allow=never -c protocol.fd.allow=never`
-//!   as for fetch; run with `Git::run_streaming` (stdin closed, `GIT_TERMINAL_PROMPT=0`, no
-//!   controlling terminal), progress to the `JobContext`, cancellable;
+//!   as for fetch; run with `Git::run_network` (stdin closed, `GIT_TERMINAL_PROMPT=0`, no
+//!   controlling terminal, credentials asked through the prompter if set), progress to the `JobContext`, cancellable;
 //! - on cancellation or error the destination goes back to how it was: a folder created here is
 //!   removed, a pre-existing empty folder is emptied again (all it holds is git's). Not when git says
 //!   the destination is not empty: someone else wrote there in the meantime.
 
 use super::CliOpener;
 use crate::command::{Segment, failure};
-use crate::progress::{parse_progress, remote_error};
+use crate::progress::parse_progress;
 use project_engine::{
     CloneOutcome, CloneRequest, EngineError, InitRequest, JobContext, clone_no_such_branch,
     destination_no_parent, destination_not_empty, destination_not_folder,
@@ -161,10 +161,11 @@ impl CliOpener {
         args.extend(["--end-of-options", &request.url, dest.as_str()]);
 
         let mut lines = Vec::new();
-        let streamed = self.git.run_streaming(
+        let streamed = self.git.run_network(
             &working_dir(&dest.path),
             &args,
             false,
+            &request.url,
             |Segment { text, newline }| match parse_progress(&text) {
                 Some(progress) => job.report(&progress),
                 None if newline && !text.trim().is_empty() => {
@@ -194,7 +195,7 @@ impl CliOpener {
                 (&request.branch, lower.contains("not found in upstream"))
             {
                 clone_no_such_branch(&request.url, branch, stderr.trim())
-            } else if let Some(error) = remote_error(&request.url, &stderr) {
+            } else if let Some(error) = streamed.remote_error(&request.url, &stderr) {
                 error
             } else if lower.contains("repository '") && lower.contains("' does not exist") {
                 EngineError::RemoteUnreachable {

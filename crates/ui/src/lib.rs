@@ -14,9 +14,13 @@
 
 mod auto_fetch;
 mod branch;
+mod clean;
 mod clone;
 mod commit;
+mod compare;
 mod conflict;
+mod credentials;
+mod detach;
 mod details;
 mod diff;
 mod diff_view;
@@ -27,6 +31,7 @@ mod file;
 mod format;
 mod graph;
 mod icons;
+mod keys;
 mod lines;
 mod list;
 mod merge;
@@ -46,9 +51,11 @@ mod stash;
 mod sync;
 mod tabs;
 mod theme;
+mod tracking;
 mod view;
 mod word_diff;
 
+pub use credentials::{CredentialBox, CredentialDialog};
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
 
 use branch::BranchBox;
@@ -57,7 +64,7 @@ use conflict::ConflictBox;
 use details::DetailsState;
 use diff::DiffDoc;
 use diff::{DiffSource, DiffState, DiffTarget, Pane};
-use discard::{DiscardBox, History};
+use discard::{DiscardBox, History, UndoOp};
 use fetch::FetchBox;
 use graph::RefLabel;
 use list::{CommitList, PageRequest, Seek};
@@ -73,7 +80,7 @@ use project_i18n::tr;
 use rebase::RebaseBox;
 use remotes::RemotesBox;
 use serde_json::{Value, json};
-use stage::{Follow, PendingWrite, Side, StageLists};
+use stage::{Follow, PendingWrite, Side, StageLists, StageOp};
 use stash::StashBox;
 use std::collections::HashMap;
 
@@ -109,12 +116,16 @@ enum Action {
     Clone(clone::Action),
     /// The "Settings…" window and the settings: applied by [`App`].
     Settings(settings::Action),
+    /// The credential modal (S52): applied by [`App`].
+    Credentials(credentials::Action),
     /// Opening and closing a file's diff.
     Diff(diff::Action),
     /// Stage and unstage of whole files.
     Stage(stage::Action),
     /// Discarding changes, undo and redo.
     Discard(discard::Action),
+    /// Deleting untracked files.
+    Clean(clean::Action),
     /// Selecting diff rows and staging hunks or lines.
     Lines(lines::Action),
     /// The commit message box.
@@ -143,6 +154,8 @@ enum Action {
     File(file::Action),
     /// The search in the history.
     Search(search::Action),
+    /// Comparing two revisions in the details panel.
+    Compare(compare::Action),
 }
 
 /// A step of dragging over the diff rows.
@@ -181,6 +194,8 @@ enum Request {
     HeadMessage(u64),
     /// `worktree.discard`, without or with `confirm` (the phase is in [`DiscardBox`]).
     Discard(u64),
+    /// `worktree.clean`, without or with `confirm` (the phase is in [`clean::CleanBox`]).
+    Clean(u64),
     /// `edit.undo`/`edit.redo`.
     Undo(u64),
     /// `edit.history`: the state of the Undo and Redo buttons.
@@ -222,6 +237,8 @@ enum Request {
     File(u64, u64),
     /// `repo.search` with the request number of [`search::SearchBox`].
     Search(u64, u64),
+    /// `diff.range` of the comparison with the request number of [`compare::CompareBox`].
+    Compare(u64, u64),
 }
 
 /// The repo shown and the data read so far.
@@ -251,10 +268,14 @@ struct RepoView {
     details: DetailsState,
     /// Diff of the open file (`diff.commit`), shown in place of the graph.
     diff: DiffState,
+    /// Two revisions compared in the details panel (`diff.range`).
+    compare: compare::CompareBox,
     /// The commit message box: draft, commit in progress, confirmation, error.
     commit: CommitBox,
     /// Discarding changes: check, confirmation, submission.
     discard: DiscardBox,
+    /// Deleting untracked files: check, confirmation, submission.
+    clean: clean::CleanBox,
     /// Branch commands: name dialogs, deletion confirmation, checkout.
     branch: BranchBox,
     /// The fetch in progress and the last error to explain.
@@ -313,8 +334,10 @@ impl RepoView {
             refs_version: 0,
             details: DetailsState::default(),
             diff: DiffState::default(),
+            compare: compare::CompareBox::default(),
             commit: CommitBox::default(),
             discard: DiscardBox::default(),
+            clean: clean::CleanBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
             auto_fetch: auto_fetch::AutoFetch::default(),
@@ -359,6 +382,7 @@ impl RepoView {
             self.worktree_selected = false;
             self.confirm = None;
             self.discard.cancel();
+            self.clean.cancel();
         }
         self.update_labels();
     }
@@ -369,6 +393,7 @@ impl RepoView {
         self.confirm.is_some()
             || self.commit.confirm().is_some()
             || self.discard.confirm().is_some()
+            || self.clean.confirm().is_some()
             || self.branch.modal_open()
             || self.sync.modal_open()
             || self.remotes.modal_open()
@@ -540,9 +565,23 @@ impl Tab {
     /// Applies an action of the frame: the list selection here, the rest in its area's
     /// `apply_*` function.
     fn apply(&mut self, action: Action) {
+        // A result chosen in the list: closing the search keeps it.
+        if matches!(
+            action,
+            Action::Select(_)
+                | Action::SelectWorktree
+                | Action::SelectCommit(_)
+                | Action::Move(_)
+                | Action::Edge(_)
+        ) && let Some(repo) = &mut self.repo
+        {
+            repo.search.keep();
+            // A plain selection goes back from the comparison to one commit.
+            repo.compare.close();
+        }
         match action {
-            // The tabs, the folder dialog, clone and settings belong to `App`.
-            Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) => {}
+            // The tabs, the folder dialog, clone, settings and credentials belong to `App`.
+            Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) | Action::Credentials(_) => {}
             // During a write (a fetch can last) reads would wait in the queue.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
@@ -602,6 +641,7 @@ impl Tab {
             Action::Diff(action) => self.apply_diff(action),
             Action::Stage(action) => self.apply_stage(action),
             Action::Discard(action) => self.apply_discard(action),
+            Action::Clean(action) => self.apply_clean(action),
             Action::Lines(action) => self.apply_lines(action),
             Action::Commit(action) => self.apply_commit(action),
             Action::Branch(action) => self.apply_branch(action),
@@ -616,6 +656,7 @@ impl Tab {
             Action::Conflict(action) => self.apply_conflict(action),
             Action::File(action) => self.apply_file(action),
             Action::Search(action) => self.apply_search(action),
+            Action::Compare(action) => self.apply_compare(action),
         }
     }
 
@@ -675,7 +716,7 @@ impl Tab {
         let side = match target.source {
             DiffSource::Worktree => Side::Unstaged,
             DiffSource::Index => Side::Staged,
-            DiffSource::Commit(_) => return,
+            DiffSource::Commit(_) | DiffSource::Range { .. } => return,
         };
         let request = match stage::follow(&repo.stage, side, &target.path) {
             Follow::Reload => repo.diff.reload().map(|seq| (seq, target)),
@@ -711,6 +752,7 @@ impl Tab {
             };
             let stale = repo.diff.target().is_some_and(|t| match t.source {
                 DiffSource::Commit(id) => repo.worktree_selected || Some(id) != selected,
+                DiffSource::Range { .. } => !repo.compare.view().is_some_and(|c| c.owns(t)),
                 DiffSource::Worktree | DiffSource::Index => !repo.worktree_selected,
             });
             if stale {
@@ -741,25 +783,29 @@ impl Tab {
         }
     }
 
-    /// List key actions: arrows, Page up/down, Home/End. With the diff open,
-    /// Esc closes it and the arrows stay with the diff view. Only if no text field is
-    /// receiving the keyboard.
-    fn keyboard(&self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+    /// The tab's shortcuts ([`keys`]) and the list keys: arrows, Page up/down, Home/End. With
+    /// the diff open, Esc closes it and the arrows stay with the diff view. Only if no text field
+    /// is receiving the keyboard (Ctrl+F also from a field); nothing with a menu or a
+    /// confirmation open: the keys, Esc too, are theirs.
+    fn keyboard(&self, ctx: &egui::Context, pressed: &keys::Pressed, actions: &mut Vec<Action>) {
         let Some(repo) = &self.repo else {
             return;
         };
-        // With the confirmation open the keys go only to it.
-        if repo.modal_open() {
+        if pressed.popup || repo.modal_open() {
             return;
         }
         let list_in_view = repo.conflict.editor().is_none()
             && repo.file.view().is_none()
             && repo.diff.target().is_none();
-        // Ctrl+F also from another field (e.g. the commit message): the search field takes the keyboard.
-        let find = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
-        if list_in_view && ctx.input_mut(|i| i.consume_shortcut(&find)) {
-            actions.push(Action::Search(search::Action::Open));
-            return;
+        for &command in &pressed.commands {
+            // Ctrl+F: the search field takes the keyboard.
+            if command == keys::Command::Find {
+                if list_in_view {
+                    actions.push(Action::Search(search::Action::Open));
+                }
+            } else if let Some(action) = self.shortcut(repo, command) {
+                actions.push(action);
+            }
         }
         if ctx.egui_wants_keyboard_input() {
             return;
@@ -790,9 +836,14 @@ impl Tab {
             }
             return;
         }
-        // Esc with the search open (the field without the keyboard) closes it.
-        if repo.search.is_open() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            actions.push(Action::Search(search::Action::Close));
+        // Esc goes back from a comparison to the selected commit, then closes the search (the
+        // field without the keyboard).
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if repo.compare.view().is_some() {
+                actions.push(Action::Compare(compare::Action::Close));
+            } else if repo.search.is_open() {
+                actions.push(Action::Search(search::Action::Close));
+            }
         }
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
@@ -811,6 +862,51 @@ impl Tab {
                 }
             }
         });
+    }
+
+    /// The action of a toolbar or stage panel shortcut, with the same gates as its button; `None`
+    /// when the button would be disabled.
+    fn shortcut(&self, repo: &RepoView, command: keys::Command) -> Option<Action> {
+        use keys::Command;
+        let writing = self.executor.writing().is_some();
+        let network = !writing && self.network().is_none();
+        let branch = view::current_branch(&repo.head).is_some();
+        match command {
+            Command::Undo | Command::Redo => {
+                let op = if command == Command::Undo {
+                    UndoOp::Undo
+                } else {
+                    UndoOp::Redo
+                };
+                view::undo_enabled(repo, op, writing)
+                    .then_some(Action::Discard(discard::Action::Undo(op)))
+            }
+            Command::Refresh => (!writing).then_some(Action::Refresh),
+            Command::Fetch => network.then_some(Action::Fetch(fetch::Action::Fetch(None))),
+            Command::Pull => {
+                (network && branch).then_some(Action::Sync(sync::Action::Pull(None, None)))
+            }
+            Command::Push => (network && branch).then_some(Action::Sync(sync::Action::Push(None))),
+            Command::ToggleStage => {
+                let target = repo.diff.target().filter(|_| !writing)?;
+                let (op, list) = match target.source {
+                    DiffSource::Worktree => (StageOp::Stage, &repo.stage.unstaged),
+                    DiffSource::Index => (StageOp::Unstage, &repo.stage.staged),
+                    DiffSource::Commit(_) | DiffSource::Range { .. } => return None,
+                };
+                list.iter()
+                    .any(|item| item.path == target.path)
+                    .then(|| Action::Stage(stage::Action::Write(op, vec![target.path.clone()])))
+            }
+            // Find is the tab's own (above), the others belong to `App`.
+            Command::Find
+            | Command::Settings
+            | Command::NextTab
+            | Command::PreviousTab
+            | Command::ZoomIn
+            | Command::ZoomOut
+            | Command::ZoomReset => None,
+        }
     }
 
     /// Asks for refs, status and log of the open repo.
@@ -875,6 +971,7 @@ impl Tab {
             Request::Write(generation) => self.receive_write(generation, done),
             Request::Commit(generation) => self.receive_commit(generation, done),
             Request::Discard(generation) => self.receive_discard(generation, done),
+            Request::Clean(generation) => self.receive_clean(generation, done),
             Request::Undo(generation) => self.receive_undo(generation, done),
             Request::ResetPreview(generation, seq) => {
                 self.receive_reset_preview(generation, seq, done);
@@ -929,6 +1026,8 @@ impl Tab {
             Request::File(generation, seq) => self.receive_file(generation, seq, done),
             // The search shows its errors in its bar.
             Request::Search(generation, seq) => self.receive_search(generation, seq, done),
+            // The comparison shows its errors in the details panel.
+            Request::Compare(generation, seq) => self.receive_compare(generation, seq, done),
             // The diff too: errors in its view, old answers discarded.
             Request::Diff(generation, seq) => {
                 let result = done
@@ -1116,6 +1215,7 @@ impl Tab {
             | Request::Write(..)
             | Request::Commit(..)
             | Request::Discard(..)
+            | Request::Clean(..)
             | Request::Undo(..)
             | Request::Branch(..)
             | Request::Fetch(..)
@@ -1134,7 +1234,8 @@ impl Tab {
             | Request::ConflictShow(..)
             | Request::ConflictResolve(..)
             | Request::File(..)
-            | Request::Search(..) => {}
+            | Request::Search(..)
+            | Request::Compare(..) => {}
         }
         Ok(())
     }
@@ -1198,10 +1299,11 @@ impl Tab {
         can_pick: bool,
         recent: &[view::RecentRepo],
         settings: &settings::Settings,
+        pressed: &keys::Pressed,
     ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
-        self.keyboard(&ctx, &mut actions);
+        self.keyboard(&ctx, pressed, &mut actions);
         let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
@@ -1221,6 +1323,8 @@ impl Tab {
                     writing,
                     focus_search,
                     split: settings.diff_split,
+                    dates: settings.dates,
+                    ask_detach: !settings.skip_detach_confirm,
                 };
                 central_panel(ui, repo, &mut self.viewport, center, &mut actions);
             }
@@ -1302,6 +1406,9 @@ impl Tab {
         if let Some(pending) = repo.discard.confirm() {
             view::confirm_discard(ctx, pending, actions);
         }
+        if let Some(pending) = repo.clean.confirm() {
+            view::confirm_clean(ctx, pending, actions);
+        }
         if let Some(failure) = repo.fetch.failure() {
             view::failure_window(
                 ctx,
@@ -1375,6 +1482,7 @@ impl Tab {
     fn after_actions(&mut self, ctx: &egui::Context) {
         self.close_stale_diff();
         self.request_details();
+        self.request_compare();
         self.request_file();
         self.request_search(ctx);
     }
@@ -1410,6 +1518,8 @@ fn side_panels(
                 view::stage_panel(ui, repo, draft, writing, actions);
             } else if let Some(stash) = repo.stash.selected() {
                 view::stash_panel(ui, repo, stash, writing, actions);
+            } else if let Some(comparison) = repo.compare.view() {
+                view::compare_panel(ui, repo, comparison, repo.diff.target(), actions);
             } else {
                 view::details_panel(
                     ui,
@@ -1429,6 +1539,10 @@ struct Center {
     focus_search: bool,
     /// Diffs side by side.
     split: bool,
+    /// The dates of the commit list.
+    dates: settings::DateFormat,
+    /// "Check out this commit" asks first.
+    ask_detach: bool,
 }
 
 /// The center: conflict editor, blame and history, the open diff or the commit list.
@@ -1443,6 +1557,8 @@ fn central_panel(
         writing,
         focus_search,
         split,
+        dates,
+        ask_detach,
     } = center;
     let incoming = repo
         .merge
@@ -1462,7 +1578,15 @@ fn central_panel(
                 view::file_view(ui, file, repo.diff.pane(), can_write, split, actions);
             }
         }
-        Pane::Closed => view::commit_list(ui, repo, viewport, writing, focus_search, actions),
+        Pane::Closed => {
+            let list = view::ListOptions {
+                writing,
+                focus_search,
+                dates,
+                ask_detach,
+            };
+            view::commit_list(ui, repo, viewport, list, actions);
+        }
         pane => {
             let lines = diff_view::LinesUi {
                 selection: repo.diff.selection(),

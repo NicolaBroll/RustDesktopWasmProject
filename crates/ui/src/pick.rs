@@ -8,8 +8,8 @@
 //! panel with `cherry_pick.continue`/`revert.continue` and `*.abort`, like the merge.
 
 use super::{
-    Dialog, ErrorKind, Failure, Kind, MergeBox, Op, Outcome, Received, Starting, message_texts,
-    reread_warning, unexpected,
+    Dialog, ErrorKind, Failure, Kind, MergeBox, Op, Outcome, Received, Starting, local_changes,
+    message_texts, reread_warning, unexpected,
 };
 use project_domain::Oid;
 use project_engine::{PickStartParams, PickStartResult};
@@ -153,8 +153,11 @@ impl MergeBox {
             into = &starting.into
         );
         match result {
+            Err(_) if kind == Some(ErrorKind::LocalChanges) => {
+                local_changes(&mut self.failure, title, &what, detail.as_deref())
+            }
             Err(e) => {
-                // Engine refusals (local changes, already applied, detached HEAD, mainline):
+                // Engine refusals (already applied, detached HEAD, mainline):
                 // nothing changed. Other errors (git): maybe, so the state is reread.
                 let refused = matches!(
                     kind,
@@ -176,6 +179,7 @@ impl MergeBox {
                     title: window,
                     explanation: explanation.clone(),
                     git,
+                    stash: false,
                 });
                 Received::Failed {
                     message: explanation,

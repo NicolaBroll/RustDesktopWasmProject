@@ -20,8 +20,10 @@ confirm-resolve-button = { $n ->
 }
 confirm-cancel = Annulla
 confirm-discard-title = Scartare le modifiche?
-confirm-discard-body = Le modifiche non in stage vengono tolte dal worktree: ogni file torna come è nell'indice, cioè alla versione in stage, o a quella dell'ultimo commit se non ha niente in stage. Quello che è in stage resta com'è; i file non tracciati non vengono toccati.
-confirm-discard-backup = Prima di scartare si salva un backup (refs/project/backup/discard-…): con «Annulla» nella barra in alto i file tornano come sono adesso, finché non vengono modificati di nuovo.
+confirm-discard-body = Le modifiche non in stage vengono tolte: ogni file torna alla versione in stage, o all'ultimo commit se non ha niente in stage. Le modifiche in stage e i file non tracciati non vengono toccati.
+confirm-discard-backup = «Annulla» nella barra in alto rimette i file come sono adesso, finché non vengono modificati di nuovo.
+confirm-discard-details = Dettagli
+confirm-discard-details-body = Prima di scartare si salva un backup in refs/project/backup/discard-…; poi ogni file viene ripristinato dall'indice di git (l'area di stage).
 confirm-discard-files = { $n ->
     [one] File:
    *[other] { $n } file:

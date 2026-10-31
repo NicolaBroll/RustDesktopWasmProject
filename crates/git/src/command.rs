@@ -1,11 +1,13 @@
 //! Running `git` per the rules of §5: never a shell, separate arguments, fixed options and
 //! environment.
 
-use project_engine::EngineError;
+use crate::askpass::{ASKPASS_ENV, Askpass, Bridge};
+use project_engine::{CredentialPrompter, EngineError};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -55,11 +57,18 @@ const PATHSPEC_ENV: &[&str] = &[
     "GIT_ICASE_PATHSPECS",
 ];
 
-/// How to start `git`: the program and the environment variables added by whoever configures it.
+/// Variables that point git and ssh to an askpass program, or tell the app to act as one: set
+/// only by [`Git::run_network`] with a prompter, otherwise removed so an inherited value
+/// (e.g. the app started from a git hook of another askpass session) does not reach git.
+const ASKPASS_VARS: &[&str] = &[ASKPASS_ENV];
+
+/// How to start `git`: the program, the environment variables added by whoever configures it
+/// and, if set, how to ask the user for credentials in the network commands.
 #[derive(Debug, Clone)]
 pub(crate) struct Git {
     program: OsString,
     env: Vec<(OsString, OsString)>,
+    askpass: Option<Askpass>,
 }
 
 impl Git {
@@ -67,11 +76,22 @@ impl Git {
         Self {
             program: program.into(),
             env: Vec::new(),
+            askpass: None,
         }
     }
 
     pub(crate) fn set_env(&mut self, key: OsString, value: OsString) {
         self.env.push((key, value));
+    }
+
+    /// The network commands ([`Git::run_network`]) ask `prompter` for credentials, with
+    /// `program` as git's and ssh's askpass.
+    pub(crate) fn set_prompter(
+        &mut self,
+        prompter: Arc<dyn CredentialPrompter>,
+        program: OsString,
+    ) {
+        self.askpass = Some(Askpass { program, prompter });
     }
 
     /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args> <paths>`, with empty
@@ -97,6 +117,7 @@ impl Git {
             .chain(PATHSPEC_ENV)
             .chain(CONFIG_ENV)
             .chain(DATE_ENV)
+            .chain(ASKPASS_VARS)
         {
             cmd.env_remove(key);
         }
@@ -252,6 +273,9 @@ pub(crate) struct Streamed {
     pub(crate) cancelled: bool,
     /// stdout, if requested (`capture_stdout`), otherwise empty.
     pub(crate) stdout: Vec<u8>,
+    /// True if git failed after the user cancelled a credential question
+    /// ([`Git::run_network`]): the error is [`EngineError::AuthCancelled`].
+    pub(crate) auth_cancelled: bool,
 }
 
 /// What to do with stdout in [`Git::stream`].
@@ -302,7 +326,90 @@ impl Git {
         } else {
             Stdout::Discard
         };
-        self.stream(dir, args, &[], stdout, on_segment, cancelled)
+        self.stream(
+            self.command(Some(dir), args, &[]),
+            stdout,
+            on_segment,
+            cancelled,
+        )
+    }
+
+    /// A command that contacts the remote `remote` (fetch, push, clone; name or URL): like
+    /// [`Git::run_streaming`] and, if a prompter is set, with the askpass bridge
+    /// (`crate::askpass`): git and ssh ask the user for user name, password, passphrase or host
+    /// key through the app. `GIT_TERMINAL_PROMPT=0` stays: git tries askpass before the
+    /// terminal. Without a prompter (MCP, tests) or if the bridge cannot start, exactly
+    /// [`Git::run_streaming`].
+    ///
+    /// If git fails after the user cancelled a question, [`Streamed::auth_cancelled`]: the
+    /// caller reports [`EngineError::AuthCancelled`] where it would report
+    /// [`EngineError::Auth`] (`Streamed::remote_error`).
+    pub(crate) fn run_network(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        capture_stdout: bool,
+        remote: &str,
+        on_segment: impl FnMut(Segment),
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Streamed, EngineError> {
+        let stdout = if capture_stdout {
+            Stdout::Grace
+        } else {
+            Stdout::Discard
+        };
+        // The user's own askpass is never overridden: git keeps `GIT_ASKPASS`, `core.askPass`
+        // or `SSH_ASKPASS` (git's fallback), ssh keeps `SSH_ASKPASS` and the user's
+        // `SSH_ASKPASS_REQUIRE`; a side already served is not bridged.
+        let bridged = self.askpass.as_ref().and_then(|askpass| {
+            if !askpass.prompter.asks_now() {
+                return None;
+            }
+            let user_ssh = self.env_set("SSH_ASKPASS");
+            let git_side =
+                !user_ssh && !self.env_set("GIT_ASKPASS") && !self.askpass_configured(dir);
+            let ssh_side = !user_ssh && !self.env_set("SSH_ASKPASS_REQUIRE");
+            if !git_side && !ssh_side {
+                return None;
+            }
+            let bridge = Bridge::start(askpass.prompter.clone(), Some(remote.to_owned())).ok()?;
+            Some((askpass, bridge, git_side, ssh_side))
+        });
+        let Some((askpass, bridge, git_side, ssh_side)) = bridged else {
+            return self.stream(
+                self.command(Some(dir), args, &[]),
+                stdout,
+                on_segment,
+                cancelled,
+            );
+        };
+        let mut env = vec![(ASKPASS_ENV, OsString::from(bridge.env_value()))];
+        if git_side {
+            env.push(("GIT_ASKPASS", askpass.program.clone()));
+        }
+        if ssh_side {
+            env.push(("SSH_ASKPASS", askpass.program.clone()));
+            env.push(("SSH_ASKPASS_REQUIRE", "force".into()));
+        }
+        let mut cmd = self.command(Some(dir), args, &[]);
+        cmd.envs(env);
+        let mut streamed = self.stream(cmd, stdout, on_segment, cancelled)?;
+        streamed.auth_cancelled = bridge.cancelled() && !streamed.status.success();
+        Ok(streamed)
+    }
+
+    /// Whether `key` is set, not empty, for git: added with [`Git::set_env`] or inherited.
+    fn env_set(&self, key: &str) -> bool {
+        match self.env.iter().rev().find(|(k, _)| k == key) {
+            Some((_, value)) => !value.is_empty(),
+            None => std::env::var_os(key).is_some_and(|v| !v.is_empty()),
+        }
+    }
+
+    /// Whether `core.askPass` is configured, not empty, in any scope for the repo in `dir`.
+    fn askpass_configured(&self, dir: &Path) -> bool {
+        self.output(Some(dir), &["config", "--get", "core.askPass"])
+            .is_ok_and(|out| out.status.success() && !out.stdout.trim_ascii().is_empty())
     }
 
     /// A slow read (`git blame`, `git log` of one file) that can be cancelled: like
@@ -319,9 +426,7 @@ impl Git {
         debug_assert!(paths.is_empty() || args.last() == Some(&"--"));
         let mut lines = Vec::new();
         let streamed = self.stream(
-            dir,
-            args,
-            paths,
+            self.command(Some(dir), args, paths),
             Stdout::Full,
             |Segment { text, newline }| {
                 if newline && !text.trim().is_empty() {
@@ -333,11 +438,10 @@ impl Git {
         Ok((streamed, lines.join("\n")))
     }
 
+    /// Runs `cmd` (built by [`Git::command`]) as described in [`Git::run_streaming`].
     fn stream(
         &self,
-        dir: &Path,
-        args: &[&str],
-        paths: &[&OsStr],
+        mut cmd: Command,
         stdout_mode: Stdout,
         mut on_segment: impl FnMut(Segment),
         cancelled: &dyn Fn() -> bool,
@@ -349,7 +453,6 @@ impl Git {
                 error = e
             ))
         };
-        let mut cmd = self.command(Some(dir), args, paths);
         if stdout_mode == Stdout::Discard {
             cmd.stdout(Stdio::null());
         }
@@ -420,6 +523,7 @@ impl Git {
             status,
             cancelled: terminated.is_some(),
             stdout,
+            auth_cancelled: false,
         })
     }
 }
@@ -650,6 +754,7 @@ mod tests {
             .chain(PATHSPEC_ENV)
             .chain(CONFIG_ENV)
             .chain(DATE_ENV)
+            .chain(ASKPASS_VARS)
         {
             assert_eq!(value(key), Some(None), "{key}");
         }

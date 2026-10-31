@@ -8,6 +8,7 @@
 mod message;
 mod builtin;
 mod commands;
+mod credentials;
 mod git;
 mod job;
 mod journal;
@@ -17,7 +18,9 @@ mod session;
 pub use builtin::branch::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
     BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
+    BranchSetUpstreamParams, BranchSetUpstreamResult, CommitCheckoutParams, CommitCheckoutResult,
 };
+pub use builtin::clean::{CleanParams, CleanResult};
 pub use builtin::clone::RepoCloneResult;
 pub use builtin::commit::CommitCreateResult;
 pub use builtin::conflict::{
@@ -56,26 +59,34 @@ pub use builtin::stash::{
 };
 pub use builtin::tag::{TagCreateParams, TagCreateResult, TagDeleteParams, TagDeleteResult};
 pub use builtin::{
-    CommitShowParams, DEFAULT_LOG_LIMIT, DiffCommitParams, DiffParams, DiffWithDigests,
-    FileDiffWithDigest, JournalState, RepoLogResult, RepoOpenParams, RepoOpenResult,
-    RepoOptimizeResult,
+    CommitShowParams, DEFAULT_LOG_LIMIT, DiffCommitParams, DiffParams, DiffRangeParams,
+    DiffRangeResult, DiffWithDigests, FileDiffWithDigest, JournalState, RepoLogResult,
+    RepoOpenParams, RepoOpenResult, RepoOptimizeResult,
 };
 pub use commands::{Access, CommandSpec, Registry};
+pub use credentials::{CredentialKind, CredentialPrompter, CredentialRequest};
 pub use git::{
-    BACKUP_PREFIX, BranchDeleted, CommitOutcome, CommitRequest, ConfigEntry, DiffSpec,
-    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
-    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
-    LinePatch, LineSelection, LogQuery, RefMove, RefRestore, RepoOpener, RestoreOutcome,
-    SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore, amend_impact,
-    apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
-    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
-    check_remote_name, check_same_plan, default_remote, discard_description, discard_plan,
-    file_digest, line_patch, path_matches, unknown_remote, valid_ref_name, versions_at_risk,
-    versions_at_risk_hidden,
+    BACKUP_PREFIX, BranchDeleted, CleanBackup, CleanOutcome, CleanRestore, CleanedFile,
+    CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome, DiscardedFile,
+    FetchOutcome, FetchRequest, GitBackend, GitIndex, GitMaintenance, GitOperations, GitRead,
+    GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState, LinePatch, LineSelection, LogQuery,
+    RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery, StagedVersion,
+    WorktreeBackup, WorktreeRestore, amend_impact, apply_patch, backup_message, branch_ref,
+    branch_short, check_amend_published, check_branch_name, check_commit_state,
+    check_new_branch_name, check_no_operation, check_remote_name, check_same_clean_plan,
+    check_same_plan, clean_description, clean_plan, default_remote, discard_description,
+    discard_plan, file_digest, line_patch, path_matches, unknown_remote, valid_ref_name,
+    versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
     blame_missing_worktree, blame_no_commits,
+};
+/// The in-memory repo for tests (UI, MCP): not in the app binaries.
+#[cfg(any(test, feature = "test-support"))]
+pub use git::{
+    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
+    cleanup_message, is_binary_content, split_message,
 };
 pub use git::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
@@ -87,12 +98,6 @@ pub use git::{
 pub use git::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,
-};
-/// The in-memory repo for tests (UI, MCP): not in the app binaries.
-#[cfg(any(test, feature = "test-support"))]
-pub use git::{
-    FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash, cleanup_message,
-    is_binary_content, split_message,
 };
 pub use git::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
@@ -129,6 +134,7 @@ pub use git::{
     reset_moved, status_paths, strict_conflicts,
 };
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
+pub use git::{TrackingBranch, UpstreamChange, resolve_tracking, upstream_label};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{BranchMove, HeadChange, Integration, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};
@@ -250,6 +256,12 @@ pub enum EngineError {
     RemoteUnreachable {
         remote: String,
         message: String,
+    },
+    /// git asked for credentials (user name, password, passphrase, host key) through the app's
+    /// [`CredentialPrompter`] and the user cancelled: git stopped before contacting the remote
+    /// for anything else. Nothing was modified; the command is not retried by itself.
+    AuthCancelled {
+        remote: String,
     },
     /// The command was cancelled by whoever launched it
     /// ([`CancelToken::cancel`](crate::CancelToken::cancel)). What the command says about itself
@@ -385,6 +397,7 @@ impl EngineError {
             E::Auth { remote, message } => {
                 msg!("engine-auth", remote = remote, message = message)
             }
+            E::AuthCancelled { remote } => msg!("engine-auth-cancelled", remote = remote),
             E::RemoteUnreachable { remote, message } => {
                 msg!(
                     "engine-remote-unreachable",

@@ -10,8 +10,8 @@
 //! cancels it (S25, `remote.fetch`). Commands that are not slow ignore both.
 
 use project_engine::{
-    CancelToken, EngineError, JobContext, Platform, Progress, PullOperation, PushRejection,
-    Registry, Session,
+    CancelToken, EngineError, JobContext, Message, MessageArg, Platform, Progress, PullOperation,
+    PushRejection, Registry, Session,
 };
 use project_i18n::tr;
 use serde_json::Value;
@@ -40,6 +40,8 @@ pub struct Job {
     pub writes: bool,
     /// When it was sent: the status bar shows a read only once it takes a while.
     pub started: std::time::Instant,
+    /// False if git's credential questions get no dialog (the automatic fetch).
+    pub asks: bool,
 }
 
 /// A finished command.
@@ -58,6 +60,9 @@ pub struct Done {
     /// The full id to send back as `"expected"` with `"confirm": true`, if the command
     /// gave it with [`ErrorKind::ConfirmRequired`] (the force of `remote.push`).
     pub confirm_expected: Option<String>,
+    /// The `bytes` number of a [`ErrorKind::ConfirmRequired`] reason, if it has one: the total
+    /// size of the files `worktree.clean` would delete.
+    pub confirm_bytes: Option<u64>,
 }
 
 /// The kind of an engine error, for UI reactions that do not depend on the text.
@@ -67,6 +72,10 @@ pub enum ErrorKind {
     StaleDiff,
     /// [`EngineError::NotAllowed`]: operation refused in the repo's current state.
     NotAllowed,
+    /// [`EngineError::NotAllowed`] because of uncommitted changes to tracked files (merge,
+    /// cherry-pick, revert, rebase, pull: keys `engine-*-local-changes`); the files are in
+    /// [`Done::error_detail`]. Nothing changed: the UI offers to stash them.
+    LocalChanges,
     /// [`EngineError::InvalidParams`].
     InvalidParams,
     /// [`EngineError::IndexLocked`].
@@ -90,6 +99,9 @@ pub enum ErrorKind {
     /// [`EngineError::Auth`]: the remote rejected the credentials or they would have to be asked for;
     /// git's text is in [`Done::error_detail`].
     Auth,
+    /// [`EngineError::AuthCancelled`]: the user cancelled a credential question; nothing
+    /// changed. The remote is in [`Done::error_detail`]. Shown as a notice, not as an error.
+    AuthCancelled,
     /// [`EngineError::RemoteUnreachable`]: the remote cannot be reached; git's text is in
     /// [`Done::error_detail`].
     RemoteUnreachable,
@@ -112,6 +124,9 @@ impl ErrorKind {
     pub fn of(error: &EngineError) -> Self {
         match error {
             EngineError::StaleDiff { .. } => ErrorKind::StaleDiff,
+            EngineError::NotAllowed(m) if local_changes_files(m).is_some() => {
+                ErrorKind::LocalChanges
+            }
             EngineError::NotAllowed(_) => ErrorKind::NotAllowed,
             EngineError::RepoNotFound { .. } => ErrorKind::RepoNotFound,
             EngineError::InvalidParams { .. } => ErrorKind::InvalidParams,
@@ -123,6 +138,7 @@ impl ErrorKind {
             EngineError::PostCommit { .. } => ErrorKind::PostCommit,
             EngineError::CheckoutConflict { .. } => ErrorKind::CheckoutConflict,
             EngineError::Auth { .. } => ErrorKind::Auth,
+            EngineError::AuthCancelled { .. } => ErrorKind::AuthCancelled,
             EngineError::RemoteUnreachable { .. } => ErrorKind::RemoteUnreachable,
             EngineError::Cancelled { .. } => ErrorKind::Cancelled,
             EngineError::PullConflict { operation, .. } => ErrorKind::PullConflict(*operation),
@@ -139,6 +155,17 @@ impl ErrorKind {
         }
     }
 
+    /// The number to put in [`Done::confirm_bytes`]: the `bytes` argument of a confirmation.
+    pub fn bytes(error: &EngineError) -> Option<u64> {
+        let EngineError::ConfirmRequired { reason, .. } = error else {
+            return None;
+        };
+        reason.args().iter().find_map(|(name, arg)| match arg {
+            MessageArg::Number(n) if name == "bytes" && *n >= 0.0 => Some(*n as u64),
+            _ => None,
+        })
+    }
+
     /// The detail to put in [`Done::error_detail`]: the reason of a confirmation, git's stderr,
     /// the files a checkout would overwrite (one per line), git's text for a remote that
     /// rejects the credentials or cannot be reached, the conflicted files of a pull (one per
@@ -151,11 +178,33 @@ impl ErrorKind {
             EngineError::Auth { message, .. }
             | EngineError::RemoteUnreachable { message, .. }
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
+            EngineError::AuthCancelled { remote } => Some(remote.clone()),
             EngineError::PullConflict { files, .. }
             | EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
+            EngineError::NotAllowed(m) => local_changes_files(m),
             _ => None,
         }
     }
+}
+
+/// The refusals for uncommitted local changes, which the UI explains with its own text.
+const LOCAL_CHANGES_KEYS: [&str; 4] = [
+    "engine-merge-local-changes",
+    "engine-pick-local-changes",
+    "engine-pull-local-changes",
+    "engine-rebase-local-changes",
+];
+
+/// The files of a refusal for local changes (`a.rs, b.rs`, without the engine's backticks),
+/// `None` for other messages.
+fn local_changes_files(message: &Message) -> Option<String> {
+    if !LOCAL_CHANGES_KEYS.contains(&message.key()) {
+        return None;
+    }
+    message.args().iter().find_map(|(name, arg)| match arg {
+        MessageArg::Text(files) if name == "files" => Some(files.replace('`', "")),
+        _ => None,
+    })
 }
 
 /// A command error, as it comes from the job.
@@ -164,6 +213,7 @@ struct Failure {
     detail: Option<String>,
     message: String,
     expected: Option<String>,
+    bytes: Option<u64>,
 }
 
 impl Failure {
@@ -174,6 +224,7 @@ impl Failure {
             // In the UI language; `Display` is the English of CLI and MCP.
             message: error.text(),
             expected: ErrorKind::expected(error),
+            bytes: ErrorKind::bytes(error),
         }
     }
 }
@@ -224,6 +275,12 @@ impl Executor {
     /// Sends the command `command` with `params` and returns at once (after running it, if the
     /// platform runs jobs inside `spawn`). The result arrives from [`Executor::poll`].
     pub fn submit(&mut self, command: &str, params: Value) -> Ticket {
+        self.submit_with(command, params, true)
+    }
+
+    /// Like [`Executor::submit`]; with `asks` false git's credential questions get no dialog
+    /// (the automatic fetch): a missing credential is an authentication error.
+    pub fn submit_with(&mut self, command: &str, params: Value, asks: bool) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
         let writes = self.registry.get(command).is_some_and(|spec| spec.writes);
@@ -233,6 +290,7 @@ impl Executor {
             command: command.to_owned(),
             writes,
             started: std::time::Instant::now(),
+            asks,
         });
 
         // Before starting the job: a platform may run the command (and send progress) inside
@@ -263,6 +321,7 @@ impl Executor {
         self.platform.spawn(Box::new(move || {
             // A job that ended badly poisons the lock, but the session stays valid: every command
             // leaves it consistent even when it fails.
+            let _job = crate::credentials::Job::start(asks);
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run_with(&reply.command, &mut session, params, job)
@@ -345,9 +404,9 @@ impl Reply {
 
     fn deliver(&mut self, result: Result<Value, Failure>) {
         self.sent = true;
-        let (error_kind, error_detail, confirm_expected) = match &result {
-            Ok(_) => (None, None, None),
-            Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone()),
+        let (error_kind, error_detail, confirm_expected, confirm_bytes) = match &result {
+            Ok(_) => (None, None, None, None),
+            Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone(), f.bytes),
         };
         // If the UI is already closed nobody is waiting for the result.
         let _ = self.sender.send(Done {
@@ -357,6 +416,7 @@ impl Reply {
             error_kind,
             error_detail,
             confirm_expected,
+            confirm_bytes,
         });
         (self.wake)();
     }
@@ -370,6 +430,7 @@ impl Drop for Reply {
                 detail: None,
                 message: tr!("app-no-result", command = &self.command),
                 expected: None,
+                bytes: None,
             }));
         }
     }
@@ -649,6 +710,11 @@ mod tests {
             message: "fatal: Authentication failed".into(),
         };
         assert_eq!(ErrorKind::of(&auth), ErrorKind::Auth);
+        let cancelled = EngineError::AuthCancelled {
+            remote: "origin".into(),
+        };
+        assert_eq!(ErrorKind::of(&cancelled), ErrorKind::AuthCancelled);
+        assert_eq!(ErrorKind::detail(&cancelled).as_deref(), Some("origin"));
         assert_eq!(
             ErrorKind::detail(&auth).as_deref(),
             Some("fatal: Authentication failed")

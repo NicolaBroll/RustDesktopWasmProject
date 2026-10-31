@@ -2,6 +2,8 @@ engine-journal-amend = Amend { $id } “{ $summary }” (was { $old })
 engine-journal-commit = Commit { $id } “{ $summary }”
 engine-journal-discard-one = Discard changes to “{ $path }”
 engine-journal-discard-many = Discard changes to { $n } files ({ $names })
+engine-journal-clean-one = Delete “{ $path }”
+engine-journal-clean-many = Delete { $n } untracked files ({ $names })
 engine-journal-quoted = “{ $name }”
 engine-journal-branch-create = Create branch `{ $name }` at { $id }
 engine-journal-tag-create = Create tag `{ $name }` at { $id }
@@ -43,3 +45,6 @@ engine-journal-remote-remove = Remove remote `{ $name }` ({ $n ->
 })
 engine-journal-stash-push = Stash changes (stash { $id } “{ $message }”)
 engine-journal-stash-drop = Drop { $name } ({ $id } “{ $message }”)
+engine-journal-branch-create-track = Create branch `{ $name }` at { $id } tracking `{ $upstream }`
+engine-journal-upstream-set = Set the upstream of `{ $name }` to `{ $upstream }`
+engine-journal-upstream-unset = Remove the upstream `{ $previous }` of `{ $name }`

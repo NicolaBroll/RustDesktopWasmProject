@@ -445,8 +445,10 @@ fn commands_lists_the_catalog() {
             "branch.rename",
             "branch.reset",
             "branch.reset_preview",
+            "branch.set_upstream",
             "cherry_pick.abort",
             "cherry_pick.continue",
+            "commit.checkout",
             "commit.cherry_pick",
             "commit.create",
             "commit.revert",
@@ -455,6 +457,7 @@ fn commands_lists_the_catalog() {
             "conflict.show",
             "diff.commit",
             "diff.index",
+            "diff.range",
             "diff.worktree",
             "edit.history",
             "edit.redo",
@@ -499,6 +502,7 @@ fn commands_lists_the_catalog() {
             "stash.push",
             "tag.create",
             "tag.delete",
+            "worktree.clean",
             "worktree.discard"
         ]
     );
@@ -516,8 +520,10 @@ fn commands_lists_the_catalog() {
             "branch.delete",
             "branch.rename",
             "branch.reset",
+            "branch.set_upstream",
             "cherry_pick.abort",
             "cherry_pick.continue",
+            "commit.checkout",
             "commit.cherry_pick",
             "commit.create",
             "commit.revert",
@@ -553,6 +559,7 @@ fn commands_lists_the_catalog() {
             "stash.push",
             "tag.create",
             "tag.delete",
+            "worktree.clean",
             "worktree.discard"
         ]
     );

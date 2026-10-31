@@ -771,6 +771,7 @@ impl Tab {
                 self.seek(base);
                 if let Some(repo) = &mut self.repo {
                     repo.worktree_selected = false;
+                    repo.compare.close();
                     repo.stash.select(Some(id));
                 }
             }

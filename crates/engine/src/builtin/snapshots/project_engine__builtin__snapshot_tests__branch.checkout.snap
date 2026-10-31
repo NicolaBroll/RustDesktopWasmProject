@@ -92,7 +92,11 @@ expression: out
       }
     },
     "operation": null,
-    "upstream": null
+    "upstream": {
+      "ahead": 1,
+      "behind": 0,
+      "name": "origin/main"
+    }
   },
   "warnings": []
 }

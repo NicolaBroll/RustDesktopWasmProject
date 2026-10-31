@@ -54,12 +54,13 @@
 //!   `refs/project/backup/undo-...` (§7); if the backup fails the undo is not done.
 //! - The journal keeps at most [`Journal::MAX_ENTRIES`] entries: the oldest drop out.
 
+use crate::{CleanBackup, CleanOutcome, CleanRestore, clean_description};
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
     MergeMode, Message, PullMode, RefMove, RefRestore, RemoteSnapshot, ResetMode, ResetRecord,
-    ResetRequest, RestoreOutcome, StashDrop, StashEntry, StashPush, StashRecord, WorktreeBackup,
-    WorktreeRestore, branch_short, check_no_operation, discard_description, find_stash, pop_stash,
-    remove_remote, restore_remote,
+    ResetRequest, RestoreOutcome, StashDrop, StashEntry, StashPush, StashRecord, UpstreamChange,
+    WorktreeBackup, WorktreeRestore, branch_short, check_no_operation, discard_description,
+    find_stash, pop_stash, remove_remote, restore_remote, upstream_label,
 };
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
@@ -181,6 +182,18 @@ pub struct JournalEntry {
     /// go through [`GitRefs::reset`](crate::GitRefs::reset) with the same mode, strict (nothing may need a backup).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<ResetRecord>,
+    /// Only for `branch.create` with `track` and `branch.set_upstream`: the upstream of the
+    /// branch before and after ([`UpstreamChange`]). Undo writes `before` back, redo `after`,
+    /// only if the repo still has the other value (for `branch.create` after the ref was
+    /// deleted / recreated: then a mismatch is a warning; for `branch.set_upstream`
+    /// [`EngineError::UndoConflict`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<UpstreamChange>,
+    /// Only for `worktree.clean`: the backup commit and the deleted files ([`CleanBackup`]). Undo
+    /// recreates them where the path is absent again, redo deletes them again if they still match
+    /// the backup; neither moves refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clean: Option<CleanBackup>,
 }
 
 impl JournalEntry {
@@ -235,6 +248,8 @@ impl JournalEntry {
             remote: None,
             stash: None,
             reset: None,
+            upstream: None,
+            clean: None,
         })
     }
 
@@ -260,6 +275,35 @@ impl JournalEntry {
             remote: None,
             stash: None,
             reset: None,
+            upstream: None,
+            clean: None,
+        }
+    }
+
+    /// The entry of a successful `worktree.clean`, with HEAD as it was (it does not move) and the
+    /// backup.
+    pub fn clean(outcome: &CleanOutcome, head: HeadState) -> Self {
+        Self {
+            id: 0,
+            command: "worktree.clean".to_owned(),
+            description: clean_description(&outcome.files),
+            head: HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs: Vec::new(),
+            backup: Some(outcome.backup.clone()),
+            undo_backups: Vec::new(),
+            worktree: None,
+            branch_config: Vec::new(),
+            remote: None,
+            stash: None,
+            reset: None,
+            upstream: None,
+            clean: Some(CleanBackup {
+                commit: outcome.commit,
+                files: outcome.files.clone(),
+            }),
         }
     }
 
@@ -285,6 +329,147 @@ impl JournalEntry {
             }],
             None,
         )
+    }
+
+    /// The entry of a successful `branch.create` with `track`: as [`JournalEntry::branch_create`]
+    /// plus the upstream written (`change`). Undo deletes the branch and then puts `before` back
+    /// (only if the upstream is still `after`, otherwise a warning); redo recreates both.
+    pub fn branch_create_tracking(
+        branch: &str,
+        target: Oid,
+        head: HeadState,
+        change: UpstreamChange,
+    ) -> Self {
+        let mut entry = Self::branch_create(branch, target, head);
+        entry.description = msg!(
+            "engine-journal-branch-create-track",
+            name = branch_short(branch),
+            id = target.short(),
+            upstream = upstream_label(&change.after).unwrap_or_default()
+        );
+        entry.upstream = Some(change);
+        entry
+    }
+
+    /// The entry of a successful `branch.set_upstream`: no ref moves, HEAD as it was; the
+    /// upstream of the branch (full name `branch`) from `change.before` to `change.after`.
+    /// Undo and redo write the other value only if the repo still has the one the operation
+    /// (or the undo) left ([`EngineError::UndoConflict`] otherwise).
+    pub fn set_upstream(branch: &str, head: HeadState, change: UpstreamChange) -> Self {
+        let name = branch_short(branch);
+        let description = match upstream_label(&change.after) {
+            Some(upstream) => msg!(
+                "engine-journal-upstream-set",
+                name = name,
+                upstream = upstream
+            ),
+            None => msg!(
+                "engine-journal-upstream-unset",
+                name = name,
+                previous = upstream_label(&change.before).unwrap_or_default()
+            ),
+        };
+        let mut entry = Self::branch_entry(
+            "branch.set_upstream",
+            description,
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            Vec::new(),
+            None,
+        );
+        entry.upstream = Some(change);
+        entry
+    }
+
+    /// Undo and redo of the upstream of a [`JournalEntry::set_upstream`]: the branch must still
+    /// exist and have the upstream the operation (or the undo) left, otherwise
+    /// [`EngineError::UndoConflict`] and nothing changes.
+    fn apply_upstream(
+        &self,
+        repo: &mut dyn GitBackend,
+        redo: bool,
+    ) -> Result<RestoreOutcome, EngineError> {
+        let command = if redo { "edit.redo" } else { "edit.undo" };
+        let Some(change) = &self.upstream else {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-undo-bad-entry",
+                description = self.description
+            )));
+        };
+        check_no_operation(
+            command,
+            msg!("engine-busy-upstream"),
+            repo.status()?.operation,
+        )?;
+        let (expected, target) = if redo {
+            (&change.before, &change.after)
+        } else {
+            (&change.after, &change.before)
+        };
+        let conflict = |what: Message| EngineError::UndoConflict {
+            command,
+            refs: vec![what],
+        };
+        let full = crate::branch_ref(&change.branch);
+        if !repo.refs()?.iter().any(|r| r.name == full) {
+            return Err(conflict(msg!(
+                "engine-undo-upstream-branch-gone",
+                name = change.branch.escape_debug()
+            )));
+        }
+        let now = repo.local_upstream(&change.branch)?;
+        if now != *expected {
+            return Err(conflict(msg!(
+                "engine-undo-upstream-changed",
+                name = change.branch.escape_debug(),
+                expected = upstream_label(expected).unwrap_or_else(|| "-".to_owned()),
+                now = upstream_label(&now).unwrap_or_else(|| "-".to_owned())
+            )));
+        }
+        let warnings = repo.write_upstream(&change.branch, expected, target)?;
+        Ok(RestoreOutcome {
+            backups: Vec::new(),
+            warnings,
+        })
+    }
+
+    /// After undo/redo of a `branch.create` with `track` moved the ref: the upstream back to
+    /// `before` (undo) or to `after` (redo), only if the repo has the other one; otherwise (or
+    /// if the write fails) a warning, since the ref has already moved.
+    fn restore_create_upstream(&self, repo: &mut dyn GitBackend, redo: bool) -> Vec<Message> {
+        let Some(change) = &self.upstream else {
+            return Vec::new();
+        };
+        let (expected, target) = if redo {
+            (&change.before, &change.after)
+        } else {
+            (&change.after, &change.before)
+        };
+        let label = |e: &[ConfigEntry]| upstream_label(e).unwrap_or_else(|| "-".to_owned());
+        match repo.local_upstream(&change.branch) {
+            Ok(now) if now == *expected => repo
+                .write_upstream(&change.branch, expected, target)
+                .unwrap_or_else(|e| {
+                    vec![msg!(
+                        "engine-undo-upstream-not-written",
+                        name = change.branch.escape_debug(),
+                        error = e
+                    )]
+                }),
+            Ok(now) => vec![msg!(
+                "engine-undo-upstream-left",
+                name = change.branch.escape_debug(),
+                now = label(&now),
+                expected = label(expected)
+            )],
+            Err(e) => vec![msg!(
+                "engine-undo-upstream-not-written",
+                name = change.branch.escape_debug(),
+                error = e
+            )],
+        }
     }
 
     /// The entry of a successful `tag.create`: the tag `tag` (full name) created with the value
@@ -402,12 +587,28 @@ impl JournalEntry {
     /// moved. Undo and redo redo a safe checkout ([`GitRefs::checkout`](crate::GitRefs::checkout)), which never
     /// overwrites local changes.
     pub fn checkout(before: HeadState, after: HeadState) -> Self {
+        Self::head_switch("branch.checkout", before, after, None)
+    }
+
+    /// The entry of a successful `commit.checkout` (HEAD detached at `after`): same undo and
+    /// redo as [`JournalEntry::checkout`]; `backup` is the `refs/project/backup/detached-...`
+    /// saved when leaving a detached HEAD that no ref reached.
+    pub fn commit_checkout(before: HeadState, after: HeadState, backup: Option<String>) -> Self {
+        Self::head_switch("commit.checkout", before, after, backup)
+    }
+
+    fn head_switch(
+        command: &str,
+        before: HeadState,
+        after: HeadState,
+        backup: Option<String>,
+    ) -> Self {
         let name = |h: &HeadState| match h {
             HeadState::Branch(b) => msg!("engine-journal-head-branch", name = branch_short(b)),
             HeadState::Detached(oid) => msg!("engine-journal-head-detached", id = oid.short()),
         };
         Self::branch_entry(
-            "branch.checkout",
+            command,
             msg!(
                 "engine-journal-checkout",
                 after = name(&after),
@@ -415,7 +616,7 @@ impl JournalEntry {
             ),
             HeadChange { before, after },
             Vec::new(),
-            None,
+            backup,
         )
     }
 
@@ -670,6 +871,8 @@ impl JournalEntry {
             remote: None,
             stash: None,
             reset: None,
+            upstream: None,
+            clean: None,
         }
     }
 
@@ -980,8 +1183,27 @@ impl JournalEntry {
             }
             return repo.restore_worktree(&request);
         }
+        if let Some(backup) = &self.clean {
+            // Untracked files do not depend on HEAD: only the paths are checked (by the backend),
+            // and never in the middle of a merge, rebase...
+            let request = CleanRestore {
+                command: if redo { "edit.redo" } else { "edit.undo" },
+                redo,
+                commit: backup.commit,
+                files: backup.files.clone(),
+            };
+            check_no_operation(
+                request.command,
+                msg!("engine-busy-worktree"),
+                repo.status()?.operation,
+            )?;
+            return repo.restore_cleaned(&request);
+        }
         if self.stash.is_some() {
             return self.apply_stash(repo, redo);
+        }
+        if self.command == "branch.set_upstream" {
+            return self.apply_upstream(repo, redo);
         }
         let request = if redo {
             self.redo_request()
@@ -989,7 +1211,7 @@ impl JournalEntry {
             self.undo_request()
         };
         match self.command.as_str() {
-            "branch.checkout" => {
+            "branch.checkout" | "commit.checkout" => {
                 Self::check_unchanged(repo, &request, msg!("engine-busy-checkout"))?;
                 repo.checkout(&request.head_target)
             }
@@ -1023,6 +1245,14 @@ impl JournalEntry {
                         redo,
                     ));
                 }
+                Ok(outcome)
+            }
+            "branch.create" if self.upstream.is_some() => {
+                let mut outcome = repo.restore_refs(&request)?;
+                // The ref is already deleted / recreated: the upstream only gives warnings.
+                outcome
+                    .warnings
+                    .extend(self.restore_create_upstream(repo, redo));
                 Ok(outcome)
             }
             "remote.add" | "remote.remove" => {
@@ -1280,6 +1510,8 @@ mod tests {
             remote: None,
             stash: None,
             reset: None,
+            upstream: None,
+            clean: None,
         }
     }
 

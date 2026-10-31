@@ -54,11 +54,15 @@ pub struct AutoFetch {
     suspended: Option<Suspended>,
     /// "Retry": fetch at the next tick that can.
     now: bool,
+    /// "Retry": the next automatic fetch may ask for credentials (the others never do).
+    ask: bool,
     /// A fetch started since the last tick (it may have already ended).
     restart: bool,
     /// The remote branches moved by the last automatic fetch: the notice is written once the log
     /// has been read again (it counts the new commits in it).
     news: Option<Vec<RefUpdate>>,
+    /// The end of the last fetch that worked (automatic or manual), for the Fetch tooltip.
+    last: Option<Instant>,
 }
 
 impl AutoFetch {
@@ -117,9 +121,15 @@ impl AutoFetch {
 
     /// A fetch (automatic or manual) worked: back to the interval.
     pub fn succeeded(&mut self) {
+        self.last = Some(Instant::now());
         self.failures = 0;
         self.offline = None;
         self.suspended = None;
+    }
+
+    /// When the last fetch that worked ended; `None`: none since the repo was opened.
+    pub fn last_fetch(&self) -> Option<Instant> {
+        self.last
     }
 
     /// The remote could not be reached: the wait doubles.
@@ -138,6 +148,13 @@ impl AutoFetch {
     pub fn retry(&mut self) {
         self.suspended = None;
         self.now = true;
+        self.ask = true;
+    }
+
+    /// Whether the automatic fetch starting now may ask for credentials: only the one of
+    /// "Retry".
+    pub fn take_ask(&mut self) -> bool {
+        std::mem::take(&mut self.ask)
     }
 
     /// The notice under the bar, unless the automatic fetch is off.
@@ -296,6 +313,10 @@ impl Tab {
                 }
             }
             fetch::Received::Cancelled { notice } => {
+                // A credential question cancelled: not asked again at every tick.
+                if kind == Some(ErrorKind::AuthCancelled) {
+                    repo.auto_fetch.suspend(None);
+                }
                 self.notice = notice;
                 self.refresh_light();
             }

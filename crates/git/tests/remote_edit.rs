@@ -336,6 +336,9 @@ fn rename_refusals_change_nothing() {
     // Recent git refuses `git remote add` of a nested name: configured by hand.
     work.git(&["config", "remote.fork/a.url", remote.path_str()]);
     work.git(&["update-ref", "refs/remotes/old/main", "HEAD"]);
+    // Settings left over from remotes removed by hand: renaming to those names would take them over.
+    work.git(&["config", "branch.main.pushRemote", "gone"]);
+    work.git(&["config", "remote.pushDefault", "lost"]);
     let (r, mut s) = open(&work);
     let before = state(&work);
     for (params, invalid) in [
@@ -344,6 +347,8 @@ fn rename_refusals_change_nothing() {
         (json!({ "name": "fork", "new_name": "spoon" }), false),
         (json!({ "name": "origin", "new_name": "fork/b" }), false),
         (json!({ "name": "origin", "new_name": "old" }), false),
+        (json!({ "name": "origin", "new_name": "gone" }), false),
+        (json!({ "name": "origin", "new_name": "lost" }), false),
         (json!({ "name": "origin", "new_name": "a..b" }), true),
         (json!({ "name": "origin", "new_name": "a b" }), true),
         (json!({ "name": "origin", "new_name": "-x" }), true),

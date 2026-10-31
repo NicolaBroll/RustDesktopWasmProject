@@ -818,7 +818,8 @@ pub(super) fn remote_set_url(
 /// Refusals, nothing changes: `new_name` not a valid remote name ([`check_new_remote_name`])
 /// → [`EngineError::InvalidParams`]; [`EngineError::NotAllowed`] for `name` not configured or
 /// defined (even partly) outside the repo file, `new_name` already configured or with leftovers
-/// (`remote.<new_name>.*` entries, remote-tracking branches), names nested with another remote
+/// (`remote.<new_name>.*` entries, remote-tracking branches, `branch.<b>.remote`/`pushRemote` or
+/// `remote.pushDefault` naming it), names nested with another remote
 /// (`a` and `a/b`: git would move the refs of both, [`nested_remote`]), an operation in progress.
 /// Afterwards every upstream, `pushRemote` and remote-tracking branch that used `name` is checked:
 /// what git did not carry over goes into `warnings`. If git fails after moving the configuration,
@@ -859,6 +860,15 @@ pub(super) fn remote_rename(
             "engine-remote-rename-leftovers",
             name = new_name.escape_debug(),
             n = leftover.refs.len()
+        )));
+    }
+    // Upstreams or push settings that still name `new_name` (a remote removed by hand) would
+    // silently follow the renamed remote, and its undo would rewrite them.
+    if !leftover.upstreams.is_empty() || leftover.push_default {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-rename-dependents",
+            name = new_name.escape_debug(),
+            n = leftover.upstreams.len() + usize::from(leftover.push_default)
         )));
     }
     let head = HeadState::from_head(&status.head);

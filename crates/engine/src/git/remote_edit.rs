@@ -199,7 +199,15 @@ fn rename_back(
             target.refs.iter().any(|t| t.name == name)
         })
     });
-    if remotes.iter().any(|r| r == to) || !target.config.is_empty() || collides {
+    // Upstreams or `pushDefault` naming `to` would be taken over by the renamed remote, unless
+    // its remote-tracking branches are still there too: a rename stopped midway leaves both on
+    // the old name, and renaming back must give them back to it.
+    let settings = !target.upstreams.is_empty() || target.push_default;
+    if remotes.iter().any(|r| r == to)
+        || !target.config.is_empty()
+        || (settings && target.refs.is_empty())
+        || collides
+    {
         return Err(conflict(
             command,
             msg!("engine-undo-remote-taken", name = to.escape_debug()),

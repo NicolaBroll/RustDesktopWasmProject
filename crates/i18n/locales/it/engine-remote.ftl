@@ -109,6 +109,7 @@ engine-remote-url-not-as-written = dopo la modifica `{ $key }` è { $now } invec
 engine-remote-url-none = non impostato
 engine-remote-rename-exists = esiste già un remoto `{ $name }`, niente modificato
 engine-remote-rename-leftovers = ci sono già voci `remote.{ $name }.*` o branch remoti sotto `refs/remotes/{ $name }/` ({ $n }): la rinomina li mescolerebbe con il remoto rinominato, niente modificato
+engine-remote-rename-dependents = { $n } impostazioni (`branch.<b>.remote`, `branch.<b>.pushRemote` o `remote.pushDefault`) nominano già `{ $name }`, un remoto che non esiste più: il remoto rinominato le prenderebbe per sé, niente modificato; correggerle prima nella configurazione
 engine-remote-rename-nested = i nomi `{ $name }` e `{ $other }` sono annidati (uno è l'altro seguito da `/...`): git sposterebbe i branch remoti di entrambi, niente modificato
 engine-remote-rename-partial = git si è fermato rinominando il remoto `{ $from }` in `{ $to }` dopo averne spostato la configurazione: la rinomina è nel journal (`edit.undo` la annulla). { $error }
 engine-remote-rename-ref-missed = dopo la rinomina `{ $name }` manca o è su un altro commit (era `{ $old }`)

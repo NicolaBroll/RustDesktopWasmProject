@@ -112,6 +112,7 @@ engine-remote-url-not-as-written = after the change `{ $key }` is { $now } inste
 engine-remote-url-none = not set
 engine-remote-rename-exists = a remote `{ $name }` already exists, nothing changed
 engine-remote-rename-leftovers = there are already entries `remote.{ $name }.*` or remote-tracking branches under `refs/remotes/{ $name }/` ({ $n }): the rename would mix them with the renamed remote, nothing changed
+engine-remote-rename-dependents = { $n } settings (`branch.<b>.remote`, `branch.<b>.pushRemote` or `remote.pushDefault`) already name `{ $name }`, a remote that no longer exists: the renamed remote would take them over, nothing changed; fix them in the configuration first
 engine-remote-rename-nested = the names `{ $name }` and `{ $other }` are nested (one is the other followed by `/...`): git would move the remote-tracking branches of both, nothing changed
 engine-remote-rename-partial = git stopped while renaming remote `{ $from }` to `{ $to }` after moving its configuration: the rename is in the journal (`edit.undo` renames it back). { $error }
 engine-remote-rename-ref-missed = after the rename `{ $name }` is missing or on another commit (it was `{ $old }`)

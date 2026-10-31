@@ -104,7 +104,9 @@ Writes (`writes`), goes into the journal (§7). `new_name`: `check_new_remote_na
 `refs/remotes/<new>/x`, no leading `-`) → `InvalidParams`. `NotAllowed`, nothing changes:
 `new_name` already configured; `name` not configured or defined (even partly) outside the repo file
 (as `remote.set_url`); an operation in progress; `remote.<new_name>.*` entries or remote branches
-under `refs/remotes/<new_name>/` left over (they would mix); nested names (`nested_remote`: `name`
+under `refs/remotes/<new_name>/` left over (they would mix); `branch.<b>.remote`,
+`branch.<b>.pushRemote` or `remote.pushDefault` already naming `new_name` (a remote removed by
+hand: the renamed remote would take them over, and its undo would rewrite them); nested names (`nested_remote`: `name`
 and `new_name`, or either and another configured remote, are one the other followed by `/...`:
 `git remote rename` moves every ref under `refs/remotes/<name>/`, those of `<name>/x` too). Then
 `git remote rename --no-progress --end-of-options <name> <new_name>`: git moves the section, the
@@ -206,5 +208,7 @@ rename (from what exists now to the other name): no operation in progress, the c
 configured, the other one not configured and without `remote.<other>.*` entries, no nesting, nothing
 defined elsewhere, and no remote branch under `refs/remotes/<other>/` with the name of one that
 would be moved (others are allowed: after a rename stopped midway the old refs are still there and
-renaming back must work); otherwise `UndoConflict`. Then `rename_remote` and the same
+renaming back must work), and no upstream, `pushRemote` or `pushDefault` naming the other name
+unless its remote branches are there too (the same rename stopped midway leaves both); otherwise
+`UndoConflict`. Then `rename_remote` and the same
 `rename_warnings`. The entry's `refs` (old names deleted, new ones created) are for display only.

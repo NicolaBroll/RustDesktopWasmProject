@@ -964,7 +964,7 @@ file of its function in [git/](git/) before the code.
   desktop app on Xvfb with an editor command that writes a marker file; CI green.
 
 ### S61 — Search in the content of the changes (pickaxe)
-- [ ] **Agent:** `git-engine`, then `egui-ui`
+- [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** `repo.search` finds commits by message, author and id, not by what they changed
   ("when did this function disappear?"). Add `"content"` to `in` (read-only), alone (it cannot be
   ANDed with the others by git: refuse the mix with `InvalidParams`):
@@ -983,6 +983,13 @@ file of its function in [git/](git/) before the code.
 - **Done when:** integration tests (text added, text removed, text only moved inside a file: not a
   match for `-S`, regex, invalid regex, path filter, `all`, non-UTF-8 text in the file, pagination)
   and on the `MemoryBackend` (a simple added/removed-count scan); UI test of the cancel; CI green.
+- **Status:** engine and backend done (`"in": ["content"]` with `regex`/`ignore_case`, `total: null`,
+  [git/reading.md](git/reading.md) "Content"); cancellation reuses `Executor::cancel` (the git process
+  is killed). `ignore_case` also works with `-S` (git supports it since 2.10). UI done
+  (`crates/ui/src/search.rs`): "Content", "Regex" and "Aa" toggles; content runs on Enter (no
+  debounce), spinner and "Stop" while it runs; cancelled by a new search, "Stop", closing the bar,
+  opening another repo, closing or hiding the tab; "N found" / "N+ found" when `total` is `null`;
+  the invalid regex is shown in the bar. A log refresh does not run a content search again.
 
 ### S62 — Submodules: clone, update, open
 - [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`

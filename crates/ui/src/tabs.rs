@@ -254,6 +254,7 @@ impl App {
     }
 
     fn remove(&mut self, index: usize) {
+        self.tabs[index].stop_search();
         self.tabs.remove(index);
         if self.tabs.is_empty() {
             let tab = self.new_tab();
@@ -558,6 +559,10 @@ impl App {
         let app_blocked = self.clone.dialog().is_some() || self.settings_box.open;
         for (index, tab) in self.tabs.iter_mut().enumerate() {
             let shown = index == self.active;
+            if !shown {
+                // A content search of a hidden tab is slow work nobody watches.
+                tab.stop_search();
+            }
             tab.tick(now, shown);
             tab.tick_fetch(now, shown, interval, app_blocked);
         }

@@ -52,7 +52,7 @@ fn search(r: &Registry, s: &mut Session, params: Value) -> (Vec<Oid>, u64, bool)
         .unwrap_or_else(|e| panic!("{e}"));
     let typed: crate::RepoSearchResult = serde_json::from_value(out.clone()).unwrap();
     assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-    let total = u64::try_from(typed.total).unwrap();
+    let total = u64::try_from(typed.total.expect("total")).unwrap();
     (typed.ids, total, typed.has_more)
 }
 
@@ -202,6 +202,208 @@ fn can_be_cancelled() {
     let job = JobContext::new().with_cancel(token);
     let e = r
         .run_with("repo.search", &mut s, json!({ "query": "a" }), job)
+        .unwrap_err();
+    assert!(matches!(e, EngineError::Cancelled { .. }), "{e}");
+}
+
+// ---- Content (S61) ----
+
+/// A file written by a step: path and content (`None`: deleted).
+type FileWrite<'a> = (&'a str, Option<&'a [u8]>);
+
+/// A linear history on `main`: commit `n` (from 1, id `fake_oid(100 + n)`) writes the files of
+/// `steps[n - 1]` (`None`: deletes it).
+fn content_repo(steps: &[&[FileWrite]]) -> MemoryBackend {
+    use project_domain::{Change, ChangedFile, RepoPath};
+    use std::collections::BTreeMap;
+    let mut repo = MemoryBackend::new();
+    let who = Signature {
+        name: "Ada".into(),
+        email: "ada@example.org".into(),
+        time: 1_700_000_000,
+        offset_min: 0,
+    };
+    let mut tree: BTreeMap<&str, Oid> = BTreeMap::new();
+    let mut parent = None;
+    for (n, files) in (1u64..).zip(steps) {
+        let id = oid(100 + n);
+        let mut changes = Vec::new();
+        for (i, (path, content)) in (0u64..).zip(files.iter()) {
+            let old = tree.get(path).copied();
+            let zero = Oid::from_bytes([0; Oid::LEN]);
+            let (change, new_oid) = match content {
+                Some(bytes) => {
+                    let blob = oid(10_000 * n + i);
+                    repo.set_blob(blob, bytes.to_vec());
+                    tree.insert(path, blob);
+                    let change = if old.is_some() {
+                        Change::Modified
+                    } else {
+                        Change::Added
+                    };
+                    (change, blob)
+                }
+                None => {
+                    tree.remove(path);
+                    (Change::Deleted, zero)
+                }
+            };
+            changes.push(ChangedFile {
+                path: RepoPath::from(*path),
+                change,
+                original: None,
+                score: None,
+                old_mode: if old.is_some() { 0o100_644 } else { 0 },
+                new_mode: if content.is_some() { 0o100_644 } else { 0 },
+                old_oid: old.unwrap_or(zero),
+                new_oid,
+            });
+        }
+        repo.insert_commit(Commit {
+            id,
+            parents: parent.into_iter().collect(),
+            author: who.clone(),
+            committer: Signature {
+                time: who.time + i64::try_from(n).unwrap(),
+                ..who.clone()
+            },
+            summary: format!("step {n}"),
+            body: String::new(),
+        });
+        repo.set_changes(id, changes);
+        parent = Some(id);
+    }
+    if let Some(head) = parent {
+        repo.set_branch("main", head);
+    }
+    repo
+}
+
+/// 1 adds `foo()` to `f`, 2 changes another file, 3 moves `foo()` inside `f`, 4 removes it,
+/// 5 adds `FOO()` to `g`, 6 adds `foo()` to a binary file.
+fn content_opened() -> (Registry, Session) {
+    let repo = content_repo(&[
+        &[("f", Some(b"foo()\nx\ny\nz\n"))],
+        &[("other", Some(b"nothing\n"))],
+        &[("f", Some(b"x\ny\nz\nfoo()\n"))],
+        &[("f", Some(b"x\ny\nz\n"))],
+        &[("dir/g", Some(b"FOO()\n"))],
+        &[("bin", Some(b"\0foo()\n"))],
+    ]);
+    let mut opener = MemoryOpener::default();
+    opener.insert("c", repo);
+    let mut s = Session::new(Arc::new(opener));
+    let r = Registry::builtin();
+    r.run("repo.open", &mut s, json!({ "path": "c" })).unwrap();
+    (r, s)
+}
+
+fn step(n: u64) -> Oid {
+    oid(100 + n)
+}
+
+/// `(ids, has_more)` of a content search; `total` must be `null`.
+fn content(r: &Registry, s: &mut Session, mut params: Value) -> (Vec<Oid>, bool) {
+    params["in"] = json!(["content"]);
+    let out = r
+        .run("repo.search", s, params.clone())
+        .unwrap_or_else(|e| panic!("{params}: {e}"));
+    assert!(out["total"].is_null(), "{out}");
+    let typed: crate::RepoSearchResult = serde_json::from_value(out).unwrap();
+    (typed.ids, typed.has_more)
+}
+
+#[test]
+fn content_literal_counts_occurrences() {
+    let (r, mut s) = content_opened();
+    // Added (1), removed (4), binary (6); moved inside the file (3): same count, no match.
+    let (found, more) = content(&r, &mut s, json!({ "query": "foo()" }));
+    assert_eq!(found, [step(6), step(4), step(1)]);
+    assert!(!more);
+    // Case-sensitive unless `ignore_case`.
+    let (found, _) = content(&r, &mut s, json!({ "query": "foo()", "ignore_case": true }));
+    assert_eq!(found, [step(6), step(5), step(4), step(1)]);
+    // A text that looks like an option is just text.
+    assert!(
+        content(&r, &mut s, json!({ "query": "--all" }))
+            .0
+            .is_empty()
+    );
+}
+
+#[test]
+fn content_regex_matches_added_and_removed_lines() {
+    let (r, mut s) = content_opened();
+    // The move shows up as a removed and an added line; the binary file is skipped.
+    let (found, _) = content(&r, &mut s, json!({ "query": "^fo+\\(", "regex": true }));
+    assert_eq!(found, [step(4), step(3), step(1)]);
+    let (found, _) = content(
+        &r,
+        &mut s,
+        json!({ "query": "^fo+\\(", "regex": true, "ignore_case": true }),
+    );
+    assert_eq!(found, [step(5), step(4), step(3), step(1)]);
+    let e = r
+        .run(
+            "repo.search",
+            &mut s,
+            json!({ "query": "fo(", "in": ["content"], "regex": true }),
+        )
+        .unwrap_err();
+    assert!(matches!(e, EngineError::InvalidParams { .. }), "{e}");
+}
+
+#[test]
+fn content_path_and_pages() {
+    let (r, mut s) = content_opened();
+    let (found, _) = content(
+        &r,
+        &mut s,
+        json!({ "query": "foo", "ignore_case": true, "path": "dir" }),
+    );
+    assert_eq!(found, [step(5)]);
+    // `has_more` without a total: pages of one are contiguous.
+    let mut joined = Vec::new();
+    for skip in 0..3 {
+        let (page, more) = content(
+            &r,
+            &mut s,
+            json!({ "query": "foo()", "skip": skip, "limit": 1 }),
+        );
+        assert_eq!(page.len(), 1);
+        assert_eq!(more, skip < 2);
+        joined.extend(page);
+    }
+    assert_eq!(joined, [step(6), step(4), step(1)]);
+    let (page, more) = content(&r, &mut s, json!({ "query": "foo()", "skip": 3 }));
+    assert!(page.is_empty() && !more);
+}
+
+#[test]
+fn content_is_alone_and_options_need_it() {
+    let (r, mut s) = content_opened();
+    for params in [
+        json!({ "query": "a", "in": ["content", "message"] }),
+        json!({ "query": "a", "in": ["author"], "regex": true }),
+        json!({ "query": "a", "ignore_case": true }),
+        json!({ "query": "a\nb", "in": ["content"] }),
+    ] {
+        let e = r.run("repo.search", &mut s, params.clone()).unwrap_err();
+        assert!(
+            matches!(e, EngineError::InvalidParams { .. }),
+            "{params}: {e}"
+        );
+    }
+    let token = CancelToken::new();
+    token.cancel();
+    let job = JobContext::new().with_cancel(token);
+    let e = r
+        .run_with(
+            "repo.search",
+            &mut s,
+            json!({ "query": "a", "in": ["content"] }),
+            job,
+        )
         .unwrap_err();
     assert!(matches!(e, EngineError::Cancelled { .. }), "{e}");
 }

@@ -13,8 +13,15 @@
 //!   (`--full-history`: also the commits of side branches and the merges that bring a change in;
 //!   `--no-follow`: independent of `log.follow`, no rename following).
 //!
+//! Content (S61) is one run of its own, in the order git gives:
+//! `git log --date-order --no-renames --no-textconv (-S<text> | -G<text>)
+//! [--regexp-ignore-case] [--full-history --no-follow] [--max-count=<max>] <range> -- [<path>]`
+//! (the text glued to the option, so it cannot become one; `--max-count` counts the matches,
+//! while `--skip` would count the walked commits, so the page is cut here). An invalid regex
+//! (`fatal: invalid regex`) → `InvalidParams` with git's text.
+//!
 //! Only `%H` comes out, so non-UTF-8 messages and names cannot break the parsing. Every run
-//! is cancellable with the job's token.
+//! is cancellable with the job's token: the git process (group) is killed.
 
 use super::CliBackend;
 use crate::command::{failure, os_from_bytes};
@@ -36,6 +43,9 @@ impl CliBackend {
         let Some(range) = self.log_range(&query.range())? else {
             return Ok(Vec::new());
         };
+        if query.is_content() {
+            return self.search_content(query, &range, job);
+        }
         let order = self.log_ids(&["--date-order"], &range, None, job)?;
         let mut matched: HashSet<Oid> = order
             .iter()
@@ -69,6 +79,52 @@ impl CliBackend {
             .into_iter()
             .filter(|id| matched.contains(id))
             .collect())
+    }
+
+    /// The commits whose changes contain the text (`-S`/`-G`), at most `query.max`.
+    fn search_content(
+        &self,
+        query: &SearchQuery,
+        range: &[String],
+        job: &JobContext,
+    ) -> Result<Vec<Oid>, EngineError> {
+        let pickaxe = if query.regex {
+            format!("-G{}", query.text)
+        } else {
+            format!("-S{}", query.text)
+        };
+        let max = query.max.map(|n| format!("--max-count={n}"));
+        let mut options = vec![
+            "--date-order",
+            "--no-renames",
+            "--no-textconv",
+            pickaxe.as_str(),
+        ];
+        if query.ignore_case {
+            options.push("--regexp-ignore-case");
+        }
+        if query.path.is_some() {
+            options.extend(["--full-history", "--no-follow"]);
+        }
+        options.extend(max.as_deref());
+        let path = query.path.as_ref().map(|p| os_from_bytes(p.as_bytes()));
+        match self.log_ids(&options, range, path.as_deref(), job) {
+            Err(EngineError::Git { stderr, .. })
+                if query.regex && stderr.contains("invalid regex") =>
+            {
+                Err(EngineError::InvalidParams {
+                    id: "repo.search",
+                    reason: msg!(
+                        "engine-search-bad-regex",
+                        stderr = stderr
+                            .trim()
+                            .trim_start_matches("fatal: ")
+                            .trim_start_matches("invalid regex: ")
+                    ),
+                })
+            }
+            other => other,
+        }
     }
 
     /// The ids `git log <options> <range> -- [<path>]` prints, one per line.

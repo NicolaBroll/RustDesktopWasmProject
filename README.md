@@ -118,7 +118,12 @@ plus the journal state. `branch.checkout {"name"}` switches to the branch with `
 if a local change, an untracked file or an ignored one would be overwritten it gives an error
 that lists the files, and nothing changes; other changes are kept. Refused during merge, rebase,
 etc. and with conflicted files. Result: `{"branch", "previous", "changed", "warnings",
-"status"}`. `branch.delete {"name", "confirm"?, "expected"?}` deletes a branch (with `expected`, the full id of the
+"backup"?, "status"}`. `commit.checkout {"rev"}` checks out a commit (id, short id, tag...) with
+detached HEAD, with the same checks; already there: `changed: false`. Result: `{"head",
+"previous", "changed", "warnings", "backup"?, "status"}`; `branch.create {"name"}` then creates a
+branch at the detached commit. Both checkouts, when they leave a detached HEAD on commits that no
+branch, tag or remote branch reaches, first save it in `refs/project/backup/detached-...`
+(`backup`, with a warning). `branch.delete {"name", "confirm"?, "expected"?}` deletes a branch (with `expected`, the full id of the
 commit seen, it refuses without touching anything if the branch points elsewhere in the meantime): the active branch or one open in
 another worktree is refused; if it has commits that are neither in HEAD nor in its upstream,
 `"confirm": true` is required. It always saves the commit first in `refs/project/backup/delete-...`; like `git

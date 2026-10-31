@@ -52,7 +52,26 @@ Parameters: `{"name"}`.
 Switches to the local branch `name` (`git switch`, never forced). Result: `{"branch", "previous":
 HeadState, "changed", "warnings", "status", ...journal}`. Local changes that would be
 overwritten → `CheckoutConflict { target, files, stderr }` and nothing changes; operation in progress or
-conflicted files → `NotAllowed`; already on the branch: `changed: false`.
+conflicted files → `NotAllowed`; already on the branch: `changed: false`. Leaving a detached HEAD
+that no ref reaches: `backup` (see "Commits left behind").
+
+### `commit.checkout`
+
+Parameters: `{"rev"}` (S55).
+
+Checks out the commit `rev` (full or short id, tag, branch name, any rev that leads to a commit)
+with **detached HEAD** (`git switch --detach`): to try an old commit. Same checks, refusals and
+`CheckoutConflict` as `branch.checkout` (never forced; operation in progress or conflicted files →
+`NotAllowed`). `rev` empty, or an object that is not a commit (`HEAD^{tree}`, `HEAD:file`) →
+`InvalidParams`; a rev that does not exist → `UnknownRev` (the `MemoryBackend` says
+`InvalidParams`). A branch name detaches at its commit (it does not switch to the branch). HEAD
+already detached at that commit → `changed: false`, nothing in the journal; on a branch whose tip
+is that commit it still detaches. Result: `{"head": {"detached": "<oid>"}, "previous": HeadState,
+"changed", "warnings", "backup"?, "status", "status_error"?, ...journal}`.
+
+To keep work done on a detached HEAD ("Create a branch here"): `branch.create {"name"}` without
+`start` creates the branch at the detached commit (HEAD stays detached; `branch.checkout` then
+switches to it without touching files).
 
 ### `branch.delete`
 
@@ -180,6 +199,24 @@ branch called `--force` or `-d` never becomes an option (tests with such names).
   entry stays. The redo likewise. A checkout that leaves a branch without
   commits does not go into the journal: going back would mean emptying index and worktree (`switch --orphan`). The
   checkout of the already active branch does nothing and does not go in.
+- **`commit.checkout`**: the rev becomes a full id with `GitRead::commit_id` (`rev-parse
+  --end-of-options <rev>^{commit}`), then `GitRefs::checkout(Detached(<id>))`, the same call as the
+  undo: `git -c core.fsmonitor=false switch --no-guess --no-overwrite-ignore --detach
+  --end-of-options <full id>` (a rev like `-x` or `--force` never reaches `switch`). Journal
+  entry `commit.checkout` with HEAD before and after and `backup` (if any), undone and redone
+  like `branch.checkout`.
+- **Commits left behind** (`GitRefs::checkout`, so `branch.checkout`, `commit.checkout` and the
+  undo/redo of both): if HEAD is detached at a commit other than the destination, `--no-replace-objects
+  rev-list --count --not --branches --tags --remotes --not --end-of-options <HEAD>`; if it
+  is not 0 (commits on no branch, tag or remote-tracking branch: after a switch only the reflog
+  would keep them), first `refs/project/backup/detached-<seconds>-<nanoseconds>` at that commit
+  (created only if it does not exist), then HEAD is re-read (another process committing on the
+  detached HEAD meanwhile → `NotAllowed`, nothing switched, backup kept), then the switch. If
+  the backup fails nothing is switched. In the result `backup` and a warning with the count and
+  the backup name; no `confirm`: nothing is lost. If the switch fails and HEAD is still detached
+  at that commit (e.g. `CheckoutConflict`, nothing changed) the backup is removed (`update-ref -d
+  <backup> <id>`); otherwise (a failing `post-checkout` hook after the switch) it stays and the
+  error names it. Other refs under `refs/` (backups included) do not count as keeping the commit.
 - **`branch.delete`**: with `expected` (full id) the branch must still point to that commit,
   checked before computing the confirmation and before deleting (`NotAllowed` otherwise): the UI
   passes it with the commit shown, so `confirm` does not delete a branch moved by another
@@ -226,4 +263,5 @@ The `MemoryBackend` makes the same refusals (the checkout is stricter than git: 
 change to a file that differs between HEAD and the destination, and an untracked or ignored file that is the
 file, a directory of a file or a file in place of a directory of the destination); as
 configuration it has only the upstream (`branch.<name>.remote`/`merge`), and records deletion backups in
-`commit_backups` (`refs/project/backup/delete-<n>`).
+`commit_backups` (`refs/project/backup/delete-<n>`), and those of a detached HEAD left behind as
+`refs/project/backup/detached-<n>`.

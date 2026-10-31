@@ -552,12 +552,28 @@ impl JournalEntry {
     /// moved. Undo and redo redo a safe checkout ([`GitRefs::checkout`](crate::GitRefs::checkout)), which never
     /// overwrites local changes.
     pub fn checkout(before: HeadState, after: HeadState) -> Self {
+        Self::head_switch("branch.checkout", before, after, None)
+    }
+
+    /// The entry of a successful `commit.checkout` (HEAD detached at `after`): same undo and
+    /// redo as [`JournalEntry::checkout`]; `backup` is the `refs/project/backup/detached-...`
+    /// saved when leaving a detached HEAD that no ref reached.
+    pub fn commit_checkout(before: HeadState, after: HeadState, backup: Option<String>) -> Self {
+        Self::head_switch("commit.checkout", before, after, backup)
+    }
+
+    fn head_switch(
+        command: &str,
+        before: HeadState,
+        after: HeadState,
+        backup: Option<String>,
+    ) -> Self {
         let name = |h: &HeadState| match h {
             HeadState::Branch(b) => msg!("engine-journal-head-branch", name = branch_short(b)),
             HeadState::Detached(oid) => msg!("engine-journal-head-detached", id = oid.short()),
         };
         Self::branch_entry(
-            "branch.checkout",
+            command,
             msg!(
                 "engine-journal-checkout",
                 after = name(&after),
@@ -565,7 +581,7 @@ impl JournalEntry {
             ),
             HeadChange { before, after },
             Vec::new(),
-            None,
+            backup,
         )
     }
 
@@ -1143,7 +1159,7 @@ impl JournalEntry {
             self.undo_request()
         };
         match self.command.as_str() {
-            "branch.checkout" => {
+            "branch.checkout" | "commit.checkout" => {
                 Self::check_unchanged(repo, &request, msg!("engine-busy-checkout"))?;
                 repo.checkout(&request.head_target)
             }

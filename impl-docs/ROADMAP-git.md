@@ -681,3 +681,36 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `DiffSource::Range`), Ctrl/Cmd+click and "Compare with the selected commit" in the commit
   menu, "Compare with `<current>` (what it brings)" in the branch menu; tests in
   `crates/ui/src/compare_tests.rs`.
+
+### S55 — Check out a commit (detached HEAD)
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** going back to an old commit to try it is not possible today: `branch.checkout` takes
+  only local branches and `--detach` is used only by its undo. Add `commit.checkout {"rev"}`
+  (`Access::Write`): `git -c core.fsmonitor=false switch --detach --no-overwrite-ignore
+  --end-of-options <full id>` with exactly the same checks, refusals and `CheckoutConflict`
+  handling as `branch.checkout` ([branch.md](git/branch.md)): never forced, refused during an
+  operation in progress or with conflicted files; a rev that is not a commit → `InvalidParams`;
+  already there (detached at that commit) → `changed: false`, no journal. Journal entry HEAD
+  before/after (same undo/redo as `branch.checkout`).
+  - **Commits left behind**: when HEAD is detached and a checkout (this command *and*
+    `branch.checkout`) moves away from a commit not reachable from any branch, tag or remote
+    branch (`rev-list --count <HEAD> --not --branches --tags --remotes`, no replace objects), save
+    `refs/project/backup/detached-<timestamp>` at that commit **before** switching (switch not run
+    if the backup fails) and add a warning with the count and the backup name. No `confirm`
+    needed: nothing is lost.
+  - `repo.status`/`repo.refs` already expose a detached HEAD; check that `branch.create` with no
+    `start` from a detached HEAD works (it is the "create a branch here" action) and document it.
+  - Result: `{"head": HeadState, "previous", "changed", "warnings", "backup"?, "status",
+    ...journal}`.
+  - Docs in `impl-docs/git/branch.md`, examples in `impl-docs/git/cli.md`, README.
+  - UI (later): "Check out this commit" in the commit menu (one-line explanation of detached
+    HEAD), a top-bar indicator "Detached at <short id>" with "Create branch here…".
+- **Done when:** integration tests (checkout of an old commit, tag and short id revs, rev starting
+  with `-`, conflicting local changes, already detached there, leaving a detached commit not on any
+  ref → backup ref + warning, leaving one that is on a branch → no backup, branch.checkout from a
+  detached unreachable commit → backup, undo/redo, operation in progress refused) and on the
+  `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** engine done (UI to do). `commit.checkout` in `crates/engine/src/builtin/branch.rs`;
+  backup of a detached HEAD left behind inside `GitRefs::checkout` (both backends), so it also
+  covers `branch.checkout` and undo/redo; tests in `crates/git/tests/detached.rs` and
+  `crates/engine/src/builtin/checkout_tests.rs`.

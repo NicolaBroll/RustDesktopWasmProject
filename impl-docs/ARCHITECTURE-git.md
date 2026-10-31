@@ -280,7 +280,7 @@ its function (or to a new file in `impl-docs/git/`, listed here).
 | `index.stage` / `index.unstage`, `index.stage_lines` / `index.unstage_lines` | [git/stage.md](git/stage.md) |
 | `worktree.discard` | [git/discard.md](git/discard.md) |
 | `commit.create` | [git/commit.md](git/commit.md) |
-| `branch.create`, `branch.checkout`, `branch.delete`, `branch.rename` | [git/branch.md](git/branch.md) |
+| `branch.create`, `branch.checkout`, `commit.checkout`, `branch.delete`, `branch.rename` | [git/branch.md](git/branch.md) |
 | `branch.reset`, `branch.reset_preview` | [git/reset.md](git/reset.md) |
 | `repo.clone`, `repo.init` | [git/clone.md](git/clone.md) |
 | `remote.fetch`, `remote.pull`, `remote.push` | [git/sync.md](git/sync.md) |
@@ -294,7 +294,7 @@ its function (or to a new file in `impl-docs/git/`, listed here).
 
 | Id | Parameters | Notes |
 | --- | --- | --- |
-| `edit.undo` / `edit.redo` | `{}` | on the operation journal (§7). Writes. `undo` undoes the last entry made, `redo` redoes the last undone; without entries `NotAllowed`. Refs must still equal what the operation (or the undo) left, otherwise `UndoConflict { command, refs }` and nothing changes (the entry stays). Undo and redo of `branch.checkout` are safe checkouts: with conflicting local changes `CheckoutConflict` (the entry stays). Merge, rebase, cherry-pick, revert, bisect or `git am` in progress (even a stopped sequencer, `.git/sequencer` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`): `NotAllowed`. Result: `{"undone" \| "redone": JournalEntry, "backups": [string], "warnings": [string], "status": Status \| null, "can_undo": bool, "can_redo": bool, "next_undo": string \| null, "next_redo": string \| null}` (`warnings`: warnings discovered after a successful move, e.g. HEAD changed by another process at that instant; usually empty. `status` `null`, with `status_error`, if it cannot be re-read: the operation is done, it must not be repeated) |
+| `edit.undo` / `edit.redo` | `{}` | on the operation journal (§7). Writes. `undo` undoes the last entry made, `redo` redoes the last undone; without entries `NotAllowed`. Refs must still equal what the operation (or the undo) left, otherwise `UndoConflict { command, refs }` and nothing changes (the entry stays). Undo and redo of `branch.checkout` and `commit.checkout` are safe checkouts: with conflicting local changes `CheckoutConflict` (the entry stays). Merge, rebase, cherry-pick, revert, bisect or `git am` in progress (even a stopped sequencer, `.git/sequencer` without `CHERRY_PICK_HEAD`/`REVERT_HEAD`): `NotAllowed`. Result: `{"undone" \| "redone": JournalEntry, "backups": [string], "warnings": [string], "status": Status \| null, "can_undo": bool, "can_redo": bool, "next_undo": string \| null, "next_redo": string \| null}` (`warnings`: warnings discovered after a successful move, e.g. HEAD changed by another process at that instant; usually empty. `status` `null`, with `status_error`, if it cannot be re-read: the operation is done, it must not be repeated) |
 | `edit.history` | `{}` | read-only: `{"done": [JournalEntry], "undone": [JournalEntry], "can_undo", "can_redo", "next_undo", "next_redo"}`; in both lists the last entry is the next one for `undo` / `redo` |
 
 The catalog grows with the steps. Ids, once published, are not renamed.

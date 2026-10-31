@@ -487,6 +487,7 @@ fn branch_and_tag_writes() {
         "",
         json!({ "name": "v0.1.0", "confirm": true }),
     );
+    snap(&r, &mut s, "commit.checkout", "", json!({ "rev": "main" }));
 }
 
 #[test]

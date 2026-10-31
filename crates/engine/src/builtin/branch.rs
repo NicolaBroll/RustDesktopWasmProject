@@ -55,6 +55,14 @@ pub struct BranchCheckoutParams {
     pub name: String,
 }
 
+/// Parameters of `commit.checkout`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommitCheckoutParams {
+    /// The commit: full or abbreviated id, branch, tag or any rev that leads to a commit.
+    pub rev: String,
+}
+
 /// Parameters of `branch.delete`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -110,9 +118,43 @@ pub struct BranchCheckoutResult {
     pub previous: HeadState,
     /// `false` if the branch was already active (nothing done, nothing in the journal).
     pub changed: bool,
-    /// Something unexpected found after the successful checkout (usually empty).
+    /// Something unexpected found after the successful checkout (usually empty), and the
+    /// note on a detached HEAD saved in `backup`.
     #[serde(default)]
     pub warnings: Vec<Message>,
+    /// `refs/project/backup/detached-...` if HEAD was detached on commits that no branch, tag
+    /// or remote branch reaches (saved before the checkout); absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
+    /// The state re-read after the checkout; `null` if it could not be re-read (see
+    /// `status_error`).
+    pub status: Option<Status>,
+    /// Why the state could not be re-read; absent when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `commit.checkout`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommitCheckoutResult {
+    /// HEAD now: `{"detached": "<oid>"}`, the full id of the commit.
+    pub head: HeadState,
+    /// HEAD before the command.
+    pub previous: HeadState,
+    /// `false` if HEAD was already detached at that commit (nothing done, nothing in the
+    /// journal).
+    pub changed: bool,
+    /// Something unexpected found after the successful checkout (usually empty), and the
+    /// note on a detached HEAD saved in `backup`.
+    #[serde(default)]
+    pub warnings: Vec<Message>,
+    /// `refs/project/backup/detached-...` if HEAD was detached on commits that no branch, tag
+    /// or remote branch reaches (saved before the checkout); absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
     /// The state re-read after the checkout; `null` if it could not be re-read (see
     /// `status_error`).
     pub status: Option<Status>,
@@ -460,14 +502,18 @@ pub(super) fn branch_checkout(
     let before = HeadState::from_head(&status.head);
     let target = HeadState::Branch(full.clone());
     let mut warnings = Vec::new();
+    let mut backup = None;
     let changed = before != target;
     if changed {
         let outcome = repo.checkout(&target)?;
         warnings = outcome.warnings;
+        backup = outcome.backups.into_iter().next();
         // There is no going back from a branch without commits without emptying the index: no entry.
         let unborn = matches!(status.head, Head::Branch { target: None, .. });
         if !unborn {
-            journal.record(JournalEntry::checkout(before.clone(), target));
+            let mut entry = JournalEntry::checkout(before.clone(), target);
+            entry.backup.clone_from(&backup);
+            journal.record(entry);
         }
     }
     let (status, status_error) = reread(repo.status());
@@ -476,6 +522,70 @@ pub(super) fn branch_checkout(
         previous: before,
         changed,
         warnings,
+        backup,
+        status,
+        status_error,
+        journal: JournalState::of(journal),
+    }))
+}
+
+/// Checks out the commit `rev` with detached HEAD (`git switch --detach`, see
+/// [`GitRefs::checkout`](crate::GitRefs::checkout)), with the same checks as
+/// `branch.checkout`: never forced ([`EngineError::CheckoutConflict`] if a local change would
+/// be overwritten, nothing changes), refused ([`EngineError::NotAllowed`]) during an operation
+/// in progress and with conflicted files. A `rev` that exists but is not a commit (tree, blob)
+/// → [`EngineError::InvalidParams`]; one that does not exist → [`EngineError::UnknownRev`].
+/// HEAD already detached at that commit: `changed: false`, nothing in the journal. Leaving a
+/// detached HEAD that no ref reaches saves it in `refs/project/backup/detached-...` first
+/// (`backup`, with a warning). `edit.undo` returns to the previous HEAD as for `branch.checkout`.
+///
+/// Result: [`CommitCheckoutResult`].
+pub(super) fn commit_checkout(
+    s: &mut Session,
+    CommitCheckoutParams { rev }: CommitCheckoutParams,
+) -> Out {
+    const ID: &str = "commit.checkout";
+    if rev.is_empty() {
+        return Err(EngineError::InvalidParams {
+            id: ID,
+            reason: msg!("engine-branch-checkout-empty-rev"),
+        });
+    }
+    let (repo, journal) = s.repo_and_journal()?;
+    let status = repo.status()?;
+    check_no_operation(ID, msg!("engine-busy-checkout"), status.operation)?;
+    let oid = repo
+        .commit_id(&rev)?
+        .ok_or_else(|| EngineError::InvalidParams {
+            id: ID,
+            reason: msg!("engine-range-not-commit", rev = rev),
+        })?;
+    let before = HeadState::from_head(&status.head);
+    let target = HeadState::Detached(oid);
+    let mut warnings = Vec::new();
+    let mut backup = None;
+    let changed = before != target;
+    if changed {
+        let outcome = repo.checkout(&target)?;
+        warnings = outcome.warnings;
+        backup = outcome.backups.into_iter().next();
+        // As for `branch.checkout`: no going back to a branch without commits.
+        let unborn = matches!(status.head, Head::Branch { target: None, .. });
+        if !unborn {
+            journal.record(JournalEntry::commit_checkout(
+                before.clone(),
+                target.clone(),
+                backup.clone(),
+            ));
+        }
+    }
+    let (status, status_error) = reread(repo.status());
+    Ok(to_json(CommitCheckoutResult {
+        head: target,
+        previous: before,
+        changed,
+        warnings,
+        backup,
         status,
         status_error,
         journal: JournalState::of(journal),
@@ -1263,3 +1373,7 @@ mod tests {
 #[cfg(test)]
 #[path = "upstream_tests.rs"]
 mod upstream_tests;
+
+#[cfg(test)]
+#[path = "checkout_tests.rs"]
+mod checkout_tests;

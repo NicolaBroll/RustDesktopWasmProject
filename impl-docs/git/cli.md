@@ -37,6 +37,9 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Fixed 
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
+# check out an old commit (detached HEAD; also a tag or a short id), create a branch there, go back;
+# leaving a detached commit on no branch/tag/remote saves it in refs/project/backup/detached-... ("backup")
+cargo run -p project-cli -- --repo . run --cmd 'commit.checkout={"rev":"HEAD~3"}' --cmd 'branch.create={"name":"try"}' --cmd edit.undo --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message":"Version 9"}' --cmd edit.undo
 # delete a local tag: always "confirm":true; the value (tag object or commit) goes to refs/project/backup/tag-delete-..., edit.undo puts it back
 cargo run -p project-cli -- --repo . run --cmd 'tag.delete={"name":"v9","confirm":true}' --cmd edit.undo

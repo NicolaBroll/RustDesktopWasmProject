@@ -18,7 +18,7 @@ mod common;
 
 use common::{GIT_ENV, Repo};
 use project_engine::{EngineError, Registry, Session};
-use project_git::CliOpener;
+use project_git::{CliOpener, GitVersion};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,8 +31,20 @@ const LFS_CONFIG: &[(&str, &str)] = &[
     ("filter.lfs.required", "true"),
 ];
 
-/// Whether git-lfs is installed; prints why the test is skipped when not.
+/// Whether git-lfs is installed and git reads [`LFS_CONFIG`] (`GIT_CONFIG_COUNT`, from git 2.31);
+/// prints why the test is skipped when not.
 fn lfs_installed() -> bool {
+    let version = std::process::Command::new("git")
+        .arg("version")
+        .output()
+        .ok()
+        .and_then(|o| GitVersion::parse(&String::from_utf8_lossy(&o.stdout)));
+    if version.is_some_and(|v| v < GitVersion::new(2, 31, 0)) {
+        eprintln!(
+            "skipped: git older than 2.31 ignores `GIT_CONFIG_COUNT`, used for `filter.lfs.*`"
+        );
+        return false;
+    }
     let ok = std::process::Command::new("git")
         .args(["lfs", "version"])
         .envs(GIT_ENV.iter().copied())

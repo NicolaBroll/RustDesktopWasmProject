@@ -12,6 +12,11 @@ Parameters: `{"paths", "confirm"}`.
 
 With backup (below).
 
+### `worktree.clean`
+
+Parameters: `{"paths", "confirm"}`. Deletes untracked files, with backup ("Deleting untracked
+files" below).
+
 ## Steps and guarantees
 
 `worktree.discard {"paths", "confirm"}` returns the worktree of the files `paths` (files or directories,
@@ -24,9 +29,8 @@ taken literally) to the staged version, like `git restore --worktree`. Choices:
 - **Only tracked files with unstaged changes** (Y ∉ {`.`, `?`, `!`}: modified, deleted,
   type-changed, also mode). **Untracked files are never touched**: requested by name
   they are an error (discarding them would mean deleting them, and `git stash create` does not save them, so
-  there would be no backup); inside a directory they stay where they are. No option to
-  delete them: if needed it will be a separate command (`git stash create` has no `-u`, another
-  backup would be needed). Submodules requested by name are refused, inside a directory skipped; the
+  there would be no backup); inside a directory they stay where they are. They are deleted
+  by the separate `worktree.clean` (below), which has its own backup. Submodules requested by name are refused, inside a directory skipped; the
   `--assume-unchanged`/`--skip-worktree` files have Y = `.` and are not touched.
 - **When the backup cannot be made, nothing is discarded**: branch without commits ("You do not have
   the initial commit yet"), conflicted files in the repo ("Cannot save the current index state"),
@@ -87,3 +91,63 @@ otherwise `UndoConflict` (a checkout or a commit from the terminal) and nothing 
 
 The `MemoryBackend` records backups in `MemoryBackend::worktree_backups`
 (`refs/project/backup/discard-<n>`, with the status entry and the content of each file).
+
+## Deleting untracked files
+
+`worktree.clean {"paths", "confirm"}` is the safe `git clean` for named files (code:
+`crates/engine/src/git/clean.rs`, `crates/git/src/backend/clean.rs`). Choices:
+
+- **Only untracked, non-ignored files, as `repo.status` lists them.** The status is read with
+  `--untracked-files=all`, which overrides `status.showUntrackedFiles`: every untracked file is its own
+  entry, so a directory path means the untracked files under it (no `ls-files --others`
+  expansion is needed). Tracked, ignored and conflicted files inside a requested directory stay. A
+  requested path with no untracked file (tracked, ignored, conflicted, missing, a prefix that is not
+  a directory) → `NotAllowed` listing them, nothing deleted. The checks are in `clean_plan`, shared
+  by the backends.
+- **Nested repositories are refused**, by name or inside a requested directory (status lists
+  them as one entry `dir/`; their history is not in the backup), and so is a path inside one.
+  Submodules are tracked: never untracked files.
+- **`"confirm": true` is mandatory.** Without it, `ConfirmRequired` with the files and their total
+  size; the refusals come first. `GitIndex::clean` also receives the confirmed plan (`[{"path",
+  "mode", "size"}]`) and refuses if the plan read before writing differs.
+- **Links** are saved and deleted as links (`symlink_metadata`, `read_link`, `remove_file`): the
+  target is never followed. A link to a directory is a file for git. A path whose directories
+  include a link (or a non-directory) is refused, and checked again right before each deletion.
+
+The `CliBackend`, in this order: status without fsmonitor, `clean_plan`, `lstat` of every file
+(regular file, mode `100755` if the user execute bit is set, otherwise `100644`; link `120000`
+with its target as content; anything else → `NotAllowed`) and comparison with the confirmed plan;
+the bytes read now saved with `hash-object -w --stdin --no-filters` (no `clean` filter or
+`core.autocrlf` conversion: CRLF bytes stay CRLF); a tree built in a **temporary index**
+(`GIT_INDEX_FILE` in the git directory, `update-index -z --index-info`, `write-tree`; the user's
+index is never touched or locked) and a commit **without parent** (`commit-tree --no-gpg-sign`,
+fixed backup identity, the paths in the message); `update-ref refs/project/backup/clean-<seconds>-<nanoseconds>
+<commit> ""`; **last verification**: the backup tree has every file with the expected mode and
+blob, and the bytes on disk now hash to the same blob (`hash-object --stdin --no-filters` without
+`-w`); only then `remove_file` of each file, and `remove_dir` of the directories the deletion left
+empty, from each file's directory up, stopping at the first non-empty one (so a pre-existing empty
+directory is never removed, and neither is the worktree root). If any step before the deletion fails
+(e.g. the backup ref cannot be created), nothing is deleted. A file that cannot be deleted after the
+backup (read-only directory) stays and goes into `warnings` with the backup ref; if none could be
+deleted, error with the backup ref. The repo may have no commits and HEAD may be detached.
+
+Result: `{"deleted": [path], "files": [{"path", "mode", "size"}], "dirs": [path], "backup",
+"commit", "bytes", "warnings", "status", "status_error"?, "can_undo", "can_redo", "next_undo",
+"next_redo"}` (`dirs` deepest first, `bytes` the total size of the deleted files).
+
+The journal entry has `"clean": {"commit", "files": [{"path", "mode", "size"}]}` (only the files
+actually deleted) and `"backup"`. Undo and redo do not look at HEAD (untracked files do not depend
+on it) but are refused during an operation in progress, like the others.
+
+- **undo**: every path must be absent (`lstat`) and every existing directory on its way a real
+  directory; otherwise `UndoConflict` with one line per file and nothing changes. Then each file is
+  recreated from the backup tree: missing directories created, the file opened with `create_new`
+  (never overwriting, even a file that appeared in the meantime), the execute bit set for
+  `100755`, links recreated as links. Re-read afterwards: a file not as in the backup goes in
+  `warnings`.
+- **redo**: every file must still be untracked in the status and have the backup's kind, mode and
+  bytes; otherwise `UndoConflict` and nothing changes. Then deleted again as above (no new
+  backup), with the empty directories.
+
+The `MemoryBackend` records backups in `MemoryBackend::clean_backups`
+(`refs/project/backup/clean-<n>`, with the content of each file; mode always `100644`).

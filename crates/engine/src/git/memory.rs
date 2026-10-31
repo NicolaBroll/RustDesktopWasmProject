@@ -1,6 +1,7 @@
 //! In-memory fake repository: for command and UI tests.
 
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod conflict;
@@ -19,6 +20,7 @@ mod sync;
 mod tags;
 mod write;
 
+pub use clean::CleanStash;
 pub use discard::{StashedFile, WorktreeStash};
 use merge::MemoryMerge;
 use rebase::MemoryRebase;
@@ -100,6 +102,8 @@ pub struct MemoryBackend {
     commit_backups: Vec<(String, Oid)>,
     /// Worktree backups saved by `worktree.discard`.
     worktree_backups: Vec<WorktreeStash>,
+    /// Backups saved by `worktree.clean`.
+    clean_backups: Vec<CleanStash>,
     /// Name and email of the committer (`user.name`/`user.email`); `None` = not configured.
     identity: Option<(String, String)>,
     /// Configured remotes, by name.
@@ -164,6 +168,7 @@ impl MemoryBackend {
             backups: Vec::new(),
             commit_backups: Vec::new(),
             worktree_backups: Vec::new(),
+            clean_backups: Vec::new(),
             identity: None,
             remotes: BTreeMap::new(),
             pull_settings: PullSettings::default(),
@@ -868,6 +873,25 @@ impl GitIndex for MemoryBackend {
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)?;
         Ok(RestoreOutcome::default())
+    }
+
+    fn clean_plan(&self, paths: &[RepoPath]) -> Result<Vec<super::CleanedFile>, EngineError> {
+        self.plan_clean(paths)
+    }
+
+    fn clean(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[super::CleanedFile],
+    ) -> Result<super::CleanOutcome, EngineError> {
+        self.clean_paths(paths, expected)
+    }
+
+    fn restore_cleaned(
+        &mut self,
+        request: &super::CleanRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_clean(request)
     }
 }
 

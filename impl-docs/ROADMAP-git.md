@@ -682,6 +682,44 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   menu, "Compare with `<current>` (what it brings)" in the branch menu; tests in
   `crates/ui/src/compare_tests.rs`.
 
+### S54 — Delete untracked files
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** `worktree.discard` never touches untracked files (by design, `impl-docs/git/discard.md`),
+  so a new file the user wants gone can only be deleted outside the app. Add `worktree.clean
+  {"paths": [path, ...], "confirm": true}` (`Access::Write`), the safe `git clean` for named files:
+  - Only untracked, non-ignored paths as `repo.status` reports them (a directory path = the
+    untracked files under it that status lists; with `status.showUntrackedFiles=normal` a whole
+    untracked dir is one entry, expand it with `git ls-files --others --exclude-standard -z --
+    <dir>`). A tracked, ignored, conflicted or nonexistent path → `InvalidParams`/`NotAllowed`
+    listing them, nothing deleted. Nested git repos (a dir with `.git`) and submodules refused.
+    Symlinks deleted as links, never followed.
+  - Always `confirm` (without it: `ConfirmRequired` with the file list and total size).
+  - Backup **before** deleting, and nothing deleted if the backup fails: the exact bytes and mode
+    of every file go into a commit `refs/project/backup/clean-<timestamp>` built with a temporary
+    index (`GIT_INDEX_FILE`, `git update-index --add` / `hash-object -w` with `--no-filters` so
+    CRLF/filters don't alter bytes; check byte-for-byte as `worktree.discard` does). The user's
+    index is never touched.
+  - Delete files, then remove directories left empty by the deletion (only those, never
+    pre-existing empty dirs outside the request).
+  - `JournalEntry` so `edit.undo` restores the files from the backup, only where the path is absent
+    again (a file recreated meanwhile → `UndoConflict`, nothing overwritten); redo deletes again
+    only if the files still match the backup bytes.
+  - Result: `{"deleted": [path], "backup", "bytes", "warnings", "status", ...journal}`.
+  - Docs: new section in `impl-docs/git/discard.md`, CLI examples in `impl-docs/git/cli.md`, README.
+  - UI (later): "Delete…" on untracked files in the stage area (and "Delete all untracked…"),
+    confirmation dialog with the list.
+- **Done when:** integration tests (file, untracked dir, nested dir, CRLF bytes with autocrlf,
+  binary, executable bit, symlink, ignored refused, tracked refused, nested repo refused, name
+  starting with `-`, non-UTF-8 name if the helper supports it, backup failure → nothing deleted,
+  undo/redo, file recreated before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI
+  green.
+- **Status:** engine done, UI to do. `worktree.clean`, `GitIndex::clean_plan`/`clean`/
+  `restore_cleaned`, `JournalEntry::clean`; plan in `crates/engine/src/git/clean.rs`, `CliBackend`
+  in `crates/git/src/backend/clean.rs` (status is read with `--untracked-files=all`, so no
+  `ls-files` expansion is needed; backup commit has no parent; undo/redo ignore HEAD); tests in
+  `crates/git/tests/clean.rs`, `crates/engine/src/git/memory/clean.rs`,
+  `crates/engine/src/builtin/clean.rs`. Waiting for the `safety-reviewer` review and the UI.
+
 ### S55 — Check out a commit (detached HEAD)
 - [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** going back to an old commit to try it is not possible today: `branch.checkout` takes

@@ -54,6 +54,7 @@
 //!   `refs/project/backup/undo-...` (§7); if the backup fails the undo is not done.
 //! - The journal keeps at most [`Journal::MAX_ENTRIES`] entries: the oldest drop out.
 
+use crate::{CleanBackup, CleanOutcome, CleanRestore, clean_description};
 use crate::{
     CommitOutcome, ConfigEntry, DiscardOutcome, EngineError, GitBackend, HeadState, LogQuery,
     MergeMode, Message, PullMode, RefMove, RefRestore, RemoteSnapshot, ResetMode, ResetRecord,
@@ -188,6 +189,11 @@ pub struct JournalEntry {
     /// [`EngineError::UndoConflict`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamChange>,
+    /// Only for `worktree.clean`: the backup commit and the deleted files ([`CleanBackup`]). Undo
+    /// recreates them where the path is absent again, redo deletes them again if they still match
+    /// the backup; neither moves refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clean: Option<CleanBackup>,
 }
 
 impl JournalEntry {
@@ -243,6 +249,7 @@ impl JournalEntry {
             stash: None,
             reset: None,
             upstream: None,
+            clean: None,
         })
     }
 
@@ -269,6 +276,34 @@ impl JournalEntry {
             stash: None,
             reset: None,
             upstream: None,
+            clean: None,
+        }
+    }
+
+    /// The entry of a successful `worktree.clean`, with HEAD as it was (it does not move) and the
+    /// backup.
+    pub fn clean(outcome: &CleanOutcome, head: HeadState) -> Self {
+        Self {
+            id: 0,
+            command: "worktree.clean".to_owned(),
+            description: clean_description(&outcome.files),
+            head: HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs: Vec::new(),
+            backup: Some(outcome.backup.clone()),
+            undo_backups: Vec::new(),
+            worktree: None,
+            branch_config: Vec::new(),
+            remote: None,
+            stash: None,
+            reset: None,
+            upstream: None,
+            clean: Some(CleanBackup {
+                commit: outcome.commit,
+                files: outcome.files.clone(),
+            }),
         }
     }
 
@@ -837,6 +872,7 @@ impl JournalEntry {
             stash: None,
             reset: None,
             upstream: None,
+            clean: None,
         }
     }
 
@@ -1146,6 +1182,22 @@ impl JournalEntry {
                 });
             }
             return repo.restore_worktree(&request);
+        }
+        if let Some(backup) = &self.clean {
+            // Untracked files do not depend on HEAD: only the paths are checked (by the backend),
+            // and never in the middle of a merge, rebase...
+            let request = CleanRestore {
+                command: if redo { "edit.redo" } else { "edit.undo" },
+                redo,
+                commit: backup.commit,
+                files: backup.files.clone(),
+            };
+            check_no_operation(
+                request.command,
+                msg!("engine-busy-worktree"),
+                repo.status()?.operation,
+            )?;
+            return repo.restore_cleaned(&request);
         }
         if self.stash.is_some() {
             return self.apply_stash(repo, redo);
@@ -1459,6 +1511,7 @@ mod tests {
             stash: None,
             reset: None,
             upstream: None,
+            clean: None,
         }
     }
 

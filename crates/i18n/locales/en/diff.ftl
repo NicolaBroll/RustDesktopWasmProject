@@ -53,3 +53,4 @@ diff-lines-label-unstage-lines = { $n ->
 diff-unified-hint = Unified view: old and new lines one under the other
 diff-split-hint = Side by side view: the old file on the left, the new one on the right
 diff-split-lines-hint = To stage single lines, switch to the unified view
+diff-in-range = from { $from } to { $to }

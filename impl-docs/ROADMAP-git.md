@@ -600,7 +600,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   remote from a terminal shows up in the graph without pressing Fetch; CI green.
 
 ### S53 — Compare two revisions
-- [ ] **Agent:** `git-engine`, then `egui-ui`
+- [x] **Agent:** `git-engine`, then `egui-ui`
 - **Goal:** `diff.commit` only compares a commit with its parent. Add the read-only `diff.range
   {"from", "to", "merge_base"?: bool, "path"?}`: the diff of `to` against `from` (`git diff from
   to`), or with `merge_base: true` what `to` brings since it diverged from `from` (`from...to`, i.e.
@@ -614,6 +614,10 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
 - **Done when:** integration tests (two unrelated commits, merge_base with diverged branches, no
   common base, rename, binary, path filter, rev starting with `-`, tag and branch names) and on the
   `MemoryBackend`; desktop screenshot; CI green.
-- **Status:** engine part done (`diff.range`, `GitRead::commit_id`/`common_base`,
-  `DiffSpec::Range`; tests in `crates/git/tests/range.rs` and `crates/engine/src/builtin/range_tests.rs`);
-  UI part (`egui-ui`) to do.
+- **Status:** done. Engine: `diff.range`, `GitRead::commit_id`/`common_base`, `DiffSpec::Range`;
+  tests in `crates/git/tests/range.rs` and `crates/engine/src/builtin/range_tests.rs`. UI:
+  `crates/ui/src/compare.rs` (`CompareBox`, ancestor order on the loaded rows), details panel in
+  `view/compare_view.rs` (Swap, Back/Esc, files through `changed_files`, file diff as
+  `DiffSource::Range`), Ctrl/Cmd+click and "Compare with the selected commit" in the commit
+  menu, "Compare with `<current>` (what it brings)" in the branch menu; tests in
+  `crates/ui/src/compare_tests.rs`.

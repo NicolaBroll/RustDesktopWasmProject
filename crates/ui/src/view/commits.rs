@@ -1,6 +1,6 @@
 use super::*;
 use crate::settings::DateFormat;
-use crate::{branch, merge, rebase, search};
+use crate::{branch, compare, merge, rebase, search};
 
 /// Height of a row of the commit list.
 pub(super) const ROW_HEIGHT: f32 = 22.0;
@@ -127,7 +127,9 @@ pub(crate) fn commit_list(
                 );
                 continue;
             };
-            let selected = list.selected() == Some(index) && !repo.worktree_selected;
+            // The two sides of a comparison are both highlighted.
+            let selected = (list.selected() == Some(index) && !repo.worktree_selected)
+                || repo.compare.marks(commit.id);
             if selected {
                 ui.painter()
                     .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
@@ -140,10 +142,16 @@ pub(crate) fn commit_list(
                 ui.painter().rect_filled(rect, 2.0, tint);
             }
             if response.clicked() {
-                actions.push(Action::Select(index));
+                // Ctrl+click (Cmd on macOS): compares with the selected commit.
+                if ui.input(|i| i.modifiers.command) {
+                    actions.push(Action::Compare(compare::Action::With(index)));
+                } else {
+                    actions.push(Action::Select(index));
+                }
             }
             let id = commit.id;
             response.context_menu(|ui| {
+                compare_item(ui, repo, index, id, actions);
                 if ui
                     .button(tr!("commit-copy-id"))
                     .on_hover_text(tr!("commit-copy-id-hint", id = id.to_string()))
@@ -209,6 +217,31 @@ pub(crate) fn commit_list(
     viewport.rows = output.inner;
     viewport.height = output.inner_rect.height();
     actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
+}
+
+/// "Compare with the selected commit", when another commit is selected.
+fn compare_item(ui: &mut Ui, repo: &RepoView, index: usize, id: Oid, actions: &mut Vec<Action>) {
+    let selected = repo
+        .list
+        .selected_commit()
+        .filter(|c| !repo.worktree_selected && c.id != id);
+    let Some(selected) = selected else {
+        return;
+    };
+    let hint = tr!(
+        "compare-with-selected-hint",
+        selected = selected.id.short(),
+        id = id.short()
+    );
+    if ui
+        .button(tr!("compare-with-selected"))
+        .on_hover_text(hint)
+        .clicked()
+    {
+        actions.push(Action::Compare(compare::Action::With(index)));
+        ui.close();
+    }
+    ui.separator();
 }
 
 /// The search bar above the list: field, number of matches, previous/next, close. Enter and

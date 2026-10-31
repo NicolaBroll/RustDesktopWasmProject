@@ -57,7 +57,15 @@ pub(crate) fn details_panel(
             }
         }
         Shown::Loaded(details) => {
-            changed_files(ui, details.commit.id, &details.files, open, actions);
+            let id = details.commit.id;
+            changed_files(
+                ui,
+                DiffSource::Commit(id),
+                id,
+                &details.files,
+                open,
+                actions,
+            );
         }
     }
 }
@@ -159,10 +167,12 @@ const FILES_TITLE: f32 = 32.0;
 /// Height of a row of the file list.
 pub(super) const FILE_ROW_HEIGHT: f32 = 20.0;
 
-/// List of the changed files of commit `commit`, virtualized: only the visible rows
-/// are drawn. A click on a file opens its diff; the file of the open diff (`open`) is highlighted.
+/// List of the changed files of `source` (a commit or a comparison), virtualized: only the
+/// visible rows are drawn. A click on a file opens its diff; the file of the open diff (`open`)
+/// is highlighted. Blame and history in the menu are at commit `commit`.
 pub(super) fn changed_files(
     ui: &mut Ui,
+    source: DiffSource,
     commit: Oid,
     files: &[ChangedFile],
     open: Option<&DiffTarget>,
@@ -183,7 +193,10 @@ pub(super) fn changed_files(
                     vec2(ui.available_width(), FILE_ROW_HEIGHT),
                     Sense::click(),
                 );
-                let target = DiffTarget::commit(commit, file.path.clone());
+                let target = DiffTarget {
+                    source,
+                    path: file.path.clone(),
+                };
                 if open == Some(&target) {
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);

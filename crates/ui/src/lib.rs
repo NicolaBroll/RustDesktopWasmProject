@@ -16,6 +16,7 @@ mod auto_fetch;
 mod branch;
 mod clone;
 mod commit;
+mod compare;
 mod conflict;
 mod details;
 mod diff;
@@ -144,6 +145,8 @@ enum Action {
     File(file::Action),
     /// The search in the history.
     Search(search::Action),
+    /// Comparing two revisions in the details panel.
+    Compare(compare::Action),
 }
 
 /// A step of dragging over the diff rows.
@@ -223,6 +226,8 @@ enum Request {
     File(u64, u64),
     /// `repo.search` with the request number of [`search::SearchBox`].
     Search(u64, u64),
+    /// `diff.range` of the comparison with the request number of [`compare::CompareBox`].
+    Compare(u64, u64),
 }
 
 /// The repo shown and the data read so far.
@@ -252,6 +257,8 @@ struct RepoView {
     details: DetailsState,
     /// Diff of the open file (`diff.commit`), shown in place of the graph.
     diff: DiffState,
+    /// Two revisions compared in the details panel (`diff.range`).
+    compare: compare::CompareBox,
     /// The commit message box: draft, commit in progress, confirmation, error.
     commit: CommitBox,
     /// Discarding changes: check, confirmation, submission.
@@ -314,6 +321,7 @@ impl RepoView {
             refs_version: 0,
             details: DetailsState::default(),
             diff: DiffState::default(),
+            compare: compare::CompareBox::default(),
             commit: CommitBox::default(),
             discard: DiscardBox::default(),
             branch: BranchBox::default(),
@@ -552,6 +560,8 @@ impl Tab {
         ) && let Some(repo) = &mut self.repo
         {
             repo.search.keep();
+            // A plain selection goes back from the comparison to one commit.
+            repo.compare.close();
         }
         match action {
             // The tabs, the folder dialog, clone and settings belong to `App`.
@@ -629,6 +639,7 @@ impl Tab {
             Action::Conflict(action) => self.apply_conflict(action),
             Action::File(action) => self.apply_file(action),
             Action::Search(action) => self.apply_search(action),
+            Action::Compare(action) => self.apply_compare(action),
         }
     }
 
@@ -688,7 +699,7 @@ impl Tab {
         let side = match target.source {
             DiffSource::Worktree => Side::Unstaged,
             DiffSource::Index => Side::Staged,
-            DiffSource::Commit(_) => return,
+            DiffSource::Commit(_) | DiffSource::Range { .. } => return,
         };
         let request = match stage::follow(&repo.stage, side, &target.path) {
             Follow::Reload => repo.diff.reload().map(|seq| (seq, target)),
@@ -724,6 +735,7 @@ impl Tab {
             };
             let stale = repo.diff.target().is_some_and(|t| match t.source {
                 DiffSource::Commit(id) => repo.worktree_selected || Some(id) != selected,
+                DiffSource::Range { .. } => !repo.compare.view().is_some_and(|c| c.owns(t)),
                 DiffSource::Worktree | DiffSource::Index => !repo.worktree_selected,
             });
             if stale {
@@ -807,9 +819,14 @@ impl Tab {
             }
             return;
         }
-        // Esc with the search open (the field without the keyboard) closes it.
-        if repo.search.is_open() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            actions.push(Action::Search(search::Action::Close));
+        // Esc goes back from a comparison to the selected commit, then closes the search (the
+        // field without the keyboard).
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if repo.compare.view().is_some() {
+                actions.push(Action::Compare(compare::Action::Close));
+            } else if repo.search.is_open() {
+                actions.push(Action::Search(search::Action::Close));
+            }
         }
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
@@ -858,7 +875,7 @@ impl Tab {
                 let (op, list) = match target.source {
                     DiffSource::Worktree => (StageOp::Stage, &repo.stage.unstaged),
                     DiffSource::Index => (StageOp::Unstage, &repo.stage.staged),
-                    DiffSource::Commit(_) => return None,
+                    DiffSource::Commit(_) | DiffSource::Range { .. } => return None,
                 };
                 list.iter()
                     .any(|item| item.path == target.path)
@@ -991,6 +1008,8 @@ impl Tab {
             Request::File(generation, seq) => self.receive_file(generation, seq, done),
             // The search shows its errors in its bar.
             Request::Search(generation, seq) => self.receive_search(generation, seq, done),
+            // The comparison shows its errors in the details panel.
+            Request::Compare(generation, seq) => self.receive_compare(generation, seq, done),
             // The diff too: errors in its view, old answers discarded.
             Request::Diff(generation, seq) => {
                 let result = done
@@ -1196,7 +1215,8 @@ impl Tab {
             | Request::ConflictShow(..)
             | Request::ConflictResolve(..)
             | Request::File(..)
-            | Request::Search(..) => {}
+            | Request::Search(..)
+            | Request::Compare(..) => {}
         }
         Ok(())
     }
@@ -1439,6 +1459,7 @@ impl Tab {
     fn after_actions(&mut self, ctx: &egui::Context) {
         self.close_stale_diff();
         self.request_details();
+        self.request_compare();
         self.request_file();
         self.request_search(ctx);
     }
@@ -1474,6 +1495,8 @@ fn side_panels(
                 view::stage_panel(ui, repo, draft, writing, actions);
             } else if let Some(stash) = repo.stash.selected() {
                 view::stash_panel(ui, repo, stash, writing, actions);
+            } else if let Some(comparison) = repo.compare.view() {
+                view::compare_panel(ui, repo, comparison, repo.diff.target(), actions);
             } else {
                 view::details_panel(
                     ui,

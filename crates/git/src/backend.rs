@@ -6,6 +6,7 @@ mod clone;
 mod commit;
 mod conflict;
 mod discard;
+mod discard_lines;
 mod file;
 mod maintenance;
 mod merge;
@@ -1353,6 +1354,20 @@ impl GitIndex for CliBackend {
         request: &project_engine::CleanRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_clean(request)
+    }
+
+    fn discard_lines(
+        &mut self,
+        selection: &project_engine::DiscardLines,
+    ) -> Result<project_engine::DiscardLinesOutcome, EngineError> {
+        self.discard_line_selection(selection)
+    }
+
+    fn restore_lines(
+        &mut self,
+        request: &project_engine::LinesRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_discarded_lines(request)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

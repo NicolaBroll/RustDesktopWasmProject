@@ -11,6 +11,7 @@ mod clone;
 mod commit;
 mod conflict;
 mod discard;
+mod discard_lines;
 mod file;
 #[cfg(any(test, feature = "test-support"))]
 mod line_diff;
@@ -67,6 +68,10 @@ pub use conflict::{
 pub use discard::{
     DiscardOutcome, DiscardedFile, WorktreeBackup, WorktreeRestore, check_same_plan,
     discard_description, discard_plan,
+};
+pub use discard_lines::{
+    DiscardLines, DiscardLinesOutcome, LinesBackup, LinesRestore, discard_line_patch,
+    discard_lines_confirm, discard_lines_description, discard_lines_target,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use file::is_binary_content;
@@ -347,6 +352,30 @@ pub trait GitIndex {
         &mut self,
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
+
+    /// Discards only the lines `selection.lines` of the unstaged changes of one file
+    /// (`worktree.discard_lines`, §7): they go back to the index version, the other changes stay
+    /// in the worktree. **The index is not touched**; the file's mode is kept.
+    ///
+    /// Rereads the status ([`discard_lines_target`]: the refusals of `worktree.discard` and only
+    /// a modified file) and the file's `diff.worktree` diff ([`discard_line_patch`]: digest,
+    /// selection, anchored hunks), then computes the new clean content with the strict
+    /// [`apply_patch`] on the clean worktree content. The `CliBackend` writes its smudged form
+    /// (`cat-file --filters`), and only if the current bytes clean to the diff's new side and
+    /// smudge back to themselves (otherwise [`EngineError::NotAllowed`]: discard the whole
+    /// file). Before writing, the exact current bytes and mode are saved in a new ref
+    /// `refs/project/backup/discard-...`; if the backup fails nothing is written; if the file
+    /// changed since it was read, [`EngineError::StaleDiff`] and nothing is written.
+    fn discard_lines(
+        &mut self,
+        selection: &DiscardLines,
+    ) -> Result<DiscardLinesOutcome, EngineError>;
+
+    /// Undoes (`request.redo == false`) or redoes a `worktree.discard_lines`: writes the bytes of
+    /// the other blob only if the file has exactly the expected bytes and mode
+    /// ([`LinesRestore::blobs`]), otherwise [`EngineError::UndoConflict`] and nothing changes.
+    /// The index is not touched.
+    fn restore_lines(&mut self, request: &LinesRestore) -> Result<RestoreOutcome, EngineError>;
 
     /// The untracked files that `worktree.clean` of `paths` would delete now, with mode and size:
     /// [`clean_plan`] on the status read now (see there for the refusals: nested repositories,

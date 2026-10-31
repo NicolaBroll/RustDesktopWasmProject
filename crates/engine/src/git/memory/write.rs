@@ -90,7 +90,7 @@ impl MemoryBackend {
 
     /// True if the worktree file `path` has the content of blob `oid` (false if either
     /// is not known).
-    fn worktree_is(&self, path: &RepoPath, oid: Oid) -> bool {
+    pub(super) fn worktree_is(&self, path: &RepoPath, oid: Oid) -> bool {
         matches!(
             (self.worktree.get(path), self.blobs.get(&oid)),
             (Some(w), Some(b)) if w == b

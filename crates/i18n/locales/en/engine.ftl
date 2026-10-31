@@ -41,6 +41,13 @@ engine-discard-confirm = the unstaged changes of { $n ->
     [one] 1 file
    *[other] { $n } files
 } would be lost ({ $files }): the worktree would go back to the index. A backup would first be saved in `refs/project/backup/discard-...`, and `edit.undo` would put them back
+engine-discard-lines-confirm = { $lost } changed { $lost ->
+    [one] line
+   *[other] lines
+} of `{ $path }` would be lost and { $back } { $back ->
+    [one] line
+   *[other] lines
+} of the index version would come back: the other changes stay. A backup of the file would first be saved in `refs/project/backup/discard-...`, and `edit.undo` would put it back
 engine-status-unreadable = the status cannot be read again ({ $error })
 engine-lines-empty = `lines` is empty: give at least one changed line of the diff
 engine-paths-empty = `paths` is empty: give at least one path

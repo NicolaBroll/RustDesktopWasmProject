@@ -20,6 +20,10 @@
 //!   backup ([`JournalEntry::worktree`], the `git stash create` commit) and `edit.undo` puts
 //!   the files back as they were ([`GitIndex::restore_worktree`](crate::GitIndex::restore_worktree)), only if in the meantime they have not
 //!   changed; `edit.redo` discards them again, only if they are still as the undo left them.
+//! - **`worktree.discard_lines` enters the journal** in the same way, with the file and the blobs of
+//!   its bytes before and after ([`JournalEntry::lines`]): undo writes the old bytes back only if
+//!   the file has exactly the written ones, redo the other way round
+//!   ([`GitIndex::restore_lines`](crate::GitIndex::restore_lines)).
 //! - **Branches.** `branch.create` and `branch.delete` are undone by moving the ref (deleted or
 //!   recreated on the previous commit, only if nobody touched it). `branch.checkout` and
 //!   `branch.rename`, instead, are undone with another checkout ([`GitRefs::checkout`](crate::GitRefs::checkout): never
@@ -62,6 +66,7 @@ use crate::{
     WorktreeBackup, WorktreeRestore, branch_short, check_no_operation, discard_description,
     find_stash, pop_stash, remove_remote, restore_remote, upstream_label,
 };
+use crate::{DiscardLinesOutcome, LinesBackup, LinesRestore, discard_lines_description};
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
@@ -194,6 +199,11 @@ pub struct JournalEntry {
     /// the backup; neither moves refs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clean: Option<CleanBackup>,
+    /// Only for `worktree.discard_lines`: the file with the blobs of its bytes before and after
+    /// ([`LinesBackup`]). Undo writes the old bytes back only if the file has exactly the written
+    /// ones, redo the other way round; neither moves refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<LinesBackup>,
 }
 
 impl JournalEntry {
@@ -250,6 +260,7 @@ impl JournalEntry {
             reset: None,
             upstream: None,
             clean: None,
+            lines: None,
         })
     }
 
@@ -277,6 +288,32 @@ impl JournalEntry {
             reset: None,
             upstream: None,
             clean: None,
+            lines: None,
+        }
+    }
+
+    /// The entry of a successful `worktree.discard_lines`, with HEAD as it was (it does not move)
+    /// and the backup.
+    pub fn discard_lines(outcome: &DiscardLinesOutcome, head: HeadState) -> Self {
+        Self {
+            id: 0,
+            command: "worktree.discard_lines".to_owned(),
+            description: discard_lines_description(&outcome.file.path),
+            head: HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs: Vec::new(),
+            backup: Some(outcome.backup.clone()),
+            undo_backups: Vec::new(),
+            worktree: None,
+            branch_config: Vec::new(),
+            remote: None,
+            stash: None,
+            reset: None,
+            upstream: None,
+            clean: None,
+            lines: Some(outcome.file.clone()),
         }
     }
 
@@ -304,6 +341,7 @@ impl JournalEntry {
                 commit: outcome.commit,
                 files: outcome.files.clone(),
             }),
+            lines: None,
         }
     }
 
@@ -873,6 +911,7 @@ impl JournalEntry {
             reset: None,
             upstream: None,
             clean: None,
+            lines: None,
         }
     }
 
@@ -1151,6 +1190,35 @@ impl JournalEntry {
         })
     }
 
+    /// Before the undo or redo of a discard (whole files or lines): no operation in progress (it
+    /// would rewrite merge files) and HEAD the recorded one (`head.after` for the undo,
+    /// `head.before` for the redo); otherwise an error and nothing changes.
+    fn check_worktree_state(
+        &self,
+        repo: &dyn GitBackend,
+        command: &'static str,
+        redo: bool,
+    ) -> Result<(), EngineError> {
+        check_no_operation(
+            command,
+            msg!("engine-busy-worktree"),
+            repo.status()?.operation,
+        )?;
+        let expected = if redo {
+            &self.head.before
+        } else {
+            &self.head.after
+        };
+        let now = HeadState::from_head(&repo.head()?);
+        if now != *expected {
+            return Err(EngineError::UndoConflict {
+                command,
+                refs: vec![msg!("engine-head-changed", expected = expected, now = now)],
+            });
+        }
+        Ok(())
+    }
+
     /// Runs undo or redo of the entry on the backend: the files for a discard, the refs otherwise.
     ///
     /// For a discard HEAD must be the recorded one (`head.after` for the undo,
@@ -1163,25 +1231,17 @@ impl JournalEntry {
         redo: bool,
     ) -> Result<RestoreOutcome, EngineError> {
         if let Some(request) = self.worktree_request(redo) {
-            // As for the refs: never in the middle of a merge, rebase... (it would rewrite merge files).
-            check_no_operation(
-                request.command,
-                msg!("engine-busy-worktree"),
-                repo.status()?.operation,
-            )?;
-            let expected = if redo {
-                &self.head.before
-            } else {
-                &self.head.after
-            };
-            let now = HeadState::from_head(&repo.head()?);
-            if now != *expected {
-                return Err(EngineError::UndoConflict {
-                    command: request.command,
-                    refs: vec![msg!("engine-head-changed", expected = expected, now = now)],
-                });
-            }
+            self.check_worktree_state(repo, request.command, redo)?;
             return repo.restore_worktree(&request);
+        }
+        if let Some(file) = &self.lines {
+            let request = LinesRestore {
+                command: if redo { "edit.redo" } else { "edit.undo" },
+                redo,
+                file: file.clone(),
+            };
+            self.check_worktree_state(repo, request.command, redo)?;
+            return repo.restore_lines(&request);
         }
         if let Some(backup) = &self.clean {
             // Untracked files do not depend on HEAD: only the paths are checked (by the backend),
@@ -1512,6 +1572,7 @@ mod tests {
             reset: None,
             upstream: None,
             clean: None,
+            lines: None,
         }
     }
 

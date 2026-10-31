@@ -6,6 +6,7 @@ mod clone;
 mod commit;
 mod conflict;
 mod discard;
+mod discard_lines;
 mod file;
 mod merge;
 mod pick;
@@ -104,6 +105,11 @@ pub struct MemoryBackend {
     worktree_backups: Vec<WorktreeStash>,
     /// Backups saved by `worktree.clean`.
     clean_backups: Vec<CleanStash>,
+    /// Backups saved by `worktree.discard_lines`: ref name, path and blob with the old bytes.
+    line_backups: Vec<(String, RepoPath, Oid)>,
+    /// If set, the backup of `worktree.discard_lines` fails with this message
+    /// ([`MemoryBackend::fail_line_backups`]).
+    line_backup_failure: Option<String>,
     /// Name and email of the committer (`user.name`/`user.email`); `None` = not configured.
     identity: Option<(String, String)>,
     /// Configured remotes, by name.
@@ -169,6 +175,8 @@ impl MemoryBackend {
             commit_backups: Vec::new(),
             worktree_backups: Vec::new(),
             clean_backups: Vec::new(),
+            line_backups: Vec::new(),
+            line_backup_failure: None,
             identity: None,
             remotes: BTreeMap::new(),
             pull_settings: PullSettings::default(),
@@ -872,6 +880,21 @@ impl GitIndex for MemoryBackend {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)?;
+        Ok(RestoreOutcome::default())
+    }
+
+    fn discard_lines(
+        &mut self,
+        selection: &super::DiscardLines,
+    ) -> Result<super::DiscardLinesOutcome, EngineError> {
+        self.discard_line_selection(selection)
+    }
+
+    fn restore_lines(
+        &mut self,
+        request: &super::LinesRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_discarded_lines(request)?;
         Ok(RestoreOutcome::default())
     }
 

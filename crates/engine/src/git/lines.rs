@@ -137,8 +137,81 @@ impl LinePatch {
 /// - Lines that are not changed lines of the diff, or empty selection:
 ///   [`EngineError::InvalidParams`].
 pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, EngineError> {
-    let id = selection.command_id();
+    let no_file = match selection.direction {
+        PatchDirection::Stage => msg!("engine-lines-no-unstaged"),
+        PatchDirection::Unstage => msg!("engine-lines-no-staged"),
+    };
+    let file = pick_file(diff, &selection.path, &selection.digest, no_file)?;
+    patch_of(
+        file,
+        &selection.path,
+        &selection.lines,
+        selection.direction,
+        selection.command_id(),
+    )
+}
+
+/// The lines to discard from the worktree (`worktree.discard_lines`): the chosen changed lines
+/// of the `diff.worktree` diff of `path` go back to the index version, the others stay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscardLines {
+    /// The file (a tracked file with unstaged changes, not renamed).
+    pub path: RepoPath,
+    /// The chosen lines, with the numbers of the seen `diff.worktree` diff. Not empty.
+    pub lines: Vec<LineRef>,
+    /// The [`file_digest`] of the `FileDiff` the lines come from.
+    pub digest: String,
+}
+
+impl DiscardLines {
+    /// The diff the lines come from: `diff.worktree`, limited to the file.
+    pub fn diff_spec(&self) -> DiffSpec {
+        DiffSpec::Worktree {
+            path: Some(self.path.clone()),
+        }
+    }
+}
+
+/// [`line_patch`] for `worktree.discard_lines`: picks the file in `diff` (the reread
+/// [`DiscardLines::diff_spec`]), checks the digest and builds the patch that, applied to the
+/// **worktree** content (the new side of the diff), takes the selected lines back to the index
+/// version: the [`PatchDirection::Unstage`] rule of [`build_patch`] (the worktree is the new side
+/// of the diff, as the index is for `diff.index`). The patch's preimage is the clean worktree
+/// content, its postimage the content to write.
+///
+/// Errors as [`line_patch`]; besides, only a modified file ([`Change::Modified`]: not a file
+/// deleted from the worktree, `intent-to-add`, renamed): [`EngineError::NotAllowed`], discard the
+/// whole file.
+pub fn discard_line_patch(diff: &Diff, selection: &DiscardLines) -> Result<LinePatch, EngineError> {
     let path = &selection.path;
+    let file = pick_file(
+        diff,
+        path,
+        &selection.digest,
+        msg!("engine-lines-no-unstaged"),
+    )?;
+    if file.change != Change::Modified || file.old_path != file.new_path {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-discard-lines-whole-file",
+            path = path
+        )));
+    }
+    patch_of(
+        file,
+        path,
+        &selection.lines,
+        PatchDirection::Unstage,
+        "worktree.discard_lines",
+    )
+}
+
+/// The file of `diff` at `path` (see [`line_patch`]), if its digest is `digest`.
+fn pick_file<'a>(
+    diff: &'a Diff,
+    path: &RepoPath,
+    digest: &str,
+    no_file: Message,
+) -> Result<&'a FileDiff, EngineError> {
     let by_new: Vec<&FileDiff> = diff.files.iter().filter(|f| f.new_path == *path).collect();
     let candidates = if by_new.is_empty() {
         diff.files.iter().filter(|f| f.old_path == *path).collect()
@@ -148,13 +221,9 @@ pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, E
     let file = match candidates[..] {
         [file] => file,
         [] => {
-            let reason = match selection.direction {
-                PatchDirection::Stage => msg!("engine-lines-no-unstaged"),
-                PatchDirection::Unstage => msg!("engine-lines-no-staged"),
-            };
             return Err(EngineError::StaleDiff {
                 path: path.to_string(),
-                reason,
+                reason: no_file,
             });
         }
         _ => {
@@ -164,13 +233,24 @@ pub fn line_patch(diff: &Diff, selection: &LineSelection) -> Result<LinePatch, E
             )));
         }
     };
-    if file_digest(file) != selection.digest {
+    if file_digest(file) != digest {
         return Err(EngineError::StaleDiff {
             path: path.to_string(),
             reason: msg!("engine-lines-diff-changed"),
         });
     }
-    let patch = build_patch(file, &selection.lines, selection.direction).map_err(|e| match e {
+    Ok(file)
+}
+
+/// The patch of `lines` of `file` in `direction`, anchored (see [`line_patch`]).
+fn patch_of(
+    file: &FileDiff,
+    path: &RepoPath,
+    lines: &[LineRef],
+    direction: PatchDirection,
+    id: &'static str,
+) -> Result<LinePatch, EngineError> {
+    let patch = build_patch(file, lines, direction).map_err(|e| match e {
         DomainError::UnsupportedPatch { .. } => {
             EngineError::NotAllowed(msg!("engine-other", text = e.to_string()))
         }

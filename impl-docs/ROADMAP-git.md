@@ -792,3 +792,9 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   end of file without newline, CRLF with `core.autocrlf`, a clean/smudge filter, executable bit
   kept, file changed after the read, stale digest, backup failure → nothing written, undo/redo,
   file changed before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** engine done, UI to do. `worktree.discard_lines` in `crates/engine/src/builtin/discard.rs`;
+  `discard_line_patch` (in `git/lines.rs`), `discard_lines_target`, `LinesBackup`/`LinesRestore` in
+  `git/discard_lines.rs`; `GitIndex::discard_lines`/`restore_lines` on both backends
+  (`crates/git/src/backend/discard_lines.rs`, `git/memory/discard_lines.rs`); journal field
+  `lines`; tests in `crates/git/tests/discard_lines.rs` and on the `MemoryBackend`. Next: the
+  `egui-ui` part and the `safety-reviewer` review.

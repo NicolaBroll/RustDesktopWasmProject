@@ -209,7 +209,7 @@ impl CliBackend {
     /// folder. In place of a folder there can be an untracked file or link (or
     /// ignored: `git status` does not say), and `git restore` would delete it to recreate the
     /// file: nothing is written.
-    fn check_real_dirs(&self, paths: &[RepoPath]) -> Result<(), EngineError> {
+    pub(super) fn check_real_dirs(&self, paths: &[RepoPath]) -> Result<(), EngineError> {
         let mut bad = Vec::new();
         for path in paths {
             let bytes = path.as_bytes();
@@ -282,7 +282,7 @@ impl CliBackend {
 
     /// What is in the worktree at `path`: `None` if nothing, `(true, target)` for a link,
     /// `(false, bytes)` for a file. A folder counts as content that never matches.
-    fn disk(path: &Path) -> Result<Option<(bool, Vec<u8>)>, EngineError> {
+    pub(super) fn disk(path: &Path) -> Result<Option<(bool, Vec<u8>)>, EngineError> {
         let io = |e: std::io::Error| EngineError::GitWithReason {
             command: "restore".to_owned(),
             reason: msg!(
@@ -309,7 +309,7 @@ impl CliBackend {
     /// The bytes `git restore` would write for the entry `entry` (mode, blob) at `path`: a link
     /// has the blob content as its target, a file goes through the filters
     /// (`cat-file --filters --path=<path>`, the attributes of that path).
-    fn checkout_bytes(
+    pub(super) fn checkout_bytes(
         &self,
         path: &RepoPath,
         entry: &(u32, Oid),

@@ -1,4 +1,4 @@
-# Title bar: the File menu (open, recent, theme), the Help menu (shortcuts, about), window title and buttons (view/title_bar.rs).
+# Title bar: the File menu (open, recent, folder and terminal of the repo, settings), the Help menu (shortcuts, about), window title and buttons (view/title_bar.rs).
 
 title-bar-file = File
 title-bar-open = Apri repository…
@@ -9,6 +9,12 @@ title-bar-minimize = Riduci a icona
 title-bar-maximize = Ingrandisci
 title-bar-restore = Ripristina
 title-bar-close = Chiudi
+title-bar-show-folder = Mostra nel file manager
+title-bar-show-folder-hint = Apri la cartella di questo repository nel file manager del sistema
+title-bar-open-terminal = Apri terminale qui
+title-bar-open-terminal-hint = Apri un terminale nella cartella di questo repository
+title-bar-launch-no-repo = Apri prima un repository
+title-bar-launch-failed = Impossibile avviare il programma: { $error }
 title-bar-settings = Impostazioni…
 title-bar-help = Aiuto
 title-bar-shortcuts = Scorciatoie da tastiera

@@ -2,10 +2,12 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // no console on Windows in release
 
+mod launch;
 mod watch;
 
 use project_engine::{Capabilities, OnChange, Platform, Watch};
 use project_git::CliOpener;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Window icon (source in `assets/icon.svg`).
@@ -64,7 +66,8 @@ fn main() -> eframe::Result {
     )
 }
 
-/// Folder dialog via `rfd`, threads for slow jobs, `notify` for the repos changed from outside.
+/// Folder dialog via `rfd`, threads for slow jobs, `notify` for the repos changed from outside,
+/// the system's file manager and terminal.
 struct NativePlatform {
     /// The dialog to open, parented to the main window (modal to it on Windows and macOS; on
     /// Linux the XDG portal, or zenity, receive the window id).
@@ -81,7 +84,10 @@ impl NativePlatform {
 
 impl Platform for NativePlatform {
     fn capabilities(&self) -> Capabilities {
-        Capabilities { open_folder: true }
+        Capabilities {
+            open_folder: true,
+            external_apps: true,
+        }
     }
 
     /// The dialog is created here, on the UI thread (macOS wants the main thread), and shown by
@@ -117,6 +123,14 @@ impl Platform for NativePlatform {
 
     fn system_language(&self) -> Option<String> {
         language_from_env(|name| std::env::var(name).ok())
+    }
+
+    fn show_folder(&self, folder: &Path) -> std::io::Result<()> {
+        launch::show_folder(folder)
+    }
+
+    fn open_terminal(&self, folder: &Path) -> std::io::Result<()> {
+        launch::open_terminal(folder)
     }
 }
 

@@ -31,6 +31,10 @@ pub(crate) enum Action {
     CloseTab(usize),
     /// Drops from the recent list the repos whose folder no longer exists.
     ForgetMissing,
+    /// Shows the folder of the repo shown in the system's file manager.
+    ShowFolder,
+    /// Opens a terminal in the folder of the repo shown.
+    OpenTerminal,
 }
 
 /// Key of the state in the eframe storage.
@@ -380,6 +384,24 @@ impl App {
                 prune(&mut self.recent, &self.missing);
                 self.missing.clear();
             }
+            Action::ShowFolder => self.launch(|platform, folder| platform.show_folder(folder)),
+            Action::OpenTerminal => self.launch(|platform, folder| platform.open_terminal(folder)),
+        }
+    }
+
+    /// Starts a program of the system on the folder of the repo shown; if it does not start, the
+    /// error goes in the tab's status bar.
+    fn launch(&mut self, run: impl FnOnce(&dyn Platform, &Path) -> std::io::Result<()>) {
+        let tab = &mut self.tabs[self.active];
+        let Some(folder) = tab.repo_path().map(Path::new) else {
+            return;
+        };
+        match run(self.platform.as_ref(), folder) {
+            Ok(()) => tab.error.clear(),
+            Err(e) => {
+                log::error!("{}: {e}", folder.display());
+                tab.error = tr!("title-bar-launch-failed", error = e.to_string());
+            }
         }
     }
 
@@ -581,7 +603,8 @@ impl eframe::App for App {
         // Before anything is drawn: a menu open now closes on this frame's Esc, which must not
         // reach the tab too (U31).
         let pressed = self.shortcuts(&ctx);
-        let can_pick = self.platform.capabilities().open_folder;
+        let capabilities = self.platform.capabilities();
+        let can_pick = capabilities.open_folder;
         self.check_missing(ctx.input(|i| i.time));
         let recent = self.recent_view();
         // The actions of the menus and of the strip after the tab's: they can change the tab shown.
@@ -590,6 +613,7 @@ impl eframe::App for App {
             frame: self.frame,
             repo: self.tabs[self.active].repo.as_ref(),
             can_pick,
+            can_launch: capabilities.external_apps,
             recent: &recent,
         };
         view::title_bar_panel(ui, &bar, &mut strip);
@@ -726,7 +750,10 @@ mod tests {
 
     impl Platform for Deferred {
         fn capabilities(&self) -> Capabilities {
-            Capabilities { open_folder: true }
+            Capabilities {
+                open_folder: true,
+                ..Capabilities::default()
+            }
         }
         fn pick_folder(&self, on_done: OnPicked) {
             self.pending.lock().unwrap().push(on_done);
@@ -1076,7 +1103,10 @@ mod tests {
 
     impl Platform for Queued {
         fn capabilities(&self) -> Capabilities {
-            Capabilities { open_folder: true }
+            Capabilities {
+                open_folder: true,
+                ..Capabilities::default()
+            }
         }
         fn pick_folder(&self, on_done: OnPicked) {
             on_done(Some("/work".to_owned()));

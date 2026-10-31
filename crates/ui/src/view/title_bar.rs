@@ -43,6 +43,8 @@ pub(crate) struct TitleBar<'a> {
     /// The repo of the tab shown.
     pub(crate) repo: Option<&'a RepoView>,
     pub(crate) can_pick: bool,
+    /// The platform opens the file manager and the terminal.
+    pub(crate) can_launch: bool,
     pub(crate) recent: &'a [RecentRepo],
 }
 
@@ -143,7 +145,8 @@ fn title(ui: &Ui, bar: &TitleBar<'_>, bar_rect: Rect, free: Rect) {
     ui.painter().galley(pos, galley, color);
 }
 
-/// Only what is not about the repo shown: its commands are in the toolbar.
+/// Only what is not a git command on the repo shown (those are in the toolbar): opening repos,
+/// its folder in the file manager or a terminal, the settings.
 fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-file"), |ui| {
         // Room for the shortcut of "Settings…" after the longest item.
@@ -158,6 +161,10 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         }
         create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
+        if bar.can_launch {
+            ui.separator();
+            launch_buttons(ui, bar.repo.is_some(), actions);
+        }
         ui.separator();
         let shortcut = keys::shortcut_text(ui.ctx(), &settings::SHORTCUT);
         if ui
@@ -178,6 +185,34 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
             ui.close();
         }
     });
+}
+
+/// "Show in file manager" and "Open terminal here", on the folder of the repo shown: off without
+/// a repo.
+fn launch_buttons(ui: &mut Ui, has_repo: bool, actions: &mut Vec<Action>) {
+    let items = [
+        (
+            tr!("title-bar-show-folder"),
+            tr!("title-bar-show-folder-hint"),
+            tabs::Action::ShowFolder,
+        ),
+        (
+            tr!("title-bar-open-terminal"),
+            tr!("title-bar-open-terminal-hint"),
+            tabs::Action::OpenTerminal,
+        ),
+    ];
+    for (label, hint, action) in items {
+        if ui
+            .add_enabled(has_repo, egui::Button::new(label))
+            .on_hover_text(hint)
+            .on_disabled_hover_text(tr!("title-bar-launch-no-repo"))
+            .clicked()
+        {
+            actions.push(Action::Tabs(action));
+            ui.close();
+        }
+    }
 }
 
 /// The app icon, `size` points wide, decoded once per image.

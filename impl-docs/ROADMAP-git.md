@@ -1062,7 +1062,7 @@ file of its function in [git/](git/) before the code.
   `submodule_tests.rs` (checkout that moves one, fetch gives none, the paths sent).
 
 ### S63 — Git LFS: verify and mark
-- [ ] **Agent:** `git-scenarios`, then `egui-ui`
+- [x] **Agent:** `git-scenarios`, then `egui-ui`
 - **Goal:** the app never bypasses filters or hooks, so with `git-lfs` installed clone, pull,
   push, stage and checkout should work as in the terminal; verify it and fix what does not. Install
   `git-lfs` in the devcontainer and in CI; scenarios with a local LFS server-less setup
@@ -1076,6 +1076,20 @@ file of its function in [git/](git/) before the code.
     uses Git LFS: install git-lfs, otherwise files stay as pointers").
 - **Done when:** the scenarios pass with git-lfs installed (skipped with a message when it is not);
   UI tests of the badge and the notice; CI green.
+- **Status:** engine and scenarios done (`crates/git/tests/lfs.rs`, git-lfs in the devcontainer
+  and in the `ci` and `git-versions` workflows). Clone, stage, commit, push, pull, checkout,
+  `worktree.discard`, `stash` worked as they were; `index.stage_lines`/`unstage_lines` and
+  `worktree.discard_lines` wrote broken pointers and now refuse an LFS file (`engine-lines-lfs`).
+  Detection: `repo.lfs_paths {"paths"}` and `repo.lfs_status {}` → `{"used", "installed"}`
+  ([reading.md](git/reading.md) "Git LFS"; `MemoryBackend::set_lfs` for UI tests). The credential
+  prompt for an LFS endpoint is not covered (no LFS server). UI done (`crates/ui/src/lfs.rs`,
+  `view/lfs_view.rs`, `locales/*/lfs.ftl`): `repo.lfs_status` on opening and "Refresh"; if `used`,
+  one `repo.lfs_paths` per status with its paths, and for an open diff whose path is not known yet
+  (commit diffs); answers cached in `LfsBox` (an error counts as "not LFS", no loop). "LFS" badge on
+  the stage rows and in the diff bar; the diff of an LFS file shows "Stored in Git LFS (<size>)"
+  (the pointer's `size` line, new side, old for a deleted file), no +/- counts, no hunk or line
+  buttons (`lines::partial` = `Hidden`). `used && !installed`: the notice under the bar, once per
+  repo per tab (= engine session), "Close" hides it. Tests: `crates/ui/src/lfs_tests.rs`.
 
 ### S64 — Worktrees (only if needed)
 - [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`

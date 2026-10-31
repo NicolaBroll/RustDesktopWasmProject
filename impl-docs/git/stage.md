@@ -40,6 +40,8 @@ new content with `apply_patch` on the staged blob and writes it (`CliBackend`: `
 always without writing: file with no more changes or different digest → `StaleDiff` (re-read the diff);
 two `FileDiff`s on the same path (type change) → `NotAllowed`; domain `UnsupportedPatch`
 (binaries, submodules, links, conflicts, copies, renames in the stage) → `NotAllowed`;
+a file stored in Git LFS (`CliBackend` only, `engine-lines-lfs`: its diff is the pointer text, see
+[reading.md](reading.md) "Git LFS") → `NotAllowed`;
 `InvalidLineSelection` or empty `lines` → `InvalidParams`; locked index → `IndexLocked`. Backup
 like `index.stage` (see "Index backup"). Result: `{"status": Status, "backup": string | null}`.
 

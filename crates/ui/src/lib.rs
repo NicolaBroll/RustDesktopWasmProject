@@ -33,6 +33,7 @@ mod graph;
 mod icons;
 mod ignore;
 mod keys;
+mod lfs;
 mod lines;
 mod list;
 mod merge;
@@ -148,6 +149,8 @@ enum Action {
     Stash(stash::Action),
     /// Updating submodules.
     Submodule(submodule::Action),
+    /// The notice "git-lfs is not installed".
+    Lfs(lfs::Action),
     /// Merge, cherry-pick and revert.
     Merge(merge::Action),
     /// The interactive rebase editor.
@@ -251,6 +254,10 @@ enum Request {
     Search(u64, u64),
     /// `diff.range` of the comparison with the request number of [`compare::CompareBox`].
     Compare(u64, u64),
+    /// `repo.lfs_status` (the state is in [`lfs::LfsBox`]).
+    LfsStatus(u64),
+    /// `repo.lfs_paths` (the paths sent are in [`lfs::LfsBox`]).
+    LfsPaths(u64),
 }
 
 /// The repo shown and the data read so far.
@@ -306,6 +313,8 @@ struct RepoView {
     stash: StashBox,
     /// The submodules (`submodule.list`) and the update in progress.
     submodules: submodule::SubmoduleBox,
+    /// Git LFS: the files stored in it and the notice "git-lfs is not installed" (S63).
+    lfs: lfs::LfsBox,
     /// The merge started, the operation in progress (panel) and the Continue and Abort dialogs.
     merge: MergeBox,
     /// The interactive rebase editor.
@@ -363,6 +372,7 @@ impl RepoView {
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
             submodules: submodule::SubmoduleBox::default(),
+            lfs: lfs::LfsBox::default(),
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
             reset: reset::ResetBox::default(),
@@ -512,6 +522,9 @@ struct Tab {
     notice: String,
     /// The watch of the repo and the refresh it asks for (S40).
     auto: refresh::AutoRefresh,
+    /// The repos (paths) that already showed the notice "git-lfs is not installed" in this tab:
+    /// once per repo per session (S63).
+    lfs_noticed: std::collections::HashSet<String>,
 }
 
 impl Tab {
@@ -530,6 +543,7 @@ impl Tab {
             error: String::new(),
             notice: String::new(),
             auto: refresh::AutoRefresh::default(),
+            lfs_noticed: std::collections::HashSet::new(),
         }
     }
 
@@ -669,6 +683,7 @@ impl Tab {
             Action::Fetch(action) => self.apply_fetch(action),
             Action::Optimize(action) => self.apply_optimize(action),
             Action::Submodule(action) => self.apply_submodule(action),
+            Action::Lfs(action) => self.apply_lfs(action),
             Action::Sync(action) => self.apply_sync(action),
             Action::Remotes(action) => self.apply_remotes(action),
             Action::Stash(action) => self.apply_stash(action),
@@ -943,6 +958,7 @@ impl Tab {
         self.request_remotes(generation);
         self.submit(stash::LIST, json!({}), Request::Stashes(generation));
         self.request_submodules(generation, false);
+        self.request_lfs_status(generation);
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
@@ -999,6 +1015,8 @@ impl Tab {
             self.check_submodules(generation);
         }
         self.receive_request(request, done);
+        // A new status or diff: which of its files are stored in Git LFS (S63).
+        self.follow_lfs();
     }
 
     fn receive_request(&mut self, request: Request, done: Done) {
@@ -1082,6 +1100,7 @@ impl Tab {
             Request::Search(generation, seq) => self.receive_search(generation, seq, done),
             // The comparison shows its errors in the details panel.
             Request::Compare(generation, seq) => self.receive_compare(generation, seq, done),
+            Request::LfsStatus(_) | Request::LfsPaths(_) => self.receive_lfs(request, done),
             // The diff too: errors in its view, old answers discarded.
             Request::Diff(generation, seq) => {
                 let result = done
@@ -1296,7 +1315,9 @@ impl Tab {
             | Request::ConflictResolve(..)
             | Request::File(..)
             | Request::Search(..)
-            | Request::Compare(..) => {}
+            | Request::Compare(..)
+            | Request::LfsStatus(..)
+            | Request::LfsPaths(..) => {}
         }
         Ok(())
     }
@@ -1459,6 +1480,14 @@ impl Tab {
             let can_write = !writing && !repo.modal_open() && repo.submodules.running().is_none();
             egui::Panel::top("submodule-outdated").show(ui, |ui| {
                 view::outdated_notice(ui, repo.submodules.outdated(), can_write, actions);
+            });
+        }
+        // The repo uses Git LFS but git-lfs is missing (S63): once per repo in this tab.
+        if let Some(repo) = &self.repo
+            && repo.lfs.notice()
+        {
+            egui::Panel::top("lfs-missing").show(ui, |ui| {
+                view::lfs_notice(ui, actions);
             });
         }
         // The automatic fetch suspended by an authentication error (S50), under the bar too.

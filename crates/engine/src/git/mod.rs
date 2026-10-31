@@ -14,6 +14,7 @@ mod discard;
 mod discard_lines;
 mod file;
 mod ignore;
+mod lfs;
 #[cfg(any(test, feature = "test-support"))]
 mod line_diff;
 mod lines;
@@ -86,6 +87,7 @@ pub use ignore::{
     IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
     ignore_description, ignore_tracked_warning,
 };
+pub use lfs::{LFS_FILTER, LfsState};
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use maintenance::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
@@ -252,6 +254,14 @@ pub trait GitRead {
     /// that `branch.set_upstream` and `branch.create` with `track` replace. A non-UTF-8 value
     /// gives [`EngineError::NotAllowed`] (it could not be written back). A read.
     fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError>;
+
+    /// Which of `paths` are stored in Git LFS: their `filter` attribute is [`LFS_FILTER`] (`git
+    /// check-attr filter`, attributes of the worktree and the index), in the order given, each
+    /// once. Empty `paths` → empty, without running git. A read (`repo.lfs_paths`).
+    fn lfs_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>, EngineError>;
+
+    /// Whether the repo uses LFS and git-lfs is installed (`repo.lfs_status`). A read.
+    fn lfs_state(&self) -> Result<LfsState, EngineError>;
 }
 
 /// Index and worktree: stage, unstage, commit, discard and their restores. Part of

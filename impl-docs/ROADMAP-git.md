@@ -992,7 +992,7 @@ file of its function in [git/](git/) before the code.
   the invalid regex is shown in the bar. A log refresh does not run a content search again.
 
 ### S62 — Submodules: clone, update, open
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** submodules are recognised (status, `[submodule]` badge in the diff, refused by the line
   operations) but cannot be set up or updated: after a clone they are empty, after a pull that
   moves them they stay "modified" with no way out but the terminal. Add:
@@ -1020,6 +1020,24 @@ file of its function in [git/](git/) before the code.
   `different_commit` → update, submodule with local changes refused, with commits not on a ref
   refused, nested submodule without `recursive`, path with spaces/non-UTF-8, URL starting with
   `-` refused) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** engine and backend done ([git/submodules.md](git/submodules.md)): `submodule.list`,
+  `submodule.update` (per-submodule refusals in `refused` with a `reason`, also `conflict`,
+  `no_mapping`, `suspicious_url`, `not_initialized`; an already in-sync submodule is `unchanged`,
+  never refused), `repo.clone` `"submodules"`. `-c protocol.file.allow=user` only when the user's
+  configuration sets neither `protocol.file.allow` nor `protocol.allow` (their `always` stands; tests
+  set it through `GIT_CONFIG_COUNT`). `recursive` re-applies the same checks level by level instead of
+  `--recursive`. Review fixes: `-c submodule.recurse=false` on every git run (covers S62b's check
+  for all checkout commands, test in `submodules.rs`), leftover `.git/modules/<name>` checked and
+  backed up, `ignored_overwritten` and `changed_meanwhile` refusals, URLs masked. UI done
+  (`crates/ui/src/submodule.rs`, `view/submodule_view.rs`): "Submodules" section only when there
+  are any (state badge, tooltip with recorded/checked out commit, changes, untracked, operation,
+  unreferenced, ignored files), "Update" / "Initialize and update" per row (off with the reason
+  when the engine would refuse), "Update all" (with `init`), "Open in a new tab", "Show in file
+  manager"; the update runs like the fetch (bar progress, "Stop", credential dialog), the notice
+  has the counts and the refused ones with the engine's reason (also kept in the section), then
+  status and list are read again. The list is read on open and Refresh, then with every status
+  only if the repo has submodules or the status shows `.gitmodules` or a gitlink. "With
+  submodules" in the clone dialog. `safety-reviewer` reviews done (the fixes above).
 
 ### S62b — Submodules out of date after checkout, pull and merge
 - [ ] **Agent:** `egui-ui` (engine only if a field is missing)

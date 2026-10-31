@@ -123,6 +123,9 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
             if !column.filtering {
                 stash_section(ui, repo, column.can_write, actions);
             }
+            if !column.filtering && repo.submodules.shown() {
+                submodule_section(ui, repo, column.can_write, actions);
+            }
         });
     state.trees = Some(trees);
     for key in toggled {

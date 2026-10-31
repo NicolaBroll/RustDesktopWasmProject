@@ -18,6 +18,7 @@ mod reset;
 mod restore;
 mod search;
 mod stash;
+mod submodule;
 mod sync;
 mod tags;
 mod write;
@@ -160,6 +161,10 @@ pub struct MemoryBackend {
     exclude: Option<Vec<u8>>,
     /// How many backups `worktree.ignore` saved (`refs/project/backup/ignore-<n>`).
     ignore_backups: u64,
+    /// The submodules ([`MemoryBackend::set_submodules`]).
+    submodules: Vec<super::SubmoduleInfo>,
+    /// Backups saved by `submodule.update` inside the submodules: ref, path, HEAD saved.
+    submodule_backups: Vec<(String, RepoPath, Oid)>,
 }
 
 impl Default for MemoryBackend {
@@ -208,6 +213,8 @@ impl MemoryBackend {
             tag_objects: BTreeMap::new(),
             exclude: None,
             ignore_backups: 0,
+            submodules: Vec::new(),
+            submodule_backups: Vec::new(),
         }
     }
 
@@ -1207,6 +1214,20 @@ impl GitOperations for MemoryBackend {
     }
 }
 
+impl super::GitSubmodules for MemoryBackend {
+    fn submodules(&self) -> Result<Vec<super::SubmoduleInfo>, EngineError> {
+        Ok(self.submodules.clone())
+    }
+
+    fn update_submodules(
+        &mut self,
+        request: &super::SubmoduleUpdate,
+        job: &JobContext,
+    ) -> Result<super::SubmoduleUpdated, EngineError> {
+        self.memory_submodule_update(request, job)
+    }
+}
+
 impl GitMaintenance for MemoryBackend {
     fn commit_graph(&self) -> Result<CommitGraphState, EngineError> {
         // Like git: the last value of `core.commitGraph` wins; `false`, `no`, `off`, `0` and
@@ -1355,7 +1376,8 @@ impl RepoOpener for MemoryOpener {
                 message: format!("fatal: repository '{}' does not exist", request.url),
             });
         };
-        let clone = remote.cloned(&request.url, request.branch.as_deref())?;
+        let mut clone = remote.cloned(&request.url, request.branch.as_deref())?;
+        clone.clone_submodules(&remote.submodules, request.submodules);
         job.report(&Progress {
             phase: "Receiving objects".to_owned(),
             remote: false,

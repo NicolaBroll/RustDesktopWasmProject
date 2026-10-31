@@ -34,6 +34,7 @@ mod restore;
 mod sample;
 mod search;
 mod stash;
+mod submodule;
 mod tag;
 
 #[cfg(test)]
@@ -136,6 +137,11 @@ pub use stash::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
+};
+pub use submodule::{
+    SUBMODULE_BACKUP_KIND, SubmoduleInfo, SubmoduleMoved, SubmoduleRefusal, SubmoduleRefusalReason,
+    SubmoduleState, SubmoduleUpdate, SubmoduleUpdated, UpdatePlan, nested_path, not_at_recorded,
+    plan_update, refusal_message, submodule_state, update_refusal,
 };
 pub use tag::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 
@@ -922,15 +928,42 @@ pub trait GitMaintenance {
     fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError>;
 }
 
+/// Submodules (`impl-docs/git/submodules.md`). Part of [`GitBackend`].
+pub trait GitSubmodules {
+    /// The submodules of the repo (the gitlinks of the index, in path order) with their state.
+    /// A read: nothing is written in the superproject or in the submodules.
+    fn submodules(&self) -> Result<Vec<SubmoduleInfo>, EngineError>;
+
+    /// `submodule.update`: checks out the recorded commit in the selected submodules, never in
+    /// one [`update_refusal`] refuses (listed in the result, nothing run for it). The detached
+    /// HEAD of each submodule about to move is saved first in a backup ref inside it; if a
+    /// backup fails nothing is run. May fetch (network: credentials through the prompter,
+    /// progress and cancellation from `job`). The request is already checked
+    /// ([`SubmoduleUpdate::check`]).
+    fn update_submodules(
+        &mut self,
+        request: &SubmoduleUpdate,
+        job: &JobContext,
+    ) -> Result<SubmoduleUpdated, EngineError>;
+}
+
 /// An open repository: the union of the traits by area ([`GitRead`], [`GitIndex`], [`GitRefs`],
-/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`]). Every type that
+/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`], [`GitSubmodules`]). Every type that
 /// implements all of them is a `GitBackend` (blanket impl); `Session` and the commands hold a
 /// `Box<dyn GitBackend>`. A caller with a concrete backend (`MemoryBackend`, `CliBackend`)
 /// imports the traits of the methods it calls.
 ///
 /// `Send` because the session may move it to a worker thread for slow commands (§6).
 pub trait GitBackend:
-    GitRead + GitIndex + GitRefs + GitRemotes + GitStash + GitOperations + GitMaintenance + Send
+    GitRead
+    + GitIndex
+    + GitRefs
+    + GitRemotes
+    + GitStash
+    + GitOperations
+    + GitMaintenance
+    + GitSubmodules
+    + Send
 {
 }
 
@@ -942,6 +975,7 @@ impl<T> GitBackend for T where
         + GitStash
         + GitOperations
         + GitMaintenance
+        + GitSubmodules
         + Send
         + ?Sized
 {

@@ -72,6 +72,12 @@ fn can_launch_id() -> egui::Id {
     egui::Id::unique("can-launch")
 }
 
+/// True if the platform starts external programs (see [`set_can_launch`]).
+pub(super) fn can_launch(ui: &Ui) -> bool {
+    ui.ctx()
+        .data(|d| d.get_temp(can_launch_id()).unwrap_or(false))
+}
+
 /// Called by the app every frame, before the tab is drawn.
 pub(crate) fn set_can_launch(ctx: &egui::Context, can: bool) {
     ctx.data_mut(|d| d.insert_temp(can_launch_id(), can));

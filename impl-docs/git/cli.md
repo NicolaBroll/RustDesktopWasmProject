@@ -73,6 +73,13 @@ cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1",
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/rust-lang/log.git","path":"target/log"}' --cmd 'repo.log={"limit":3}'
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"file:///path/to/repo","path":"target/shallow","branch":"main","depth":1}'
 cargo run -p project-cli -- run --cmd 'repo.init={"path":"target/new-repo","branch":"main"}' --cmd repo.status
+# clone with its submodules, then list them
+cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/me/app.git","path":"target/app","submodules":true}' --cmd submodule.list
+# submodules: state, update (the recorded commit; refused per submodule with local changes, untracked
+# files, an operation in progress or commits on no ref), with init, only some paths, recursive
+cargo run -p project-cli -- --repo . run --cmd submodule.list
+cargo run -p project-cli -- --repo . run --cmd submodule.update
+cargo run -p project-cli -- --repo . run --cmd 'submodule.update={"paths":["vendor/lib"],"init":true,"recursive":true}'
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'

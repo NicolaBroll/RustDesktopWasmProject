@@ -35,7 +35,8 @@ project-cli mcp [--root <dir>]                           # MCP server on stdin/s
 Commands: `repo.open {"path"}` (`{"path", "head", "commit_graph"}`: `commit_graph` false = no
 commit-graph, so `repo.log` is slow on huge histories), `repo.optimize` (writes the commit-graph,
 `git commit-graph write --reachable`: a cache, no `confirm`, nothing to undo; `{"commit_graph"}`),
-`repo.clone {"url", "path", "branch"?, "depth"?}` and `repo.init {"path", "branch"?}` (writes; no
+`repo.clone {"url", "path", "branch"?, "depth"?, "submodules"?}` (`submodules`: also the
+submodules, `--recurse-submodules`) and `repo.init {"path", "branch"?}` (writes; no
 open repo needed: they create the repo in an absent or empty folder, never over existing files, and
 open it; result as `repo.open`, plus `messages` for the clone; a cancelled or failed clone removes
 the folder it created; not available over MCP),
@@ -298,6 +299,20 @@ its section, refspec, remote branches (with `HEAD`), the upstreams, `pushRemote`
 Afterwards every upstream is checked (`warnings` lists what git did not carry over). Result: `{"from",
 "to", "moved_refs", "upstreams", "warnings", "remotes", "refs"}`. The undo renames it back only if
 the new name still exists and the old one does not.
+
+`submodule.list {}` (read-only) lists the submodules: `path`, `name`, `url`, `recorded` (the commit in
+the index), `head` (checked out), `detached`, `state` (`uninitialized`, `in_sync`, `different_commit`,
+`local_changes`, `conflict`), `changes`, `untracked`, `operation`, `unreferenced` (a detached HEAD with
+commits on no branch, tag or remote branch). `submodule.update {"paths"?, "init"?, "recursive"?}`
+checks out the recorded commit (`git submodule update --checkout`, never `--force`, `--remote`,
+`--merge` or `--rebase`; may fetch). Each submodule with local changes, untracked files, an operation
+in progress, unreferenced commits (also in a git directory left by `deinit`), ignored files the
+checkout would overwrite, a conflict, no `.gitmodules` entry or a URL starting with `-` is
+refused (listed in `refused`, nothing run for it); uninitialized ones only with `init`, nested ones
+only with `recursive`. A detached HEAD is saved first in `refs/project/backup/submodule-...` inside
+the submodule. Result: `{"updated": [{"path", "from", "to", "backup"}], "unchanged", "refused":
+[{"path", "reason", "message"}], "messages", "warnings"}`. No journal entry (the superproject's refs
+do not move).
 
 Ahead/behind of the branches relative to the upstream are in `repo.refs` (`upstream.ahead`/`behind`) and
 in the `refs` of the fetch, pull and push results.

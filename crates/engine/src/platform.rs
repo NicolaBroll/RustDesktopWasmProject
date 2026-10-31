@@ -3,6 +3,7 @@
 //! The implementations live in the executables (L7); the UI receives an
 //! `Arc<dyn Platform>` and does not know which target it is running on.
 
+use std::path::Path;
 use std::sync::Arc;
 
 /// Keeps a [`Platform::watch`] going: dropping it stops the watch.
@@ -15,6 +16,8 @@ pub type OnChange = Arc<dyn Fn() + Send + Sync>;
 pub struct Capabilities {
     /// [`Platform::pick_folder`] opens a dialog.
     pub open_folder: bool,
+    /// [`Platform::show_folder`] and [`Platform::open_terminal`] start the system's programs.
+    pub external_apps: bool,
 }
 
 pub trait Platform: Send + Sync {
@@ -41,5 +44,16 @@ pub trait Platform: Send + Sync {
     /// uses English.
     fn system_language(&self) -> Option<String> {
         None
+    }
+    /// Shows `folder` in the system's file manager, without waiting for it. The default (test
+    /// platforms, see [`Capabilities::external_apps`]): [`std::io::ErrorKind::Unsupported`].
+    fn show_folder(&self, folder: &Path) -> std::io::Result<()> {
+        let _ = folder;
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    /// Opens a terminal in `folder`, without waiting for it. The default as [`Self::show_folder`].
+    fn open_terminal(&self, folder: &Path) -> std::io::Result<()> {
+        let _ = folder;
+        Err(std::io::ErrorKind::Unsupported.into())
     }
 }

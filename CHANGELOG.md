@@ -6,6 +6,12 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Show in file manager** and **Open terminal here** in the File menu: they open the folder of
+  the repository shown in the system's file manager or in a terminal (on Linux `$TERMINAL`, then
+  `x-terminal-emulator` and the common desktop terminals).
+
 ## [0.7.0] - 2026-10-31
 
 The fundamental operations that were missing: local branches that follow a remote branch,

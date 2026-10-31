@@ -257,7 +257,7 @@ be undone). Result: `{"remote", "remote_source", "branch", "remote_branch", "kin
 `https://user:token@host/r` becomes `https://user:***@host/r`, `https://token@github.com/r`
 becomes `https://***@github.com/r` (in `http(s)`/`ftp(s)` a lone user is often a token),
 `credentials: true` says there were some; an ssh user (`git@host:r`) stays. This also applies to the
-results of `remote.add`/`remote.remove` and to the journal (`edit.history`).
+results of `remote.add`/`remote.remove`/`remote.set_url` and to the journal (`edit.history`).
 
 `remote.add {"name", "url", "fetch"?}` adds a remote (`git remote add --end-of-options`,
 default refspec; `"fetch": true` then downloads like `remote.fetch`, with progress and
@@ -281,6 +281,22 @@ branches go into `refs/project/backup/remote-...`. Result: `{"remote", "removed"
 "upstreams_removed", "push_remotes_removed", "push_default_removed", "backups", "warnings",
 "remotes", "refs"}`. The undo restores configuration, remote branches and upstream, only if nobody has
 recreated a remote with that name; an upstream reset in the meantime stays, with a warning.
+
+`remote.set_url {"name", "url", "push"?}` changes the fetch URL of a remote (`git remote set-url
+--end-of-options`) or, with `"push": true`, only its push URL (`pushurl`), keeping remote branches and
+upstreams. Same URL checks as `remote.add`; refused for an unknown remote, one defined (even partly)
+outside the repo's file or with several values of the key. The same URL gives `changed: false` and
+writes nothing. Result: `{"remote", "url", "push_url", "changed", "credentials", "warnings", "remotes",
+"refs"}`. The undo writes the old URL back only if the key still holds the one written.
+
+`remote.rename {"name", "new_name"}` renames a remote (`git remote rename --no-progress`): git moves
+its section, refspec, remote branches (with `HEAD`), the upstreams, `pushRemote` and
+`remote.pushDefault`; tags do not change. Refused for an invalid or existing new name, leftovers under
+`refs/remotes/<new_name>/`, nested names (`a` and `a/b`) and during an operation in progress.
+Afterwards every upstream is checked (`warnings` lists what git did not carry over). Result: `{"from",
+"to", "moved_refs", "upstreams", "warnings", "remotes", "refs"}`. The undo renames it back only if
+the new name still exists and the old one does not.
+
 Ahead/behind of the branches relative to the upstream are in `repo.refs` (`upstream.ahead`/`behind`) and
 in the `refs` of the fetch, pull and push results.
 
@@ -371,7 +387,7 @@ stages it like `index.stage`; refused with `StaleDiff` if the file is no longer 
 <ref>:<path>`). Result: `{"status", "backup", "index_backup"}`. It does not go into the journal.
 
 `edit.undo {}` undoes the last operation in the journal (currently `commit.create`, also with `amend`,
-`branch.*`, `worktree.discard`, `worktree.discard_lines`, `worktree.ignore`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
+`branch.*`, `worktree.discard`, `worktree.discard_lines`, `worktree.ignore`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `remote.set_url`, `remote.rename`, `stash.push`,
 `stash.drop` and the concluded merge, `merge.start` and `merge.continue`) and `edit.redo {}` redoes it; `edit.history {}` (read-only) lists the journal. The undo
 returns the branch (or detached HEAD) to the previous value only if nobody has moved it in the
 meantime (a `git commit` or `git reset` from the terminal): otherwise error and nothing changes.

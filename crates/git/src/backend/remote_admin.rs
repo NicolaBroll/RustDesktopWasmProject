@@ -16,7 +16,10 @@
 //!   `git symbolic-ref --delete refs/remotes/<name>/HEAD`. So nothing disappears without having been
 //!   saved (with `git remote remove` git would choose by itself what to remove);
 //! - restoring: `git config --local --add --end-of-options <key> <value>` for each entry
-//!   and `git symbolic-ref -m <reflog> refs/remotes/<name>/HEAD <ref>`.
+//!   and `git symbolic-ref -m <reflog> refs/remotes/<name>/HEAD <ref>`;
+//! - changing in place (S59): `git remote set-url [--push] --end-of-options <name> <url>` (or
+//!   `git config --local --unset-all` to remove a push URL on undo) and `git remote rename
+//!   --no-progress --end-of-options <from> <to>`.
 
 use super::CliBackend;
 use super::branch::regex_escape;
@@ -154,7 +157,7 @@ impl CliBackend {
             return Ok(());
         }
         // stderr may repeat the URL: never credentials in an error.
-        let stderr = String::from_utf8_lossy(&out.stderr).replace(url, &mask_url(url).0);
+        let stderr = masked_stderr(&out, url);
         if stderr.contains("already exists") {
             Err(EngineError::NotAllowed(msg!(
                 "engine-remote-exists",
@@ -170,18 +173,74 @@ impl CliBackend {
                 ),
             })
         } else {
-            let stderr = stderr.trim();
-            Err(if stderr.is_empty() {
-                EngineError::GitWithReason {
-                    command: "remote".to_owned(),
-                    reason: msg!("engine-git-exit-status", status = out.status.to_string()),
-                }
-            } else {
-                EngineError::Git {
-                    command: "remote".to_owned(),
-                    stderr: stderr.to_owned(),
-                }
+            Err(remote_failure(&out, url))
+        }
+    }
+
+    /// [`GitRemotes::set_remote_url`](project_engine::GitRemotes::set_remote_url).
+    pub(super) fn change_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError> {
+        let Some(url) = url else {
+            let key = format!("remote.{name}.{}", if push { "pushurl" } else { "url" });
+            let args = ["config", "--local", "--unset-all", "--end-of-options", &key];
+            return self.config_call(&args, &[]);
+        };
+        let mut args = vec!["remote", "set-url"];
+        if push {
+            args.push("--push");
+        }
+        args.extend(["--end-of-options", name, url]);
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(remote_failure(&out, url))
+    }
+
+    /// [`GitRemotes::rename_remote`](project_engine::GitRemotes::rename_remote).
+    pub(super) fn rename_cli_remote(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<Message>, EngineError> {
+        let args = [
+            "remote",
+            "rename",
+            "--no-progress",
+            "--end-of-options",
+            from,
+            to,
+        ];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if out.status.success() {
+            return Ok(stderr
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(|l| msg!("engine-remote-git-says", text = l))
+                .collect());
+        }
+        if stderr.contains("already exists") {
+            Err(EngineError::NotAllowed(msg!(
+                "engine-remote-exists",
+                name = to.escape_debug()
+            )))
+        } else if stderr.contains("not a valid remote name") {
+            Err(EngineError::InvalidParams {
+                id: "remote.rename",
+                reason: msg!(
+                    "engine-remote-git-rejects-name",
+                    name = to.escape_debug(),
+                    stderr = stderr.trim()
+                ),
             })
+        } else {
+            Err(remote_failure(&out, ""))
         }
     }
 
@@ -360,6 +419,33 @@ impl CliBackend {
             Ok(())
         } else {
             Err(failure(args, &out))
+        }
+    }
+}
+
+/// The stderr of a `git remote` call with `url` (if not empty) masked ([`mask_url`]).
+fn masked_stderr(out: &std::process::Output, url: &str) -> String {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if url.is_empty() {
+        stderr.into_owned()
+    } else {
+        stderr.replace(url, &mask_url(url).0)
+    }
+}
+
+/// The error of a failed `git remote` call: git's text (with `url` masked) or the exit status.
+fn remote_failure(out: &std::process::Output, url: &str) -> EngineError {
+    let stderr = masked_stderr(out, url);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        EngineError::GitWithReason {
+            command: "remote".to_owned(),
+            reason: msg!("engine-git-exit-status", status = out.status.to_string()),
+        }
+    } else {
+        EngineError::Git {
+            command: "remote".to_owned(),
+            stderr: stderr.to_owned(),
         }
     }
 }

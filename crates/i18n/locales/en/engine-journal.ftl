@@ -33,6 +33,9 @@ engine-journal-rebase = Rebase of `{ $branch }` ({ $n ->
    *[other] { $n } commits
 }, from { $before } to { $after })
 engine-journal-remote-add = Add remote `{ $name }`
+engine-journal-remote-set-url = Change the URL of remote `{ $name }` to { $url }
+engine-journal-remote-set-push-url = Change the push URL of remote `{ $name }` to { $url }
+engine-journal-remote-rename = Rename remote `{ $from }` to `{ $to }`
 engine-journal-remote-add-fetched = Add remote `{ $name }` (with fetch: { $n ->
     [one] 1 remote branch
    *[other] { $n } remote branches

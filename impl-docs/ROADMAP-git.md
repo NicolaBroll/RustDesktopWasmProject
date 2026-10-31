@@ -925,6 +925,10 @@ file of its function in [git/](git/) before the code.
   - Docs in `impl-docs/git/remotes.md`, examples in `impl-docs/git/cli.md`, README.
   - UI: in the remote's "⋯" menu of the side panel, "Edit URL…" (fetch URL, optional separate push
     URL) and "Rename…", with the credentials note when switching between https and ssh.
+- **Status:** engine and backend done (`remote.set_url`, `remote.rename` in
+  `crates/engine/src/builtin/remotes.rs`, journal `RemoteChange` in `git/remote_edit.rs`,
+  `GitRemotes::set_remote_url`/`rename_remote`; tests `builtin/remote_edit_tests.rs`,
+  `crates/git/tests/remote_edit.rs`); UI and `safety-reviewer` review to do.
 - **Done when:** integration tests (set fetch URL, push URL only, same URL, unknown remote, URL
   starting with `-`, rename with upstreams and tags, rename to an existing name, invalid name,
   rename with an operation in progress refused, undo/redo, URL changed from the terminal before

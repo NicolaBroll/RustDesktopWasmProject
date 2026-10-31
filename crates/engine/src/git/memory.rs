@@ -131,6 +131,9 @@ pub struct MemoryBackend {
     /// How many `restore_refs` calls still succeed before failing
     /// ([`MemoryBackend::fail_restore_refs_after`]); `None`: always.
     restore_budget: Option<usize>,
+    /// If set, `rename_remote` fails: before writing (`false`) or after moving the configuration
+    /// (`true`) ([`MemoryBackend::fail_remote_rename`]).
+    remote_rename_failure: Option<bool>,
     /// The stashes, most recent first (`stash@{0}`); `refs/stash` points to the first.
     stashes: Vec<MemoryStash>,
     /// The dropped stashes, by id: `stash_store` (the undo of a drop) finds them again whole.
@@ -193,6 +196,7 @@ impl MemoryBackend {
             remote_elsewhere: BTreeMap::new(),
             listed_anyway: BTreeSet::new(),
             restore_budget: None,
+            remote_rename_failure: None,
             stashes: Vec::new(),
             dropped_stashes: BTreeMap::new(),
             stash_drop_failure: None,
@@ -1120,6 +1124,19 @@ impl GitRemotes for MemoryBackend {
 
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         Ok(self.remote_elsewhere.get(name).cloned().unwrap_or_default())
+    }
+
+    fn set_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.change_remote_url(name, push, url)
+    }
+
+    fn rename_remote(&mut self, from: &str, to: &str) -> Result<Vec<Message>, EngineError> {
+        self.rename_memory_remote(from, to)
     }
 }
 

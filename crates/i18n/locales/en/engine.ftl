@@ -100,6 +100,7 @@ engine-busy-reset = would reset the branch
 engine-busy-pull = would integrate the upstream
 engine-busy-remote-remove = would remove a remote
 engine-busy-remote-restore = would put back a remote
+engine-busy-remote-rename = would rename a remote
 engine-busy-cherry-pick = would start a cherry-pick
 engine-busy-revert = would start a revert
 engine-busy-worktree = would rewrite files

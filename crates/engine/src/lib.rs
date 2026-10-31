@@ -136,6 +136,10 @@ pub use git::{
     remove_remote, restore_remote, split_branch_key,
 };
 pub use git::{
+    RemoteChange, apply_remote_change, nested_remote, rename_warnings, shown_url, url_key,
+    url_values,
+};
+pub use git::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
 };

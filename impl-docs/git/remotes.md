@@ -18,7 +18,7 @@ Read-only. Result: `{"remotes": [{"name", "url": string | null, "push_urls": [st
 branches `refs/remotes/<r>/...` (excluding those of a remote `<r>/...`, without symbolic ones); `default`: the
 remote used by `remote.fetch` without parameters (`default_remote`; `null` if ambiguous); `push_default`:
 the last `remote.pushDefault`. **Masked credentials** (`mask_url`, wherever a URL leaves the
-engine: `remote.list`, `remote.add`, `remote.remove`, the journal entry in `edit.history`, error
+engine: `remote.list`, `remote.add`, `remote.remove`, `remote.set_url`, the journal entry in `edit.history`, error
 messages about URLs): `scheme://user:password@host` → `user:***`; in `http(s)`/`ftp(s)`
 a user without a password also becomes `***` (it is often a token); a user in `ssh://`/`git://` or
 scp-style (`git@host:r`) stays; this applies inside a helper (`<x>::<url>`). `credentials`: the URL had some.
@@ -76,6 +76,49 @@ tags stay, the real remote does not change. Result: `{"remote", "removed": Remot
 URLs), "upstreams_removed": [branch], "push_remotes_removed": [branch],
 "push_default_removed": bool, "backups": [string], "warnings", "remotes", "refs", ...journal}`.
 
+### `remote.set_url`
+
+Parameters: `{"name", "url", "push"?: bool}`.
+
+Writes (`writes`), goes into the journal (§7). `name`: a configured remote (`check_remote_name`;
+otherwise `NotAllowed` with the list) defined only in the repo file (any
+`remote_config_elsewhere` entry, or no `remote.<name>.*` entry in the repo file → `NotAllowed`: the
+write would go only to the repo file while git keeps reading the other one). URL: the policy of
+`remote.add` (`check_remote_url`: no leading `-`, no `ext::`/`fd::`, no control characters, no
+user or host starting with `-`; local paths and `file://` fine) → `InvalidParams`. The key
+(`remote.<name>.url`, or `remote.<name>.pushurl` with `"push": true`) with more than one value in
+the repo file → `NotAllowed` (git refuses to replace several values with one). A URL equal to the
+current value of the key → `changed: false`, nothing written, nothing in the journal (with `push`
+the comparison is with `pushurl` only). Then `git remote set-url [--push] --end-of-options <name>
+<url>`, then the key is re-read: if it does not hold exactly the URL written (another process), a
+warning and no journal entry (checklist 4). Remote-tracking branches and upstreams do not change.
+Credentials in the URL: accepted with a warning naming the key. Result: `{"remote", "url": string |
+null, "push_url": string | null, "changed", "credentials", "warnings", "remotes", "refs",
+...journal}` (URLs masked; `push_url` `null` = the push goes to `url`).
+
+### `remote.rename`
+
+Parameters: `{"name", "new_name"}`.
+
+Writes (`writes`), goes into the journal (§7). `new_name`: `check_new_remote_name` (valid as
+`refs/remotes/<new>/x`, no leading `-`) → `InvalidParams`. `NotAllowed`, nothing changes:
+`new_name` already configured; `name` not configured or defined (even partly) outside the repo file
+(as `remote.set_url`); an operation in progress; `remote.<new_name>.*` entries or remote branches
+under `refs/remotes/<new_name>/` left over (they would mix); nested names (`nested_remote`: `name`
+and `new_name`, or either and another configured remote, are one the other followed by `/...`:
+`git remote rename` moves every ref under `refs/remotes/<name>/`, those of `<name>/x` too). Then
+`git remote rename --no-progress --end-of-options <name> <new_name>`: git moves the section, the
+default refspec, `refs/remotes/<name>/*` (one transaction, symbolic `HEAD` too),
+`branch.<b>.remote`, `branch.<b>.pushRemote` and `remote.pushDefault` (repo file; a global
+`pushDefault` only gets a git warning, passed on in `warnings`). Tags and local branches do not
+change; nothing is lost, so no `confirm`. Afterwards (`rename_warnings`) every remote branch,
+upstream, `pushRemote` and `remote.pushDefault` that used `name` must use `new_name`: what does not
+goes into `warnings`. **git failing midway** (a locked ref: git 2.56 renames the section first, then
+fails on the refs, leaving the refspec and the upstreams on the old name): if `git remote` lists
+`new_name` and not `name`, the rename goes into the journal anyway and the error says that
+`edit.undo` renames it back; otherwise just the error. Result: `{"from", "to", "moved_refs": [full
+name], "upstreams": [branch], "warnings", "remotes", "refs", ...journal}`.
+
 ## CliBackend
 
 **Remotes** (`remote.list`, `remote.add`, `remote.remove`, S27). Reading a remote
@@ -102,6 +145,12 @@ config --local --remove-section --end-of-options remote.<name>`, `git config --l
 `remote.pushDefault` from other files too). Restore: `git config --local --add
 --end-of-options <key> <value>` for each entry and `git symbolic-ref -m <reflog>
 refs/remotes/<name>/HEAD <ref>`.
+
+**Changing in place** (`remote.set_url`, `remote.rename`, S59): `git remote set-url [--push]
+--end-of-options <name> <url>` (stderr with the URL masked); removing a push URL on undo: `git config
+--local --unset-all --end-of-options remote.<name>.pushurl`. `git remote rename --no-progress
+--end-of-options <from> <to>`: `already exists` → `NotAllowed`, `not a valid remote name` →
+`InvalidParams`; on success git's stderr lines become warnings.
 
 ## Undo and backup
 
@@ -145,3 +194,17 @@ the undo is refused if a branch has in the meantime taken the remote as upstream
 `remote.push`), or if a fetch has changed the remote branches; the undo never removes downloaded tags
 (they may have come from other remotes too). A remote added with remote branches already
 present under `refs/remotes/<name>/` is refused beforehand, because the undo would delete them.
+
+`remote.set_url` and `remote.rename` go into the journal with `JournalEntry::remote_change`
+(`RemoteChange`: `{"kind": "url", "name", "push", "before", "after"}` with masked URLs, or `{"kind":
+"rename", "from", "to"}`; not deserialized, like `remote`); no backup is needed, nothing is
+deleted. Undo/redo (`apply_remote_change`): for a URL, the remote must still be configured and the
+key must hold exactly the value written (`after` for the undo, `before` for the redo; `null` = not
+set), otherwise `UndoConflict` naming key, expected and current value (masked); then
+`set_remote_url` with the other value (`None` removes the `pushurl` that was not there). For a
+rename (from what exists now to the other name): no operation in progress, the current name
+configured, the other one not configured and without `remote.<other>.*` entries, no nesting, nothing
+defined elsewhere, and no remote branch under `refs/remotes/<other>/` with the name of one that
+would be moved (others are allowed: after a rename stopped midway the old refs are still there and
+renaming back must work); otherwise `UndoConflict`. Then `rename_remote` and the same
+`rename_warnings`. The entry's `refs` (old names deleted, new ones created) are for display only.

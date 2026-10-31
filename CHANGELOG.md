@@ -6,6 +6,49 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-31
+
+Three everyday operations that were missing: discarding single lines or hunks, ignoring files
+from the app, and merging a branch as a single commit (squash).
+
+### Added
+
+- **Discard lines and hunks**: in the diff of unstaged changes, “Discard lines… (N)” next to
+  “Stage selected lines” and “Discard hunk…” on each hunk put the chosen lines back as they are in
+  the index; the other changes of the file stay. Always confirmed; the file as it was is saved in a
+  backup and “Undo” puts it back (new `worktree.discard_lines`). Line endings, `clean`/`smudge`
+  filters and the executable bit are kept; a file whose bytes would not survive git's filters is
+  refused.
+- **Ignore files**: an “Ignore” submenu on untracked files adds “This file”, “All *.ext files” or
+  a parent folder to `.gitignore` (shared, committed) or to `.git/info/exclude` (only for this
+  clone). The status bar says how many files became ignored and warns about tracked files the
+  pattern matches; “Undo” removes the lines (new `worktree.ignore`).
+- **Squash merge**: “Merge into … with options…” in the branch and commit menus opens a dialog
+  with Merge commit / Squash into one commit / Fast-forward only. A squash brings the branch in as
+  one ordinary commit, with an editable message (default: `Squashed branch 'x'` and the list of
+  commits); on conflicts it stays in progress with its banner, “Continue squash…” and “Abort
+  squash…” (`merge.start` with `squash`, `Squash` operation in `repo.operation`).
+
+### Changed
+
+- The “… with a merge commit” entry of the branch and commit menus is replaced by “Merge into …
+  with options…”; the quick “Merge into …” entry is unchanged.
+
+### Packages
+
+- Linux: `BinariGit-0.9.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.9.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.9.0-x86_64.msi` and `BinariGit-0.9.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- The ssh passphrase and host-key prompts need OpenSSH 8.4 or newer.
+- No macOS build.
+
 ## [0.8.0] - 2026-10-31
 
 Opening the repository outside the app: its folder in the file manager and a terminal in it,
@@ -343,7 +386,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.5.0...v0.6.0

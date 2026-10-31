@@ -165,6 +165,9 @@ pub struct MemoryBackend {
     submodules: Vec<super::SubmoduleInfo>,
     /// Backups saved by `submodule.update` inside the submodules: ref, path, HEAD saved.
     submodule_backups: Vec<(String, RepoPath, Oid)>,
+    /// The paths stored in Git LFS and whether git-lfs is installed ([`MemoryBackend::set_lfs`]).
+    lfs_files: BTreeSet<RepoPath>,
+    lfs_installed: bool,
 }
 
 impl Default for MemoryBackend {
@@ -214,6 +217,8 @@ impl MemoryBackend {
             exclude: None,
             ignore_backups: 0,
             submodules: Vec::new(),
+            lfs_files: Default::default(),
+            lfs_installed: true,
             submodule_backups: Vec::new(),
         }
     }
@@ -695,6 +700,16 @@ impl MemoryBackend {
     }
 }
 
+impl MemoryBackend {
+    /// The files stored in Git LFS (`repo.lfs_paths`; `repo.lfs_status` says `used` when there
+    /// is at least one) and whether git-lfs is installed. The `MemoryBackend` has no filters:
+    /// it only reports them, the content of those files is what was written.
+    pub fn set_lfs(&mut self, paths: impl IntoIterator<Item = RepoPath>, installed: bool) {
+        self.lfs_files = paths.into_iter().collect();
+        self.lfs_installed = installed;
+    }
+}
+
 impl GitRead for MemoryBackend {
     fn head(&self) -> Result<Head, EngineError> {
         Ok(match &self.head {
@@ -875,6 +890,22 @@ impl GitRead for MemoryBackend {
 
     fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
         Ok(self.upstream_entries(name))
+    }
+
+    fn lfs_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>, EngineError> {
+        let mut seen = BTreeSet::new();
+        Ok(paths
+            .iter()
+            .filter(|p| self.lfs_files.contains(*p) && seen.insert(*p))
+            .cloned()
+            .collect())
+    }
+
+    fn lfs_state(&self) -> Result<super::LfsState, EngineError> {
+        Ok(super::LfsState {
+            used: !self.lfs_files.is_empty(),
+            installed: self.lfs_installed,
+        })
     }
 }
 

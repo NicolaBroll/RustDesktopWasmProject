@@ -488,6 +488,8 @@ fn commands_lists_the_catalog() {
             "remote.set_url",
             "repo.clone",
             "repo.init",
+            "repo.lfs_paths",
+            "repo.lfs_status",
             "repo.log",
             "repo.open",
             "repo.operation",

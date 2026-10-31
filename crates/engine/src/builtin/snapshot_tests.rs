@@ -289,6 +289,21 @@ fn repo_reads() {
 }
 
 #[test]
+fn lfs_reads() {
+    let mut repo = MemoryBackend::new();
+    repo.set_lfs([RepoPath::from("big.bin")], false);
+    let (r, mut s) = opened_with(repo);
+    snap(
+        &r,
+        &mut s,
+        "repo.lfs_paths",
+        "",
+        json!({ "paths": ["README.md", "big.bin"] }),
+    );
+    snap(&r, &mut s, "repo.lfs_status", "", json!({}));
+}
+
+#[test]
 fn commit_and_file_reads() {
     let (r, mut s) = sample();
     snap(&r, &mut s, "commit.show", "rename", json!({ "id": id(12) }));

@@ -158,6 +158,42 @@ merge-base --end-of-options <a> <b>`, exit 1 without output = none): unrelated h
 `MemoryBackend`: diff of the two trees, renames only exact ones (same blob), except when `from` is
 the first parent of `to` (then the commit's own files, as `diff.commit`).
 
+## Git LFS (S63)
+
+The app never runs `git lfs` commands and never bypasses filters or hooks: with git-lfs installed
+(`filter.lfs.*` from `git lfs install`, the hooks git-lfs puts in the repo) `repo.clone`,
+`index.stage`, `commit.create`, `remote.push`, `remote.pull`, `branch.checkout`,
+`worktree.discard` (and its undo), `stash.push`/`stash.pop` work as in a terminal
+(`crates/git/tests/lfs.rs`, server-less: a local bare remote, whose `lfs/objects` git-lfs 3.x
+fills through its standalone file transfer agent). What git sees of an LFS file is its
+**pointer** (the clean content): `diff.worktree`/`diff.index`/`diff.commit` show the pointer text
+(`version` as context, the `oid` and `size` lines changed), not binary. A pointer with only some
+of its lines changed is not a pointer any more and git-lfs would store or write that text as is,
+so `index.stage_lines`, `index.unstage_lines` and `worktree.discard_lines` refuse an LFS file
+(`NotAllowed`, `engine-lines-lfs`, `CliBackend` only; the `MemoryBackend` has no filters).
+
+### `repo.lfs_paths`
+
+Parameters: `{"paths": [RepoPath]}` (may be empty; each path checked like the other commands:
+relative, no `.`/`..`/empty components, `InvalidParams`). Read. Result `{"paths"}`: the requested
+paths whose `filter` attribute is `lfs`, in the order given, each once. `GitRead::lfs_paths`;
+`CliBackend`: one `git check-attr -z --stdin filter` with the paths on stdin (NUL-separated, no
+pathspecs, so no `--literal-pathspecs`), the values matched to the paths by position; no git run
+for an empty list. Attributes only: a path that does not exist is answered too, and the answer
+does not depend on git-lfs being installed. Cheap: the UI asks it once per diff or status refresh
+with the paths shown, to put the "LFS" badge, show "Stored in Git LFS" instead of the pointer and
+hide the line operations. `MemoryBackend`: the paths of `MemoryBackend::set_lfs`.
+
+### `repo.lfs_status`
+
+Parameters: `{}`. Read. Result `{"used": bool, "installed": bool}` (`LfsState`,
+`missing_git_lfs()` = `used && !installed`, the once-per-repo notice "this repository uses Git
+LFS: install git-lfs"). `used`: at least one index entry has `filter=lfs` (`git ls-files -z --
+':(attr:filter=lfs)'`); `installed`: `git lfs version` succeeds and prints `git-lfs/...` (an alias
+named `lfs` does not count). A repo cloned without git-lfs has the pointers in the worktree: they
+are reported as LFS all the same. `MemoryBackend`: `used` when `set_lfs` gave at least one path,
+`installed` as given there (default `true`).
+
 ## Huge repos: the commit-graph (S36)
 
 ### Measurements

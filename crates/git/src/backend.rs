@@ -10,6 +10,7 @@ mod discard;
 mod discard_lines;
 mod file;
 mod ignore;
+mod lfs;
 mod maintenance;
 mod merge;
 mod pick;
@@ -1244,6 +1245,14 @@ impl GitRead for CliBackend {
     fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
         self.read_upstream_config(name)
     }
+
+    fn lfs_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>, EngineError> {
+        self.lfs_filtered(paths)
+    }
+
+    fn lfs_state(&self) -> Result<project_engine::LfsState, EngineError> {
+        self.lfs_status()
+    }
 }
 
 impl GitIndex for CliBackend {
@@ -1409,6 +1418,7 @@ impl GitIndex for CliBackend {
         let diff = self.diff(&selection.diff_spec())?;
         let prepared = line_patch(&diff, selection)?;
         self.check_diff_matches_index(&index, &prepared, selection.direction)?;
+        self.refuse_lfs_lines(prepared.target())?;
 
         // The new content is computed here, with the strict applier, on the blob of the entry
         // just checked: each hunk only at its position, context byte for byte. `git apply` is

@@ -1076,6 +1076,13 @@ file of its function in [git/](git/) before the code.
     uses Git LFS: install git-lfs, otherwise files stay as pointers").
 - **Done when:** the scenarios pass with git-lfs installed (skipped with a message when it is not);
   UI tests of the badge and the notice; CI green.
+- **Status:** engine and scenarios done (`crates/git/tests/lfs.rs`, git-lfs in the devcontainer
+  and in the `ci` and `git-versions` workflows). Clone, stage, commit, push, pull, checkout,
+  `worktree.discard`, `stash` worked as they were; `index.stage_lines`/`unstage_lines` and
+  `worktree.discard_lines` wrote broken pointers and now refuse an LFS file (`engine-lines-lfs`).
+  Detection: `repo.lfs_paths {"paths"}` and `repo.lfs_status {}` → `{"used", "installed"}`
+  ([reading.md](git/reading.md) "Git LFS"; `MemoryBackend::set_lfs` for UI tests). The credential
+  prompt for an LFS endpoint is not covered (no LFS server). UI (`egui-ui`) to do.
 
 ### S64 — Worktrees (only if needed)
 - [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`

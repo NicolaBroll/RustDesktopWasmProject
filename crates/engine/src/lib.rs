@@ -30,6 +30,7 @@ pub use builtin::discard::{DiscardLinesParams, DiscardLinesResult, DiscardParams
 pub use builtin::edit::{HistoryResult, UndoResult};
 pub use builtin::file::{FileBlameParams, FileLogParams, FileLogResult};
 pub use builtin::ignore::{IgnoreParams, IgnoreResult};
+pub use builtin::lfs::{LfsPathsParams, LfsPathsResult};
 pub use builtin::merge::{
     IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
     MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
@@ -112,6 +113,7 @@ pub use git::{
     IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
     ignore_description, ignore_tracked_warning,
 };
+pub use git::{LFS_FILTER, LfsState};
 pub use git::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
     check_rebase_state, check_rebasing, explicit_squash_messages, plan_error, rebase_range,

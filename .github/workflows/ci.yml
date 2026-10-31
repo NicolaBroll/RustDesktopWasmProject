@@ -20,5 +20,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
+      # git-lfs for the LFS scenarios (crates/git/tests/lfs.rs; skipped without it).
+      - run: sudo apt-get install -y --no-install-recommends git-lfs
       # The same command used locally.
       - run: cargo xtask ci

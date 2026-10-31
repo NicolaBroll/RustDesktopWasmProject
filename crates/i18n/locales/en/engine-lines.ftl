@@ -20,3 +20,4 @@ engine-lines-index-changed = the index changed while the write was being prepare
 engine-lines-index-unexpected = after the write, the index entry of `{ $target }` is not the expected one (another git process?)
 engine-lines-index-unexpected-backup = after the write, the index entry of `{ $target }` is not the expected one (another git process?); the previous staged version is in `{ $backup }`
 engine-lines-head-invalid = HEAD does not point to a valid commit (nor to a branch without commits): nothing unstaged
+engine-lines-lfs = `{ $path }` is stored in Git LFS: the diff shows its pointer, whose lines cannot be chosen one by one; stage, unstage or discard the whole file

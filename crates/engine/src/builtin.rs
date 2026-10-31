@@ -9,6 +9,7 @@ pub(crate) mod discard;
 pub(crate) mod edit;
 pub(crate) mod file;
 pub(crate) mod ignore;
+pub(crate) mod lfs;
 pub(crate) mod merge;
 pub(crate) mod pick;
 pub(crate) mod pull;
@@ -81,6 +82,20 @@ impl Registry {
         )
         .takes_paths_outside_repo();
         self.add("repo.status", "Repository status", "{}", Read, repo_status);
+        self.add(
+            "repo.lfs_paths",
+            "Which of the given files are stored in Git LFS (filter attribute lfs)",
+            r#"{"paths": [path] (may be empty)} -> {"paths": the LFS ones, in the order given}"#,
+            Read,
+            lfs::repo_lfs_paths,
+        );
+        self.add(
+            "repo.lfs_status",
+            "Whether the repo uses Git LFS and git-lfs is installed",
+            "{}",
+            Read,
+            lfs::repo_lfs_status,
+        );
         self.add(
             "repo.refs",
             "Branches, tags and stashes",
@@ -1065,6 +1080,8 @@ mod tests {
                 "remote.set_url",
                 "repo.clone",
                 "repo.init",
+                "repo.lfs_paths",
+                "repo.lfs_status",
                 "repo.log",
                 "repo.open",
                 "repo.operation",

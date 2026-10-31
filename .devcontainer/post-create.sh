@@ -22,5 +22,8 @@ sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mi
     wixl
 rustup target add x86_64-pc-windows-gnu
 
+# git-lfs for the LFS scenarios (`crates/git/tests/lfs.rs`, skipped without it).
+sudo apt-get install -y --no-install-recommends git-lfs
+
 # clippy and rustfmt for `cargo xtask ci` (see `make setup`).
 make setup

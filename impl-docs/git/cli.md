@@ -19,6 +19,8 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"parse_(log
 # huge repo: does it have a commit-graph ("commit_graph" in the repo.open result)? write it
 # (~19 s on the Linux kernel, then the first log page goes from ~16 s to ~40 ms)
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize
+# Git LFS: which files are in LFS (badge, no line operations) and "uses LFS but git-lfs is missing"
+cargo run -p project-cli -- --repo . run --cmd 'repo.lfs_paths={"paths":["big.bin","README.md"]}' --cmd repo.lfs_status
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
 # compare two revisions: directly, or what `dev` brings since it left `master` (with "base")

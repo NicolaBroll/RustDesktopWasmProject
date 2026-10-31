@@ -113,7 +113,7 @@ numbers of the seen diff, `StaleDiff` if the reread diff has another digest. Cho
 - **Refusals**, always before the confirmation and without writing: those of `worktree.discard`
   (`discard_lines_target` calls `discard_plan` on the path: branch without commits, conflicted or
   `intent-to-add` files in the repo, untracked, submodule, something in the way) and those of the
-  line commands (binaries, links, two files on the path); only a **modified** file (`Change::Modified`,
+  line commands (binaries, links, two files on the path, a file stored in Git LFS on the `CliBackend`); only a **modified** file (`Change::Modified`,
   same path on both sides): a file deleted from the worktree, renamed or `intent-to-add` →
   `NotAllowed`, discard the whole file.
 - **`"confirm": true` is mandatory.** Without it `ConfirmRequired` with how many worktree lines would

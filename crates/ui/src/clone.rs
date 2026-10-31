@@ -112,6 +112,7 @@ impl CloneDialog {
                 path,
                 branch,
                 depth: f.depth.trim().parse::<u32>().ok(),
+                submodules: false,
             }),
             Kind::Init => crate::params(InitRequest { path, branch }),
         })

@@ -879,3 +879,29 @@ fn ignore_untracked() {
         json!({ "patterns": ["/note.txt"], "file": "exclude" }),
     );
 }
+
+#[test]
+fn submodules() {
+    use crate::{SubmoduleInfo, SubmoduleState};
+    let info = |path: &str, head: u64, state, untracked| SubmoduleInfo {
+        path: RepoPath::from(path),
+        name: Some(path.to_owned()),
+        url: Some(format!("../{path}")),
+        recorded: Some(oid(1)),
+        head: Some(oid(head)),
+        detached: true,
+        state,
+        changes: false,
+        untracked,
+        operation: None,
+        unreferenced: false,
+    };
+    let mut repo = clean_sample();
+    repo.set_submodules(vec![
+        info("lib", 2, SubmoduleState::DifferentCommit, false),
+        info("vendor/x", 3, SubmoduleState::LocalChanges, true),
+    ]);
+    let (r, mut s) = opened_with(repo);
+    snap(&r, &mut s, "submodule.list", "", json!({}));
+    snap(&r, &mut s, "submodule.update", "", json!({}));
+}

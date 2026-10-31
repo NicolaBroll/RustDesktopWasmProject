@@ -1,0 +1,34 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "submodules": [
+    {
+      "changes": false,
+      "detached": true,
+      "head": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "name": "lib",
+      "operation": null,
+      "path": "lib",
+      "recorded": "910a2dec89025cc1beeb8da1658eec67f893a2ee",
+      "state": "different_commit",
+      "unreferenced": false,
+      "untracked": false,
+      "url": "../lib"
+    },
+    {
+      "changes": false,
+      "detached": true,
+      "head": "1d0b14e4db018fedb3466f8a7b81a9899cebe8a6",
+      "name": "vendor/x",
+      "operation": null,
+      "path": "vendor/x",
+      "recorded": "910a2dec89025cc1beeb8da1658eec67f893a2ee",
+      "state": "local_changes",
+      "unreferenced": false,
+      "untracked": true,
+      "url": "../vendor/x"
+    }
+  ]
+}

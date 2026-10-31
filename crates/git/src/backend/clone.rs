@@ -4,7 +4,8 @@
 //! - the destination is absent or an empty folder, never a file, a link or a folder with something
 //!   in it; an absent one is created here with `create_dir` (atomic), so git always receives an
 //!   existing empty folder and the command knows which folder is its own;
-//! - `git clone --progress [--branch=<b>] [--depth=<n>] --end-of-options <url> <abs path>`: a URL
+//! - `git clone --progress [--recurse-submodules] [--branch=<b>] [--depth=<n>] --end-of-options
+//!   <url> <abs path>`: a URL
 //!   starting with `-` is never an option; `-c protocol.ext.allow=never -c protocol.fd.allow=never`
 //!   as for fetch; run with `Git::run_network` (stdin closed, `GIT_TERMINAL_PROMPT=0`, no
 //!   controlling terminal, credentials asked through the prompter if set), progress to the `JobContext`, cancellable;
@@ -13,6 +14,7 @@
 //!   the destination is not empty: someone else wrote there in the meantime.
 
 use super::CliOpener;
+use super::submodule::file_protocol_args;
 use crate::command::{Segment, failure};
 use crate::progress::parse_progress;
 use project_engine::{
@@ -148,21 +150,28 @@ impl CliOpener {
         let dest = Destination::prepare(&request.path)?;
         let branch = request.branch.as_ref().map(|b| format!("--branch={b}"));
         let depth = request.depth.map(|n| format!("--depth={n}"));
+        let cwd = working_dir(&dest.path);
         let mut args = vec![
             "-c",
             "protocol.ext.allow=never",
             "-c",
             "protocol.fd.allow=never",
-            "clone",
-            "--progress",
         ];
+        if request.submodules {
+            // Passed on to the submodule clones through `GIT_CONFIG_PARAMETERS`.
+            args.extend(file_protocol_args(&self.git, &cwd));
+        }
+        args.extend(["clone", "--progress"]);
+        if request.submodules {
+            args.push("--recurse-submodules");
+        }
         args.extend(branch.as_deref());
         args.extend(depth.as_deref());
         args.extend(["--end-of-options", &request.url, dest.as_str()]);
 
         let mut lines = Vec::new();
         let streamed = self.git.run_network(
-            &working_dir(&dest.path),
+            &cwd,
             &args,
             false,
             &request.url,

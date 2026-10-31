@@ -21,6 +21,7 @@ mod restore;
 mod search;
 mod squash;
 mod stash;
+mod submodule;
 mod sync;
 mod tag;
 
@@ -40,10 +41,10 @@ use project_engine::{
     CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
     ConflictVersions, CredentialPrompter, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
     FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance,
-    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext,
-    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
-    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
-    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
+    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules, HeadState, InitRequest,
+    JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
+    Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings,
+    PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
     RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
     StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
     UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
@@ -152,7 +153,16 @@ impl CliOpener {
         if path.is_empty() {
             return Err(not_found(msg!("engine-open-empty-path")));
         }
-        let dir = Path::new(path);
+        self.open_dir(Path::new(path), path)
+    }
+
+    /// [`CliOpener::open_cli`] without the version check, on a folder that may not be UTF-8
+    /// (`shown` names it in the errors).
+    fn open_dir(&self, dir: &Path, shown: &str) -> Result<CliBackend, EngineError> {
+        let not_found = |reason: Message| EngineError::RepoNotFound {
+            path: shown.to_owned(),
+            reason,
+        };
 
         let args = [
             "rev-parse",
@@ -1704,6 +1714,20 @@ impl GitOperations for CliBackend {
 
     fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.abort_rebase()
+    }
+}
+
+impl GitSubmodules for CliBackend {
+    fn submodules(&self) -> Result<Vec<project_engine::SubmoduleInfo>, EngineError> {
+        self.list_submodules()
+    }
+
+    fn update_submodules(
+        &mut self,
+        request: &project_engine::SubmoduleUpdate,
+        job: &JobContext,
+    ) -> Result<project_engine::SubmoduleUpdated, EngineError> {
+        self.update_submodule_paths(request, job)
     }
 }
 

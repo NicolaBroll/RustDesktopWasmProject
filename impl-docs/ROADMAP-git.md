@@ -1020,6 +1020,13 @@ file of its function in [git/](git/) before the code.
   `different_commit` → update, submodule with local changes refused, with commits not on a ref
   refused, nested submodule without `recursive`, path with spaces/non-UTF-8, URL starting with
   `-` refused) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** engine and backend done ([git/submodules.md](git/submodules.md)): `submodule.list`,
+  `submodule.update` (per-submodule refusals in `refused` with a `reason`, also `conflict`,
+  `no_mapping`, `suspicious_url`, `not_initialized`; an already in-sync submodule is `unchanged`,
+  never refused), `repo.clone` `"submodules"`. `-c protocol.file.allow=user` only when the user's
+  configuration sets neither `protocol.file.allow` nor `protocol.allow` (their `always` stands; tests
+  set it through `GIT_CONFIG_COUNT`). `recursive` re-applies the same checks level by level instead of
+  `--recursive`. UI to do.
 
 ### S62b — Submodules out of date after checkout, pull and merge
 - [ ] **Agent:** `egui-ui` (engine only if a field is missing)

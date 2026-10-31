@@ -22,6 +22,7 @@ pub(crate) mod reset;
 pub(crate) mod search;
 pub(crate) mod stage;
 pub(crate) mod stash;
+pub(crate) mod submodule;
 pub(crate) mod tag;
 
 use crate::{
@@ -46,6 +47,7 @@ impl Registry {
         r.add_refs();
         r.add_remotes();
         r.add_stashes();
+        r.add_submodules();
         r.add_merges();
         r.add_rebase();
         r.add_edit();
@@ -65,7 +67,7 @@ impl Registry {
         self.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
-            r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
+            r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0), "submodules"?: bool (also clone the submodules)}"#,
             Write,
             clone::repo_clone,
         )
@@ -384,6 +386,24 @@ impl Registry {
             r#"{"name": string, "new_name": string}"#,
             Write,
             remotes::remote_rename,
+        );
+    }
+
+    /// Submodules.
+    fn add_submodules(&mut self) {
+        self.add(
+            "submodule.list",
+            "Submodules and their state",
+            "{}",
+            Read,
+            submodule::submodule_list,
+        );
+        self.add(
+            "submodule.update",
+            "Check out the recorded commit in the submodules",
+            r#"{"paths"?: [path, ...] (submodules or folders; all), "init"?: bool (also the uninitialized ones), "recursive"?: bool (then the nested ones)}"#,
+            Write,
+            submodule::submodule_update,
         );
     }
 
@@ -1059,6 +1079,8 @@ mod tests {
                 "stash.list",
                 "stash.pop",
                 "stash.push",
+                "submodule.list",
+                "submodule.update",
                 "tag.create",
                 "tag.delete",
                 "worktree.clean",
@@ -1117,6 +1139,7 @@ mod tests {
                 "stash.drop",
                 "stash.pop",
                 "stash.push",
+                "submodule.update",
                 "tag.create",
                 "tag.delete",
                 "worktree.clean",

@@ -17,7 +17,7 @@ previously open repo stays). They go through the `RepoOpener` injected by the ap
 
 ### `repo.clone`
 
-Parameters: `{"url", "path", "branch"?, "depth"?}`. Writes. Slow: progress and cancellation from
+Parameters: `{"url", "path", "branch"?, "depth"?, "submodules"?}`. Writes. Slow: progress and cancellation from
 `Session::job` (`Registry::run_with`).
 
 - `url`: anything `git clone` accepts (`https://`, `ssh://`, `user@host:path`, `file://`, a local
@@ -29,6 +29,11 @@ Parameters: `{"url", "path", "branch"?, "depth"?}`. Writes. Slow: progress and c
   (`engine-clone-no-parent`): the command never creates more than one folder.
 - `branch`: the branch (or tag) to check out, `git clone --branch`; one the remote does not have →
   `NotAllowed` `engine-clone-no-such-branch`, nothing left behind.
+- `submodules`: also clone and check out the submodules, recursively (`--recurse-submodules`);
+  their hosts ask for credentials through the same askpass bridge. `protocol.file.allow` as in
+  [submodules.md](submodules.md) (a submodule URL that is a local path is refused unless the user's
+  configuration allows it). A failing submodule fails the clone, and the destination goes back
+  to how it was.
 - `depth`: shallow clone, `--depth <n>`, `n > 0` (`0` → `InvalidParams`). For a plain local path
   git ignores it (it warns: "use file:// instead"); the warning is in `messages`.
 
@@ -58,8 +63,8 @@ starting with `-`); without it git's `init.defaultBranch` (or git's own default)
 2. An absent destination is created by the command with `create_dir` (atomic: it fails if
    something appeared in the meantime, so the command knows the folder is its own). git then always
    receives an existing, empty folder.
-3. `git -C <cwd> -c protocol.ext.allow=never -c protocol.fd.allow=never clone --progress
-   [--branch=<b>] [--depth=<n>] --end-of-options <url> <abs path>` with `Git::run_streaming`
+3. `git -C <cwd> -c protocol.ext.allow=never -c protocol.fd.allow=never [-c
+   protocol.file.allow=user] clone --progress [--recurse-submodules] [--branch=<b>] [--depth=<n>] --end-of-options <url> <abs path>` with `Git::run_streaming`
    (stdin closed, `GIT_TERMINAL_PROMPT=0`, no controlling terminal, `LC_ALL=C`): progress lines
    go to the `JobContext`, the other lines into `messages` or the error. `ext::`/`fd::` URLs never
    run commands. Init: `git init --quiet [--initial-branch=<b>] -- <abs path>`.

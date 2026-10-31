@@ -71,15 +71,16 @@ pub use git::{
     BACKUP_PREFIX, BranchDeleted, CleanBackup, CleanOutcome, CleanRestore, CleanedFile,
     CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardLines, DiscardLinesOutcome,
     DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
-    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
-    LinePatch, LineSelection, LinesBackup, LinesRestore, LogQuery, RefMove, RefRestore, RepoOpener,
-    RestoreOutcome, SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore,
-    amend_impact, apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
-    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
-    check_remote_name, check_same_clean_plan, check_same_plan, clean_description, clean_plan,
-    default_remote, discard_description, discard_line_patch, discard_lines_confirm,
-    discard_lines_description, discard_lines_target, discard_plan, file_digest, line_patch,
-    path_matches, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
+    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules,
+    HEADS_PREFIX, HeadState, LinePatch, LineSelection, LinesBackup, LinesRestore, LogQuery,
+    RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery, StagedVersion,
+    WorktreeBackup, WorktreeRestore, amend_impact, apply_patch, backup_message, branch_ref,
+    branch_short, check_amend_published, check_branch_name, check_commit_state,
+    check_new_branch_name, check_no_operation, check_remote_name, check_same_clean_plan,
+    check_same_plan, clean_description, clean_plan, default_remote, discard_description,
+    discard_line_patch, discard_lines_confirm, discard_lines_description, discard_lines_target,
+    discard_plan, file_digest, line_patch, path_matches, unknown_remote, valid_ref_name,
+    versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
@@ -143,6 +144,11 @@ pub use git::{
 pub use git::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
+};
+pub use git::{
+    SUBMODULE_BACKUP_KIND, SubmoduleInfo, SubmoduleMoved, SubmoduleRefusal, SubmoduleRefusalReason,
+    SubmoduleState, SubmoduleUpdate, SubmoduleUpdated, UpdatePlan, nested_path, not_at_recorded,
+    plan_update, refusal_message, submodule_state, update_refusal,
 };
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use git::{TrackingBranch, UpstreamChange, resolve_tracking, upstream_label};

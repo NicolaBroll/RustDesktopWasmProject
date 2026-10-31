@@ -36,6 +36,19 @@ fn main() {
         ),
         ("env_askpass_is_kept", env_askpass_is_kept),
         ("config_askpass_is_kept", config_askpass_is_kept),
+        ("ssh_askpass_is_kept", ssh_askpass_is_kept),
+        (
+            "ssh_askpass_require_keeps_git_side",
+            ssh_askpass_require_keeps_git_side,
+        ),
+        (
+            "remote_deletes_leave_no_backup",
+            remote_deletes_leave_no_backup,
+        ),
+        (
+            "client_only_when_started_as_askpass",
+            client_only_when_started_as_askpass,
+        ),
     ];
     for (name, test) in tests {
         if !filter.is_empty() && !filter.iter().any(|f| name.contains(f.as_str())) {
@@ -308,4 +321,89 @@ fn config_askpass_is_kept() {
     assert!(matches!(&err, EngineError::Auth { .. }), "{err}");
     assert!(err.to_string().contains("config-askpass"), "{err}");
     assert!(prompter.asked().is_empty());
+}
+
+/// `SSH_ASKPASS` set by the user: git falls back to it for its own prompts, so neither side is
+/// bridged and our prompter is never called.
+fn ssh_askpass_is_kept() {
+    let server = AuthServer::start();
+    let prompter = TestPrompter::new(Some("ada"), Some("pw"));
+    let opener = with_prompter(&prompter).env("SSH_ASKPASS", "/nonexistent/ssh-askpass");
+    let (_repo, r, mut s) = open(&server, opener);
+    let err = r
+        .run("remote.fetch", &mut s, json!({ "remote": "origin" }))
+        .unwrap_err();
+    assert!(matches!(&err, EngineError::Auth { .. }), "{err}");
+    assert!(err.to_string().contains("ssh-askpass"), "{err}");
+    assert!(prompter.asked().is_empty());
+}
+
+/// `SSH_ASKPASS_REQUIRE` set by the user keeps only the ssh side out: git's own prompts still
+/// reach the prompter.
+fn ssh_askpass_require_keeps_git_side() {
+    let server = AuthServer::start();
+    let prompter = TestPrompter::new(None, None);
+    let opener = with_prompter(&prompter).env("SSH_ASKPASS_REQUIRE", "never");
+    let (_repo, r, mut s) = open(&server, opener);
+    let err = r
+        .run("remote.fetch", &mut s, json!({ "remote": "origin" }))
+        .unwrap_err();
+    assert!(matches!(&err, EngineError::AuthCancelled { .. }), "{err}");
+    assert_eq!(prompter.asked().len(), 1);
+}
+
+/// `remote.delete_branch` and `remote.delete_tag` cancelled at the prompt (in the read of the
+/// remote value before the backup): `AuthCancelled`, no backup ref left, local refs untouched.
+fn remote_deletes_leave_no_backup() {
+    let server = AuthServer::start();
+    let prompter = TestPrompter::new(None, None);
+    let (repo, r, mut s) = open(&server, with_prompter(&prompter));
+    let head = repo.rev("HEAD").to_string();
+    repo.git(&["update-ref", "refs/remotes/origin/feature", &head]);
+    repo.tag("v1", "HEAD");
+    let before = repo.git(&["for-each-ref"]);
+    let calls = [
+        (
+            "remote.delete_branch",
+            json!({ "remote": "origin", "branch": "feature", "expected": head, "confirm": true }),
+        ),
+        (
+            "remote.delete_tag",
+            json!({ "remote": "origin", "name": "v1", "expected": head, "confirm": true }),
+        ),
+    ];
+    for (id, params) in calls {
+        let err = r.run(id, &mut s, params).unwrap_err();
+        assert!(
+            matches!(&err, EngineError::AuthCancelled { .. }),
+            "{id}: {err}"
+        );
+        assert_eq!(repo.git(&["for-each-ref", "refs/project/"]), "", "{id}");
+        assert_eq!(repo.git(&["for-each-ref"]), before, "{id}");
+    }
+    assert!(server.authorizations().is_empty());
+}
+
+/// `PROJECT_ASKPASS` alone (e.g. inherited by a hook that starts the app) does not make the
+/// executable an askpass client: it starts normally. With `GIT_ASKPASS` naming it, it is one.
+fn client_only_when_started_as_askpass() {
+    let exe = std::env::current_exe().unwrap();
+    let run = |git_askpass: Option<&std::path::Path>| {
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("no-test-has-this-name")
+            .env(project_git::ASKPASS_ENV, "1:0000")
+            .env_remove("GIT_ASKPASS")
+            .env_remove("SSH_ASKPASS");
+        if let Some(path) = git_askpass {
+            cmd.env("GIT_ASKPASS", path);
+        }
+        cmd.output().unwrap()
+    };
+    // Normal start: the test runner runs (no test matches the filter) and exits 0.
+    let normal = run(None);
+    assert!(normal.status.success(), "{normal:?}");
+    // As askpass: the bridge `1:0000` does not answer, so the client exits 1.
+    let client = run(Some(&exe));
+    assert_eq!(client.status.code(), Some(1), "{client:?}");
+    assert!(client.stdout.is_empty(), "{client:?}");
 }

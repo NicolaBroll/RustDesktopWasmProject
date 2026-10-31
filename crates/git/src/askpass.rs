@@ -15,11 +15,11 @@
 //! anything. The answers are secrets: never logged, never kept here.
 
 use project_engine::{CredentialPrompter, CredentialRequest};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,9 @@ const MAX_REQUEST: u64 = 16 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often the listener checks whether the command ended.
 const ACCEPT_POLL: Duration = Duration::from_millis(20);
+/// Connections served at once, each on its own thread: a silent connection does not block a
+/// real question; more than this are dropped.
+const MAX_CONNECTIONS: usize = 4;
 
 /// How to ask for credentials: the prompter and the program git starts as askpass (the app's
 /// executable). Shown by `Debug` without the prompter.
@@ -58,8 +61,6 @@ pub(crate) struct Bridge {
     port: u16,
     token: String,
     stop: Arc<AtomicBool>,
-    /// True while the prompter is asking.
-    busy: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -85,29 +86,38 @@ impl Bridge {
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let stop = Arc::new(AtomicBool::new(false));
-        let busy = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::new(AtomicBool::new(false));
         let thread = {
-            let (token, stop, busy, cancelled) =
-                (token.clone(), stop.clone(), busy.clone(), cancelled.clone());
+            let (token, stop, cancelled) =
+                (Arc::new(token.clone()), stop.clone(), cancelled.clone());
+            let remote = Arc::new(remote);
+            let active = Arc::new(AtomicUsize::new(0));
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Acquire) {
                     match listener.accept() {
                         // Accepted after the command ended: dropped.
                         Ok(_) if stop.load(Ordering::Acquire) => break,
+                        // Too many at once: dropped.
+                        Ok(_) if active.load(Ordering::Acquire) >= MAX_CONNECTIONS => {}
                         Ok((stream, _)) => {
-                            busy.store(true, Ordering::Release);
-                            serve(
-                                stream,
-                                &token,
-                                prompter.as_ref(),
-                                remote.as_ref(),
-                                &cancelled,
+                            active.fetch_add(1, Ordering::AcqRel);
+                            let (token, prompter, remote, cancelled, active) = (
+                                token.clone(),
+                                prompter.clone(),
+                                remote.clone(),
+                                cancelled.clone(),
+                                active.clone(),
                             );
-                            busy.store(false, Ordering::Release);
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(ACCEPT_POLL);
+                            std::thread::spawn(move || {
+                                serve(
+                                    stream,
+                                    &token,
+                                    prompter.as_ref(),
+                                    remote.as_ref().as_ref(),
+                                    &cancelled,
+                                );
+                                active.fetch_sub(1, Ordering::AcqRel);
+                            });
                         }
                         Err(_) => std::thread::sleep(ACCEPT_POLL),
                     }
@@ -118,7 +128,6 @@ impl Bridge {
             port,
             token,
             stop,
-            busy,
             cancelled,
             thread: Some(thread),
         })
@@ -138,15 +147,10 @@ impl Bridge {
 impl Drop for Bridge {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        // Waits for the listener to close, but not for a question still open (git was stopped
-        // while the dialog was open): the command must not wait for the user.
-        let Some(thread) = self.thread.take() else {
-            return;
-        };
-        while !thread.is_finished() && !self.busy.load(Ordering::Acquire) {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        if thread.is_finished() {
+        // Waits for the listener to close (at most one poll); a question still open (git was
+        // stopped while the dialog was open) runs on its own thread: the command does not wait
+        // for the user.
+        if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
     }
@@ -200,10 +204,13 @@ fn serve(
     let prompt = String::from_utf8_lossy(&request[newline + 1..]).into_owned();
     let answer = prompter.ask(CredentialRequest::new(prompt, remote.cloned()));
     let mut reply = Vec::new();
-    match &answer {
+    match answer {
         Some(text) => {
+            let mut text = text.into_bytes();
+            reply.reserve_exact(1 + text.len());
             reply.push(b'1');
-            reply.extend_from_slice(text.as_bytes());
+            reply.extend_from_slice(&text);
+            wipe(&mut text);
         }
         None => {
             cancelled.store(true, Ordering::Release);
@@ -211,23 +218,37 @@ fn serve(
         }
     }
     let _ = stream.write_all(&reply);
+    wipe(&mut reply);
     let _ = stream.shutdown(Shutdown::Both);
     Some(())
 }
 
-/// The askpass side, for the apps' `main`: if [`ASKPASS_ENV`] is set and there is exactly one
-/// argument (the prompt), this process was started by git or ssh to ask for a credential. It
+/// Overwrites a buffer that held an answer before it is freed (best effort: copies made by the
+/// prompter or the system are out of reach).
+fn wipe(buf: &mut [u8]) {
+    buf.fill(0);
+    std::hint::black_box(buf);
+}
+
+/// The askpass side, for the apps' `main`: if [`ASKPASS_ENV`] is set, `GIT_ASKPASS` or
+/// `SSH_ASKPASS` is this executable and there is exactly one argument (the prompt), this
+/// process was started by git or ssh to ask for a credential. Otherwise (e.g. the app started
+/// from a hook that inherited the variable) [`ASKPASS_ENV`] is removed and the app starts. It
 /// asks the app over the bridge, prints the answer and a newline on stdout and returns the
 /// exit code: 0 answered, 1 cancelled or any error. `None` = normal start: run the app.
 ///
 /// The apps call it before anything else and exit with the code it returns, without starting.
 pub fn askpass_client() -> Option<i32> {
-    let value = std::env::var(ASKPASS_ENV).ok()?;
-    let mut args = std::env::args_os().skip(1);
-    let prompt = args.next()?;
-    if args.next().is_some() {
+    let value = std::env::var_os(ASKPASS_ENV)?;
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let exe = std::env::current_exe().ok();
+    if !started_as_askpass(|k| std::env::var_os(k), exe.as_deref(), &args) {
+        // SAFETY: called first thing in `main`, before the app starts any thread.
+        unsafe { std::env::remove_var(ASKPASS_ENV) };
         return None;
     }
+    let value = value.to_string_lossy();
+    let prompt = &args[0];
     // ssh only shows a notice (e.g. "Confirm user presence" of a FIDO key) and does not wait
     // for an answer: nothing to ask.
     if std::env::var_os("SSH_ASKPASS_PROMPT").is_some_and(|v| v == "none") {
@@ -237,14 +258,30 @@ pub fn askpass_client() -> Option<i32> {
     Some(match ask_bridge(&value, &prompt) {
         Some(answer) => {
             let mut out = std::io::stdout().lock();
-            let written = out
-                .write_all(&answer)
-                .and_then(|()| out.write_all(b"\n"))
-                .and_then(|()| out.flush());
+            let mut answer = answer;
+            answer.push(b'\n');
+            let written = out.write_all(&answer).and_then(|()| out.flush());
+            wipe(&mut answer);
             if written.is_ok() { 0 } else { 1 }
         }
         None => 1,
     })
+}
+
+/// Whether this process is git's or ssh's askpass: exactly one argument and `GIT_ASKPASS` or
+/// `SSH_ASKPASS` (from `var`) naming `exe`.
+fn started_as_askpass(
+    var: impl Fn(&str) -> Option<OsString>,
+    exe: Option<&std::path::Path>,
+    args: &[OsString],
+) -> bool {
+    let Some(exe) = exe else {
+        return false;
+    };
+    args.len() == 1
+        && ["GIT_ASKPASS", "SSH_ASKPASS"]
+            .iter()
+            .any(|k| var(k).is_some_and(|v| OsStr::new(&v) == exe.as_os_str()))
 }
 
 /// Sends `prompt` to the bridge named by `value` (`<port>:<token>`): the answer, or `None` if
@@ -263,10 +300,12 @@ fn ask_bridge(value: &str, prompt: &str) -> Option<Vec<u8>> {
     // No timeout: the user may take a while to answer.
     let mut reply = Vec::new();
     stream.read_to_end(&mut reply).ok()?;
-    match reply.split_first() {
+    let answer = match reply.split_first() {
         Some((b'1', answer)) => Some(answer.to_vec()),
         _ => None,
-    }
+    };
+    wipe(&mut reply);
+    answer
 }
 
 #[cfg(test)]
@@ -341,6 +380,49 @@ mod tests {
         assert_eq!(a.token.len(), TOKEN_LEN * 2);
         assert_ne!(a.token, b.token);
         assert!(!format!("{a:?}").contains(&a.token));
+    }
+
+    #[test]
+    fn only_git_or_ssh_starts_the_client() {
+        let exe = std::path::Path::new("/opt/app/project");
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == k)
+                    .map(|(_, v)| OsString::from(*v))
+            }
+        };
+        let one = [OsString::from("Password: ")];
+        let ours = env(&[("GIT_ASKPASS", "/opt/app/project")]);
+        assert!(started_as_askpass(ours, Some(exe), &one));
+        let ssh = env(&[("SSH_ASKPASS", "/opt/app/project")]);
+        assert!(started_as_askpass(ssh, Some(exe), &one));
+        // An app started normally with the variable inherited (e.g. from a hook).
+        assert!(!started_as_askpass(env(&[]), Some(exe), &one));
+        let other = env(&[("GIT_ASKPASS", "/usr/bin/ksshaskpass")]);
+        assert!(!started_as_askpass(other, Some(exe), &one));
+        assert!(!started_as_askpass(ours, Some(exe), &[]));
+        let two = [OsString::from("a"), OsString::from("b")];
+        assert!(!started_as_askpass(ours, Some(exe), &two));
+        assert!(!started_as_askpass(ours, None, &one));
+    }
+
+    #[test]
+    fn a_silent_connection_does_not_block_a_question() {
+        let (_, bridge) = bridge(Some("s3cret"));
+        let _silent = TcpStream::connect(("127.0.0.1", bridge.port)).unwrap();
+        let start = Instant::now();
+        let answer = ask_bridge(&bridge.env_value(), "Password: ");
+        assert_eq!(answer.as_deref(), Some(&b"s3cret"[..]));
+        assert!(start.elapsed() < REQUEST_TIMEOUT, "{:?}", start.elapsed());
+    }
+
+    #[test]
+    fn wipe_zeroes() {
+        let mut buf = b"s3cret".to_vec();
+        wipe(&mut buf);
+        assert_eq!(buf, [0; 6]);
     }
 
     #[test]

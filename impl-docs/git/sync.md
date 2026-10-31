@@ -270,22 +270,31 @@ input without a new dependency).
   platforms, no Unix socket) with a 32-byte token from the system's random source
   (`getrandom`); closed when the command ends. git runs with `GIT_ASKPASS` and `SSH_ASKPASS` =
   the app's executable (`current_exe`), `SSH_ASKPASS_REQUIRE=force` (ssh uses it even without
-  a display) and `PROJECT_ASKPASS=<port>:<token>`; `GIT_TERMINAL_PROMPT=0` stays (git tries
+  a display; the variable exists from OpenSSH 8.4, an older ssh ignores it and uses askpass only
+  with `DISPLAY` set and no terminal) and `PROJECT_ASKPASS=<port>:<token>`; `GIT_TERMINAL_PROMPT=0` stays (git tries
   askpass first, then gives up). An inherited `PROJECT_ASKPASS` is removed from every other git
   run. **The user's askpass is never overridden**: if `GIT_ASKPASS` is set (environment or opener)
   or `core.askPass` is configured in any scope (`git config --get core.askPass`, read once per
-  network command), `GIT_ASKPASS` is not set and git keeps using theirs; if `SSH_ASKPASS` is set,
-  neither `SSH_ASKPASS` nor `SSH_ASKPASS_REQUIRE`. A side already served is not bridged; with
+  network command) or `SSH_ASKPASS` is set (git's own fallback), `GIT_ASKPASS` is not set and
+  git keeps using theirs; if `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` is set, neither
+  `SSH_ASKPASS` nor `SSH_ASKPASS_REQUIRE`. A side already served is not bridged; with
   both served there is no listener at all. Credential helpers still come first: git asks only what they do not give.
 - **Client**: both apps call `project_git::askpass_client()` first thing in `main`: with
-  `PROJECT_ASKPASS` set and exactly one argument (the prompt) the process connects, sends
+  `PROJECT_ASKPASS` set, `GIT_ASKPASS` or `SSH_ASKPASS` equal to its own executable and exactly
+  one argument (the prompt) the process connects, sends
   `<token>\n<prompt>`, prints the answer and a newline on stdout and exits 0, or exits 1 on
-  cancel or any error (git then fails); the app never starts in that role. With
+  cancel or any error (git then fails); the app never starts in that role. Otherwise (the
+  variable alone, e.g. inherited by a hook that starts the app) it removes `PROJECT_ASKPASS`
+  from its environment and starts normally. With
   `SSH_ASKPASS_PROMPT=none` (ssh only shows a notice, e.g. touching a FIDO key) it exits 0
   without asking.
-- **Requests**: a connection with a wrong token, longer than 16 KiB or slower than 5 s to send
-  (one deadline for the whole request) is dropped without asking. The prompt (verbatim, `LC_ALL=C`) is classified into
-  `CredentialKind`: `HostKey` ("(yes/no", "continue connecting"), `Passphrase`, `Username`
+- **Requests**: each connection is served on its own thread (at most 4 at once, more are
+  dropped), so a silent connection does not hold a real question. A connection with a wrong
+  token, longer than 16 KiB or slower than 5 s to send (one deadline for the whole request) is
+  dropped without asking. The answer buffers are zeroed after sending (best effort). The prompt (verbatim, `LC_ALL=C`) is classified into
+  `CredentialKind`: git's `Username for '...'` and `Password for '...'` first (their URL may
+  contain any word), `HostKey` only when the last line asks "continue connecting (yes/no...)" and
+  ends with `?`, `Passphrase`, `Username`
   (git's `Username for '<url>'`), `Password`, `Other`; `url` from git's prompt, `remote` = the
   remote name, or the URL for `repo.clone`.
 - **Cancel**: git fails after a cancelled question with an `Auth` text →
@@ -298,8 +307,10 @@ input without a new dependency).
 - **Secrets**: the answer goes from the prompter straight to the socket; it is not logged, kept,
   put in errors, progress, journal or `Debug` (`Askpass` and `Bridge` have their own `Debug`
   without prompter and token). After a successful command git's credential helper stores it,
-  as in a terminal. Any process git starts (hooks included) inherits `PROJECT_ASKPASS` and could
-  ask the user something: they already run with the user's rights.
+  as in a terminal. During the command, every process git starts (hooks such as `pre-push`,
+  credential helpers, ssh and its `ProxyCommand`) inherits `PROJECT_ASKPASS` with the token and
+  could ask the user something through the dialog: they already run with the user's rights.
+  The token dies with the command's listener.
 - **Desktop dialog** (`project_ui::CredentialDialog`, built before the window and connected to
   it by `App::with_credentials`): `ask` sends the question with a one-shot reply channel and
   wakes the UI; no UI yet or UI gone → `None`. One app-level modal at a time: title by kind,

@@ -358,14 +358,17 @@ impl Git {
         } else {
             Stdout::Discard
         };
-        // The user's own askpass is never overridden: git keeps `GIT_ASKPASS`/`core.askPass`,
-        // ssh keeps `SSH_ASKPASS`; a side already served is not bridged.
+        // The user's own askpass is never overridden: git keeps `GIT_ASKPASS`, `core.askPass`
+        // or `SSH_ASKPASS` (git's fallback), ssh keeps `SSH_ASKPASS` and the user's
+        // `SSH_ASKPASS_REQUIRE`; a side already served is not bridged.
         let bridged = self.askpass.as_ref().and_then(|askpass| {
             if !askpass.prompter.asks_now() {
                 return None;
             }
-            let git_side = !self.env_set("GIT_ASKPASS") && !self.askpass_configured(dir);
-            let ssh_side = !self.env_set("SSH_ASKPASS");
+            let user_ssh = self.env_set("SSH_ASKPASS");
+            let git_side =
+                !user_ssh && !self.env_set("GIT_ASKPASS") && !self.askpass_configured(dir);
+            let ssh_side = !user_ssh && !self.env_set("SSH_ASKPASS_REQUIRE");
             if !git_side && !ssh_side {
                 return None;
             }
@@ -751,6 +754,7 @@ mod tests {
             .chain(PATHSPEC_ENV)
             .chain(CONFIG_ENV)
             .chain(DATE_ENV)
+            .chain(ASKPASS_VARS)
         {
             assert_eq!(value(key), Some(None), "{key}");
         }

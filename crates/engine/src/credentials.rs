@@ -39,12 +39,19 @@ impl CredentialKind {
     /// The kind of a git or ssh prompt (with `LC_ALL=C` the texts are English).
     pub fn of_prompt(prompt: &str) -> Self {
         let lower = prompt.to_ascii_lowercase();
-        if lower.contains("(yes/no") || lower.contains("continue connecting") {
+        // git's prompts start with these words and carry a URL that may contain anything.
+        if lower.starts_with("username") {
+            return Self::Username;
+        }
+        if lower.starts_with("password for '") {
+            return Self::Password;
+        }
+        // ssh's host key question: its last line asks "... (yes/no/[fingerprint])?".
+        let last = lower.trim_end().lines().last().unwrap_or("");
+        if last.contains("continue connecting (yes/no") && last.ends_with('?') {
             Self::HostKey
-        } else if lower.contains("passphrase") {
+        } else if lower.starts_with("enter passphrase") || lower.contains("passphrase for") {
             Self::Passphrase
-        } else if lower.starts_with("username") {
-            Self::Username
         } else if lower.contains("password") {
             Self::Password
         } else {
@@ -139,6 +146,23 @@ mod tests {
                 CredentialKind::HostKey,
             ),
             ("Enter PIN for 'token': ", CredentialKind::Other),
+            // Words of other prompts inside a URL or a path do not change the kind.
+            (
+                "Username for 'https://h/continue connecting (yes/no)?': ",
+                CredentialKind::Username,
+            ),
+            (
+                "Password for 'https://passphrase@h/(yes/no': ",
+                CredentialKind::Password,
+            ),
+            (
+                "Enter passphrase for key '/k/continue connecting (yes/no)?': ",
+                CredentialKind::Passphrase,
+            ),
+            (
+                "Please type 'yes', 'no' or the fingerprint: ",
+                CredentialKind::Other,
+            ),
         ];
         for (prompt, kind) in cases {
             assert_eq!(CredentialKind::of_prompt(prompt), kind, "{prompt}");

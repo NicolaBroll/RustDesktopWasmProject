@@ -117,8 +117,8 @@ pub use git::{
 };
 pub use git::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
-    OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
-    merge_source,
+    OperationState, SQUASH_RECORD, SQUASH_SUBJECTS, SquashRecord, check_merge_state, check_merging,
+    clean_merge_message, conflicted_paths, merge_source, squash_message,
 };
 pub use git::{
     PickKind, PickRequest, check_pick_state, check_picking, pick_empty_error, pick_message,

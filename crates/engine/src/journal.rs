@@ -81,6 +81,8 @@ pub enum Integration {
     FastForward,
     Merge,
     Rebase,
+    /// A squash merge: one ordinary commit with the changes of the merged rev.
+    Squash,
 }
 
 impl From<&MergeMode> for Integration {
@@ -88,6 +90,7 @@ impl From<&MergeMode> for Integration {
         match mode {
             MergeMode::FastForward => Integration::FastForward,
             MergeMode::Merge { .. } => Integration::Merge,
+            MergeMode::Squash => Integration::Squash,
         }
     }
 }
@@ -719,7 +722,9 @@ impl JournalEntry {
         let how = match strategy {
             Integration::FastForward => msg!("engine-journal-pull-ff"),
             Integration::Rebase => msg!("engine-journal-pull-rebase", upstream = upstream),
-            Integration::Merge => msg!("engine-journal-pull-merge", upstream = upstream),
+            Integration::Merge | Integration::Squash => {
+                msg!("engine-journal-pull-merge", upstream = upstream)
+            }
         };
         Self::branch_entry(
             "remote.pull",
@@ -764,6 +769,7 @@ impl JournalEntry {
         } = moved;
         let strategy = match strategy {
             Integration::FastForward => "fast_forward",
+            Integration::Squash => "squash",
             Integration::Merge | Integration::Rebase => "merge",
         };
         Self::branch_entry(

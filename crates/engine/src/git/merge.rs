@@ -27,6 +27,11 @@ pub enum MergeMode {
     /// A merge commit (parents: HEAD and the commit), even when a
     /// fast-forward would be possible if `no_ff` (`--no-ff`).
     Merge { no_ff: bool },
+    /// The changes of the commit as **one ordinary commit** on HEAD (one parent): `git merge
+    /// --squash`, then a commit with the request's message. The merged branch is not recorded
+    /// as merged. A stop (conflicts, a hook that rejects the commit) leaves an
+    /// [`Operation::Squash`] in progress, with the [`SquashRecord`].
+    Squash,
 }
 
 impl MergeMode {
@@ -35,6 +40,7 @@ impl MergeMode {
         match self {
             MergeMode::FastForward => "fast_forward",
             MergeMode::Merge { .. } => "merge",
+            MergeMode::Squash => "squash",
         }
     }
 }
@@ -51,8 +57,83 @@ pub struct MergeRequest {
     /// For messages: the name of the rev (`feature`, `origin/x`, `v1.0`) or the id.
     pub target_name: String,
     pub mode: MergeMode,
-    /// The message of the merge commit (only with [`MergeMode::Merge`]).
+    /// The message of the merge commit (with [`MergeMode::Merge`]) or of the squash commit
+    /// (with [`MergeMode::Squash`]).
     pub message: String,
+}
+
+/// The file, in the git folder of the worktree, with the [`SquashRecord`] of a squash merge
+/// in progress.
+pub const SQUASH_RECORD: &str = "project-squash.json";
+
+/// What the app knows of a squash merge it started and that stopped: git leaves only
+/// `SQUASH_MSG` (and the conflicts in the index), not an operation in progress, so the engine
+/// keeps this record in [`SQUASH_RECORD`]. It counts ([`Operation::Squash`]) only while HEAD is
+/// still on `branch` at `head` and `SQUASH_MSG` exists; otherwise it is stale (a commit or a
+/// reset from the terminal) and the backend ignores and removes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SquashRecord {
+    /// The branch of HEAD (short name).
+    pub branch: String,
+    /// The value of the branch (HEAD) before the squash: the parent of the squash commit.
+    pub head: Oid,
+    /// The squashed commit (the resolved rev).
+    pub target: Oid,
+    /// The name of the rev for messages and the journal (`feature`, `origin/x`, an id).
+    pub source: String,
+    /// The backup ref of the branch before the squash (`refs/project/backup/merge-...`).
+    pub backup: String,
+    /// The message of the squash commit (`merge.continue` without `message` uses it).
+    pub message: String,
+}
+
+impl SquashRecord {
+    /// The record as saved in [`SQUASH_RECORD`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec_pretty(self).expect("the record is serializable")
+    }
+
+    /// The record read from [`SQUASH_RECORD`]; `None` if it is not valid.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        serde_json::from_slice(bytes).ok()
+    }
+
+    /// The record of the squash started by `request` with the backup `backup`.
+    pub fn of(request: &MergeRequest, backup: &str) -> Self {
+        SquashRecord {
+            branch: request.branch.clone(),
+            head: request.expected,
+            target: request.target,
+            source: request.target_name.clone(),
+            backup: backup.to_owned(),
+            message: request.message.clone(),
+        }
+    }
+}
+
+/// The most squashed-commit subjects listed in the default squash message.
+pub const SQUASH_SUBJECTS: usize = 50;
+
+/// The default message of a squash (`merge.start` with `squash` and no `message`): `Squashed
+/// branch 'x'` (`remote-tracking branch`, `tag`, `commit` as for [`MergeSource::message`], with
+/// ` into <branch>` outside `main`/`master`), a blank line and the subjects of the squashed
+/// commits, oldest first, as `* <subject>`: at most [`SQUASH_SUBJECTS`], then `…`. `subjects`
+/// is newest first (as the log returns them), possibly with one more than the limit.
+pub fn squash_message(source: &MergeSource, branch: &str, subjects: &[String]) -> String {
+    let mut message = source.message(branch).replacen("Merge ", "Squashed ", 1);
+    if subjects.is_empty() {
+        return message;
+    }
+    message.push('\n');
+    // The oldest are the last ones: with more than the limit the newest are left out.
+    let shown = subjects.len().min(SQUASH_SUBJECTS);
+    for subject in subjects[subjects.len() - shown..].iter().rev() {
+        message.push_str(&format!("\n* {subject}"));
+    }
+    if subjects.len() > SQUASH_SUBJECTS {
+        message.push_str("\n…");
+    }
+    message
 }
 
 /// Outcome of [`GitOperations::merge`](super::GitOperations::merge).
@@ -116,6 +197,9 @@ pub struct OperationState {
     /// `None` for one started from the terminal.
     #[serde(default)]
     pub rebase: Option<super::RebaseRecord>,
+    /// Squash: the [`SquashRecord`] of the squash merge in progress (`None` otherwise).
+    #[serde(default)]
+    pub squash: Option<SquashRecord>,
 }
 
 /// Where the commit to merge comes from, for the default message.
@@ -256,8 +340,12 @@ pub fn check_merge_state(status: &Status, mode: &MergeMode) -> Result<(), Engine
     )))
 }
 
-/// The check common to `merge.abort` and `merge.continue`: a merge must be in progress.
+/// The check common to `merge.abort` and `merge.continue`: a merge (or a squash merge started
+/// by the app, [`Operation::Squash`]) must be in progress.
 pub fn check_merging(command: &str, status: &Status) -> Result<(), EngineError> {
+    if status.operation == Some(Operation::Squash) {
+        return Ok(());
+    }
     check_in_progress(command, Operation::Merge, status)
 }
 
@@ -270,6 +358,7 @@ pub(crate) fn operation_name(op: Operation) -> Message {
         Operation::Bisect => msg!("engine-op-bisect"),
         Operation::Am => msg!("engine-op-am"),
         Operation::Merge => msg!("engine-op-merge"),
+        Operation::Squash => msg!("engine-op-squash"),
     }
 }
 
@@ -382,5 +471,29 @@ mod tests {
             "T\n# Conflicts:\naltro"
         );
         assert_eq!(clean_merge_message("Only title\n"), "Only title");
+    }
+
+    #[test]
+    fn squash_messages() {
+        let a = Oid::from_bytes([1; Oid::LEN]);
+        let refs = [r("refs/heads/feature", RefKind::LocalBranch, a)];
+        let s = merge_source("feature", &refs, &a);
+        assert_eq!(squash_message(&s, "main", &[]), "Squashed branch 'feature'");
+        let subjects = vec!["second".to_owned(), "first".to_owned()];
+        assert_eq!(
+            squash_message(&s, "dev", &subjects),
+            "Squashed branch 'feature' into dev\n\n* first\n* second"
+        );
+        let c = merge_source(&a.to_string(), &[], &a);
+        assert!(squash_message(&c, "main", &[]).starts_with("Squashed commit '"));
+        // More than the limit: the oldest 50, then `…`.
+        let many: Vec<String> = (0..=SQUASH_SUBJECTS)
+            .rev()
+            .map(|i| format!("c{i}"))
+            .collect();
+        let text = squash_message(&s, "main", &many);
+        assert!(text.contains("\n* c0\n* c1\n"), "{text}");
+        assert!(!text.contains("* c50"), "{text}");
+        assert!(text.ends_with("* c49\n…"), "{text}");
     }
 }

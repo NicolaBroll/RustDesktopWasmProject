@@ -336,7 +336,9 @@ fn refusals() {
         json!({ "rev": "feat", "no_ff": true, "ff_only": true }),
         json!({ "rev": "" }),
         json!({ "rev": "feat", "message": "  " }),
-        json!({ "rev": "feat", "squash": true }),
+        json!({ "rev": "feat", "squash": true, "no_ff": true }),
+        json!({ "rev": "feat", "squash": true, "ff_only": true }),
+        json!({ "rev": "feat", "squash": true, "bogus": true }),
     ] {
         let err = r.run("merge.start", &mut s, params.clone()).unwrap_err();
         assert!(
@@ -573,4 +575,186 @@ fn reread_error_fields() {
     assert_eq!(out["refs_error"], error.as_str());
     let back: MergeAbortResult = serde_json::from_value(out).unwrap();
     assert_eq!(back, result);
+}
+
+#[test]
+fn squash_of_a_diverged_branch_undo_and_redo() {
+    let (r, mut s) = opened_with(repo());
+    let out = run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": "feat", "squash": true }),
+    );
+    assert_eq!(out["strategy"], "squash");
+    assert_eq!(out["in_progress"], false);
+    assert_eq!(out["backup"], "refs/project/backup/merge-1");
+    let after = out["after"].as_str().unwrap().to_owned();
+    let log = run(&r, &mut s, "repo.log", json!({ "limit": 1 }));
+    assert_eq!(log["commits"][0]["parents"], json!([oid(2).to_string()]));
+    assert_eq!(log["commits"][0]["summary"], "Squashed branch 'feat'");
+    assert_eq!(log["commits"][0]["body"], "* new");
+    assert_eq!(out["status"]["operation"], Value::Null);
+    assert!(
+        out["next_undo"]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Merge of feat into `main` (squash into one commit"),
+        "{}",
+        out["next_undo"]
+    );
+    run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(main_at(&r, &mut s), oid(2).to_string());
+    run(&r, &mut s, "edit.redo", json!({}));
+    assert_eq!(main_at(&r, &mut s), after);
+    // The branch is not recorded as merged: squashing it again finds it not up to date.
+    let out = r
+        .run(
+            "merge.start",
+            &mut s,
+            json!({ "rev": "feat", "squash": true }),
+        )
+        .unwrap();
+    assert_ne!(out["strategy"], "up_to_date");
+}
+
+#[test]
+fn squash_of_a_branch_ahead_message_and_up_to_date() {
+    let (r, mut s) = opened_with(repo());
+    let out = run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": "ahead", "squash": true, "message": "All of it" }),
+    );
+    assert_eq!(out["strategy"], "squash");
+    let log = run(&r, &mut s, "repo.log", json!({ "limit": 1 }));
+    // No fast-forward: a new commit on `main`, not `ahead`.
+    assert_ne!(log["commits"][0]["id"], oid(5).to_string());
+    assert_eq!(log["commits"][0]["parents"], json!([oid(2).to_string()]));
+    assert_eq!(log["commits"][0]["summary"], "All of it");
+    // Already contained: nothing written.
+    let entries_before = run(&r, &mut s, "edit.history", json!({}));
+    let out = run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": oid(1).to_string(), "squash": true }),
+    );
+    assert_eq!(out["strategy"], "up_to_date");
+    assert_eq!(out["backup"], Value::Null);
+    assert_eq!(run(&r, &mut s, "edit.history", json!({})), entries_before);
+}
+
+#[test]
+fn squash_conflict_stays_in_progress_then_continue() {
+    let (r, mut s) = opened_with(repo());
+    let out = run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": "other", "squash": true }),
+    );
+    assert_eq!(out["strategy"], "squash");
+    assert_eq!(out["in_progress"], true);
+    assert_eq!(out["conflicts"], json!(["a.txt"]));
+    assert_eq!(out["after"], oid(2).to_string());
+    assert_eq!(out["status"]["operation"], "Squash");
+    assert_eq!(out["can_undo"], false);
+    let op = run(&r, &mut s, "repo.operation", json!({}));
+    assert_eq!(op["operation"], "Squash");
+    assert_eq!(op["incoming"][0]["label"], "other");
+    assert_eq!(op["message"], "Squashed branch 'other'\n\n* theirs");
+    assert_eq!(op["continue"], "merge.continue");
+    assert_eq!(op["abort"], "merge.abort");
+    // During the squash: undo, another merge, a checkout, amend, continue with conflicts.
+    for (id, params) in [
+        ("edit.undo", json!({})),
+        ("merge.start", json!({ "rev": "feat" })),
+        ("branch.checkout", json!({ "name": "feat" })),
+        ("merge.continue", json!({})),
+    ] {
+        let err = r.run(id, &mut s, params).unwrap_err();
+        assert!(matches!(err, EngineError::NotAllowed(_)), "{id}: {err}");
+    }
+    run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
+    let err = r
+        .run(
+            "commit.create",
+            &mut s,
+            json!({ "message": "x", "amend": true, "confirm": true }),
+        )
+        .unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    let out = run(&r, &mut s, "merge.continue", json!({}));
+    assert_eq!(out["message"], "Squashed branch 'other'\n\n* theirs");
+    assert_eq!(out["commit"]["parents"], json!([oid(2).to_string()]));
+    assert_eq!(out["status"]["operation"], Value::Null);
+    assert!(
+        out["next_undo"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("squash into one commit")
+    );
+    run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(main_at(&r, &mut s), oid(2).to_string());
+    assert_eq!(entries(&r, &mut s), 0);
+}
+
+#[test]
+fn squash_abort_needs_confirm_and_saves_a_backup() {
+    let (r, mut s) = opened_with(repo());
+    run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": "other", "squash": true }),
+    );
+    let err = r.run("merge.abort", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::ConfirmRequired { .. }), "{err}");
+    assert_eq!(
+        run(&r, &mut s, "repo.operation", json!({}))["operation"],
+        "Squash"
+    );
+    let out = run(&r, &mut s, "merge.abort", json!({ "confirm": true }));
+    assert!(
+        out["backup"]
+            .as_str()
+            .unwrap()
+            .starts_with("refs/project/backup/merge-abort-")
+    );
+    assert_eq!(out["status"]["operation"], Value::Null);
+    assert_eq!(entries(&r, &mut s), 0);
+    assert_eq!(main_at(&r, &mut s), oid(2).to_string());
+}
+
+#[test]
+fn squash_refuses_local_changes() {
+    let mut dirty = repo();
+    let (mode, b) = (0o100644, oid_of_b(&mut dirty));
+    dirty.set_entries(vec![project_domain::StatusEntry {
+        path: RepoPath::from("b.txt"),
+        index: Change::Unmodified,
+        worktree: Change::Modified,
+        kind: project_domain::EntryKind::Ordinary(project_domain::TrackedInfo {
+            submodule: None,
+            mode_head: mode,
+            mode_index: mode,
+            mode_worktree: mode,
+            oid_head: b,
+            oid_index: b,
+        }),
+    }]);
+    dirty.set_worktree_file("b.txt", "changed\n");
+    let (r, mut s) = opened_with(dirty);
+    // Even when the branch is ahead (a fast-forward would accept the change).
+    let err = r
+        .run(
+            "merge.start",
+            &mut s,
+            json!({ "rev": "ahead", "squash": true }),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("`b.txt`"), "{err}");
+    assert_eq!(main_at(&r, &mut s), oid(2).to_string());
 }

@@ -102,6 +102,10 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"stashes":t
 # merge of a branch into the active branch (fast-forward or merge commit; undoable with edit.undo)
 cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"test"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"origin/main","no_ff":true,"message":"Merge main"}'
+# squash merge: the branch's changes as one ordinary commit (the branch does not appear merged);
+# with conflicts it stays in progress ("operation":"Squash"), then merge.continue or merge.abort
+cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"feature","squash":true}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"feature","squash":true,"message":"Feature X"}'
 # with conflicts the merge stays in progress: banner (kind, conflicted files, incoming commits), then
 # resolve the files, stage them and finish; or abort ("confirm":true, backup)
 cargo run -p project-cli -- --repo . run --cmd repo.operation

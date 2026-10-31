@@ -4,6 +4,7 @@
 merge-noun-merge-commit = commit di merge
 merge-noun-commit = commit
 merge-terminal-merge = Si conclude da terminale: `git merge --continue` o `git merge --abort`
+merge-terminal-squash = Si conclude da terminale: `git commit` o `git reset --merge`
 merge-terminal-rebase = Si conclude da terminale: `git rebase --continue` o `git rebase --abort`
 merge-terminal-cherry-pick = Si conclude da terminale: `git cherry-pick --continue` o `git cherry-pick --abort`
 merge-terminal-revert = Si conclude da terminale: `git revert --continue` o `git revert --abort`

@@ -881,3 +881,13 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   conflicts → in progress → continue, → abort with backup, HEAD moved from the terminal while in
   progress, hook that rejects the commit, `merge.ff=only` and `mergeOptions` in the config,
   undo/redo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** engine and backend done (`merge.start` `squash`, `Operation::Squash`, `SquashRecord`
+  in `<git dir>/project-squash.json`, `merge.continue`/`merge.abort`/`repo.operation` for the
+  squash; tests in `crates/git/tests/merge_squash.rs` and `merge_tests.rs`); UI and
+  `safety-reviewer` review to do. Choices: the squash state is a new `Operation::Squash` in
+  `Status::operation`, so every command refuses during it through the usual checks; a commit
+  rejected by a hook or signing leaves the squash in progress (staged, `in_progress` with git's
+  text); nothing to commit (changes already on the branch) → nothing written plus a warning;
+  `commit.create` during a squash stays possible (one parent, journaled as a commit, no `amend`);
+  the abort runs `git reset --merge`; the journal text reads `Merge of x into `b` (squash into one
+  commit: …)`.

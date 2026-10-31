@@ -10,8 +10,9 @@
 use super::{JournalState, Out, reread, to_json};
 use crate::{
     BranchMove, CommitRequest, EngineError, GitBackend, HeadState, JournalEntry, LogQuery,
-    MergeMode, MergeOutcome, MergeRequest, MergeSource, Message, MessageArg, Session, branch_ref,
-    check_merge_state, check_merging, clean_merge_message, conflicted_paths, merge_source,
+    MergeMode, MergeOutcome, MergeRequest, MergeSource, Message, MessageArg, SQUASH_SUBJECTS,
+    Session, branch_ref, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
+    merge_source, squash_message,
 };
 use project_domain::{Commit, Head, Oid, Operation, RefInfo, RefKind, RepoPath, Status};
 use project_domain::{HEADS_PREFIX, REMOTES_PREFIX, TAGS_PREFIX};
@@ -28,6 +29,9 @@ pub enum MergeApplied {
     FastForward,
     /// A merge commit (or a merge stopped before it, see `in_progress`).
     Merge,
+    /// One ordinary commit with the changes of the rev (`squash`), or a squash stopped before
+    /// it (see `in_progress`).
+    Squash,
 }
 
 impl From<&MergeMode> for MergeApplied {
@@ -35,6 +39,7 @@ impl From<&MergeMode> for MergeApplied {
         match mode {
             MergeMode::FastForward => Self::FastForward,
             MergeMode::Merge { .. } => Self::Merge,
+            MergeMode::Squash => Self::Squash,
         }
     }
 }
@@ -155,7 +160,11 @@ pub struct MergeStartParams {
     /// Fast-forward only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ff_only: bool,
-    /// The message of the merge commit.
+    /// The changes of the rev as one ordinary commit on the branch (`git merge --squash`, then a
+    /// commit): the rev is not recorded as merged. Not with `no_ff` or `ff_only`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub squash: bool,
+    /// The message of the merge commit (or of the squash commit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -216,6 +225,9 @@ pub(super) fn label(oid: &Oid, refs: &[RefInfo]) -> String {
 /// `rev` lacks (and there is no `no_ff`), otherwise a merge commit with `message` or git's default
 /// message (`Merge branch 'x'`, ...). `ff_only`: fast-forward only (diverged →
 /// [`EngineError::NotAllowed`]); `no_ff` and `ff_only` together → [`EngineError::InvalidParams`].
+/// `squash`: the changes of `rev` as one ordinary commit ([`MergeMode::Squash`], message
+/// `message` or [`squash_message`]); with `no_ff`/`ff_only` → [`EngineError::InvalidParams`];
+/// stopped, it stays in progress as `Squash`.
 ///
 /// Refused before writing ([`EngineError::NotAllowed`], nothing changes): detached HEAD or
 /// branch without commits, operation in progress, conflicted files, for a merge commit any
@@ -235,11 +247,12 @@ pub(super) fn merge_start(
         rev,
         no_ff,
         ff_only,
+        squash,
         message,
     }: MergeStartParams,
 ) -> Out {
     const ID: &str = "merge.start";
-    check_merge_params(ID, &rev, no_ff, ff_only)?;
+    check_merge_params(ID, &rev, no_ff, ff_only, squash)?;
     check_message(ID, &message)?;
     let (repo, journal) = s.repo_and_journal()?;
     let status = repo.status()?;
@@ -280,7 +293,9 @@ pub(super) fn merge_start(
             journal: JournalState::of(journal),
         }));
     }
-    let mode = if ahead == 0 && !no_ff {
+    let mode = if squash {
+        MergeMode::Squash
+    } else if ahead == 0 && !no_ff {
         MergeMode::FastForward
     } else if ff_only {
         return Err(EngineError::NotAllowed(msg!(
@@ -294,7 +309,18 @@ pub(super) fn merge_start(
         MergeMode::Merge { no_ff }
     };
     check_merge_state(&status, &mode)?;
-    let message = message.unwrap_or_else(|| source.message(&branch));
+    let message = match message {
+        Some(message) => message,
+        None if mode == MergeMode::Squash => {
+            let subjects: Vec<String> = repo
+                .missing_commits(&target, &[before], SQUASH_SUBJECTS + 1)?
+                .into_iter()
+                .map(|c| c.summary)
+                .collect();
+            squash_message(&source, &branch, &subjects)
+        }
+        None => source.message(&branch),
+    };
     let outcome = repo.merge(&MergeRequest {
         branch: branch.clone(),
         expected: before,
@@ -358,11 +384,18 @@ fn check_merge_params(
     rev: &str,
     no_ff: bool,
     ff_only: bool,
+    squash: bool,
 ) -> Result<(), EngineError> {
     if no_ff && ff_only {
         return Err(EngineError::InvalidParams {
             id,
             reason: msg!("engine-merge-no-ff-and-ff-only"),
+        });
+    }
+    if squash && (no_ff || ff_only) {
+        return Err(EngineError::InvalidParams {
+            id,
+            reason: msg!("engine-merge-squash-with-ff"),
         });
     }
     if rev.trim().is_empty() || rev.contains('\0') {
@@ -389,8 +422,8 @@ fn merge_branch(head: &Head) -> Result<(String, Oid), EngineError> {
     }
 }
 
-/// In the journal only if the result is the merge's: the fast-forward commit, or a merge commit
-/// on top of the previous branch. Otherwise another process (or a hook) has moved the branch in
+/// In the journal only if the result is the merge's: the fast-forward commit, a merge commit
+/// on top of the previous branch, or a squash commit whose only parent is the previous branch. Otherwise another process (or a hook) has moved the branch in
 /// the meantime, and an undo would also bring back its work.
 fn merge_as_expected(
     repo: &dyn GitBackend,
@@ -403,10 +436,15 @@ fn merge_as_expected(
         && outcome.after != before
         && match mode {
             MergeMode::FastForward => outcome.after == target,
-            MergeMode::Merge { .. } => repo
+            MergeMode::Merge { .. } | MergeMode::Squash => repo
                 .log(&LogQuery::page(0, 1).from_rev(outcome.after.to_string()))
                 .ok()
-                .and_then(|c| c.first().map(|c| c.parents.first() == Some(&before)))
+                .and_then(|c| {
+                    c.first().map(|c| match mode {
+                        MergeMode::Squash => c.parents == [before],
+                        _ => c.parents.first() == Some(&before),
+                    })
+                })
                 .unwrap_or(false),
         }
 }
@@ -517,6 +555,9 @@ pub(super) fn merge_continue(
         )));
     }
     let state = repo.operation_state()?;
+    if status.operation == Some(Operation::Squash) {
+        return squash_continue(repo, journal, &status, state, message);
+    }
     let refs = repo.refs()?;
     let sources: Vec<String> = state.incoming.iter().map(|o| label(o, &refs)).collect();
     let message = match message {
@@ -556,6 +597,64 @@ pub(super) fn merge_continue(
             },
             None,
         )),
+        _ => match JournalEntry::commit(&outcome, false) {
+            Some(entry) => journal.record(entry),
+            None => 0,
+        },
+    };
+    let (status, status_error) = reread(repo.status());
+    let (refs, refs_error) = reread(repo.refs());
+    Ok(to_json(MergeContinueResult {
+        commit: outcome.commit,
+        previous: outcome.previous,
+        branch: outcome.branch,
+        backup: outcome.backup,
+        also_on: outcome.also_on,
+        message,
+        status,
+        status_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
+}
+
+/// `merge.continue` of a squash merge in progress: the ordinary commit (one parent) of what is
+/// staged, with `message` or the one of the squash ([`SquashRecord`](crate::SquashRecord)). It
+/// enters the journal as the squash of `merge.start` (backup of the record) if the branch moved
+/// from the value the squash started on; otherwise as a commit.
+fn squash_continue(
+    repo: &mut dyn GitBackend,
+    journal: &mut crate::Journal,
+    status: &Status,
+    state: crate::OperationState,
+    message: Option<String>,
+) -> Out {
+    const ID: &str = "merge.continue";
+    let record = state.squash.ok_or_else(|| {
+        EngineError::NotAllowed(msg!(
+            "engine-merge-not-in-progress",
+            operation = msg!("engine-op-squash"),
+            command = ID
+        ))
+    })?;
+    let message = message.unwrap_or_else(|| record.message.clone());
+    let outcome = repo.commit(&CommitRequest::new(message.clone()))?;
+    let full = branch_ref(&record.branch);
+    match (&outcome.branch, outcome.previous) {
+        (Some(branch), Some(previous)) if *branch == full && previous == record.head => journal
+            .record(JournalEntry::merge(
+                ID,
+                BranchMove {
+                    branch,
+                    before: previous,
+                    after: outcome.commit.id,
+                    head: HeadState::from_head(&status.head),
+                },
+                crate::Integration::Squash,
+                &record.source,
+                Some(record.backup.clone()),
+            )),
         _ => match JournalEntry::commit(&outcome, false) {
             Some(entry) => journal.record(entry),
             None => 0,
@@ -655,7 +754,7 @@ pub(super) fn repo_operation(s: &mut Session, NoParams {}: NoParams) -> Out {
     // started from a terminal), and cherry-pick and revert of a single commit (a sequence
     // started from a terminal stays with the terminal).
     let (continue_id, abort_id) = match operation {
-        Some(Operation::Merge) => (Some("merge.continue"), Some("merge.abort")),
+        Some(Operation::Merge | Operation::Squash) => (Some("merge.continue"), Some("merge.abort")),
         Some(Operation::Rebase) => (Some("rebase.continue"), Some("rebase.abort")),
         Some(op) => match crate::PickKind::from_operation(op) {
             Some(kind) if !state.sequencer => {
@@ -671,7 +770,11 @@ pub(super) fn repo_operation(s: &mut Session, NoParams {}: NoParams) -> Out {
         head: status.head,
         conflicts,
         incoming,
-        message: state.message.as_deref().map(clean_merge_message),
+        // The squash message is the app's own (no conflicts block to remove).
+        message: match operation {
+            Some(Operation::Squash) => state.message,
+            _ => state.message.as_deref().map(clean_merge_message),
+        },
         onto: state.onto,
         rebase_branch: state.rebase_branch,
         ready,

@@ -16,7 +16,7 @@ use super::write::{TreeEntry, ZERO, entry_order, tracked_info};
 use super::{HEADS, HeadRef, MemoryBackend};
 use crate::git::{
     BACKUP_PREFIX, GitRead, MergeAborted, MergeMode, MergeOutcome, MergeRequest, OperationState,
-    PickKind, check_merge_state, check_merging, check_picking, split_message,
+    PickKind, SquashRecord, check_merge_state, check_merging, check_picking, split_message,
 };
 use crate::{EngineError, Message};
 use project_domain::{
@@ -122,7 +122,7 @@ impl MemoryBackend {
                     return Err(overwritten(files));
                 }
                 let index = work.switch_index(&differing, &new_tree);
-                work.set_ref(full, request.target, None);
+                work.set_ref(full.clone(), request.target, None);
                 work.rebase_entries(&index);
                 outcome.after = request.target;
             }
@@ -140,6 +140,7 @@ impl MemoryBackend {
                 outcome.conflicts = merged.conflicts;
                 outcome.message = merged.message;
             }
+            MergeMode::Squash => {}
         }
         let prefix = format!("{BACKUP_PREFIX}merge-");
         let n = work
@@ -149,9 +150,102 @@ impl MemoryBackend {
             .count()
             + 1;
         outcome.backup = format!("{prefix}{n}");
+        if request.mode == MergeMode::Squash {
+            let squashed = work.squash(&full, request, &outcome.backup)?;
+            if squashed.after == request.expected && !squashed.in_progress {
+                // Nothing to commit: nothing written, no backup.
+                return Ok(MergeOutcome {
+                    backup: outcome.backup,
+                    ..squashed
+                });
+            }
+            outcome = MergeOutcome {
+                backup: outcome.backup,
+                ..squashed
+            };
+        }
         work.commit_backups
             .push((outcome.backup.clone(), request.expected));
         *self = work;
+        Ok(outcome)
+    }
+
+    /// The squash of `request.target` into HEAD (the branch `full`, equal to `request.expected`),
+    /// file by file like [`MemoryBackend::merge_three_way`]: without conflicts an ordinary
+    /// commit (one parent) with the request's message; with conflicts the squash **stays in
+    /// progress** ([`Operation::Squash`] with its record), the branch as it was. If the result
+    /// equals HEAD: nothing written, a warning.
+    fn squash(
+        &mut self,
+        full: &str,
+        request: &MergeRequest,
+        backup: &str,
+    ) -> Result<MergeOutcome, EngineError> {
+        let expected = request.expected;
+        let base = self
+            .merge_base(expected, request.target)
+            .map(|b| self.tree_at(b))
+            .unwrap_or_default();
+        let head_tree = self.tree_at(expected);
+        let (merged, conflicts) = merge_partial(&base, &head_tree, &self.tree_at(request.target));
+        let mut written = merged.clone();
+        for c in &conflicts {
+            if let Some(entry) = c.ours.or(c.theirs) {
+                written.insert(c.path.clone(), entry);
+            }
+        }
+        let (_, files) = self.switch_plan(&written);
+        if !files.is_empty() {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-merge-blocked",
+                what = msg!("engine-merge-what-merge"),
+                files = files
+                    .iter()
+                    .map(|f| format!("`{f}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let mut outcome = MergeOutcome {
+            after: expected,
+            backup: String::new(),
+            in_progress: false,
+            conflicts: Vec::new(),
+            message: String::new(),
+            warnings: Vec::new(),
+        };
+        if conflicts.is_empty() && merged == head_tree {
+            outcome.warnings.push(msg!(
+                "engine-merge-squash-empty",
+                source = request.target_name,
+                branch = request.branch
+            ));
+            return Ok(outcome);
+        }
+        let (differing, _) = self.switch_plan(&merged);
+        let index = self.switch_index(&differing, &merged);
+        if conflicts.is_empty() {
+            let (summary, body) = split_message(&request.message);
+            let id = self.make_commit(vec![expected], &merged, None, summary, body)?;
+            self.set_ref(full.to_owned(), id, None);
+            self.rebase_entries(&index);
+            outcome.after = id;
+            return Ok(outcome);
+        }
+        let mut text = Vec::new();
+        for c in &conflicts {
+            self.add_conflict(c, &request.target_name);
+            text.push(format!("CONFLICT (content): Merge conflict in {}", c.path));
+            outcome.conflicts.push(c.path.clone());
+        }
+        self.rebase_entries(&index);
+        self.operation = Some(Operation::Squash);
+        self.merge_state = None;
+        self.squash_state = Some(SquashRecord::of(request, backup));
+        text.push("Squash commit -- not updating HEAD".to_owned());
+        text.push("Automatic merge failed; fix conflicts and then commit the result.".to_owned());
+        outcome.in_progress = true;
+        outcome.message = text.join("\n");
         Ok(outcome)
     }
 
@@ -441,6 +535,7 @@ impl MemoryBackend {
         self.entries = kept;
         self.operation = None;
         self.merge_state = None;
+        self.squash_state = None;
         Ok(MergeAborted {
             backup,
             files,
@@ -461,14 +556,25 @@ impl MemoryBackend {
             .as_ref()
             .filter(|_| self.operation == Some(Operation::Rebase))
             .map(|r| r.record.clone());
+        let squash = self
+            .squash_state
+            .clone()
+            .filter(|_| self.operation == Some(Operation::Squash));
+        let mut incoming = merge.map(|m| m.heads.clone()).unwrap_or_default();
+        let mut message = merge.map(|m| m.message.clone());
+        if let Some(record) = &squash {
+            incoming = vec![record.target];
+            message = Some(record.message.clone());
+        }
         OperationState {
             operation: self.operation,
-            incoming: merge.map(|m| m.heads.clone()).unwrap_or_default(),
-            message: merge.map(|m| m.message.clone()),
+            incoming,
+            message,
             onto: rebase.as_ref().map(|r| r.onto),
             rebase_branch: rebase.as_ref().map(|r| format!("{HEADS}{}", r.branch)),
             sequencer: false,
             rebase,
+            squash,
         }
     }
 }

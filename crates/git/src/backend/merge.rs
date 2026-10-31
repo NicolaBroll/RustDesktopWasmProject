@@ -60,6 +60,15 @@ impl AbortTarget {
         command: "merge.abort",
         head_file: "MERGE_HEAD",
     };
+
+    /// The squash merge: no `MERGE_HEAD`, aborted with `git reset --merge` (what `git merge
+    /// --abort` runs), the squashed commit from the record.
+    const SQUASH: AbortTarget = AbortTarget {
+        operation: Operation::Squash,
+        git: "merge",
+        command: "merge.abort",
+        head_file: project_engine::SQUASH_RECORD,
+    };
 }
 
 /// The ids, one per line, of a file like `MERGE_HEAD`; invalid lines are skipped.
@@ -99,6 +108,9 @@ impl CliBackend {
             &expected,
             &format!("project: backup of {full} before merge.start"),
         )?;
+        if request.mode == MergeMode::Squash {
+            return self.squash_into_head(request, &full, backup);
+        }
         let env: [(&str, &OsStr); 2] = [
             ("GIT_REFLOG_ACTION", OsStr::new(REFLOG_ACTION)),
             ("GIT_EDITOR", OsStr::new(":")),
@@ -153,6 +165,7 @@ impl CliBackend {
                 // The path as `OsStr`: the git folder may not be UTF-8.
                 args.push(file.0.as_os_str());
             }
+            MergeMode::Squash => unreachable!("handled by `squash_into_head`"),
         }
         args.extend(["--end-of-options", target.as_str()].map(OsStr::new));
         let out = self.git.output_os_env(Some(&self.workdir), &args, &env)?;
@@ -256,7 +269,12 @@ impl CliBackend {
     pub(super) fn abort_merge(&mut self) -> Result<MergeAborted, EngineError> {
         let status = self.status_for_write()?;
         check_merging("merge.abort", &status)?;
-        self.abort_operation(&status, AbortTarget::MERGE, &[])
+        let target = if status.operation == Some(Operation::Squash) {
+            AbortTarget::SQUASH
+        } else {
+            AbortTarget::MERGE
+        };
+        self.abort_operation(&status, target, &[])
     }
 
     /// [`GitOperations::pick_abort`](project_engine::GitOperations::pick_abort).
@@ -330,11 +348,18 @@ impl CliBackend {
         let backup = self.save_merge_backup(&head, &files, git, command, head_file)?;
         let reflog = format!("project: {command}");
         let env = [("GIT_REFLOG_ACTION", OsStr::new(&reflog))];
-        let args = ["-c", "core.fsmonitor=false", git, "--abort"];
+        let args: &[&str] = if operation == Operation::Squash {
+            &["-c", "core.fsmonitor=false", "reset", "--merge"]
+        } else {
+            &["-c", "core.fsmonitor=false", git, "--abort"]
+        };
         let out = self
             .git
-            .output_with_input_env(Some(&self.workdir), &args, b"", &env)?;
+            .output_with_input_env(Some(&self.workdir), args, b"", &env)?;
         let still_merging = self.operation() == Some(operation);
+        if operation == Operation::Squash && out.status.success() && !still_merging {
+            self.remove_squash_record();
+        }
         if !out.status.success() || still_merging {
             // The backup is never removed: even when git refuses, `reset --merge` may have
             // already rewritten some of the files (a file that cannot be deleted, a read-only
@@ -417,15 +442,18 @@ impl CliBackend {
             .map(|(k, v)| (*k, OsStr::new(v)))
             .collect();
         let head = head.to_string();
-        let merging = std::fs::read(self.git_dir.join(head_file))
-            .map(|b| {
+        let merging = if head_file == project_engine::SQUASH_RECORD {
+            Ok(self.squash_target_text())
+        } else {
+            std::fs::read(self.git_dir.join(head_file)).map(|b| {
                 oids(&b)
                     .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             })
-            .unwrap_or_default();
+        }
+        .unwrap_or_default();
 
         let index = TempIndex::new(&self.git_dir);
         let env = [("GIT_INDEX_FILE", index.0.as_os_str())];
@@ -511,6 +539,11 @@ impl CliBackend {
     pub(super) fn read_operation_state(&self) -> OperationState {
         let read = |name: &str| std::fs::read(self.git_dir.join(name)).ok();
         let operation = self.operation();
+        let squash = if operation == Some(Operation::Squash) {
+            self.squash_record()
+        } else {
+            None
+        };
         let incoming = match operation {
             Some(Operation::Merge) => read("MERGE_HEAD"),
             Some(Operation::CherryPick) => read("CHERRY_PICK_HEAD"),
@@ -518,11 +551,12 @@ impl CliBackend {
             _ => None,
         }
         .map(|b| oids(&b))
-        .unwrap_or_default();
+        .unwrap_or_else(|| squash.iter().map(|r| r.target).collect());
         let message = match operation {
             Some(Operation::Merge | Operation::CherryPick | Operation::Revert) => {
                 read("MERGE_MSG").map(|b| String::from_utf8_lossy(&b).into_owned())
             }
+            Some(Operation::Squash) => squash.as_ref().map(|r| r.message.clone()),
             _ => None,
         };
         let (mut onto, mut rebase_branch) = (None, None);
@@ -549,6 +583,7 @@ impl CliBackend {
             } else {
                 None
             },
+            squash,
         }
     }
 }

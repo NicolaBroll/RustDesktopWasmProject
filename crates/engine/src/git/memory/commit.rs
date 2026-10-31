@@ -158,9 +158,11 @@ impl MemoryBackend {
             }
         };
         self.commit_entries();
-        if merge_heads.is_some() || concluding {
+        if merge_heads.is_some() || concluding || self.operation == Some(Operation::Squash) {
+            // A squash is concluded by any commit (git removes `SQUASH_MSG`).
             self.operation = None;
             self.merge_state = None;
+            self.squash_state = None;
         }
         Ok(CommitOutcome {
             commit,

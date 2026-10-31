@@ -35,3 +35,9 @@ engine-merge-target-missing = dopo il merge `{ $full }` ({ $after }) non contien
 engine-merge-abort-head-moved = dopo l'annullamento HEAD non è più { $head }: un hook o un altro processo l'ha spostata
 engine-merge-unexpected-result = il branch è a { $after } ma non è il risultato atteso del merge (un hook o un altro processo l'ha spostato?): l'operazione non entra nel diario, il branch com'era è in `{ $backup }`
 engine-merge-head-moved-after = dopo il merge HEAD non è più su `{ $full }`: un hook o un altro processo l'ha cambiata; controllare HEAD prima di continuare
+# Merge squash (`merge.start` con `squash`, S58).
+engine-merge-squash-with-ff = `squash` non si può combinare con `no_ff` o `ff_only`
+engine-merge-squash-record-not-written = non è stato possibile salvare il record dello squash nella cartella di git ({ $error }), niente modificato
+engine-merge-squash-moved = `git merge --squash` è terminato ma HEAD non è più su `{ $full }` a { $expected } ({ $text }): controllare indice e worktree; il branch com'era è in `{ $backup }`
+engine-merge-squash-empty = le modifiche di { $source } sono già in `{ $branch }`: niente da committare, niente modificato
+engine-merge-squash-commit-failed = lo squash è in stage ma il commit non è riuscito ({ $error }): resta in corso, concluderlo con `merge.continue` o annullarlo con `merge.abort`

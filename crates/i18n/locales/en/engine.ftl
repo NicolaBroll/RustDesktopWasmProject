@@ -86,6 +86,7 @@ engine-operation-in-progress = { $operation ->
     [cherry-pick] a cherry-pick
     [revert] a revert
     [bisect] a bisect
+    [squash] a squash merge
    *[am] a `git am`
 } is in progress: `{ $command }` { $what } in the middle of the operation, nothing changed. Finish or abort the operation and try again
 engine-busy-checkout = would switch branch
@@ -122,6 +123,7 @@ engine-op-cherry-pick = a cherry-pick
 engine-op-revert = a revert
 engine-op-bisect = a bisect
 engine-op-am = a `git am`
+engine-op-squash = a squash merge
 # Opening the repository (`repo.open`).
 engine-open-empty-path = empty path
 engine-open-bare = it is a bare repository, without a working tree: not supported

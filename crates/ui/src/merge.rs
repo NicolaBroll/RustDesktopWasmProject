@@ -195,6 +195,7 @@ pub fn operation_name(operation: Operation) -> &'static str {
         Operation::Revert => "Revert",
         Operation::Bisect => "Bisect",
         Operation::Am => "`git am`",
+        Operation::Squash => "Squash",
     }
 }
 
@@ -207,6 +208,7 @@ pub fn terminal_hint(operation: Operation) -> String {
         Operation::Revert => tr!("merge-terminal-revert"),
         Operation::Bisect => tr!("merge-terminal-bisect"),
         Operation::Am => tr!("merge-terminal-am"),
+        Operation::Squash => tr!("merge-terminal-squash"),
     }
 }
 
@@ -494,6 +496,7 @@ impl MergeBox {
             rev,
             no_ff,
             ff_only: false,
+            squash: false,
             message: None,
         });
         let label = tr!("merge-start-label", what = &what, into = &into);
@@ -893,7 +896,7 @@ fn start_notice(r: &MergeStartResult, starting: &Starting) -> String {
             name = name,
             id = id
         ),
-        MergeApplied::Merge => tr!(
+        MergeApplied::Merge | MergeApplied::Squash => tr!(
             "merge-merged",
             name = name,
             branch = branch,

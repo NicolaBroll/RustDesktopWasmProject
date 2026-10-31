@@ -230,6 +230,11 @@ pub enum Operation {
     Bisect,
     /// `git am` stopped halfway (`.git/rebase-apply/applying`). Added after the others.
     Am,
+    /// A squash merge started by the app (`merge.start` with `squash`) and stopped (conflicts,
+    /// a hook that rejected the commit). Git itself has no state for it (no `MERGE_HEAD`): the
+    /// engine keeps a record in the git folder, valid while HEAD is where the squash started
+    /// and `SQUASH_MSG` exists. Concluded with `merge.continue`, aborted with `merge.abort`.
+    Squash,
 }
 
 /// A file in the repo state.

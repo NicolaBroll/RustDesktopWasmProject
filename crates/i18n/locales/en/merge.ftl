@@ -4,6 +4,7 @@
 merge-noun-merge-commit = merge commit
 merge-noun-commit = commit
 merge-terminal-merge = Finish it from the terminal: `git merge --continue` or `git merge --abort`
+merge-terminal-squash = Finish it from the terminal: `git commit` or `git reset --merge`
 merge-terminal-rebase = Finish it from the terminal: `git rebase --continue` or `git rebase --abort`
 merge-terminal-cherry-pick = Finish it from the terminal: `git cherry-pick --continue` or `git cherry-pick --abort`
 merge-terminal-revert = Finish it from the terminal: `git revert --continue` or `git revert --abort`

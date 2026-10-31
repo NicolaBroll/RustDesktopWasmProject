@@ -358,11 +358,18 @@ impl Git {
         } else {
             Stdout::Discard
         };
-        let bridge = self.askpass.as_ref().and_then(|askpass| {
+        // The user's own askpass is never overridden: git keeps `GIT_ASKPASS`/`core.askPass`,
+        // ssh keeps `SSH_ASKPASS`; a side already served is not bridged.
+        let bridged = self.askpass.as_ref().and_then(|askpass| {
+            let git_side = !self.env_set("GIT_ASKPASS") && !self.askpass_configured(dir);
+            let ssh_side = !self.env_set("SSH_ASKPASS");
+            if !git_side && !ssh_side {
+                return None;
+            }
             let bridge = Bridge::start(askpass.prompter.clone(), Some(remote.to_owned())).ok()?;
-            Some((askpass, bridge))
+            Some((askpass, bridge, git_side, ssh_side))
         });
-        let Some((askpass, bridge)) = bridge else {
+        let Some((askpass, bridge, git_side, ssh_side)) = bridged else {
             return self.stream(
                 self.command(Some(dir), args, &[]),
                 stdout,
@@ -370,17 +377,33 @@ impl Git {
                 cancelled,
             );
         };
-        let env = [
-            ("GIT_ASKPASS", askpass.program.clone()),
-            ("SSH_ASKPASS", askpass.program.clone()),
-            ("SSH_ASKPASS_REQUIRE", "force".into()),
-            (ASKPASS_ENV, bridge.env_value().into()),
-        ];
+        let mut env = vec![(ASKPASS_ENV, OsString::from(bridge.env_value()))];
+        if git_side {
+            env.push(("GIT_ASKPASS", askpass.program.clone()));
+        }
+        if ssh_side {
+            env.push(("SSH_ASKPASS", askpass.program.clone()));
+            env.push(("SSH_ASKPASS_REQUIRE", "force".into()));
+        }
         let mut cmd = self.command(Some(dir), args, &[]);
         cmd.envs(env);
         let mut streamed = self.stream(cmd, stdout, on_segment, cancelled)?;
         streamed.auth_cancelled = bridge.cancelled() && !streamed.status.success();
         Ok(streamed)
+    }
+
+    /// Whether `key` is set, not empty, for git: added with [`Git::set_env`] or inherited.
+    fn env_set(&self, key: &str) -> bool {
+        match self.env.iter().rev().find(|(k, _)| k == key) {
+            Some((_, value)) => !value.is_empty(),
+            None => std::env::var_os(key).is_some_and(|v| !v.is_empty()),
+        }
+    }
+
+    /// Whether `core.askPass` is configured, not empty, in any scope for the repo in `dir`.
+    fn askpass_configured(&self, dir: &Path) -> bool {
+        self.output(Some(dir), &["config", "--get", "core.askPass"])
+            .is_ok_and(|out| out.status.success() && !out.stdout.trim_ascii().is_empty())
     }
 
     /// A slow read (`git blame`, `git log` of one file) that can be cancelled: like

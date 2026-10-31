@@ -272,7 +272,11 @@ input without a new dependency).
   the app's executable (`current_exe`), `SSH_ASKPASS_REQUIRE=force` (ssh uses it even without
   a display) and `PROJECT_ASKPASS=<port>:<token>`; `GIT_TERMINAL_PROMPT=0` stays (git tries
   askpass first, then gives up). An inherited `PROJECT_ASKPASS` is removed from every other git
-  run. Credential helpers still come first: git asks only what they do not give.
+  run. **The user's askpass is never overridden**: if `GIT_ASKPASS` is set (environment or opener)
+  or `core.askPass` is configured in any scope (`git config --get core.askPass`, read once per
+  network command), `GIT_ASKPASS` is not set and git keeps using theirs; if `SSH_ASKPASS` is set,
+  neither `SSH_ASKPASS` nor `SSH_ASKPASS_REQUIRE`. A side already served is not bridged; with
+  both served there is no listener at all. Credential helpers still come first: git asks only what they do not give.
 - **Client**: both apps call `project_git::askpass_client()` first thing in `main`: with
   `PROJECT_ASKPASS` set and exactly one argument (the prompt) the process connects, sends
   `<token>\n<prompt>`, prints the answer and a newline on stdout and exits 0, or exits 1 on

@@ -34,6 +34,8 @@ fn main() {
             "without_prompter_nothing_is_asked",
             without_prompter_nothing_is_asked,
         ),
+        ("env_askpass_is_kept", env_askpass_is_kept),
+        ("config_askpass_is_kept", config_askpass_is_kept),
     ];
     for (name, test) in tests {
         if !filter.is_empty() && !filter.iter().any(|f| name.contains(f.as_str())) {
@@ -277,4 +279,33 @@ fn without_prompter_nothing_is_asked() {
         .unwrap_err();
     assert!(matches!(&err, EngineError::Auth { .. }), "{err}");
     assert!(server.authorizations().is_empty());
+}
+
+/// An askpass the user set in `GIT_ASKPASS` stays: git runs it (here a program that does not
+/// exist, so git fails with `Auth`), our prompter is never called.
+fn env_askpass_is_kept() {
+    let server = AuthServer::start();
+    let prompter = TestPrompter::new(Some("ada"), Some("pw"));
+    let opener = with_prompter(&prompter).env("GIT_ASKPASS", "/nonexistent/user-askpass");
+    let (_repo, r, mut s) = open(&server, opener);
+    let err = r
+        .run("remote.fetch", &mut s, json!({ "remote": "origin" }))
+        .unwrap_err();
+    assert!(matches!(&err, EngineError::Auth { .. }), "{err}");
+    assert!(err.to_string().contains("user-askpass"), "{err}");
+    assert!(prompter.asked().is_empty());
+}
+
+/// Likewise an askpass configured in `core.askPass`.
+fn config_askpass_is_kept() {
+    let server = AuthServer::start();
+    let prompter = TestPrompter::new(Some("ada"), Some("pw"));
+    let (repo, r, mut s) = open(&server, with_prompter(&prompter));
+    repo.git(&["config", "core.askPass", "/nonexistent/config-askpass"]);
+    let err = r
+        .run("remote.fetch", &mut s, json!({ "remote": "origin" }))
+        .unwrap_err();
+    assert!(matches!(&err, EngineError::Auth { .. }), "{err}");
+    assert!(err.to_string().contains("config-askpass"), "{err}");
+    assert!(prompter.asked().is_empty());
 }

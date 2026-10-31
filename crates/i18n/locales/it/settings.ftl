@@ -24,3 +24,5 @@ settings-scale-hint = Anche { $larger } e { $smaller }; { $reset } torna al 100%
 settings-dates = Date nell'elenco dei commit
 settings-dates-absolute = Data e ora
 settings-dates-relative = Relative (“3 h fa”)
+settings-ask-detach = Chiedi prima di fare il checkout di un commit (HEAD staccata)
+settings-ask-detach-hint = “Checkout di questo commit” spiega prima che non sarai su nessun branch.

@@ -23,6 +23,7 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
             }
             Dialog::Refused(refused) => refused_dialog(ui, refused, actions),
             Dialog::Upstream(dialog) => upstream_dialog(ui, dialog, actions),
+            Dialog::Detach(dialog) => detach_dialog(ui, dialog, actions),
         }
     });
     if modal.should_close() {
@@ -32,7 +33,9 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
 
 pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mut Vec<Action>) {
     let (title, button) = match &dialog.kind {
-        NameKind::Create(_) => (tr!("branch-new-title"), tr!("branch-create-button")),
+        NameKind::Create(_) | NameKind::Here(_) => {
+            (tr!("branch-new-title"), tr!("branch-create-button"))
+        }
         NameKind::Rename(_) => (tr!("branch-rename-title"), tr!("branch-rename-button")),
         NameKind::Tag(_) => (tr!("branch-tag-title"), tr!("branch-tag-button")),
     };
@@ -45,6 +48,9 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
                 start = &start.label,
                 id = start.target.short()
             ));
+        }
+        NameKind::Here(id) => {
+            ui.add(egui::Label::new(tr!("branch-here-text", id = id.short())).wrap());
         }
         NameKind::Rename(old) => {
             ui.label(tr!("branch-rename-text", name = old));
@@ -219,6 +225,40 @@ pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &m
     if ui.button(tr!("branch-close")).clicked() {
         actions.push(Action::Branch(branch::Action::CloseDialog));
     }
+}
+
+/// The confirmation of "Check out this commit": what a detached HEAD means, "Don't ask again".
+pub(super) fn detach_dialog(
+    ui: &mut Ui,
+    dialog: &crate::detach::DetachDialog,
+    actions: &mut Vec<Action>,
+) {
+    ui.heading(tr!("detach-heading", id = dialog.id.short()));
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(tr!("detach-text")).wrap());
+    ui.add_space(6.0);
+    let mut dont_ask = dialog.dont_ask;
+    if ui
+        .checkbox(&mut dont_ask, tr!("detach-dont-ask"))
+        .on_hover_text(tr!("detach-dont-ask-hint"))
+        .changed()
+    {
+        actions.push(Action::Branch(branch::Action::DetachDontAsk(dont_ask)));
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        if ui.button(tr!("detach-button")).clicked() {
+            if dialog.dont_ask {
+                actions.push(Action::Settings(crate::settings::Action::Change(
+                    crate::settings::Change::SkipDetachConfirm(true),
+                )));
+            }
+            actions.push(Action::Branch(branch::Action::ConfirmCheckoutCommit));
+        }
+        if ui.button(tr!("confirm-cancel")).clicked() {
+            actions.push(Action::Branch(branch::Action::CloseDialog));
+        }
+    });
 }
 
 /// Maximum height of the remote branch list of the "Set upstream" window; beyond it scrolls.

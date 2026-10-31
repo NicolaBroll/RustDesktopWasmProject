@@ -22,7 +22,7 @@
 
 use super::CliBackend;
 use crate::command::failure;
-use project_domain::{EntryKind, Oid, RepoPath};
+use project_domain::{EntryKind, Head, Oid, RepoPath};
 use project_engine::Message;
 use project_engine::{
     BranchDeleted, ConfigEntry, EngineError, HEADS_PREFIX, HeadState, RestoreOutcome, branch_ref,
@@ -30,6 +30,13 @@ use project_engine::{
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// The detached HEAD saved by [`CliBackend::save_detached_head`] before a checkout.
+struct SavedHead {
+    commit: Oid,
+    backup: String,
+    warning: Message,
+}
 
 impl CliBackend {
     /// `git check-ref-format --branch <name>` must accept `name` and return it identical (with
@@ -211,6 +218,8 @@ impl CliBackend {
             }
         };
         self.check_assume_unchanged(&status.head.target(), &oid)?;
+        // A detached HEAD on commits that no ref keeps: saved before leaving it.
+        let saved = self.save_detached_head(&status.head, target)?;
 
         let mut args = vec![
             "-c",
@@ -223,7 +232,10 @@ impl CliBackend {
             args.push("--detach");
         }
         args.extend(["--end-of-options", &label]);
-        let out = self.git.output(Some(&self.workdir), &args)?;
+        let out = match self.git.output(Some(&self.workdir), &args) {
+            Ok(out) => out,
+            Err(e) => return Err(self.checkout_failed(saved.as_ref(), e)),
+        };
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
             // Git lists the files with a tab in front: local changes or untracked files that the
@@ -240,15 +252,23 @@ impl CliBackend {
                     .filter_map(|l| l.strip_prefix('\t'))
                     .map(str::to_owned)
                     .collect();
-                return Err(EngineError::CheckoutConflict {
-                    target: label,
-                    files,
-                    stderr: stderr.trim().to_owned(),
-                });
+                return Err(self.checkout_failed(
+                    saved.as_ref(),
+                    EngineError::CheckoutConflict {
+                        target: label,
+                        files,
+                        stderr: stderr.trim().to_owned(),
+                    },
+                ));
             }
-            return Err(failure(&args, &out));
+            return Err(self.checkout_failed(saved.as_ref(), failure(&args, &out)));
         }
         let mut warnings = Vec::new();
+        let mut backups = Vec::new();
+        if let Some(saved) = saved {
+            warnings.push(saved.warning);
+            backups.push(saved.backup);
+        }
         match self.head_state() {
             Ok(head) if head == *target => {}
             Ok(head) => warnings.push(msg!(
@@ -258,10 +278,106 @@ impl CliBackend {
             )),
             Err(e) => warnings.push(msg!("engine-branch-checkout-head-unreadable", error = e)),
         }
-        Ok(RestoreOutcome {
-            backups: Vec::new(),
-            warnings,
-        })
+        Ok(RestoreOutcome { backups, warnings })
+    }
+
+    /// If HEAD is detached at a commit that is not `target` and that no branch, tag or
+    /// remote-tracking branch reaches (`rev-list --count <head> --not --branches --tags
+    /// --remotes`, without replace objects), saves it in a new
+    /// `refs/project/backup/detached-...` before the checkout; an error if the backup cannot be
+    /// made (the checkout is then not run) or if HEAD moved meanwhile.
+    fn save_detached_head(
+        &self,
+        head: &Head,
+        target: &HeadState,
+    ) -> Result<Option<SavedHead>, EngineError> {
+        let Head::Detached(commit) = head else {
+            return Ok(None);
+        };
+        if *target == HeadState::Detached(*commit) {
+            return Ok(None);
+        }
+        let oid = commit.to_string();
+        let args = [
+            "--no-replace-objects",
+            "rev-list",
+            "--count",
+            "--not",
+            "--branches",
+            "--tags",
+            "--remotes",
+            "--not",
+            "--end-of-options",
+            &oid,
+        ];
+        let out = self.run(&args)?;
+        let text = String::from_utf8_lossy(&out);
+        let count: usize = text
+            .trim()
+            .parse()
+            .map_err(|_| EngineError::GitWithReason {
+                command: "rev-list".to_owned(),
+                reason: msg!("engine-git-unexpected-output", output = text.trim()),
+            })?;
+        if count == 0 {
+            return Ok(None);
+        }
+        let backup = self.create_backup_ref(
+            "detached",
+            &oid,
+            &format!("project: backup of detached HEAD {oid} before checkout of {target}"),
+        )?;
+        // Another process may have committed on the detached HEAD in the meantime: that commit
+        // would be in no backup.
+        match self.head_state() {
+            Ok(HeadState::Detached(now)) if now == *commit => {}
+            now => {
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-branch-detached-moved",
+                    commit = commit.short(),
+                    now = now.map_or_else(|e| e.to_string(), |h| h.to_string()),
+                    backup = backup
+                )));
+            }
+        }
+        Ok(Some(SavedHead {
+            warning: msg!(
+                "engine-branch-detached-saved",
+                commit = commit.short(),
+                count = count,
+                backup = backup
+            ),
+            commit: *commit,
+            backup,
+        }))
+    }
+
+    /// The error of a failed checkout. The backup of the detached HEAD is removed only if HEAD
+    /// is still detached at that commit (nothing was left); otherwise it stays and the error
+    /// names it.
+    fn checkout_failed(&self, saved: Option<&SavedHead>, error: EngineError) -> EngineError {
+        let Some(saved) = saved else {
+            return error;
+        };
+        if matches!(self.head_state(), Ok(HeadState::Detached(now)) if now == saved.commit) {
+            let oid = saved.commit.to_string();
+            let _ = self.git.output(
+                Some(&self.workdir),
+                &["update-ref", "-d", &saved.backup, &oid],
+            );
+            return error;
+        }
+        EngineError::GitWithReason {
+            command: "switch".to_owned(),
+            reason: msg!(
+                "engine-note-newline",
+                text = error.to_string(),
+                note = msg!(
+                    "engine-branch-detached-kept",
+                    backup = saved.backup.as_str()
+                )
+            ),
+        }
     }
 
     /// Git does not check `--assume-unchanged` files (lowercase letter in `ls-files -v`): a

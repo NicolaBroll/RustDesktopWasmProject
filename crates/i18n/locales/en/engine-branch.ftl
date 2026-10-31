@@ -38,3 +38,13 @@ engine-branch-track-no-start = `track` needs `start`: the remote branch to follo
 engine-branch-track-ambiguous = `{ $start }` is also `{ $other }`, which git would take first: give the remote branch in full (`refs/remotes/{ $start }`)
 engine-branch-track-rolled-back = the upstream of `{ $name }` could not be written ({ $error }): the branch just created was deleted again, nothing changed
 engine-branch-track-not-rolled-back = the upstream of `{ $name }` could not be written ({ $error }) and the branch just created could not be deleted again ({ $rollback }): the branch exists without upstream
+engine-branch-detached-saved = HEAD was detached at { $commit }, with { $count ->
+    [one] 1 commit
+   *[other] { $count } commits
+} on no branch, tag or remote branch: saved in `{ $backup }` before the checkout. Create a branch there (`branch.create` with `start`) to keep { $count ->
+    [one] it
+   *[other] them
+}
+engine-branch-detached-moved = HEAD moved while the checkout was saving the detached commit { $commit } (now { $now }): nothing switched, the backup `{ $backup }` stays; try again
+engine-branch-detached-kept = the detached commit HEAD was on is saved in `{ $backup }`
+engine-branch-checkout-empty-rev = `rev` is empty

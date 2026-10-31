@@ -290,6 +290,8 @@ pub(crate) struct Settings {
     pub scale: Scale,
     /// The dates of the commit list.
     pub dates: DateFormat,
+    /// "Don't ask again" in the confirmation of "Check out this commit" (detached HEAD).
+    pub skip_detach_confirm: bool,
 }
 
 /// One setting changed, from the window, the theme menu or the diff view.
@@ -301,6 +303,8 @@ pub(crate) enum Change {
     FetchInterval(FetchInterval),
     Scale(Scale),
     Dates(DateFormat),
+    /// Check out a commit without the detached HEAD confirmation.
+    SkipDetachConfirm(bool),
 }
 
 impl Settings {
@@ -320,6 +324,7 @@ impl Settings {
             fetch_minutes: FetchInterval::default(),
             scale: Scale::default(),
             dates: DateFormat::default(),
+            skip_detach_confirm: false,
         }
     }
 
@@ -331,6 +336,7 @@ impl Settings {
             Change::FetchInterval(interval) => self.fetch_minutes = interval,
             Change::Scale(scale) => self.scale = scale,
             Change::Dates(dates) => self.dates = dates,
+            Change::SkipDetachConfirm(skip) => self.skip_detach_confirm = skip,
         }
     }
 
@@ -379,11 +385,12 @@ mod tests {
             fetch_minutes: FetchInterval::Fifteen,
             scale: Scale(120),
             dates: DateFormat::Relative,
+            skip_detach_confirm: true,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(
             json,
-            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15,"scale":120,"dates":"relative"}"#
+            r#"{"theme":"dark","language":"it","diff_split":true,"fetch_minutes":15,"scale":120,"dates":"relative","skip_detach_confirm":true}"#
         );
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
     }

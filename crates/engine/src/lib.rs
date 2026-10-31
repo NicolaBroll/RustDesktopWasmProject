@@ -18,7 +18,7 @@ mod session;
 pub use builtin::branch::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
     BranchDeleteParams, BranchDeleteResult, BranchRenameParams, BranchRenameResult,
-    BranchSetUpstreamParams, BranchSetUpstreamResult,
+    BranchSetUpstreamParams, BranchSetUpstreamResult, CommitCheckoutParams, CommitCheckoutResult,
 };
 pub use builtin::clone::RepoCloneResult;
 pub use builtin::commit::CommitCreateResult;

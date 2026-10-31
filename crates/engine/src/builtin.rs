@@ -233,6 +233,13 @@ impl Registry {
             branch::branch_checkout,
         );
         self.add(
+            "commit.checkout",
+            "Check out a commit (detached HEAD)",
+            r#"{"rev": string}"#,
+            Write,
+            branch::commit_checkout,
+        );
+        self.add(
             "branch.delete",
             "Delete a branch",
             r#"{"name": string, "confirm"?: bool (unmerged branch), "expected"?: full oid (the branch must point there)}"#,
@@ -961,6 +968,7 @@ mod tests {
                 "branch.set_upstream",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
+                "commit.checkout",
                 "commit.cherry_pick",
                 "commit.create",
                 "commit.revert",
@@ -1031,6 +1039,7 @@ mod tests {
                 "branch.set_upstream",
                 "cherry_pick.abort",
                 "cherry_pick.continue",
+                "commit.checkout",
                 "commit.cherry_pick",
                 "commit.create",
                 "commit.revert",

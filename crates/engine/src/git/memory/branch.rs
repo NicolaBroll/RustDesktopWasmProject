@@ -10,7 +10,7 @@
 //! rename and disappears with the deletion, like the `branch.<name>` section in git.
 
 use super::write::TreeEntry;
-use super::{HEADS, HeadRef, MemoryBackend, REMOTES};
+use super::{HEADS, HeadRef, MemoryBackend, REMOTES, TAGS};
 use crate::git::{
     BACKUP_PREFIX, BranchDeleted, ConfigEntry, HeadState, RestoreOutcome, check_new_branch_name,
     check_new_tag_name, check_no_operation, tag_ref,
@@ -148,10 +148,41 @@ impl MemoryBackend {
                 stderr: String::new(),
             });
         }
+        // A detached HEAD on commits that no branch, tag or remote branch keeps: saved first.
+        let mut outcome = RestoreOutcome::default();
+        if let HeadRef::Detached(current) = self.head
+            && *target != HeadState::Detached(current)
+        {
+            let kept: BTreeSet<Oid> = self.reachable_from(
+                self.refs
+                    .iter()
+                    .filter(|(name, _)| [HEADS, TAGS, REMOTES].iter().any(|p| name.starts_with(p)))
+                    .map(|(_, entry)| entry.target),
+            );
+            let count = self.reachable(current).difference(&kept).count();
+            if count > 0 {
+                let prefix = format!("{BACKUP_PREFIX}detached-");
+                let n = self
+                    .commit_backups
+                    .iter()
+                    .filter(|(b, _)| b.starts_with(&prefix))
+                    .count()
+                    + 1;
+                let backup = format!("{prefix}{n}");
+                self.commit_backups.push((backup.clone(), current));
+                outcome.warnings.push(msg!(
+                    "engine-branch-detached-saved",
+                    commit = current.short(),
+                    count = count,
+                    backup = backup
+                ));
+                outcome.backups.push(backup);
+            }
+        }
         let index = self.switch_index(&differing, &new_tree);
         self.head = head;
         self.rebase_entries(&index);
-        Ok(RestoreOutcome::default())
+        Ok(outcome)
     }
 
     /// To bring HEAD (index and worktree) to the tree `new_tree`: the files that differ between HEAD and

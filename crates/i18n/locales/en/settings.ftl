@@ -24,3 +24,5 @@ settings-scale-hint = Also { $larger } and { $smaller }; { $reset } goes back to
 settings-dates = Dates in the commit list
 settings-dates-absolute = Date and time
 settings-dates-relative = Relative (“3 h ago”)
+settings-ask-detach = Ask before checking out a commit (detached HEAD)
+settings-ask-detach-hint = “Check out this commit” first explains that you will not be on a branch.

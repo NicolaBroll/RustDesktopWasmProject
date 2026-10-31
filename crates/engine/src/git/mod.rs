@@ -397,8 +397,15 @@ pub trait GitRefs {
     fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError>;
 
     /// Moves HEAD to `target` updating index and worktree (`git switch`): the local branch
-    /// (full name, must exist) or a commit with detached HEAD (for the undo of a checkout
-    /// made from detached HEAD). `branch.checkout` and its undo/redo.
+    /// (full name, must exist) or a commit with detached HEAD (`commit.checkout`, and the undo
+    /// of a checkout made from detached HEAD). `branch.checkout`, `commit.checkout` and their
+    /// undo/redo.
+    ///
+    /// **Commits left behind**: if HEAD is detached at a commit other than `target` that no
+    /// branch, tag or remote-tracking branch reaches, that commit is first saved in a new
+    /// `refs/project/backup/detached-...` (in `backups`, with a warning that gives the number of
+    /// commits and the backup); if the backup fails nothing is switched. After a failed switch
+    /// the backup is removed only if HEAD is still on that commit.
     ///
     /// **Never loses local changes**: never `--force`, `--discard-changes` or `--merge`.
     /// Changes that do not touch the files that differ between HEAD and `target` stay (as in git);

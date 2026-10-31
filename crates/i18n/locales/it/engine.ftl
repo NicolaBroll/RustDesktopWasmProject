@@ -146,3 +146,4 @@ engine-blame-binary = `{ $path }` è un file binario: il blame funziona solo sui
 engine-commit-graph-disabled = `core.commitGraph` è `false`: git non leggerebbe il commit-graph, niente scritto
 engine-commit-graph-shallow = Repository shallow: qui git non scrive né legge il commit-graph, niente scritto
 engine-commit-graph-replaced = Replace ref (refs/replace) o graft: qui git non scrive né legge il commit-graph, niente scritto
+engine-busy-upstream = cambierebbe l'upstream di un branch

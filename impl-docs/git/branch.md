@@ -8,14 +8,42 @@ undo and backup of this function. "§n" always refers to the main document.
 
 ### `branch.create`
 
-Parameters: `{"name", "start"?}`.
+Parameters: `{"name", "start"?, "track"?}`.
 
 Creates `refs/heads/<name>` at `start` (a rev; HEAD if missing, `NotAllowed` error if HEAD has no
-commits) without switching branch and without upstream; never over an existing ref (`NotAllowed`). New name
+commits) without switching branch and, without `track`, without upstream; never over an existing ref (`NotAllowed`). New name
 checked (`check_new_branch_name` and, in the `CliBackend`, `git check-ref-format --branch`, which
 must return the identical name): no leading `-`, `HEAD`, `@`, full `refs/...` names →
-`InvalidParams`. Result: `{"branch", "target", "refs", "can_undo", "can_redo", "next_undo",
-"next_redo"}` (see "Undo and backup" for all `branch.*`).
+`InvalidParams`. Result: `{"branch", "target", "upstream", "warnings", "refs", "can_undo",
+"can_redo", "next_undo", "next_redo"}` (see "Undo and backup" for all `branch.*`).
+
+`"track": true` (like `git branch --track`): `start` is required and must be a remote-tracking
+branch `<remote>/<branch>` (or `refs/remotes/<remote>/<branch>`) of a configured remote
+(`resolve_tracking`), otherwise `InvalidParams`: a local branch, a tag, HEAD, an id, `origin/HEAD`
+(symbolic), a ref of no configured remote. The branch starts at the commit of that ref (read from
+`repo.refs`, not resolved as a rev). A short `start` that git would resolve first to
+`refs/tags/<start>` or `refs/heads/<start>` is ambiguous → `InvalidParams` (the full name works). A
+remote whose name contains `/` is recognized; a ref that two configured remotes could own (`a` and
+`a/b` for `a/b/c`) → `InvalidParams` (git refuses it too). After the ref, `branch.<name>.remote =
+<remote>` and `branch.<name>.merge = refs/heads/<branch>` (`GitRefs::write_upstream`); if that
+write fails the new ref is deleted again (`restore_refs` with the expected value) and the error
+says so (or that the deletion failed too): nothing half-done, nothing in the journal. `upstream`
+in the result: `"<remote>/<branch>"`, `null` without `track`.
+
+### `branch.set_upstream`
+
+Parameters: `{"name", "upstream": "<remote>/<branch>" | null}` (`upstream` **required**: a missing
+field is `InvalidParams`, so a forgotten parameter never removes the upstream; `""` too).
+
+Sets (or with `null` removes) the upstream of the existing local branch `name` (any valid ref
+name, also `-x`; missing → `NotAllowed`). `upstream` is checked as for `track` (existing
+remote-tracking branch of exactly one configured remote). Only `branch.<name>.remote` and
+`branch.<name>.merge` of the repo file are written (`--local`); other keys (`description`,
+`rebase`, `pushRemote`...) stay. Allowed with detached HEAD and during an operation (it touches no
+refs, index or worktree). Same value as now → `changed: false`, nothing written, nothing in the
+journal. Result: `{"branch", "upstream", "previous", "changed", "warnings", "refs", ...journal}`
+(`previous`: the upstream of the repo file before, `"<remote>/<branch>"`, `"<remote>:<merge>"` if
+`merge` is not a branch, or `null`).
 
 ### `branch.checkout`
 
@@ -110,6 +138,23 @@ branch called `--force` or `-d` never becomes an option (tests with such names).
   `--no-deref`. No upstream (`branch.autoSetupMerge` does not apply). Journal
   entry: the branch from absent to `<id>`; undo = deletion with the expected value, redo =
   creation only if still absent. No backup: the commit already existed.
+- **Upstream** (`branch.create` with `track`, `branch.set_upstream`): `GitRead::local_upstream`
+  reads `git config --local -z --get-regexp '^branch\.<escaped name>\.(remote|merge)$'` (file
+  order; a non-UTF-8 value → `NotAllowed`). `GitRefs::write_upstream(name, expected, entries)`
+  re-reads and refuses (`NotAllowed`) if the entries are no longer `expected`, then per key
+  `git config --local --replace-all --end-of-options <key> <value>` (one value; a single
+  rewrite of the file under `config.lock`) or `--unset-all` (none; code 5 = nothing to remove);
+  if one write fails it writes `expected` back and the error says whether it could. Afterwards a
+  re-read: a different value (another process) goes in `warnings`. The configuration has no
+  compare-and-swap like `update-ref`: between the re-read and the write there is a small window,
+  covered by the re-read afterwards. The journal entry carries `upstream: {"branch", "before",
+  "after"}` (`[{"key", "value"}]`, like `branch_config`, but only the two keys, so other entries
+  of the section are never removed). `branch.create` with `track`: undo = deletion of the ref as
+  above, then `before` written back only if the repo still has `after` (otherwise a warning: the
+  ref has already moved, as for `branch_config`); redo = ref recreated, then `after` only if the
+  repo still has `before`. `branch.set_upstream`: no refs in the entry; undo/redo refused
+  (`UndoConflict`, nothing changes, the entry stays) if the branch no longer exists or its upstream
+  is no longer the one the command (or the undo) left, and during an operation in progress.
 - **`branch.checkout`**: `git -c core.fsmonitor=false switch --no-guess --no-overwrite-ignore
   --end-of-options <name>` (with detached HEAD `--detach <id>`, only for the undo). Never `--force`,
   `--discard-changes`, `--merge`. Git checks before writing: a modified file (staged

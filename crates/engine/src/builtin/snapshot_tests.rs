@@ -446,6 +446,20 @@ fn branch_and_tag_writes() {
     snap(
         &r,
         &mut s,
+        "branch.create",
+        "track",
+        json!({ "name": "graph", "start": "origin/feature/graph", "track": true }),
+    );
+    snap(
+        &r,
+        &mut s,
+        "branch.set_upstream",
+        "",
+        json!({ "name": "topic", "upstream": "origin/main" }),
+    );
+    snap(
+        &r,
+        &mut s,
         "branch.rename",
         "",
         json!({ "name": "old", "new_name": "older" }),

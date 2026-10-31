@@ -41,6 +41,10 @@ cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message
 # delete a local tag: always "confirm":true; the value (tag object or commit) goes to refs/project/backup/tag-delete-..., edit.undo puts it back
 cargo run -p project-cli -- --repo . run --cmd 'tag.delete={"name":"v9","confirm":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","new_name":"test2"}' --cmd 'branch.delete={"name":"test2"}'
+# a local branch that follows a remote branch (start must be <remote>/<branch>), and the upstream of
+# an existing branch set / removed (null); edit.undo puts the previous upstream back
+cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"feature","start":"origin/feature","track":true}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'branch.set_upstream={"name":"dev","upstream":"origin/dev"}' --cmd 'branch.set_upstream={"name":"dev","upstream":null}' --cmd edit.undo
 # reset of the current branch: soft (ref only), mixed (also the index), hard (also the worktree);
 # the preview lists the files a hard would overwrite; a hard with local changes needs "confirm":true
 # (and "expected": the HEAD id from the preview), saves them in refs/project/backup/reset-...

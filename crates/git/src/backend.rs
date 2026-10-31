@@ -1201,6 +1201,10 @@ impl GitRead for CliBackend {
             _ => Err(failure(&args, &out)),
         }
     }
+
+    fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
+        self.read_upstream_config(name)
+    }
 }
 
 impl GitIndex for CliBackend {
@@ -1433,6 +1437,15 @@ impl GitRefs for CliBackend {
         remove: bool,
     ) -> Vec<Message> {
         self.set_branch_config(name, entries, remove)
+    }
+
+    fn write_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError> {
+        self.replace_upstream_config(name, expected, entries)
     }
 
     fn reset(

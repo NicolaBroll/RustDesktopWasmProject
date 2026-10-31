@@ -132,6 +132,15 @@ configuration (if a new one has not appeared in the meantime; the reflog of the 
 restored), renames back, and returns to the previous branch (or commit) with another safe
 checkout; always only if nobody has touched those refs or HEAD in the meantime.
 
+`branch.create` with `"track": true` makes the new branch follow `start`, which must be a remote
+branch `<remote>/<branch>` of a configured remote (like `git branch --track`: it writes
+`branch.<name>.remote` and `branch.<name>.merge`; the result's `upstream` is `"<remote>/<branch>"`).
+`branch.set_upstream {"name", "upstream": "<remote>/<branch>" | null}` sets or removes the upstream of
+a local branch (only those two keys of the repo's own `.git/config`). Result: `{"branch",
+"upstream", "previous", "changed", "warnings", "refs"}`. Both go into the journal: the undo puts the
+previous upstream back (and deletes the tracking branch), only if the configuration has not been
+changed from outside in the meantime.
+
 `branch.reset {"target", "mode": "soft"|"mixed"|"hard", "confirm"?, "expected"?}` moves the current
 branch (or a detached HEAD) to `target` like `git reset`: `soft` only the ref, `mixed` also the index
 (staged versions that exist only there saved first in `refs/project/backup/index-...`), `hard` also the

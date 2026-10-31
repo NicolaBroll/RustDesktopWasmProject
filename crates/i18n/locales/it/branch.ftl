@@ -70,3 +70,25 @@ branch-tag-delete-heading = Eliminare il tag «{ $name }»?
 branch-tag-delete-text = Il tag viene eliminato solo qui: i remoti tengono la loro copia (per quello c'è «Elimina dal remoto…»).
 branch-tag-delete-backup = Prima di eliminarlo, il tag viene salvato in un backup (refs/project/backup/tag-delete-…), con messaggio e autore se è annotato: «Annulla» nella barra in alto lo ricrea sullo stesso valore, finché l'app resta aperta.
 branch-tag-delete-button = Elimina il tag
+
+# Branch che seguono un remoto e upstream (tracking.rs).
+branch-created-tracking = Branch «{ $branch }» creato su { $id }, segue { $upstream }. «Annulla» lo elimina con il suo upstream
+branch-track-label = Creazione di «{ $name }» che segue { $upstream }
+branch-track-failed = Impossibile creare il branch locale «{ $name }»: { $error }
+branch-track-name-taken = Esiste già un branch locale «{ $name }» che non segue questo branch remoto: scegli un altro nome.
+branch-track-checkbox = Segui { $upstream }
+branch-track-hint = Lo imposta come upstream del nuovo branch: Pull e Push lo usano e il branch mostra avanti/indietro
+branch-upstream-label = Impostazione dell'upstream di «{ $name }» a { $upstream }
+branch-upstream-unset-label = Rimozione dell'upstream di «{ $name }»
+branch-upstream-unset-failed = Impossibile rimuovere l'upstream di «{ $name }»: { $error }
+branch-upstream-set = «{ $branch }» ora segue { $upstream }. «Annulla» ripristina l'upstream precedente
+branch-upstream-unset = «{ $branch }» non segue più { $previous }. «Annulla» lo ripristina
+branch-upstream-unchanged = L'upstream di «{ $branch }» non è cambiato
+branch-upstream-title = Upstream di «{ $name }»
+branch-upstream-text-current = Ora segue { $upstream }. Scegli il branch remoto che Pull e Push devono usare.
+branch-upstream-text-none = Non ha upstream. Scegli il branch remoto che Pull e Push devono usare.
+branch-upstream-filter-hint = Filtra i branch remoti
+branch-upstream-no-remote-branches = Nessun branch remoto: aggiungi un remoto e fai fetch prima.
+branch-upstream-no-match = Nessun branch remoto corrisponde al filtro.
+branch-upstream-current-mark = { $upstream } (attuale)
+branch-upstream-button = Imposta upstream

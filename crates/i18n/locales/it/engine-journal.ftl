@@ -36,3 +36,6 @@ engine-journal-remote-remove = Rimuovi remoto `{ $name }` ({ $n } branch remoti{
 })
 engine-journal-stash-push = Metti da parte le modifiche (stash { $id } «{ $message }»)
 engine-journal-stash-drop = Elimina { $name } ({ $id } «{ $message }»)
+engine-journal-branch-create-track = Crea branch `{ $name }` su { $id } che segue `{ $upstream }`
+engine-journal-upstream-set = Imposta l'upstream di `{ $name }` a `{ $upstream }`
+engine-journal-upstream-unset = Togli l'upstream `{ $previous }` di `{ $name }`

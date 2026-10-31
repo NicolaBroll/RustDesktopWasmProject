@@ -42,8 +42,9 @@ pub use backup::{
     versions_at_risk_hidden,
 };
 pub use branch::{
-    BranchDeleted, ConfigEntry, HEADS_PREFIX, branch_ref, branch_short, check_branch_name,
-    check_new_branch_name, check_no_operation,
+    BranchDeleted, ConfigEntry, HEADS_PREFIX, TrackingBranch, UpstreamChange, branch_ref,
+    branch_short, check_branch_name, check_new_branch_name, check_no_operation, resolve_tracking,
+    upstream_label,
 };
 pub use clone::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
@@ -217,6 +218,12 @@ pub trait GitRead {
     /// no common history. With several best ones, the one git picks (the one `git diff a...b`
     /// uses). A read, for `diff.range` with `merge_base`.
     fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError>;
+
+    /// The `branch.<name>.remote` and `branch.<name>.merge` entries of the **repo file** only
+    /// (`git config --local`: no global configuration, no `include`), in file order: the upstream
+    /// that `branch.set_upstream` and `branch.create` with `track` replace. A non-UTF-8 value
+    /// gives [`EngineError::NotAllowed`] (it could not be written back). A read.
+    fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError>;
 }
 
 /// Index and worktree: stage, unstage, commit, discard and their restores. Part of
@@ -438,6 +445,21 @@ pub trait GitRefs {
         entries: &[ConfigEntry],
         remove: bool,
     ) -> Vec<Message>;
+
+    /// Replaces the upstream of the local branch `name` in the repo file
+    /// ([`GitRead::local_upstream`]) with `entries` (`branch.<name>.remote` / `.merge`; empty =
+    /// no upstream), **only if** it is still `expected`: otherwise [`EngineError::NotAllowed`]
+    /// and nothing changes. Only those two keys are touched (`git config --local`, one key at a
+    /// time); if a write fails midway the backend puts `expected` back and returns the error
+    /// (saying whether it could). Returns the warnings found re-reading afterwards (another
+    /// process wrote the configuration at the same time). `branch.set_upstream`,
+    /// `branch.create` with `track` and their undo/redo.
+    fn write_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError>;
 
     /// Undo and redo of a pull on the active branch: like [`GitRefs::restore_refs`] (a single ref,
     /// the branch of HEAD, from `expected` to `target`, with the same checks and the backups of

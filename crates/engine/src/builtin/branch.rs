@@ -534,7 +534,7 @@ pub(super) fn branch_checkout(
 /// `branch.checkout`: never forced ([`EngineError::CheckoutConflict`] if a local change would
 /// be overwritten, nothing changes), refused ([`EngineError::NotAllowed`]) during an operation
 /// in progress and with conflicted files. A `rev` that exists but is not a commit (tree, blob)
-/// → [`EngineError::InvalidParams`]; one that does not exist → [`EngineError::UnknownRev`].
+/// → [`EngineError::InvalidParams`], and so does one that does not exist.
 /// HEAD already detached at that commit: `changed: false`, nothing in the journal. Leaving a
 /// detached HEAD that no ref reaches saves it in `refs/project/backup/detached-...` first
 /// (`backup`, with a warning). `edit.undo` returns to the previous HEAD as for `branch.checkout`.

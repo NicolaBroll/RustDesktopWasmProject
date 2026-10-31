@@ -63,8 +63,7 @@ Checks out the commit `rev` (full or short id, tag, branch name, any rev that le
 with **detached HEAD** (`git switch --detach`): to try an old commit. Same checks, refusals and
 `CheckoutConflict` as `branch.checkout` (never forced; operation in progress or conflicted files →
 `NotAllowed`). `rev` empty, or an object that is not a commit (`HEAD^{tree}`, `HEAD:file`) →
-`InvalidParams`; a rev that does not exist → `UnknownRev` (the `MemoryBackend` says
-`InvalidParams`). A branch name detaches at its commit (it does not switch to the branch). HEAD
+`InvalidParams`, and so is a rev that does not exist (as `diff.range`). A branch name detaches at its commit (it does not switch to the branch). HEAD
 already detached at that commit → `changed: false`, nothing in the journal; on a branch whose tip
 is that commit it still detaches. Result: `{"head": {"detached": "<oid>"}, "previous": HeadState,
 "changed", "warnings", "backup"?, "status", "status_error"?, ...journal}`.

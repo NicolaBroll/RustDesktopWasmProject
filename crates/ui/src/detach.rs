@@ -8,10 +8,9 @@
 
 use crate::branch::{Action, BranchBox, Dialog, NameKind, Op, Outcome};
 use crate::{Request, Tab, params, warnings_text};
-use project_domain::{Head, Oid, Status};
-use project_engine::{HeadState, JournalState, Message, MessageArg};
+use project_domain::{Head, Oid};
+use project_engine::{CommitCheckoutParams, CommitCheckoutResult, HeadState, Message, MessageArg};
 use project_i18n::tr;
-use serde::Deserialize;
 use serde_json::Value;
 
 /// The confirmation of "Check out this commit".
@@ -21,28 +20,6 @@ pub struct DetachDialog {
     pub id: Oid,
     /// "Don't ask again" is ticked: on "Check out" the setting is saved.
     pub dont_ask: bool,
-}
-
-/// The parameters of `commit.checkout`.
-#[derive(Debug, serde::Serialize)]
-struct CommitCheckoutParams {
-    rev: String,
-}
-
-/// The fields of the `commit.checkout` result the UI reads.
-#[derive(Debug, Deserialize)]
-struct CommitCheckoutResult {
-    head: HeadState,
-    changed: bool,
-    #[serde(default)]
-    warnings: Vec<Message>,
-    #[serde(default)]
-    backup: Option<String>,
-    status: Option<Status>,
-    #[serde(default)]
-    status_error: Option<String>,
-    #[serde(flatten)]
-    journal: JournalState,
 }
 
 /// The engine warning of the commits saved when leaving a detached HEAD.

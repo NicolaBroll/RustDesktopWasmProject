@@ -42,6 +42,11 @@ cargo run -p project-cli -- --repo . run --cmd 'worktree.discard_lines={"path":"
 # them with their total size; the exact bytes go to refs/project/backup/clean-..., edit.undo recreates them
 cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"]}'
 cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"],"confirm":true}' --cmd edit.undo
+# ignores files: appends patterns to the root .gitignore (default) or to .git/info/exclude ("file":"exclude");
+# patterns already present are listed in "already"; "ignored" = untracked files now ignored, "tracked" = tracked
+# files matched (a warning); edit.undo puts the exact old bytes back (or removes the file it created)
+cargo run -p project-cli -- --repo . run --cmd 'worktree.ignore={"patterns":["*.log","/build/"]}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'worktree.ignore={"patterns":["/notes.txt"],"file":"exclude"}'
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
 # check out an old commit (detached HEAD; also a tag or a short id), create a branch there, go back;

@@ -49,3 +49,5 @@ engine-journal-stash-drop = Drop { $name } ({ $id } “{ $message }”)
 engine-journal-branch-create-track = Create branch `{ $name }` at { $id } tracking `{ $upstream }`
 engine-journal-upstream-set = Set the upstream of `{ $name }` to `{ $upstream }`
 engine-journal-upstream-unset = Remove the upstream `{ $previous }` of `{ $name }`
+engine-journal-ignore-one = Ignore “{ $pattern }” in { $file }
+engine-journal-ignore-many = Ignore { $n } patterns ({ $names }) in { $file }

@@ -8,6 +8,7 @@ mod conflict;
 mod discard;
 mod discard_lines;
 mod file;
+mod ignore;
 mod merge;
 mod pick;
 mod rebase;
@@ -150,6 +151,10 @@ pub struct MemoryBackend {
     /// The annotated tag objects created by `tag.create`, with the commit they point to: an undo
     /// and redo of the tag put the ref back on the same object.
     tag_objects: BTreeMap<Oid, Oid>,
+    /// The content of `.git/info/exclude` (`None`: no file).
+    exclude: Option<Vec<u8>>,
+    /// How many backups `worktree.ignore` saved (`refs/project/backup/ignore-<n>`).
+    ignore_backups: u64,
 }
 
 impl Default for MemoryBackend {
@@ -194,6 +199,8 @@ impl MemoryBackend {
             rebase_state: None,
             commit_graph: false,
             tag_objects: BTreeMap::new(),
+            exclude: None,
+            ignore_backups: 0,
         }
     }
 
@@ -782,7 +789,13 @@ impl GitRead for MemoryBackend {
         Ok(Status {
             head: self.head()?,
             upstream,
-            entries: self.entries.clone(),
+            // Untracked files ignored by `.gitignore` or `.git/info/exclude` are not listed.
+            entries: self
+                .entries
+                .iter()
+                .filter(|e| !(matches!(e.kind, EntryKind::Untracked) && self.is_ignored(&e.path)))
+                .cloned()
+                .collect(),
             operation: self.operation,
         })
     }
@@ -915,6 +928,20 @@ impl GitIndex for MemoryBackend {
         request: &super::CleanRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_clean(request)
+    }
+
+    fn ignore(
+        &mut self,
+        request: &super::IgnoreRequest,
+    ) -> Result<super::IgnoreOutcome, EngineError> {
+        self.ignore_patterns(request)
+    }
+
+    fn restore_ignore(
+        &mut self,
+        request: &super::IgnoreRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_ignore_file(request)
     }
 }
 

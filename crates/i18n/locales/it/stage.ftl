@@ -67,6 +67,10 @@ stage-blame-untracked = Il file non è ancora tracciato: il blame vuole un file 
 stage-blame-deleted = Il file è eliminato: non c'è niente su cui fare il blame
 stage-delete-file = Elimina…
 stage-delete-file-help = Elimina questo file non tracciato (chiede conferma; si tiene un backup e «Annulla» lo rimette)
+stage-ignore = Ignora
+stage-ignore-help = Aggiunge una riga a .gitignore o a .git/info/exclude perché git non mostri più questo file (o tutti quelli simili). «Annulla» la rimuove
+stage-ignore-shared = In .gitignore (condiviso, nei commit)
+stage-ignore-local = Solo per me (.git/info/exclude)
 stage-delete-untracked = { $n ->
     [one] Elimina il file non tracciato…
    *[other] Elimina tutti i { $n } file non tracciati…

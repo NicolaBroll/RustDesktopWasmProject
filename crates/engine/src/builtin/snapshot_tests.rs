@@ -846,3 +846,15 @@ fn clean_untracked() {
         json!({ "paths": ["note.txt"], "confirm": true }),
     );
 }
+
+#[test]
+fn ignore_untracked() {
+    let (r, mut s) = sample();
+    snap(
+        &r,
+        &mut s,
+        "worktree.ignore",
+        "",
+        json!({ "patterns": ["/note.txt"], "file": "exclude" }),
+    );
+}

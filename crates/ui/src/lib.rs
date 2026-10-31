@@ -31,6 +31,7 @@ mod file;
 mod format;
 mod graph;
 mod icons;
+mod ignore;
 mod keys;
 mod lines;
 mod list;
@@ -126,6 +127,8 @@ enum Action {
     Discard(discard::Action),
     /// Deleting untracked files.
     Clean(clean::Action),
+    /// Ignoring untracked files (`.gitignore`, `.git/info/exclude`).
+    Ignore(ignore::Action),
     /// Selecting diff rows and staging hunks or lines.
     Lines(lines::Action),
     /// The commit message box.
@@ -196,6 +199,8 @@ enum Request {
     Discard(u64),
     /// `worktree.clean`, without or with `confirm` (the phase is in [`clean::CleanBox`]).
     Clean(u64),
+    /// `worktree.ignore` (the pattern sent is in [`ignore::IgnoreBox`]).
+    Ignore(u64),
     /// `edit.undo`/`edit.redo`.
     Undo(u64),
     /// `edit.history`: the state of the Undo and Redo buttons.
@@ -276,6 +281,8 @@ struct RepoView {
     discard: DiscardBox,
     /// Deleting untracked files: check, confirmation, submission.
     clean: clean::CleanBox,
+    /// Ignoring an untracked file: the pattern sent.
+    ignore: ignore::IgnoreBox,
     /// Branch commands: name dialogs, deletion confirmation, checkout.
     branch: BranchBox,
     /// The fetch in progress and the last error to explain.
@@ -338,6 +345,7 @@ impl RepoView {
             commit: CommitBox::default(),
             discard: DiscardBox::default(),
             clean: clean::CleanBox::default(),
+            ignore: ignore::IgnoreBox::default(),
             branch: BranchBox::default(),
             fetch: FetchBox::default(),
             auto_fetch: auto_fetch::AutoFetch::default(),
@@ -642,6 +650,7 @@ impl Tab {
             Action::Stage(action) => self.apply_stage(action),
             Action::Discard(action) => self.apply_discard(action),
             Action::Clean(action) => self.apply_clean(action),
+            Action::Ignore(action) => self.apply_ignore(action),
             Action::Lines(action) => self.apply_lines(action),
             Action::Commit(action) => self.apply_commit(action),
             Action::Branch(action) => self.apply_branch(action),
@@ -972,6 +981,7 @@ impl Tab {
             Request::Commit(generation) => self.receive_commit(generation, done),
             Request::Discard(generation) => self.receive_discard(generation, done),
             Request::Clean(generation) => self.receive_clean(generation, done),
+            Request::Ignore(generation) => self.receive_ignore(generation, done),
             Request::Undo(generation) => self.receive_undo(generation, done),
             Request::ResetPreview(generation, seq) => {
                 self.receive_reset_preview(generation, seq, done);
@@ -1216,6 +1226,7 @@ impl Tab {
             | Request::Commit(..)
             | Request::Discard(..)
             | Request::Clean(..)
+            | Request::Ignore(..)
             | Request::Undo(..)
             | Request::Branch(..)
             | Request::Fetch(..)

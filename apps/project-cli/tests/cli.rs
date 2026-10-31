@@ -504,7 +504,8 @@ fn commands_lists_the_catalog() {
             "tag.delete",
             "worktree.clean",
             "worktree.discard",
-            "worktree.discard_lines"
+            "worktree.discard_lines",
+            "worktree.ignore"
         ]
     );
     // Commands that modify the repo are marked.
@@ -562,7 +563,8 @@ fn commands_lists_the_catalog() {
             "tag.delete",
             "worktree.clean",
             "worktree.discard",
-            "worktree.discard_lines"
+            "worktree.discard_lines",
+            "worktree.ignore"
         ]
     );
 

@@ -1,5 +1,6 @@
 //! [`CliBackend`] and [`CliOpener`]: reading a repository by running `git`.
 
+mod atomic;
 mod branch;
 mod clean;
 mod clone;
@@ -8,6 +9,7 @@ mod conflict;
 mod discard;
 mod discard_lines;
 mod file;
+mod ignore;
 mod maintenance;
 mod merge;
 mod pick;
@@ -1368,6 +1370,20 @@ impl GitIndex for CliBackend {
         request: &project_engine::LinesRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded_lines(request)
+    }
+
+    fn ignore(
+        &mut self,
+        request: &project_engine::IgnoreRequest,
+    ) -> Result<project_engine::IgnoreOutcome, EngineError> {
+        self.ignore_patterns(request)
+    }
+
+    fn restore_ignore(
+        &mut self,
+        request: &project_engine::IgnoreRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_ignore_file(request)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

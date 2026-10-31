@@ -19,6 +19,10 @@ pub use git::{
     parse_diff_tree, parse_file_log, parse_log, parse_refs, parse_status, remote_short,
     resolve_all, resolve_block, tag_short,
 };
+pub use git::{
+    IgnoreAppend, IgnoreKind, IgnorePattern, PatternProblem, append_ignore_patterns,
+    check_ignore_pattern, ignore_pattern,
+};
 
 /// Domain errors.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

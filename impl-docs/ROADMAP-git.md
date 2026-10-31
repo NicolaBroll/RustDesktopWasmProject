@@ -683,7 +683,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `crates/ui/src/compare_tests.rs`.
 
 ### S55 — Check out a commit (detached HEAD)
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** going back to an old commit to try it is not possible today: `branch.checkout` takes
   only local branches and `--detach` is used only by its undo. Add `commit.checkout {"rev"}`
   (`Access::Write`): `git -c core.fsmonitor=false switch --detach --no-overwrite-ignore
@@ -710,7 +710,12 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   ref → backup ref + warning, leaving one that is on a branch → no backup, branch.checkout from a
   detached unreachable commit → backup, undo/redo, operation in progress refused) and on the
   `MemoryBackend`; `safety-reviewer` review; CI green.
-- **Status:** engine done (UI to do). `commit.checkout` in `crates/engine/src/builtin/branch.rs`;
+- **Status:** done. `commit.checkout` in `crates/engine/src/builtin/branch.rs`;
   backup of a detached HEAD left behind inside `GitRefs::checkout` (both backends), so it also
   covers `branch.checkout` and undo/redo; tests in `crates/git/tests/detached.rs` and
-  `crates/engine/src/builtin/checkout_tests.rs`.
+  `crates/engine/src/builtin/checkout_tests.rs`. UI in `crates/ui/src/detach.rs` (tests in
+  `detach_tests.rs`): "Check out this commit…" in the commit menu with a detached HEAD confirmation
+  ("Don't ask again" = setting `skip_detach_confirm`, also in Settings → General), the
+  `CheckoutConflict` dialog of `branch.checkout`, "Detached at <id>" in the top bar with "Create
+  branch here…" (`branch.create` without `start`, then `branch.checkout`), commits saved when
+  leaving a detached HEAD named in the notice of both checkouts.

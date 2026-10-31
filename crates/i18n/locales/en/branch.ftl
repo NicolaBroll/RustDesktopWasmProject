@@ -46,6 +46,7 @@ branch-rename-title = Rename branch
 branch-rename-button = Rename
 branch-create-text = The branch starts at { $start } ({ $id }). It is created without switching to it: the current branch does not change.
 branch-rename-text = New name for “{ $name }”. Reflog and upstream follow the branch.
+branch-here-text = The branch starts at the detached HEAD ({ $id }) and then becomes the current branch: new commits stay on it.
 branch-name-hint = e.g. feature/new
 branch-close = Close
 branch-delete-heading = Delete “{ $name }” ({ $id })?

@@ -49,7 +49,7 @@ pub(crate) fn top_bar(
 ) {
     let bar = ui.max_rect();
     ui.horizontal(|ui| {
-        branch_info(ui, repo);
+        branch_info(ui, repo, !writing && !repo.modal_open(), actions);
         // The width of the buttons is known only after drawing them: the last frame's centers them.
         let width_id = ui.scope_id().with("tools-width");
         let width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(0.0);
@@ -81,11 +81,32 @@ pub(crate) fn top_bar(
     });
 }
 
-/// The branch under its caption (the repo is the tab's name).
-fn branch_info(ui: &mut Ui, repo: &RepoView) {
+/// The branch under its caption (the repo is the tab's name); a detached HEAD in the warning
+/// color, with "Create branch here…".
+fn branch_info(ui: &mut Ui, repo: &RepoView, can_write: bool, actions: &mut Vec<Action>) {
     ui.add_space(4.0);
     caption(ui, &tr!("top-bar-branch"), |ui| {
         ui.horizontal(|ui| {
+            if let Head::Detached(id) = &repo.head {
+                let text = RichText::new(head_text(&repo.head))
+                    .color(ui.visuals().warn_fg_color)
+                    .strong();
+                ui.label(text)
+                    .on_hover_text(tr!("top-bar-head-detached-hint", id = id.short()));
+                let button = ui
+                    .add_enabled(
+                        can_write,
+                        egui::Button::new(tr!("top-bar-create-here")).small(),
+                    )
+                    .on_hover_text(tr!("top-bar-create-here-hint"))
+                    .on_disabled_hover_text(wait());
+                if button.clicked() {
+                    // The name field of the dialog takes the keyboard only if nothing has it.
+                    button.surrender_focus();
+                    actions.push(Action::Branch(crate::branch::Action::CreateBranchHere));
+                }
+                return;
+            }
             ui.label(head_text(&repo.head));
             if let Some(upstream) = repo.status.as_ref().and_then(|s| s.upstream.as_ref()) {
                 upstream_label(ui, upstream);

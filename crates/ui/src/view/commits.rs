@@ -12,6 +12,8 @@ pub(crate) struct ListOptions {
     /// The search field takes the keyboard.
     pub(crate) focus_search: bool,
     pub(crate) dates: DateFormat,
+    /// "Check out this commit" asks first (the detached HEAD confirmation is not turned off).
+    pub(crate) ask_detach: bool,
 }
 
 pub(crate) fn commit_list(
@@ -25,6 +27,7 @@ pub(crate) fn commit_list(
         writing,
         focus_search,
         dates,
+        ask_detach,
     } = options;
     if repo.search.is_open() {
         search_bar(ui, &repo.search, focus_search, actions);
@@ -182,6 +185,7 @@ pub(crate) fn commit_list(
                     ))));
                     ui.close();
                 }
+                checkout_item(ui, repo, id, can_write, ask_detach, actions);
                 let what = merge::commit_name(id, &repo.refs);
                 // Already in HEAD: merging or cherry-picking it would change nothing.
                 let in_head = in_head_history(repo, id);
@@ -217,6 +221,34 @@ pub(crate) fn commit_list(
     viewport.rows = output.inner;
     viewport.height = output.inner_rect.height();
     actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
+}
+
+/// "Check out this commit" (S55): HEAD detached there, after the confirmation if `ask`. Off
+/// when HEAD is already detached at that commit.
+fn checkout_item(
+    ui: &mut Ui,
+    repo: &RepoView,
+    id: Oid,
+    can_write: bool,
+    ask: bool,
+    actions: &mut Vec<Action>,
+) {
+    let here = repo.head == Head::Detached(id);
+    let button = ui
+        .add_enabled(
+            can_write && !here,
+            egui::Button::new(tr!("commit-checkout")),
+        )
+        .on_hover_text(tr!("commit-checkout-hint", id = id.short()));
+    let button = if here {
+        button.on_disabled_hover_text(tr!("commit-checkout-here"))
+    } else {
+        button.on_disabled_hover_text(wait())
+    };
+    if button.clicked() {
+        actions.push(Action::Branch(branch::Action::CheckoutCommit { id, ask }));
+        ui.close();
+    }
 }
 
 /// "Compare with the selected commit", when another commit is selected.

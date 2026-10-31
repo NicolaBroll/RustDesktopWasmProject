@@ -65,6 +65,15 @@ pub(crate) enum Action {
     SubmitUpstream,
     /// Removes the upstream of the local branch (short name): no confirmation, it is undoable.
     UnsetUpstream(String),
+    /// "Check out this commit" (S55): with `ask` the detached HEAD confirmation opens first,
+    /// otherwise `commit.checkout` starts at once.
+    CheckoutCommit { id: Oid, ask: bool },
+    /// The "Don't ask again" checkbox of the detached HEAD confirmation changed.
+    DetachDontAsk(bool),
+    /// "Check out" in the detached HEAD confirmation.
+    ConfirmCheckoutCommit,
+    /// "Create branch here…" with a detached HEAD: the new-branch dialog without `start`.
+    CreateBranchHere,
     /// Closes the open branch dialog without sending anything.
     CloseDialog,
 }
@@ -82,6 +91,8 @@ pub enum Op {
     DeleteTag,
     /// `branch.set_upstream`: sets or removes the upstream.
     SetUpstream,
+    /// `commit.checkout`: a commit with detached HEAD (S55).
+    CheckoutCommit,
 }
 
 impl Op {
@@ -95,6 +106,7 @@ impl Op {
             Op::CreateTag => "tag.create",
             Op::DeleteTag => "tag.delete",
             Op::SetUpstream => "branch.set_upstream",
+            Op::CheckoutCommit => "commit.checkout",
         }
     }
 }
@@ -154,6 +166,9 @@ pub enum NameKind {
     Rename(String),
     /// A new tag on the commit of `Start`.
     Tag(Start),
+    /// A new branch at the detached HEAD, shown at that commit: `branch.create` without `start`,
+    /// then checked out (S55).
+    Here(Oid),
 }
 
 /// The dialog to type the name of a branch.
@@ -179,7 +194,7 @@ impl NameDialog {
     pub fn trackable(&self) -> Option<&str> {
         match &self.kind {
             NameKind::Create(start) => start.remote.as_deref(),
-            NameKind::Rename(_) | NameKind::Tag(_) => None,
+            NameKind::Rename(_) | NameKind::Tag(_) | NameKind::Here(_) => None,
         }
     }
 
@@ -195,14 +210,14 @@ impl NameDialog {
         self.running.is_none()
             && !name.is_empty()
             && match &self.kind {
-                NameKind::Create(_) | NameKind::Tag(_) => true,
+                NameKind::Create(_) | NameKind::Tag(_) | NameKind::Here(_) => true,
                 NameKind::Rename(old) => name != old,
             }
     }
 
     fn op(&self) -> Op {
         match self.kind {
-            NameKind::Create(_) => Op::Create,
+            NameKind::Create(_) | NameKind::Here(_) => Op::Create,
             NameKind::Rename(_) => Op::Rename,
             NameKind::Tag(_) => Op::CreateTag,
         }
@@ -224,6 +239,12 @@ impl NameDialog {
                     track: false,
                 }),
             },
+            // Without `start`: the engine creates it where HEAD is now.
+            NameKind::Here(_) => params(BranchCreateParams {
+                name: name.to_owned(),
+                start: None,
+                track: false,
+            }),
             NameKind::Rename(old) => params(BranchRenameParams {
                 name: old.clone(),
                 new_name: name.to_owned(),
@@ -242,7 +263,9 @@ impl NameDialog {
     /// The description of the operation for the status bar.
     pub fn label(&self) -> String {
         match &self.kind {
-            NameKind::Create(_) => tr!("branch-create-label", name = self.trimmed()),
+            NameKind::Create(_) | NameKind::Here(_) => {
+                tr!("branch-create-label", name = self.trimmed())
+            }
             NameKind::Rename(old) => tr!("branch-rename-label", name = old),
             NameKind::Tag(_) => tr!("branch-tag-label", name = self.trimmed()),
         }
@@ -291,14 +314,16 @@ pub enum Dialog {
     Refused(Refused),
     /// The "Set upstream" window.
     Upstream(crate::tracking::UpstreamDialog),
+    /// The confirmation of "Check out this commit" (S55).
+    Detach(crate::detach::DetachDialog),
 }
 
 /// Commands on branches: one dialog at a time, one command at a time.
 #[derive(Debug, Default)]
 pub struct BranchBox {
     pub(crate) dialog: Option<Dialog>,
-    /// The checkout in progress, short name (it has no dialog).
-    checkout: Option<String>,
+    /// The checkout in progress, short name of the branch or `commit <id>` (it has no dialog).
+    pub(crate) checkout: Option<String>,
     /// The tracking branch being created by "Check out" on a remote branch, short name (no
     /// dialog): once created it is checked out.
     pub(crate) track: Option<String>,
@@ -344,7 +369,7 @@ impl BranchBox {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Delete(delete) => matches!(delete.phase, Phase::Confirm { .. }),
             Dialog::DeleteTag(delete) => matches!(delete.phase, Phase::Confirm { .. }),
-            Dialog::Name(_) | Dialog::Refused(_) | Dialog::Upstream(_) => true,
+            Dialog::Name(_) | Dialog::Refused(_) | Dialog::Upstream(_) | Dialog::Detach(_) => true,
         })
     }
 
@@ -526,7 +551,7 @@ impl BranchBox {
             Some(Dialog::Name(dialog)) => dialog.running.is_none(),
             Some(Dialog::Delete(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteTag(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
-            Some(Dialog::Refused(_)) => true,
+            Some(Dialog::Refused(_) | Dialog::Detach(_)) => true,
             Some(Dialog::Upstream(dialog)) => dialog.running.is_none(),
             None => false,
         };
@@ -548,7 +573,7 @@ impl BranchBox {
             Op::Create if self.track.is_some() => self.receive_track(result, kind),
             Op::SetUpstream => self.receive_upstream(result, kind),
             Op::Create | Op::Rename | Op::CreateTag => self.receive_name(op, result),
-            Op::Checkout => self.receive_checkout(result, kind, detail),
+            Op::Checkout | Op::CheckoutCommit => self.receive_checkout(op, result, kind, detail),
             Op::Delete => self.receive_delete(result, kind, detail),
             Op::DeleteTag => self.receive_delete_tag(result, kind, detail, expected),
         }
@@ -586,14 +611,16 @@ impl BranchBox {
         }
     }
 
+    /// The answer of `branch.checkout` or `commit.checkout`: the same refusals and dialog.
     fn receive_checkout(
         &mut self,
+        op: Op,
         result: Result<Value, String>,
         kind: Option<ErrorKind>,
         detail: Option<String>,
     ) -> Received {
         let Some(name) = self.checkout.take() else {
-            return unexpected(Op::Checkout);
+            return unexpected(op);
         };
         match result {
             Err(_) if kind == Some(ErrorKind::CheckoutConflict) => {
@@ -621,6 +648,7 @@ impl BranchBox {
                     reload: !refused,
                 }
             }
+            Ok(value) if op == Op::CheckoutCommit => done(crate::detach::outcome(value)),
             Ok(value) => done(
                 crate::decode::<BranchCheckoutResult>(Op::Checkout.command(), value)
                     .map(checkout_outcome),
@@ -809,7 +837,7 @@ fn checkout_outcome(r: BranchCheckoutResult) -> Outcome {
     };
     Outcome {
         op: Op::Checkout,
-        notice: notice + &messages_text(&r.warnings),
+        notice: notice + &crate::detach::backup_text(&r.warnings, r.backup.as_deref()),
         refs: None,
         status: r.status,
         warning: r
@@ -1051,6 +1079,10 @@ impl Tab {
             | Action::UpstreamPick(_)
             | Action::SubmitUpstream
             | Action::UnsetUpstream(_) => self.apply_tracking(action),
+            Action::CheckoutCommit { .. }
+            | Action::DetachDontAsk(_)
+            | Action::ConfirmCheckoutCommit
+            | Action::CreateBranchHere => self.apply_detach(action),
         }
     }
 
@@ -1083,7 +1115,7 @@ impl Tab {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                let checkout = outcome.op == Op::Checkout;
+                let checkout = matches!(outcome.op, Op::Checkout | Op::CheckoutCommit);
                 let then_checkout = outcome.then_checkout.clone();
                 // After a checkout the new HEAD is selected as soon as the log arrives.
                 if checkout && !repo.worktree_selected {

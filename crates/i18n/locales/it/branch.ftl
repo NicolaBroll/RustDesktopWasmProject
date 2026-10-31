@@ -46,6 +46,7 @@ branch-rename-title = Rinomina il branch
 branch-rename-button = Rinomina
 branch-create-text = Il branch parte da { $start } ({ $id }). Si crea senza passarci: il branch attivo non cambia.
 branch-rename-text = Nuovo nome per «{ $name }». Reflog e upstream seguono il branch.
+branch-here-text = Il branch parte dalla HEAD staccata ({ $id }) e poi diventa il branch attivo: i nuovi commit restano su di esso.
 branch-name-hint = es. feature/nuova
 branch-close = Chiudi
 branch-delete-heading = Eliminare «{ $name }» ({ $id })?

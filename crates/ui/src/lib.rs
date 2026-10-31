@@ -19,6 +19,7 @@ mod commit;
 mod compare;
 mod conflict;
 mod credentials;
+mod detach;
 mod details;
 mod diff;
 mod diff_view;
@@ -1310,6 +1311,7 @@ impl Tab {
                     focus_search,
                     split: settings.diff_split,
                     dates: settings.dates,
+                    ask_detach: !settings.skip_detach_confirm,
                 };
                 central_panel(ui, repo, &mut self.viewport, center, &mut actions);
             }
@@ -1523,6 +1525,8 @@ struct Center {
     split: bool,
     /// The dates of the commit list.
     dates: settings::DateFormat,
+    /// "Check out this commit" asks first.
+    ask_detach: bool,
 }
 
 /// The center: conflict editor, blame and history, the open diff or the commit list.
@@ -1538,6 +1542,7 @@ fn central_panel(
         focus_search,
         split,
         dates,
+        ask_detach,
     } = center;
     let incoming = repo
         .merge
@@ -1562,6 +1567,7 @@ fn central_panel(
                 writing,
                 focus_search,
                 dates,
+                ask_detach,
             };
             view::commit_list(ui, repo, viewport, list, actions);
         }

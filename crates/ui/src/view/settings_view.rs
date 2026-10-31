@@ -140,6 +140,17 @@ fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
             }
         }
     });
+    ui.add_space(10.0);
+    let mut ask = !settings.skip_detach_confirm;
+    if ui
+        .checkbox(&mut ask, tr!("settings-ask-detach"))
+        .on_hover_text(tr!("settings-ask-detach-hint"))
+        .changed()
+    {
+        actions.push(Action::Settings(settings::Action::Change(
+            Change::SkipDetachConfirm(!ask),
+        )));
+    }
 }
 
 /// The UI scale, with the keys that change it too.

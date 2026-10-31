@@ -58,3 +58,17 @@ submodule-update-refused = { $n ->
 
 submodule-clone = Con i sottomoduli
 submodule-clone-hint = Clona anche i sottomoduli e porta fuori i commit registrati (git clone --recurse-submodules)
+
+# L'avviso dopo un checkout, pull, merge... che ha lasciato indietro dei sottomoduli (S62b); $list: i loro percorsi.
+submodule-outdated = { $n ->
+    [one] 1 sottomodulo non è sul commit registrato
+   *[other] { $n } sottomoduli non sono sul commit registrato
+}
+submodule-outdated-hint = L'ultima operazione ha cambiato il commit registrato per { $list }, ma nella cartella del sottomodulo c'è ancora quello precedente (i sottomoduli non vengono mai spostati da soli). “Aggiorna” porta il sottomodulo sul commit registrato; quello precedente viene salvato in un ref di backup dentro il sottomodulo.
+submodule-outdated-update = Aggiorna
+submodule-outdated-dismiss = Non ora
+submodule-outdated-dismiss-hint = Chiudi l'avviso: i sottomoduli restano come sono e si possono aggiornare dalla sezione “Sottomoduli”
+submodule-outdated-label = { $n ->
+    [one] Aggiornamento di 1 sottomodulo
+   *[other] Aggiornamento di { $n } sottomoduli
+}

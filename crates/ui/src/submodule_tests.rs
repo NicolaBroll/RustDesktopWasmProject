@@ -137,7 +137,7 @@ fn the_list_is_read_again_only_when_it_can_have_changed() {
         operation: None,
     };
     let mut b = SubmoduleBox::default();
-    b.receive_list(Ok(json!({"submodules": []})));
+    b.receive_list(Ok(json!({"submodules": []})), false);
     assert!(
         !b.wants_list(&status(&["a.txt"])),
         "no submodules: never again"
@@ -152,10 +152,10 @@ fn the_list_is_read_again_only_when_it_can_have_changed() {
         "already on its way"
     );
     let one = serde_json::to_value(vec![sub("lib", Some(1), |_| {})]).unwrap();
-    b.receive_list(Ok(json!({ "submodules": one })));
+    b.receive_list(Ok(json!({ "submodules": one })), false);
     assert!(b.wants_list(&status(&[])), "with submodules: every status");
     // A failed read keeps the last list, with the error.
-    b.receive_list(Err("boom".into()));
+    b.receive_list(Err("boom".into()), false);
     assert!(b.shown());
     assert_eq!(b.list_error(), Some("boom"));
 }
@@ -277,6 +277,119 @@ fn stop_once_and_a_cancelled_update_is_a_notice() {
     assert!(matches!(received, Received::Cancelled(_)), "{received:?}");
     assert!(b.running().is_none());
     // One path: the parameters name it.
-    let params = b.request(Some(&RepoPath::from("lib")), false).unwrap();
+    let params = b.request(Some(vec![RepoPath::from("lib")]), false).unwrap();
     assert_eq!(params, json!({"paths": ["lib"]}));
+}
+
+/// The tab's list as it was before a command: `lib` and `other` on the given checked out commits.
+fn before(tab: &mut Tab, subs: Vec<SubmoduleInfo>) {
+    let value = json!({ "submodules": serde_json::to_value(subs).unwrap() });
+    tab.repo
+        .as_mut()
+        .unwrap()
+        .submodules
+        .receive_list(Ok(value), false);
+}
+
+/// The backend has `lib` left on `oid(2)` (as a checkout that moved its recorded commit leaves
+/// it) and `other`, already behind before the command; the tab still has the list from before.
+fn moved_tab() -> Tab {
+    let mut tab = tab_with(vec![
+        sub("lib", Some(2), |_| {}),
+        sub("other", Some(3), |_| {}),
+    ]);
+    assert!(repo(&tab).submodules.outdated().is_empty(), "not on open");
+    // A branch on HEAD, so that the checkout is not refused for the sample's changes.
+    tab.executor
+        .submit("branch.create", json!({ "name": "side" }));
+    settle(&mut tab);
+    before(
+        &mut tab,
+        vec![sub("lib", Some(1), |_| {}), sub("other", Some(3), |_| {})],
+    );
+    tab
+}
+
+#[test]
+fn a_checkout_that_moves_a_submodule_gives_the_notice_once() {
+    let mut tab = moved_tab();
+    tab.apply(TabAction::Branch(crate::branch::Action::Checkout(
+        "side".to_owned(),
+    )));
+    settle(&mut tab);
+    assert!(
+        matches!(&repo(&tab).status.as_ref().unwrap().head, Head::Branch { name, .. } if name == "side"),
+        "checked out"
+    );
+    // Only `lib`: `other` was already on that commit before the checkout.
+    assert_eq!(repo(&tab).submodules.outdated(), [RepoPath::from("lib")]);
+    // Other reads of the list do not bring it back once dismissed.
+    tab.apply(TabAction::Submodule(Action::Dismiss));
+    tab.request_submodules(tab.generation, false);
+    settle(&mut tab);
+    assert!(repo(&tab).submodules.outdated().is_empty());
+}
+
+#[test]
+fn no_notice_after_unrelated_commands() {
+    let mut tab = moved_tab();
+    tab.apply(TabAction::Fetch(crate::fetch::Action::Fetch(None)));
+    settle(&mut tab);
+    assert!(repo(&tab).submodules.outdated().is_empty());
+    assert!(!moves_submodules("remote.fetch"));
+    assert!(!moves_submodules("commit.create"));
+    assert!(moves_submodules("remote.pull"));
+    assert!(moves_submodules("stash.pop"));
+}
+
+#[test]
+fn update_of_the_notice_sends_exactly_its_submodules() {
+    let mut tab = moved_tab();
+    tab.apply(TabAction::Branch(crate::branch::Action::Checkout(
+        "side".to_owned(),
+    )));
+    settle(&mut tab);
+    let b = &repo(&tab).submodules;
+    let params = b.request(Some(b.outdated().to_vec()), false).unwrap();
+    assert_eq!(params["paths"], json!(["lib"]));
+    tab.apply(TabAction::Submodule(Action::UpdateOutdated));
+    settle(&mut tab);
+    assert!(repo(&tab).submodules.outdated().is_empty(), "closed");
+    assert_eq!(
+        tab.notice,
+        tr!("submodule-update-done", updated = 1, unchanged = 0)
+    );
+    // `lib` updated, `other` left as it was.
+    assert_eq!(
+        states(&tab),
+        [
+            ("lib".to_owned(), SubmoduleState::InSync),
+            ("other".to_owned(), SubmoduleState::DifferentCommit),
+        ]
+    );
+}
+
+#[test]
+fn the_notice_drops_submodules_no_longer_behind() {
+    let mut b = SubmoduleBox::default();
+    let list =
+        |subs: Vec<SubmoduleInfo>| Ok(json!({ "submodules": serde_json::to_value(subs).unwrap() }));
+    b.receive_list(
+        list(vec![sub("a", Some(1), |_| {}), sub("b", Some(1), |_| {})]),
+        false,
+    );
+    b.receive_list(
+        list(vec![sub("a", Some(2), |_| {}), sub("b", Some(2), |_| {})]),
+        true,
+    );
+    assert_eq!(b.outdated(), [RepoPath::from("a"), RepoPath::from("b")]);
+    // Updated from outside: gone from the notice.
+    b.receive_list(
+        list(vec![sub("a", Some(1), |_| {}), sub("b", Some(2), |_| {})]),
+        false,
+    );
+    assert_eq!(b.outdated(), [RepoPath::from("b")]);
+    // A failed read keeps it.
+    b.receive_list(Err("boom".into()), true);
+    assert_eq!(b.outdated(), [RepoPath::from("b")]);
 }

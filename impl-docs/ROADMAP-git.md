@@ -1040,7 +1040,7 @@ file of its function in [git/](git/) before the code.
   submodules" in the clone dialog. `safety-reviewer` reviews done (the fixes above).
 
 ### S62b — Submodules out of date after checkout, pull and merge
-- [ ] **Agent:** `egui-ui` (engine only if a field is missing)
+- [x] **Agent:** `egui-ui` (engine only if a field is missing)
 - **Goal:** after `branch.checkout`, `commit.checkout`, `remote.pull`, `merge.*`, `branch.reset` and
   `stash.*` the submodules whose recorded commit changed stay at the old one (we never pass
   `--recurse-submodules`, and `submodule.recurse` in the user's config must not change that
@@ -1050,6 +1050,16 @@ file of its function in [git/](git/) before the code.
   those).
 - **Done when:** UI tests on the `MemoryBackend` and an integration test that `submodule.recurse=true`
   does not make a checkout touch a submodule; CI green.
+- **Status:** done. Engine part in S62 (`-c submodule.recurse=false` on every git run, tested).
+  UI (`crates/ui/src/submodule.rs`, `view/submodule_view.rs`): after a successful
+  `branch.checkout`, `commit.checkout`, `branch.reset`, `remote.pull`, `merge.*`, `stash.apply`/`pop`,
+  `rebase.*`, `commit.cherry_pick`/`revert`, `cherry_pick.*`/`revert.*`, `edit.undo`/`redo`
+  (`moves_submodules`) in a repo with submodules, the list kept at that moment is compared with a
+  fresh `submodule.list`: the submodules now `different_commit` that were not on the same
+  recorded/checked out pair before give the notice under the bar "N submodules are not at the
+  recorded commit" (paths on hover), "Update" (`submodule.update` of exactly those, refusals as in
+  S62) and "Not now"; later reads only drop from it the ones no longer behind. Tests in
+  `submodule_tests.rs` (checkout that moves one, fetch gives none, the paths sent).
 
 ### S63 — Git LFS: verify and mark
 - [ ] **Agent:** `git-scenarios`, then `egui-ui`

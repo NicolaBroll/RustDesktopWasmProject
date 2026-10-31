@@ -58,3 +58,17 @@ submodule-update-refused = { $n ->
 
 submodule-clone = With submodules
 submodule-clone-hint = Also clone the submodules and check out the commits recorded (git clone --recurse-submodules)
+
+# The notice after a checkout, pull, merge... that left submodules behind (S62b); $list: their paths.
+submodule-outdated = { $n ->
+    [one] 1 submodule is not at the recorded commit
+   *[other] { $n } submodules are not at the recorded commit
+}
+submodule-outdated-hint = The last operation changed the commit recorded for { $list }, but the submodule's folder still has the previous one checked out (submodules are never moved on their own). “Update” checks out the recorded commit; the previous one is saved in a backup ref inside the submodule.
+submodule-outdated-update = Update
+submodule-outdated-dismiss = Not now
+submodule-outdated-dismiss-hint = Close the notice: the submodules stay as they are and can be updated from the “Submodules” section
+submodule-outdated-label = { $n ->
+    [one] Update of 1 submodule
+   *[other] Update of { $n } submodules
+}

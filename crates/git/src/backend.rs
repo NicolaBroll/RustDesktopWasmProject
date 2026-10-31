@@ -1,6 +1,7 @@
 //! [`CliBackend`] and [`CliOpener`]: reading a repository by running `git`.
 
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod conflict;
@@ -1330,6 +1331,28 @@ impl GitIndex for CliBackend {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)
+    }
+
+    fn clean_plan(
+        &self,
+        paths: &[RepoPath],
+    ) -> Result<Vec<project_engine::CleanedFile>, EngineError> {
+        self.plan_clean(paths)
+    }
+
+    fn clean(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[project_engine::CleanedFile],
+    ) -> Result<project_engine::CleanOutcome, EngineError> {
+        self.clean_paths(paths, expected)
+    }
+
+    fn restore_cleaned(
+        &mut self,
+        request: &project_engine::CleanRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_clean(request)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {

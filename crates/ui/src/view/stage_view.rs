@@ -1,5 +1,5 @@
 use super::*;
-use crate::{commit, conflict, diff, discard, stage};
+use crate::{clean, commit, conflict, diff, discard, stage};
 
 /// Stage area, in place of the details when the changes row is selected: the lists
 /// "Staged" and "Unstaged", each virtualized, and below the commit message box.
@@ -557,7 +557,8 @@ pub(super) fn stage_section(
 /// Size of the "⋯" icon of the section menu.
 const MORE_ICON: f32 = 14.0;
 
-/// The "⋯" menu of the unstaged list: "Discard all…", in the destructive red as in the file
+/// The "⋯" menu of the unstaged list: "Discard all…" and, with untracked files, "Delete all
+/// untracked files…", in the destructive red as in the file
 /// context menu, kept away from "Stage all" so a misclick does not open its dialog.
 fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut Vec<Action>) {
     let more = egui::Button::new(icons::text(icons::MORE, MORE_ICON)).small();
@@ -579,6 +580,23 @@ fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut 
             {
                 actions.push(Action::Discard(discard::Action::Discard(paths)));
                 ui.close();
+            }
+            // Only when there are untracked files: deleting is not discarding.
+            if let Some(paths) = clean::untracked_paths(items) {
+                let color = if enabled {
+                    ui.visuals().error_fg_color
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                let label =
+                    RichText::new(tr!("stage-delete-untracked", n = paths.len())).color(color);
+                let button = ui
+                    .add_enabled(enabled, egui::Button::new(label))
+                    .on_hover_text(tr!("stage-delete-untracked-help"));
+                if button.clicked() {
+                    actions.push(Action::Clean(clean::Action::Delete(paths)));
+                    ui.close();
+                }
             }
         })
         .0
@@ -628,7 +646,27 @@ pub(super) fn file_menu(
         )));
         ui.close();
     }
-    if op == StageOp::Stage {
+    if op == StageOp::Stage && clean::deletable(item) {
+        ui.separator();
+        let color = if enabled {
+            ui.visuals().error_fg_color
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let button = ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(RichText::new(tr!("stage-delete-file")).color(color)),
+            )
+            .on_hover_text(tr!("stage-delete-file-help"))
+            .on_disabled_hover_text(tr!("stage-wait"));
+        if button.clicked() {
+            actions.push(Action::Clean(clean::Action::Delete(vec![
+                item.path.clone(),
+            ])));
+            ui.close();
+        }
+    } else if op == StageOp::Stage {
         ui.separator();
         let reason = discard::not_discardable_reason(item);
         let button = ui
@@ -719,6 +757,8 @@ pub(super) fn stage_tooltip(op: StageOp, item: &StageItem) -> String {
     });
     if op == StageOp::Stage && discard::discardable(item) {
         lines.push(tr!("stage-tooltip-right-discard"));
+    } else if op == StageOp::Stage && clean::deletable(item) {
+        lines.push(tr!("stage-tooltip-right-delete"));
     } else {
         lines.push(tr!("stage-tooltip-right"));
     }

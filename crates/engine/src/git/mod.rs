@@ -6,6 +6,7 @@
 
 mod backup;
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod conflict;
@@ -46,6 +47,10 @@ pub use branch::{
     branch_short, check_branch_name, check_new_branch_name, check_no_operation, resolve_tracking,
     upstream_label,
 };
+pub use clean::{
+    CleanBackup, CleanOutcome, CleanRestore, CleanedFile, check_same_clean_plan, clean_description,
+    clean_plan,
+};
 pub use clone::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
     destination_not_empty, destination_not_folder,
@@ -74,7 +79,9 @@ pub use maintenance::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
 };
 #[cfg(any(test, feature = "test-support"))]
-pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub use memory::{
+    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
+};
 pub(crate) use merge::check_in_progress;
 pub use merge::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
@@ -340,6 +347,38 @@ pub trait GitIndex {
         &mut self,
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
+
+    /// The untracked files that `worktree.clean` of `paths` would delete now, with mode and size:
+    /// [`clean_plan`] on the status read now (see there for the refusals: nested repositories,
+    /// paths without untracked files). Reads only.
+    fn clean_plan(&self, paths: &[RepoPath]) -> Result<Vec<CleanedFile>, EngineError>;
+
+    /// Deletes the untracked files of `paths` (`worktree.clean`, §7). Before deleting, the exact
+    /// bytes and mode of every file are saved in a commit (temporary index: the user's index is
+    /// not touched) held by a new ref `refs/project/backup/clean-...`; if the backup fails or
+    /// does not have the current bytes of every file, nothing is deleted. Links are deleted as
+    /// links. Then the folders the deletion left empty are removed (only those).
+    ///
+    /// `expected` is the plan shown to whoever confirmed ([`GitIndex::clean_plan`]): if the plan
+    /// computed now is different (a file more or less, another mode or size),
+    /// [`EngineError::NotAllowed`] and nothing changes. A file that cannot be deleted after the
+    /// backup stays and goes in [`CleanOutcome::warnings`]; if none could, the error names the
+    /// backup.
+    fn clean(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[CleanedFile],
+    ) -> Result<CleanOutcome, EngineError>;
+
+    /// Undoes (`request.redo == false`) or redoes a clean (`edit.undo`/`edit.redo` of an entry
+    /// of `worktree.clean`). The index is not touched.
+    ///
+    /// Undo: every path must be absent (nothing there, no file or link in place of one of its
+    /// folders), otherwise [`EngineError::UndoConflict`] and nothing changes; then the files are
+    /// recreated from `request.commit` (bytes, executable bit, links), never overwriting.
+    /// Redo: every file must still be untracked with the backup's bytes and mode, otherwise
+    /// [`EngineError::UndoConflict`]; then it is deleted again (no new backup).
+    fn restore_cleaned(&mut self, request: &CleanRestore) -> Result<RestoreOutcome, EngineError>;
 }
 
 /// Refs and journal: branches, tags, checkout, reset, and the ref restores of undo/redo. Part

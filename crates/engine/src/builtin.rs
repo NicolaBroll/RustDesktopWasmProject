@@ -1,6 +1,7 @@
 //! Catalog of the built-in commands.
 
 pub(crate) mod branch;
+pub(crate) mod clean;
 pub(crate) mod clone;
 pub(crate) mod commit;
 pub(crate) mod conflict;
@@ -206,6 +207,13 @@ impl Registry {
             r#"{"paths": [path, ...], "confirm": true}"#,
             Write,
             discard::worktree_discard,
+        );
+        self.add(
+            "worktree.clean",
+            "Delete untracked files (with backup)",
+            r#"{"paths": [path, ...], "confirm": true}"#,
+            Write,
+            clean::worktree_clean,
         );
     }
 
@@ -1022,6 +1030,7 @@ mod tests {
                 "stash.push",
                 "tag.create",
                 "tag.delete",
+                "worktree.clean",
                 "worktree.discard"
             ]
         );
@@ -1075,6 +1084,7 @@ mod tests {
                 "stash.push",
                 "tag.create",
                 "tag.delete",
+                "worktree.clean",
                 "worktree.discard"
             ]
         );

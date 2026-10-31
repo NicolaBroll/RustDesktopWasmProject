@@ -35,6 +35,10 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Title\
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Fixed title","amend":true}'
 # discards unstaged changes (worktree like the index): needs "confirm":true, saves a backup
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
+# deletes untracked files (a folder = the untracked files under it): without "confirm" the error lists
+# them with their total size; the exact bytes go to refs/project/backup/clean-..., edit.undo recreates them
+cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"]}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"],"confirm":true}' --cmd edit.undo
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
 # check out an old commit (detached HEAD; also a tag or a short id), create a branch there, go back;

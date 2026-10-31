@@ -815,3 +815,15 @@ fn clone_and_init() {
         json!({ "path": "new2", "branch": "trunk" }),
     );
 }
+
+#[test]
+fn clean_untracked() {
+    let (r, mut s) = sample();
+    snap(
+        &r,
+        &mut s,
+        "worktree.clean",
+        "",
+        json!({ "paths": ["note.txt"], "confirm": true }),
+    );
+}

@@ -502,6 +502,7 @@ fn commands_lists_the_catalog() {
             "stash.push",
             "tag.create",
             "tag.delete",
+            "worktree.clean",
             "worktree.discard"
         ]
     );
@@ -558,6 +559,7 @@ fn commands_lists_the_catalog() {
             "stash.push",
             "tag.create",
             "tag.delete",
+            "worktree.clean",
             "worktree.discard"
         ]
     );

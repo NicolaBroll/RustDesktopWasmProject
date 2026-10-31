@@ -12,6 +12,11 @@ Parameters: `{"paths", "confirm"}`.
 
 With backup (below).
 
+### `worktree.discard_lines`
+
+Parameters: `{"path", "lines", "digest", "confirm"}`. Discards only some lines, with backup
+("Discarding lines" below).
+
 ### `worktree.clean`
 
 Parameters: `{"paths", "confirm"}`. Deletes untracked files, with backup ("Deleting untracked
@@ -91,6 +96,78 @@ otherwise `UndoConflict` (a checkout or a commit from the terminal) and nothing 
 
 The `MemoryBackend` records backups in `MemoryBackend::worktree_backups`
 (`refs/project/backup/discard-<n>`, with the status entry and the content of each file).
+
+## Discarding lines
+
+`worktree.discard_lines {"path", "lines", "digest", "confirm"}` (code:
+`crates/engine/src/git/discard_lines.rs`, `crates/git/src/backend/discard_lines.rs`): the chosen
+changed lines of the `diff.worktree` diff of `path` go back to the index version, the others stay in
+the worktree. `lines` and `digest` as for `index.stage_lines` ([stage.md](stage.md)): non-empty,
+numbers of the seen diff, `StaleDiff` if the reread diff has another digest. Choices:
+
+- **The patch.** `discard_line_patch` (in `lines.rs`, sharing the file choice and the digest check
+  with `line_patch`) applies the `build_patch` **unstage** rule to the worktree diff: there the
+  worktree is the new side, as the index is in `diff.index`, so the patch's preimage is the clean
+  worktree content and its postimage the content with the selected lines back as in the index. The
+  new content is computed with the strict `apply_patch` (each hunk only at its position).
+- **Refusals**, always before the confirmation and without writing: those of `worktree.discard`
+  (`discard_lines_target` calls `discard_plan` on the path: branch without commits, conflicted or
+  `intent-to-add` files in the repo, untracked, submodule, something in the way) and those of the
+  line commands (binaries, links, two files on the path); only a **modified** file (`Change::Modified`,
+  same path on both sides): a file deleted from the worktree, renamed or `intent-to-add` →
+  `NotAllowed`, discard the whole file.
+- **`"confirm": true` is mandatory.** Without it `ConfirmRequired` with how many worktree lines would
+  be lost and how many index lines would come back.
+- **Filters and line endings.** The diff is of the clean content. The `CliBackend` cleans the bytes
+  on disk (`hash-object -w --stdin --path=<path>`): they must give the diff's new id, otherwise
+  `StaleDiff`. It also requires that smudging that blob (`cat-file --filters --path=<path>`) gives
+  back exactly the bytes on disk; otherwise `NotAllowed` (discard the whole file): rewriting the file
+  through the filters would also change lines that were not chosen (e.g. CRLF with
+  `core.autocrlf=input`, a filter that does not round-trip). The bytes written are the smudged form
+  of the new content (`hash-object -w --no-filters`, then `cat-file --filters`).
+- **The index is never touched**, and the mode (executable bit) of the file is kept: the new file
+  gets the old file's permissions.
+
+The `CliBackend`, in this order: status without fsmonitor and `discard_lines_target`; the index
+entry (`ls-files -s`) equal to the status one; the diff and `discard_line_patch`, with the diff's
+old id equal to that entry; every directory on the path a real
+directory and the file a regular file (`lstat`; bytes and permissions read once). The mode recorded (backup, result, journal) is the
+diff's new mode, the one git sees: with `core.fileMode=false` or on Windows the permissions on disk
+may differ from it, and they are never compared with it; clean and smudge checks
+above; the new content and its bytes; **backup**: a commit with only the file and its exact bytes
+and mode (`hash-object -w --no-filters`, temporary index, fixed identity, never signed) whose
+**parent** is a commit with the bytes to write (so that both blobs of the journal entry stay
+reachable after a `git gc`), held by `update-ref refs/project/backup/discard-<seconds>-<nanoseconds>
+<commit> ""` and verified with `ls-tree`; if any of this fails nothing is written. **Last check**:
+the directories again and the file still has exactly the bytes and permissions read (otherwise `StaleDiff`,
+nothing written; the backup ref stays, harmless). Then the **atomic write**: a new temporary file
+`.project-<pid>-<nanoseconds>.tmp` in the same directory (without the file's name, which could
+exceed the name limit) (`create_new`), the bytes, the old
+file's permissions, `sync_all`, `rename` over the file (on failure the temporary file is removed and
+the error names the backup). The rename gives the file a new inode: a hard link to the old file
+keeps the old content. Only the instant between the last check and the rename remains, in which an
+editor saving the file would lose that save (it is in neither the backup nor the result). After
+the write the file is reread: if it does not have the bytes written, a warning in `warnings`.
+
+Result: `{"path", "mode", "before", "after", "backup", "warnings", "status", "status_error"?,
+"can_undo", "can_redo", "next_undo", "next_redo"}` (`before`/`after`: blobs with the exact bytes
+before and after).
+
+The journal entry has `"lines": {"path", "mode", "before", "after"}` and `"backup"`; the
+`"worktree"` entry of `worktree.discard` is not reused, because its undo requires the worktree equal
+to the index, which after discarding only some lines is not the case. Undo and redo check, like
+those of `worktree.discard`, that no operation is in progress and that HEAD is the recorded one,
+then call `GitIndex::restore_lines`:
+
+- **undo**: the file must be a regular file with exactly the bytes of `after` (the permissions are
+  not compared: the write keeps them), otherwise `UndoConflict` and nothing changes; then the bytes of `before` are written
+  atomically as above. Nothing is lost: the bytes overwritten are blob `after`.
+- **redo**: the same with the roles swapped (exactly the bytes of `before`, then `after` written).
+  No new backup.
+
+The `MemoryBackend` has no filters: the worktree bytes are the clean content. Its backups are in
+`MemoryBackend::line_backups` (`refs/project/backup/discard-<n>`, numbered with the
+`worktree.discard` ones); `fail_line_backups` makes the backup fail.
 
 ## Deleting untracked files
 

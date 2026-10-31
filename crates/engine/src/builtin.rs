@@ -8,6 +8,7 @@ pub(crate) mod conflict;
 pub(crate) mod discard;
 pub(crate) mod edit;
 pub(crate) mod file;
+pub(crate) mod ignore;
 pub(crate) mod merge;
 pub(crate) mod pick;
 pub(crate) mod pull;
@@ -209,11 +210,25 @@ impl Registry {
             discard::worktree_discard,
         );
         self.add(
+            "worktree.discard_lines",
+            "Discard the chosen unstaged lines",
+            r#"{"path": path, "lines": [{"old": n} | {"new": n}, ...], "digest": string (from diff.worktree), "confirm": true}"#,
+            Write,
+            discard::worktree_discard_lines,
+        );
+        self.add(
             "worktree.clean",
             "Delete untracked files (with backup)",
             r#"{"paths": [path, ...], "confirm": true}"#,
             Write,
             clean::worktree_clean,
+        );
+        self.add(
+            "worktree.ignore",
+            "Ignore files: append patterns to .gitignore or .git/info/exclude",
+            r#"{"patterns": [string, ...], "file"?: "gitignore" | "exclude"}"#,
+            Write,
+            ignore::worktree_ignore,
         );
     }
 
@@ -1031,7 +1046,9 @@ mod tests {
                 "tag.create",
                 "tag.delete",
                 "worktree.clean",
-                "worktree.discard"
+                "worktree.discard",
+                "worktree.discard_lines",
+                "worktree.ignore"
             ]
         );
         let ids: Vec<_> = r.search("COMMIT HISTORY").map(|c| c.id).collect();
@@ -1085,7 +1102,9 @@ mod tests {
                 "tag.create",
                 "tag.delete",
                 "worktree.clean",
-                "worktree.discard"
+                "worktree.discard",
+                "worktree.discard_lines",
+                "worktree.ignore"
             ]
         );
         let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();

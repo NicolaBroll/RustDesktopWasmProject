@@ -433,6 +433,25 @@ fn commit_discard_and_journal() {
 }
 
 #[test]
+fn discard_lines() {
+    let (r, mut s) = sample();
+    let diff = run(&r, &mut s, "diff.worktree", json!({ "path": "src/lib.rs" }));
+    let file: project_domain::FileDiff = serde_json::from_value(diff["files"][0].clone()).unwrap();
+    snap(
+        &r,
+        &mut s,
+        "worktree.discard_lines",
+        "",
+        json!({
+            "path": "src/lib.rs",
+            "lines": [file.line_refs()[0]],
+            "digest": diff["files"][0]["digest"],
+            "confirm": true
+        }),
+    );
+}
+
+#[test]
 fn branch_and_tag_writes() {
     let (r, mut s) = sample();
     snap(&r, &mut s, "branch.create", "", json!({ "name": "topic" }));
@@ -825,5 +844,17 @@ fn clean_untracked() {
         "worktree.clean",
         "",
         json!({ "paths": ["note.txt"], "confirm": true }),
+    );
+}
+
+#[test]
+fn ignore_untracked() {
+    let (r, mut s) = sample();
+    snap(
+        &r,
+        &mut s,
+        "worktree.ignore",
+        "",
+        json!({ "patterns": ["/note.txt"], "file": "exclude" }),
     );
 }

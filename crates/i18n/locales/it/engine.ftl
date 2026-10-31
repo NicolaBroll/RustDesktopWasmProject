@@ -38,6 +38,7 @@ engine-path-empty = il percorso è vuoto: `{ $path }`
 engine-path-nul = il percorso contiene un byte NUL: `{ $path }`
 engine-path-not-relative = il percorso deve essere relativo alla radice del repo, con `/` come separatore e senza componenti vuoti, `.` o `..`: `{ $path }`
 engine-discard-confirm = le modifiche non in stage di { $n } file andrebbero perse ({ $files }): il worktree tornerebbe come l'indice. Prima si salverebbe un backup in `refs/project/backup/discard-...`, e `edit.undo` le rimetterebbe
+engine-discard-lines-confirm = { $lost } righe cambiate di `{ $path }` andrebbero perse e { $back } righe della versione nell'indice tornerebbero: le altre modifiche restano. Prima si salverebbe un backup del file in `refs/project/backup/discard-...`, e `edit.undo` lo rimetterebbe
 engine-status-unreadable = lo stato non si rilegge ({ $error })
 engine-lines-empty = `lines` è vuoto: indicare almeno una riga cambiata del diff
 engine-paths-empty = `paths` è vuoto: indicare almeno un percorso
@@ -76,6 +77,7 @@ engine-operation-in-progress = è in corso { $operation ->
     [cherry-pick] un cherry-pick
     [revert] un revert
     [bisect] un bisect
+    [squash] un merge squash
    *[am] un `git am`
 }: `{ $command }` { $what } a metà dell'operazione, niente modificato. Concludere o annullare l'operazione e riprovare
 engine-busy-checkout = cambierebbe branch
@@ -112,6 +114,7 @@ engine-op-cherry-pick = un cherry-pick
 engine-op-revert = un revert
 engine-op-bisect = un bisect
 engine-op-am = un `git am`
+engine-op-squash = un merge squash
 # Opening the repository (`repo.open`).
 engine-open-empty-path = percorso vuoto
 engine-open-bare = è un repository bare, senza cartella di lavoro: non supportato

@@ -2,6 +2,7 @@ engine-journal-amend = Amend { $id } «{ $summary }» (era { $old })
 engine-journal-commit = Commit { $id } «{ $summary }»
 engine-journal-discard-one = Scarta le modifiche di «{ $path }»
 engine-journal-discard-many = Scarta le modifiche di { $n } file ({ $names })
+engine-journal-discard-lines = Scarta righe di «{ $path }»
 engine-journal-clean-one = Cancella «{ $path }»
 engine-journal-clean-many = Cancella { $n } file non tracciati ({ $names })
 engine-journal-quoted = «{ $name }»
@@ -20,6 +21,7 @@ engine-journal-pull = Pull di `{ $branch }` ({ $how }: da { $before } a { $after
 engine-journal-reset = Reset ({ $mode }) di `{ $branch }` da { $before } a { $after }
 engine-journal-merge = Merge di { $source } in `{ $branch }` ({ $strategy ->
     [fast_forward] fast-forward
+    [squash] squash in un solo commit
    *[other] commit di merge
 }: da { $before } a { $after })
 engine-journal-pick = { $kind ->
@@ -41,3 +43,5 @@ engine-journal-stash-drop = Elimina { $name } ({ $id } «{ $message }»)
 engine-journal-branch-create-track = Crea branch `{ $name }` su { $id } che segue `{ $upstream }`
 engine-journal-upstream-set = Imposta l'upstream di `{ $name }` a `{ $upstream }`
 engine-journal-upstream-unset = Togli l'upstream `{ $previous }` di `{ $name }`
+engine-journal-ignore-one = Ignora «{ $pattern }» in { $file }
+engine-journal-ignore-many = Ignora { $n } pattern ({ $names }) in { $file }

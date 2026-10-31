@@ -6,7 +6,9 @@ mod clone;
 mod commit;
 mod conflict;
 mod discard;
+mod discard_lines;
 mod file;
+mod ignore;
 mod merge;
 mod pick;
 mod rebase;
@@ -104,6 +106,11 @@ pub struct MemoryBackend {
     worktree_backups: Vec<WorktreeStash>,
     /// Backups saved by `worktree.clean`.
     clean_backups: Vec<CleanStash>,
+    /// Backups saved by `worktree.discard_lines`: ref name, path and blob with the old bytes.
+    line_backups: Vec<(String, RepoPath, Oid)>,
+    /// If set, the backup of `worktree.discard_lines` fails with this message
+    /// ([`MemoryBackend::fail_line_backups`]).
+    line_backup_failure: Option<String>,
     /// Name and email of the committer (`user.name`/`user.email`); `None` = not configured.
     identity: Option<(String, String)>,
     /// Configured remotes, by name.
@@ -138,12 +145,18 @@ pub struct MemoryBackend {
     merge_state: Option<MemoryMerge>,
     /// The rebase in progress, with `operation` = `Rebase`.
     rebase_state: Option<MemoryRebase>,
+    /// The squash merge in progress, with `operation` = `Squash`.
+    squash_state: Option<crate::git::SquashRecord>,
     /// There is a commit-graph ([`GitMaintenance::commit_graph`]): written by
     /// [`GitMaintenance::write_commit_graph`].
     commit_graph: bool,
     /// The annotated tag objects created by `tag.create`, with the commit they point to: an undo
     /// and redo of the tag put the ref back on the same object.
     tag_objects: BTreeMap<Oid, Oid>,
+    /// The content of `.git/info/exclude` (`None`: no file).
+    exclude: Option<Vec<u8>>,
+    /// How many backups `worktree.ignore` saved (`refs/project/backup/ignore-<n>`).
+    ignore_backups: u64,
 }
 
 impl Default for MemoryBackend {
@@ -169,6 +182,8 @@ impl MemoryBackend {
             commit_backups: Vec::new(),
             worktree_backups: Vec::new(),
             clean_backups: Vec::new(),
+            line_backups: Vec::new(),
+            line_backup_failure: None,
             identity: None,
             remotes: BTreeMap::new(),
             pull_settings: PullSettings::default(),
@@ -184,8 +199,11 @@ impl MemoryBackend {
             config_write_failure: None,
             merge_state: None,
             rebase_state: None,
+            squash_state: None,
             commit_graph: false,
             tag_objects: BTreeMap::new(),
+            exclude: None,
+            ignore_backups: 0,
         }
     }
 
@@ -304,6 +322,7 @@ impl MemoryBackend {
         self.operation = operation;
         self.merge_state = None;
         self.rebase_state = None;
+        self.squash_state = None;
     }
 
     fn set_ref(&mut self, name: String, target: Oid, tag_object: Option<Oid>) {
@@ -774,7 +793,13 @@ impl GitRead for MemoryBackend {
         Ok(Status {
             head: self.head()?,
             upstream,
-            entries: self.entries.clone(),
+            // Untracked files ignored by `.gitignore` or `.git/info/exclude` are not listed.
+            entries: self
+                .entries
+                .iter()
+                .filter(|e| !(matches!(e.kind, EntryKind::Untracked) && self.is_ignored(&e.path)))
+                .cloned()
+                .collect(),
             operation: self.operation,
         })
     }
@@ -875,6 +900,21 @@ impl GitIndex for MemoryBackend {
         Ok(RestoreOutcome::default())
     }
 
+    fn discard_lines(
+        &mut self,
+        selection: &super::DiscardLines,
+    ) -> Result<super::DiscardLinesOutcome, EngineError> {
+        self.discard_line_selection(selection)
+    }
+
+    fn restore_lines(
+        &mut self,
+        request: &super::LinesRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_discarded_lines(request)?;
+        Ok(RestoreOutcome::default())
+    }
+
     fn clean_plan(&self, paths: &[RepoPath]) -> Result<Vec<super::CleanedFile>, EngineError> {
         self.plan_clean(paths)
     }
@@ -892,6 +932,20 @@ impl GitIndex for MemoryBackend {
         request: &super::CleanRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_clean(request)
+    }
+
+    fn ignore(
+        &mut self,
+        request: &super::IgnoreRequest,
+    ) -> Result<super::IgnoreOutcome, EngineError> {
+        self.ignore_patterns(request)
+    }
+
+    fn restore_ignore(
+        &mut self,
+        request: &super::IgnoreRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_ignore_file(request)
     }
 }
 

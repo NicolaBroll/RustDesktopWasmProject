@@ -91,6 +91,7 @@ pub fn check_no_operation(
         Operation::Revert => "revert",
         Operation::Bisect => "bisect",
         Operation::Am => "am",
+        Operation::Squash => "squash",
     };
     Err(EngineError::NotAllowed(msg!(
         "engine-operation-in-progress",

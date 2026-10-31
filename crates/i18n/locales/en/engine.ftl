@@ -41,6 +41,13 @@ engine-discard-confirm = the unstaged changes of { $n ->
     [one] 1 file
    *[other] { $n } files
 } would be lost ({ $files }): the worktree would go back to the index. A backup would first be saved in `refs/project/backup/discard-...`, and `edit.undo` would put them back
+engine-discard-lines-confirm = { $lost } changed { $lost ->
+    [one] line
+   *[other] lines
+} of `{ $path }` would be lost and { $back } { $back ->
+    [one] line
+   *[other] lines
+} of the index version would come back: the other changes stay. A backup of the file would first be saved in `refs/project/backup/discard-...`, and `edit.undo` would put it back
 engine-status-unreadable = the status cannot be read again ({ $error })
 engine-lines-empty = `lines` is empty: give at least one changed line of the diff
 engine-paths-empty = `paths` is empty: give at least one path
@@ -79,6 +86,7 @@ engine-operation-in-progress = { $operation ->
     [cherry-pick] a cherry-pick
     [revert] a revert
     [bisect] a bisect
+    [squash] a squash merge
    *[am] a `git am`
 } is in progress: `{ $command }` { $what } in the middle of the operation, nothing changed. Finish or abort the operation and try again
 engine-busy-checkout = would switch branch
@@ -115,6 +123,7 @@ engine-op-cherry-pick = a cherry-pick
 engine-op-revert = a revert
 engine-op-bisect = a bisect
 engine-op-am = a `git am`
+engine-op-squash = a squash merge
 # Opening the repository (`repo.open`).
 engine-open-empty-path = empty path
 engine-open-bare = it is a bare repository, without a working tree: not supported

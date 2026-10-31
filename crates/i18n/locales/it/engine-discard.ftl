@@ -26,3 +26,9 @@ engine-discard-not-as-expected = dopo `{ $command }` { $files } non { $n ->
     [one] è
    *[other] sono
 } come atteso (un filtro `clean`/`smudge` o un altro programma?); { $note }
+engine-discard-lines-whole-file = `{ $path }` non ha modifiche di righe scartabili una per una (eliminato, rinominato, `intent-to-add`, cambio di tipo o solo cambio di modo): scarta il file intero (`worktree.discard`)
+engine-discard-lines-filters = `{ $path }`: i byte sul disco non sono quelli che git scriverebbe per il suo contenuto (un filtro `clean`/`smudge` o una conversione dei fine riga che non torna uguale): nulla scritto, scarta il file intero (`worktree.discard`)
+engine-discard-lines-not-a-file = `{ $path }` non è un file normale nel worktree: nulla scritto
+engine-discard-lines-changed = il file è cambiato dopo la lettura del suo diff: nulla scritto, ricarica il diff
+engine-discard-lines-write-failed = `{ $path }` non si può scrivere ({ $error }); il file prima dello scarto è salvato in `{ $backup }`
+engine-discard-lines-not-as-expected = dopo `{ $command }` `{ $path }` non ha i byte scritti (un altro programma?); il file prima dello scarto è salvato in `{ $backup }`

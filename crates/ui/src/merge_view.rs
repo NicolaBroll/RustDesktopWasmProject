@@ -3,7 +3,7 @@
 
 use crate::conflict;
 use crate::discard::Phase;
-use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog};
+use crate::merge::{self, ContinueDialog, Dialog, Kind, MainlineDialog, Mode, StartDialog};
 use crate::view::git_text;
 use crate::{Action, RepoView};
 use egui::{RichText, Ui};
@@ -99,11 +99,8 @@ fn buttons(
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
-    let abort = info.abort_command.as_deref().and_then(Kind::from_abort);
-    let resume = info
-        .continue_command
-        .as_deref()
-        .and_then(Kind::from_continue);
+    let abort = Kind::abort_of(info);
+    let resume = Kind::resume_of(info);
     if abort.is_none() && resume.is_none() {
         let why = match operation {
             Operation::CherryPick | Operation::Revert => tr!("merge-sequence-hint"),
@@ -169,11 +166,7 @@ fn conflicts_line(
 ) {
     let n = info.conflicts.len();
     if n == 0 {
-        let resume = info
-            .continue_command
-            .as_deref()
-            .and_then(Kind::from_continue);
-        match resume {
+        match Kind::resume_of(info) {
             Some(kind) => ui.label(tr!("merge-no-conflicts-continue", name = kind.name())),
             None => ui.label(tr!("merge-no-conflicts")),
         };
@@ -209,7 +202,7 @@ fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>
     }
 }
 
-/// The open dialog: "Continue", the abort confirmation or the parent of a
+/// The open dialog: the merge with options, "Continue", the abort confirmation or the parent of a
 /// cherry-pick or revert of a merge commit.
 pub(crate) fn merge_dialog(
     ctx: &egui::Context,
@@ -220,6 +213,7 @@ pub(crate) fn merge_dialog(
     let modal = egui::Modal::new(egui::Id::unique("merge-dialog")).show(ctx, |ui| {
         ui.set_max_width(520.0);
         match dialog {
+            Dialog::Start(dialog) => start_dialog(ui, dialog, actions),
             Dialog::Continue(dialog) => continue_dialog(ui, repo, dialog, actions),
             Dialog::Abort(kind, Phase::Confirm { reason }) => {
                 abort_dialog(ui, *kind, reason, actions)
@@ -231,6 +225,62 @@ pub(crate) fn merge_dialog(
     if modal.should_close() {
         actions.push(Action::Merge(merge::Action::CloseDialog));
     }
+}
+
+/// The merge with options (S58): merge commit, squash into one commit (with the message and the
+/// note that the branch will not appear as merged) or fast-forward only.
+fn start_dialog(ui: &mut Ui, dialog: &StartDialog, actions: &mut Vec<Action>) {
+    let (what, into) = (dialog.what.as_str(), dialog.into.as_str());
+    ui.heading(tr!("merge-start-heading", what = what, into = into));
+    ui.add_space(6.0);
+    for mode in Mode::CHOICES {
+        if ui.radio(dialog.mode == mode, mode.label()).clicked() {
+            actions.push(Action::Merge(merge::Action::Mode(mode)));
+        }
+        ui.indent(("merge-mode", mode.label()), |ui| {
+            ui.add(egui::Label::new(RichText::new(mode.explanation(what, into)).weak()).wrap());
+        });
+    }
+    if dialog.mode == Mode::Squash {
+        ui.add_space(8.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(tr!("merge-squash-not-merged", what = what))
+                    .color(ui.visuals().warn_fg_color),
+            )
+            .wrap(),
+        );
+        ui.add_space(6.0);
+        ui.label(tr!("merge-squash-message-label"));
+        let mut message = dialog.message.clone();
+        let edit = ui.add(
+            egui::TextEdit::multiline(&mut message)
+                .id(ui.make_persistent_id("merge-squash-message"))
+                .hint_text(tr!("merge-squash-message-hint", what = what))
+                .desired_rows(5)
+                .desired_width(f32::INFINITY)
+                .font(egui::TextStyle::Monospace),
+        );
+        if edit.changed() {
+            actions.push(Action::Merge(merge::Action::Message(message)));
+        }
+    }
+    ui.add_space(8.0);
+    ui.add(egui::Label::new(RichText::new(tr!("merge-start-undo")).small()).wrap());
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let label = if dialog.mode == Mode::Squash {
+            tr!("merge-squash-button")
+        } else {
+            tr!("merge-start-button")
+        };
+        if ui.button(RichText::new(label).strong()).clicked() {
+            actions.push(Action::Merge(merge::Action::SubmitMerge));
+        }
+        if ui.button(tr!("merge-close")).clicked() {
+            actions.push(Action::Merge(merge::Action::CloseDialog));
+        }
+    });
 }
 
 fn continue_dialog(

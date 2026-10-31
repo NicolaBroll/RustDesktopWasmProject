@@ -14,6 +14,7 @@ mod diff;
 mod diff_tree;
 mod file_log;
 mod graph;
+mod ignore;
 mod log;
 mod oid;
 mod patch;
@@ -57,6 +58,10 @@ pub use diff::{DIFF_ARGS, Diff, FileDiff, Hunk, Line, LineKind, NO_NEWLINE_MARKE
 pub use diff_tree::{ChangedFile, CommitDetails, DIFF_TREE_ARGS, parse_diff_tree};
 pub use file_log::{FILE_LOG_ARGS, FileLogEntry, parse_file_log};
 pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};
+pub use ignore::{
+    IgnoreAppend, IgnoreKind, IgnorePattern, PatternProblem, append_ignore_patterns,
+    check_ignore_pattern, ignore_pattern,
+};
 pub use log::{LOG_ARGS, LOG_FIELDS, LOG_FORMAT, parse_log};
 pub use oid::Oid;
 pub use patch::{APPLY_ARGS, LineRef, PatchDirection, build_patch};
@@ -225,6 +230,11 @@ pub enum Operation {
     Bisect,
     /// `git am` stopped halfway (`.git/rebase-apply/applying`). Added after the others.
     Am,
+    /// A squash merge started by the app (`merge.start` with `squash`) and stopped (conflicts,
+    /// a hook that rejected the commit). Git itself has no state for it (no `MERGE_HEAD`): the
+    /// engine keeps a record in the git folder, valid while HEAD is where the squash started
+    /// and `SQUASH_MSG` exists. Concluded with `merge.continue`, aborted with `merge.abort`.
+    Squash,
 }
 
 /// A file in the repo state.

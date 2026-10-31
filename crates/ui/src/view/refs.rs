@@ -823,7 +823,8 @@ fn compare_item(ui: &mut Ui, info: &RefInfo, current: &str, actions: &mut Vec<Ac
     ui.separator();
 }
 
-/// The "Merge into `<branch>`" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for
+/// The "Merge into `<branch>`" entry (fast-forward if enough, otherwise a merge commit, at once) and
+/// "Merge into `<branch>` with options…" (the dialog: merge commit, squash, fast-forward only) for
 /// `rev`, shown as `what`; disabled with the reason if the current branch does not allow it.
 pub(super) fn merge_items(
     ui: &mut Ui,
@@ -846,22 +847,23 @@ pub(super) fn merge_items(
             tr!("refs-merge-hint", what = what, into = into),
         ),
         (
-            tr!("refs-merge-no-ff-item", into = into),
+            tr!("refs-merge-options-item", into = into),
             true,
-            tr!("refs-merge-no-ff-hint", what = what, into = into),
+            tr!("refs-merge-options-hint", what = what, into = into),
         ),
     ];
-    for (label, no_ff, hint) in items {
+    for (label, options, hint) in items {
         let button = ui
             .add_enabled(can_write && blocked.is_none(), egui::Button::new(label))
             .on_hover_text(hint)
             .on_disabled_hover_text(blocked.map_or_else(wait, str::to_owned));
 
         if button.clicked() {
-            actions.push(Action::Merge(merge::Action::Merge {
-                rev: rev.to_owned(),
-                what: what.to_owned(),
-                no_ff,
+            let (rev, what) = (rev.to_owned(), what.to_owned());
+            actions.push(Action::Merge(if options {
+                merge::Action::OpenMerge { rev, what }
+            } else {
+                merge::Action::Merge { rev, what }
             }));
             ui.close();
         }

@@ -155,6 +155,9 @@ pub fn amend_impact(containing: &[String], branch: Option<&str>) -> (Vec<String>
 /// - Merge in progress: the commit is the **merge commit** (git adds `MERGE_HEAD` to the parents),
 ///   even with the index equal to HEAD (merge without changes, e.g. `-s ours`). With `amend` it is
 ///   rejected, as git does.
+/// - Squash merge in progress ([`Operation::Squash`]): an ordinary commit (one parent) of what is
+///   staged, which concludes it (`merge.continue` is the command that also records the journal
+///   entry of the squash); with `amend` it is rejected like during a merge.
 /// - Bisect in progress: nothing special, the commit is made.
 /// - `amend` without a commit in HEAD → [`EngineError::NotAllowed`].
 /// - Without `amend`, nothing staged (and no merge in progress) → [`EngineError::NothingToCommit`]:
@@ -196,7 +199,7 @@ pub fn check_commit_state(
                 operation = operation
             )));
         }
-        Some(Operation::Merge) if amend => {
+        Some(Operation::Merge | Operation::Squash) if amend => {
             return Err(EngineError::NotAllowed(msg!("engine-commit-amend-merge")));
         }
         _ => {}

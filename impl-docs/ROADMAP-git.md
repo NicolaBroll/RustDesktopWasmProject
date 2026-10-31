@@ -762,3 +762,139 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `CheckoutConflict` dialog of `branch.checkout`, "Detached at <id>" in the top bar with "Create
   branch here…" (`branch.create` without `start`, then `branch.checkout`), commits saved when
   leaving a detached HEAD named in the notice of both checkouts.
+
+### S56 — Discard by hunk and by line
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** stage and unstage work by line, but `worktree.discard` only takes whole files. Add
+  `worktree.discard_lines {"path", "lines", "digest", "confirm"}` (`Access::Write`): the selected
+  changed lines of the `diff.worktree` diff of `path` go back to the index version, the others stay
+  in the worktree. Same selection and digest as `index.stage_lines` (`StaleDiff` if the diff
+  changed); the reverse patch is the `build_patch` "unstage" rule applied to the worktree diff (the
+  worktree is its new side), computed with the strict `apply_patch` on the worktree content.
+  - Only a tracked file with unstaged changes; the same refusals as `index.stage_lines`
+    (binaries, links, submodules, conflicts, intent-to-add/new files, renames) and as
+    `worktree.discard` (no initial commit, conflicts in the repo, a non-directory in the path).
+  - **Filters and line endings:** the diff is of the clean content; the new worktree bytes are the
+    smudged form of the new content (`hash-object -w` of it, then `cat-file --filters
+    --path=<path>`), and only if the current worktree bytes clean to the diff's new side;
+    otherwise `NotAllowed` (discard the whole file instead).
+  - Always `confirm` (without it: `ConfirmRequired` with the lines that would be lost). Backup
+    before writing, as `worktree.discard` (the exact current bytes and mode in
+    `refs/project/backup/discard-...`); no backup → nothing written; re-check the bytes right
+    before writing (a file changed since the read → `StaleDiff`, nothing written); the mode is kept.
+  - `JournalEntry` so `edit.undo` puts the old bytes back only if the file still has the bytes
+    written (otherwise `UndoConflict`), and redo writes them again only if it still has the old ones.
+  - Result: `{"status", "backup", ...journal}`. Docs: section in `impl-docs/git/discard.md`, CLI
+    example in `impl-docs/git/cli.md`, README.
+  - UI: in the unstaged diff, "Discard lines…"/"Discard hunk…" next to "Stage lines"/"Stage hunk",
+    with the confirmation dialog (Cancel focused, Enter never confirms).
+- **Done when:** integration tests (one line of a hunk, a whole hunk, added/removed/modified lines,
+  end of file without newline, CRLF with `core.autocrlf`, a clean/smudge filter, executable bit
+  kept, file changed after the read, stale digest, backup failure → nothing written, undo/redo,
+  file changed before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** done. `worktree.discard_lines` in `crates/engine/src/builtin/discard.rs`;
+  `discard_line_patch` (in `git/lines.rs`), `discard_lines_target`, `LinesBackup`/`LinesRestore` in
+  `git/discard_lines.rs`; `GitIndex::discard_lines`/`restore_lines` on both backends
+  (`crates/git/src/backend/discard_lines.rs`, `git/memory/discard_lines.rs`); journal field
+  `lines`; tests in `crates/git/tests/discard_lines.rs` and on the `MemoryBackend`. UI: "Discard
+  lines… (N)" in the selection bar and "Discard hunk…" on each hunk header of the unstaged diff
+  only (disabled with the reason for a file that is not plainly modified), `lines::discard_plan`,
+  `DiscardBox::start_lines` and the `confirm_discard_lines` dialog (Cancel focused, Enter never
+  confirms; notice with the backup, status and diff reread, `StaleDiff` rereads them). `safety-reviewer`
+  review done (the recorded mode is git's, so `core.fileMode=false` works; short temporary name).
+  The backup records git's mode: with `core.fileMode=false` an executable file is `100644` there.
+### S57 — Ignore files (`.gitignore`)
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** an untracked file that should never be committed (build output, logs, editor files) can
+  only be ignored by editing `.gitignore` outside the app. Add `worktree.ignore {"patterns":
+  [string], "file"?: "gitignore" | "exclude"}` (`Access::Write`): appends the patterns to the root
+  `.gitignore` (default) or to `.git/info/exclude` (ignored only in this clone, not committed).
+  - Patterns: non-empty, no NUL/CR/LF, not only whitespace, not a comment (a leading `#` must be
+    escaped) → otherwise `InvalidParams`. A pattern already present as a line is not added again.
+    A pure helper (domain) builds the escaped, anchored pattern for the UI choices: one path
+    (`/dir/name`), a folder (`/dir/`), an extension (`*.log`), escaping `\ * ? [ ! #` and trailing
+    spaces as gitignore requires; tests with `git check-ignore` that the pattern matches exactly
+    what it should.
+  - Write: the file is created if missing; appended otherwise, adding the missing final newline
+    first and keeping the file's line endings (CRLF if it uses them). A `.gitignore` that is a link,
+    a directory or in a directory that is a link → `NotAllowed`. Atomic write (temporary file and
+    rename, permissions kept, as `worktree.discard_lines`). No `confirm`: nothing is lost.
+  - `JournalEntry` so `edit.undo` puts the exact old bytes back (or removes the file it created)
+    only if the file still has exactly the bytes written (otherwise `UndoConflict`); redo the
+    reverse. The old bytes stay reachable (blob in a backup ref or in the journal, as in S56).
+  - Result: `{"file", "added": [pattern], "already": [pattern], "ignored": [path] (untracked files
+    that became ignored), "tracked": [path] (tracked files matched: git keeps tracking them, a
+    warning), "warnings", "status", ...journal}`.
+  - Docs: new `impl-docs/git/ignore.md`, CLI example in `impl-docs/git/cli.md`, README.
+  - UI: on an untracked file of the stage area, "Ignore" submenu: "This file", "All *.ext files",
+    "Folder dir/" (each parent folder), and a choice ".gitignore (shared)" / "Only for me
+    (.git/info/exclude)"; notice with Undo. The `.gitignore` change appears in the unstaged list.
+- **Done when:** integration tests (new file, append without final newline, CRLF file, duplicate
+  pattern, names with spaces/`#`/`!`/`*`/trailing space/non-UTF-8, exclude file, `.gitignore` as a
+  link refused, tracked file matched → warning, undo/redo, file changed before undo) and on the
+  `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** done; `safety-reviewer` review done (a pattern followed by a negation is appended
+  again, a tracked `.gitignore` missing from disk is refused, BOM ignored when comparing). UI: "Ignore" submenu in the context menu of an
+  untracked file (`crates/ui/src/view/stage_view.rs`, `ignore_menu`), two headed sections
+  ".gitignore (shared, committed)" and "Only for me (.git/info/exclude)" with the same entries;
+  `crates/ui/src/ignore.rs` (choices, `IgnoreBox`, notice; tests in `ignore_tests.rs`), texts in
+  `locales/*/ignore.ftl`. Engine: `worktree.ignore`, `GitIndex::ignore`/`restore_ignore`,
+  `JournalEntry::ignore` (field `ignore`); pattern helpers in `crates/domain/src/git/ignore.rs`
+  (`ignore_pattern`, `append_ignore_patterns`, `IgnorePattern` = bytes like `RepoPath`), types in
+  `crates/engine/src/git/ignore.rs`, command in `crates/engine/src/builtin/ignore.rs`, `CliBackend`
+  in `crates/git/src/backend/ignore.rs` with the atomic write in `atomic.rs`; tests in
+  `crates/git/tests/ignore.rs`, `crates/engine/src/git/memory/ignore.rs`,
+  `crates/engine/src/builtin/ignore.rs`. Docs: `impl-docs/git/ignore.md`.
+
+### S58 — Squash merge
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** `merge.start` has `no_ff` and `ff_only` but not squash: a feature branch cannot be
+  brought in as one commit. Add `"squash"?: bool` to `merge.start` (with `no_ff`/`ff_only` →
+  `InvalidParams`): `git merge --squash` of the resolved id, then one ordinary commit (one parent,
+  HEAD) on the branch; the merged branch is not recorded as merged (the next merge of the same
+  branch may conflict: said in the docs and in the UI).
+  - Same refusals as a merge commit (detached HEAD, no commits, operation in progress, conflicted
+    files, **any** change to tracked files, untracked/ignored files the merge would overwrite);
+    `up_to_date` → nothing written. Explicit options against the configuration (`--no-ff` is
+    meaningless with squash; `--no-commit`/`--squash` behaviour checked with `merge.ff`,
+    `branch.<b>.mergeOptions`, `merge.autoStash`).
+  - Message: `message`, otherwise `Squashed branch 'x'` (as `merge_source`, ` into <branch>`
+    outside `main`/`master`) followed by a blank line and the subjects of the squashed commits
+    (`* <subject>`, oldest first, at most 50 then `…`). The commit goes through `GitIndex::commit`
+    (hooks and signing as `commit.create`). Backup `refs/project/backup/merge-...` of the branch,
+    `JournalEntry` as for the concluded merge of `merge.start` (same undo/redo).
+  - **Conflicts**: git leaves no `MERGE_HEAD`, so git itself has no "operation in progress".
+    The squash stays in progress as a merge does, recorded by the engine in the git directory
+    (`project-squash`: rev, branch, HEAD before, backup, message), valid only while HEAD is still
+    there and `SQUASH_MSG` exists; `repo.operation` reports it (`operation: "Squash"`,
+    `continue: "merge.continue"`, `abort: "merge.abort"`), `merge.continue` makes the single-parent
+    commit, `merge.abort` restores index and worktree to HEAD with the same backup and `confirm`
+    rules as today. Other commands refuse during it like during a merge. A stale record (HEAD
+    moved from the terminal) is ignored and removed.
+  - Result: as `merge.start`, `strategy: "squash"`, `in_progress`, `conflicts`.
+  - Docs in `impl-docs/git/merge.md`, examples in `impl-docs/git/cli.md`, README.
+  - UI: in the merge dialog a choice "Merge commit / Squash into one commit / Fast-forward only",
+    with the editable message for squash and a one-line note that the branch will not appear
+    merged; the in-progress banner handles "Squash".
+- **Done when:** integration tests (squash of a diverged branch, of a branch ahead (no
+  fast-forward: one commit), message default and custom, up to date, local changes refused,
+  conflicts → in progress → continue, → abort with backup, HEAD moved from the terminal while in
+  progress, hook that rejects the commit, `merge.ff=only` and `mergeOptions` in the config,
+  undo/redo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** engine and backend done (`merge.start` `squash`, `Operation::Squash`, `SquashRecord`
+  in `<git dir>/project-squash.json`, `merge.continue`/`merge.abort`/`repo.operation` for the
+  squash; tests in `crates/git/tests/merge_squash.rs` and `merge_tests.rs`); UI done (branch and
+  commit menus: "Merge into … with options…" opens a dialog with merge commit / squash into one
+  commit / fast-forward only, the squash message (empty: the engine's default, said in the hint)
+  and the note that the branch will not appear merged; squash notices; the panel shows "Squash"
+  with "Continue squash…"/"Abort squash…" on `merge.continue`/`merge.abort` (`Kind::Squash`);
+  `crates/ui/src/merge_start.rs`, tests in `merge_squash_tests.rs`); `safety-reviewer` review
+  done (a leftover `SQUASH_MSG` is refused, the record holds a hash of the `SQUASH_MSG` git
+  wrote, `merge.continue` with nothing staged points to `merge.abort`). UI choice: the quick "Merge into …" entry stays (fast-forward if enough); the old "… with a
+  merge commit" entry is now the dialog's "Merge commit". Choices: the squash state is a new `Operation::Squash` in
+  `Status::operation`, so every command refuses during it through the usual checks; a commit
+  rejected by a hook or signing leaves the squash in progress (staged, `in_progress` with git's
+  text); nothing to commit (changes already on the branch) → nothing written plus a warning;
+  `commit.create` during a squash stays possible (one parent, journaled as a commit, no `amend`);
+  the abort runs `git reset --merge`; the journal text reads `Merge of x into `b` (squash into one
+  commit: …)`.

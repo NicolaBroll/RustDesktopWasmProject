@@ -19,3 +19,14 @@ discard-done-many = Changes to { $n ->
    *[other] { $n } files
 } discarded; backup in { $backup }. “Undo” brings them back
 discard-status-not-reread = Changes discarded, but the status can't be reread: { $reason }
+discard-lines-label = Discarding { $n ->
+    [one] 1 line
+   *[other] { $n } lines
+} of { $path }
+discard-lines-label-hunk = Discarding hunk { $hunk } of { $path }
+discard-lines-check-label = Checking before discarding lines of { $path }
+discard-lines-done = { $n ->
+    [one] 1 line
+   *[other] { $n } lines
+} of { $path } discarded; backup of the file in { $backup }. “Undo” brings them back
+discard-lines-done-hunk = Hunk { $hunk } of { $path } discarded; backup of the file in { $backup }. “Undo” brings it back

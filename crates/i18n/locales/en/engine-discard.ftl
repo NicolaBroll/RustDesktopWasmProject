@@ -26,3 +26,9 @@ engine-discard-not-as-expected = after `{ $command }` { $files } { $n ->
     [one] is
    *[other] are
 } not as expected (a `clean`/`smudge` filter or another program?); { $note }
+engine-discard-lines-whole-file = `{ $path }` has no line changes that can be discarded one by one (deleted, renamed, `intent-to-add`, type change or only a mode change): discard the whole file (`worktree.discard`)
+engine-discard-lines-filters = `{ $path }`: its bytes on disk are not what git would write for its content (a `clean`/`smudge` filter or line-ending conversion that does not round-trip): nothing written, discard the whole file (`worktree.discard`)
+engine-discard-lines-not-a-file = `{ $path }` is not a regular file in the worktree: nothing written
+engine-discard-lines-changed = the file changed after its diff was read: nothing written, reload the diff
+engine-discard-lines-write-failed = `{ $path }` cannot be written ({ $error }); the file before the discard is saved in `{ $backup }`
+engine-discard-lines-not-as-expected = after `{ $command }` `{ $path }` does not have the bytes written (another program?); the file before the discard is saved in `{ $backup }`

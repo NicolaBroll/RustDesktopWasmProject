@@ -320,6 +320,26 @@ impl CliBackend {
     /// The backup commit: a tree with `blobs` (path, mode, blob) built in a temporary index, and
     /// a commit without parent with the fixed identity, never signed.
     fn backup_commit(&self, blobs: &[(RepoPath, u32, Oid)]) -> Result<Oid, EngineError> {
+        let mut message = format!(
+            "{BACKUP_MESSAGE}\n\nThe exact bytes and mode of the untracked files deleted by \
+             worktree.clean (`git show <commit>:<path>`):\n\n"
+        );
+        for (path, _, _) in blobs {
+            message.push_str(&format!("{path}\n"));
+        }
+        self.files_commit(blobs, &message, None)
+    }
+
+    /// A commit (with parent `parent`, if any) whose tree has only `blobs` (path, mode, blob),
+    /// built in a temporary index (the user's is not touched), with the fixed identity, never
+    /// signed, and the message `message`. The backups of `worktree.clean` and
+    /// `worktree.discard_lines`.
+    pub(super) fn files_commit(
+        &self,
+        blobs: &[(RepoPath, u32, Oid)],
+        message: &str,
+        parent: Option<&Oid>,
+    ) -> Result<Oid, EngineError> {
         let index = super::TempIndex::new(&self.git_dir);
         let index_env = [("GIT_INDEX_FILE", index.0.as_os_str())];
         let mut info = Vec::new();
@@ -341,18 +361,16 @@ impl CliBackend {
         let write = [&plain[..], &["write-tree"]].concat();
         let tree = self.run_input(&write, b"", &index_env)?;
         let tree = String::from_utf8_lossy(tree.trim_ascii_end()).into_owned();
-        let mut message = format!(
-            "{BACKUP_MESSAGE}\n\nThe exact bytes and mode of the untracked files deleted by \
-             worktree.clean (`git show <commit>:<path>`):\n\n"
-        );
-        for (path, _, _) in blobs {
-            message.push_str(&format!("{path}\n"));
-        }
         let identity: Vec<(&str, &OsStr)> = super::BACKUP_IDENTITY
             .iter()
             .map(|(k, v)| (*k, OsStr::new(v)))
             .collect();
-        let args = ["commit-tree", "--no-gpg-sign", "-F", "-", &tree];
+        let parent = parent.map(Oid::to_string);
+        let mut args = vec!["commit-tree", "--no-gpg-sign"];
+        if let Some(parent) = &parent {
+            args.extend(["-p", parent]);
+        }
+        args.extend(["-F", "-", &tree]);
         let commit = self.run_input(&args, message.as_bytes(), &identity)?;
         Ok(Oid::from_hex(commit.trim_ascii_end())?)
     }
@@ -503,7 +521,7 @@ fn depth(path: &RepoPath) -> usize {
 }
 
 #[cfg(unix)]
-fn file_mode(meta: &std::fs::Metadata) -> u32 {
+pub(super) fn file_mode(meta: &std::fs::Metadata) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     if meta.permissions().mode() & 0o100 != 0 {
         EXECUTABLE

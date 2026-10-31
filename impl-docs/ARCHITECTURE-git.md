@@ -278,7 +278,8 @@ its function (or to a new file in `impl-docs/git/`, listed here).
 | --- | --- |
 | `repo.open`, `repo.status`, `repo.refs`, `repo.log`, `commit.show`, `diff.worktree` / `diff.index` / `diff.commit` | [git/reading.md](git/reading.md) |
 | `index.stage` / `index.unstage`, `index.stage_lines` / `index.unstage_lines` | [git/stage.md](git/stage.md) |
-| `worktree.discard` | [git/discard.md](git/discard.md) |
+| `worktree.discard`, `worktree.discard_lines` | [git/discard.md](git/discard.md) |
+| `worktree.ignore` | [git/ignore.md](git/ignore.md) |
 | `commit.create` | [git/commit.md](git/commit.md) |
 | `branch.create`, `branch.checkout`, `commit.checkout`, `branch.delete`, `branch.rename` | [git/branch.md](git/branch.md) |
 | `branch.reset`, `branch.reset_preview` | [git/reset.md](git/reset.md) |

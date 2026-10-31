@@ -11,7 +11,9 @@ mod clone;
 mod commit;
 mod conflict;
 mod discard;
+mod discard_lines;
 mod file;
+mod ignore;
 #[cfg(any(test, feature = "test-support"))]
 mod line_diff;
 mod lines;
@@ -68,11 +70,19 @@ pub use discard::{
     DiscardOutcome, DiscardedFile, WorktreeBackup, WorktreeRestore, check_same_plan,
     discard_description, discard_plan,
 };
+pub use discard_lines::{
+    DiscardLines, DiscardLinesOutcome, LinesBackup, LinesRestore, discard_line_patch,
+    discard_lines_confirm, discard_lines_description, discard_lines_target,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use file::is_binary_content;
 pub use file::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
     blame_missing_worktree, blame_no_commits,
+};
+pub use ignore::{
+    IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
+    ignore_description, ignore_tracked_warning,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use maintenance::{
@@ -85,8 +95,8 @@ pub use memory::{
 pub(crate) use merge::check_in_progress;
 pub use merge::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
-    OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
-    merge_source,
+    OperationState, SQUASH_RECORD, SQUASH_SUBJECTS, SquashRecord, check_merge_state, check_merging,
+    clean_merge_message, conflicted_paths, merge_source, squash_message,
 };
 pub use pick::{
     PickKind, PickRequest, check_pick_state, check_picking, pick_empty_error, pick_message,
@@ -348,6 +358,30 @@ pub trait GitIndex {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
 
+    /// Discards only the lines `selection.lines` of the unstaged changes of one file
+    /// (`worktree.discard_lines`, §7): they go back to the index version, the other changes stay
+    /// in the worktree. **The index is not touched**; the file's mode is kept.
+    ///
+    /// Rereads the status ([`discard_lines_target`]: the refusals of `worktree.discard` and only
+    /// a modified file) and the file's `diff.worktree` diff ([`discard_line_patch`]: digest,
+    /// selection, anchored hunks), then computes the new clean content with the strict
+    /// [`apply_patch`] on the clean worktree content. The `CliBackend` writes its smudged form
+    /// (`cat-file --filters`), and only if the current bytes clean to the diff's new side and
+    /// smudge back to themselves (otherwise [`EngineError::NotAllowed`]: discard the whole
+    /// file). Before writing, the exact current bytes and mode are saved in a new ref
+    /// `refs/project/backup/discard-...`; if the backup fails nothing is written; if the file
+    /// changed since it was read, [`EngineError::StaleDiff`] and nothing is written.
+    fn discard_lines(
+        &mut self,
+        selection: &DiscardLines,
+    ) -> Result<DiscardLinesOutcome, EngineError>;
+
+    /// Undoes (`request.redo == false`) or redoes a `worktree.discard_lines`: writes the bytes of
+    /// the other blob only if the file has exactly the expected bytes and mode
+    /// ([`LinesRestore::blobs`]), otherwise [`EngineError::UndoConflict`] and nothing changes.
+    /// The index is not touched.
+    fn restore_lines(&mut self, request: &LinesRestore) -> Result<RestoreOutcome, EngineError>;
+
     /// The untracked files that `worktree.clean` of `paths` would delete now, with mode and size:
     /// [`clean_plan`] on the status read now (see there for the refusals: nested repositories,
     /// paths without untracked files). Reads only.
@@ -379,6 +413,24 @@ pub trait GitIndex {
     /// Redo: every file must still be untracked with the backup's bytes and mode, otherwise
     /// [`EngineError::UndoConflict`]; then it is deleted again (no new backup).
     fn restore_cleaned(&mut self, request: &CleanRestore) -> Result<RestoreOutcome, EngineError>;
+
+    /// Appends `request.patterns` to the root `.gitignore` or to `.git/info/exclude`
+    /// (`worktree.ignore`): the file is created if missing, a pattern already present as a line
+    /// is not added again ([`append_ignore_patterns`](project_domain::append_ignore_patterns)).
+    /// The index is not touched. A file that is a link, a folder or a special file, or in a
+    /// folder that is a link, is [`EngineError::NotAllowed`]; so is a `.gitignore` with a
+    /// conflict. Before writing, the blobs of the exact bytes before and after are saved and
+    /// held by a new ref `refs/project/backup/ignore-...`; if that fails, or the file changed
+    /// since it was read, nothing is written. The write is atomic (temporary file and rename,
+    /// permissions kept). If every pattern is already there, nothing is written and
+    /// [`IgnoreOutcome::record`] is `None`.
+    fn ignore(&mut self, request: &IgnoreRequest) -> Result<IgnoreOutcome, EngineError>;
+
+    /// Undoes (`request.redo == false`) or redoes a `worktree.ignore`: writes the bytes of the
+    /// other blob (or removes the file / creates it) only if the file has exactly the expected
+    /// bytes ([`IgnoreRestore::blobs`]), otherwise [`EngineError::UndoConflict`] and nothing
+    /// changes.
+    fn restore_ignore(&mut self, request: &IgnoreRestore) -> Result<RestoreOutcome, EngineError>;
 }
 
 /// Refs and journal: branches, tags, checkout, reset, and the ref restores of undo/redo. Part
@@ -740,6 +792,9 @@ pub trait GitOperations {
     /// would overwrite changes or untracked files → [`EngineError::NotAllowed`] with the files, nothing
     /// changes. **A merge that stops (conflicts, `pre-merge-commit` hook) stays in progress**:
     /// it is not an error, [`MergeOutcome::in_progress`] and the files in [`MergeOutcome::conflicts`].
+    /// [`MergeMode::Squash`]: `git merge --squash` then an ordinary commit with
+    /// `request.message`; a stop (conflicts, a rejected commit) leaves [`Operation::Squash`](project_domain::Operation::Squash) in
+    /// progress with its [`SquashRecord`].
     fn merge(&mut self, request: &MergeRequest) -> Result<MergeOutcome, EngineError>;
 
     /// Aborts the merge in progress (`merge.abort`, `git merge --abort`): index and worktree go back

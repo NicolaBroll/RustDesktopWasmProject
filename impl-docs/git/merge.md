@@ -5,16 +5,17 @@ git (§5), slow commands (§6) and the journal (§7) are there; here are the com
 undo and backup of this function. "§n" always refers to the main document.
 
 Types and checks shared by the backends in `crates/engine/src/git/merge.rs` (`MergeRequest`,
-`MergeMode`, `MergeOutcome`, `MergeAborted`, `OperationState`, `check_merge_state`,
-`check_merging`, `merge_source`, `clean_merge_message`); commands in
-`crates/engine/src/builtin/merge.rs`; `CliBackend` in `crates/git/src/backend/merge.rs`;
+`MergeMode`, `MergeOutcome`, `MergeAborted`, `OperationState`, `SquashRecord`, `check_merge_state`,
+`check_merging`, `merge_source`, `squash_message`, `clean_merge_message`); commands in
+`crates/engine/src/builtin/merge.rs`; `CliBackend` in `crates/git/src/backend/merge.rs` (squash in
+`crates/git/src/backend/squash.rs`);
 `MemoryBackend` in `crates/engine/src/git/memory/merge.rs`.
 
 ## Commands
 
 ### `merge.start`
 
-Parameters: `{"rev", "no_ff"?, "ff_only"?, "message"?}`.
+Parameters: `{"rev", "no_ff"?, "ff_only"?, "squash"?, "message"?}`.
 
 Writes (`writes`), goes into the journal when the merge concludes (§7). Merges `rev` into the HEAD
 branch. `rev`: a local or remote branch, a tag, an id (even abbreviated) or another rev; it is resolved
@@ -24,7 +25,9 @@ after `--end-of-options` (a branch `-x` does not become an option). Empty or wit
 - **Mode** (from `unmerged_count`): nothing to do if the branch already contains the commit
   (`up_to_date`: nothing written, no backup or journal entry); fast-forward if the branch has no commits
   that `rev` lacks, unless `no_ff`; otherwise a merge commit. `ff_only` with diverged
-  branches → `NotAllowed`; `no_ff` and `ff_only` together → `InvalidParams`.
+  branches → `NotAllowed`; `no_ff` and `ff_only` together → `InvalidParams`. `squash`: a squash
+  merge (below) whenever the branch does not already contain `rev`, even if a fast-forward
+  were possible; with `no_ff` or `ff_only` → `InvalidParams`.
 - **Message** of the merge commit: `message` (non-empty, without NUL, otherwise `InvalidParams`),
   otherwise as `git merge` (`merge_source`): `Merge branch 'x'`, `Merge remote-tracking branch
   'origin/x'`, `Merge tag 'v1'`, `Merge commit '<id>'`, with ` into <branch>` outside `main`/
@@ -52,8 +55,32 @@ after `--end-of-options` (a branch `-x` does not become an option). Empty or wit
   `merge.abort`. A merge stopped by a `pre-merge-commit` hook is also `in_progress` (without
   conflicts).
 
+- **Squash** (`squash: true`, S58): the changes of `rev` as **one ordinary commit** on the
+  branch (one parent, HEAD); `rev` is **not recorded as merged** (a later merge of the same branch
+  may conflict on the same changes: say it in the UI). Same refusals as a merge commit (any change
+  to tracked files included), same backup `refs/project/backup/merge-...`. Message: `message`,
+  otherwise `squash_message`: `Squashed branch 'x'` (`remote-tracking branch`, `tag`, `commit`
+  as for the merge, ` into <branch>` outside `main`/`master`), a blank line and `* <subject>` of
+  the squashed commits (`rev` not in the branch), oldest first, at most 50 then `…`. The commit
+  goes through `GitIndex::commit` (hooks and signing as `commit.create`). Nothing to commit (the
+  changes are already on the branch) → nothing written, the backup removed, `after == before`, a
+  warning. **Stopped** (conflicts, or a hook/signing that rejected the commit): the squash stays
+  in progress, `in_progress: true`, `conflicts` (empty for a hook, whose text is in `message`).
+  Git has no state for it (no `MERGE_HEAD`), so the engine keeps a `SquashRecord` (`branch`,
+  `head` before, `target`, `source`, `backup`, `message`, `squash_msg`: a hash of the `SQUASH_MSG`
+  git wrote for it) in `<git dir>/project-squash.json`; it counts only while HEAD is on `branch`
+  at `head` and `SQUASH_MSG` is that same file (a squash started later from the terminal, even
+  on the same HEAD, makes it stale). A `SQUASH_MSG` left over from a terminal squash (no
+  operation in progress) → `NotAllowed` before writing (choice: refused, not removed: it may be
+  the user's draft). Then
+  `Status::operation` is `Squash` (`repo.status`, `repo.operation`), so **every command that
+  refuses during an operation refuses during a squash too**, and `edit.undo`/`edit.redo` refuse.
+  A stale record (a `git commit` or `git reset` from the terminal) is ignored and removed when
+  read. Choice: `commit.create` during a squash stays possible (like during a merge) and makes the
+  same single-parent commit, but it goes into the journal as a commit; `amend` is refused.
+
 Result: `{"rev", "source": {"kind": "branch" | "remote_branch" | "tag" | "commit", "name",
-"full": string | null}, "target", "branch", "strategy": "fast_forward" | "merge" | "up_to_date",
+"full": string | null}, "target", "branch", "strategy": "fast_forward" | "merge" | "squash" | "up_to_date",
 "before", "after", "ahead", "behind", "in_progress", "conflicts": [path], "message", "backup":
 string | null, "warnings", "status" | null, "refs" | null, "can_undo", "can_redo", "next_undo",
 "next_redo"}`.
@@ -71,7 +98,10 @@ Message: `message` (non-empty, without NUL) or the one prepared by git, `MERGE_M
 `# Conflicts:` / `#\t<file>` block that git appends at the end (`clean_merge_message`: `git commit -F` with
 `whitespace` cleanup does not remove comments, which would end up in the commit; applies with any
 `core.commentChar`); without `MERGE_MSG`, `Merge commit '<id>'`. It also works for a merge started
-from the terminal. `commit.create` with a merge in progress stays possible and makes the same commit, but goes
+from the terminal. **Squash in progress**: the ordinary commit (one parent) of what is staged, with
+`message` or the record's message (resolutions that leave nothing staged → `NotAllowed` pointing
+to `merge.abort`, nothing changes); into the journal as the squash of `merge.start` (same entry,
+backup of the record) if the branch moves from the record's `head`, otherwise as a commit. `commit.create` with a merge in progress stays possible and makes the same commit, but goes
 into the journal as a commit (undo = `reset --soft`); `merge.continue` is the command to use.
 
 Result: `{"commit": Commit, "previous", "branch", "backup", "also_on", "message", "status" |
@@ -81,7 +111,9 @@ null, "refs" | null, "can_undo", "can_redo", "next_undo", "next_redo"}`.
 
 Parameters: `{"confirm": true}`.
 
-Writes (`writes`), does **not** go into the journal. Cancels the merge in progress (`git merge --abort`):
+Writes (`writes`), does **not** go into the journal. Cancels the merge in progress (`git merge --abort`;
+for a squash in progress `git reset --merge`, which is what `git merge --abort` runs, and the record is
+removed):
 index and worktree return to HEAD for the files of the merge. The resolutions made in the conflicted
 files, the staged changes and those made after the merge started would be lost: it **always**
 requires `"confirm": true`; without it, `ConfirmRequired` listing the conflicted and changed
@@ -104,7 +136,7 @@ HEAD).
 
 Parameters: `{}`. Read-only: what the UI needs for the banner of an operation in progress.
 
-Result: `{"operation": "Merge" | "Rebase" | "CherryPick" | "Revert" | "Bisect" | "Am" | null,
+Result: `{"operation": "Merge" | "Rebase" | "CherryPick" | "Revert" | "Bisect" | "Am" | "Squash" | null,
 "head": Head, "conflicts": [path], "incoming": [{"id", "label", "summary": string | null,
 "refs": [full name]}], "message": string | null, "onto": oid | null, "rebase_branch": string |
 null, "ready": bool, "continue": string | null, "abort": string | null}`.
@@ -120,6 +152,8 @@ null, "ready": bool, "continue": string | null, "abort": string | null}`.
 - `onto`, `rebase_branch`: for a rebase, the commit it is reapplied onto and the rewritten branch
   (`rebase-merge/` or `rebase-apply/`: `onto` and `head-name`; `null` if started from detached HEAD).
 - `ready`: there is an operation and no conflicted files remain.
+- Squash: `incoming` the squashed commit, `message` the record's message (as is),
+  `continue`/`abort` `merge.continue`/`merge.abort`.
 - `continue` / `abort`: the ids of the commands that conclude or cancel the operation from here:
   `merge.continue` / `merge.abort` for the merge, `cherry_pick.continue` / `cherry_pick.abort` for
   a cherry-pick, `revert.continue` / `revert.abort` for a revert ([cherry-pick.md](cherry-pick.md));
@@ -185,9 +219,26 @@ even with `MERGE_HEAD` and HEAD unchanged. Limit: untracked files are not in the
 touch them); between the backup and `merge --abort` there remains the instant in which another process could
 change a file (which `reset --merge` would bring back to HEAD without it being in the backup).
 
+**Squash** (`merge.start` with `squash`): after the same checks and backup, the record
+`project-squash.json`, then `git -c core.fsmonitor=false merge --squash --no-commit --ff
+--no-autostash --no-overwrite-ignore --no-edit --end-of-options <oid>` (`--no-commit` and `--ff`
+against `branch.<name>.mergeOptions` with `--commit`/`--no-ff`, with which git refuses `--squash`,
+and against `merge.ff=only`; `--squash` against `--no-squash`; `--no-autostash` against
+`merge.autoStash`). Afterwards HEAD must still be on the branch at its value (a `post-merge` hook
+runs after `--squash` too): otherwise `Git` error naming the backup. Started only with exit code
+0 or 1 **and** a `SQUASH_MSG` written by this run (none existed before): then the record is
+written with its hash (if that fails: `Git` error naming the backup and saying the squash is staged
+outside the app). Not started (e.g. `merge.verifySignatures`, exit 128, or a file in the way) →
+backup removed, `NotAllowed` with the files or `Git` with git's text; a `SQUASH_MSG` after a
+failure → `Git` error naming the backup, which stays. Conflicts (exit 1) → in progress.
+Otherwise nothing staged → `SQUASH_MSG`, record and backup removed, warning; else
+`CliBackend::create_commit`: success → record removed; `PostCommit` → returned with the backup;
+rejected (hook, signing) with the squash still valid → in progress with git's text; otherwise the
+HEAD check again (error naming the backup).
+
 **Read** (`repo.operation`): the operation as for `repo.status` (`MERGE_HEAD`,
 `rebase-apply/applying`, `rebase-merge`/`rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
-`sequencer/`, `BISECT_LOG`), then from this worktree's git directory: the ids of `MERGE_HEAD` /
+`sequencer/`, valid `project-squash.json`, `BISECT_LOG`), then from this worktree's git directory: the ids of `MERGE_HEAD` /
 `CHERRY_PICK_HEAD` / `REVERT_HEAD` (one per line), `MERGE_MSG`, and for the rebase `onto` and
 `head-name` of `rebase-merge/` or `rebase-apply/` (`head-name` counts only if it starts with `refs/`).
 
@@ -211,6 +262,11 @@ merge commit and removes the merge state.
   otherwise (a `post-merge` hook or another process moved it in the meantime) the merge is
   done but does not go into the journal, with a warning in `warnings` naming the backup: an undo
   would also roll back the work of others.
+- **Concluded squash** (`merge.start` with `squash`, or `merge.continue` of a squash): the same
+  `JournalEntry::merge` (strategy `squash`: `Merge of x into `main` (squash into one commit: from
+  … to …)`) with the backup `refs/project/backup/merge-...`, only if the result is a commit whose
+  only parent is the previous branch; same undo and redo. A squash stopped in progress: nothing in
+  the journal, like a merge.
 - With an operation in progress the undo and redo of `worktree.discard` are also refused
   (`NotAllowed`), like those that move refs: they would rewrite merge files.
 - **Merge stopped on conflict: nothing in the journal** (choice). The branch has not moved; while the
@@ -241,3 +297,8 @@ with the index; the worktree of the changed files) and
 returns all tracked files to HEAD (stricter than git, which keeps the unstaged changes of the
 files the merge does not touch: here they are only in the backup); it refuses, like git, a staged file with
 unstaged changes too. Merge backups in `commit_backups` (`refs/project/backup/merge-<n>`).
+The squash on the `MemoryBackend` uses the same file-by-file merge: without conflicts a commit with
+one parent; with conflicts `Operation::Squash` with the `SquashRecord` in memory (the commit
+concludes it with one parent, the abort is the merge one). A squash set up with `set_operation`
+has no record: `merge.continue` refuses it. No stale-record handling (nothing moves HEAD from
+outside).

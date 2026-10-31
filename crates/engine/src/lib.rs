@@ -26,9 +26,10 @@ pub use builtin::commit::CommitCreateResult;
 pub use builtin::conflict::{
     ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
 };
-pub use builtin::discard::{DiscardParams, DiscardResult};
+pub use builtin::discard::{DiscardLinesParams, DiscardLinesResult, DiscardParams, DiscardResult};
 pub use builtin::edit::{HistoryResult, UndoResult};
 pub use builtin::file::{FileBlameParams, FileLogParams, FileLogResult};
+pub use builtin::ignore::{IgnoreParams, IgnoreResult};
 pub use builtin::merge::{
     IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
     MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
@@ -67,16 +68,17 @@ pub use commands::{Access, CommandSpec, Registry};
 pub use credentials::{CredentialKind, CredentialPrompter, CredentialRequest};
 pub use git::{
     BACKUP_PREFIX, BranchDeleted, CleanBackup, CleanOutcome, CleanRestore, CleanedFile,
-    CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardOutcome, DiscardedFile,
-    FetchOutcome, FetchRequest, GitBackend, GitIndex, GitMaintenance, GitOperations, GitRead,
-    GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState, LinePatch, LineSelection, LogQuery,
-    RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery, StagedVersion,
-    WorktreeBackup, WorktreeRestore, amend_impact, apply_patch, backup_message, branch_ref,
-    branch_short, check_amend_published, check_branch_name, check_commit_state,
-    check_new_branch_name, check_no_operation, check_remote_name, check_same_clean_plan,
-    check_same_plan, clean_description, clean_plan, default_remote, discard_description,
-    discard_plan, file_digest, line_patch, path_matches, unknown_remote, valid_ref_name,
-    versions_at_risk, versions_at_risk_hidden,
+    CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardLines, DiscardLinesOutcome,
+    DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
+    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
+    LinePatch, LineSelection, LinesBackup, LinesRestore, LogQuery, RefMove, RefRestore, RepoOpener,
+    RestoreOutcome, SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore,
+    amend_impact, apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
+    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
+    check_remote_name, check_same_clean_plan, check_same_plan, clean_description, clean_plan,
+    default_remote, discard_description, discard_line_patch, discard_lines_confirm,
+    discard_lines_description, discard_lines_target, discard_plan, file_digest, line_patch,
+    path_matches, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
@@ -105,14 +107,18 @@ pub use git::{
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
 pub use git::{
+    IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
+    ignore_description, ignore_tracked_warning,
+};
+pub use git::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
     check_rebase_state, check_rebasing, explicit_squash_messages, plan_error, rebase_range,
     rewritten_commits,
 };
 pub use git::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
-    OperationState, check_merge_state, check_merging, clean_merge_message, conflicted_paths,
-    merge_source,
+    OperationState, SQUASH_RECORD, SQUASH_SUBJECTS, SquashRecord, check_merge_state, check_merging,
+    clean_merge_message, conflicted_paths, merge_source, squash_message,
 };
 pub use git::{
     PickKind, PickRequest, check_pick_state, check_picking, pick_empty_error, pick_message,

@@ -48,6 +48,10 @@ pub(super) const DISCARD_LIST_HEIGHT: f32 = 160.0;
 /// Confirmation before discarding unstaged changes: lists the files and explains how to
 /// undo.
 pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &mut Vec<Action>) {
+    if let Some(pick) = &pending.lines {
+        confirm_discard_lines(ctx, pending, pick, actions);
+        return;
+    }
     let modal = egui::Modal::new(egui::Id::unique("discard-confirm")).show(ctx, |ui| {
         ui.set_max_width(460.0);
         let n = pending.paths.len();
@@ -87,6 +91,65 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
                 actions.push(Action::Discard(discard::Action::Confirm));
             }
             if ui.button(tr!("confirm-discard-keep")).clicked() {
+                actions.push(Action::Discard(discard::Action::Cancel));
+            }
+        });
+    });
+    if modal.should_close() {
+        actions.push(Action::Discard(discard::Action::Cancel));
+    }
+}
+
+/// Confirmation before discarding a hunk or some lines of the unstaged diff: names the file and
+/// how many lines, and says that a backup is kept and Undo puts the file back (the engine's
+/// confirmation text would repeat it). "Cancel" has the focus and Enter never discards.
+fn confirm_discard_lines(
+    ctx: &egui::Context,
+    pending: &Discard,
+    pick: &discard::LinesPick,
+    actions: &mut Vec<Action>,
+) {
+    let modal = egui::Modal::new(egui::Id::unique("discard-lines-confirm")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        let path = pending
+            .paths
+            .first()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let n = pick.lines.len();
+        let (title, button) = match pick.hunk {
+            Some(h) => (
+                tr!(
+                    "confirm-discard-hunk-title",
+                    hunk = h + 1,
+                    path = path.as_str()
+                ),
+                tr!("confirm-discard-hunk-button"),
+            ),
+            None => (
+                tr!("confirm-discard-lines-title", n = n, path = path.as_str()),
+                tr!("confirm-discard-lines-button", n = n),
+            ),
+        };
+        ui.heading(title);
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(tr!("confirm-discard-lines-body")).wrap());
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(tr!("confirm-discard-lines-backup")).wrap());
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let button =
+                egui::Button::new(RichText::new(button).color(ui.visuals().strong_text_color()))
+                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.add(button).clicked() && !enter {
+                actions.push(Action::Discard(discard::Action::Confirm));
+            }
+            let cancel = ui.button(tr!("confirm-cancel"));
+            if ui.memory(|m| m.focused().is_none()) {
+                cancel.request_focus();
+            }
+            if cancel.clicked() {
                 actions.push(Action::Discard(discard::Action::Cancel));
             }
         });

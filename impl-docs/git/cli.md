@@ -35,10 +35,18 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Title\
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Fixed title","amend":true}'
 # discards unstaged changes (worktree like the index): needs "confirm":true, saves a backup
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
+# discards only some unstaged lines (numbers and digest from diff.worktree); without "confirm" the error
+# says how many lines would be lost; the file's bytes go to refs/project/backup/discard-..., edit.undo puts them back
+cargo run -p project-cli -- --repo . run --cmd 'worktree.discard_lines={"path":"README.md","lines":[{"new":3},{"old":4}],"digest":"<from diff.worktree>","confirm":true}' --cmd edit.undo
 # deletes untracked files (a folder = the untracked files under it): without "confirm" the error lists
 # them with their total size; the exact bytes go to refs/project/backup/clean-..., edit.undo recreates them
 cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"]}'
 cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"],"confirm":true}' --cmd edit.undo
+# ignores files: appends patterns to the root .gitignore (default) or to .git/info/exclude ("file":"exclude");
+# patterns already present are listed in "already"; "ignored" = untracked files now ignored, "tracked" = tracked
+# files matched (a warning); edit.undo puts the exact old bytes back (or removes the file it created)
+cargo run -p project-cli -- --repo . run --cmd 'worktree.ignore={"patterns":["*.log","/build/"]}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'worktree.ignore={"patterns":["/notes.txt"],"file":"exclude"}'
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
 # check out an old commit (detached HEAD; also a tag or a short id), create a branch there, go back;
@@ -94,6 +102,10 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"stashes":t
 # merge of a branch into the active branch (fast-forward or merge commit; undoable with edit.undo)
 cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"test"}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"origin/main","no_ff":true,"message":"Merge main"}'
+# squash merge: the branch's changes as one ordinary commit (the branch does not appear merged);
+# with conflicts it stays in progress ("operation":"Squash"), then merge.continue or merge.abort
+cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"feature","squash":true}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'merge.start={"rev":"feature","squash":true,"message":"Feature X"}'
 # with conflicts the merge stays in progress: banner (kind, conflicted files, incoming commits), then
 # resolve the files, stage them and finish; or abort ("confirm":true, backup)
 cargo run -p project-cli -- --repo . run --cmd repo.operation

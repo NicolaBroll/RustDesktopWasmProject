@@ -46,7 +46,7 @@ pub fn direction(source: DiffSource) -> Option<PatchDirection> {
     match source {
         DiffSource::Worktree => Some(PatchDirection::Stage),
         DiffSource::Index => Some(PatchDirection::Unstage),
-        DiffSource::Commit(_) => None,
+        DiffSource::Commit(_) | DiffSource::Range { .. } => None,
     }
 }
 

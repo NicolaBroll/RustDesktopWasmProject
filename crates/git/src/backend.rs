@@ -1128,6 +1128,10 @@ impl GitRead for CliBackend {
                 };
                 vec!["--end-of-options", &parent, &id]
             }
+            DiffSpec::Range { from, to, .. } => {
+                (parent, id) = (from.to_string(), to.to_string());
+                vec!["--end-of-options", &parent, &id]
+            }
         };
         let Some(path) = spec.path() else {
             return Ok(parse_diff(&self.run_diff(DIFF_ARGS, &compare, &[])?)?);
@@ -1164,6 +1168,38 @@ impl GitRead for CliBackend {
 
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
         self.config_all(key)
+    }
+
+    fn commit_id(&self, rev: &str) -> Result<Option<Oid>, EngineError> {
+        match self.resolve(rev) {
+            Ok(found) => Ok(found),
+            // `^{commit}` of a tree or a blob fails with an error on stderr: if `rev` names an
+            // object without peeling it, it exists but is not a commit. Otherwise a real error.
+            Err(err) => {
+                let args = ["rev-parse", "--quiet", "--verify", "--end-of-options", rev];
+                let out = self.git.output(Some(&self.workdir), &args)?;
+                if out.status.success() {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError> {
+        let (a, b) = (a.to_string(), b.to_string());
+        let args = ["merge-base", "--end-of-options", &a, &b];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        match out.status.code() {
+            Some(0) => {
+                let hex = out.stdout.trim_ascii();
+                Ok(Some(Oid::from_hex(hex)?))
+            }
+            // Exit 1 without output: no common ancestor.
+            Some(1) if out.stdout.is_empty() && out.stderr.is_empty() => Ok(None),
+            _ => Err(failure(&args, &out)),
+        }
     }
 }
 

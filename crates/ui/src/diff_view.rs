@@ -163,6 +163,10 @@ fn toolbar(
                     DiffSource::Commit(id) => {
                         (tr!("diff-in-commit", id = id.short()), id.to_string())
                     }
+                    DiffSource::Range { from, to, .. } => (
+                        tr!("diff-in-range", from = from.short(), to = to.short()),
+                        format!("{from}\n{to}"),
+                    ),
                     DiffSource::Worktree => (tr!("diff-unstaged"), tr!("diff-unstaged-hint")),
                     DiffSource::Index => (tr!("diff-staged"), tr!("diff-staged-hint")),
                 };

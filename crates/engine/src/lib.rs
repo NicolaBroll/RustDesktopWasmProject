@@ -56,9 +56,9 @@ pub use builtin::stash::{
 };
 pub use builtin::tag::{TagCreateParams, TagCreateResult, TagDeleteParams, TagDeleteResult};
 pub use builtin::{
-    CommitShowParams, DEFAULT_LOG_LIMIT, DiffCommitParams, DiffParams, DiffWithDigests,
-    FileDiffWithDigest, JournalState, RepoLogResult, RepoOpenParams, RepoOpenResult,
-    RepoOptimizeResult,
+    CommitShowParams, DEFAULT_LOG_LIMIT, DiffCommitParams, DiffParams, DiffRangeParams,
+    DiffRangeResult, DiffWithDigests, FileDiffWithDigest, JournalState, RepoLogResult,
+    RepoOpenParams, RepoOpenResult, RepoOptimizeResult,
 };
 pub use commands::{Access, CommandSpec, Registry};
 pub use git::{

@@ -101,6 +101,27 @@ no commits), commit relative to the first parent (empty tree for a root commit, 
 backend first looks for the other path with `--diff-filter=R`) and paths go to git after `--` with
 `--literal-pathspecs`. No size limit
 
+### `diff.range` (S53)
+
+Parameters: `{"from", "to", "merge_base"?: bool, "path"?}`. Read-only.
+
+`to` relative to `from` (`git diff <from> <to>`), or with `merge_base: true` what `to` brings since it
+diverged from `from` (`git diff from...to`: against `git merge-base from to`). Result: the `Diff` of
+`diff.commit` (same `DiffSpec` path in the backend, `DiffSpec::Range { from, to, path }` with the
+two resolved ids: same parser, renames, `path` handling with `--literal-pathspecs`, binary files
+`binary: true` without hunks, no size limit) plus `"from"`, `"to"` (full commit ids) and, only with
+`merge_base`, `"base"` (the merge base the diff is against). Without `path` every changed file with
+its hunks, as `diff.commit`.
+
+The engine resolves both revs first with `GitRead::commit_id` (`rev-parse --verify
+--end-of-options <rev>^{commit}`; annotated tags are peeled): unknown, ambiguous, a tree, a blob, an
+option such as `--all` → `InvalidParams` (`engine-range-not-commit`), never `UnknownRev`, so git
+never sees a user string except after `--end-of-options`. Then `GitRead::common_base` (`git
+merge-base --end-of-options <a> <b>`, exit 1 without output = none): unrelated histories →
+`InvalidParams` (`engine-range-no-base`). The `git diff` call gets only the two full ids.
+`MemoryBackend`: diff of the two trees, renames only exact ones (same blob), except when `from` is
+the first parent of `to` (then the commit's own files, as `diff.commit`).
+
 ## Huge repos: the commit-graph (S36)
 
 ### Measurements

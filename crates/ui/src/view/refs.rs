@@ -372,6 +372,13 @@ impl Column<'_> {
         }
         let response = response.on_hover_text(ref_tooltip(info, is_head));
         response.context_menu(|ui| {
+            let branch = matches!(info.kind, RefKind::LocalBranch | RefKind::RemoteBranch);
+            if branch && !is_head {
+                let current = self
+                    .current
+                    .map_or("HEAD", |c| c.strip_prefix(HEADS_PREFIX).unwrap_or(c));
+                compare_item(ui, info, current, actions);
+            }
             let on_remote = (info.kind == RefKind::RemoteBranch)
                 .then(|| {
                     remotes::split_remote_branch(info.short_name(), &self.repo.remotes.names())
@@ -746,6 +753,27 @@ fn tag_items(
             ui.close();
         }
     }
+}
+
+/// "Compare with `<current branch>`": what the branch brings since it diverged from HEAD.
+/// `current` is the short name of the current branch, or `HEAD` when detached.
+fn compare_item(ui: &mut Ui, info: &RefInfo, current: &str, actions: &mut Vec<Action>) {
+    let name = info.short_name();
+    let button = ui
+        .button(tr!("compare-with-current", current = current))
+        .on_hover_text(tr!(
+            "compare-with-current-hint",
+            name = name,
+            current = current
+        ));
+    if button.clicked() {
+        actions.push(Action::Compare(crate::compare::Action::Branch {
+            rev: info.name.clone(),
+            name: name.to_owned(),
+        }));
+        ui.close();
+    }
+    ui.separator();
 }
 
 /// The "Merge into `<branch>`" entries (fast-forward if enough) and "... with merge commit" (`no_ff`) for

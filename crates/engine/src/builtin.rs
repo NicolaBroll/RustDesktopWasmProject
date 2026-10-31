@@ -27,7 +27,7 @@ use crate::{
     DiffSpec, EngineError, Journal, LogQuery, Message, Registry, Session, commit_graph_disabled,
     commit_graph_replaced, commit_graph_shallow, file_digest,
 };
-use project_domain::{Commit, Diff, FileDiff, Head, RepoPath};
+use project_domain::{Commit, Diff, FileDiff, Head, Oid, RepoPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -153,6 +153,13 @@ impl Registry {
             r#"{"id": string, "path"?: path}"#,
             Read,
             diff_commit,
+        );
+        self.add(
+            "diff.range",
+            "Diff between two revisions",
+            r#"{"from": string, "to": string, "merge_base"?: bool, "path"?: path}"#,
+            Read,
+            diff_range,
         );
     }
 
@@ -671,6 +678,38 @@ pub struct DiffCommitParams {
     pub path: Option<RepoPath>,
 }
 
+/// Parameters of `diff.range`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiffRangeParams {
+    /// The old side: any revision that leads to a commit (id, branch, tag, `HEAD~2`...).
+    pub from: String,
+    /// The new side, as `from`.
+    pub to: String,
+    /// True: what `to` brings since it diverged from `from` (`git diff from...to`, against
+    /// their merge base) instead of `to` against `from`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub merge_base: bool,
+    /// Only this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RepoPath>,
+}
+
+/// Result of `diff.range`: the [`Diff`] (`files`, as in `diff.commit`) and the commits compared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffRangeResult {
+    /// `from` resolved to a full commit id.
+    pub from: Oid,
+    /// `to` resolved to a full commit id.
+    pub to: Oid,
+    /// With `merge_base`: the merge base the diff is against (the old side). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<Oid>,
+    /// The changed files.
+    #[serde(flatten)]
+    pub diff: Diff,
+}
+
 /// Like [`check_path`], for an optional path.
 fn check_opt_path(
     id: &'static str,
@@ -737,6 +776,51 @@ fn diff_commit(s: &mut Session, DiffCommitParams { id, path }: DiffCommitParams)
     Ok(to_json(
         s.repo()?.diff(&DiffSpec::Commit { rev: id, path })?,
     ))
+}
+
+/// The [`Diff`] of `to` against `from`, or with `merge_base` against their merge base
+/// (`from...to`): [`DiffRangeResult`]. A revision that does not lead to a commit, or two commits
+/// without a common ancestor with `merge_base`, → [`EngineError::InvalidParams`].
+fn diff_range(s: &mut Session, params: DiffRangeParams) -> Out {
+    const ID: &str = "diff.range";
+    let DiffRangeParams {
+        from,
+        to,
+        merge_base,
+        path,
+    } = params;
+    let path = check_opt_path(ID, path)?;
+    let repo = s.repo()?;
+    let commit = |rev: &str| {
+        repo.commit_id(rev)?
+            .ok_or_else(|| EngineError::InvalidParams {
+                id: ID,
+                reason: msg!("engine-range-not-commit", rev = rev),
+            })
+    };
+    let (from_id, to_id) = (commit(&from)?, commit(&to)?);
+    let base = if merge_base {
+        let base =
+            repo.common_base(&from_id, &to_id)?
+                .ok_or_else(|| EngineError::InvalidParams {
+                    id: ID,
+                    reason: msg!("engine-range-no-base", from = from, to = to),
+                })?;
+        Some(base)
+    } else {
+        None
+    };
+    let diff = repo.diff(&DiffSpec::Range {
+        from: base.unwrap_or(from_id),
+        to: to_id,
+        path,
+    })?;
+    Ok(to_json(DiffRangeResult {
+        from: from_id,
+        to: to_id,
+        base,
+        diff,
+    }))
 }
 
 /// The paths of a command that writes the index or the worktree (`index.stage`,
@@ -821,6 +905,10 @@ fn repo_log(s: &mut Session, query: LogQuery) -> Out {
 mod snapshot_tests;
 
 #[cfg(test)]
+#[path = "builtin/range_tests.rs"]
+mod range_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{GitRead, MemoryBackend, MemoryOpener};
@@ -873,6 +961,7 @@ mod tests {
                 "conflict.show",
                 "diff.commit",
                 "diff.index",
+                "diff.range",
                 "diff.worktree",
                 "edit.history",
                 "edit.redo",
@@ -1865,6 +1954,15 @@ mod tests {
             ("diff.commit", json!({})),
             ("diff.commit", json!({ "path": "a" })),
             ("diff.commit", json!({ "id": "HEAD", "rev": "HEAD" })),
+            ("diff.range", json!({ "from": "HEAD" })),
+            (
+                "diff.range",
+                json!({ "from": "HEAD", "to": "HEAD", "base": true }),
+            ),
+            (
+                "diff.range",
+                json!({ "from": "HEAD", "to": "HEAD", "merge_base": "yes" }),
+            ),
             ("index.stage", json!({})),
             ("index.stage", json!({ "paths": [] })),
             ("index.stage", json!({ "paths": "README.md" })),
@@ -1954,6 +2052,10 @@ mod tests {
                 ("diff.worktree", json!({ "path": path })),
                 ("diff.index", json!({ "path": path })),
                 ("diff.commit", json!({ "id": "HEAD", "path": path })),
+                (
+                    "diff.range",
+                    json!({ "from": "HEAD~1", "to": "HEAD", "path": path }),
+                ),
                 ("index.stage", json!({ "paths": ["README.md", path] })),
                 ("index.unstage", json!({ "paths": [path] })),
                 (

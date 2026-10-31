@@ -19,6 +19,9 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"ada@","in"
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
+# compare two revisions: directly, or what `dev` brings since it left `master` (with "base")
+cargo run -p project-cli -- --repo . run --cmd 'diff.range={"from":"HEAD~5","to":"HEAD"}'
+cargo run -p project-cli -- --repo . run --cmd 'diff.range={"from":"master","to":"dev","merge_base":true,"path":"README.md"}'
 # blame of the worktree file (uncommitted lines: "commit": null) or at a commit; history of one
 # file across renames ("follow":false: only under this name), paginated like repo.log
 cargo run -p project-cli -- --repo . run --cmd 'file.blame={"path":"README.md"}' --cmd 'file.blame={"path":"README.md","rev":"HEAD~3"}'

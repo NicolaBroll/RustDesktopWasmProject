@@ -45,7 +45,7 @@ pub(super) fn remote_row(
     clicked
 }
 
-/// The menu of a remote: fetch and removal.
+/// The menu of a remote: fetch, edit URL, rename and removal.
 pub(super) fn remote_menu(
     ui: &mut Ui,
     remote: &RemoteListEntry,
@@ -60,6 +60,27 @@ pub(super) fn remote_menu(
     if button.clicked() {
         actions.push(Action::Fetch(fetch::Action::Fetch(Some(name.clone()))));
         ui.close();
+    }
+    for (kind, label, hint) in [
+        (
+            EditKind::Url,
+            tr!("remotes-edit-url-button"),
+            tr!("remotes-edit-url-button-hint"),
+        ),
+        (
+            EditKind::Rename,
+            tr!("remotes-rename-button"),
+            tr!("remotes-rename-button-hint"),
+        ),
+    ] {
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(label))
+            .on_hover_text(hint)
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Remotes(remotes::Action::Edit(name.clone(), kind)));
+            ui.close();
+        }
     }
     ui.separator();
     let color = if can_write {
@@ -104,6 +125,7 @@ pub(crate) fn remote_dialog(
                 };
                 delete_branch_dialog(ui, delete, reason, actions);
             }
+            remotes::Dialog::Edit(edit) => edit_remote_dialog(ui, edit, actions),
         }
     });
     if modal.should_close() {
@@ -334,6 +356,113 @@ pub(super) fn remove_remote_dialog(
         }
         if ui.button(tr!("remotes-remove-cancel")).clicked() {
             actions.push(Action::Remotes(remotes::Action::CloseDialog));
+        }
+    });
+}
+
+/// "Edit URL…" (fetch URL and separate push URL) or "Rename…" of a remote.
+pub(super) fn edit_remote_dialog(ui: &mut Ui, dialog: &EditDialog, actions: &mut Vec<Action>) {
+    let name = &dialog.remote;
+    let (title, explanation, submit) = match dialog.kind {
+        EditKind::Url => (
+            tr!("remotes-edit-url-title", name = name),
+            tr!("remotes-edit-url-explanation"),
+            tr!("remotes-edit-url-submit"),
+        ),
+        EditKind::Rename => (
+            tr!("remotes-rename-title", name = name),
+            tr!("remotes-rename-explanation", name = name),
+            tr!("remotes-rename-submit"),
+        ),
+    };
+    ui.heading(title);
+    ui.add_space(6.0);
+    ui.add(egui::Label::new(explanation).wrap());
+    ui.add_space(8.0);
+    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let mut fields = dialog.fields.clone();
+    let mut changed = false;
+    let editable = !dialog.sending;
+    egui::Grid::new("remote-edit-fields")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| match dialog.kind {
+            EditKind::Url => {
+                ui.label(tr!("remotes-edit-fetch-url"));
+                let url = ui.add(
+                    egui::TextEdit::singleline(&mut fields.url)
+                        .id(ui.make_persistent_id("remote-edit-url"))
+                        .hint_text(dialog.url_hint())
+                        .desired_width(320.0)
+                        .interactive(editable),
+                );
+                if editable && ui.memory(|m| m.focused().is_none()) {
+                    url.request_focus();
+                }
+                changed |= url.changed();
+                ui.end_row();
+                ui.label(tr!("remotes-edit-push-url"))
+                    .on_hover_text(tr!("remotes-edit-push-url-tooltip"));
+                let push = ui.add(
+                    egui::TextEdit::singleline(&mut fields.push_url)
+                        .id(ui.make_persistent_id("remote-edit-push-url"))
+                        .hint_text(dialog.push_hint())
+                        .desired_width(320.0)
+                        .interactive(editable),
+                );
+                changed |= push.changed();
+                ui.end_row();
+            }
+            EditKind::Rename => {
+                ui.label(tr!("remotes-add-name"));
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut fields.new_name)
+                        .id(ui.make_persistent_id("remote-edit-name"))
+                        .desired_width(320.0)
+                        .interactive(editable),
+                );
+                if editable && ui.memory(|m| m.focused().is_none()) {
+                    field.request_focus();
+                }
+                changed |= field.changed();
+                ui.end_row();
+            }
+        });
+    if changed {
+        actions.push(Action::Remotes(remotes::Action::EditFields(fields)));
+    }
+    let weak = ui.visuals().weak_text_color();
+    let warn = ui.visuals().warn_fg_color;
+    for (note, color) in [
+        (dialog.masked_note(), weak),
+        (dialog.transport_note(), warn),
+        (dialog.credentials_warning(), warn),
+    ] {
+        if let Some(note) = note {
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(RichText::new(note).small().color(color)).wrap());
+        }
+    }
+    if let Some(error) = &dialog.error {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
+    }
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let clicked = ui
+            .add_enabled(dialog.can_submit(), egui::Button::new(submit))
+            .clicked();
+        if (clicked || enter) && dialog.can_submit() {
+            actions.push(Action::Remotes(remotes::Action::SubmitEdit));
+        }
+        if ui
+            .add_enabled(editable, egui::Button::new(tr!("remotes-close")))
+            .clicked()
+        {
+            actions.push(Action::Remotes(remotes::Action::CloseDialog));
+        }
+        if dialog.sending {
+            ui.spinner();
         }
     });
 }

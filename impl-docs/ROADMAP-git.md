@@ -928,7 +928,10 @@ file of its function in [git/](git/) before the code.
 - **Status:** engine and backend done (`remote.set_url`, `remote.rename` in
   `crates/engine/src/builtin/remotes.rs`, journal `RemoteChange` in `git/remote_edit.rs`,
   `GitRemotes::set_remote_url`/`rename_remote`; tests `builtin/remote_edit_tests.rs`,
-  `crates/git/tests/remote_edit.rs`); UI and `safety-reviewer` review to do.
+  `crates/git/tests/remote_edit.rs`); UI done ("Edit URL…" and "Rename…" in the remote's "⋯"
+  menu, `crates/ui/src/remote_edit.rs`: a masked URL is never prefilled, fetch and push URL as two
+  `remote.set_url`, https/ssh credentials note; tests `remote_edit_tests.rs`); `safety-reviewer`
+  review to do.
 - **Done when:** integration tests (set fetch URL, push URL only, same URL, unknown remote, URL
   starting with `-`, rename with upstreams and tags, rename to an existing name, invalid name,
   rename with an operation in progress refused, undo/redo, URL changed from the terminal before

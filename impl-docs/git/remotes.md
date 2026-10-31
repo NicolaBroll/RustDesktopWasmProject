@@ -109,7 +109,8 @@ under `refs/remotes/<new_name>/` left over (they would mix); `branch.<b>.remote`
 hand: the renamed remote would take them over, and its undo would rewrite them); nested names (`nested_remote`: `name`
 and `new_name`, or either and another configured remote, are one the other followed by `/...`:
 `git remote rename` moves every ref under `refs/remotes/<name>/`, those of `<name>/x` too). Then
-`git remote rename --no-progress --end-of-options <name> <new_name>`: git moves the section, the
+`git remote rename --end-of-options <name> <new_name>` (no `--no-progress`: it exists only from
+git 2.41, and git shows no progress when stderr is not a terminal): git moves the section, the
 default refspec, `refs/remotes/<name>/*` (one transaction, symbolic `HEAD` too),
 `branch.<b>.remote`, `branch.<b>.pushRemote` and `remote.pushDefault` (repo file; a global
 `pushDefault` only gets a git warning, passed on in `warnings`). Tags and local branches do not
@@ -150,7 +151,7 @@ refs/remotes/<name>/HEAD <ref>`.
 
 **Changing in place** (`remote.set_url`, `remote.rename`, S59): `git remote set-url [--push]
 --end-of-options <name> <url>` (stderr with the URL masked); removing a push URL on undo: `git config
---local --unset-all --end-of-options remote.<name>.pushurl`. `git remote rename --no-progress
+--local --unset-all --end-of-options remote.<name>.pushurl`. `git remote rename
 --end-of-options <from> <to>`: `already exists` → `NotAllowed`, `not a valid remote name` →
 `InvalidParams`; on success git's stderr lines become warnings.
 

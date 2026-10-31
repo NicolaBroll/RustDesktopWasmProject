@@ -13,10 +13,27 @@ mod common;
 
 use common::{GIT_ENV, Repo};
 use project_engine::{EngineError, Registry, Session};
-use project_git::CliOpener;
+use project_git::{CliOpener, GitVersion};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
+
+/// Whether git reads the test configuration (`GIT_CONFIG_COUNT`, from git 2.31); prints why the
+/// test is skipped when not.
+fn config_count_supported() -> bool {
+    let version = std::process::Command::new("git")
+        .arg("version")
+        .output()
+        .ok()
+        .and_then(|o| GitVersion::parse(&String::from_utf8_lossy(&o.stdout)));
+    let ok = version.is_none_or(|v| v >= GitVersion::new(2, 31, 0));
+    if !ok {
+        eprintln!(
+            "skipped: git older than 2.31 ignores `GIT_CONFIG_COUNT`, used for `protocol.file.allow`"
+        );
+    }
+    ok
+}
 
 /// The test opener plus `protocol.file.allow=always` in the user's configuration.
 fn opener() -> CliOpener {
@@ -149,6 +166,9 @@ fn pair(a: &str, b: &str) -> (String, String) {
 
 #[test]
 fn clone_without_then_init_and_with_submodules() {
+    if !config_count_supported() {
+        return;
+    }
     let lib = library("lib");
     let upstream = superproject(&lib, "lib");
     let mut c = clone_of(&upstream, false);
@@ -181,6 +201,9 @@ fn clone_without_then_init_and_with_submodules() {
 
 #[test]
 fn local_paths_need_the_users_configuration() {
+    if !config_count_supported() {
+        return;
+    }
     let lib = library("lib");
     let upstream = superproject(&lib, "lib");
     // Plain test opener: `protocol.file.allow` not configured, the product passes `user`.
@@ -209,6 +232,9 @@ fn local_paths_need_the_users_configuration() {
 
 #[test]
 fn pull_that_moves_the_submodule_then_update_saves_the_detached_head() {
+    if !config_count_supported() {
+        return;
+    }
     let lib = library("lib");
     let upstream = superproject(&lib, "lib");
     let mut c = clone_of(&upstream, true);
@@ -264,6 +290,9 @@ fn behind_adding(file: &str, opener: CliOpener) -> (Repo, Repo, Clone, project_d
 
 #[test]
 fn local_changes_untracked_files_and_operations_are_refused() {
+    if !config_count_supported() {
+        return;
+    }
     let (_lib, _up, mut c, old) = behind();
     let lib = c.sub("lib");
 
@@ -297,6 +326,9 @@ fn local_changes_untracked_files_and_operations_are_refused() {
 
 #[test]
 fn commits_on_no_ref_are_refused_but_a_branch_is_fine() {
+    if !config_count_supported() {
+        return;
+    }
     let (_lib, _up, mut c, _old) = behind();
     let lib = c.sub("lib");
     git(&lib, &["commit", "--quiet", "--allow-empty", "-m", "lost"]);
@@ -317,6 +349,9 @@ fn commits_on_no_ref_are_refused_but_a_branch_is_fine() {
 
 #[test]
 fn nested_submodules_only_with_recursive() {
+    if !config_count_supported() {
+        return;
+    }
     let inner = library("inner");
     let middle = superproject(&inner, "inner");
     let upstream = superproject(&middle, "middle");
@@ -346,6 +381,9 @@ fn nested_submodules_only_with_recursive() {
 
 #[test]
 fn paths_with_spaces_and_a_folder_selection() {
+    if !config_count_supported() {
+        return;
+    }
     let lib = library("lib");
     let upstream = superproject(&lib, "libs/my lib");
     let mut c = clone_of(&upstream, false);
@@ -362,6 +400,9 @@ fn paths_with_spaces_and_a_folder_selection() {
 #[cfg(unix)]
 #[test]
 fn a_path_that_is_not_utf8() {
+    if !config_count_supported() {
+        return;
+    }
     use std::os::unix::ffi::OsStrExt;
     let lib = library("lib");
     let upstream = Repo::new();
@@ -397,6 +438,9 @@ fn a_path_that_is_not_utf8() {
 
 #[test]
 fn a_url_starting_with_a_dash_is_refused() {
+    if !config_count_supported() {
+        return;
+    }
     let lib = library("lib");
     let upstream = superproject(&lib, "lib");
     let mut c = clone_of(&upstream, false);
@@ -417,6 +461,9 @@ fn a_url_starting_with_a_dash_is_refused() {
 
 #[test]
 fn the_users_update_mode_does_not_change_the_checkout() {
+    if !config_count_supported() {
+        return;
+    }
     let (_lib, _up, mut c, _old) = behind();
     git(&c.path, &["config", "submodule.lib.update", "rebase"]);
     git(&c.sub("lib"), &["switch", "--quiet", "-c", "work"]);
@@ -430,6 +477,9 @@ fn the_users_update_mode_does_not_change_the_checkout() {
 
 #[test]
 fn a_failed_backup_runs_nothing() {
+    if !config_count_supported() {
+        return;
+    }
     let (_lib, _up, mut c, old) = behind();
     let lib = c.sub("lib");
     let git_dir = git(&lib, &["rev-parse", "--absolute-git-dir"]);
@@ -442,6 +492,9 @@ fn a_failed_backup_runs_nothing() {
 
 #[test]
 fn a_failure_after_the_backup_names_it() {
+    if !config_count_supported() {
+        return;
+    }
     let (_lib, _up, mut c, old) = behind();
     let lib = c.sub("lib");
     // The recorded commit is not in the submodule and its remote is gone: the fetch fails
@@ -465,6 +518,9 @@ fn a_failure_after_the_backup_names_it() {
 #[cfg(unix)]
 #[test]
 fn a_failing_hook_inside_the_submodule_is_reported_with_the_backup() {
+    if !config_count_supported() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
     let (lib_repo, _up, mut c, _old) = behind();
     let lib = c.sub("lib");
@@ -490,6 +546,9 @@ fn a_failing_hook_inside_the_submodule_is_reported_with_the_backup() {
 
 #[test]
 fn the_users_submodule_recurse_moves_no_nested_submodule() {
+    if !config_count_supported() {
+        return;
+    }
     let inner = library("inner");
     let middle = superproject(&inner, "inner");
     let upstream = superproject(&middle, "middle");
@@ -533,6 +592,9 @@ fn the_users_submodule_recurse_moves_no_nested_submodule() {
 
 #[test]
 fn a_leftover_git_dir_after_deinit_is_checked_and_backed_up() {
+    if !config_count_supported() {
+        return;
+    }
     // Commits on no ref in the leftover git directory: refused even with `init`.
     let (_lib, _up, mut c, _old) = behind();
     git(
@@ -569,6 +631,9 @@ fn a_leftover_git_dir_after_deinit_is_checked_and_backed_up() {
 
 #[test]
 fn ignored_files_the_checkout_would_overwrite_are_refused() {
+    if !config_count_supported() {
+        return;
+    }
     // An ignored file where the recorded commit adds one.
     let (_lib, _up, mut c, old) = behind_adding("build.txt", opener());
     let lib = c.sub("lib");
@@ -604,6 +669,9 @@ fn ignored_files_the_checkout_would_overwrite_are_refused() {
 
 #[test]
 fn credentials_in_urls_are_masked() {
+    if !config_count_supported() {
+        return;
+    }
     let lib = library("lib");
     let upstream = superproject(&lib, "lib");
     let mut c = clone_of(&upstream, false);

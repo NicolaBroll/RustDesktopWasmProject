@@ -40,6 +40,10 @@ pub(crate) enum Action {
     OpenFile(RepoPath),
     /// Shows the folder of that file of the working tree in the system's file manager.
     ShowFileFolder(RepoPath),
+    /// Opens the submodule at that path of the repo shown in a tab (S62).
+    OpenSubmodule(RepoPath),
+    /// Shows the folder of the submodule at that path in the system's file manager.
+    ShowSubmoduleFolder(RepoPath),
 }
 
 /// Key of the state in the eframe storage.
@@ -405,6 +409,19 @@ impl App {
             Action::ShowFileFolder(path) => self.launch(Some(&path), |platform, file| {
                 platform.show_folder(file.parent().unwrap_or(file))
             }),
+            Action::ShowSubmoduleFolder(path) => {
+                self.launch(Some(&path), |platform, folder| platform.show_folder(folder));
+            }
+            Action::OpenSubmodule(path) => {
+                let tab = &mut self.tabs[self.active];
+                let Some(root) = tab.repo_path().map(Path::new) else {
+                    return;
+                };
+                match absolute_file(root, &path) {
+                    Ok(folder) => self.open(folder.to_string_lossy().into_owned()),
+                    Err(e) => tab.error = tr!("title-bar-launch-failed", error = e.to_string()),
+                }
+            }
         }
     }
 

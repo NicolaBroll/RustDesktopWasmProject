@@ -122,6 +122,15 @@ pub(crate) fn clone_dialog(
                         .on_hover_text(tr!("clone-depth-tooltip"));
                     changed |= depth.changed();
                     ui.end_row();
+                    ui.label("");
+                    let submodules = ui
+                        .add_enabled(
+                            !running,
+                            egui::Checkbox::new(&mut fields.submodules, tr!("submodule-clone")),
+                        )
+                        .on_hover_text(tr!("submodule-clone-hint"));
+                    changed |= submodules.changed();
+                    ui.end_row();
                 }
             });
         if changed {

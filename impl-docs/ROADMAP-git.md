@@ -1028,7 +1028,16 @@ file of its function in [git/](git/) before the code.
   set it through `GIT_CONFIG_COUNT`). `recursive` re-applies the same checks level by level instead of
   `--recursive`. Review fixes: `-c submodule.recurse=false` on every git run (covers S62b's check
   for all checkout commands, test in `submodules.rs`), leftover `.git/modules/<name>` checked and
-  backed up, `ignored_overwritten` and `changed_meanwhile` refusals, URLs masked. UI to do.
+  backed up, `ignored_overwritten` and `changed_meanwhile` refusals, URLs masked. UI done
+  (`crates/ui/src/submodule.rs`, `view/submodule_view.rs`): "Submodules" section only when there
+  are any (state badge, tooltip with recorded/checked out commit, changes, untracked, operation,
+  unreferenced, ignored files), "Update" / "Initialize and update" per row (off with the reason
+  when the engine would refuse), "Update all" (with `init`), "Open in a new tab", "Show in file
+  manager"; the update runs like the fetch (bar progress, "Stop", credential dialog), the notice
+  has the counts and the refused ones with the engine's reason (also kept in the section), then
+  status and list are read again. The list is read on open and Refresh, then with every status
+  only if the repo has submodules or the status shows `.gitmodules` or a gitlink. "With
+  submodules" in the clone dialog. Review to do.
 
 ### S62b — Submodules out of date after checkout, pull and merge
 - [ ] **Agent:** `egui-ui` (engine only if a field is missing)

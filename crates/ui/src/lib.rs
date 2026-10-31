@@ -49,6 +49,7 @@ mod settings;
 mod side_panel;
 mod stage;
 mod stash;
+mod submodule;
 mod sync;
 mod tabs;
 mod theme;
@@ -145,6 +146,8 @@ enum Action {
     Remotes(remotes::Action),
     /// Stashes.
     Stash(stash::Action),
+    /// Updating submodules.
+    Submodule(submodule::Action),
     /// Merge, cherry-pick and revert.
     Merge(merge::Action),
     /// The interactive rebase editor.
@@ -219,6 +222,10 @@ enum Request {
     Remote(u64, remotes::Op),
     /// `stash.list`.
     Stashes(u64),
+    /// `submodule.list`.
+    Submodules(u64),
+    /// `submodule.update` (the state is in [`submodule::SubmoduleBox`]).
+    Submodule(u64),
     /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (the state is in [`StashBox`]).
     Stash(u64, stash::Op),
     /// `repo.operation`: the operation in progress for the panel.
@@ -297,6 +304,8 @@ struct RepoView {
     remotes: RemotesBox,
     /// The stashes (`stash.list`), the selected stash, the push and drop dialogs.
     stash: StashBox,
+    /// The submodules (`submodule.list`) and the update in progress.
+    submodules: submodule::SubmoduleBox,
     /// The merge started, the operation in progress (panel) and the Continue and Abort dialogs.
     merge: MergeBox,
     /// The interactive rebase editor.
@@ -353,6 +362,7 @@ impl RepoView {
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
+            submodules: submodule::SubmoduleBox::default(),
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
             reset: reset::ResetBox::default(),
@@ -658,6 +668,7 @@ impl Tab {
             Action::Branch(action) => self.apply_branch(action),
             Action::Fetch(action) => self.apply_fetch(action),
             Action::Optimize(action) => self.apply_optimize(action),
+            Action::Submodule(action) => self.apply_submodule(action),
             Action::Sync(action) => self.apply_sync(action),
             Action::Remotes(action) => self.apply_remotes(action),
             Action::Stash(action) => self.apply_stash(action),
@@ -931,6 +942,7 @@ impl Tab {
         self.submit("edit.history", json!({}), Request::History(generation));
         self.request_remotes(generation);
         self.submit(stash::LIST, json!({}), Request::Stashes(generation));
+        self.request_submodules(generation);
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
@@ -1010,6 +1022,14 @@ impl Tab {
                 }
             }
             Request::Stash(generation, op) => self.receive_stash(generation, op, done),
+            // The submodule list also has its own error, in its section.
+            Request::Submodules(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.submodules.receive_list(done.result);
+                }
+            }
+            Request::Submodule(generation) => self.receive_submodule(generation, done),
             // The operation in progress also has its own error, in the panel.
             Request::Operation(generation) => {
                 log_failure(&done);
@@ -1175,8 +1195,12 @@ impl Tab {
             Request::Status(generation) | Request::AutoStatus(generation) => {
                 if let Some(repo) = self.current(generation) {
                     let status: Status = serde_json::from_value(value)?;
+                    let submodules = repo.submodules.wants_list(&status);
                     repo.set_status(status);
                     self.follow_diff();
+                    if submodules {
+                        self.request_submodules(generation);
+                    }
                     if matches!(request, Request::AutoStatus(_)) {
                         self.after_auto_status(generation);
                     }
@@ -1238,6 +1262,8 @@ impl Tab {
             | Request::Remote(..)
             | Request::Stashes(..)
             | Request::Stash(..)
+            | Request::Submodules(..)
+            | Request::Submodule(..)
             | Request::Operation(..)
             | Request::Merge(..)
             | Request::RebasePlan(..)
@@ -1265,6 +1291,15 @@ impl Tab {
                 progress: self.executor.progress(running.ticket),
                 stop_hint: tr!("optimize-stop-hint"),
                 cancel: Action::Optimize(optimize::Action::Cancel),
+            });
+        }
+        if let Some(running) = r.submodules.running() {
+            return Some(view::Network {
+                what: running.extra.clone(),
+                cancelling: running.cancelling,
+                progress: self.executor.progress(running.ticket),
+                stop_hint: tr!("submodule-stop-hint"),
+                cancel: Action::Submodule(submodule::Action::Cancel),
             });
         }
         if let Some(running) = r.fetch.running() {

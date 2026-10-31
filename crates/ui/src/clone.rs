@@ -60,6 +60,8 @@ pub struct Fields {
     pub branch: String,
     /// Clone: how many commits to download; empty: the whole history.
     pub depth: String,
+    /// Clone: "With submodules" (`--recurse-submodules`).
+    pub submodules: bool,
 }
 
 /// The clone or new-repository dialog.
@@ -112,7 +114,7 @@ impl CloneDialog {
                 path,
                 branch,
                 depth: f.depth.trim().parse::<u32>().ok(),
-                submodules: false,
+                submodules: f.submodules,
             }),
             Kind::Init => crate::params(InitRequest { path, branch }),
         })

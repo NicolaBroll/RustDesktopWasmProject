@@ -57,6 +57,7 @@ fn params_need_url_and_path_and_carry_branch_and_depth() {
         path: "dest".into(),
         branch: "main".into(),
         depth: "0".into(),
+        submodules: false,
     });
     assert!(b.dialog().unwrap().problem().is_some());
     assert!(b.submit().is_none(), "depth 0");
@@ -70,6 +71,13 @@ fn params_need_url_and_path_and_carry_branch_and_depth() {
         params,
         json!({"url": "remote", "path": "dest", "branch": "main", "depth": 3})
     );
+    // "With submodules".
+    b.set_fields(Fields {
+        submodules: true,
+        ..b.dialog().unwrap().fields.clone()
+    });
+    let (_, params) = b.submit().unwrap();
+    assert_eq!(params["submodules"], json!(true));
     // Init: no URL needed, URL and depth never sent.
     let mut b = dialog(Kind::Init, "ignored", "new");
     b.set_fields(Fields {

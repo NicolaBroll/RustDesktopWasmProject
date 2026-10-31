@@ -12,6 +12,8 @@
 //! closes without sending it.
 
 use project_engine::{CredentialKind, CredentialPrompter, CredentialRequest};
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Mutex, MutexGuard};
 
@@ -31,6 +33,8 @@ pub(crate) enum Action {
 struct Question {
     request: CredentialRequest,
     reply: Sender<Option<String>>,
+    /// The commands that may have asked (see [`Job`]).
+    owners: Vec<u64>,
 }
 
 /// The desktop app's [`CredentialPrompter`], installed on the `CliOpener` by `apps/project`.
@@ -86,10 +90,66 @@ impl CredentialPrompter for CredentialDialog {
         let ctx = lock(&self.ctx).clone()?;
         let (reply, answer) = mpsc::channel();
         // Fails once the UI (the receiver) is gone.
-        self.sender.send(Question { request, reply }).ok()?;
+        // `ask` runs on the bridge's thread, not the command's: the owner is among the commands
+        // that started a bridge and are still running.
+        let owners = lock(&ASKING).iter().copied().collect();
+        self.sender
+            .send(Question {
+                request,
+                reply,
+                owners,
+            })
+            .ok()?;
         ctx.request_repaint();
         // Fails if the UI drops the question without answering (closed, or the app exits).
         answer.recv().ok().flatten()
+    }
+
+    fn asks_now(&self) -> bool {
+        let (id, quiet) = JOB.get();
+        if quiet {
+            return false;
+        }
+        if let Some(id) = id {
+            lock(&ASKING).insert(id);
+        }
+        true
+    }
+}
+
+thread_local! {
+    /// The command running on this thread (see [`Job`]): its id and whether it must not ask.
+    static JOB: std::cell::Cell<(Option<u64>, bool)> = const { std::cell::Cell::new((None, false)) };
+}
+
+/// The commands that started a credential bridge and are still running.
+static ASKING: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
+
+/// The id of the next [`Job`].
+static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
+
+/// Held by the executor on the thread of every command, for its whole run: with `asks` false the
+/// command gets no credential dialog ([`CredentialPrompter::asks_now`] is false: the automatic
+/// fetch); otherwise a question it asks can be told apart from a stale one after it ends.
+pub(crate) struct Job {
+    id: u64,
+    previous: (Option<u64>, bool),
+}
+
+impl Job {
+    pub(crate) fn start(asks: bool) -> Self {
+        let id = NEXT_JOB.fetch_add(1, Ordering::Relaxed);
+        Self {
+            id,
+            previous: JOB.replace((Some(id), !asks)),
+        }
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        lock(&ASKING).remove(&self.id);
+        JOB.set(self.previous);
     }
 }
 
@@ -107,6 +167,8 @@ pub(crate) struct Prompt {
     /// The field has not received the focus yet.
     pub focus: bool,
     reply: Sender<Option<String>>,
+    /// The commands that may have asked; empty: unknown (asked outside the executor).
+    owners: Vec<u64>,
 }
 
 impl std::fmt::Debug for Prompt {
@@ -169,13 +231,18 @@ impl CredentialBox {
             return false;
         };
         match queue.try_recv() {
-            Ok(Question { request, reply }) => {
+            Ok(Question {
+                request,
+                reply,
+                owners,
+            }) => {
                 self.open = Some(Prompt {
                     request,
                     answer: String::new(),
                     shown: false,
                     focus: true,
                     reply,
+                    owners,
                 });
                 true
             }
@@ -185,6 +252,15 @@ impl CredentialBox {
                 false
             }
         }
+    }
+
+    /// The question in the modal is stale: every command that may have asked it has ended (git
+    /// was stopped while it asked). Never for a question of unknown origin.
+    pub(crate) fn stale(&self) -> bool {
+        self.open.as_ref().is_some_and(|prompt| {
+            let asking = lock(&ASKING);
+            !prompt.owners.is_empty() && prompt.owners.iter().all(|id| !asking.contains(id))
+        })
     }
 
     /// The question in the modal, if any.
@@ -342,6 +418,42 @@ mod tests {
     }
 
     #[test]
+    fn quiet_commands_do_not_ask() {
+        let dialog = CredentialDialog::new();
+        assert!(dialog.asks_now());
+        {
+            let _quiet = Job::start(false);
+            assert!(!dialog.asks_now());
+            let _asks = Job::start(true);
+            assert!(dialog.asks_now());
+        }
+        assert!(dialog.asks_now());
+    }
+
+    #[test]
+    fn a_question_is_stale_once_its_command_ended() {
+        let dialog = std::sync::Arc::new(CredentialDialog::new());
+        let mut boxed = dialog.connect(&egui::Context::default()).unwrap();
+        let (go, wait) = mpsc::channel::<()>();
+        // The command's thread starts the bridge, whose own thread asks.
+        let command = thread::spawn(move || {
+            let job = Job::start(true);
+            assert!(dialog.asks_now());
+            let asker = thread::spawn(move || dialog.ask(request("Password: ")));
+            wait.recv().unwrap();
+            drop(job);
+            asker
+        });
+        wait_open(&mut boxed);
+        assert!(!boxed.stale());
+        go.send(()).unwrap();
+        let asker = command.join().unwrap();
+        assert!(boxed.stale());
+        assert!(boxed.cancel());
+        assert_eq!(asker.join().unwrap(), None);
+    }
+
+    #[test]
     fn toggle_and_wipe() {
         let mut text = String::from("s3cret");
         wipe(&mut text);
@@ -355,8 +467,10 @@ mod tests {
                 shown: false,
                 focus: false,
                 reply,
+                owners: Vec::new(),
             }),
         };
+        assert!(!boxed.stale(), "unknown origin: never stale");
         assert!(!boxed.apply(Action::ToggleShown));
         assert!(boxed.open().unwrap().shown);
         assert!(boxed.cancel());

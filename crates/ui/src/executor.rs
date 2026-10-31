@@ -40,6 +40,8 @@ pub struct Job {
     pub writes: bool,
     /// When it was sent: the status bar shows a read only once it takes a while.
     pub started: std::time::Instant,
+    /// False if git's credential questions get no dialog (the automatic fetch).
+    pub asks: bool,
 }
 
 /// A finished command.
@@ -257,6 +259,12 @@ impl Executor {
     /// Sends the command `command` with `params` and returns at once (after running it, if the
     /// platform runs jobs inside `spawn`). The result arrives from [`Executor::poll`].
     pub fn submit(&mut self, command: &str, params: Value) -> Ticket {
+        self.submit_with(command, params, true)
+    }
+
+    /// Like [`Executor::submit`]; with `asks` false git's credential questions get no dialog
+    /// (the automatic fetch): a missing credential is an authentication error.
+    pub fn submit_with(&mut self, command: &str, params: Value, asks: bool) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
         let writes = self.registry.get(command).is_some_and(|spec| spec.writes);
@@ -266,6 +274,7 @@ impl Executor {
             command: command.to_owned(),
             writes,
             started: std::time::Instant::now(),
+            asks,
         });
 
         // Before starting the job: a platform may run the command (and send progress) inside
@@ -296,6 +305,7 @@ impl Executor {
         self.platform.spawn(Box::new(move || {
             // A job that ended badly poisons the lock, but the session stays valid: every command
             // leaves it consistent even when it fails.
+            let _job = crate::credentials::Job::start(asks);
             let mut session = session.lock().unwrap_or_else(|e| e.into_inner());
             let result = registry
                 .run_with(&reply.command, &mut session, params, job)

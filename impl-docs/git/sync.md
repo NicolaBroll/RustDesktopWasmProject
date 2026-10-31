@@ -305,7 +305,11 @@ input without a new dependency).
   wakes the UI; no UI yet or UI gone → `None`. One app-level modal at a time: title by kind,
   git's text verbatim and selectable, masked field with Show/Hide for secret kinds, host key
   only with "Trust and continue" (`yes`) or Cancel. The text is wiped on close; a question left
-  open after every command ended is closed with `None`. `AuthCancelled` is a status-bar notice.
+  open after the commands that may have asked it ended is closed with `None` (the executor
+  marks each job's thread; `CredentialPrompter::asks_now`, called on that thread before the
+  bridge starts, registers it). The automatic fetch never asks (`asks_now` false: a missing
+  credential is `Auth`, the timer suspends); its "Retry" and the manual Fetch do.
+  `AuthCancelled` is a status-bar notice.
 - **Tests**: `crates/git/tests/askpass.rs` (`harness = false`: the test binary is git's askpass)
   against a dummy HTTP server that asks for Basic auth: answers reach git, cancel on fetch,
   clone and tag push, no prompter → `Auth`; unit tests in `askpass.rs` for wrong token, cancel,

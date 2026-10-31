@@ -256,18 +256,11 @@ impl App {
     /// Collects the results of every tab, shown or not, and the repos just opened: they enter the
     /// recent list; the same repo already open in another tab (reached by another path) closes the
     /// new tab and shows the other one.
-    /// Opens the next question of git or ssh. A question left open after every command ended
-    /// (stopped with "Stop" while it was asking: git is gone) is closed with no answer.
+    /// Opens the next question of git or ssh. A question whose command has ended (stopped with
+    /// "Stop" while it was asking: git is gone) is closed with no answer.
     fn receive_credentials(&mut self, ctx: &egui::Context) {
-        if self.credentials.open().is_some() {
-            let busy = self
-                .tabs
-                .iter()
-                .chain(self.cloning.as_ref())
-                .any(|tab| tab.executor.is_busy());
-            if !busy && self.credentials.cancel() {
-                forget_field(ctx);
-            }
+        if self.credentials.stale() && self.credentials.cancel() {
+            forget_field(ctx);
         }
         self.credentials.receive();
     }

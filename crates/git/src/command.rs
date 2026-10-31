@@ -361,6 +361,9 @@ impl Git {
         // The user's own askpass is never overridden: git keeps `GIT_ASKPASS`/`core.askPass`,
         // ssh keeps `SSH_ASKPASS`; a side already served is not bridged.
         let bridged = self.askpass.as_ref().and_then(|askpass| {
+            if !askpass.prompter.asks_now() {
+                return None;
+            }
             let git_side = !self.env_set("GIT_ASKPASS") && !self.askpass_configured(dir);
             let ssh_side = !self.env_set("SSH_ASKPASS");
             if !git_side && !ssh_side {

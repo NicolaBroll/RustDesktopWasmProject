@@ -102,6 +102,14 @@ fn quoted_url(prompt: &str) -> Option<String> {
 /// returned answer is a secret: whoever implements this must not log or keep it.
 pub trait CredentialPrompter: Send + Sync {
     fn ask(&self, request: CredentialRequest) -> Option<String>;
+
+    /// Whether the command about to start may ask at all. Called once per network command, on
+    /// the thread that runs it, before git starts: `false` = as without a prompter (a missing
+    /// credential is [`EngineError::Auth`](crate::EngineError::Auth)). The desktop app says no
+    /// for its automatic fetch, which must never open a dialog by itself.
+    fn asks_now(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

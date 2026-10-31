@@ -451,7 +451,9 @@ impl Tab {
         } else {
             label(remote.as_deref())
         });
-        let ticket = self.executor.submit(COMMAND, params);
+        // The automatic fetch never opens the credential dialog by itself, only after "Retry".
+        let asks = !auto || repo.auto_fetch.take_ask();
+        let ticket = self.executor.submit_with(COMMAND, params, asks);
         self.pending.insert(ticket, Request::Fetch(generation));
         if let Some(repo) = &mut self.repo {
             repo.auto_fetch.started();

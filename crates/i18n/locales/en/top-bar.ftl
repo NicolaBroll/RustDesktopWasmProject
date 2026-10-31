@@ -7,12 +7,11 @@ top-bar-after-operation = After the current operation
 top-bar-stash = Stash…
 top-bar-undo-in-operation = { $hint } (not while an operation is in progress: finish or abort it from the panel at the top)
 top-bar-undo-after-operation = { $hint } (after the current operation)
-top-bar-changed-files = { $n ->
-    [one] 1 changed file
-   *[other] { $n } changed files
-}
 top-bar-head-unborn = { $name } (no commits yet)
-top-bar-head-detached = HEAD detached at { $id }
+top-bar-head-detached = Detached at { $id }
+top-bar-head-detached-hint = HEAD is detached at { $id }: you are not on a branch. New commits are kept only if a branch points to them: “Create branch here…” makes one
+top-bar-create-here = Create branch here…
+top-bar-create-here-hint = Creates a branch at this commit and switches to it
 top-bar-fetch = Fetch
 top-bar-fetch-hint = Downloads commits, remote branches and tags from the remote of the current branch's upstream (otherwise origin, or the only remote). Does not touch local branches, the index or files
 top-bar-fetch-from = Fetch from “{ $remote }”
@@ -40,3 +39,5 @@ top-bar-recent-heading = Recent repositories
 top-bar-recent-missing-hint = The folder { $path } no longer exists
 top-bar-recent-forget = Remove missing
 top-bar-recent-forget-hint = Drops from the recent list the repositories whose folder no longer exists (no folder is touched)
+top-bar-last-fetch = Last fetch: { $when }
+top-bar-last-fetch-none = No fetch since the repository was opened

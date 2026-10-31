@@ -19,6 +19,9 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"ada@","in"
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
+# compare two revisions: directly, or what `dev` brings since it left `master` (with "base")
+cargo run -p project-cli -- --repo . run --cmd 'diff.range={"from":"HEAD~5","to":"HEAD"}'
+cargo run -p project-cli -- --repo . run --cmd 'diff.range={"from":"master","to":"dev","merge_base":true,"path":"README.md"}'
 # blame of the worktree file (uncommitted lines: "commit": null) or at a commit; history of one
 # file across renames ("follow":false: only under this name), paginated like repo.log
 cargo run -p project-cli -- --repo . run --cmd 'file.blame={"path":"README.md"}' --cmd 'file.blame={"path":"README.md","rev":"HEAD~3"}'
@@ -32,12 +35,23 @@ cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Title\
 cargo run -p project-cli -- --repo . run --cmd 'commit.create={"message":"Fixed title","amend":true}'
 # discards unstaged changes (worktree like the index): needs "confirm":true, saves a backup
 cargo run -p project-cli -- --repo . run --cmd 'worktree.discard={"paths":["README.md"],"confirm":true}' --cmd edit.undo
+# deletes untracked files (a folder = the untracked files under it): without "confirm" the error lists
+# them with their total size; the exact bytes go to refs/project/backup/clean-..., edit.undo recreates them
+cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"]}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.clean={"paths":["notes.txt","build"],"confirm":true}' --cmd edit.undo
 # branch: create, switch, rename, delete (not merged: "confirm":true; backup in refs/project/backup/delete-...)
 cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"test"}' --cmd 'branch.checkout={"name":"test"}' --cmd edit.undo
+# check out an old commit (detached HEAD; also a tag or a short id), create a branch there, go back;
+# leaving a detached commit on no branch/tag/remote saves it in refs/project/backup/detached-... ("backup")
+cargo run -p project-cli -- --repo . run --cmd 'commit.checkout={"rev":"HEAD~3"}' --cmd 'branch.create={"name":"try"}' --cmd edit.undo --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'tag.create={"name":"v9","message":"Version 9"}' --cmd edit.undo
 # delete a local tag: always "confirm":true; the value (tag object or commit) goes to refs/project/backup/tag-delete-..., edit.undo puts it back
 cargo run -p project-cli -- --repo . run --cmd 'tag.delete={"name":"v9","confirm":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'branch.rename={"name":"test","new_name":"test2"}' --cmd 'branch.delete={"name":"test2"}'
+# a local branch that follows a remote branch (start must be <remote>/<branch>), and the upstream of
+# an existing branch set / removed (null); edit.undo puts the previous upstream back
+cargo run -p project-cli -- --repo . run --cmd 'branch.create={"name":"feature","start":"origin/feature","track":true}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'branch.set_upstream={"name":"dev","upstream":"origin/dev"}' --cmd 'branch.set_upstream={"name":"dev","upstream":null}' --cmd edit.undo
 # reset of the current branch: soft (ref only), mixed (also the index), hard (also the worktree);
 # the preview lists the files a hard would overwrite; a hard with local changes needs "confirm":true
 # (and "expected": the HEAD id from the preview), saves them in refs/project/backup/reset-...

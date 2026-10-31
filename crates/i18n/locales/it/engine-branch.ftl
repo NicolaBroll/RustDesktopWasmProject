@@ -31,3 +31,14 @@ engine-branch-config-exists = esiste già una configurazione `branch.{ $name }.*
 engine-branch-memory-no-upstream = configurazione `branch.{ $name }.*` senza upstream: non riscritta nel repo in memoria
 engine-branch-config-partly = la configurazione `branch.{ $name }.*` è stata riscritta solo in parte: { $error } (valori salvati: { $entries })
 engine-branch-config-not-written = configurazione non riscritta: { $error }
+engine-branch-track-no-start = `track` richiede `start`: il branch remoto da seguire (es. `origin/main`)
+engine-branch-track-ambiguous = `{ $start }` è anche `{ $other }`, che git prenderebbe per primo: indica il branch remoto per intero (`refs/remotes/{ $start }`)
+engine-branch-track-rolled-back = non è stato possibile scrivere l'upstream di `{ $name }` ({ $error }): il branch appena creato è stato eliminato di nuovo, nulla è cambiato
+engine-branch-track-not-rolled-back = non è stato possibile scrivere l'upstream di `{ $name }` ({ $error }) né eliminare di nuovo il branch appena creato ({ $rollback }): il branch esiste senza upstream
+engine-branch-detached-saved = HEAD era staccata su { $commit }, con { $count ->
+    [one] 1 commit
+   *[other] { $count } commit
+} che non stanno su nessun branch, tag o branch remoto: salvati in `{ $backup }` prima del checkout. Creare un branch lì (`branch.create` con `start`) per tenerli
+engine-branch-detached-moved = HEAD si è spostata mentre il checkout salvava il commit staccato { $commit } (ora { $now }): nessun cambio, il backup `{ $backup }` resta; riprovare
+engine-branch-detached-kept = il commit staccato su cui era HEAD è salvato in `{ $backup }`
+engine-branch-checkout-empty-rev = `rev` è vuoto

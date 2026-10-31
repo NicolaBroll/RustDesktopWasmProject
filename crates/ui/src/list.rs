@@ -70,6 +70,8 @@ pub struct CommitList {
     /// a page arrives, not on every frame: a lane may depend on commits from different
     /// pages.
     graph: GraphLayout,
+    /// Grows every time [`CommitList::graph`] is computed again: caches of its colors key on it.
+    graph_version: u64,
     has_more: bool,
     /// The requested page that has not arrived yet.
     loading: Option<PageRequest>,
@@ -90,6 +92,11 @@ impl CommitList {
     /// The graph lanes: `graph().rows[i]` is the row of `commits()[i]`.
     pub fn graph(&self) -> &GraphLayout {
         &self.graph
+    }
+
+    /// See the field `graph_version`.
+    pub fn graph_version(&self) -> u64 {
+        self.graph_version
     }
 
     /// True if there are more commits after the last loaded one.
@@ -167,6 +174,7 @@ impl CommitList {
             self.commits.extend(commits);
         }
         self.graph = layout_graph(&self.commits);
+        self.graph_version += 1;
         self.has_more = has_more;
         true
     }

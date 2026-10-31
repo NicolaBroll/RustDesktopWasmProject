@@ -11,10 +11,12 @@
 #[macro_use]
 extern crate project_engine;
 
+mod askpass;
 mod backend;
 mod command;
 mod progress;
 mod version;
 
+pub use askpass::{ASKPASS_ENV, askpass_client};
 pub use backend::{CliBackend, CliOpener};
 pub use version::GitVersion;

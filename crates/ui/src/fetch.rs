@@ -55,6 +55,8 @@ pub struct Failure {
     pub explanation: String,
     /// git's text (stderr), if any.
     pub git: Option<String>,
+    /// Refused for uncommitted local changes: the window offers "Stash…".
+    pub stash: bool,
 }
 
 /// The fetch: the one in progress and the last error to explain.
@@ -185,6 +187,10 @@ impl FetchBox {
             Some(ErrorKind::Cancelled) => Received::Cancelled {
                 notice: tr!("fetch-cancelled", label = label),
             },
+            // The user said no to git's question: a notice, not an error window.
+            Some(ErrorKind::AuthCancelled) => Received::Cancelled {
+                notice: auth_cancelled(detail.as_deref().or(remote.as_deref())),
+            },
             Some(ErrorKind::Auth) => {
                 self.failure = Some(auth_failure(&who, detail));
                 Received::Failed {
@@ -210,6 +216,7 @@ impl FetchBox {
                     title: tr!("fetch-failed-title"),
                     explanation: error.clone(),
                     git: detail,
+                    stash: false,
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
@@ -234,6 +241,14 @@ pub fn who(remote: Option<&str>) -> String {
     }
 }
 
+/// The notice of a cancelled credential question: "Cancelled: authentication for origin".
+pub fn auth_cancelled(remote: Option<&str>) -> String {
+    match remote {
+        Some(remote) => tr!("credentials-cancelled-remote", remote = remote),
+        None => tr!("credentials-cancelled"),
+    }
+}
+
 /// The sentence that closes the explanations of [`auth_failure`] and [`unreachable_failure`].
 pub fn nothing_changed() -> String {
     tr!("fetch-nothing-changed")
@@ -250,6 +265,7 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
             nothing_changed()
         ),
         git: detail,
+        stash: false,
     }
 }
 
@@ -263,6 +279,21 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
             nothing_changed()
         ),
         git: detail,
+        stash: false,
+    }
+}
+
+/// The window of an operation (`title`) refused because of uncommitted changes to `files`:
+/// the UI's text instead of the engine's (meant for CLI and MCP), with "Stash…".
+pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
+    Failure {
+        title,
+        explanation: match files {
+            Some(files) => tr!("common-local-changes", files = files),
+            None => tr!("common-local-changes-no-files"),
+        },
+        git: None,
+        stash: true,
     }
 }
 
@@ -420,7 +451,9 @@ impl Tab {
         } else {
             label(remote.as_deref())
         });
-        let ticket = self.executor.submit(COMMAND, params);
+        // The automatic fetch never opens the credential dialog by itself, only after "Retry".
+        let asks = !auto || repo.auto_fetch.take_ask();
+        let ticket = self.executor.submit_with(COMMAND, params, asks);
         self.pending.insert(ticket, Request::Fetch(generation));
         if let Some(repo) = &mut self.repo {
             repo.auto_fetch.started();
@@ -596,6 +629,27 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_credential_question_is_a_notice() {
+        let mut f = FetchBox::default();
+        let ticket = Ticket::for_test(1);
+        f.started(ticket, None);
+        let r = f.receive(
+            ticket,
+            Err("authentication cancelled".into()),
+            Some(ErrorKind::AuthCancelled),
+            Some("origin".into()),
+        );
+        let Received::Cancelled { notice } = r else {
+            panic!("{r:?}")
+        };
+        assert!(
+            notice.starts_with("Cancelled: authentication for origin"),
+            "{notice}"
+        );
+        assert!(f.failure().is_none());
+    }
+
+    #[test]
     fn auth_and_network_errors_are_explained() {
         let mut f = FetchBox::default();
         let ticket = Ticket::for_test(1);
@@ -613,7 +667,6 @@ mod tests {
         assert!(message.contains("authentication"), "{message}");
         let failure = f.failure().unwrap();
         assert_eq!(failure.title, "Authentication failed");
-        assert!(failure.explanation.contains("never asks for credentials"));
         assert!(failure.explanation.contains("credential helper"));
         assert!(failure.explanation.contains("ssh-agent"));
         assert_eq!(

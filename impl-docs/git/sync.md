@@ -238,8 +238,9 @@ ssh (passphrase, host key confirmation), nor a credential helper can open
 `/dev/tty` and wait, even if the CLI or MCP server are started from a terminal. Graphical
 requests remain (`SSH_ASKPASS` with a display, `GIT_ASKPASS`, `core.askPass`) and credential
 helpers that ask nothing (cache, keychain, libsecret, GCM); without them, a missing
-credential fails immediately with `Auth`. stderr is read while git runs
-(`Git::run_streaming`): split at every `\r` and `\n`, the progress lines go to the
+credential fails immediately with `Auth`, unless the app set a credential prompter (next
+section). stderr is read while git runs
+(`Git::run_network`, `Git::run_streaming` without a prompter): split at every `\r` and `\n`, the progress lines go to the
 `JobContext` (§6), the others, only those closed by `\n`, are the result's `messages` or the
 error text. Errors recognized from the text (`LC_ALL=C`, `progress::remote_error`):
 `Auth` for "Authentication failed", "could not read Username/Password", "terminal prompts
@@ -253,6 +254,77 @@ master with `ControlPersist`) does not block the command. Cancellation: see §6.
 Windows no `setsid` (there is no `/dev/tty`; cancellation uses `kill`); the repo's
 configuration can give remotes with URLs outside the MCP server's root (the fetch reads from there, as
 from the terminal).
+
+## Credential prompts
+
+S52. The network commands (`remote.fetch`, `remote.pull` through its fetch, `remote.push`,
+`remote.push_tag`, `remote.delete_branch`, `remote.delete_tag` with their `ls-remote`/fetch of the
+backup, `repo.clone`) run with `Git::run_network`. With no prompter it is `Git::run_streaming`:
+behaviour as above, a missing credential is `Auth`. The L7 app can set one on the opener
+(`CliOpener::credential_prompter(Arc<dyn CredentialPrompter>)`, L5 trait: `ask(CredentialRequest)
+-> Option<String>`, blocking, called on the worker thread, `None` = cancelled). Only the desktop
+app does (`project_ui::CredentialDialog`); the MCP server never, the CLI not yet (no echo-off
+input without a new dependency).
+
+- **Bridge** (`crates/git/src/askpass.rs`): per command a listener on `127.0.0.1:0` (all
+  platforms, no Unix socket) with a 32-byte token from the system's random source
+  (`getrandom`); closed when the command ends. git runs with `GIT_ASKPASS` and `SSH_ASKPASS` =
+  the app's executable (`current_exe`), `SSH_ASKPASS_REQUIRE=force` (ssh uses it even without
+  a display; the variable exists from OpenSSH 8.4, an older ssh ignores it and uses askpass only
+  with `DISPLAY` set and no terminal) and `PROJECT_ASKPASS=<port>:<token>`; `GIT_TERMINAL_PROMPT=0` stays (git tries
+  askpass first, then gives up). An inherited `PROJECT_ASKPASS` is removed from every other git
+  run. **The user's askpass is never overridden**: if `GIT_ASKPASS` is set (environment or opener)
+  or `core.askPass` is configured in any scope (`git config --get core.askPass`, read once per
+  network command) or `SSH_ASKPASS` is set (git's own fallback), `GIT_ASKPASS` is not set and
+  git keeps using theirs; if `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` is set, neither
+  `SSH_ASKPASS` nor `SSH_ASKPASS_REQUIRE`. A side already served is not bridged; with
+  both served there is no listener at all. Credential helpers still come first: git asks only what they do not give.
+- **Client**: both apps call `project_git::askpass_client()` first thing in `main`: with
+  `PROJECT_ASKPASS` set, `GIT_ASKPASS` or `SSH_ASKPASS` equal to its own executable and exactly
+  one argument (the prompt) the process connects, sends
+  `<token>\n<prompt>`, prints the answer and a newline on stdout and exits 0, or exits 1 on
+  cancel or any error (git then fails); the app never starts in that role. Otherwise (the
+  variable alone, e.g. inherited by a hook that starts the app) it removes `PROJECT_ASKPASS`
+  from its environment and starts normally. With
+  `SSH_ASKPASS_PROMPT=none` (ssh only shows a notice, e.g. touching a FIDO key) it exits 0
+  without asking.
+- **Requests**: each connection is served on its own thread (at most 4 at once, more are
+  dropped), so a silent connection does not hold a real question. A connection with a wrong
+  token, longer than 16 KiB or slower than 5 s to send (one deadline for the whole request) is
+  dropped without asking. The answer buffers are zeroed after sending (best effort). The prompt (verbatim, `LC_ALL=C`) is classified into
+  `CredentialKind`: git's `Username for '...'` and `Password for '...'` first (their URL may
+  contain any word), `HostKey` only when the last line asks "continue connecting (yes/no...)" and
+  ends with `?`, `Passphrase`, `Username`
+  (git's `Username for '<url>'`), `Password`, `Other`; `url` from git's prompt, `remote` = the
+  remote name, or the URL for `repo.clone`.
+- **Cancel**: git fails after a cancelled question with an `Auth` text →
+  `EngineError::AuthCancelled { remote }` (same backup handling as `Auth`:
+  `remote.delete_branch`/`delete_tag` remove theirs only if no URL deleted the ref). Any other
+  failure keeps its own error: after a cancelled passphrase ssh may authenticate with another
+  key and git fail later (connection lost after the remote changed a ref). Never retried by the backend; the UI maps it
+  to the `Auth` kind (auto fetch suspends, no question at every tick). A cancelled job while a
+  question is open: git is stopped, the bridge closes without waiting for the prompter.
+- **Secrets**: the answer goes from the prompter straight to the socket; it is not logged, kept,
+  put in errors, progress, journal or `Debug` (`Askpass` and `Bridge` have their own `Debug`
+  without prompter and token). After a successful command git's credential helper stores it,
+  as in a terminal. During the command, every process git starts (hooks such as `pre-push`,
+  credential helpers, ssh and its `ProxyCommand`) inherits `PROJECT_ASKPASS` with the token and
+  could ask the user something through the dialog: they already run with the user's rights.
+  The token dies with the command's listener.
+- **Desktop dialog** (`project_ui::CredentialDialog`, built before the window and connected to
+  it by `App::with_credentials`): `ask` sends the question with a one-shot reply channel and
+  wakes the UI; no UI yet or UI gone → `None`. One app-level modal at a time: title by kind,
+  git's text verbatim and selectable, masked field with Show/Hide for secret kinds, host key
+  only with "Trust and continue" (`yes`) or Cancel. The text is wiped on close; a question left
+  open after the commands that may have asked it ended is closed with `None` (the executor
+  marks each job's thread; `CredentialPrompter::asks_now`, called on that thread before the
+  bridge starts, registers it). The automatic fetch never asks (`asks_now` false: a missing
+  credential is `Auth`, the timer suspends); its "Retry" and the manual Fetch do.
+  `AuthCancelled` is a status-bar notice.
+- **Tests**: `crates/git/tests/askpass.rs` (`harness = false`: the test binary is git's askpass)
+  against a dummy HTTP server that asks for Basic auth: answers reach git, cancel on fetch,
+  clone and tag push, no prompter → `Auth`; unit tests in `askpass.rs` for wrong token, cancel,
+  closed listener.
 
 ## CliBackend: pull
 

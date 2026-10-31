@@ -453,6 +453,11 @@ impl SyncBox {
                 },
                 reload: true,
             },
+            // Nothing was fetched or sent: a notice, not an error window.
+            Some(ErrorKind::AuthCancelled) => Received::Cancelled {
+                notice: fetch::auth_cancelled(detail.as_deref()),
+                reload: false,
+            },
             Some(ErrorKind::Auth) => {
                 self.window = Some(Window::Failure(fetch::auth_failure(
                     &fetch::who(None),
@@ -525,7 +530,24 @@ impl SyncBox {
                 }));
                 Received::Confirm
             }
-            // Rejected before starting (detached HEAD, no upstream, local changes,
+            // Uncommitted changes: the UI's text with "Stash…"; the fetch may be done, re-read.
+            Some(ErrorKind::LocalChanges) => {
+                let failure = fetch::local_changes_failure(
+                    tr!("sync-not-possible-title", label = &label),
+                    detail.as_deref(),
+                );
+                let message = tr!(
+                    "sync-not-possible",
+                    label = &label,
+                    error = &failure.explanation
+                );
+                self.window = Some(Window::Failure(failure));
+                Received::Failed {
+                    message,
+                    reload: request.op == Op::Pull,
+                }
+            }
+            // Rejected before starting (detached HEAD, no upstream,
             // diverged branch with fast-forward only...): the reason is long, it goes in a window.
             // The pull may have already done the fetch: re-read.
             Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams) => {
@@ -533,6 +555,7 @@ impl SyncBox {
                     title: tr!("sync-not-possible-title", label = &label),
                     explanation: error.clone(),
                     git: None,
+                    stash: false,
                 }));
                 Received::Failed {
                     message: tr!("sync-not-possible", label = &label, error = error),
@@ -544,6 +567,7 @@ impl SyncBox {
                     title: tr!("sync-failed-title", label = &label),
                     explanation: error.clone(),
                     git: detail,
+                    stash: false,
                 }));
                 Received::Failed {
                     message: tr!("common-failed", label = &label, error = error),

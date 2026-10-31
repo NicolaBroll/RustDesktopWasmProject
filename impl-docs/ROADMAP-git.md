@@ -598,3 +598,167 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
 - **Done when:** UI tests with a fake clock (interval, skips, backoff, suspension on an
   authentication error and Retry, hidden tab); by hand on Xvfb: a commit pushed to a local
   remote from a terminal shows up in the graph without pressing Fetch; CI green.
+
+### S51 — Tracking branches and upstream
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** today a remote branch (`origin/feature`) cannot become a local branch that pulls from
+  it: `branch.checkout` uses `--no-guess`, `branch.create` never sets an upstream, and
+  `remote.pull` then refuses ("set the upstream"). Add:
+  - `branch.create` gains `"track"?: bool`: allowed only when `start` resolves to a
+    remote-tracking branch `refs/remotes/<remote>/<branch>` of a configured remote (otherwise
+    `InvalidParams`); after creating the ref it writes `branch.<name>.remote` and
+    `branch.<name>.merge = refs/heads/<branch>` (like `git branch --track`). If the config write
+    fails the ref is removed again (nothing half-done). The journal entry also carries the config
+    so `edit.undo` removes branch AND config, redo recreates both (reuse the `branch_config`
+    mechanism of `branch.delete` in [git/branch.md](git/branch.md)).
+  - `branch.set_upstream {"name", "upstream": "<remote>/<branch>" | null}` (`Access::Write`):
+    sets or removes the upstream of a local branch; upstream must be an existing remote-tracking
+    branch of a configured remote (a remote whose name contains `/` must resolve unambiguously).
+    Only `--local` config. Journal entry with the upstream before/after; undo/redo only if the
+    config is still the value left by the command (`UndoConflict` otherwise). Result:
+    `{"branch", "upstream", "previous", "refs", ...journal}`.
+  - Docs in [git/branch.md](git/branch.md), CLI examples in [git/cli.md](git/cli.md), README
+    command list.
+  - UI (later, `egui-ui`): "Check out" on a remote branch row → local branch with the same name
+    tracking it (or the existing local branch that already tracks it), name prompted if taken;
+    "Set upstream…"/"Unset upstream" in the local branch menu.
+- **Done when:** integration tests (track from `origin/x`, remote name with `/`, `track` with a
+  local start refused, name starting with `-`, set/unset upstream, undo/redo of both, config
+  changed from outside before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI
+  green.
+- **Status:** done. Engine: `branch.create` `track`, `branch.set_upstream`, journal field
+  `upstream`, `GitRead::local_upstream`, `GitRefs::write_upstream`. UI (`crates/ui/src/tracking.rs`):
+  "Checkout" (menu and double click) on a remote branch reuses the local branch that tracks it or
+  creates `<branch>` with `track` and checks it out, name taken → new-branch dialog prefilled;
+  "Track `<remote>/<branch>`" checkbox in the new-branch dialog from a remote branch; "Set
+  upstream…" window (filter, virtualized list, `<remote>/<same name>` preselected) and "Unset
+  upstream" in the local branch menu.
+
+### S52 — Credential prompts
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** network commands (fetch, pull, push, push_tag, delete_branch, delete_tag, clone) run
+  with stdin closed, `GIT_TERMINAL_PROMPT=0` and `setsid`: without a configured credential helper
+  or ssh-agent they only fail with `Auth`. The app asks the user instead
+  ([git/sync.md](git/sync.md), "Credential prompts"). L5: trait `CredentialPrompter` (`ask` gets a
+  `CredentialRequest {kind: Username | Password | Passphrase | HostKey | Other, prompt, remote,
+  url}`, returns the answer or `None` = cancelled), optional on `CliOpener` (set by the L7 app;
+  absent in MCP and tests → today's behaviour). L6: askpass bridge for the network calls (listener
+  on `127.0.0.1:0` per command, 32-byte random token, `GIT_ASKPASS`/`SSH_ASKPASS` = the app's own
+  executable, `SSH_ASKPASS_REQUIRE=force`, `PROJECT_ASKPASS=<port>:<token>`); cancel →
+  `EngineError::AuthCancelled`, never retried. L7: both apps run as askpass client first thing in
+  `main` when `PROJECT_ASKPASS` is set. Secrets never logged, in errors, journal, progress or
+  `Debug`; not stored by the app (git's credential helper stores them after success).
+- **Done when:** integration tests against a dummy HTTP server that asks for Basic auth (prompter
+  gets Username and Password, git sends the answers; cancel → error; no prompter → unchanged),
+  wrong token rejected; desktop dialog (egui-ui) fills the stub prompter; `safety-reviewer`
+  review; CI green.
+- **Status:** done. Desktop dialog (`crates/ui/src/credentials.rs`, `view/credentials_view.rs`):
+  `ask` queues the question to the App (one modal at a time, above every dialog), masked field
+  with Show/Hide for secrets, "Trust and continue" for host keys (no default), Enter/Escape;
+  the typed text is wiped on close, the field's egui state dropped; a question left open after
+  its command ended closes with no answer. `AuthCancelled` is a notice (auto fetch suspends).
+  The CLI has no prompter yet (no echo-off crate in the workspace).
+
+### S53 — Compare two revisions
+- [x] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** `diff.commit` only compares a commit with its parent. Add the read-only `diff.range
+  {"from", "to", "merge_base"?: bool, "path"?}`: the diff of `to` against `from` (`git diff from
+  to`), or with `merge_base: true` what `to` brings since it diverged from `from` (`from...to`, i.e.
+  against the merge base; no merge base → clear error). Same result shape, renames handling, size
+  limits and binary handling as `diff.commit` (same parser and code path), plus `{"from", "to",
+  "base"?}` as full oids. Without `path`: every changed file with its hunks, as `diff.commit`. Revs
+  after `--end-of-options`, paths after `--` with `--literal-pathspecs`; a rev that is not a commit
+  → `InvalidParams`. Docs in `impl-docs/git/reading.md`, examples in `impl-docs/git/cli.md`, README
+  command list. UI: Ctrl+click a second commit in the list → details panel "Compare A ↔ B" with
+  files and diff; "Compare with the current branch" in the branch menu (`merge_base: true`).
+- **Done when:** integration tests (two unrelated commits, merge_base with diverged branches, no
+  common base, rename, binary, path filter, rev starting with `-`, tag and branch names) and on the
+  `MemoryBackend`; desktop screenshot; CI green.
+- **Status:** done. Engine: `diff.range`, `GitRead::commit_id`/`common_base`, `DiffSpec::Range`;
+  tests in `crates/git/tests/range.rs` and `crates/engine/src/builtin/range_tests.rs`. UI:
+  `crates/ui/src/compare.rs` (`CompareBox`, ancestor order on the loaded rows), details panel in
+  `view/compare_view.rs` (Swap, Back/Esc, files through `changed_files`, file diff as
+  `DiffSource::Range`), Ctrl/Cmd+click and "Compare with the selected commit" in the commit
+  menu, "Compare with `<current>` (what it brings)" in the branch menu; tests in
+  `crates/ui/src/compare_tests.rs`.
+
+### S54 — Delete untracked files
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** `worktree.discard` never touches untracked files (by design, `impl-docs/git/discard.md`),
+  so a new file the user wants gone can only be deleted outside the app. Add `worktree.clean
+  {"paths": [path, ...], "confirm": true}` (`Access::Write`), the safe `git clean` for named files:
+  - Only untracked, non-ignored paths as `repo.status` reports them (a directory path = the
+    untracked files under it that status lists; with `status.showUntrackedFiles=normal` a whole
+    untracked dir is one entry, expand it with `git ls-files --others --exclude-standard -z --
+    <dir>`). A tracked, ignored, conflicted or nonexistent path → `InvalidParams`/`NotAllowed`
+    listing them, nothing deleted. Nested git repos (a dir with `.git`) and submodules refused.
+    Symlinks deleted as links, never followed.
+  - Always `confirm` (without it: `ConfirmRequired` with the file list and total size).
+  - Backup **before** deleting, and nothing deleted if the backup fails: the exact bytes and mode
+    of every file go into a commit `refs/project/backup/clean-<timestamp>` built with a temporary
+    index (`GIT_INDEX_FILE`, `git update-index --add` / `hash-object -w` with `--no-filters` so
+    CRLF/filters don't alter bytes; check byte-for-byte as `worktree.discard` does). The user's
+    index is never touched.
+  - Delete files, then remove directories left empty by the deletion (only those, never
+    pre-existing empty dirs outside the request).
+  - `JournalEntry` so `edit.undo` restores the files from the backup, only where the path is absent
+    again (a file recreated meanwhile → `UndoConflict`, nothing overwritten); redo deletes again
+    only if the files still match the backup bytes.
+  - Result: `{"deleted": [path], "backup", "bytes", "warnings", "status", ...journal}`.
+  - Docs: new section in `impl-docs/git/discard.md`, CLI examples in `impl-docs/git/cli.md`, README.
+  - UI (later): "Delete…" on untracked files in the stage area (and "Delete all untracked…"),
+    confirmation dialog with the list.
+- **Done when:** integration tests (file, untracked dir, nested dir, CRLF bytes with autocrlf,
+  binary, executable bit, symlink, ignored refused, tracked refused, nested repo refused, name
+  starting with `-`, non-UTF-8 name if the helper supports it, backup failure → nothing deleted,
+  undo/redo, file recreated before undo) and on the `MemoryBackend`; `safety-reviewer` review; CI
+  green.
+- **Status:** done. `worktree.clean`, `GitIndex::clean_plan`/`clean`/
+  `restore_cleaned`, `JournalEntry::clean`; plan in `crates/engine/src/git/clean.rs`, `CliBackend`
+  in `crates/git/src/backend/clean.rs` (status is read with `--untracked-files=all`, so no
+  `ls-files` expansion is needed; backup commit has no parent; undo/redo ignore HEAD); tests in
+  `crates/git/tests/clean.rs`, `crates/engine/src/git/memory/clean.rs`,
+  `crates/engine/src/builtin/clean.rs`. UI: `crates/ui/src/clean.rs` (`CleanBox`, tests in
+  `clean_tests.rs`), "Delete…" in the context menu of untracked files and "Delete all untracked
+  files…" in the "⋯" menu of the unstaged list (`view/stage_view.rs`; the stage area has no
+  multi-selection), dialog `confirm_clean` in `view/confirm.rs` (scrollable list, count and total
+  size from the `bytes` of the confirmation, `Done::confirm_bytes`; "Delete N files", Cancel
+  focused, Enter never confirms); notice with the count and the `warnings`.
+
+### S55 — Check out a commit (detached HEAD)
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** going back to an old commit to try it is not possible today: `branch.checkout` takes
+  only local branches and `--detach` is used only by its undo. Add `commit.checkout {"rev"}`
+  (`Access::Write`): `git -c core.fsmonitor=false switch --detach --no-overwrite-ignore
+  --end-of-options <full id>` with exactly the same checks, refusals and `CheckoutConflict`
+  handling as `branch.checkout` ([branch.md](git/branch.md)): never forced, refused during an
+  operation in progress or with conflicted files; a rev that is not a commit → `InvalidParams`;
+  already there (detached at that commit) → `changed: false`, no journal. Journal entry HEAD
+  before/after (same undo/redo as `branch.checkout`).
+  - **Commits left behind**: when HEAD is detached and a checkout (this command *and*
+    `branch.checkout`) moves away from a commit not reachable from any branch, tag or remote
+    branch (`rev-list --count <HEAD> --not --branches --tags --remotes`, no replace objects), save
+    `refs/project/backup/detached-<timestamp>` at that commit **before** switching (switch not run
+    if the backup fails) and add a warning with the count and the backup name. No `confirm`
+    needed: nothing is lost.
+  - `repo.status`/`repo.refs` already expose a detached HEAD; check that `branch.create` with no
+    `start` from a detached HEAD works (it is the "create a branch here" action) and document it.
+  - Result: `{"head": HeadState, "previous", "changed", "warnings", "backup"?, "status",
+    ...journal}`.
+  - Docs in `impl-docs/git/branch.md`, examples in `impl-docs/git/cli.md`, README.
+  - UI (later): "Check out this commit" in the commit menu (one-line explanation of detached
+    HEAD), a top-bar indicator "Detached at <short id>" with "Create branch here…".
+- **Done when:** integration tests (checkout of an old commit, tag and short id revs, rev starting
+  with `-`, conflicting local changes, already detached there, leaving a detached commit not on any
+  ref → backup ref + warning, leaving one that is on a branch → no backup, branch.checkout from a
+  detached unreachable commit → backup, undo/redo, operation in progress refused) and on the
+  `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** done. `commit.checkout` in `crates/engine/src/builtin/branch.rs`;
+  backup of a detached HEAD left behind inside `GitRefs::checkout` (both backends), so it also
+  covers `branch.checkout` and undo/redo; tests in `crates/git/tests/detached.rs` and
+  `crates/engine/src/builtin/checkout_tests.rs`. UI in `crates/ui/src/detach.rs` (tests in
+  `detach_tests.rs`): "Check out this commit…" in the commit menu with a detached HEAD confirmation
+  ("Don't ask again" = setting `skip_detach_confirm`, also in Settings → General), the
+  `CheckoutConflict` dialog of `branch.checkout`, "Detached at <id>" in the top bar with "Create
+  branch here…" (`branch.create` without `start`, then `branch.checkout`), commits saved when
+  leaving a detached HEAD named in the notice of both checkouts.

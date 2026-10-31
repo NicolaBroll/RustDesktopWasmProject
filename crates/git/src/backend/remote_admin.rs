@@ -108,7 +108,7 @@ impl CliBackend {
     /// The entries of the repo file configuration whose key matches `pattern`
     /// (`git config --local -z --get-regexp`), in file order. A non-UTF-8 value could not
     /// be written back: [`EngineError::NotAllowed`].
-    fn local_config(&self, pattern: &str) -> Result<Vec<ConfigEntry>, EngineError> {
+    pub(super) fn local_config(&self, pattern: &str) -> Result<Vec<ConfigEntry>, EngineError> {
         let args = [
             "config",
             "--local",
@@ -352,7 +352,7 @@ impl CliBackend {
 
     /// Runs `args`; succeeds also with code 5 of `git config --unset` (nothing to
     /// remove) or if stderr contains one of the `ok` texts.
-    fn config_call(&self, args: &[&str], ok: &[&str]) -> Result<(), EngineError> {
+    pub(super) fn config_call(&self, args: &[&str], ok: &[&str]) -> Result<(), EngineError> {
         let out = self.git.output(Some(&self.workdir), args)?;
         let stderr = String::from_utf8_lossy(&out.stderr);
         let unset_nothing = out.status.code() == Some(5) && args.contains(&"--unset-all");

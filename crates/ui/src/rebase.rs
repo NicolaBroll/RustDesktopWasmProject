@@ -481,7 +481,18 @@ impl RebaseBox {
                 };
                 Received::Confirm
             }
-            // Refusals (local changes, plan that changes nothing, merges in the range, ...):
+            // Uncommitted changes: the UI's text; the editor stays open with the plan (the
+            // stash dialog cannot open above it).
+            Err(_) if kind == Some(ErrorKind::LocalChanges) => {
+                editor.phase = Phase::Editing;
+                let error = match detail.as_deref() {
+                    Some(files) => tr!("common-local-changes", files = files),
+                    None => tr!("common-local-changes-no-files"),
+                };
+                editor.error = Some(tr!("rebase-refused", error = &error));
+                Received::Inline
+            }
+            // Refusals (plan that changes nothing, merges in the range, ...):
             // nothing changed, the editor stays with the reason.
             Err(e)
                 if matches!(

@@ -319,6 +319,7 @@ pub(crate) fn stash_panel(
         Shown::Loaded(details) => {
             changed_files(
                 ui,
+                DiffSource::Commit(details.commit.id),
                 details.commit.id,
                 &details.files,
                 repo.diff.target(),

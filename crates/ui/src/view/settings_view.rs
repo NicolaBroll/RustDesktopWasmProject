@@ -2,8 +2,9 @@
 //! change is applied at once (no "Save"): it leaves as an [`settings::Action::Change`].
 
 use super::*;
+use crate::keys::{self, Command};
 use crate::settings::{
-    self, Change, FetchInterval, Language, Section, Settings, SettingsBox, Theme,
+    self, Change, DateFormat, FetchInterval, Language, Scale, Section, Settings, SettingsBox, Theme,
 };
 use project_i18n::Lang;
 
@@ -90,7 +91,7 @@ pub(crate) fn settings_window(
     }
 }
 
-/// Theme and language.
+/// Theme, language, UI scale and dates.
 fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     ui.strong(tr!("settings-theme"));
     ui.horizontal(|ui| {
@@ -122,6 +123,58 @@ fn general(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         }
     });
     ui.weak(tr!("settings-language-hint"));
+    ui.add_space(10.0);
+    scale(ui, settings.scale, actions);
+    ui.add_space(10.0);
+    ui.strong(tr!("settings-dates"));
+    ui.horizontal(|ui| {
+        for format in DateFormat::ALL {
+            let label = match format {
+                DateFormat::Absolute => tr!("settings-dates-absolute"),
+                DateFormat::Relative => tr!("settings-dates-relative"),
+            };
+            if ui.radio(settings.dates == format, label).clicked() && settings.dates != format {
+                actions.push(Action::Settings(settings::Action::Change(Change::Dates(
+                    format,
+                ))));
+            }
+        }
+    });
+    ui.add_space(10.0);
+    let mut ask = !settings.skip_detach_confirm;
+    if ui
+        .checkbox(&mut ask, tr!("settings-ask-detach"))
+        .on_hover_text(tr!("settings-ask-detach-hint"))
+        .changed()
+    {
+        actions.push(Action::Settings(settings::Action::Change(
+            Change::SkipDetachConfirm(!ask),
+        )));
+    }
+}
+
+/// The UI scale, with the keys that change it too.
+fn scale(ui: &mut Ui, current: Scale, actions: &mut Vec<Action>) {
+    ui.strong(tr!("settings-scale"));
+    egui::ComboBox::from_id_salt("settings-scale")
+        .selected_text(tr!("settings-scale-value", n = current.percent()))
+        .show_ui(ui, |ui| {
+            for scale in Scale::all() {
+                let label = tr!("settings-scale-value", n = scale.percent());
+                if ui.selectable_label(current == scale, label).clicked() && current != scale {
+                    actions.push(Action::Settings(settings::Action::Change(Change::Scale(
+                        scale,
+                    ))));
+                }
+            }
+        });
+    let key = |command: Command| keys::shortcut_text(ui.ctx(), &command.shortcut());
+    ui.weak(tr!(
+        "settings-scale-hint",
+        larger = key(Command::ZoomIn),
+        smaller = key(Command::ZoomOut),
+        reset = key(Command::ZoomReset)
+    ));
 }
 
 fn interval_label(interval: FetchInterval) -> String {

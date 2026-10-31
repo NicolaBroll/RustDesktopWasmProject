@@ -13,3 +13,7 @@ engine-undo-delete-worktree-branch = `{ $command }` cancellerebbe `{ $name }`, i
 engine-undo-head-changed-after = dopo `{ $command }` HEAD è { $head } invece di { $target }: un altro processo l'ha cambiata durante l'operazione; controllare HEAD prima di continuare (nessun commit è perso)
 engine-undo-head-unreadable-after = dopo `{ $command }` HEAD non si rilegge ({ $error }): controllare il repository
 engine-undo-head-reflog-grew = durante `{ $command }` un altro processo ha cambiato HEAD ({ $n } voci nuove nel reflog di HEAD invece di una): se era tornata su un branch (`git checkout`), ora è { $target }; rifare il checkout se serve (nessun commit è perso, vedi `git reflog HEAD`)
+engine-undo-upstream-branch-gone = il branch `{ $name }` non esiste più
+engine-undo-upstream-changed = l'upstream di `{ $name }` è { $now } invece di { $expected }
+engine-undo-upstream-not-written = l'upstream di `{ $name }` non è stato riscritto: { $error }
+engine-undo-upstream-left = l'upstream di `{ $name }` è cambiato nel frattempo ({ $now } invece di { $expected }): lasciato com'è

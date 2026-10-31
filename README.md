@@ -48,8 +48,10 @@ the folder it created; not available over MCP),
 prefix contain the text, literal and case-insensitive, in the order of `repo.log`; `in` limits to
 `"message"`, `"author"`, `"id"`; result `{"ids", "total", "has_more"}`), `commit.show {"id"}` (metadata and files
 changed relative to the first parent), `diff.worktree {"path"?}` (unstaged changes),
-`diff.index {"path"?}` (staged changes) and `diff.commit {"id", "path"?}` (commit relative to its
-first parent). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and
+`diff.index {"path"?}` (staged changes), `diff.commit {"id", "path"?}` (commit relative to its
+first parent) and `diff.range {"from", "to", "merge_base"?, "path"?}` (`to` relative to `from`, or
+with `merge_base: true` relative to their merge base; the result also has `from`, `to` and `base`
+as full ids). Diffs return `{"files": [...]}` with hunks and lines (in `diff.worktree` and
 `diff.index` each file also has `digest`, to be passed to `index.*_lines`); `path` limits the
 result to that file (renames stay renames) and is a string, or a byte array for non-UTF-8 names.
 There is no size limit: for large commits it is better to request one file at a time.
@@ -109,6 +111,17 @@ redo of a discard are refused even if HEAD has changed. Result: `{"files": [{"pa
 "mode", "oid"}], "backup", "stash", "status", "can_undo", "can_redo", "next_undo",
 "next_redo"}`.
 
+`worktree.clean {"paths", "confirm"}` deletes untracked files (a directory means the untracked files
+under it, as `repo.status` lists them; ignored, tracked and conflicted files stay). A path with no
+untracked file, or a nested git repository, is refused and nothing is deleted. Without `"confirm":
+true` it gives an error listing the files and their total size. Before deleting it saves the exact
+bytes and mode of every file (CRLF, binary, executable bit, links as links) in a commit held by
+`refs/project/backup/clean-...` (built with a temporary index: the user's index is not touched; if
+the backup fails nothing is deleted), then removes the directories the deletion left empty. `edit.undo`
+recreates the files only where the path is still free (never overwriting), `edit.redo` deletes them
+again only if they still match the backup. Result: `{"deleted", "files": [{"path", "mode",
+"size"}], "dirs", "backup", "commit", "bytes", "warnings", "status", "can_undo", ...}`.
+
 `branch.create {"name", "start"?}` creates the branch `name` (short name) at `start` (a rev; HEAD if
 missing) without switching branch; an existing branch is never overwritten, and a new name that git
 does not accept (even one starting with `-`) is an error. Result: `{"branch", "target", "refs"}`
@@ -116,7 +129,12 @@ plus the journal state. `branch.checkout {"name"}` switches to the branch with `
 if a local change, an untracked file or an ignored one would be overwritten it gives an error
 that lists the files, and nothing changes; other changes are kept. Refused during merge, rebase,
 etc. and with conflicted files. Result: `{"branch", "previous", "changed", "warnings",
-"status"}`. `branch.delete {"name", "confirm"?, "expected"?}` deletes a branch (with `expected`, the full id of the
+"backup"?, "status"}`. `commit.checkout {"rev"}` checks out a commit (id, short id, tag...) with
+detached HEAD, with the same checks; already there: `changed: false`. Result: `{"head",
+"previous", "changed", "warnings", "backup"?, "status"}`; `branch.create {"name"}` then creates a
+branch at the detached commit. Both checkouts, when they leave a detached HEAD on commits that no
+branch, tag or remote branch reaches, first save it in `refs/project/backup/detached-...`
+(`backup`, with a warning). `branch.delete {"name", "confirm"?, "expected"?}` deletes a branch (with `expected`, the full id of the
 commit seen, it refuses without touching anything if the branch points elsewhere in the meantime): the active branch or one open in
 another worktree is refused; if it has commits that are neither in HEAD nor in its upstream,
 `"confirm": true` is required. It always saves the commit first in `refs/project/backup/delete-...`; like `git
@@ -129,6 +147,15 @@ journal: the undo deletes the created branch, recreates the deleted one at the s
 configuration (if a new one has not appeared in the meantime; the reflog of the deleted branch is not
 restored), renames back, and returns to the previous branch (or commit) with another safe
 checkout; always only if nobody has touched those refs or HEAD in the meantime.
+
+`branch.create` with `"track": true` makes the new branch follow `start`, which must be a remote
+branch `<remote>/<branch>` of a configured remote (like `git branch --track`: it writes
+`branch.<name>.remote` and `branch.<name>.merge`; the result's `upstream` is `"<remote>/<branch>"`).
+`branch.set_upstream {"name", "upstream": "<remote>/<branch>" | null}` sets or removes the upstream of
+a local branch (only those two keys of the repo's own `.git/config`). Result: `{"branch",
+"upstream", "previous", "changed", "warnings", "refs"}`. Both go into the journal: the undo puts the
+previous upstream back (and deletes the tracking branch), only if the configuration has not been
+changed from outside in the meantime.
 
 `branch.reset {"target", "mode": "soft"|"mixed"|"hard", "confirm"?, "expected"?}` moves the current
 branch (or a detached HEAD) to `target` like `git reset`: `soft` only the ref, `mixed` also the index
@@ -315,7 +342,7 @@ stages it like `index.stage`; refused with `StaleDiff` if the file is no longer 
 <ref>:<path>`). Result: `{"status", "backup", "index_backup"}`. It does not go into the journal.
 
 `edit.undo {}` undoes the last operation in the journal (currently `commit.create`, also with `amend`,
-`branch.*`, `worktree.discard`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
+`branch.*`, `worktree.discard`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
 `stash.drop` and the concluded merge, `merge.start` and `merge.continue`) and `edit.redo {}` redoes it; `edit.history {}` (read-only) lists the journal. The undo
 returns the branch (or detached HEAD) to the previous value only if nobody has moved it in the
 meantime (a `git commit` or `git reset` from the terminal): otherwise error and nothing changes.

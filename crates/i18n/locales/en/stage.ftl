@@ -41,6 +41,7 @@ stage-stage-all-help = Stages all the files in this list
 stage-section-title = { $title } ({ $n })
 stage-discard-all = Discard all…
 stage-discard-all-help = Discards the unstaged changes of all the tracked files in this list (asks for confirmation, can be undone). Untracked files are not touched
+stage-more-hint = More actions on this list
 stage-empty-staged = No staged files.
 stage-empty-unstaged = No unstaged changes.
 stage-stage = Stage
@@ -70,3 +71,11 @@ stage-tooltip-right-discard = Right-click: more actions, including discarding th
 stage-tooltip-right = Right-click: more actions
 stage-blame-untracked = The file is not tracked yet: the blame needs a file in HEAD or in the index
 stage-blame-deleted = The file is deleted: there is nothing to blame
+stage-delete-file = Delete…
+stage-delete-file-help = Deletes this untracked file (asks for confirmation; a backup is kept and “Undo” puts it back)
+stage-delete-untracked = { $n ->
+    [one] Delete the untracked file…
+   *[other] Delete all { $n } untracked files…
+}
+stage-delete-untracked-help = Deletes the untracked files of this list (asks for confirmation; a backup is kept and “Undo” puts them back). Tracked files are not touched
+stage-tooltip-right-delete = Right-click: more actions, including deleting the file

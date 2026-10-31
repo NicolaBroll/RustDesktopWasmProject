@@ -1,4 +1,4 @@
-//! File diff view: which diff to ask for (`diff.commit`, `diff.worktree` or
+//! File diff view: which diff to ask for (`diff.commit`, `diff.range`, `diff.worktree` or
 //! `diff.index`), which response to show and
 //! how to turn it into lines to draw. Data only, no egui: tested with unit tests.
 //!
@@ -11,7 +11,7 @@ use crate::format::change_name;
 use crate::lines::LineSelection;
 use crate::{Tab, word_diff};
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
-use project_engine::{DiffCommitParams, DiffParams};
+use project_engine::{DiffCommitParams, DiffParams, DiffRangeParams};
 use project_i18n::tr;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -32,6 +32,12 @@ pub(crate) enum Action {
 pub enum DiffSource {
     /// The commit against its first parent (`diff.commit`).
     Commit(Oid),
+    /// Commit `to` against `from`, or with `merge_base` against their merge base (`diff.range`).
+    Range {
+        from: Oid,
+        to: Oid,
+        merge_base: bool,
+    },
     /// Unstaged changes, working tree against the index (`diff.worktree`).
     Worktree,
     /// Staged changes, index against HEAD (`diff.index`).
@@ -62,6 +68,19 @@ impl DiffTarget {
                 "diff.commit",
                 crate::params(DiffCommitParams {
                     id: id.to_string(),
+                    path,
+                }),
+            ),
+            DiffSource::Range {
+                from,
+                to,
+                merge_base,
+            } => (
+                "diff.range",
+                crate::params(DiffRangeParams {
+                    from: from.to_string(),
+                    to: to.to_string(),
+                    merge_base,
                     path,
                 }),
             ),

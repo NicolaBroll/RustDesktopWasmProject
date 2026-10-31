@@ -46,6 +46,11 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Started by git or ssh as askpass (S52): never the case today (the CLI sets no prompter),
+    // but the same executable must never run a command in that role.
+    if let Some(code) = project_git::askpass_client() {
+        std::process::exit(code);
+    }
     let Cli { repo, command } = Cli::parse();
     match command {
         Command::Commands { search, json } => {

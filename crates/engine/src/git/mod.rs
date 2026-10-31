@@ -6,6 +6,7 @@
 
 mod backup;
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod conflict;
@@ -42,8 +43,13 @@ pub use backup::{
     versions_at_risk_hidden,
 };
 pub use branch::{
-    BranchDeleted, ConfigEntry, HEADS_PREFIX, branch_ref, branch_short, check_branch_name,
-    check_new_branch_name, check_no_operation,
+    BranchDeleted, ConfigEntry, HEADS_PREFIX, TrackingBranch, UpstreamChange, branch_ref,
+    branch_short, check_branch_name, check_new_branch_name, check_no_operation, resolve_tracking,
+    upstream_label,
+};
+pub use clean::{
+    CleanBackup, CleanOutcome, CleanRestore, CleanedFile, check_same_clean_plan, clean_description,
+    clean_plan,
 };
 pub use clone::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
@@ -73,7 +79,9 @@ pub use maintenance::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
 };
 #[cfg(any(test, feature = "test-support"))]
-pub use memory::{FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash};
+pub use memory::{
+    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
+};
 pub(crate) use merge::check_in_progress;
 pub use merge::{
     MergeAborted, MergeMode, MergeOutcome, MergeRequest, MergeSource, MergeSourceKind,
@@ -208,6 +216,21 @@ pub trait GitRead {
     /// built by the engine from already checked names (e.g. `branch.<name>.pushRemote`,
     /// `remote.<name>.fetch`).
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError>;
+
+    /// The commit `rev` leads to (`rev^{commit}`), `None` if it does not resolve to a commit
+    /// (unknown, ambiguous, a tree or a blob). A read, for `diff.range`.
+    fn commit_id(&self, rev: &str) -> Result<Option<Oid>, EngineError>;
+
+    /// The best common ancestor of commits `a` and `b` (`git merge-base`), `None` if they have
+    /// no common history. With several best ones, the one git picks (the one `git diff a...b`
+    /// uses). A read, for `diff.range` with `merge_base`.
+    fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError>;
+
+    /// The `branch.<name>.remote` and `branch.<name>.merge` entries of the **repo file** only
+    /// (`git config --local`: no global configuration, no `include`), in file order: the upstream
+    /// that `branch.set_upstream` and `branch.create` with `track` replace. A non-UTF-8 value
+    /// gives [`EngineError::NotAllowed`] (it could not be written back). A read.
+    fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError>;
 }
 
 /// Index and worktree: stage, unstage, commit, discard and their restores. Part of
@@ -324,6 +347,38 @@ pub trait GitIndex {
         &mut self,
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError>;
+
+    /// The untracked files that `worktree.clean` of `paths` would delete now, with mode and size:
+    /// [`clean_plan`] on the status read now (see there for the refusals: nested repositories,
+    /// paths without untracked files). Reads only.
+    fn clean_plan(&self, paths: &[RepoPath]) -> Result<Vec<CleanedFile>, EngineError>;
+
+    /// Deletes the untracked files of `paths` (`worktree.clean`, §7). Before deleting, the exact
+    /// bytes and mode of every file are saved in a commit (temporary index: the user's index is
+    /// not touched) held by a new ref `refs/project/backup/clean-...`; if the backup fails or
+    /// does not have the current bytes of every file, nothing is deleted. Links are deleted as
+    /// links. Then the folders the deletion left empty are removed (only those).
+    ///
+    /// `expected` is the plan shown to whoever confirmed ([`GitIndex::clean_plan`]): if the plan
+    /// computed now is different (a file more or less, another mode or size),
+    /// [`EngineError::NotAllowed`] and nothing changes. A file that cannot be deleted after the
+    /// backup stays and goes in [`CleanOutcome::warnings`]; if none could, the error names the
+    /// backup.
+    fn clean(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[CleanedFile],
+    ) -> Result<CleanOutcome, EngineError>;
+
+    /// Undoes (`request.redo == false`) or redoes a clean (`edit.undo`/`edit.redo` of an entry
+    /// of `worktree.clean`). The index is not touched.
+    ///
+    /// Undo: every path must be absent (nothing there, no file or link in place of one of its
+    /// folders), otherwise [`EngineError::UndoConflict`] and nothing changes; then the files are
+    /// recreated from `request.commit` (bytes, executable bit, links), never overwriting.
+    /// Redo: every file must still be untracked with the backup's bytes and mode, otherwise
+    /// [`EngineError::UndoConflict`]; then it is deleted again (no new backup).
+    fn restore_cleaned(&mut self, request: &CleanRestore) -> Result<RestoreOutcome, EngineError>;
 }
 
 /// Refs and journal: branches, tags, checkout, reset, and the ref restores of undo/redo. Part
@@ -381,8 +436,15 @@ pub trait GitRefs {
     fn delete_tag(&mut self, name: &str, expected: &Oid) -> Result<String, EngineError>;
 
     /// Moves HEAD to `target` updating index and worktree (`git switch`): the local branch
-    /// (full name, must exist) or a commit with detached HEAD (for the undo of a checkout
-    /// made from detached HEAD). `branch.checkout` and its undo/redo.
+    /// (full name, must exist) or a commit with detached HEAD (`commit.checkout`, and the undo
+    /// of a checkout made from detached HEAD). `branch.checkout`, `commit.checkout` and their
+    /// undo/redo.
+    ///
+    /// **Commits left behind**: if HEAD is detached at a commit other than `target` that no
+    /// branch, tag or remote-tracking branch reaches, that commit is first saved in a new
+    /// `refs/project/backup/detached-...` (in `backups`, with a warning that gives the number of
+    /// commits and the backup); if the backup fails nothing is switched. After a failed switch
+    /// the backup is removed only if HEAD is still on that commit.
     ///
     /// **Never loses local changes**: never `--force`, `--discard-changes` or `--merge`.
     /// Changes that do not touch the files that differ between HEAD and `target` stay (as in git);
@@ -429,6 +491,21 @@ pub trait GitRefs {
         entries: &[ConfigEntry],
         remove: bool,
     ) -> Vec<Message>;
+
+    /// Replaces the upstream of the local branch `name` in the repo file
+    /// ([`GitRead::local_upstream`]) with `entries` (`branch.<name>.remote` / `.merge`; empty =
+    /// no upstream), **only if** it is still `expected`: otherwise [`EngineError::NotAllowed`]
+    /// and nothing changes. Only those two keys are touched (`git config --local`, one key at a
+    /// time); if a write fails midway the backend puts `expected` back and returns the error
+    /// (saying whether it could). Returns the warnings found re-reading afterwards (another
+    /// process wrote the configuration at the same time). `branch.set_upstream`,
+    /// `branch.create` with `track` and their undo/redo.
+    fn write_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError>;
 
     /// Undo and redo of a pull on the active branch: like [`GitRefs::restore_refs`] (a single ref,
     /// the branch of HEAD, from `expected` to `target`, with the same checks and the backups of
@@ -786,7 +863,7 @@ impl<T> GitBackend for T where
 }
 
 /// What to compare in [`GitRead::diff`]: parameters of `diff.worktree`, `diff.index` and
-/// `diff.commit` (§4). `path`, if present, limits the diff to that file.
+/// `diff.commit` and `diff.range` (§4). `path`, if present, limits the diff to that file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffSpec {
     /// Worktree relative to the index: the unstaged changes (`git diff`). Untracked files
@@ -799,6 +876,13 @@ pub enum DiffSpec {
     /// root commit relative to the empty tree. The same files as
     /// [`GitRead::show_commit`].
     Commit { rev: String, path: Option<RepoPath> },
+    /// Commit `to` relative to commit `from` (`git diff <from> <to>`), whatever their relation:
+    /// `diff.range`, which resolves the revisions (and the merge base) first.
+    Range {
+        from: Oid,
+        to: Oid,
+        path: Option<RepoPath>,
+    },
 }
 
 impl DiffSpec {
@@ -807,7 +891,8 @@ impl DiffSpec {
         match self {
             DiffSpec::Worktree { path }
             | DiffSpec::Index { path }
-            | DiffSpec::Commit { path, .. } => path.as_ref(),
+            | DiffSpec::Commit { path, .. }
+            | DiffSpec::Range { path, .. } => path.as_ref(),
         }
     }
 }

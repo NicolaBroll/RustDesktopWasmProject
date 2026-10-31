@@ -18,7 +18,9 @@ are opened only for the part being touched (the section cited here, the function
   revert, bisect, am).
 - **Calls to git** (§5): never a shell; `--end-of-options` before user-supplied revs and names,
   `--` and `--literal-pathspecs` for paths (lists via stdin with `--pathspec-file-nul`, never
-  empty); messages via stdin or file; `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`; no `--autostash`,
+  empty); messages via stdin or file; `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`; credentials asked only
+  through the askpass bridge of `Git::run_network` with a prompter, answers never logged or kept
+  ([sync.md](sync.md) "Credential prompts"); no `--autostash`,
   `--force` (only `--force-with-lease` with the expected oid), `git pull`.
 - Paths stay bytes (`RepoPath`): `from_utf8_lossy` only for displayed text.
 - Every command: tests on the `MemoryBackend`; every `CliBackend` method: integration tests in

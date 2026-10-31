@@ -5,8 +5,10 @@
 //! open tabs, the one shown and the recent repos; at startup the tabs reopen.
 
 use crate::clone::{self, CloneBox, Received};
+use crate::credentials::CredentialBox;
 use crate::executor::{Executor, Wake};
-use crate::settings::{self, Settings, SettingsBox};
+use crate::keys::{self, Command};
+use crate::settings::{self, Change, Scale, Settings, SettingsBox};
 use crate::{Tab, view};
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
@@ -91,6 +93,8 @@ pub struct App {
     settings_saved: Option<Settings>,
     /// The "Settings…" window.
     settings_box: SettingsBox,
+    /// The questions of git and ssh for the user (S52), one modal at a time.
+    credentials: CredentialBox,
 }
 
 /// What the folder chosen in the dialog is for.
@@ -143,6 +147,16 @@ impl App {
         self
     }
 
+    /// The questions of git and ssh for the user, from
+    /// [`CredentialDialog::connect`](crate::CredentialDialog::connect) (`None`: none ever come).
+    #[must_use]
+    pub fn with_credentials(mut self, credentials: Option<CredentialBox>) -> Self {
+        if let Some(credentials) = credentials {
+            self.credentials = credentials;
+        }
+        self
+    }
+
     fn restore(
         platform: Arc<dyn Platform>,
         opener: Arc<dyn RepoOpener>,
@@ -170,6 +184,7 @@ impl App {
             settings: Settings::default(),
             settings_saved: Some(Settings::default()),
             settings_box: SettingsBox::default(),
+            credentials: CredentialBox::default(),
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -241,6 +256,15 @@ impl App {
     /// Collects the results of every tab, shown or not, and the repos just opened: they enter the
     /// recent list; the same repo already open in another tab (reached by another path) closes the
     /// new tab and shows the other one.
+    /// Opens the next question of git or ssh. A question whose command has ended (stopped with
+    /// "Stop" while it was asking: git is gone) is closed with no answer.
+    fn receive_credentials(&mut self, ctx: &egui::Context) {
+        if self.credentials.stale() && self.credentials.cancel() {
+            forget_field(ctx);
+        }
+        self.credentials.receive();
+    }
+
     fn receive(&mut self) {
         let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
         match folder {
@@ -333,6 +357,11 @@ impl App {
             crate::Action::Tabs(action) => self.apply_tabs(ctx, action),
             crate::Action::Clone(action) => self.apply_clone(ctx, action),
             crate::Action::Settings(action) => self.apply_settings(ctx, action),
+            crate::Action::Credentials(action) => {
+                if self.credentials.apply(action) {
+                    forget_field(ctx);
+                }
+            }
             action => self.tabs[self.active].apply(action),
         }
     }
@@ -486,6 +515,48 @@ impl App {
         }
     }
 
+    /// The shortcuts pressed in this frame: none with a menu, a popup or a modal window open
+    /// (the keys are theirs), only the global ones while a text field has the keyboard.
+    fn shortcuts(&self, ctx: &egui::Context) -> keys::Pressed {
+        let popup = egui::Popup::is_any_open(ctx);
+        let modal = self.clone.dialog().is_some()
+            || self.settings_box.open
+            || self.credentials.open().is_some()
+            || ctx.memory(|m| m.top_modal_layer().is_some())
+            || self.tabs[self.active]
+                .repo
+                .as_ref()
+                .is_some_and(crate::RepoView::modal_open);
+        let commands = if popup || modal {
+            Vec::new()
+        } else {
+            keys::take(ctx, ctx.egui_wants_keyboard_input())
+        };
+        keys::Pressed { commands, popup }
+    }
+
+    /// The actions of the app's shortcuts: settings, tabs, scale.
+    fn app_shortcuts(&self, commands: &[Command]) -> Vec<crate::Action> {
+        let change = |change| crate::Action::Settings(settings::Action::Change(change));
+        let len = self.tabs.len();
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Settings => Some(crate::Action::Settings(settings::Action::Open)),
+                Command::NextTab => Some(crate::Action::Tabs(Action::SwitchTab(
+                    (self.active + 1) % len,
+                ))),
+                Command::PreviousTab => Some(crate::Action::Tabs(Action::SwitchTab(
+                    (self.active + len - 1) % len,
+                ))),
+                Command::ZoomIn => Some(change(Change::Scale(self.settings.scale.larger()))),
+                Command::ZoomOut => Some(change(Change::Scale(self.settings.scale.smaller()))),
+                Command::ZoomReset => Some(change(Change::Scale(Scale::NORMAL))),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn labels(&self) -> Vec<view::TabLabel> {
         self.tabs
             .iter()
@@ -505,7 +576,11 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive();
+        self.receive_credentials(&ctx);
         self.auto_refresh(&ctx);
+        // Before anything is drawn: a menu open now closes on this frame's Esc, which must not
+        // reach the tab too (U31).
+        let pressed = self.shortcuts(&ctx);
         let can_pick = self.platform.capabilities().open_folder;
         self.check_missing(ctx.input(|i| i.time));
         let recent = self.recent_view();
@@ -516,23 +591,18 @@ impl eframe::App for App {
             repo: self.tabs[self.active].repo.as_ref(),
             can_pick,
             recent: &recent,
-            theme: self.settings.theme,
         };
         view::title_bar_panel(ui, &bar, &mut strip);
-        if self.tabs.len() > 1 || self.tabs[0].path().is_some() {
-            let labels = self.labels();
-            view::tab_strip_panel(ui, &labels, self.active, can_pick, &mut strip);
-        }
-        let modal = self.clone.dialog().is_some() || self.settings_box.open;
-        if !modal && ctx.input_mut(|i| i.consume_shortcut(&settings::SHORTCUT)) {
-            strip.push(crate::Action::Settings(settings::Action::Open));
-        }
+        // Always shown: after closing the last tab its "+" is still there.
+        let labels = self.labels();
+        view::tab_strip_panel(ui, &labels, self.active, can_pick, &mut strip);
+        strip.extend(self.app_shortcuts(&pressed.commands));
         // Under the tab's own id: panel widths and scroll positions do not pass between tabs.
         let tab = &mut self.tabs[self.active];
         let settings = &self.settings;
         let mut actions = ui
             .push_id(("tab", tab.id), |ui| {
-                tab.ui(ui, can_pick, &recent, settings)
+                tab.ui(ui, can_pick, &recent, settings, &pressed)
             })
             .inner;
         if self.settings_box.open {
@@ -550,6 +620,13 @@ impl eframe::App for App {
                 .zip(self.cloning.as_ref())
                 .and_then(|(running, tab)| tab.executor.progress(running.ticket));
             view::clone_dialog(&ctx, dialog, progress.as_ref(), can_pick, &mut actions);
+        }
+        if let Some(prompt) = self.credentials.open_mut() {
+            // Over everything, the tab's dialogs and clone included: what happened under it is
+            // dropped.
+            actions.clear();
+            strip.clear();
+            view::credential_dialog(&ctx, prompt, &mut actions);
         }
         for action in actions.into_iter().chain(strip) {
             self.apply(&ctx, action);
@@ -569,6 +646,11 @@ impl eframe::App for App {
         eframe::set_value(storage, settings::KEY, &self.settings);
         self.settings_saved = Some(self.settings.clone());
     }
+}
+
+/// Drops the egui state of the credential field: its undo history holds copies of the text.
+fn forget_field(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(view::credential_field_id()));
 }
 
 /// `path` at the top of the recent list, without duplicates and at most [`MAX_RECENT`].
@@ -913,6 +995,60 @@ mod tests {
         let loaded = Settings::load(Some(&storage), &egui::Context::default());
         assert_eq!(loaded, app.settings);
         assert_eq!((loaded.theme, loaded.diff_split), (Theme::Dark, true));
+    }
+
+    #[test]
+    fn the_zoom_keys_change_the_scale_setting_and_it_is_saved() {
+        let mut app = app(Saved::default(), None);
+        let ctx = egui::Context::default();
+        let press = |app: &mut App, command| {
+            for action in app.app_shortcuts(&[command]) {
+                app.apply(&ctx, action);
+            }
+        };
+        press(&mut app, Command::ZoomIn);
+        press(&mut app, Command::ZoomIn);
+        assert_eq!(app.settings.scale.percent(), 120);
+        assert!(
+            !ctx.options(|o| o.zoom_with_keyboard),
+            "egui's own keys are off"
+        );
+        press(&mut app, Command::ZoomOut);
+        assert_eq!(app.settings.scale.percent(), 110);
+        app.apply(
+            &ctx,
+            crate::Action::Settings(settings::Action::Change(Change::Dates(
+                settings::DateFormat::Relative,
+            ))),
+        );
+        let mut storage = Memory::default();
+        app.persist(Some(&mut storage));
+        let loaded = Settings::load(Some(&storage), &egui::Context::default());
+        assert_eq!(
+            (loaded.scale.percent(), loaded.dates),
+            (110, settings::DateFormat::Relative)
+        );
+        press(&mut app, Command::ZoomReset);
+        assert_eq!(app.settings.scale, Scale::NORMAL);
+    }
+
+    #[test]
+    fn ctrl_tab_goes_around_the_tabs() {
+        let saved = Saved {
+            tabs: vec!["a".into(), "b".into()],
+            active: 1,
+            recent: Vec::new(),
+        };
+        let mut app = app(saved, None);
+        let ctx = egui::Context::default();
+        for action in app.app_shortcuts(&[Command::NextTab]) {
+            app.apply(&ctx, action);
+        }
+        assert_eq!(app.active, 0);
+        for action in app.app_shortcuts(&[Command::PreviousTab]) {
+            app.apply(&ctx, action);
+        }
+        assert_eq!(app.active, 1);
     }
 
     #[test]

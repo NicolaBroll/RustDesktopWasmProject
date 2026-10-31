@@ -1,6 +1,7 @@
 //! [`CliBackend`] and [`CliOpener`]: reading a repository by running `git`.
 
 mod branch;
+mod clean;
 mod clone;
 mod commit;
 mod conflict;
@@ -33,20 +34,21 @@ use project_domain::{
 use project_engine::{
     BACKUP_PREFIX, BlameQuery, BranchDeleted, CloneOutcome, CloneRequest, CommitGraphState,
     CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
-    ConflictVersions, DiffSpec, DiscardOutcome, DiscardedFile, EngineError, FetchOutcome,
-    FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance, GitOperations,
-    GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext, LinePatch,
-    LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message, OperationState,
-    PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest,
-    RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot,
-    RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion, StashApplied,
-    StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed, UpstreamConfig,
-    WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    ConflictVersions, CredentialPrompter, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
+    FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance,
+    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext,
+    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
+    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
+    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
+    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
+    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
+    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
     versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Opens repositories with the system `git`. It is the [`RepoOpener`] of the desktop and the CLI.
@@ -80,6 +82,26 @@ impl CliOpener {
     /// Used by tests for a deterministic environment (e.g. `GIT_CONFIG_GLOBAL=/dev/null`).
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.git.set_env(key.into(), value.into());
+        self
+    }
+
+    /// Network commands (fetch, pull, push, tags and branches on the remote, clone) ask
+    /// `prompter` when git or ssh need a user name, password, passphrase or host key
+    /// confirmation (askpass bridge, `impl-docs/git/sync.md` "Credential prompts"). git and ssh
+    /// start this executable ([`std::env::current_exe`]) as askpass: its `main` must call
+    /// [`askpass_client`](crate::askpass_client) first. Set by the desktop app only; without it
+    /// (MCP, tests) nothing is ever asked. If the executable path cannot be found, no prompter.
+    pub fn credential_prompter(self, prompter: Arc<dyn CredentialPrompter>) -> Self {
+        match std::env::current_exe() {
+            Ok(program) => self.askpass(prompter, program.into_os_string()),
+            Err(_) => self,
+        }
+    }
+
+    /// Like [`CliOpener::credential_prompter`], with `program` as git's askpass (it must call
+    /// [`askpass_client`](crate::askpass_client) in its `main`).
+    pub fn askpass(mut self, prompter: Arc<dyn CredentialPrompter>, program: OsString) -> Self {
+        self.git.set_prompter(prompter, program);
         self
     }
 
@@ -1128,6 +1150,10 @@ impl GitRead for CliBackend {
                 };
                 vec!["--end-of-options", &parent, &id]
             }
+            DiffSpec::Range { from, to, .. } => {
+                (parent, id) = (from.to_string(), to.to_string());
+                vec!["--end-of-options", &parent, &id]
+            }
         };
         let Some(path) = spec.path() else {
             return Ok(parse_diff(&self.run_diff(DIFF_ARGS, &compare, &[])?)?);
@@ -1164,6 +1190,42 @@ impl GitRead for CliBackend {
 
     fn config_values(&self, key: &str) -> Result<Vec<String>, EngineError> {
         self.config_all(key)
+    }
+
+    fn commit_id(&self, rev: &str) -> Result<Option<Oid>, EngineError> {
+        match self.resolve(rev) {
+            Ok(found) => Ok(found),
+            // `^{commit}` of a tree or a blob fails with an error on stderr: if `rev` names an
+            // object without peeling it, it exists but is not a commit. Otherwise a real error.
+            Err(err) => {
+                let args = ["rev-parse", "--quiet", "--verify", "--end-of-options", rev];
+                let out = self.git.output(Some(&self.workdir), &args)?;
+                if out.status.success() {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    fn common_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, EngineError> {
+        let (a, b) = (a.to_string(), b.to_string());
+        let args = ["merge-base", "--end-of-options", &a, &b];
+        let out = self.git.output(Some(&self.workdir), &args)?;
+        match out.status.code() {
+            Some(0) => {
+                let hex = out.stdout.trim_ascii();
+                Ok(Some(Oid::from_hex(hex)?))
+            }
+            // Exit 1 without output: no common ancestor.
+            Some(1) if out.stdout.is_empty() && out.stderr.is_empty() => Ok(None),
+            _ => Err(failure(&args, &out)),
+        }
+    }
+
+    fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
+        self.read_upstream_config(name)
     }
 }
 
@@ -1269,6 +1331,28 @@ impl GitIndex for CliBackend {
         request: &WorktreeRestore,
     ) -> Result<RestoreOutcome, EngineError> {
         self.restore_discarded(request)
+    }
+
+    fn clean_plan(
+        &self,
+        paths: &[RepoPath],
+    ) -> Result<Vec<project_engine::CleanedFile>, EngineError> {
+        self.plan_clean(paths)
+    }
+
+    fn clean(
+        &mut self,
+        paths: &[RepoPath],
+        expected: &[project_engine::CleanedFile],
+    ) -> Result<project_engine::CleanOutcome, EngineError> {
+        self.clean_paths(paths, expected)
+    }
+
+    fn restore_cleaned(
+        &mut self,
+        request: &project_engine::CleanRestore,
+    ) -> Result<RestoreOutcome, EngineError> {
+        self.restore_clean(request)
     }
 
     fn apply_lines(&mut self, selection: &LineSelection) -> Result<Option<String>, EngineError> {
@@ -1397,6 +1481,15 @@ impl GitRefs for CliBackend {
         remove: bool,
     ) -> Vec<Message> {
         self.set_branch_config(name, entries, remove)
+    }
+
+    fn write_upstream(
+        &mut self,
+        name: &str,
+        expected: &[ConfigEntry],
+        entries: &[ConfigEntry],
+    ) -> Result<Vec<Message>, EngineError> {
+        self.replace_upstream_config(name, expected, entries)
     }
 
     fn reset(

@@ -163,6 +163,10 @@ fn toolbar(
                     DiffSource::Commit(id) => {
                         (tr!("diff-in-commit", id = id.short()), id.to_string())
                     }
+                    DiffSource::Range { from, to, .. } => (
+                        tr!("diff-in-range", from = from.short(), to = to.short()),
+                        format!("{from}\n{to}"),
+                    ),
                     DiffSource::Worktree => (tr!("diff-unstaged"), tr!("diff-unstaged-hint")),
                     DiffSource::Index => (tr!("diff-staged"), tr!("diff-staged-hint")),
                 };
@@ -185,8 +189,8 @@ fn toolbar(
     });
 }
 
-/// Under the diff bar: the buttons for the selected rows, or why the file cannot be
-/// split into rows.
+/// Under the diff bar: the buttons for the selected rows, how to select them, or why the
+/// file cannot be split into rows.
 fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
     if let Partial::Unavailable(reason) = &state.partial {
         ui.horizontal(|ui| {
@@ -200,6 +204,16 @@ fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
     let Some(b) = state.buttons else {
         return;
     };
+    // Nothing selected yet: say how to select instead of two buttons that do nothing.
+    // Same height as the buttons, so the diff does not jump when the first line is selected.
+    if b.count == 0 {
+        ui.horizontal(|ui| {
+            ui.set_min_height(ui.spacing().interact_size.y);
+            ui.weak(tr!("diff-select-lines-hint"))
+                .on_hover_text(tr!("diff-no-lines-selected"));
+        });
+        return;
+    }
     ui.horizontal(|ui| {
         let (label, help) = match b.direction {
             project_domain::PatchDirection::Stage => (
@@ -214,11 +228,7 @@ fn lines_bar(ui: &mut Ui, state: &LineState<'_>, actions: &mut Vec<Action>) {
         let button = ui
             .add_enabled(b.selected, egui::Button::new(label))
             .on_hover_text(help)
-            .on_disabled_hover_text(if b.count == 0 {
-                tr!("diff-no-lines-selected")
-            } else {
-                tr!("diff-wait-write")
-            });
+            .on_disabled_hover_text(tr!("diff-wait-write"));
         if button.clicked() {
             actions.push(Action::Lines(lines::Action::Selected));
         }

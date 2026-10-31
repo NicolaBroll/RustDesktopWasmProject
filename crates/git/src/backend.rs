@@ -1625,6 +1625,19 @@ impl GitRemotes for CliBackend {
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         self.remote_elsewhere(name)
     }
+
+    fn set_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.change_remote_url(name, push, url)
+    }
+
+    fn rename_remote(&mut self, from: &str, to: &str) -> Result<Vec<Message>, EngineError> {
+        self.rename_cli_remote(from, to)
+    }
 }
 
 impl GitStash for CliBackend {

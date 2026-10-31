@@ -93,6 +93,10 @@ cargo run -p project-cli -- --repo . run --cmd 'remote.delete_tag={"remote":"ori
 cargo run -p project-cli -- --repo . run --cmd remote.list
 cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'remote.remove={"name":"fork","confirm":true}' --cmd edit.undo
+# change a remote in place (remote-tracking branches and upstreams stay): fetch URL, push URL only, rename; undo
+cargo run -p project-cli -- --repo . run --cmd 'remote.set_url={"name":"origin","url":"git@github.com:me/project.git"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'remote.set_url={"name":"origin","url":"git@github.com:me/project.git","push":true}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.rename={"name":"origin","new_name":"upstream"}' --cmd edit.undo
 # stash: list, push (with untracked files), apply/pop (index and expected from the list), drop ("confirm":true with "expected", backup) and undo
 cargo run -p project-cli -- --repo . run --cmd 'stash.push={"message":"work in progress","include_untracked":true}' --cmd stash.list --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'stash.pop={"index":0,"expected":"<id from stash.list>","restore_index":true}'

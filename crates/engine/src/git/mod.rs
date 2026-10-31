@@ -27,6 +27,7 @@ mod push;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod remote_edit;
 mod reset;
 mod restore;
 #[cfg(any(test, feature = "test-support"))]
@@ -120,6 +121,10 @@ pub use remote_admin::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
+};
+pub use remote_edit::{
+    RemoteChange, apply_remote_change, nested_remote, rename_warnings, shown_url, url_key,
+    url_values,
 };
 pub use reset::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
@@ -739,6 +744,31 @@ pub trait GitRemotes {
     /// origin: `remote.remove` rejects them, because it would remove only part of the remote.
     /// A read.
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError>;
+
+    // --- Changing a remote in place (S59). Names and URL already checked by the command (or the
+    // journal); only the repo file is written.
+
+    /// Sets the fetch URL (`remote.<name>.url`) or, with `push`, the push URL
+    /// (`remote.<name>.pushurl`) of the configured remote `name` to `url` (`git remote set-url
+    /// [--push] --end-of-options <name> <url>`: the key must have at most one value in the repo
+    /// file; checked by the caller). `None` removes the key (`git config --local --unset-all`; the
+    /// undo of a push URL that was not set). The URL is never shown unmasked in an error.
+    fn set_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError>;
+
+    /// Renames the configured remote `from` to `to` (`git remote rename --no-progress
+    /// --end-of-options <from> <to>`): git moves the `remote.<from>` section, the default fetch
+    /// refspec, `refs/remotes/<from>/*` (with the symbolic `HEAD`), `branch.<b>.remote`,
+    /// `branch.<b>.pushRemote` and `remote.pushDefault` of the repo file. The caller checked
+    /// `to` (valid, not configured, nothing under `refs/remotes/<to>/`) and the nesting
+    /// ([`nested_remote`]). Returns git's warnings; a `to` git rejects →
+    /// [`EngineError::InvalidParams`], one that exists → [`EngineError::NotAllowed`], other
+    /// failures → [`EngineError::Git`] (git may have already moved part of it: the caller re-reads).
+    fn rename_remote(&mut self, from: &str, to: &str) -> Result<Vec<Message>, EngineError>;
 }
 
 /// Stash: list, push, apply, drop, store. Part of [`GitBackend`].

@@ -10,7 +10,9 @@ use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
-use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, RemoteText, RemoveDialog};
+use crate::remotes::{
+    self, AddDialog, AddFields, DeleteBranchDialog, EditDialog, EditKind, RemoteText, RemoveDialog,
+};
 use crate::search::{SearchBox, State as SearchState};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{DropDialog, PushDialog, PushFields, StashText};

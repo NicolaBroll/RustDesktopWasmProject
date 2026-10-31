@@ -905,7 +905,7 @@ Analysis of 2026-10-31 (after 0.9.0), in order of usefulness over cost. Each com
 file of its function in [git/](git/) before the code.
 
 ### S59 — Remotes: change URL and rename
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** today a remote's URL can only be changed by removing and adding it again, which deletes
   its remote-tracking branches and the upstream of the local branches. Add (`Access::Write`):
   - `remote.set_url {"name", "url", "push"?: bool}`: `git remote set-url [--push] --end-of-options
@@ -925,6 +925,13 @@ file of its function in [git/](git/) before the code.
   - Docs in `impl-docs/git/remotes.md`, examples in `impl-docs/git/cli.md`, README.
   - UI: in the remote's "⋯" menu of the side panel, "Edit URL…" (fetch URL, optional separate push
     URL) and "Rename…", with the credentials note when switching between https and ssh.
+- **Status:** engine and backend done (`remote.set_url`, `remote.rename` in
+  `crates/engine/src/builtin/remotes.rs`, journal `RemoteChange` in `git/remote_edit.rs`,
+  `GitRemotes::set_remote_url`/`rename_remote`; tests `builtin/remote_edit_tests.rs`,
+  `crates/git/tests/remote_edit.rs`); UI done ("Edit URL…" and "Rename…" in the remote's "⋯"
+  menu, `crates/ui/src/remote_edit.rs`: a masked URL is never prefilled, fetch and push URL as two
+  `remote.set_url`, https/ssh credentials note; tests `remote_edit_tests.rs`); `safety-reviewer`
+  review done (a rename to a name that upstreams or `pushDefault` still use is refused).
 - **Done when:** integration tests (set fetch URL, push URL only, same URL, unknown remote, URL
   starting with `-`, rename with upstreams and tags, rename to an existing name, invalid name,
   rename with an operation in progress refused, undo/redo, URL changed from the terminal before

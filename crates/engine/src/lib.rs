@@ -49,7 +49,8 @@ pub use builtin::remote_tag::{
 };
 pub use builtin::remotes::{
     FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddParams, RemoteAddResult,
-    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemovedRemote,
+    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemoteRenameParams,
+    RemoteRenameResult, RemoteSetUrlParams, RemoteSetUrlResult, RemovedRemote,
 };
 pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 pub use builtin::search::{RepoSearchParams, RepoSearchResult};
@@ -134,6 +135,10 @@ pub use git::{
     REMOTES_PREFIX, RemoteRef, RemoteSnapshot, RemoteStillListed, check_new_remote_name,
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
+};
+pub use git::{
+    RemoteChange, apply_remote_change, nested_remote, rename_warnings, shown_url, url_key,
+    url_values,
 };
 pub use git::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,

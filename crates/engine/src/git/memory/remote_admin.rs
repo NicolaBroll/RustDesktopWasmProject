@@ -38,6 +38,143 @@ impl MemoryBackend {
         );
     }
 
+    /// The next `rename_remote` call (only that one) fails: before writing anything
+    /// (`Some(false)`), or after moving the configuration but not the remote-tracking branches
+    /// (`Some(true)`, like `git remote rename` stopped by a locked ref); `None`: it succeeds.
+    pub fn fail_remote_rename(&mut self, midway: Option<bool>) {
+        self.remote_rename_failure = midway;
+    }
+
+    /// [`GitRemotes::set_remote_url`](crate::GitRemotes::set_remote_url): the fetch URL is the
+    /// remote's (the "server" stays the same), the push URL the `remote.<name>.pushurl` key.
+    /// Fails like `git config` with [`MemoryBackend::fail_config_writes`].
+    pub(super) fn change_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError> {
+        if !self.remotes.contains_key(name) {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-remote-remove-unknown",
+                name = name.escape_debug(),
+                known = msg!("engine-remote-none-configured")
+            )));
+        }
+        if let Some(message) = &self.config_write_failure {
+            return Err(EngineError::Git {
+                command: "remote".to_owned(),
+                stderr: message.clone(),
+            });
+        }
+        let key = format!("remote.{name}.pushurl");
+        match (push, url) {
+            (false, Some(url)) => {
+                if let Some(remote) = self.remotes.get_mut(name) {
+                    url.clone_into(&mut remote.url);
+                }
+            }
+            (false, None) => {
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-remote-memory-needs-url",
+                    name = name
+                )));
+            }
+            (true, Some(url)) => {
+                self.config.insert(key, vec![url.to_owned()]);
+            }
+            (true, None) => {
+                self.config.remove(&key);
+            }
+        }
+        Ok(())
+    }
+
+    /// [`GitRemotes::rename_remote`](crate::GitRemotes::rename_remote), like `git remote rename`:
+    /// remote, `remote.<from>.*` keys, remote-tracking branches, upstreams, `pushRemote` and
+    /// `remote.pushDefault`.
+    pub(super) fn rename_memory_remote(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<Message>, EngineError> {
+        if self.remotes.contains_key(to) {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-remote-exists",
+                name = to
+            )));
+        }
+        let failure = self.remote_rename_failure.take();
+        if failure == Some(false) {
+            return Err(EngineError::Git {
+                command: "remote".to_owned(),
+                stderr: "error: could not lock config file .git/config".to_owned(),
+            });
+        }
+        let Some(remote) = self.remotes.remove(from) else {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-remote-remove-unknown",
+                name = from.escape_debug(),
+                known = msg!("engine-remote-none-configured")
+            )));
+        };
+        let remotes: Vec<String> = self
+            .remotes
+            .keys()
+            .cloned()
+            .chain([from.to_owned()])
+            .collect();
+        self.remotes.insert(to.to_owned(), remote);
+        let old = format!("remote.{from}.");
+        let moved: Vec<String> = self
+            .config
+            .keys()
+            .filter(|k| k.strip_prefix(&old).is_some_and(|v| !v.contains('.')))
+            .cloned()
+            .collect();
+        for key in moved {
+            if let Some(values) = self.config.remove(&key) {
+                let var = &key[old.len()..];
+                self.config.insert(format!("remote.{to}.{var}"), values);
+            }
+        }
+        if failure == Some(true) {
+            return Err(EngineError::Git {
+                command: "remote".to_owned(),
+                stderr: format!("error: renaming 'refs/remotes/{from}/main' failed"),
+            });
+        }
+        for (key, values) in &mut self.config {
+            let dependent = key == "remote.pushDefault"
+                || split_branch_key(key).is_some_and(|(_, var)| var == "pushremote");
+            if dependent {
+                for v in values.iter_mut().filter(|v| v.as_str() == from) {
+                    to.clone_into(v);
+                }
+            }
+        }
+        let old_prefix = format!("{REMOTES}{from}/");
+        let new_prefix = format!("{REMOTES}{to}/");
+        let refs: Vec<String> = self
+            .refs
+            .keys()
+            .filter(|r| owned_by(from, &remotes, r))
+            .cloned()
+            .collect();
+        for name in refs {
+            if let Some(entry) = self.refs.remove(&name) {
+                let rest = &name[old_prefix.len()..];
+                self.refs.insert(format!("{new_prefix}{rest}"), entry);
+            }
+        }
+        for tracking in self.upstreams.values_mut() {
+            if owned_by(from, &remotes, tracking) {
+                *tracking = format!("{new_prefix}{}", &tracking[old_prefix.len()..]);
+            }
+        }
+        Ok(Vec::new())
+    }
+
     pub(super) fn snapshot_of(&self, name: &str) -> RemoteSnapshot {
         let mut config = Vec::new();
         let prefix = format!("remote.{name}.");

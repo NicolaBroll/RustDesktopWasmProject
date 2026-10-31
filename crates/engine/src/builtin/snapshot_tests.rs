@@ -588,6 +588,27 @@ fn remotes() {
         "branch",
         json!({ "remote": "origin", "branch": "main" }),
     );
+    snap(
+        &r,
+        &mut s,
+        "remote.set_url",
+        "",
+        json!({ "name": "mirror", "url": "https://u:pw@example.com/new.git" }),
+    );
+    snap(
+        &r,
+        &mut s,
+        "remote.set_url",
+        "push",
+        json!({ "name": "mirror", "url": "ssh://git@example.com/new.git", "push": true }),
+    );
+    snap(
+        &r,
+        &mut s,
+        "remote.rename",
+        "",
+        json!({ "name": "mirror", "new_name": "copy" }),
+    );
 }
 
 #[test]

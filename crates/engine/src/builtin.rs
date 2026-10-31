@@ -371,6 +371,20 @@ impl Registry {
             Write,
             remotes::remote_remove,
         );
+        self.add(
+            "remote.set_url",
+            "Change the URL of a remote",
+            r#"{"name": string, "url": string, "push"?: bool (only the push URL)}"#,
+            Write,
+            remotes::remote_set_url,
+        );
+        self.add(
+            "remote.rename",
+            "Rename a remote",
+            r#"{"name": string, "new_name": string}"#,
+            Write,
+            remotes::remote_rename,
+        );
     }
 
     /// Stashes.
@@ -1027,6 +1041,8 @@ mod tests {
                 "remote.push",
                 "remote.push_tag",
                 "remote.remove",
+                "remote.rename",
+                "remote.set_url",
                 "repo.clone",
                 "repo.init",
                 "repo.log",
@@ -1090,6 +1106,8 @@ mod tests {
                 "remote.push",
                 "remote.push_tag",
                 "remote.remove",
+                "remote.rename",
+                "remote.set_url",
                 "repo.clone",
                 "repo.init",
                 "repo.optimize",

@@ -1,0 +1,104 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "can_redo": false,
+  "can_undo": true,
+  "changed": true,
+  "credentials": true,
+  "next_redo": null,
+  "next_undo": {
+    "args": {
+      "name": "mirror",
+      "url": "https://u:***@example.com/new.git"
+    },
+    "key": "engine-journal-remote-set-url",
+    "text": "Change the URL of remote `mirror` to https://u:***@example.com/new.git"
+  },
+  "push_url": null,
+  "refs": [
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/feature/graph",
+      "tag_object": null,
+      "target": "aeaf52febe706064c02d8a5e87afea6243ec2be5",
+      "upstream": {
+        "ahead": 0,
+        "behind": 1,
+        "name": "refs/remotes/origin/feature/graph"
+      }
+    },
+    {
+      "kind": "LocalBranch",
+      "name": "refs/heads/main",
+      "tag_object": null,
+      "target": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "upstream": {
+        "ahead": 1,
+        "behind": 0,
+        "name": "refs/remotes/origin/main"
+      }
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/feature/graph",
+      "tag_object": null,
+      "target": "c4ca37b7f8ad8aff5424e3deaf36a071a202a225",
+      "upstream": null
+    },
+    {
+      "kind": "RemoteBranch",
+      "name": "refs/remotes/origin/main",
+      "tag_object": null,
+      "target": "50f5647d2380309d432a5cd27a6b13a1a356be30",
+      "upstream": null
+    },
+    {
+      "kind": "Tag",
+      "name": "refs/tags/v0.1.0",
+      "tag_object": "3c1eba8b4dccc148d07a9d82d4f4bbafc5fe6a1c",
+      "target": "088712be8a582fcabbff7c596e26ce4621876e7a",
+      "upstream": null
+    }
+  ],
+  "remote": "mirror",
+  "remotes": [
+    {
+      "branches": 0,
+      "credentials": true,
+      "default": false,
+      "fetch": [
+        "+refs/heads/*:refs/remotes/mirror/*"
+      ],
+      "mirror": false,
+      "name": "mirror",
+      "push_default": false,
+      "push_urls": [],
+      "url": "https://u:***@example.com/new.git"
+    },
+    {
+      "branches": 2,
+      "credentials": false,
+      "default": true,
+      "fetch": [
+        "+refs/heads/*:refs/remotes/origin/*"
+      ],
+      "mirror": false,
+      "name": "origin",
+      "push_default": false,
+      "push_urls": [],
+      "url": "https://example.com/project.git"
+    }
+  ],
+  "url": "https://u:***@example.com/new.git",
+  "warnings": [
+    {
+      "args": {
+        "key": "remote.mirror.url"
+      },
+      "key": "engine-remote-url-credentials-key",
+      "text": "the URL contains credentials: git saved them in clear text in the repo configuration (`remote.mirror.url`); a credential helper is better"
+    }
+  ]
+}

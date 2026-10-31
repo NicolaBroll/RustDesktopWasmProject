@@ -1,4 +1,5 @@
-//! Management of the remotes (S27): `remote.list`, `remote.add`, `remote.remove`. The parts common
+//! Management of the remotes (S27): `remote.list`, `remote.add`, `remote.remove`; S59:
+//! `remote.set_url`, `remote.rename`. The parts common
 //! to the backends (name and URL checks, credential masking, removal and
 //! restoration of a remote) are in `git/remote_admin.rs`; here the commands.
 
@@ -8,7 +9,8 @@ use crate::{
     ConfigEntry, EngineError, FetchRequest, GitBackend, HeadState, JobContext, JournalEntry,
     Message, MessageArg, RemoteRef, RemoteSnapshot, Session, check_new_remote_name,
     check_no_operation, check_remote_name, check_remote_url, default_remote, ensure_remote_gone,
-    mask_url, masked_entry, owned_by, remove_remote,
+    mask_url, masked_entry, nested_remote, owned_by, remove_remote, rename_warnings, url_key,
+    url_values,
 };
 use project_domain::{RefInfo, RefKind};
 use schemars::JsonSchema;
@@ -182,9 +184,92 @@ pub struct RemoteRemoveResult {
     pub journal: JournalState,
 }
 
+/// Result of `remote.set_url`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteSetUrlResult {
+    /// The remote.
+    pub remote: String,
+    /// The fetch URL (`remote.<name>.url`) now, masked; `null` if not set.
+    pub url: Option<String>,
+    /// The push URL (`remote.<name>.pushurl`) now, masked; `null` = the push goes to `url`.
+    pub push_url: Option<String>,
+    /// Something was written (false: the URL was already that one, nothing changed and nothing in
+    /// the journal).
+    pub changed: bool,
+    /// The new URL contains credentials (git saves them in clear text: `warnings` says so).
+    pub credentials: bool,
+    /// Warnings (credentials in the URL, a value re-read different from the one written).
+    pub warnings: Vec<Message>,
+    /// The remotes re-read (as in `remote.list`); `null` if they could not be re-read.
+    pub remotes: Option<Vec<RemoteListEntry>>,
+    /// Why the remotes could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remotes_error: Option<String>,
+    /// The refs re-read; `null` if they could not be re-read.
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
+/// Result of `remote.rename`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteRenameResult {
+    /// The old name.
+    pub from: String,
+    /// The new name.
+    pub to: String,
+    /// The remote-tracking branches now under `refs/remotes/<to>/` (full names, in name order).
+    pub moved_refs: Vec<String>,
+    /// The local branches whose upstream is now `to`, in name order.
+    pub upstreams: Vec<String>,
+    /// What git did not carry over (upstreams, `pushRemote`, `remote.pushDefault`, refs) and
+    /// git's own warnings.
+    pub warnings: Vec<Message>,
+    /// The remotes re-read (as in `remote.list`); `null` if they could not be re-read.
+    pub remotes: Option<Vec<RemoteListEntry>>,
+    /// Why the remotes could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remotes_error: Option<String>,
+    /// The refs re-read; `null` if they could not be re-read.
+    pub refs: Option<Vec<RefInfo>>,
+    /// Why the refs could not be re-read; absent when they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs_error: Option<String>,
+    /// The journal after the command.
+    #[serde(flatten)]
+    pub journal: JournalState,
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ListParams {}
+
+/// Parameters of `remote.set_url`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSetUrlParams {
+    /// The remote.
+    pub name: String,
+    /// The new URL.
+    pub url: String,
+    /// Set only the push URL (`remote.<name>.pushurl`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub push: bool,
+}
+
+/// Parameters of `remote.rename`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteRenameParams {
+    /// The remote.
+    pub name: String,
+    /// Its new name.
+    pub new_name: String,
+}
 
 /// Parameters of `remote.add`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -515,16 +600,7 @@ pub(super) fn remote_remove(
     let (repo, journal) = s.repo_and_journal()?;
     let remotes = repo.remotes()?;
     if !remotes.contains(&name) {
-        let known = if remotes.is_empty() {
-            msg!("engine-remote-none-configured")
-        } else {
-            msg!("engine-remote-configured", names = names(&remotes))
-        };
-        return Err(EngineError::NotAllowed(msg!(
-            "engine-remote-remove-unknown",
-            name = name.escape_debug(),
-            known = known
-        )));
+        return Err(unknown(&name, &remotes));
     }
     let status = repo.status()?;
     check_no_operation(ID, msg!("engine-busy-remote-remove"), status.operation)?;
@@ -601,6 +677,254 @@ pub(super) fn remote_remove(
     }))
 }
 
+/// [`EngineError::NotAllowed`] for a remote that is not configured, with the configured ones.
+fn unknown(name: &str, remotes: &[String]) -> EngineError {
+    let known = if remotes.is_empty() {
+        msg!("engine-remote-none-configured")
+    } else {
+        msg!("engine-remote-configured", names = names(remotes))
+    };
+    EngineError::NotAllowed(msg!(
+        "engine-remote-remove-unknown",
+        name = name.escape_debug(),
+        known = known
+    ))
+}
+
+/// The remote `name` is configured and only in the repo file (otherwise
+/// [`EngineError::NotAllowed`]): the commands that change it in place write only there, and the
+/// entries elsewhere would stay (or win). Returns its snapshot.
+fn editable_remote(
+    repo: &dyn GitBackend,
+    id: &'static str,
+    name: &str,
+    remotes: &[String],
+) -> Result<RemoteSnapshot, EngineError> {
+    if !remotes.iter().any(|r| r == name) {
+        return Err(unknown(name, remotes));
+    }
+    let snapshot = repo.remote_snapshot(name)?;
+    let elsewhere = repo.remote_config_elsewhere(name)?;
+    if !elsewhere.is_empty() {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-edit-elsewhere",
+            name = name.escape_debug(),
+            command = id,
+            elsewhere = elsewhere.join("; ")
+        )));
+    }
+    if snapshot.config.is_empty() {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-edit-outside",
+            name = name.escape_debug(),
+            command = id
+        )));
+    }
+    Ok(snapshot)
+}
+
+/// Sets the fetch URL of the configured remote `name` (`remote.<name>.url`) or, with `"push":
+/// true`, only its push URL (`remote.<name>.pushurl`): `git remote set-url [--push]
+/// --end-of-options <name> <url>`. Remote-tracking branches and upstreams stay (unlike removing
+/// and adding the remote again).
+///
+/// Checks before writing: the URL like `remote.add` ([`check_remote_url`]: no leading `-`, no
+/// `ext::`/`fd::`, no control characters; local paths and `file://` are fine) →
+/// [`EngineError::InvalidParams`]; a remote not configured, defined (even partly) outside the
+/// repo file, or with more than one value of the key (git could not replace them) →
+/// [`EngineError::NotAllowed`]. A URL equal to the current one: `changed: false`, nothing
+/// written and nothing in the journal. A URL with credentials is accepted with a warning.
+///
+/// It goes into the journal (old and new URL): `edit.undo` writes the old one back (or removes
+/// the push URL that was not there) only if the key still holds the one written, otherwise
+/// [`EngineError::UndoConflict`].
+///
+/// Result: [`RemoteSetUrlResult`].
+pub(super) fn remote_set_url(
+    s: &mut Session,
+    RemoteSetUrlParams { name, url, push }: RemoteSetUrlParams,
+) -> Out {
+    const ID: &str = "remote.set_url";
+    check_remote_name(ID, &name)?;
+    check_remote_url(ID, &url)?;
+    let (repo, journal) = s.repo_and_journal()?;
+    let remotes = repo.remotes()?;
+    let snapshot = editable_remote(repo, ID, &name, &remotes)?;
+    let current = url_values(&snapshot, push);
+    if current.len() > 1 {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-set-url-multiple",
+            name = name.escape_debug(),
+            key = url_key(&name, push),
+            n = current.len()
+        )));
+    }
+    let before = current.into_iter().next();
+    let changed = before.as_deref() != Some(url.as_str());
+    let (_, credentials) = mask_url(&url);
+    let mut warnings = Vec::new();
+    if changed {
+        let head = HeadState::from_head(&repo.head()?);
+        repo.set_remote_url(&name, push, Some(&url))?;
+        if credentials {
+            warnings.push(msg!(
+                "engine-remote-url-credentials-key",
+                key = url_key(&name, push)
+            ));
+        }
+        // Re-read: the journal records only the expected result.
+        let now = url_values(&repo.remote_snapshot(&name)?, push);
+        if now == [url.clone()] {
+            journal.record(JournalEntry::remote_set_url(
+                &name,
+                push,
+                before,
+                url.clone(),
+                head,
+            ));
+        } else {
+            warnings.push(msg!(
+                "engine-remote-url-not-as-written",
+                key = url_key(&name, push),
+                expected = crate::shown_url(Some(&url)),
+                now = crate::shown_url(now.first().map(String::as_str))
+            ));
+        }
+    }
+    let after = repo.remote_snapshot(&name)?;
+    let shown = |push: bool| url_values(&after, push).first().map(|u| mask_url(u).0);
+    let (remotes, remotes_error, refs, refs_error) = remotes_and_refs(repo);
+    Ok(to_json(RemoteSetUrlResult {
+        remote: name,
+        url: shown(false),
+        push_url: shown(true),
+        changed,
+        credentials: changed && credentials,
+        warnings,
+        remotes,
+        remotes_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
+}
+
+/// Renames the configured remote `name` to `new_name` (`git remote rename --no-progress
+/// --end-of-options`): git moves the `remote.<name>` section, the default fetch refspec, the
+/// remote-tracking branches `refs/remotes/<name>/*` (and the symbolic `HEAD`), the upstreams
+/// `branch.<b>.remote`, `branch.<b>.pushRemote` and `remote.pushDefault` of the repo file. Tags
+/// and local branches do not change; nothing is lost, so no confirmation.
+///
+/// Refusals, nothing changes: `new_name` not a valid remote name ([`check_new_remote_name`])
+/// → [`EngineError::InvalidParams`]; [`EngineError::NotAllowed`] for `name` not configured or
+/// defined (even partly) outside the repo file, `new_name` already configured or with leftovers
+/// (`remote.<new_name>.*` entries, remote-tracking branches, `branch.<b>.remote`/`pushRemote` or
+/// `remote.pushDefault` naming it), names nested with another remote
+/// (`a` and `a/b`: git would move the refs of both, [`nested_remote`]), an operation in progress.
+/// Afterwards every upstream, `pushRemote` and remote-tracking branch that used `name` is checked:
+/// what git did not carry over goes into `warnings`. If git fails after moving the configuration,
+/// the rename goes into the journal anyway (the error says so) so `edit.undo` can rename it back.
+///
+/// It goes into the journal: `edit.undo` renames it back only if `new_name` still exists and
+/// `name` does not (otherwise [`EngineError::UndoConflict`]).
+///
+/// Result: [`RemoteRenameResult`].
+pub(super) fn remote_rename(
+    s: &mut Session,
+    RemoteRenameParams { name, new_name }: RemoteRenameParams,
+) -> Out {
+    const ID: &str = "remote.rename";
+    check_remote_name(ID, &name)?;
+    check_new_remote_name(ID, &new_name)?;
+    let (repo, journal) = s.repo_and_journal()?;
+    let remotes = repo.remotes()?;
+    if remotes.contains(&new_name) {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-rename-exists",
+            name = new_name.escape_debug()
+        )));
+    }
+    let status = repo.status()?;
+    check_no_operation(ID, msg!("engine-busy-remote-rename"), status.operation)?;
+    let before = editable_remote(repo, ID, &name, &remotes)?;
+    if let Some(other) = nested_remote(&remotes, &name, &new_name) {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-rename-nested",
+            name = name.escape_debug(),
+            other = other.escape_debug()
+        )));
+    }
+    let leftover = repo.remote_snapshot(&new_name)?;
+    if !leftover.is_absent() {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-rename-leftovers",
+            name = new_name.escape_debug(),
+            n = leftover.refs.len()
+        )));
+    }
+    // Upstreams or push settings that still name `new_name` (a remote removed by hand) would
+    // silently follow the renamed remote, and its undo would rewrite them.
+    if !leftover.upstreams.is_empty() || leftover.push_default {
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-remote-rename-dependents",
+            name = new_name.escape_debug(),
+            n = leftover.upstreams.len() + usize::from(leftover.push_default)
+        )));
+    }
+    let head = HeadState::from_head(&status.head);
+    let mut warnings = match repo.rename_remote(&name, &new_name) {
+        Ok(warnings) => warnings,
+        Err(error) => {
+            // Stopped midway (a locked ref): if the configuration moved, the journal must be able
+            // to rename it back.
+            let moved = repo
+                .remotes()
+                .is_ok_and(|r| r.contains(&new_name) && !r.contains(&name));
+            if !moved {
+                return Err(error);
+            }
+            let after = repo
+                .remote_snapshot(&new_name)
+                .unwrap_or_else(|_| RemoteSnapshot {
+                    name: new_name.clone(),
+                    ..RemoteSnapshot::default()
+                });
+            journal.record(JournalEntry::remote_rename(&before, &after, head));
+            return Err(EngineError::GitWithReason {
+                command: "remote".to_owned(),
+                reason: msg!(
+                    "engine-remote-rename-partial",
+                    from = name.escape_debug(),
+                    to = new_name.escape_debug(),
+                    error = error
+                ),
+            });
+        }
+    };
+    let after = repo.remote_snapshot(&new_name)?;
+    warnings.extend(rename_warnings(&before, &after));
+    journal.record(JournalEntry::remote_rename(&before, &after, head));
+    let moved_refs = after.refs.iter().map(|r| r.name.clone()).collect();
+    let upstreams = after.upstream_branches();
+    let (remotes, remotes_error, refs, refs_error) = remotes_and_refs(repo);
+    Ok(to_json(RemoteRenameResult {
+        from: name,
+        to: new_name,
+        moved_refs,
+        upstreams,
+        warnings,
+        remotes,
+        remotes_error,
+        refs,
+        refs_error,
+        journal: JournalState::of(journal),
+    }))
+}
+
 #[cfg(test)]
 #[path = "remotes_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "remote_edit_tests.rs"]
+mod edit_tests;

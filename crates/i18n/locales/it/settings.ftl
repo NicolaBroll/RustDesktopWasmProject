@@ -26,3 +26,6 @@ settings-dates-absolute = Data e ora
 settings-dates-relative = Relative (“3 h fa”)
 settings-ask-detach = Chiedi prima di fare il checkout di un commit (HEAD staccata)
 settings-ask-detach-hint = “Checkout di questo commit” spiega prima che non sarai su nessun branch.
+settings-editor = Editor esterno
+settings-editor-placeholder = L'applicazione predefinita del sistema
+settings-editor-hint = Una riga di comando, per esempio: code -g {"{file}"}. {"{file}"} è il percorso del file (senza, il percorso va in fondo); metti tra virgolette le parole con spazi. Avviato senza shell. Vuoto: l'applicazione predefinita del sistema.

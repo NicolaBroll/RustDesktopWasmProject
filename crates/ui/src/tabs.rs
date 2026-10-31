@@ -10,6 +10,7 @@ use crate::executor::{Executor, Wake};
 use crate::keys::{self, Command};
 use crate::settings::{self, Change, Scale, Settings, SettingsBox};
 use crate::{Tab, view};
+use project_domain::RepoPath;
 use project_engine::{Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,10 @@ pub(crate) enum Action {
     ShowFolder,
     /// Opens a terminal in the folder of the repo shown.
     OpenTerminal,
+    /// Opens that file of the working tree of the repo shown in the external editor (S60).
+    OpenFile(RepoPath),
+    /// Shows the folder of that file of the working tree in the system's file manager.
+    ShowFileFolder(RepoPath),
 }
 
 /// Key of the state in the eframe storage.
@@ -384,24 +389,49 @@ impl App {
                 prune(&mut self.recent, &self.missing);
                 self.missing.clear();
             }
-            Action::ShowFolder => self.launch(|platform, folder| platform.show_folder(folder)),
-            Action::OpenTerminal => self.launch(|platform, folder| platform.open_terminal(folder)),
+            Action::ShowFolder => {
+                self.launch(None, |platform, folder| platform.show_folder(folder));
+            }
+            Action::OpenTerminal => {
+                self.launch(None, |platform, folder| platform.open_terminal(folder));
+            }
+            Action::OpenFile(path) => {
+                let editor = self.settings.editor.clone();
+                self.launch(Some(&path), |platform, file| {
+                    platform.open_file(file, &editor)
+                });
+            }
+            Action::ShowFileFolder(path) => self.launch(Some(&path), |platform, file| {
+                platform.show_folder(file.parent().unwrap_or(file))
+            }),
         }
     }
 
-    /// Starts a program of the system on the folder of the repo shown; if it does not start, the
-    /// error goes in the tab's status bar.
-    fn launch(&mut self, run: impl FnOnce(&dyn Platform, &Path) -> std::io::Result<()>) {
+    /// Starts a program of the system on the folder of the repo shown, or on its `file`, as an
+    /// absolute path (never starting with `-`); if it does not start, the error goes in the tab's
+    /// status bar.
+    fn launch(
+        &mut self,
+        file: Option<&RepoPath>,
+        run: impl FnOnce(&dyn Platform, &Path) -> std::io::Result<()>,
+    ) {
         let tab = &mut self.tabs[self.active];
-        let Some(folder) = tab.repo_path().map(Path::new) else {
+        let Some(root) = tab.repo_path().map(Path::new) else {
             return;
         };
-        match run(self.platform.as_ref(), folder) {
+        let target = match file {
+            None => Ok(root.to_path_buf()),
+            Some(file) => absolute_file(root, file),
+        };
+        let result = target.and_then(|target| {
+            run(self.platform.as_ref(), &target).map_err(|e| {
+                log::error!("{}: {e}", target.display());
+                e
+            })
+        });
+        match result {
             Ok(()) => tab.error.clear(),
-            Err(e) => {
-                log::error!("{}: {e}", folder.display());
-                tab.error = tr!("title-bar-launch-failed", error = e.to_string());
-            }
+            Err(e) => tab.error = tr!("title-bar-launch-failed", error = e.to_string()),
         }
     }
 
@@ -605,6 +635,7 @@ impl eframe::App for App {
         let pressed = self.shortcuts(&ctx);
         let capabilities = self.platform.capabilities();
         let can_pick = capabilities.open_folder;
+        view::set_can_launch(&ctx, capabilities.external_apps);
         self.check_missing(ctx.input(|i| i.time));
         let recent = self.recent_view();
         // The actions of the menus and of the strip after the tab's: they can change the tab shown.
@@ -702,6 +733,18 @@ fn after_close(active: usize, closed: usize, len: usize) -> usize {
     } else {
         active.min(len - 1)
     }
+}
+
+/// The absolute path of `file` of the worktree at `root`; a non-UTF-8 path (the menus turn it
+/// off) is an error.
+fn absolute_file(root: &Path, file: &RepoPath) -> std::io::Result<std::path::PathBuf> {
+    let Some(relative) = file.to_str() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{file}: the path is not UTF-8"),
+        ));
+    };
+    std::path::absolute(root.join(relative))
 }
 
 /// Marks the folder dialog closed when dropped.
@@ -1237,5 +1280,105 @@ mod tests {
         fn flush(&mut self) {
             self.flushes += 1;
         }
+    }
+
+    /// Records the programs the app asks to start; `fail`: they do not start.
+    #[derive(Default)]
+    struct Launcher {
+        calls: Mutex<Vec<(&'static str, std::path::PathBuf, String)>>,
+        fail: AtomicBool,
+    }
+
+    impl Launcher {
+        fn result(&self) -> std::io::Result<()> {
+            if self.fail.load(Ordering::Relaxed) {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "no editor",
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl Platform for Launcher {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                external_apps: true,
+                ..Capabilities::default()
+            }
+        }
+        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+            on_done(None);
+        }
+        fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+            job();
+        }
+        fn show_folder(&self, folder: &Path) -> std::io::Result<()> {
+            let call = ("folder", folder.to_path_buf(), String::new());
+            self.calls.lock().unwrap().push(call);
+            self.result()
+        }
+        fn open_file(&self, file: &Path, editor: &str) -> std::io::Result<()> {
+            let call = ("file", file.to_path_buf(), editor.to_owned());
+            self.calls.lock().unwrap().push(call);
+            self.result()
+        }
+    }
+
+    #[test]
+    fn file_menus_start_the_platform_on_the_absolute_path() {
+        let platform = Arc::new(Launcher::default());
+        let mut opener = MemoryOpener::new();
+        opener.insert("a", MemoryBackend::sample());
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            Some("a".to_owned()),
+        );
+        app.receive();
+        let ctx = egui::Context::default();
+        let editor = "code -g {file}";
+        app.apply(
+            &ctx,
+            crate::Action::Settings(settings::Action::Change(Change::Editor(editor.into()))),
+        );
+        let file = RepoPath::from("-dash dir/a b.txt");
+        app.apply(&ctx, crate::Action::Tabs(Action::OpenFile(file.clone())));
+        app.apply(&ctx, crate::Action::Tabs(Action::ShowFileFolder(file)));
+        let expected = std::path::absolute(Path::new("a").join("-dash dir/a b.txt")).unwrap();
+        assert!(expected.is_absolute());
+        let calls = std::mem::take(&mut *platform.calls.lock().unwrap());
+        assert_eq!(
+            calls,
+            [
+                ("file", expected.clone(), editor.to_owned()),
+                (
+                    "folder",
+                    expected.parent().unwrap().to_path_buf(),
+                    String::new()
+                ),
+            ]
+        );
+        assert!(app.tabs[0].error.is_empty());
+
+        // A program that does not start: its error in the status bar.
+        platform.fail.store(true, Ordering::Relaxed);
+        app.apply(&ctx, crate::Action::Tabs(Action::OpenFile("x".into())));
+        assert!(
+            app.tabs[0].error.contains("no editor"),
+            "{}",
+            app.tabs[0].error
+        );
+
+        // A non-UTF-8 path never reaches the platform.
+        let bytes = RepoPath::from_bytes(vec![b'f', 0xff]);
+        platform.calls.lock().unwrap().clear();
+        app.apply(&ctx, crate::Action::Tabs(Action::OpenFile(bytes)));
+        assert!(platform.calls.lock().unwrap().is_empty());
+        assert!(app.tabs[0].error.contains("UTF-8"));
     }
 }

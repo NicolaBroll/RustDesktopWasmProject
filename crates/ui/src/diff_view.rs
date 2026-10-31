@@ -7,10 +7,10 @@ use crate::diff::{
 };
 use crate::icons;
 use crate::lines::{self, LineButtons, LineSelection, Partial};
-use crate::settings::{self, Change};
+use crate::settings;
 use crate::{Action, Drag};
 use egui::{Align2, Color32, FontId, Rect, Sense, Ui, pos2, vec2};
-use project_domain::LineKind;
+use project_domain::{Change, LineKind};
 use project_i18n::tr;
 
 /// Height of a diff row: all equal, for `show_rows`.
@@ -147,7 +147,7 @@ fn toolbar(
                 let button = egui::Button::selectable(split == value, icons::text(icon, 14.0));
                 if ui.add(button).on_hover_text(hint).clicked() && split != value {
                     actions.push(Action::Settings(settings::Action::Change(
-                        Change::DiffSplit(value),
+                        settings::Change::DiffSplit(value),
                     )));
                 }
             }
@@ -172,8 +172,16 @@ fn toolbar(
                     DiffSource::Index => (tr!("diff-staged"), tr!("diff-staged-hint")),
                 };
                 let path = target.path.to_string_lossy();
-                ui.add(egui::Label::new(egui::RichText::new(path.as_ref()).strong()).truncate())
-                    .on_hover_text(format!("{path} {text}"));
+                let label = egui::Label::new(egui::RichText::new(path.as_ref()).strong())
+                    .truncate()
+                    .sense(Sense::click());
+                let deleted = matches!(pane, Pane::Loaded(_, doc)
+                    if doc.diff.files.first().is_some_and(|f| f.change == Change::Deleted));
+                ui.add(label)
+                    .on_hover_text(format!("{path} {text}"))
+                    .context_menu(|ui| {
+                        crate::view::launch_entries(ui, &target.path, deleted, actions);
+                    });
                 // The description whole or not at all: a lone "…" says nothing.
                 let description = egui::WidgetText::from(egui::RichText::new(text).weak())
                     .into_galley(

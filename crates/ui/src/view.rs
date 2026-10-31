@@ -63,6 +63,7 @@ pub(crate) use details_view::details_panel;
 use details_view::*;
 use file_view::file_menu_entries;
 pub(crate) use file_view::file_view;
+pub(crate) use file_view::{launch_entries, set_can_launch};
 pub(crate) use optimize_view::optimize_notice;
 pub(crate) use rebase_view::rebase_editor;
 pub(crate) use refs::refs_panel;

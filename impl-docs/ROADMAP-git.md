@@ -938,7 +938,7 @@ file of its function in [git/](git/) before the code.
   undo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
 
 ### S60 — Open a file in the external editor
-- [ ] **Agent:** `egui-ui` (and the L7 app for the `Platform` implementation)
+- [x] **Agent:** `egui-ui` (and the L7 app for the `Platform` implementation)
 - **Goal:** there is no way to go from a changed file to the editor. Add `Platform::open_file(path)`
   (default: unsupported) implemented in the desktop app: the editor set in Settings → General
   ("External editor": a command line with `{file}`, run without a shell, arguments split as a
@@ -951,6 +951,15 @@ file of its function in [git/](git/) before the code.
     a stage-area file keeps its current action. Disabled for a deleted file.
   - No repository write: no `safety-reviewer` review. Never pass the path through a shell; a path
     starting with `-` gets `./` in front.
+- **Status:** done. `Platform::open_file(file, editor)` (`crates/engine/src/platform.rs`; the
+  editor command line is passed by the UI from the settings), desktop implementation in
+  `apps/project/src/launch.rs` (quote-aware `split_command`, `{file}` replaced or appended, the
+  path always absolute so it never starts with `-`; missing file → error; `xdg-open`/`open`/
+  `explorer` when blank). Setting `editor` in `crates/ui/src/settings.rs`, row in Settings →
+  General. Menu entries `launch_entries` in `view/file_view.rs` (stage area, commit file list,
+  diff header path), actions `tabs::Action::OpenFile`/`ShowFileFolder`, error in the status bar.
+  Tests: splitter in `launch.rs`, settings round-trip, `file_menus_start_the_platform_on_the_absolute_path`
+  in `tabs.rs`; tried on Xvfb with `cp {file} <scratch>` (screenshots `target/s60-*.png`).
 - **Done when:** unit tests of the command-line splitter and of the menu wiring; tried on the
   desktop app on Xvfb with an editor command that writes a marker file; CI green.
 

@@ -847,7 +847,7 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   `crates/engine/src/builtin/ignore.rs`. Docs: `impl-docs/git/ignore.md`.
 
 ### S58 — Squash merge
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** `merge.start` has `no_ff` and `ff_only` but not squash: a feature branch cannot be
   brought in as one commit. Add `"squash"?: bool` to `merge.start` (with `no_ff`/`ff_only` →
   `InvalidParams`): `git merge --squash` of the resolved id, then one ordinary commit (one parent,
@@ -888,8 +888,9 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   commit / fast-forward only, the squash message (empty: the engine's default, said in the hint)
   and the note that the branch will not appear merged; squash notices; the panel shows "Squash"
   with "Continue squash…"/"Abort squash…" on `merge.continue`/`merge.abort` (`Kind::Squash`);
-  `crates/ui/src/merge_start.rs`, tests in `merge_squash_tests.rs`); `safety-reviewer` review to
-  do. UI choice: the quick "Merge into …" entry stays (fast-forward if enough); the old "… with a
+  `crates/ui/src/merge_start.rs`, tests in `merge_squash_tests.rs`); `safety-reviewer` review
+  done (a leftover `SQUASH_MSG` is refused, the record holds a hash of the `SQUASH_MSG` git
+  wrote, `merge.continue` with nothing staged points to `merge.abort`). UI choice: the quick "Merge into …" entry stays (fast-forward if enough); the old "… with a
   merge commit" entry is now the dialog's "Merge commit". Choices: the squash state is a new `Operation::Squash` in
   `Status::operation`, so every command refuses during it through the usual checks; a commit
   rejected by a hook or signing leaves the squash in progress (staged, `in_progress` with git's

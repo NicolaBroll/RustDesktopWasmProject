@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["apps/project"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 # Minimum Rust: the highest `rust-version` of the dependencies (egui 0.37: 1.95). Raise it
 # with egui; clippy `incompatible_msrv` checks the std APIs we use.

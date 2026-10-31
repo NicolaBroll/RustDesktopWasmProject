@@ -11,6 +11,8 @@
 //!   (fast-forward or merge commit) enters the journal: "Undo" undoes it. A merge
 //!   stopped on conflicts **stays in progress** (it is not an error): the panel appears. A refusal
 //!   (local changes, detached HEAD, operation already in progress) opens a window that explains it.
+//! - **Merge dialog** (S58, `merge_start.rs`): "Merge into … with options…" chooses merge commit,
+//!   squash into one commit (with its message) or fast-forward only.
 //! - **Continue**: a dialog with the merge commit message, prefilled with git's;
 //!   a refusal (conflicts remain, a hook) stays in the dialog.
 //! - **Abort the merge**: in two steps, like dropping a stash: first without
@@ -33,20 +35,24 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
+pub use start::{Mode, StartDialog};
 
 /// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
 #[derive(Debug, Clone)]
 pub(crate) enum Action {
-    /// Merges `rev` (shown as `what`) into the active branch; `no_ff`: always a merge
-    /// commit.
-    Merge {
-        rev: String,
-        what: String,
-        no_ff: bool,
-    },
+    /// Merges `rev` (shown as `what`) into the active branch at once: fast-forward if enough,
+    /// otherwise a merge commit.
+    Merge { rev: String, what: String },
+    /// Opens the merge dialog for `rev` (shown as `what`): merge commit, squash or fast-forward
+    /// only.
+    OpenMerge { rev: String, what: String },
+    /// The mode chosen in the merge dialog.
+    Mode(Mode),
+    /// Starts the merge with the dialog's choices.
+    SubmitMerge,
     /// Opens the "Continue merge" dialog.
     Continue,
-    /// The message of the "Continue merge" dialog changed.
+    /// The message of the "Continue merge" dialog (or of the squash in the merge dialog) changed.
     Message(String),
     /// Finishes the merge with the dialog's message (`merge.continue`).
     SubmitContinue,
@@ -75,6 +81,9 @@ pub(crate) enum Action {
 #[path = "pick.rs"]
 mod pick;
 
+#[path = "merge_start.rs"]
+mod start;
+
 /// The id of the command that reads the in-progress operation.
 pub const OPERATION: &str = "repo.operation";
 
@@ -89,15 +98,39 @@ pub enum Kind {
     Revert,
     /// A rebase (interactive or of a pull): "Continue" has no message, git goes on with the plan.
     Rebase,
+    /// A squash merge stopped before its commit (S58): finished and aborted with the merge
+    /// commands, "Continue" creates an ordinary commit.
+    Squash,
 }
 
 impl Kind {
+    /// The kinds told apart by their command ids (the squash shares the merge ones).
     const ALL: [Kind; 4] = [Kind::Merge, Kind::CherryPick, Kind::Revert, Kind::Rebase];
+
+    /// The operation that `repo.operation` says to finish from here: the `continue` id, the
+    /// merge ones meaning a squash when the operation is `Squash`.
+    pub fn resume_of(info: &RepoOperationResult) -> Option<Kind> {
+        let kind = Kind::from_continue(info.continue_command.as_deref()?)?;
+        Some(kind.within(info.operation))
+    }
+
+    /// The operation that `repo.operation` says to abort from here (see [`Kind::resume_of`]).
+    pub fn abort_of(info: &RepoOperationResult) -> Option<Kind> {
+        let kind = Kind::from_abort(info.abort_command.as_deref()?)?;
+        Some(kind.within(info.operation))
+    }
+
+    fn within(self, operation: Option<Operation>) -> Kind {
+        match (self, operation) {
+            (Kind::Merge, Some(Operation::Squash)) => Kind::Squash,
+            (kind, _) => kind,
+        }
+    }
 
     /// The id of the command that finishes the operation.
     pub fn continue_command(self) -> &'static str {
         match self {
-            Kind::Merge => "merge.continue",
+            Kind::Merge | Kind::Squash => "merge.continue",
             Kind::CherryPick => "cherry_pick.continue",
             Kind::Revert => "revert.continue",
             Kind::Rebase => "rebase.continue",
@@ -107,7 +140,7 @@ impl Kind {
     /// The id of the command that aborts the operation.
     pub fn abort_command(self) -> &'static str {
         match self {
-            Kind::Merge => "merge.abort",
+            Kind::Merge | Kind::Squash => "merge.abort",
             Kind::CherryPick => "cherry_pick.abort",
             Kind::Revert => "revert.abort",
             Kind::Rebase => "rebase.abort",
@@ -124,13 +157,14 @@ impl Kind {
         Kind::ALL.into_iter().find(|k| k.abort_command() == id)
     }
 
-    /// The name in texts: "merge", "cherry-pick", "revert".
+    /// The name in texts: "merge", "cherry-pick", "revert", "squash".
     pub fn name(self) -> &'static str {
         match self {
             Kind::Merge => "merge",
             Kind::CherryPick => "cherry-pick",
             Kind::Revert => "revert",
             Kind::Rebase => "rebase",
+            Kind::Squash => "squash",
         }
     }
 
@@ -141,6 +175,7 @@ impl Kind {
             Kind::CherryPick => "Cherry-pick",
             Kind::Revert => "Revert",
             Kind::Rebase => "Rebase",
+            Kind::Squash => "Squash",
         }
     }
 
@@ -148,7 +183,9 @@ impl Kind {
     pub fn commit_noun(self) -> String {
         match self {
             Kind::Merge => tr!("merge-noun-merge-commit"),
-            Kind::CherryPick | Kind::Revert | Kind::Rebase => tr!("merge-noun-commit"),
+            Kind::CherryPick | Kind::Revert | Kind::Rebase | Kind::Squash => {
+                tr!("merge-noun-commit")
+            }
         }
     }
 
@@ -158,9 +195,14 @@ impl Kind {
         self != Kind::Rebase
     }
 
-    /// The prefix of the abort backup: `refs/project/backup/merge-abort-…`.
+    /// The prefix of the abort backup: `refs/project/backup/merge-abort-…` (the squash is
+    /// aborted by `merge.abort`, with its backup).
     pub fn abort_backup(self) -> String {
-        format!("refs/project/backup/{}-abort-…", self.name())
+        let name = match self {
+            Kind::Squash => Kind::Merge.name(),
+            kind => kind.name(),
+        };
+        format!("refs/project/backup/{name}-abort-…")
     }
 }
 
@@ -337,6 +379,8 @@ impl ContinueDialog {
 /// The open dialog: one at a time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
+    /// The merge with options: mode and, for the squash, the message.
+    Start(StartDialog),
     Continue(ContinueDialog),
     /// The abort: check, confirmation with the engine's reason, submit.
     Abort(Kind, Phase),
@@ -351,6 +395,8 @@ struct Starting {
     what: String,
     /// The branch it is merged into or applied onto.
     into: String,
+    /// A squash merge: its own texts.
+    squash: bool,
 }
 
 /// The UI state for merge and in-progress operation.
@@ -461,7 +507,7 @@ impl MergeBox {
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Abort(_, phase) => matches!(phase, Phase::Confirm { .. }),
-            Dialog::Continue(_) | Dialog::Mainline(_) => true,
+            Dialog::Start(_) | Dialog::Continue(_) | Dialog::Mainline(_) => true,
         })
     }
 
@@ -476,32 +522,35 @@ impl MergeBox {
             || match &self.dialog {
                 Some(Dialog::Continue(d)) => d.running.is_some(),
                 Some(Dialog::Abort(_, phase)) => !matches!(phase, Phase::Confirm { .. }),
-                Some(Dialog::Mainline(_)) | None => false,
+                Some(Dialog::Start(_) | Dialog::Mainline(_)) | None => false,
             }
     }
 
-    /// Starts the merge of `rev` (shown as `what`) into branch `into`: parameters and
-    /// description. `None` if another merge command is in progress or a dialog is open.
+    /// Starts the merge of `rev` (shown as `what`) into branch `into` with `mode` and, for the
+    /// squash, `message` (`None`: the engine's default): parameters and description. `None` if
+    /// another merge command is in progress or a dialog is open.
     pub fn start(
         &mut self,
         rev: String,
         what: String,
         into: String,
-        no_ff: bool,
+        mode: Mode,
+        message: Option<String>,
     ) -> Option<(Value, String)> {
         if self.busy() || self.dialog.is_some() {
             return None;
         }
+        let squash = mode == Mode::Squash;
         let params = params(MergeStartParams {
             rev,
-            no_ff,
-            ff_only: false,
-            squash: false,
-            message: None,
+            no_ff: mode == Mode::MergeCommit,
+            ff_only: mode == Mode::FastForwardOnly,
+            squash,
+            message: message.filter(|_| squash),
         });
-        let label = tr!("merge-start-label", what = &what, into = &into);
+        let label = start_label(&what, &into, squash);
         self.failure = None;
-        self.starting = Some(Starting { what, into });
+        self.starting = Some(Starting { what, into, squash });
         Some((params, label))
     }
 
@@ -515,11 +564,7 @@ impl MergeBox {
         let Some(info) = &self.info else {
             return false;
         };
-        let Some(kind) = info
-            .continue_command
-            .as_deref()
-            .and_then(Kind::from_continue)
-        else {
+        let Some(kind) = Kind::resume_of(info) else {
             return false;
         };
         let message = if kind.has_message() {
@@ -539,10 +584,10 @@ impl MergeBox {
 
     /// The message of the "Continue" dialog changed.
     pub fn set_message(&mut self, message: String) {
-        if let Some(Dialog::Continue(dialog)) = &mut self.dialog
-            && dialog.running.is_none()
-        {
-            dialog.message = message;
+        match &mut self.dialog {
+            Some(Dialog::Continue(dialog)) if dialog.running.is_none() => dialog.message = message,
+            Some(Dialog::Start(dialog)) => dialog.message = message,
+            _ => {}
         }
     }
 
@@ -585,7 +630,7 @@ impl MergeBox {
             return None;
         }
         let info = self.info.as_ref()?;
-        let kind = info.abort_command.as_deref().and_then(Kind::from_abort)?;
+        let kind = Kind::abort_of(info)?;
         self.dialog = Some(Dialog::Abort(kind, Phase::Checking));
         Some((
             Op::Abort(kind),
@@ -615,7 +660,7 @@ impl MergeBox {
         let closable = match &self.dialog {
             Some(Dialog::Continue(dialog)) => dialog.running.is_none(),
             Some(Dialog::Abort(_, phase)) => matches!(phase, Phase::Confirm { .. }),
-            Some(Dialog::Mainline(_)) => true,
+            Some(Dialog::Start(_) | Dialog::Mainline(_)) => true,
             None => false,
         };
         if closable {
@@ -648,14 +693,11 @@ impl MergeBox {
         let Some(starting) = self.starting.take() else {
             return unexpected(Op::Start);
         };
-        let what = tr!(
-            "merge-start-label",
-            what = &starting.what,
-            into = &starting.into
-        );
+        let what = start_label(&starting.what, &starting.into, starting.squash);
+        let title = if starting.squash { "Squash" } else { "Merge" };
         match result {
             Err(_) if kind == Some(ErrorKind::LocalChanges) => {
-                local_changes(&mut self.failure, "Merge", &what, detail.as_deref())
+                local_changes(&mut self.failure, title, &what, detail.as_deref())
             }
             Err(e) => {
                 // Engine refusals (detached HEAD, operation in progress, rev that does not
@@ -666,12 +708,12 @@ impl MergeBox {
                 );
                 let (title, explanation) = if refused {
                     (
-                        tr!("merge-refused-title", title = "Merge"),
+                        tr!("merge-refused-title", title = title),
                         tr!("merge-refused", what = &what, error = &e),
                     )
                 } else {
                     (
-                        tr!("merge-failed-title", title = "Merge"),
+                        tr!("merge-failed-title", title = title),
                         tr!("merge-failed", what = &what, error = &e),
                     )
                 };
@@ -849,8 +891,13 @@ pub(crate) fn message_texts(warnings: &[Message]) -> Vec<String> {
 /// The outcome of `merge.start`.
 fn start_outcome(r: MergeStartResult, starting: &Starting) -> Outcome {
     let notice = start_notice(&r, starting);
+    let title = if r.strategy == MergeApplied::Squash {
+        "Squash"
+    } else {
+        "Merge"
+    };
     let warning = reread_warning(
-        &tr!("merge-done", title = "Merge"),
+        &tr!("merge-done", title = title),
         &message_texts(&r.warnings),
         r.status_error,
         r.refs_error,
@@ -875,6 +922,9 @@ fn start_notice(r: &MergeStartResult, starting: &Starting) -> String {
     };
     let branch = &r.branch;
     let commits = tr!("merge-commits", n = r.behind);
+    if r.strategy == MergeApplied::Squash || starting.squash {
+        return squash_notice(r, name, &commits);
+    }
     if r.in_progress {
         return match r.conflicts.len() {
             0 => tr!("merge-stopped-before-commit", name = name, branch = branch),
@@ -903,6 +953,49 @@ fn start_notice(r: &MergeStartResult, starting: &Starting) -> String {
             commits = commits,
             id = id
         ),
+    }
+}
+
+/// The status-bar message of a squash merge: stopped (conflicts, a hook), nothing to commit (the
+/// changes already on the branch: nothing written), already up to date or one commit created.
+fn squash_notice(r: &MergeStartResult, name: &str, commits: &str) -> String {
+    let branch = &r.branch;
+    if r.in_progress {
+        return match r.conflicts.len() {
+            0 => tr!(
+                "merge-squash-stopped-before-commit",
+                name = name,
+                branch = branch
+            ),
+            n => tr!(
+                "merge-squash-stopped",
+                name = name,
+                branch = branch,
+                files = tr!("merge-conflict-files", n = n)
+            ),
+        };
+    }
+    if r.strategy == MergeApplied::UpToDate {
+        return tr!("merge-up-to-date", branch = branch, name = name);
+    }
+    if r.after == r.before {
+        return tr!("merge-squash-nothing", name = name, branch = branch);
+    }
+    tr!(
+        "merge-squashed",
+        name = name,
+        branch = branch,
+        commits = commits,
+        id = r.after.short()
+    )
+}
+
+/// The description of a start: "Merge of …" or "Squash of …".
+fn start_label(what: &str, into: &str, squash: bool) -> String {
+    if squash {
+        tr!("merge-squash-label", what = what, into = into)
+    } else {
+        tr!("merge-start-label", what = what, into = into)
     }
 }
 
@@ -1036,7 +1129,7 @@ impl Tab {
     /// The actions of this function, routed by [`Tab::apply`].
     pub(crate) fn apply_merge(&mut self, action: Action) {
         match action {
-            Action::Merge { rev, what, no_ff } => {
+            Action::Merge { rev, what } => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1047,7 +1140,38 @@ impl Tab {
                 let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
                     return;
                 };
-                if let Some((params, label)) = repo.merge.start(rev, what, into, no_ff) {
+                if let Some((params, label)) = repo.merge.start(rev, what, into, Mode::Auto, None) {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    let op = Op::Start;
+                    self.submit(op.command(), params, Request::Merge(generation, op));
+                }
+            }
+            Action::OpenMerge { rev, what } => {
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if self.executor.writing().is_some() || repo.modal_open() {
+                    return;
+                }
+                if let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) {
+                    repo.merge.open_start(rev, what, into);
+                }
+            }
+            Action::Mode(mode) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.merge.set_mode(mode);
+                }
+            }
+            Action::SubmitMerge => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((params, label)) = repo.merge.submit_start() {
                     repo.write_error = None;
                     repo.write_label = Some(label);
                     let op = Op::Start;
@@ -1369,7 +1493,7 @@ mod tests {
     }
 
     fn start(b: &mut MergeBox, rev: &str) -> Value {
-        b.start(rev.into(), rev.into(), "main".into(), false)
+        b.start(rev.into(), rev.into(), "main".into(), Mode::Auto, None)
             .unwrap()
             .0
     }
@@ -1557,7 +1681,13 @@ mod tests {
 
         // `no_ff`: a merge commit even where a fast-forward would be enough.
         let params = b
-            .start("ahead".into(), "ahead".into(), "main".into(), true)
+            .start(
+                "ahead".into(),
+                "ahead".into(),
+                "main".into(),
+                Mode::MergeCommit,
+                None,
+            )
             .unwrap()
             .0;
         assert_eq!(params, json!({ "rev": "ahead", "no_ff": true }));
@@ -1688,3 +1818,7 @@ mod tests {
 #[cfg(test)]
 #[path = "merge_rebase_tests.rs"]
 mod rebase_tests;
+
+#[cfg(test)]
+#[path = "merge_squash_tests.rs"]
+mod squash_tests;

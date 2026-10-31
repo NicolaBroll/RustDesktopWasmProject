@@ -883,8 +883,14 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   undo/redo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.
 - **Status:** engine and backend done (`merge.start` `squash`, `Operation::Squash`, `SquashRecord`
   in `<git dir>/project-squash.json`, `merge.continue`/`merge.abort`/`repo.operation` for the
-  squash; tests in `crates/git/tests/merge_squash.rs` and `merge_tests.rs`); UI and
-  `safety-reviewer` review to do. Choices: the squash state is a new `Operation::Squash` in
+  squash; tests in `crates/git/tests/merge_squash.rs` and `merge_tests.rs`); UI done (branch and
+  commit menus: "Merge into … with options…" opens a dialog with merge commit / squash into one
+  commit / fast-forward only, the squash message (empty: the engine's default, said in the hint)
+  and the note that the branch will not appear merged; squash notices; the panel shows "Squash"
+  with "Continue squash…"/"Abort squash…" on `merge.continue`/`merge.abort` (`Kind::Squash`);
+  `crates/ui/src/merge_start.rs`, tests in `merge_squash_tests.rs`); `safety-reviewer` review to
+  do. UI choice: the quick "Merge into …" entry stays (fast-forward if enough); the old "… with a
+  merge commit" entry is now the dialog's "Merge commit". Choices: the squash state is a new `Operation::Squash` in
   `Status::operation`, so every command refuses during it through the usual checks; a commit
   rejected by a hook or signing leaves the squash in progress (staged, `in_progress` with git's
   text); nothing to commit (changes already on the branch) → nothing written plus a warning;

@@ -23,6 +23,7 @@ merge-gate-detached = HEAD è staccata: serve un branch attivo. Passare prima a 
 merge-gate-operation = C'è già un'operazione in corso: concluderla o annullarla dal riquadro in alto
 merge-gate-conflicts = Ci sono file in conflitto: risolverli prima
 merge-start-label = Merge di «{ $what }» in «{ $into }»
+merge-squash-label = Squash di «{ $what }» in «{ $into }»
 merge-pick-label = { $title } di «{ $what }» su «{ $into }»
 merge-continue-label = Conclusione del { $name }
 merge-abort-check-label = Controllo per l'annullamento del { $name }
@@ -118,3 +119,26 @@ merge-mainline-heading = { $title } di un commit di merge
 merge-mainline-text-cherry-pick = «{ $what }» ha { $n } genitori. Si applica su «{ $into }» le modifiche che il merge ha portato rispetto al genitore scelto: di solito il primo (il branch in cui si è unito).
 merge-mainline-text-revert = «{ $what }» ha { $n } genitori. Si annulla su «{ $into }» le modifiche che il merge ha portato rispetto al genitore scelto: di solito il primo (il branch in cui si è unito).
 merge-mainline-hint = Con il genitore { $n } (mainline)
+
+# Squash merge (S58): messaggi della barra di stato.
+merge-squash-stopped-before-commit = Squash di «{ $name }» in «{ $branch }» fermo prima del commit (un hook o la firma?): concluderlo con «Continua il squash…» nel riquadro in alto, o annullarlo
+merge-squash-stopped = Squash di «{ $name }» in «{ $branch }» fermo: { $files }. Risolverli e segnarli come risolti nell'area di stage, poi «Continua il squash…» nel riquadro in alto (o «Annulla il squash…»)
+merge-squash-nothing = Niente da unire con squash: le modifiche di «{ $name }» sono già su «{ $branch }». Non è stato scritto nulla
+merge-squashed = «{ $name }» unito con squash in «{ $branch }» ({ $commits }): un solo commit { $id }. «{ $name }» non risulta unito. «Annulla» lo annulla
+
+# Finestra del merge (S58): modo e messaggio dello squash.
+merge-start-heading = Unisci «{ $what }» in «{ $into }»
+merge-mode-auto = Merge (fast-forward se possibile)
+merge-mode-merge-commit = Commit di merge
+merge-mode-squash = Squash in un solo commit
+merge-mode-ff-only = Solo fast-forward
+merge-mode-auto-text = Fast-forward se «{ $into }» non ha commit propri, altrimenti un commit di merge.
+merge-mode-merge-commit-text = Crea sempre un commit di merge con due genitori, anche dove basterebbe il fast-forward (--no-ff).
+merge-mode-squash-text = Le modifiche di «{ $what }» diventano un solo commit ordinario su «{ $into }» (--squash).
+merge-mode-ff-only-text = Porta avanti «{ $into }» fino a «{ $what }»; rifiutato se «{ $into }» ha commit propri (--ff-only).
+merge-squash-not-merged = «{ $what }» non risulterà unito: unirlo di nuovo più avanti può dare conflitti sulle stesse modifiche.
+merge-squash-message-label = Messaggio del commit
+merge-squash-message-hint = Vuoto: «Squashed branch '{ $what }'» seguito dall'elenco dei commit uniti
+merge-start-button = Unisci
+merge-squash-button = Squash
+merge-start-undo = Con conflitti resta in corso (si conclude o si annulla dal riquadro in alto). «Annulla» annulla un merge concluso.

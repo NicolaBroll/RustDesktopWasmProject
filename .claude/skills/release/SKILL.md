@@ -23,6 +23,7 @@ git diff --stat origin/master <last tag>          # empty: master is the last re
 prep=$(git log --format=%h -1 --grep='^Release .* preparation' origin/dev)
 git log --oneline $prep..origin/dev                # what goes in the release (the tag is on
                                                    # master's squash, not an ancestor of dev)
+git diff --stat origin/master $prep                # empty: master has nothing dev lacks
 gh pr list --state merged --base master --limit 1 --json number,title,body   # last release PR
 ```
 
@@ -54,10 +55,21 @@ git checkout -b release-<version> origin/dev
 
 ## 2. dev into master (squash)
 
+The repository allows only squash merges, so the squash of the previous release on `master` is
+never an ancestor of `dev` and a PR straight from `dev` conflicts. The PR comes from a temporary
+branch of `dev` that records `master` as a parent with `-s ours` (the strategy: the tree stays
+exactly `dev`'s, nothing comes from `master`). Never `-X ours` (a normal merge that would still
+bring in `master`'s non-conflicting changes), and never this merge on `dev` itself. Only if the
+check of step 0 (`git diff origin/master $prep` empty) passed: otherwise stop and ask.
+
 ```sh
-gh pr create --base master --head dev --title "Release <version>" --body "…"
+git checkout -b release-<version>-master origin/dev
+git merge -s ours origin/master -m "Release <version>: master takes dev at $(git rev-parse --short origin/dev)"
+git diff --stat origin/dev                         # must be empty
+git push -u origin release-<version>-master
+gh pr create --base master --head release-<version>-master --title "Release <version>" --body "…"
 gh pr checks <n> --watch
-gh pr merge <n> --squash         # squash, and NOT --delete-branch: dev stays
+gh pr merge <n> --squash
 git fetch -q origin && git diff --stat origin/master origin/dev   # must be empty
 ```
 
@@ -86,7 +98,7 @@ The assets: `BinariGit-<version>-x86_64.AppImage`, `.AppImage.zsync`,
 If the job fails on "no section for <version> in CHANGELOG.md", the heading is wrong.
 
 Finally update local `dev` (`git checkout dev && git pull --ff-only`) and delete the
-`release-<version>` branch, local and remote.
+`release-<version>` and `release-<version>-master` branches, local and remote (never `dev`).
 
 ## Push from the devcontainer
 

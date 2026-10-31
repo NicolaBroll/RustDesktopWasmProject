@@ -845,3 +845,39 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   in `crates/git/src/backend/ignore.rs` with the atomic write in `atomic.rs`; tests in
   `crates/git/tests/ignore.rs`, `crates/engine/src/git/memory/ignore.rs`,
   `crates/engine/src/builtin/ignore.rs`. Docs: `impl-docs/git/ignore.md`.
+
+### S58 — Squash merge
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** `merge.start` has `no_ff` and `ff_only` but not squash: a feature branch cannot be
+  brought in as one commit. Add `"squash"?: bool` to `merge.start` (with `no_ff`/`ff_only` →
+  `InvalidParams`): `git merge --squash` of the resolved id, then one ordinary commit (one parent,
+  HEAD) on the branch; the merged branch is not recorded as merged (the next merge of the same
+  branch may conflict: said in the docs and in the UI).
+  - Same refusals as a merge commit (detached HEAD, no commits, operation in progress, conflicted
+    files, **any** change to tracked files, untracked/ignored files the merge would overwrite);
+    `up_to_date` → nothing written. Explicit options against the configuration (`--no-ff` is
+    meaningless with squash; `--no-commit`/`--squash` behaviour checked with `merge.ff`,
+    `branch.<b>.mergeOptions`, `merge.autoStash`).
+  - Message: `message`, otherwise `Squashed branch 'x'` (as `merge_source`, ` into <branch>`
+    outside `main`/`master`) followed by a blank line and the subjects of the squashed commits
+    (`* <subject>`, oldest first, at most 50 then `…`). The commit goes through `GitIndex::commit`
+    (hooks and signing as `commit.create`). Backup `refs/project/backup/merge-...` of the branch,
+    `JournalEntry` as for the concluded merge of `merge.start` (same undo/redo).
+  - **Conflicts**: git leaves no `MERGE_HEAD`, so git itself has no "operation in progress".
+    The squash stays in progress as a merge does, recorded by the engine in the git directory
+    (`project-squash`: rev, branch, HEAD before, backup, message), valid only while HEAD is still
+    there and `SQUASH_MSG` exists; `repo.operation` reports it (`operation: "Squash"`,
+    `continue: "merge.continue"`, `abort: "merge.abort"`), `merge.continue` makes the single-parent
+    commit, `merge.abort` restores index and worktree to HEAD with the same backup and `confirm`
+    rules as today. Other commands refuse during it like during a merge. A stale record (HEAD
+    moved from the terminal) is ignored and removed.
+  - Result: as `merge.start`, `strategy: "squash"`, `in_progress`, `conflicts`.
+  - Docs in `impl-docs/git/merge.md`, examples in `impl-docs/git/cli.md`, README.
+  - UI: in the merge dialog a choice "Merge commit / Squash into one commit / Fast-forward only",
+    with the editable message for squash and a one-line note that the branch will not appear
+    merged; the in-progress banner handles "Squash".
+- **Done when:** integration tests (squash of a diverged branch, of a branch ahead (no
+  fast-forward: one commit), message default and custom, up to date, local changes refused,
+  conflicts → in progress → continue, → abort with backup, HEAD moved from the terminal while in
+  progress, hook that rejects the commit, `merge.ff=only` and `mergeOptions` in the config,
+  undo/redo) and on the `MemoryBackend`; `safety-reviewer` review; CI green.

@@ -29,6 +29,7 @@ pub use builtin::conflict::{
 pub use builtin::discard::{DiscardLinesParams, DiscardLinesResult, DiscardParams, DiscardResult};
 pub use builtin::edit::{HistoryResult, UndoResult};
 pub use builtin::file::{FileBlameParams, FileLogParams, FileLogResult};
+pub use builtin::ignore::{IgnoreParams, IgnoreResult};
 pub use builtin::merge::{
     IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
     MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
@@ -104,6 +105,10 @@ pub use git::{
     INDEX_NOT_RESTORED, STASH_REF, StashApplied, StashApply, StashDrop, StashDropped, StashEntry,
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
+};
+pub use git::{
+    IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
+    ignore_description, ignore_tracked_warning,
 };
 pub use git::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,

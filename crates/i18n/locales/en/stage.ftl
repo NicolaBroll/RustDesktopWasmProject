@@ -73,6 +73,10 @@ stage-blame-untracked = The file is not tracked yet: the blame needs a file in H
 stage-blame-deleted = The file is deleted: there is nothing to blame
 stage-delete-file = Delete…
 stage-delete-file-help = Deletes this untracked file (asks for confirmation; a backup is kept and “Undo” puts it back)
+stage-ignore = Ignore
+stage-ignore-help = Adds a line to .gitignore or .git/info/exclude so git stops showing this file (or all files like it). “Undo” removes it
+stage-ignore-shared = In .gitignore (shared, committed)
+stage-ignore-local = Only for me (.git/info/exclude)
 stage-delete-untracked = { $n ->
     [one] Delete the untracked file…
    *[other] Delete all { $n } untracked files…

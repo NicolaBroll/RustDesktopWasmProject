@@ -803,3 +803,45 @@ the file of its function in [git/](git/) before the code (contract, `CliBackend`
   confirms; notice with the backup, status and diff reread, `StaleDiff` rereads them). `safety-reviewer`
   review done (the recorded mode is git's, so `core.fileMode=false` works; short temporary name).
   The backup records git's mode: with `core.fileMode=false` an executable file is `100644` there.
+### S57 — Ignore files (`.gitignore`)
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** an untracked file that should never be committed (build output, logs, editor files) can
+  only be ignored by editing `.gitignore` outside the app. Add `worktree.ignore {"patterns":
+  [string], "file"?: "gitignore" | "exclude"}` (`Access::Write`): appends the patterns to the root
+  `.gitignore` (default) or to `.git/info/exclude` (ignored only in this clone, not committed).
+  - Patterns: non-empty, no NUL/CR/LF, not only whitespace, not a comment (a leading `#` must be
+    escaped) → otherwise `InvalidParams`. A pattern already present as a line is not added again.
+    A pure helper (domain) builds the escaped, anchored pattern for the UI choices: one path
+    (`/dir/name`), a folder (`/dir/`), an extension (`*.log`), escaping `\ * ? [ ! #` and trailing
+    spaces as gitignore requires; tests with `git check-ignore` that the pattern matches exactly
+    what it should.
+  - Write: the file is created if missing; appended otherwise, adding the missing final newline
+    first and keeping the file's line endings (CRLF if it uses them). A `.gitignore` that is a link,
+    a directory or in a directory that is a link → `NotAllowed`. Atomic write (temporary file and
+    rename, permissions kept, as `worktree.discard_lines`). No `confirm`: nothing is lost.
+  - `JournalEntry` so `edit.undo` puts the exact old bytes back (or removes the file it created)
+    only if the file still has exactly the bytes written (otherwise `UndoConflict`); redo the
+    reverse. The old bytes stay reachable (blob in a backup ref or in the journal, as in S56).
+  - Result: `{"file", "added": [pattern], "already": [pattern], "ignored": [path] (untracked files
+    that became ignored), "tracked": [path] (tracked files matched: git keeps tracking them, a
+    warning), "warnings", "status", ...journal}`.
+  - Docs: new `impl-docs/git/ignore.md`, CLI example in `impl-docs/git/cli.md`, README.
+  - UI: on an untracked file of the stage area, "Ignore" submenu: "This file", "All *.ext files",
+    "Folder dir/" (each parent folder), and a choice ".gitignore (shared)" / "Only for me
+    (.git/info/exclude)"; notice with Undo. The `.gitignore` change appears in the unstaged list.
+- **Done when:** integration tests (new file, append without final newline, CRLF file, duplicate
+  pattern, names with spaces/`#`/`!`/`*`/trailing space/non-UTF-8, exclude file, `.gitignore` as a
+  link refused, tracked file matched → warning, undo/redo, file changed before undo) and on the
+  `MemoryBackend`; `safety-reviewer` review; CI green.
+- **Status:** done; `safety-reviewer` review done (a pattern followed by a negation is appended
+  again, a tracked `.gitignore` missing from disk is refused, BOM ignored when comparing). UI: "Ignore" submenu in the context menu of an
+  untracked file (`crates/ui/src/view/stage_view.rs`, `ignore_menu`), two headed sections
+  ".gitignore (shared, committed)" and "Only for me (.git/info/exclude)" with the same entries;
+  `crates/ui/src/ignore.rs` (choices, `IgnoreBox`, notice; tests in `ignore_tests.rs`), texts in
+  `locales/*/ignore.ftl`. Engine: `worktree.ignore`, `GitIndex::ignore`/`restore_ignore`,
+  `JournalEntry::ignore` (field `ignore`); pattern helpers in `crates/domain/src/git/ignore.rs`
+  (`ignore_pattern`, `append_ignore_patterns`, `IgnorePattern` = bytes like `RepoPath`), types in
+  `crates/engine/src/git/ignore.rs`, command in `crates/engine/src/builtin/ignore.rs`, `CliBackend`
+  in `crates/git/src/backend/ignore.rs` with the atomic write in `atomic.rs`; tests in
+  `crates/git/tests/ignore.rs`, `crates/engine/src/git/memory/ignore.rs`,
+  `crates/engine/src/builtin/ignore.rs`. Docs: `impl-docs/git/ignore.md`.

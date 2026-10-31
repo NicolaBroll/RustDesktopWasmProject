@@ -39,9 +39,6 @@ use project_engine::{
     RestoreOutcome, apply_patch, discard_line_patch, discard_lines_target,
 };
 use std::ffi::{OsStr, OsString};
-use std::io::Write as _;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 impl CliBackend {
     /// [`GitIndex::discard_lines`](project_engine::GitIndex::discard_lines).
@@ -203,38 +200,21 @@ impl CliBackend {
         Ok(Oid::from_hex(out.stdout.trim_ascii_end())?)
     }
 
-    /// Replaces the file `path` with `content`, atomically: a new temporary file next to it, with
-    /// the old file's permissions, synced to disk and renamed over it. If a step fails the file is
-    /// untouched and the temporary file removed; the error names `backup`.
+    /// Replaces the file `path` with `content`, atomically ([`super::atomic::replace_file`]: a
+    /// new temporary file next to it, with the old file's permissions, synced and renamed over
+    /// it). If a step fails the file is untouched; the error names `backup`.
     fn write_file(&self, path: &RepoPath, content: &[u8], backup: &str) -> Result<(), EngineError> {
-        let full = self.worktree_path(path);
-        let error = |e: std::io::Error| EngineError::GitWithReason {
-            command: "write".to_owned(),
-            reason: msg!(
-                "engine-discard-lines-write-failed",
-                path = path,
-                error = e,
-                backup = backup
-            ),
-        };
-        let permissions = std::fs::metadata(&full).map_err(error)?.permissions();
-        let temp = temp_name(&full);
-        let written = (|| {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp)?;
-            file.write_all(content)?;
-            file.set_permissions(permissions)?;
-            file.sync_all()?;
-            drop(file);
-            std::fs::rename(&temp, &full)
-        })();
-        if let Err(e) = written {
-            let _ = std::fs::remove_file(&temp);
-            return Err(error(e));
-        }
-        Ok(())
+        super::atomic::replace_file(&self.worktree_path(path), content).map_err(|e| {
+            EngineError::GitWithReason {
+                command: "write".to_owned(),
+                reason: msg!(
+                    "engine-discard-lines-write-failed",
+                    path = path,
+                    error = e,
+                    backup = backup
+                ),
+            }
+        })
     }
 
     /// A warning if `path` reread does not have `content` (another program wrote it right
@@ -260,12 +240,3 @@ impl CliBackend {
 
 /// Reflog and first line of the backup commit.
 const BACKUP_MESSAGE: &str = "project: backup of the file before worktree.discard_lines";
-
-/// `.project-<pid>-<nanoseconds>.tmp` in the folder of `full`: without the file's name, which
-/// could push it past the file system's name limit.
-fn temp_name(full: &Path) -> std::path::PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    full.with_file_name(format!(".project-{}-{nanos}.tmp", std::process::id()))
-}

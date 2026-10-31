@@ -13,6 +13,7 @@ mod conflict;
 mod discard;
 mod discard_lines;
 mod file;
+mod ignore;
 #[cfg(any(test, feature = "test-support"))]
 mod line_diff;
 mod lines;
@@ -78,6 +79,10 @@ pub use file::is_binary_content;
 pub use file::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
     blame_missing_worktree, blame_no_commits,
+};
+pub use ignore::{
+    IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
+    ignore_description, ignore_tracked_warning,
 };
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use maintenance::{
@@ -408,6 +413,24 @@ pub trait GitIndex {
     /// Redo: every file must still be untracked with the backup's bytes and mode, otherwise
     /// [`EngineError::UndoConflict`]; then it is deleted again (no new backup).
     fn restore_cleaned(&mut self, request: &CleanRestore) -> Result<RestoreOutcome, EngineError>;
+
+    /// Appends `request.patterns` to the root `.gitignore` or to `.git/info/exclude`
+    /// (`worktree.ignore`): the file is created if missing, a pattern already present as a line
+    /// is not added again ([`append_ignore_patterns`](project_domain::append_ignore_patterns)).
+    /// The index is not touched. A file that is a link, a folder or a special file, or in a
+    /// folder that is a link, is [`EngineError::NotAllowed`]; so is a `.gitignore` with a
+    /// conflict. Before writing, the blobs of the exact bytes before and after are saved and
+    /// held by a new ref `refs/project/backup/ignore-...`; if that fails, or the file changed
+    /// since it was read, nothing is written. The write is atomic (temporary file and rename,
+    /// permissions kept). If every pattern is already there, nothing is written and
+    /// [`IgnoreOutcome::record`] is `None`.
+    fn ignore(&mut self, request: &IgnoreRequest) -> Result<IgnoreOutcome, EngineError>;
+
+    /// Undoes (`request.redo == false`) or redoes a `worktree.ignore`: writes the bytes of the
+    /// other blob (or removes the file / creates it) only if the file has exactly the expected
+    /// bytes ([`IgnoreRestore::blobs`]), otherwise [`EngineError::UndoConflict`] and nothing
+    /// changes.
+    fn restore_ignore(&mut self, request: &IgnoreRestore) -> Result<RestoreOutcome, EngineError>;
 }
 
 /// Refs and journal: branches, tags, checkout, reset, and the ref restores of undo/redo. Part

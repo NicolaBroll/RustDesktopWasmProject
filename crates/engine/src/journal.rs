@@ -24,6 +24,10 @@
 //!   its bytes before and after ([`JournalEntry::lines`]): undo writes the old bytes back only if
 //!   the file has exactly the written ones, redo the other way round
 //!   ([`GitIndex::restore_lines`](crate::GitIndex::restore_lines)).
+//! - **`worktree.ignore` enters the journal** when it writes the file ([`JournalEntry::ignore`],
+//!   with the blobs of the bytes before and after): undo writes the old bytes back (or removes the
+//!   file it created) only if the file has exactly the written ones, redo the other way round
+//!   ([`GitIndex::restore_ignore`](crate::GitIndex::restore_ignore)).
 //! - **Branches.** `branch.create` and `branch.delete` are undone by moving the ref (deleted or
 //!   recreated on the previous commit, only if nobody touched it). `branch.checkout` and
 //!   `branch.rename`, instead, are undone with another checkout ([`GitRefs::checkout`](crate::GitRefs::checkout): never
@@ -67,6 +71,7 @@ use crate::{
     find_stash, pop_stash, remove_remote, restore_remote, upstream_label,
 };
 use crate::{DiscardLinesOutcome, LinesBackup, LinesRestore, discard_lines_description};
+use crate::{IgnoreOutcome, IgnoreRecord, IgnoreRestore, ignore_description};
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
@@ -204,6 +209,11 @@ pub struct JournalEntry {
     /// ones, redo the other way round; neither moves refs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<LinesBackup>,
+    /// Only for `worktree.ignore`: the file with the blobs of its bytes before and after
+    /// ([`IgnoreRecord`]). Undo writes the old bytes back (or removes the file it created) only if
+    /// the file has exactly the written ones, redo the other way round; neither moves refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore: Option<IgnoreRecord>,
 }
 
 impl JournalEntry {
@@ -261,6 +271,7 @@ impl JournalEntry {
             upstream: None,
             clean: None,
             lines: None,
+            ignore: None,
         })
     }
 
@@ -289,6 +300,7 @@ impl JournalEntry {
             upstream: None,
             clean: None,
             lines: None,
+            ignore: None,
         }
     }
 
@@ -314,6 +326,7 @@ impl JournalEntry {
             upstream: None,
             clean: None,
             lines: Some(outcome.file.clone()),
+            ignore: None,
         }
     }
 
@@ -342,6 +355,33 @@ impl JournalEntry {
                 files: outcome.files.clone(),
             }),
             lines: None,
+            ignore: None,
+        }
+    }
+
+    /// The entry of a `worktree.ignore` that wrote the file, with HEAD as it was (it does not
+    /// move) and the backup. Only called when [`IgnoreOutcome::record`] is set.
+    pub fn ignore(outcome: &IgnoreOutcome, head: HeadState) -> Self {
+        Self {
+            id: 0,
+            command: "worktree.ignore".to_owned(),
+            description: ignore_description(outcome.file, &outcome.added),
+            head: HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs: Vec::new(),
+            backup: outcome.backup.clone(),
+            undo_backups: Vec::new(),
+            worktree: None,
+            branch_config: Vec::new(),
+            remote: None,
+            stash: None,
+            reset: None,
+            upstream: None,
+            clean: None,
+            lines: None,
+            ignore: outcome.record.clone(),
         }
     }
 
@@ -912,6 +952,7 @@ impl JournalEntry {
             upstream: None,
             clean: None,
             lines: None,
+            ignore: None,
         }
     }
 
@@ -1259,6 +1300,21 @@ impl JournalEntry {
             )?;
             return repo.restore_cleaned(&request);
         }
+        if let Some(record) = &self.ignore {
+            // Only the bytes of the file are checked (by the backend): they do not depend on
+            // HEAD; never in the middle of a merge, rebase...
+            let request = IgnoreRestore {
+                command: if redo { "edit.redo" } else { "edit.undo" },
+                redo,
+                record: record.clone(),
+            };
+            check_no_operation(
+                request.command,
+                msg!("engine-busy-worktree"),
+                repo.status()?.operation,
+            )?;
+            return repo.restore_ignore(&request);
+        }
         if self.stash.is_some() {
             return self.apply_stash(repo, redo);
         }
@@ -1573,6 +1629,7 @@ mod tests {
             upstream: None,
             clean: None,
             lines: None,
+            ignore: None,
         }
     }
 

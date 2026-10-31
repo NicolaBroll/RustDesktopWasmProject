@@ -1,5 +1,7 @@
 use super::*;
-use crate::{clean, commit, conflict, diff, discard, stage};
+use crate::{clean, commit, conflict, diff, discard, ignore, stage};
+use project_domain::RepoPath;
+use project_engine::IgnoreFile;
 
 /// Stage area, in place of the details when the changes row is selected: the lists
 /// "Staged" and "Unstaged", each virtualized, and below the commit message box.
@@ -646,6 +648,9 @@ pub(super) fn file_menu(
         )));
         ui.close();
     }
+    if op == StageOp::Stage && ignore::ignorable(item) {
+        ignore_menu(ui, &item.path, enabled, actions);
+    }
     if op == StageOp::Stage && clean::deletable(item) {
         ui.separator();
         let color = if enabled {
@@ -689,6 +694,47 @@ pub(super) fn file_menu(
             ui.close();
         }
     }
+}
+
+/// The "Ignore" submenu of an untracked file: the same choices for the root `.gitignore`
+/// (shared once committed) and, under a second heading, for `.git/info/exclude` (only this clone).
+fn ignore_menu(ui: &mut Ui, path: &RepoPath, enabled: bool, actions: &mut Vec<Action>) {
+    let choices = ignore::choices(path);
+    if choices.is_empty() {
+        return;
+    }
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.menu_button(tr!("stage-ignore"), |ui| {
+            for (n, file) in [IgnoreFile::Gitignore, IgnoreFile::Exclude]
+                .into_iter()
+                .enumerate()
+            {
+                if n > 0 {
+                    ui.separator();
+                }
+                let heading = match file {
+                    IgnoreFile::Gitignore => tr!("stage-ignore-shared"),
+                    IgnoreFile::Exclude => tr!("stage-ignore-local"),
+                };
+                ui.label(RichText::new(heading).small().weak());
+                for choice in &choices {
+                    let button = ui
+                        .button(&choice.label)
+                        .on_hover_text(ignore::help(&choice.pattern, file));
+                    if button.clicked() {
+                        actions.push(Action::Ignore(ignore::Action::Ignore(
+                            choice.pattern.clone(),
+                            file,
+                        )));
+                        ui.close();
+                    }
+                }
+            }
+        })
+        .response
+        .on_hover_text(tr!("stage-ignore-help"))
+        .on_disabled_hover_text(tr!("stage-wait"));
+    });
 }
 
 pub(super) fn stage_path_job(

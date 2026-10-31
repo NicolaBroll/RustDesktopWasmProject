@@ -33,6 +33,18 @@ confirm-discard-button = { $n ->
    *[other] Scarta le modifiche di tutti
 }
 confirm-discard-keep = Non scartare
+confirm-discard-lines-title = Scartare { $n ->
+    [one] 1 riga modificata
+   *[other] { $n } righe modificate
+} di { $path }?
+confirm-discard-hunk-title = Scartare l'hunk { $hunk } di { $path }?
+confirm-discard-lines-body = Le righe scelte tornano alla versione in stage (o all'ultimo commit se del file non c'è niente in stage); le altre modifiche del file restano. Le modifiche in stage non vengono toccate.
+confirm-discard-lines-backup = Un backup del file com'è ora viene salvato in refs/project/backup/discard-…: «Annulla» nella barra in alto lo rimette com'era, purché il file non venga modificato di nuovo.
+confirm-discard-lines-button = { $n ->
+    [one] Scarta 1 riga
+   *[other] Scarta { $n } righe
+}
+confirm-discard-hunk-button = Scarta hunk
 confirm-amend-title = Riscrivere un commit già pubblicato?
 confirm-amend-body = L'ultimo commit è già pubblicato o etichettato: lo contiene un branch remoto o un tag. Con amend viene sostituito da un commit nuovo: i branch remoti e i tag restano sul commit vecchio, il branch locale diverge da quello remoto e per pubblicare la modifica servirà un push forzato, che riscrive la storia anche per chi ha già scaricato il commit. Il commit attuale resta salvato in un ref di backup.
 confirm-amend-reason = Motivo:

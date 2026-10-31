@@ -983,6 +983,9 @@ file of its function in [git/](git/) before the code.
 - **Done when:** integration tests (text added, text removed, text only moved inside a file: not a
   match for `-S`, regex, invalid regex, path filter, `all`, non-UTF-8 text in the file, pagination)
   and on the `MemoryBackend` (a simple added/removed-count scan); UI test of the cancel; CI green.
+- **Status:** engine and backend done (`"in": ["content"]` with `regex`/`ignore_case`, `total: null`,
+  [git/reading.md](git/reading.md) "Content"); cancellation reuses `Executor::cancel` (the git process
+  is killed). `ignore_case` also works with `-S` (git supports it since 2.10). UI missing.
 
 ### S62 — Submodules: clone, update, open
 - [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`

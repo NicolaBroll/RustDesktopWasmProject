@@ -2376,6 +2376,7 @@ dependencies = [
  "project-domain",
  "project-i18n",
  "proptest",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

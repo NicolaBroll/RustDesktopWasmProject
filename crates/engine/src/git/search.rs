@@ -1,5 +1,5 @@
-//! Search in the history (`repo.search`, S48): the query shared by the backends and the
-//! literal matching rules (`impl-docs/git/reading.md`, `repo.search`).
+//! Search in the history (`repo.search`, S48; content S61): the query shared by the backends
+//! and the literal matching rules (`impl-docs/git/reading.md`, `repo.search`).
 
 use super::LogQuery;
 use project_domain::{Oid, RepoPath};
@@ -18,6 +18,9 @@ pub enum SearchField {
     Author,
     /// Prefix of the full commit id (only when the text is hexadecimal).
     Id,
+    /// What the commit changed, like `git log -S`/`-G` (S61): only alone, never in
+    /// [`SearchField::ALL`].
+    Content,
 }
 
 impl SearchField {
@@ -28,6 +31,12 @@ impl SearchField {
 /// What [`GitRead::search`](super::GitRead::search) looks for: `text` taken literally
 /// (never a regex), case-insensitive for ASCII letters, in any of `fields` (OR), optionally only
 /// in the commits that touch `path`, over the same commits as `repo.log` with `all`/`stashes`.
+///
+/// With `fields == [Content]` (S61) instead: the commits (merges excluded, as `git log`) whose
+/// changes, file by file against the first parent and without rename detection, change the
+/// number of occurrences of `text` (`git log -S`, case-sensitive unless `ignore_case`) or, with
+/// `regex`, have an added or removed line matching `text` as a POSIX extended regex (`git log
+/// -G`, binary files skipped); with `path`, only the changes under it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     /// Not empty.
@@ -41,6 +50,13 @@ pub struct SearchQuery {
     pub all: bool,
     /// As [`LogQuery::stashes`] (only with `all`).
     pub stashes: bool,
+    /// [`SearchField::Content`] only: `text` is a regex (`-G`) instead of a literal (`-S`).
+    pub regex: bool,
+    /// [`SearchField::Content`] only: ASCII case-insensitive (`--regexp-ignore-case`).
+    pub ignore_case: bool,
+    /// Stop after this many matches (the first ones in the order of the result); `None`: all.
+    /// Used for content, where counting them all would mean diffing the whole history.
+    pub max: Option<usize>,
 }
 
 impl SearchQuery {
@@ -51,6 +67,11 @@ impl SearchQuery {
             stashes: self.stashes,
             ..LogQuery::all()
         }
+    }
+
+    /// True if this is a content search ([`SearchField::Content`], always alone).
+    pub fn is_content(&self) -> bool {
+        self.has(SearchField::Content)
     }
 
     /// True if `field` is searched.

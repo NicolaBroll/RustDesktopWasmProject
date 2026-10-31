@@ -14,15 +14,18 @@ serde.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 project-i18n.workspace = true
+# Only for `-G` on the `MemoryBackend` (`test-support`).
+regex = { workspace = true, optional = true }
 
 [features]
 # `MemoryBackend`/`MemoryOpener` (in-memory repo with a sample): only for the tests of the
 # crates that use it (`[dev-dependencies]`), never in the app binaries.
-test-support = []
+test-support = ["dep:regex"]
 
 [dev-dependencies]
 fluent-syntax.workspace = true
 proptest.workspace = true
+regex.workspace = true
 insta = { workspace = true, features = ["json"] }
 
 [lints]

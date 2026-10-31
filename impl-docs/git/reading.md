@@ -46,8 +46,9 @@ so the pages are contiguous.
 
 ### `repo.search`
 
-Parameters: `{"query", "in"?, "path"?, "all"?, "stashes"?, "skip"?, "limit"?}` (S48). A read
-(`Access::Read`). Result `{"ids": [oid], "total": number, "has_more": bool}`: the page `skip..skip + limit`
+Parameters: `{"query", "in"?, "path"?, "all"?, "stashes"?, "skip"?, "limit"?, "regex"?,
+"ignore_case"?}` (S48; content S61). A read (`Access::Read`). Result `{"ids": [oid], "total":
+number | null, "has_more": bool}`: the page `skip..skip + limit`
 (`limit` 200 if missing) of the ids of the matching commits, in the order of `repo.log` with the same
 `all`/`stashes` (from HEAD, or from all refs; `stashes` without `all` → `InvalidParams`), so the UI
 highlights the matches in the graph instead of filtering it; `total` = all the matches, `has_more` =
@@ -59,6 +60,9 @@ others after the page. Pages are contiguous.
 - `in`: any of `"message"` (subject and body), `"author"` (name or email, as written in the commit:
   no mailmap), `"id"` (prefix of the full id, any case; only a hexadecimal text can match); default
   all three, empty → `InvalidParams`. A commit matches if **any** field matches (OR).
+- `"content"` in `in` (S61), **alone** (with another field → `InvalidParams`: git cannot OR it with
+  `--grep`/`--author`, it would AND them): the commits whose changes contain the text, see "Content"
+  below. `regex` and `ignore_case` without it → `InvalidParams`.
 - `path` (`RepoPath`): only the commits that change that path, or anything under it if a folder,
   with respect to **at least one** parent (`--full-history`: commits of side branches and merges that
   bring a change in count). **No rename following** (`--follow` is not used: git allows it with one
@@ -83,6 +87,38 @@ differently, since git sorts only the commits it keeps):
 The text reaches git only as the value of `--grep=`/`--author=` (cannot become an option); only `%H`
 comes out, so non-UTF-8 messages and names do not affect the parsing. `MemoryBackend`: the same rules
 on `repo.log` (`contains_literal`, `SearchQuery::id_matches`, trees compared with each parent).
+
+#### Content (`"in": ["content"]`, S61)
+
+- Literal (default): `git log -S<text>`, the commits that change the **number of occurrences** of the
+  text in a file (added or removed; only moved inside the same file: no match). Case-sensitive;
+  `"ignore_case": true` adds `--regexp-ignore-case` (git applies it to `-S` too, ASCII only).
+- `"regex": true`: `git log -G<text>`, the commits with an added or removed line matching the POSIX
+  extended regex (a line moved inside a file matches: it is a removed and an added line); binary
+  files never match `-G` (they do match `-S`). Invalid regex → `InvalidParams` with git's text
+  (`engine-search-bad-regex`); in an empty repo it is not checked (nothing to search).
+- Each commit against its **first parent**, file by file; merges are skipped (as `git log` without
+  `-m`); `--no-renames` (a rename is a deletion and an addition: the text "moves" between two paths
+  and matches) and `--no-textconv`, so `diff.renames` and textconv drivers do not change the result;
+  `path` limits the diff to that path (`--full-history --no-follow`, as above).
+- `total` is `null`: counting means diffing every commit of the history. git stops at
+  `--max-count=<skip + limit + 1>` (it counts the matches; `--skip` would count the walked commits,
+  so the page is cut here) and `has_more` says whether the extra one came. The order is git's
+  `--date-order` of that run, i.e. that of `repo.log` (with a path it can differ only with skewed commit
+  dates, as git sorts only the commits it keeps).
+- **Cost**: one walk that diffs every commit until the page is full: seconds to minutes on big
+  histories, longer for a rare text (the whole history is diffed to find few matches). It runs in the
+  background like the other slow commands; **cancellation** is the existing one: the UI submits with
+  `Executor::submit` (each job has its `CancelToken`) and stops it with `Executor::cancel(ticket)`;
+  `Git::run_cancellable` polls the token and kills git's process group, the command ends with
+  `Cancelled { command: "repo.search" }`. A new search must cancel the previous ticket first: the
+  running one holds the session, so anything submitted after it waits until it ends.
+- Text: one argument glued to the option (`-S<text>`/`-G<text>`), so a text starting with `-` stays a
+  text; no NUL or newline (`InvalidParams`, as above); non-UTF-8 bytes in the files are matched as bytes
+  (`LC_ALL=C`).
+- `MemoryBackend`: the same scan in memory (`memory/search.rs`): tree of the commit against the first
+  parent, `-S` by counting non-overlapping occurrences, `-G` on the added/removed lines of the memory
+  line diff with the `regex` crate without Unicode (close to POSIX ERE for simple patterns).
 
 ### `commit.show`
 

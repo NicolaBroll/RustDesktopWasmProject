@@ -230,6 +230,8 @@ impl SearchBox {
             stashes: true,
             skip,
             limit: Some(PAGE),
+            regex: false,
+            ignore_case: false,
         });
         self.job = Some(Job {
             seq,
@@ -270,7 +272,8 @@ impl SearchBox {
                 Ok(page) => {
                     found.set = page.ids.iter().copied().collect();
                     found.ids = page.ids;
-                    found.total = page.total;
+                    // `None` only for content searches (S61), not sent yet.
+                    found.total = page.total.unwrap_or(found.ids.len());
                     found.has_more = page.has_more;
                     match previous.filter(|p| p.query == found.query) {
                         // The same query again (log read again): the selection does not move.
@@ -297,7 +300,7 @@ impl SearchBox {
                 found.ids.truncate(job.skip);
                 found.set.extend(page.ids.iter().copied());
                 found.ids.extend(page.ids);
-                found.total = page.total;
+                found.total = page.total.unwrap_or(found.ids.len());
                 found.has_more = page.has_more;
                 found.error = None;
                 if advance {

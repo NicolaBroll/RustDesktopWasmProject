@@ -47,6 +47,9 @@ engine-log-rev-and-all = `rev` e `all` sono alternativi: `all` parte già da tut
 engine-search-empty = il testo da cercare è vuoto
 engine-search-line = il testo da cercare deve stare su una sola riga
 engine-search-no-fields = `in` è vuoto: indica almeno uno tra "message", "author", "id" (o omettilo per tutti e tre)
+engine-search-content-alone = "content" in `in` non si combina con "message", "author" o "id": git non sa mettere in AND una ricerca nel contenuto con le altre
+engine-search-content-options = `regex` e `ignore_case` valgono solo per una ricerca nel contenuto (`"in": ["content"]`)
+engine-search-bad-regex = espressione regolare non valida: { $stderr }
 engine-memory-repos = repo in memoria disponibili: { $repos }
 engine-memory-no-repo = nessun repo in memoria
 # Branch names (`git/branch.rs`).

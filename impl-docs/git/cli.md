@@ -14,6 +14,8 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}
 # literal text, case-insensitive; "in" limits the fields, "path" the commits touching it
 cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"fix","all":true,"limit":20}'
 cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"ada@","in":["author"],"path":"README.md"}'
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"fn parse_log","in":["content"],"all":true,"limit":5}'
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"parse_(log|status)\\(","in":["content"],"regex":true,"path":"crates"}'
 # huge repo: does it have a commit-graph ("commit_graph" in the repo.open result)? write it
 # (~19 s on the Linux kernel, then the first log page goes from ~16 s to ~40 ms)
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize

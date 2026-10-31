@@ -6,11 +6,36 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-31
+
+Opening the repository outside the app: its folder in the file manager and a terminal in it,
+from the File menu; plus updated dependencies.
+
 ### Added
 
 - **Show in file manager** and **Open terminal here** in the File menu: they open the folder of
   the repository shown in the system's file manager or in a terminal (on Linux `$TERMINAL`, then
-  `x-terminal-emulator` and the common desktop terminals).
+  `x-terminal-emulator` and the common desktop terminals; Terminal on macOS; Windows Terminal,
+  otherwise `cmd`, on Windows). A program that does not start shows its error in the status bar.
+
+### Changed
+
+- Dependencies updated (patch and minor versions).
+
+### Packages
+
+- Linux: `BinariGit-0.8.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.8.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.8.0-x86_64.msi` and `BinariGit-0.8.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- The ssh passphrase and host-key prompts need OpenSSH 8.4 or newer.
+- No macOS build.
 
 ## [0.7.0] - 2026-10-31
 
@@ -318,7 +343,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.4.0...v0.5.0

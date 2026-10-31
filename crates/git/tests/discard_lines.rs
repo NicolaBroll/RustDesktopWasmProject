@@ -266,6 +266,29 @@ fn executable_bit_is_kept() {
     );
 }
 
+/// With `core.fileMode=false` git ignores the permissions on disk: an executable file whose index
+/// entry is `100644` can be discarded (and undone), and the mode recorded is git's.
+#[cfg(unix)]
+#[test]
+fn file_mode_false_ignores_the_permissions_on_disk() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repo_with(BASE.as_bytes(), NOW.as_bytes());
+    repo.git(&["config", "core.fileMode", "false"]);
+    let path = repo.path().join("f.txt");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (r, mut s) = open(&repo);
+    let out = discard(&r, &mut s, "f.txt", |_| vec![LineRef::New(5)]).unwrap();
+    assert_eq!(out["mode"], 0o100644);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    run(&r, &mut s, "edit.undo", json!({}));
+    assert_eq!(bytes(&repo, "f.txt"), NOW.as_bytes());
+    run(&r, &mut s, "edit.redo", json!({}));
+    assert_ne!(bytes(&repo, "f.txt"), NOW.as_bytes());
+}
+
 #[test]
 fn stale_digest_writes_nothing() {
     let repo = repo_with(BASE.as_bytes(), NOW.as_bytes());

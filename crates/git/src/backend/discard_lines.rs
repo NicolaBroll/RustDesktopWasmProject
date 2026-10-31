@@ -66,10 +66,10 @@ impl CliBackend {
             return Err(changed());
         }
         self.check_real_dirs(std::slice::from_ref(path))?;
-        let (mode, bytes) = self.read_file(path)?;
-        if prepared.file.new_mode.is_some_and(|m| m != mode) {
-            return Err(changed());
-        }
+        let (disk_mode, bytes) = self.read_file(path)?;
+        // The mode git sees (it follows `core.fileMode`), not the permissions on disk: with
+        // `core.fileMode=false` or on Windows the two differ and git's is the one that counts.
+        let mode = prepared.file.new_mode.unwrap_or(entry.0);
 
         // The bytes on disk clean to the diff's new side, and smudge back to themselves.
         let clean_oid = self.hash_with_filters(path, &bytes)?;
@@ -122,11 +122,11 @@ impl CliBackend {
 
         // Last check before writing: the file is still the one read.
         self.check_real_dirs(std::slice::from_ref(path))?;
-        if self.read_file(path).ok() != Some((mode, bytes)) {
+        if self.read_file(path).ok() != Some((disk_mode, bytes)) {
             return Err(changed());
         }
         self.write_file(path, &new_bytes, &backup)?;
-        let warnings = self.not_written("worktree.discard_lines", path, mode, &new_bytes, &backup);
+        let warnings = self.not_written("worktree.discard_lines", path, &new_bytes, &backup);
         Ok(DiscardLinesOutcome {
             file: LinesBackup {
                 path: path.clone(),
@@ -150,13 +150,15 @@ impl CliBackend {
         let content = self.blob(&wanted)?;
         self.check_real_dirs(std::slice::from_ref(path))
             .map_err(|_| request.conflict())?;
-        if self.read_file(path).ok() != Some((request.file.mode, expected)) {
+        // Only the bytes: the permissions are kept by `write_file`, and the recorded mode is the
+        // one git saw, which may differ from the one on disk (`core.fileMode=false`).
+        if self.read_file(path).ok().map(|(_, bytes)| bytes) != Some(expected) {
             return Err(request.conflict());
         }
         // The bytes overwritten stay in the object database as blob `expected_oid`.
         let note = format!("blob {expected_oid}");
         self.write_file(path, &content, &note)?;
-        let warnings = self.not_written(request.command, path, request.file.mode, &content, &note);
+        let warnings = self.not_written(request.command, path, &content, &note);
         Ok(RestoreOutcome {
             backups: Vec::new(),
             warnings,
@@ -235,18 +237,17 @@ impl CliBackend {
         Ok(())
     }
 
-    /// A warning if `path` reread does not have `mode` and `content` (another program wrote it
-    /// right after?).
+    /// A warning if `path` reread does not have `content` (another program wrote it right
+    /// after?).
     fn not_written(
         &self,
         command: &str,
         path: &RepoPath,
-        mode: u32,
         content: &[u8],
         backup: &str,
     ) -> Vec<Message> {
         match self.read_file(path) {
-            Ok((m, bytes)) if m == mode && bytes == content => Vec::new(),
+            Ok((_, bytes)) if bytes == content => Vec::new(),
             _ => vec![msg!(
                 "engine-discard-lines-not-as-expected",
                 command = command,
@@ -260,13 +261,11 @@ impl CliBackend {
 /// Reflog and first line of the backup commit.
 const BACKUP_MESSAGE: &str = "project: backup of the file before worktree.discard_lines";
 
-/// `.<name>.project-<pid>-<nanoseconds>.tmp` in the folder of `full`.
+/// `.project-<pid>-<nanoseconds>.tmp` in the folder of `full`: without the file's name, which
+/// could push it past the file system's name limit.
 fn temp_name(full: &Path) -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    let mut name = OsString::from(".");
-    name.push(full.file_name().unwrap_or_default());
-    name.push(format!(".project-{}-{nanos}.tmp", std::process::id()));
-    full.with_file_name(name)
+    full.with_file_name(format!(".project-{}-{nanos}.tmp", std::process::id()))
 }

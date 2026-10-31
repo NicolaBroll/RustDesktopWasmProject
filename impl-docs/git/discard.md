@@ -130,16 +130,19 @@ numbers of the seen diff, `StaleDiff` if the reread diff has another digest. Cho
 
 The `CliBackend`, in this order: status without fsmonitor and `discard_lines_target`; the index
 entry (`ls-files -s`) equal to the status one; the diff and `discard_line_patch`, with the diff's
-old id equal to that entry and its new mode equal to the file's; every directory on the path a real
-directory and the file a regular file (`lstat`; bytes and mode read once); clean and smudge checks
+old id equal to that entry; every directory on the path a real
+directory and the file a regular file (`lstat`; bytes and permissions read once). The mode recorded (backup, result, journal) is the
+diff's new mode, the one git sees: with `core.fileMode=false` or on Windows the permissions on disk
+may differ from it, and they are never compared with it; clean and smudge checks
 above; the new content and its bytes; **backup**: a commit with only the file and its exact bytes
 and mode (`hash-object -w --no-filters`, temporary index, fixed identity, never signed) whose
 **parent** is a commit with the bytes to write (so that both blobs of the journal entry stay
 reachable after a `git gc`), held by `update-ref refs/project/backup/discard-<seconds>-<nanoseconds>
 <commit> ""` and verified with `ls-tree`; if any of this fails nothing is written. **Last check**:
-the directories again and the file still has exactly the bytes and mode read (otherwise `StaleDiff`,
+the directories again and the file still has exactly the bytes and permissions read (otherwise `StaleDiff`,
 nothing written; the backup ref stays, harmless). Then the **atomic write**: a new temporary file
-`.<name>.project-<pid>-<nanoseconds>.tmp` in the same directory (`create_new`), the bytes, the old
+`.project-<pid>-<nanoseconds>.tmp` in the same directory (without the file's name, which could
+exceed the name limit) (`create_new`), the bytes, the old
 file's permissions, `sync_all`, `rename` over the file (on failure the temporary file is removed and
 the error names the backup). The rename gives the file a new inode: a hard link to the old file
 keeps the old content. Only the instant between the last check and the rename remains, in which an
@@ -156,8 +159,8 @@ to the index, which after discarding only some lines is not the case. Undo and r
 those of `worktree.discard`, that no operation is in progress and that HEAD is the recorded one,
 then call `GitIndex::restore_lines`:
 
-- **undo**: the file must be a regular file with exactly the bytes of `after` and the recorded
-  mode, otherwise `UndoConflict` and nothing changes; then the bytes of `before` are written
+- **undo**: the file must be a regular file with exactly the bytes of `after` (the permissions are
+  not compared: the write keeps them), otherwise `UndoConflict` and nothing changes; then the bytes of `before` are written
   atomically as above. Nothing is lost: the bytes overwritten are blob `after`.
 - **redo**: the same with the roles swapped (exactly the bytes of `before`, then `after` written).
   No new backup.

@@ -433,3 +433,96 @@ fn head_moved_by_a_hook_during_the_squash_is_an_error() {
     ]);
     assert_eq!(repo.rev(backup.trim()), c1);
 }
+
+fn backup_refs(repo: &Repo) -> String {
+    repo.git(&["for-each-ref", "refs/project/backup/"])
+}
+
+#[test]
+fn leftover_squash_msg_and_git_refusing_before_writing() {
+    let (repo, c1, _) = ahead_branch();
+    // A squash from the terminal whose changes were thrown away: `SQUASH_MSG` stays.
+    repo.git(&["merge", "-q", "--squash", "ahead"]);
+    repo.git(&["restore", "--staged", "--worktree", "--", "."]);
+    repo.git(&["clean", "-qfd"]);
+    assert!(squash_msg(&repo) && clean(&repo));
+    let backups = backup_refs(&repo);
+    let (r, mut s) = open(&repo);
+    let err = r
+        .run(
+            "merge.start",
+            &mut s,
+            json!({ "rev": "ahead", "squash": true }),
+        )
+        .unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(err.to_string().contains("SQUASH_MSG"), "{err}");
+    assert_eq!(backup_refs(&repo), backups);
+    assert!(!record(&repo) && clean(&repo));
+    assert_eq!(repo.rev("main"), c1);
+
+    // Without the leftover, git refuses before writing (unsigned commits): its error, not a
+    // squash in progress.
+    std::fs::remove_file(repo.path().join(".git/SQUASH_MSG")).unwrap();
+    repo.git(&["config", "merge.verifySignatures", "true"]);
+    let err = r
+        .run(
+            "merge.start",
+            &mut s,
+            json!({ "rev": "ahead", "squash": true }),
+        )
+        .unwrap_err();
+    assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    assert!(err.to_string().contains("signature"), "{err}");
+    assert_eq!(backup_refs(&repo), backups);
+    assert!(!record(&repo) && !squash_msg(&repo) && clean(&repo));
+    let status = run(&r, &mut s, "repo.status", json!({}));
+    assert_eq!(status["operation"], Value::Null);
+}
+
+#[test]
+fn record_of_another_squash_from_the_terminal_is_stale() {
+    let (repo, _) = repo_with_divergent_branches();
+    repo.branch("y");
+    repo.checkout("y");
+    repo.commit_file("y.txt", "y\n", "on y");
+    repo.checkout("main");
+    let (r, mut s) = open(&repo);
+    run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": "other", "squash": true }),
+    );
+    assert!(record(&repo));
+    // From the terminal: the squash of `other` undone, one of `y` started, same HEAD.
+    repo.git(&["reset", "-q", "--merge"]);
+    repo.git(&["merge", "-q", "--squash", "y"]);
+    assert!(squash_msg(&repo) && record(&repo));
+    let op = run(&r, &mut s, "repo.operation", json!({}));
+    assert_eq!(op["operation"], Value::Null);
+    assert!(!record(&repo));
+    let err = r.run("merge.continue", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+}
+
+#[test]
+fn continue_with_resolutions_equal_to_head_points_to_abort() {
+    let (repo, _) = repo_with_divergent_branches();
+    let ours = repo.rev("HEAD");
+    let (r, mut s) = open(&repo);
+    run(
+        &r,
+        &mut s,
+        "merge.start",
+        json!({ "rev": "other", "squash": true }),
+    );
+    repo.write("a.txt", "ours\n");
+    run(&r, &mut s, "index.stage", json!({ "paths": ["a.txt"] }));
+    let err = r.run("merge.continue", &mut s, json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+    assert!(err.to_string().contains("merge.abort"), "{err}");
+    assert_eq!(repo.rev("main"), ours);
+    run(&r, &mut s, "merge.abort", json!({ "confirm": true }));
+    assert!(clean(&repo) && !record(&repo) && !squash_msg(&repo));
+}

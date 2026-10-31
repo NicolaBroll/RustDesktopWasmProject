@@ -638,6 +638,12 @@ fn squash_continue(
             command = ID
         ))
     })?;
+    if !status.entries.iter().any(|e| e.is_staged()) {
+        // The resolutions leave the branch as it is: nothing to commit.
+        return Err(EngineError::NotAllowed(msg!(
+            "engine-merge-squash-continue-empty"
+        )));
+    }
     let message = message.unwrap_or_else(|| record.message.clone());
     let outcome = repo.commit(&CommitRequest::new(message.clone()))?;
     let full = branch_ref(&record.branch);

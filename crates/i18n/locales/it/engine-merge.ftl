@@ -37,7 +37,10 @@ engine-merge-unexpected-result = il branch è a { $after } ma non è il risultat
 engine-merge-head-moved-after = dopo il merge HEAD non è più su `{ $full }`: un hook o un altro processo l'ha cambiata; controllare HEAD prima di continuare
 # Merge squash (`merge.start` con `squash`, S58).
 engine-merge-squash-with-ff = `squash` non si può combinare con `no_ff` o `ff_only`
-engine-merge-squash-record-not-written = non è stato possibile salvare il record dello squash nella cartella di git ({ $error }), niente modificato
+engine-merge-squash-record-not-written = git ha messo in stage lo squash ma non è stato possibile salvarne il record nella cartella di git ({ $error }): l'app non lo vede in corso; concluderlo con `git commit` o annullarlo con `git reset --merge`; il branch com'era è in `{ $backup }`
+engine-merge-squash-leftover = c'è un `SQUASH_MSG` rimasto da un merge squash avviato fuori dall'app (`.git/SQUASH_MSG`), niente modificato: concludere quello squash con `git commit` o cancellare il file, poi riprovare
+engine-merge-squash-failed = `git merge --squash` non è riuscito dopo essere partito ({ $text }): controllare indice e worktree; il branch com'era è in `{ $backup }`
+engine-merge-squash-continue-empty = i file risolti lasciano il branch com'è: lo squash non ha niente da committare, niente modificato. Terminarlo con `merge.abort` (indice e worktree vengono prima salvati in un backup)
 engine-merge-squash-moved = `git merge --squash` è terminato ma HEAD non è più su `{ $full }` a { $expected } ({ $text }): controllare indice e worktree; il branch com'era è in `{ $backup }`
 engine-merge-squash-empty = le modifiche di { $source } sono già in `{ $branch }`: niente da committare, niente modificato
 engine-merge-squash-commit-failed = lo squash è in stage ma il commit non è riuscito ({ $error }): resta in corso, concluderlo con `merge.continue` o annullarlo con `merge.abort`

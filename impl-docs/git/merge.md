@@ -67,8 +67,12 @@ after `--end-of-options` (a branch `-x` does not become an option). Empty or wit
   warning. **Stopped** (conflicts, or a hook/signing that rejected the commit): the squash stays
   in progress, `in_progress: true`, `conflicts` (empty for a hook, whose text is in `message`).
   Git has no state for it (no `MERGE_HEAD`), so the engine keeps a `SquashRecord` (`branch`,
-  `head` before, `target`, `source`, `backup`, `message`) in `<git dir>/project-squash.json`; it
-  counts only while HEAD is on `branch` at `head` and `SQUASH_MSG` exists. Then
+  `head` before, `target`, `source`, `backup`, `message`, `squash_msg`: a hash of the `SQUASH_MSG`
+  git wrote for it) in `<git dir>/project-squash.json`; it counts only while HEAD is on `branch`
+  at `head` and `SQUASH_MSG` is that same file (a squash started later from the terminal, even
+  on the same HEAD, makes it stale). A `SQUASH_MSG` left over from a terminal squash (no
+  operation in progress) → `NotAllowed` before writing (choice: refused, not removed: it may be
+  the user's draft). Then
   `Status::operation` is `Squash` (`repo.status`, `repo.operation`), so **every command that
   refuses during an operation refuses during a squash too**, and `edit.undo`/`edit.redo` refuse.
   A stale record (a `git commit` or `git reset` from the terminal) is ignored and removed when
@@ -95,7 +99,8 @@ Message: `message` (non-empty, without NUL) or the one prepared by git, `MERGE_M
 `whitespace` cleanup does not remove comments, which would end up in the commit; applies with any
 `core.commentChar`); without `MERGE_MSG`, `Merge commit '<id>'`. It also works for a merge started
 from the terminal. **Squash in progress**: the ordinary commit (one parent) of what is staged, with
-`message` or the record's message; into the journal as the squash of `merge.start` (same entry,
+`message` or the record's message (resolutions that leave nothing staged → `NotAllowed` pointing
+to `merge.abort`, nothing changes); into the journal as the squash of `merge.start` (same entry,
 backup of the record) if the branch moves from the record's `head`, otherwise as a commit. `commit.create` with a merge in progress stays possible and makes the same commit, but goes
 into the journal as a commit (undo = `reset --soft`); `merge.continue` is the command to use.
 
@@ -220,8 +225,12 @@ change a file (which `reset --merge` would bring back to HEAD without it being i
 against `branch.<name>.mergeOptions` with `--commit`/`--no-ff`, with which git refuses `--squash`,
 and against `merge.ff=only`; `--squash` against `--no-squash`; `--no-autostash` against
 `merge.autoStash`). Afterwards HEAD must still be on the branch at its value (a `post-merge` hook
-runs after `--squash` too): otherwise `Git` error naming the backup. No `SQUASH_MSG` → nothing
-started: record and backup removed, `NotAllowed` with the files or `Git`. Conflicts → in progress.
+runs after `--squash` too): otherwise `Git` error naming the backup. Started only with exit code
+0 or 1 **and** a `SQUASH_MSG` written by this run (none existed before): then the record is
+written with its hash (if that fails: `Git` error naming the backup and saying the squash is staged
+outside the app). Not started (e.g. `merge.verifySignatures`, exit 128, or a file in the way) →
+backup removed, `NotAllowed` with the files or `Git` with git's text; a `SQUASH_MSG` after a
+failure → `Git` error naming the backup, which stays. Conflicts (exit 1) → in progress.
 Otherwise nothing staged → `SQUASH_MSG`, record and backup removed, warning; else
 `CliBackend::create_commit`: success → record removed; `PostCommit` → returned with the backup;
 rejected (hook, signing) with the squash still valid → in progress with git's text; otherwise the

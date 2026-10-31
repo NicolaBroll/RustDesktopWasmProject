@@ -85,6 +85,11 @@ pub struct SquashRecord {
     pub backup: String,
     /// The message of the squash commit (`merge.continue` without `message` uses it).
     pub message: String,
+    /// `CliBackend`: a hash (FNV-1a 64, hex) of the `SQUASH_MSG` git wrote for this squash: the
+    /// record counts only while the file is that one (not one of a squash started later from the
+    /// terminal). `None` on the `MemoryBackend`.
+    #[serde(default)]
+    pub squash_msg: Option<String>,
 }
 
 impl SquashRecord {
@@ -107,6 +112,7 @@ impl SquashRecord {
             source: request.target_name.clone(),
             backup: backup.to_owned(),
             message: request.message.clone(),
+            squash_msg: None,
         }
     }
 }

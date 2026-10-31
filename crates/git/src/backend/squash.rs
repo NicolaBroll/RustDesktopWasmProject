@@ -31,13 +31,15 @@ impl CliBackend {
         full: &str,
         backup: String,
     ) -> Result<MergeOutcome, EngineError> {
-        let record = SquashRecord::of(request, &backup);
-        if let Err(e) = std::fs::write(self.git_dir.join(SQUASH_RECORD), record.to_bytes()) {
+        // No operation is in progress (checked): a `SQUASH_MSG` is left over from a squash of
+        // the terminal. Refused: it may be the user's draft, and the state after git would be
+        // ambiguous.
+        let squash_msg = self.git_dir.join("SQUASH_MSG");
+        if squash_msg.exists() {
             self.drop_merge_backup(&backup, full, &request.expected);
-            return Err(EngineError::GitWithReason {
-                command: "merge".to_owned(),
-                reason: msg!("engine-merge-squash-record-not-written", error = e),
-            });
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-merge-squash-leftover"
+            )));
         }
         let target = request.target.to_string();
         let args: Vec<&OsStr> = [
@@ -69,9 +71,33 @@ impl CliBackend {
         .to_owned();
         // `--squash` never moves HEAD: if it moved, something else happened.
         self.check_squash_head(request, full, &backup, &text)?;
-        if self.operation() != Some(Operation::Squash) {
+        // Started only if git ended normally or on conflicts (0 or 1) and wrote `SQUASH_MSG`.
+        let written = std::fs::read(&squash_msg).ok();
+        let started = matches!(out.status.code(), Some(0 | 1)) && written.is_some();
+        if !started && written.is_some() {
+            // Git failed after writing something: the state is unknown, the backup stays.
+            return Err(EngineError::GitWithReason {
+                command: "merge".to_owned(),
+                reason: msg!("engine-merge-squash-failed", text = text, backup = backup),
+            });
+        }
+        if let Some(bytes) = written.filter(|_| started) {
+            let mut record = SquashRecord::of(request, &backup);
+            record.squash_msg = Some(squash_hash(&bytes));
+            if let Err(e) = std::fs::write(self.git_dir.join(SQUASH_RECORD), record.to_bytes()) {
+                return Err(EngineError::GitWithReason {
+                    command: "merge".to_owned(),
+                    reason: msg!(
+                        "engine-merge-squash-record-not-written",
+                        error = e,
+                        backup = backup
+                    ),
+                });
+            }
+        }
+        if !started || self.operation() != Some(Operation::Squash) {
             // Git did not start the squash (no `SQUASH_MSG`): e.g. a file that would be
-            // overwritten. Nothing written.
+            // overwritten, or a refusal before writing. Nothing written.
             self.remove_squash_record();
             self.drop_merge_backup(&backup, full, &request.expected);
             if let Some(error) = overwrite_error(&text, msg!("engine-merge-what-merge")) {
@@ -193,15 +219,17 @@ impl CliBackend {
     }
 
     /// The record of the squash merge in progress: `None` without a record or if it is stale
-    /// (no `SQUASH_MSG`, HEAD no longer on the branch at the value the squash started on, an
+    /// (no `SQUASH_MSG` or not the one git wrote for this squash, HEAD no longer on the branch at the value the squash started on, an
     /// unreadable record), and then the file is removed. If HEAD cannot be read the record is
     /// kept as valid: an operation that is not there refuses a command, never the opposite.
     pub(super) fn squash_record(&self) -> Option<SquashRecord> {
         let path = self.git_dir.join(SQUASH_RECORD);
         let bytes = std::fs::read(&path).ok()?;
         let valid = SquashRecord::from_bytes(&bytes).filter(|record| {
-            if !self.git_dir.join("SQUASH_MSG").exists() {
-                return false;
+            // The `SQUASH_MSG` of this squash, not a later one from the terminal.
+            match std::fs::read(self.git_dir.join("SQUASH_MSG")) {
+                Ok(bytes) if record.squash_msg.as_deref() == Some(&squash_hash(&bytes)) => {}
+                _ => return false,
             }
             let full = branch_ref(&record.branch);
             match (self.head_ref_name(), self.ref_value(&full)) {
@@ -223,4 +251,12 @@ impl CliBackend {
             .map(|r| r.target.to_string())
             .unwrap_or_default()
     }
+}
+
+/// FNV-1a 64 of `bytes`, hex: identifies the `SQUASH_MSG` of a squash ([`SquashRecord::squash_msg`]).
+fn squash_hash(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
 }

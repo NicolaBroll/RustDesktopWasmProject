@@ -38,7 +38,7 @@ schemars = "1"
 thiserror = "2"
 log = "0.4"
 libc = "0.2"
-# Random token of the askpass bridge (S52); already in the lock through tempfile.
+# Random token of the askpass bridge (S52); already in the lock through ahash (egui).
 getrandom = "0.3"
 anyhow = "1"
 

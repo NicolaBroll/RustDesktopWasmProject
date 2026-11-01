@@ -18,8 +18,10 @@ mod reset;
 mod restore;
 mod search;
 mod stash;
+mod submodule;
 mod sync;
 mod tags;
+mod worktree;
 mod write;
 
 pub use clean::CleanStash;
@@ -29,6 +31,7 @@ use rebase::MemoryRebase;
 pub use remote::FetchFailure;
 use remote::MemoryRemote;
 use stash::MemoryStash;
+pub use worktree::{MEMORY_MAIN_WORKTREE, MemoryWorktree};
 
 use super::line_diff;
 use super::{
@@ -131,6 +134,9 @@ pub struct MemoryBackend {
     /// How many `restore_refs` calls still succeed before failing
     /// ([`MemoryBackend::fail_restore_refs_after`]); `None`: always.
     restore_budget: Option<usize>,
+    /// If set, `rename_remote` fails: before writing (`false`) or after moving the configuration
+    /// (`true`) ([`MemoryBackend::fail_remote_rename`]).
+    remote_rename_failure: Option<bool>,
     /// The stashes, most recent first (`stash@{0}`); `refs/stash` points to the first.
     stashes: Vec<MemoryStash>,
     /// The dropped stashes, by id: `stash_store` (the undo of a drop) finds them again whole.
@@ -157,6 +163,17 @@ pub struct MemoryBackend {
     exclude: Option<Vec<u8>>,
     /// How many backups `worktree.ignore` saved (`refs/project/backup/ignore-<n>`).
     ignore_backups: u64,
+    /// The submodules ([`MemoryBackend::set_submodules`]).
+    submodules: Vec<super::SubmoduleInfo>,
+    /// Backups saved by `submodule.update` inside the submodules: ref, path, HEAD saved.
+    submodule_backups: Vec<(String, RepoPath, Oid)>,
+    /// The paths stored in Git LFS and whether git-lfs is installed ([`MemoryBackend::set_lfs`]).
+    lfs_files: BTreeSet<RepoPath>,
+    lfs_installed: bool,
+    /// The linked worktrees ([`MemoryBackend::add_linked_worktree`], `worktree.add`).
+    linked_worktrees: Vec<MemoryWorktree>,
+    /// Paths that exist and are not empty ([`MemoryBackend::occupy_path`]).
+    occupied_paths: BTreeSet<String>,
 }
 
 impl Default for MemoryBackend {
@@ -193,6 +210,7 @@ impl MemoryBackend {
             remote_elsewhere: BTreeMap::new(),
             listed_anyway: BTreeSet::new(),
             restore_budget: None,
+            remote_rename_failure: None,
             stashes: Vec::new(),
             dropped_stashes: BTreeMap::new(),
             stash_drop_failure: None,
@@ -204,6 +222,12 @@ impl MemoryBackend {
             tag_objects: BTreeMap::new(),
             exclude: None,
             ignore_backups: 0,
+            submodules: Vec::new(),
+            lfs_files: Default::default(),
+            lfs_installed: true,
+            submodule_backups: Vec::new(),
+            linked_worktrees: Vec::new(),
+            occupied_paths: BTreeSet::new(),
         }
     }
 
@@ -684,6 +708,16 @@ impl MemoryBackend {
     }
 }
 
+impl MemoryBackend {
+    /// The files stored in Git LFS (`repo.lfs_paths`; `repo.lfs_status` says `used` when there
+    /// is at least one) and whether git-lfs is installed. The `MemoryBackend` has no filters:
+    /// it only reports them, the content of those files is what was written.
+    pub fn set_lfs(&mut self, paths: impl IntoIterator<Item = RepoPath>, installed: bool) {
+        self.lfs_files = paths.into_iter().collect();
+        self.lfs_installed = installed;
+    }
+}
+
 impl GitRead for MemoryBackend {
     fn head(&self) -> Result<Head, EngineError> {
         Ok(match &self.head {
@@ -864,6 +898,22 @@ impl GitRead for MemoryBackend {
 
     fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
         Ok(self.upstream_entries(name))
+    }
+
+    fn lfs_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>, EngineError> {
+        let mut seen = BTreeSet::new();
+        Ok(paths
+            .iter()
+            .filter(|p| self.lfs_files.contains(*p) && seen.insert(*p))
+            .cloned()
+            .collect())
+    }
+
+    fn lfs_state(&self) -> Result<super::LfsState, EngineError> {
+        Ok(super::LfsState {
+            used: !self.lfs_files.is_empty(),
+            installed: self.lfs_installed,
+        })
     }
 }
 
@@ -1121,6 +1171,19 @@ impl GitRemotes for MemoryBackend {
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         Ok(self.remote_elsewhere.get(name).cloned().unwrap_or_default())
     }
+
+    fn set_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.change_remote_url(name, push, url)
+    }
+
+    fn rename_remote(&mut self, from: &str, to: &str) -> Result<Vec<Message>, EngineError> {
+        self.rename_memory_remote(from, to)
+    }
 }
 
 impl GitStash for MemoryBackend {
@@ -1187,6 +1250,40 @@ impl GitOperations for MemoryBackend {
 
     fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.rebase_stop()
+    }
+}
+
+impl super::GitWorktrees for MemoryBackend {
+    fn worktrees(&self) -> Result<Vec<super::WorktreeInfo>, EngineError> {
+        Ok(self.memory_worktrees())
+    }
+
+    fn add_worktree(
+        &mut self,
+        request: &super::WorktreeAdd,
+    ) -> Result<super::WorktreeAdded, EngineError> {
+        self.memory_add_worktree(request)
+    }
+
+    fn remove_worktree(
+        &mut self,
+        request: &super::WorktreeRemove,
+    ) -> Result<super::WorktreeRemoved, EngineError> {
+        self.memory_remove_worktree(request)
+    }
+}
+
+impl super::GitSubmodules for MemoryBackend {
+    fn submodules(&self) -> Result<Vec<super::SubmoduleInfo>, EngineError> {
+        Ok(self.submodules.clone())
+    }
+
+    fn update_submodules(
+        &mut self,
+        request: &super::SubmoduleUpdate,
+        job: &JobContext,
+    ) -> Result<super::SubmoduleUpdated, EngineError> {
+        self.memory_submodule_update(request, job)
     }
 }
 
@@ -1338,7 +1435,8 @@ impl RepoOpener for MemoryOpener {
                 message: format!("fatal: repository '{}' does not exist", request.url),
             });
         };
-        let clone = remote.cloned(&request.url, request.branch.as_deref())?;
+        let mut clone = remote.cloned(&request.url, request.branch.as_deref())?;
+        clone.clone_submodules(&remote.submodules, request.submodules);
         job.report(&Progress {
             phase: "Receiving objects".to_owned(),
             remote: false,

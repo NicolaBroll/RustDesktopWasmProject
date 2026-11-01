@@ -21,6 +21,19 @@ impl MemoryBackend {
     /// nothing.
     pub(super) fn restore(&mut self, request: &RefRestore) -> Result<Vec<String>, EngineError> {
         request.check(self.operation)?;
+        // A branch open in a linked worktree is not deleted (e.g. undo of `worktree.add`).
+        for r in &request.refs {
+            if r.target.is_none()
+                && let Some(w) = self.worktree_of_branch(&r.name)
+            {
+                return Err(EngineError::NotAllowed(msg!(
+                    "engine-undo-delete-worktree-branch",
+                    command = request.command,
+                    name = r.name,
+                    worktree = w.path
+                )));
+            }
+        }
         let head = self.head_state();
         let conflicts =
             request.conflicts(&head, |name| Ok(self.refs.get(name).map(RefEntry::value)))?;

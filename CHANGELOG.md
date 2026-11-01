@@ -6,6 +6,63 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-01
+
+Tools for larger projects: submodules, Git LFS and worktrees, plus editing remotes, opening files
+in an external editor and searching in the content of the changes.
+
+### Added
+
+- **Submodules**: a “Submodules” section in the side panel shows each submodule's state
+  (not initialized, at another commit, with changes) with “Update”, “Initialize and update”,
+  “Update all” and “Open in a new tab”; “With submodules” in the clone dialog. An update is
+  refused for a submodule with changes, untracked files, an operation in progress, commits on no
+  branch or tag, or ignored files where new files would go; a detached HEAD is saved in a backup
+  first (`submodule.list`, `submodule.update`, `repo.clone` with `submodules`). After a checkout,
+  pull or merge that leaves submodules behind, a notice offers to update them.
+- **Git LFS**: LFS files get an “LFS” badge in the stage area and the diff, whose content shows
+  “Stored in Git LFS (<size>)” instead of the pointer; a notice when the repository uses LFS and
+  git-lfs is not installed (`repo.lfs_paths`, `repo.lfs_status`).
+- **Worktrees**: a “Worktrees” section in the side panel when there is more than one, “New
+  worktree from this branch…” (existing branch, new branch or a commit; it opens in a new tab)
+  and “Remove…”, refused when the worktree has changes, untracked or ignored files
+  (`worktree.list`, `worktree.add`, `worktree.remove`).
+- **Edit remotes**: “Edit URL…” (with an optional separate push URL) and “Rename…” in the menu of
+  a remote; renaming carries remote branches and upstreams along; both can be undone
+  (`remote.set_url`, `remote.rename`).
+- **Open in editor** and **Show in file manager** in the menus of changed files, of a commit's
+  files and of the diff header; the editor command is set in Settings → General (otherwise the
+  system's default application).
+- **Search in the content of the changes**: the “Content” toggle of the search bar finds the
+  commits that add or remove a text (or, with “Regex”, change lines matching it); it runs on
+  Enter and can be stopped (`repo.search` with `"in": ["content"]`).
+
+### Changed
+
+- Git is always run with `submodule.recurse=false`: a checkout, pull, merge, reset or stash never
+  moves submodules on its own, whatever the user's configuration says.
+
+### Fixed
+
+- Staging, unstaging or discarding single lines of a Git LFS file is refused: it could write a
+  broken pointer.
+
+### Packages
+
+- Linux: `BinariGit-0.10.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.10.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.10.0-x86_64.msi` and `BinariGit-0.10.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- The ssh passphrase and host-key prompts need OpenSSH 8.4 or newer.
+- The credential prompt of a Git LFS server has not been tested against a real server.
+- No macOS build.
+
 ## [0.9.0] - 2026-10-31
 
 Three everyday operations that were missing: discarding single lines or hunks, ignoring files
@@ -386,7 +443,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.6.0...v0.7.0

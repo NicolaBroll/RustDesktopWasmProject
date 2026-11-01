@@ -34,6 +34,10 @@ use project_engine::{
 use project_i18n::tr;
 use serde_json::{Value, json};
 
+#[path = "remote_edit.rs"]
+mod edit;
+pub use edit::{EditDialog, EditFields, EditKind};
+
 /// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
 #[derive(Debug, Clone)]
 pub(crate) enum Action {
@@ -64,6 +68,12 @@ pub(crate) enum Action {
     /// Confirms the pending deletion of the remote tag: resends with `"confirm": true` and the
     /// value seen.
     ConfirmDeleteTag,
+    /// Opens "Edit URL…" (`EditKind::Url`) or "Rename…" of the given remote.
+    Edit(String, EditKind),
+    /// The fields of the edit dialog changed.
+    EditFields(EditFields),
+    /// Submits the edit dialog.
+    SubmitEdit,
     /// Closes the open remotes dialog without sending anything.
     CloseDialog,
     /// Closes the fetch error window after the add.
@@ -80,6 +90,8 @@ pub enum Op {
     Remove,
     DeleteBranch,
     DeleteTag,
+    SetUrl,
+    Rename,
 }
 
 impl Op {
@@ -90,6 +102,8 @@ impl Op {
             Op::Remove => "remote.remove",
             Op::DeleteBranch => "remote.delete_branch",
             Op::DeleteTag => "remote.delete_tag",
+            Op::SetUrl => "remote.set_url",
+            Op::Rename => "remote.rename",
         }
     }
 }
@@ -290,6 +304,7 @@ pub enum Dialog {
     Add(AddDialog),
     Remove(RemoveDialog),
     DeleteBranch(DeleteBranchDialog),
+    Edit(EditDialog),
 }
 
 /// The remote and the branch on it of a remote-tracking branch shown as `short` (`origin/feature/x`):
@@ -317,11 +332,19 @@ pub struct RemotesBox {
     failure: Option<Failure>,
 }
 
-/// What came back from `remote.add`/`remote.remove`.
+/// What came back from a command of the remotes.
 #[derive(Debug)]
 pub enum Received {
     /// Done: what to update in the view.
     Done(Box<Outcome>),
+    /// A step done (fetch URL written), the dialog stays: update the view with `outcome` and
+    /// send the next step.
+    Step {
+        outcome: Box<Outcome>,
+        op: Op,
+        params: Value,
+        label: String,
+    },
     /// Refused: the error is in the add dialog, which stays open.
     Inline,
     /// The removal (or the deletion of a remote branch) needs confirmation: the dialog opens.
@@ -381,7 +404,7 @@ impl RemotesBox {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Remove(remove) => matches!(remove.phase, Phase::Confirm { .. }),
             Dialog::DeleteBranch(delete) => matches!(delete.phase, Phase::Confirm { .. }),
-            Dialog::Add(_) => true,
+            Dialog::Add(_) | Dialog::Edit(_) => true,
         })
     }
 
@@ -601,6 +624,7 @@ impl RemotesBox {
             Some(Dialog::Add(dialog)) => dialog.running.is_none(),
             Some(Dialog::Remove(remove)) => matches!(remove.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteBranch(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
+            Some(Dialog::Edit(edit)) => !edit.sending,
             None => false,
         };
         if closable {
@@ -623,8 +647,9 @@ impl RemotesBox {
             Op::DeleteBranch | Op::DeleteTag => {
                 self.receive_delete_branch(op, result, kind, detail, expected)
             }
+            Op::SetUrl | Op::Rename => self.receive_edit(op, result, kind),
         };
-        if let Received::Done(outcome) = &received
+        if let Received::Done(outcome) | Received::Step { outcome, .. } = &received
             && let Some(remotes) = &outcome.remotes
         {
             self.set_list(remotes.clone());
@@ -1138,6 +1163,33 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
+            Action::Edit(name, kind) => {
+                if let Some(repo) = &mut self.repo
+                    && self.executor.writing().is_none()
+                    && !repo.modal_open()
+                {
+                    repo.remotes.open_edit(&name, kind);
+                }
+            }
+            Action::EditFields(fields) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.remotes.set_edit_fields(fields);
+                }
+            }
+            Action::SubmitEdit => {
+                let generation = self.generation;
+                if self.executor.writing().is_some() {
+                    return;
+                }
+                let Some(repo) = &mut self.repo else {
+                    return;
+                };
+                if let Some((op, params, label)) = repo.remotes.submit_edit() {
+                    repo.write_error = None;
+                    repo.write_label = Some(label);
+                    self.submit(op.command(), params, Request::Remote(generation, op));
+                }
+            }
             Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.remotes.close();
@@ -1169,6 +1221,26 @@ impl Tab {
             Received::Inline | Received::Confirm => {
                 self.error.clear();
                 self.notice.clear();
+            }
+            Received::Step {
+                outcome,
+                op,
+                params,
+                label,
+            } => {
+                // The fetch URL is written: what it changed, then the push URL.
+                log::info!("{}: {}", done.command, outcome.notice);
+                if let Some(history) = outcome.history {
+                    repo.history = history;
+                }
+                if let Some(refs) = outcome.refs {
+                    repo.refs = refs;
+                    repo.update_labels();
+                }
+                repo.write_label = Some(label);
+                self.notice = outcome.notice;
+                self.error = outcome.warning.unwrap_or_default();
+                self.submit(op.command(), params, Request::Remote(generation, op));
             }
             Received::Done(outcome) => {
                 log::info!("{}: {}", done.command, outcome.notice);

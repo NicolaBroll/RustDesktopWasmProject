@@ -84,8 +84,8 @@ remotes-list-error = Remotes not read: { $error }
 remotes-add-button-hint = Adds a remote (name and URL) and, if chosen, fetches its branches right away. “Undo” removes it
 remotes-row-hint =
     { $tooltip }
-    Right-click: fetch, remove
-remotes-menu-hint = Fetch, remove
+    Right-click: fetch, edit URL, rename, remove
+remotes-menu-hint = Fetch, edit URL, rename, remove
 remotes-fetch-button = Fetch
 remotes-fetch-button-hint = Downloads commits, remote-tracking branches and tags from “{ $name }”. Doesn't touch local branches, the index or files
 remotes-remove-button = Remove…
@@ -129,3 +129,42 @@ remotes-tag-deleted-short = Tag deleted from the remote
 remotes-delete-tag-title = Delete tag “{ $name }” from “{ $remote }”?
 remotes-delete-tag-explanation = The tag “{ $name }” is deleted on the remote “{ $remote }”: it disappears for everyone who uses it. The local tag doesn't change.
 remotes-delete-tag-undo = It can't be undone with “Undo”: the remote belongs to others too. The value stays here in a backup (refs/project/backup/push-delete-…). If the tag changed on the remote after it was read, the deletion is refused and nothing changes.
+
+# Edit URL and rename (remote_edit.rs, S59).
+remotes-edit-url-button = Edit URL…
+remotes-edit-url-button-hint = Changes the URL the remote fetches from (and, if wanted, a separate push URL). Remote-tracking branches and upstreams stay; “Undo” restores the previous URL
+remotes-rename-button = Rename…
+remotes-rename-button-hint = Renames the remote: its remote-tracking branches and the upstreams using it follow the new name. Nothing is lost; “Undo” renames it back
+remotes-edit-url-title = Edit URL of “{ $name }”
+remotes-edit-url-explanation = Remote-tracking branches and the upstreams of local branches stay as they are; the next Fetch uses the new URL. “Undo” restores the previous one.
+remotes-edit-fetch-url = Fetch URL
+remotes-edit-push-url = Separate push URL
+remotes-edit-push-url-tooltip = Optional: where Push goes, if not the fetch URL (remote.<name>.pushurl). Empty leaves it as it is
+remotes-edit-push-url-hint = optional: same as the fetch URL
+remotes-edit-masked-note = The current URL contains credentials and is shown masked as hint: type the whole new URL, or leave the field empty to keep it.
+remotes-edit-to-ssh = From HTTPS to SSH: git will use your SSH key instead of the saved password or token; the key must be registered on the server.
+remotes-edit-to-https = From SSH to HTTPS: git will no longer use your SSH key and will ask for a user name and a password or token (or use the credential helper).
+remotes-edit-url-submit = Save URL
+remotes-rename-title = Rename remote “{ $name }”
+remotes-rename-explanation = The remote-tracking branches { $name }/* are moved under the new name, and local branches tracking them follow. Tags and local branches don't change; “Undo” renames it back.
+remotes-rename-submit = Rename
+remotes-set-url-label = Changing the URL of “{ $name }”
+remotes-set-push-url-label = Changing the push URL of “{ $name }”
+remotes-rename-label = Renaming remote “{ $name }” to “{ $new }”
+remotes-set-url-failed = Changing the URL of “{ $name }” failed: { $error }
+remotes-set-push-url-failed = Changing the push URL of “{ $name }” failed: { $error }
+remotes-rename-failed = Renaming remote “{ $name }” failed: { $error }
+remotes-url-set = URL of “{ $name }” changed to { $url }
+remotes-push-url-set = Push URL of “{ $name }” changed to { $url }
+remotes-url-unchanged = The URL of “{ $name }” was already { $url }: nothing changed
+remotes-push-url-unchanged = The push URL of “{ $name }” was already { $url }: nothing changed
+remotes-url-set-undo = ; “Undo” restores the previous one
+remotes-url-set-short = URL changed
+remotes-renamed = Remote “{ $name }” renamed to “{ $new }”
+remotes-renamed-refs = { $n ->
+    [one] ; 1 remote-tracking branch moved
+   *[other] ; { $n } remote-tracking branches moved
+}
+remotes-renamed-upstreams = ; upstream of { $names } now on “{ $new }”
+remotes-renamed-undo = . “Undo” renames it back
+remotes-renamed-short = Remote renamed

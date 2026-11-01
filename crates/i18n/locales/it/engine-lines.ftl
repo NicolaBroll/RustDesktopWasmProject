@@ -20,3 +20,4 @@ engine-lines-index-changed = l'indice è cambiato mentre si preparava la scrittu
 engine-lines-index-unexpected = dopo la scrittura la voce di `{ $target }` nell'indice non è quella attesa (un altro processo git?)
 engine-lines-index-unexpected-backup = dopo la scrittura la voce di `{ $target }` nell'indice non è quella attesa (un altro processo git?); la versione in stage precedente è in `{ $backup }`
 engine-lines-head-invalid = HEAD non punta a un commit valido (né a un branch senza commit): niente tolto dallo stage
+engine-lines-lfs = `{ $path }` è salvato in Git LFS: il diff mostra il suo puntatore, le cui righe non si possono scegliere una per una; aggiungi, togli o scarta il file intero

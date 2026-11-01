@@ -35,7 +35,8 @@ project-cli mcp [--root <dir>]                           # MCP server on stdin/s
 Commands: `repo.open {"path"}` (`{"path", "head", "commit_graph"}`: `commit_graph` false = no
 commit-graph, so `repo.log` is slow on huge histories), `repo.optimize` (writes the commit-graph,
 `git commit-graph write --reachable`: a cache, no `confirm`, nothing to undo; `{"commit_graph"}`),
-`repo.clone {"url", "path", "branch"?, "depth"?}` and `repo.init {"path", "branch"?}` (writes; no
+`repo.clone {"url", "path", "branch"?, "depth"?, "submodules"?}` (`submodules`: also the
+submodules, `--recurse-submodules`) and `repo.init {"path", "branch"?}` (writes; no
 open repo needed: they create the repo in an absent or empty folder, never over existing files, and
 open it; result as `repo.open`, plus `messages` for the clone; a cancelled or failed clone removes
 the folder it created; not available over MCP),
@@ -44,9 +45,11 @@ the folder it created; not available over MCP),
 `"all": true` from all local and remote branches, tags and HEAD, without stashes or backups, and with
 `"stashes": true` in addition also from the commits the stashes were created on; `rev` and
 `all` together, or `stashes` without `all`, are an error), `repo.search {"query", "in"?, "path"?,
-"all"?, "stashes"?, "skip"?, "limit"?}` (ids of the commits whose message, author name or email, or id
+"all"?, "stashes"?, "skip"?, "limit"?, "regex"?, "ignore_case"?}` (ids of the commits whose message, author name or email, or id
 prefix contain the text, literal and case-insensitive, in the order of `repo.log`; `in` limits to
-`"message"`, `"author"`, `"id"`; result `{"ids", "total", "has_more"}`), `commit.show {"id"}` (metadata and files
+`"message"`, `"author"`, `"id"`; `"in": ["content"]`, alone, finds the commits whose changes add or
+remove the text, `git log -S`, or with `"regex": true` have an added/removed line matching it, `git log -G`;
+result `{"ids", "total", "has_more"}`, `total` null for content), `commit.show {"id"}` (metadata and files
 changed relative to the first parent), `diff.worktree {"path"?}` (unstaged changes),
 `diff.index {"path"?}` (staged changes), `diff.commit {"id", "path"?}` (commit relative to its
 first parent) and `diff.range {"from", "to", "merge_base"?, "path"?}` (`to` relative to `from`, or
@@ -257,7 +260,7 @@ be undone). Result: `{"remote", "remote_source", "branch", "remote_branch", "kin
 `https://user:token@host/r` becomes `https://user:***@host/r`, `https://token@github.com/r`
 becomes `https://***@github.com/r` (in `http(s)`/`ftp(s)` a lone user is often a token),
 `credentials: true` says there were some; an ssh user (`git@host:r`) stays. This also applies to the
-results of `remote.add`/`remote.remove` and to the journal (`edit.history`).
+results of `remote.add`/`remote.remove`/`remote.set_url` and to the journal (`edit.history`).
 
 `remote.add {"name", "url", "fetch"?}` adds a remote (`git remote add --end-of-options`,
 default refspec; `"fetch": true` then downloads like `remote.fetch`, with progress and
@@ -281,6 +284,49 @@ branches go into `refs/project/backup/remote-...`. Result: `{"remote", "removed"
 "upstreams_removed", "push_remotes_removed", "push_default_removed", "backups", "warnings",
 "remotes", "refs"}`. The undo restores configuration, remote branches and upstream, only if nobody has
 recreated a remote with that name; an upstream reset in the meantime stays, with a warning.
+
+`remote.set_url {"name", "url", "push"?}` changes the fetch URL of a remote (`git remote set-url
+--end-of-options`) or, with `"push": true`, only its push URL (`pushurl`), keeping remote branches and
+upstreams. Same URL checks as `remote.add`; refused for an unknown remote, one defined (even partly)
+outside the repo's file or with several values of the key. The same URL gives `changed: false` and
+writes nothing. Result: `{"remote", "url", "push_url", "changed", "credentials", "warnings", "remotes",
+"refs"}`. The undo writes the old URL back only if the key still holds the one written.
+
+`remote.rename {"name", "new_name"}` renames a remote (`git remote rename --no-progress`): git moves
+its section, refspec, remote branches (with `HEAD`), the upstreams, `pushRemote` and
+`remote.pushDefault`; tags do not change. Refused for an invalid or existing new name, leftovers under
+`refs/remotes/<new_name>/`, nested names (`a` and `a/b`) and during an operation in progress.
+Afterwards every upstream is checked (`warnings` lists what git did not carry over). Result: `{"from",
+"to", "moved_refs", "upstreams", "warnings", "remotes", "refs"}`. The undo renames it back only if
+the new name still exists and the old one does not.
+
+`submodule.list {}` (read-only) lists the submodules: `path`, `name`, `url`, `recorded` (the commit in
+the index), `head` (checked out), `detached`, `state` (`uninitialized`, `in_sync`, `different_commit`,
+`local_changes`, `conflict`), `changes`, `untracked`, `operation`, `unreferenced` (a detached HEAD with
+commits on no branch, tag or remote branch). `submodule.update {"paths"?, "init"?, "recursive"?}`
+checks out the recorded commit (`git submodule update --checkout`, never `--force`, `--remote`,
+`--merge` or `--rebase`; may fetch). Each submodule with local changes, untracked files, an operation
+in progress, unreferenced commits (also in a git directory left by `deinit`), ignored files the
+checkout would overwrite, a conflict, no `.gitmodules` entry or a URL starting with `-` is
+refused (listed in `refused`, nothing run for it); uninitialized ones only with `init`, nested ones
+only with `recursive`. A detached HEAD is saved first in `refs/project/backup/submodule-...` inside
+the submodule. Result: `{"updated": [{"path", "from", "to", "backup"}], "unchanged", "refused":
+[{"path", "reason", "message"}], "messages", "warnings"}`. No journal entry (the superproject's refs
+do not move).
+
+Linked worktrees (`git worktree`; not to be confused with `worktree.discard`, `worktree.clean` and
+`worktree.ignore`, which act on the files of the working tree): `worktree.list {}` (read-only) gives
+`path`, `main`, `current`, `bare`, `head`, `branch`, `detached`, `locked`, `lock_reason`, `prunable`.
+`worktree.add {"path", "branch"? | "new_branch"?, "start"?}` creates one in an absent or empty folder
+(relative to the worktree root) on an existing branch checked out nowhere, on a new branch at
+`start` (journaled as `branch.create`) or detached at `start` (HEAD); never `--force`. Result:
+`{"path", "branch", "created_branch", "head", "messages", "warnings", "worktrees"}` plus the journal
+state. `worktree.remove {"path", "confirm": true}` deletes a linked worktree and its folder; refused
+for the main or current worktree, a locked one, an operation in progress there, changes, untracked,
+ignored or assume-unchanged/skip-worktree files. A detached HEAD with commits on no ref is saved in
+`refs/project/backup/worktree-...`. Result: `{"path", "backup", "messages", "worktrees"}`. Details:
+[impl-docs/git/worktrees.md](impl-docs/git/worktrees.md).
+
 Ahead/behind of the branches relative to the upstream are in `repo.refs` (`upstream.ahead`/`behind`) and
 in the `refs` of the fetch, pull and push results.
 
@@ -371,7 +417,7 @@ stages it like `index.stage`; refused with `StaleDiff` if the file is no longer 
 <ref>:<path>`). Result: `{"status", "backup", "index_backup"}`. It does not go into the journal.
 
 `edit.undo {}` undoes the last operation in the journal (currently `commit.create`, also with `amend`,
-`branch.*`, `worktree.discard`, `worktree.discard_lines`, `worktree.ignore`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `stash.push`,
+`branch.*`, `worktree.discard`, `worktree.discard_lines`, `worktree.ignore`, `worktree.clean`, `remote.pull`, `remote.add`, `remote.remove`, `remote.set_url`, `remote.rename`, `stash.push`,
 `stash.drop` and the concluded merge, `merge.start` and `merge.continue`) and `edit.redo {}` redoes it; `edit.history {}` (read-only) lists the journal. The undo
 returns the branch (or detached HEAD) to the previous value only if nobody has moved it in the
 meantime (a `git commit` or `git reset` from the terminal): otherwise error and nothing changes.

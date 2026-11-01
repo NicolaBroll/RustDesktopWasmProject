@@ -14,9 +14,13 @@ cargo run -p project-cli -- --repo . run --cmd 'repo.log={"all":true,"limit":20}
 # literal text, case-insensitive; "in" limits the fields, "path" the commits touching it
 cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"fix","all":true,"limit":20}'
 cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"ada@","in":["author"],"path":"README.md"}'
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"fn parse_log","in":["content"],"all":true,"limit":5}'
+cargo run -p project-cli -- --repo . run --cmd 'repo.search={"query":"parse_(log|status)\\(","in":["content"],"regex":true,"path":"crates"}'
 # huge repo: does it have a commit-graph ("commit_graph" in the repo.open result)? write it
 # (~19 s on the Linux kernel, then the first log page goes from ~16 s to ~40 ms)
 cargo run -p project-cli -- --repo . run --cmd 'repo.open={"path":"."}' --cmd repo.optimize
+# Git LFS: which files are in LFS (badge, no line operations) and "uses LFS but git-lfs is missing"
+cargo run -p project-cli -- --repo . run --cmd 'repo.lfs_paths={"paths":["big.bin","README.md"]}' --cmd repo.lfs_status
 cargo run -p project-cli -- --repo . run --cmd 'commit.show={"id":"HEAD"}'
 cargo run -p project-cli -- --repo . run --cmd diff.worktree --cmd 'diff.commit={"id":"HEAD","path":"README.md"}'
 # compare two revisions: directly, or what `dev` brings since it left `master` (with "base")
@@ -71,6 +75,21 @@ cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1",
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/rust-lang/log.git","path":"target/log"}' --cmd 'repo.log={"limit":3}'
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"file:///path/to/repo","path":"target/shallow","branch":"main","depth":1}'
 cargo run -p project-cli -- run --cmd 'repo.init={"path":"target/new-repo","branch":"main"}' --cmd repo.status
+# clone with its submodules, then list them
+cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/me/app.git","path":"target/app","submodules":true}' --cmd submodule.list
+# submodules: state, update (the recorded commit; refused per submodule with local changes, untracked
+# files, an operation in progress or commits on no ref), with init, only some paths, recursive
+cargo run -p project-cli -- --repo . run --cmd submodule.list
+cargo run -p project-cli -- --repo . run --cmd submodule.update
+cargo run -p project-cli -- --repo . run --cmd 'submodule.update={"paths":["vendor/lib"],"init":true,"recursive":true}'
+# linked worktrees (not worktree.discard/clean/ignore, which act on the files): list, add on an
+# existing branch, on a new branch (undo deletes it once the worktree is removed) or detached,
+# remove (refused with changes, untracked or ignored files, locked, main or current; asks confirm)
+cargo run -p project-cli -- --repo . run --cmd worktree.list
+cargo run -p project-cli -- --repo . run --cmd 'worktree.add={"path":"../app-feature","branch":"feature"}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.add={"path":"../app-fix","new_branch":"fix","start":"origin/main"}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.add={"path":"/tmp/app-review","start":"v1.2"}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.remove={"path":"../app-fix","confirm":true}'
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'
@@ -93,6 +112,10 @@ cargo run -p project-cli -- --repo . run --cmd 'remote.delete_tag={"remote":"ori
 cargo run -p project-cli -- --repo . run --cmd remote.list
 cargo run -p project-cli -- --repo . run --cmd 'remote.add={"name":"fork","url":"../fork.git","fetch":true}' --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'remote.remove={"name":"fork","confirm":true}' --cmd edit.undo
+# change a remote in place (remote-tracking branches and upstreams stay): fetch URL, push URL only, rename; undo
+cargo run -p project-cli -- --repo . run --cmd 'remote.set_url={"name":"origin","url":"git@github.com:me/project.git"}' --cmd edit.undo
+cargo run -p project-cli -- --repo . run --cmd 'remote.set_url={"name":"origin","url":"git@github.com:me/project.git","push":true}'
+cargo run -p project-cli -- --repo . run --cmd 'remote.rename={"name":"origin","new_name":"upstream"}' --cmd edit.undo
 # stash: list, push (with untracked files), apply/pop (index and expected from the list), drop ("confirm":true with "expected", backup) and undo
 cargo run -p project-cli -- --repo . run --cmd 'stash.push={"message":"work in progress","include_untracked":true}' --cmd stash.list --cmd edit.undo
 cargo run -p project-cli -- --repo . run --cmd 'stash.pop={"index":0,"expected":"<id from stash.list>","restore_index":true}'

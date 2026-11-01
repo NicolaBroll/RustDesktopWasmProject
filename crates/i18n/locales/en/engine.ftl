@@ -56,6 +56,9 @@ engine-log-rev-and-all = `rev` and `all` are alternatives: `all` already starts 
 engine-search-empty = the text to search for is empty
 engine-search-line = the text to search for must be on a single line
 engine-search-no-fields = `in` is empty: give at least one of "message", "author", "id" (or omit it for all three)
+engine-search-content-alone = "content" in `in` cannot be combined with "message", "author" or "id": git cannot AND a content search with the others
+engine-search-content-options = `regex` and `ignore_case` apply only to a content search (`"in": ["content"]`)
+engine-search-bad-regex = invalid regex: { $stderr }
 engine-memory-repos = in-memory repos available: { $repos }
 engine-memory-no-repo = no in-memory repo
 # Branch names (`git/branch.rs`).
@@ -100,6 +103,7 @@ engine-busy-reset = would reset the branch
 engine-busy-pull = would integrate the upstream
 engine-busy-remote-remove = would remove a remote
 engine-busy-remote-restore = would put back a remote
+engine-busy-remote-rename = would rename a remote
 engine-busy-cherry-pick = would start a cherry-pick
 engine-busy-revert = would start a revert
 engine-busy-worktree = would rewrite files

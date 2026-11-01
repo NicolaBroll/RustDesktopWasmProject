@@ -4,7 +4,8 @@
 //! - the destination is absent or an empty folder, never a file, a link or a folder with something
 //!   in it; an absent one is created here with `create_dir` (atomic), so git always receives an
 //!   existing empty folder and the command knows which folder is its own;
-//! - `git clone --progress [--branch=<b>] [--depth=<n>] --end-of-options <url> <abs path>`: a URL
+//! - `git clone --progress [--recurse-submodules] [--branch=<b>] [--depth=<n>] --end-of-options
+//!   <url> <abs path>`: a URL
 //!   starting with `-` is never an option; `-c protocol.ext.allow=never -c protocol.fd.allow=never`
 //!   as for fetch; run with `Git::run_network` (stdin closed, `GIT_TERMINAL_PROMPT=0`, no
 //!   controlling terminal, credentials asked through the prompter if set), progress to the `JobContext`, cancellable;
@@ -13,6 +14,7 @@
 //!   the destination is not empty: someone else wrote there in the meantime.
 
 use super::CliOpener;
+use super::submodule::file_protocol_args;
 use crate::command::{Segment, failure};
 use crate::progress::parse_progress;
 use project_engine::{
@@ -24,23 +26,36 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-/// The destination folder of a clone or init, checked and ready (existing and empty).
-struct Destination {
+/// The destination folder of a clone, init or `worktree.add`, checked and ready (existing and
+/// empty).
+pub(super) struct Destination {
     /// The path as given, for the messages.
     given: String,
-    /// Absolute (against the current directory), UTF-8.
-    path: PathBuf,
+    /// Absolute (against the current directory, or the base of [`Destination::prepare_in`]),
+    /// UTF-8.
+    pub(super) path: PathBuf,
     /// The folder was created by the command (it did not exist).
     created: bool,
 }
 
 impl Destination {
-    /// Checks `path` and creates it if absent. Nothing is written if it is refused.
+    /// Checks `path` (relative to the current directory) and creates it if absent. Nothing is
+    /// written if it is refused.
     fn prepare(path: &str) -> Result<Self, EngineError> {
+        Self::prepare_in(None, path)
+    }
+
+    /// [`Destination::prepare`] with a relative `path` taken against `base` (if given).
+    pub(super) fn prepare_in(base: Option<&Path>, path: &str) -> Result<Self, EngineError> {
         let other = |e: io::Error| {
             EngineError::NotAllowed(msg!("engine-other", text = format!("{path}: {e}")))
         };
-        let abs = std::path::absolute(path).map_err(other)?;
+        let abs = match base {
+            Some(base) if Path::new(path).is_relative() => {
+                std::path::absolute(base.join(path)).map_err(other)?
+            }
+            _ => std::path::absolute(path).map_err(other)?,
+        };
         // `..` resolved as the file system does (through links), so the folder created and checked
         // here is the one git receives.
         let abs = match (abs.parent(), abs.file_name()) {
@@ -84,7 +99,7 @@ impl Destination {
         })
     }
 
-    fn as_str(&self) -> &str {
+    pub(super) fn as_str(&self) -> &str {
         self.path.to_str().expect("checked in prepare")
     }
 
@@ -113,7 +128,7 @@ impl Destination {
     }
 
     /// `error` after cleaning up the destination; a failed cleanup is added to the text.
-    fn fail(&self, error: EngineError) -> EngineError {
+    pub(super) fn fail(&self, error: EngineError) -> EngineError {
         match self.restore() {
             Ok(()) => error,
             Err(e) => EngineError::GitWithReason {
@@ -148,21 +163,28 @@ impl CliOpener {
         let dest = Destination::prepare(&request.path)?;
         let branch = request.branch.as_ref().map(|b| format!("--branch={b}"));
         let depth = request.depth.map(|n| format!("--depth={n}"));
+        let cwd = working_dir(&dest.path);
         let mut args = vec![
             "-c",
             "protocol.ext.allow=never",
             "-c",
             "protocol.fd.allow=never",
-            "clone",
-            "--progress",
         ];
+        if request.submodules {
+            // Passed on to the submodule clones through `GIT_CONFIG_PARAMETERS`.
+            args.extend(file_protocol_args(&self.git, &cwd));
+        }
+        args.extend(["clone", "--progress"]);
+        if request.submodules {
+            args.push("--recurse-submodules");
+        }
         args.extend(branch.as_deref());
         args.extend(depth.as_deref());
         args.extend(["--end-of-options", &request.url, dest.as_str()]);
 
         let mut lines = Vec::new();
         let streamed = self.git.run_network(
-            &working_dir(&dest.path),
+            &cwd,
             &args,
             false,
             &request.url,

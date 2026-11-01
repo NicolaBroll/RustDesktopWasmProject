@@ -9,6 +9,7 @@ pub(crate) mod discard;
 pub(crate) mod edit;
 pub(crate) mod file;
 pub(crate) mod ignore;
+pub(crate) mod lfs;
 pub(crate) mod merge;
 pub(crate) mod pick;
 pub(crate) mod pull;
@@ -22,7 +23,9 @@ pub(crate) mod reset;
 pub(crate) mod search;
 pub(crate) mod stage;
 pub(crate) mod stash;
+pub(crate) mod submodule;
 pub(crate) mod tag;
+pub(crate) mod worktrees;
 
 use crate::{
     Access::{Read, Write},
@@ -46,6 +49,8 @@ impl Registry {
         r.add_refs();
         r.add_remotes();
         r.add_stashes();
+        r.add_submodules();
+        r.add_worktrees();
         r.add_merges();
         r.add_rebase();
         r.add_edit();
@@ -65,7 +70,7 @@ impl Registry {
         self.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
-            r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0)}"#,
+            r#"{"url": string, "path": string, "branch"?: string, "depth"?: number (> 0), "submodules"?: bool (also clone the submodules)}"#,
             Write,
             clone::repo_clone,
         )
@@ -79,6 +84,20 @@ impl Registry {
         )
         .takes_paths_outside_repo();
         self.add("repo.status", "Repository status", "{}", Read, repo_status);
+        self.add(
+            "repo.lfs_paths",
+            "Which of the given files are stored in Git LFS (filter attribute lfs)",
+            r#"{"paths": [path] (may be empty)} -> {"paths": the LFS ones, in the order given}"#,
+            Read,
+            lfs::repo_lfs_paths,
+        );
+        self.add(
+            "repo.lfs_status",
+            "Whether the repo uses Git LFS and git-lfs is installed",
+            "{}",
+            Read,
+            lfs::repo_lfs_status,
+        );
         self.add(
             "repo.refs",
             "Branches, tags and stashes",
@@ -370,6 +389,63 @@ impl Registry {
             r#"{"name": string, "confirm": true}"#,
             Write,
             remotes::remote_remove,
+        );
+        self.add(
+            "remote.set_url",
+            "Change the URL of a remote",
+            r#"{"name": string, "url": string, "push"?: bool (only the push URL)}"#,
+            Write,
+            remotes::remote_set_url,
+        );
+        self.add(
+            "remote.rename",
+            "Rename a remote",
+            r#"{"name": string, "new_name": string}"#,
+            Write,
+            remotes::remote_rename,
+        );
+    }
+
+    /// Linked worktrees (not the `worktree.*` commands on the files of the working tree).
+    fn add_worktrees(&mut self) {
+        self.add(
+            "worktree.list",
+            "Linked worktrees of the repository (not the working tree files)",
+            "{}",
+            Read,
+            worktrees::worktree_list,
+        );
+        self.add(
+            "worktree.add",
+            "Create a linked worktree on a branch or commit",
+            r#"{"path": string (absent or empty folder), "branch"?: string (existing, checked out nowhere) | "new_branch"?: string, "start"?: rev (HEAD; not with branch)}"#,
+            Write,
+            worktrees::worktree_add,
+        );
+        self.add(
+            "worktree.remove",
+            "Remove a clean linked worktree (deletes its folder)",
+            r#"{"path": string, "confirm": true}"#,
+            Write,
+            worktrees::worktree_remove,
+        );
+    }
+
+    /// Submodules.
+    fn add_submodules(&mut self) {
+        self.add(
+            "submodule.list",
+            "Submodules and their state",
+            "{}",
+            Read,
+            submodule::submodule_list,
+        );
+        self.add(
+            "submodule.update",
+            "Check out the recorded commit in the submodules",
+            r#"{"paths"?: [path, ...] (submodules or folders; all), "init"?: bool (also the uninitialized ones), "recursive"?: bool (then the nested ones)}"#,
+            Write,
+            submodule::submodule_update,
         );
     }
 
@@ -1027,8 +1103,12 @@ mod tests {
                 "remote.push",
                 "remote.push_tag",
                 "remote.remove",
+                "remote.rename",
+                "remote.set_url",
                 "repo.clone",
                 "repo.init",
+                "repo.lfs_paths",
+                "repo.lfs_status",
                 "repo.log",
                 "repo.open",
                 "repo.operation",
@@ -1043,12 +1123,17 @@ mod tests {
                 "stash.list",
                 "stash.pop",
                 "stash.push",
+                "submodule.list",
+                "submodule.update",
                 "tag.create",
                 "tag.delete",
+                "worktree.add",
                 "worktree.clean",
                 "worktree.discard",
                 "worktree.discard_lines",
-                "worktree.ignore"
+                "worktree.ignore",
+                "worktree.list",
+                "worktree.remove"
             ]
         );
         let ids: Vec<_> = r.search("COMMIT HISTORY").map(|c| c.id).collect();
@@ -1090,6 +1175,8 @@ mod tests {
                 "remote.push",
                 "remote.push_tag",
                 "remote.remove",
+                "remote.rename",
+                "remote.set_url",
                 "repo.clone",
                 "repo.init",
                 "repo.optimize",
@@ -1099,12 +1186,15 @@ mod tests {
                 "stash.drop",
                 "stash.pop",
                 "stash.push",
+                "submodule.update",
                 "tag.create",
                 "tag.delete",
+                "worktree.add",
                 "worktree.clean",
                 "worktree.discard",
                 "worktree.discard_lines",
-                "worktree.ignore"
+                "worktree.ignore",
+                "worktree.remove"
             ]
         );
         let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();

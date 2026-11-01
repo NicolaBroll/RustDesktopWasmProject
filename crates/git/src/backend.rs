@@ -10,6 +10,7 @@ mod discard;
 mod discard_lines;
 mod file;
 mod ignore;
+mod lfs;
 mod maintenance;
 mod merge;
 mod pick;
@@ -21,8 +22,10 @@ mod restore;
 mod search;
 mod squash;
 mod stash;
+mod submodule;
 mod sync;
 mod tag;
+mod worktrees;
 
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
@@ -40,14 +43,14 @@ use project_engine::{
     CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
     ConflictVersions, CredentialPrompter, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
     FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance,
-    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HeadState, InitRequest, JobContext,
-    LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message,
-    OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome,
-    PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
-    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
-    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
-    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
-    versions_at_risk_hidden,
+    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules, GitWorktrees, HeadState,
+    InitRequest, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
+    MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
+    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
+    RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    TagPush, TagPushed, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
+    path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -152,7 +155,16 @@ impl CliOpener {
         if path.is_empty() {
             return Err(not_found(msg!("engine-open-empty-path")));
         }
-        let dir = Path::new(path);
+        self.open_dir(Path::new(path), path)
+    }
+
+    /// [`CliOpener::open_cli`] without the version check, on a folder that may not be UTF-8
+    /// (`shown` names it in the errors).
+    fn open_dir(&self, dir: &Path, shown: &str) -> Result<CliBackend, EngineError> {
+        let not_found = |reason: Message| EngineError::RepoNotFound {
+            path: shown.to_owned(),
+            reason,
+        };
 
         let args = [
             "rev-parse",
@@ -1234,6 +1246,14 @@ impl GitRead for CliBackend {
     fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError> {
         self.read_upstream_config(name)
     }
+
+    fn lfs_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>, EngineError> {
+        self.lfs_filtered(paths)
+    }
+
+    fn lfs_state(&self) -> Result<project_engine::LfsState, EngineError> {
+        self.lfs_status()
+    }
 }
 
 impl GitIndex for CliBackend {
@@ -1399,6 +1419,7 @@ impl GitIndex for CliBackend {
         let diff = self.diff(&selection.diff_spec())?;
         let prepared = line_patch(&diff, selection)?;
         self.check_diff_matches_index(&index, &prepared, selection.direction)?;
+        self.refuse_lfs_lines(prepared.target())?;
 
         // The new content is computed here, with the strict applier, on the blob of the entry
         // just checked: each hunk only at its position, context byte for byte. `git apply` is
@@ -1625,6 +1646,19 @@ impl GitRemotes for CliBackend {
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError> {
         self.remote_elsewhere(name)
     }
+
+    fn set_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.change_remote_url(name, push, url)
+    }
+
+    fn rename_remote(&mut self, from: &str, to: &str) -> Result<Vec<Message>, EngineError> {
+        self.rename_cli_remote(from, to)
+    }
 }
 
 impl GitStash for CliBackend {
@@ -1691,6 +1725,40 @@ impl GitOperations for CliBackend {
 
     fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.abort_rebase()
+    }
+}
+
+impl GitWorktrees for CliBackend {
+    fn worktrees(&self) -> Result<Vec<project_engine::WorktreeInfo>, EngineError> {
+        self.list_worktrees()
+    }
+
+    fn add_worktree(
+        &mut self,
+        request: &project_engine::WorktreeAdd,
+    ) -> Result<project_engine::WorktreeAdded, EngineError> {
+        self.add_linked_worktree(request)
+    }
+
+    fn remove_worktree(
+        &mut self,
+        request: &project_engine::WorktreeRemove,
+    ) -> Result<project_engine::WorktreeRemoved, EngineError> {
+        self.remove_linked_worktree(request)
+    }
+}
+
+impl GitSubmodules for CliBackend {
+    fn submodules(&self) -> Result<Vec<project_engine::SubmoduleInfo>, EngineError> {
+        self.list_submodules()
+    }
+
+    fn update_submodules(
+        &mut self,
+        request: &project_engine::SubmoduleUpdate,
+        job: &JobContext,
+    ) -> Result<project_engine::SubmoduleUpdated, EngineError> {
+        self.update_submodule_paths(request, job)
     }
 }
 

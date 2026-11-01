@@ -66,6 +66,70 @@ pub(super) fn file_menu_entries(
     }
 }
 
+/// Key of the egui temp data that says whether the platform starts external programs
+/// (`Capabilities::external_apps`): set by the app every frame, read by [`launch_entries`].
+fn can_launch_id() -> egui::Id {
+    egui::Id::unique("can-launch")
+}
+
+/// True if the platform starts external programs (see [`set_can_launch`]).
+pub(super) fn can_launch(ui: &Ui) -> bool {
+    ui.ctx()
+        .data(|d| d.get_temp(can_launch_id()).unwrap_or(false))
+}
+
+/// Called by the app every frame, before the tab is drawn.
+pub(crate) fn set_can_launch(ctx: &egui::Context, can: bool) {
+    ctx.data_mut(|d| d.insert_temp(can_launch_id(), can));
+}
+
+/// "Open in editor" and "Show in file manager" (S60) in the context menu of a file: the file of
+/// the working tree at `path`, whatever list or diff it comes from. Off for a `deleted` file and
+/// a non-UTF-8 path; hidden if the platform does not start programs.
+pub(crate) fn launch_entries(
+    ui: &mut Ui,
+    path: &RepoPath,
+    deleted: bool,
+    actions: &mut Vec<Action>,
+) {
+    if !ui
+        .ctx()
+        .data(|d| d.get_temp(can_launch_id()).unwrap_or(false))
+    {
+        return;
+    }
+    let off = if deleted {
+        Some(tr!("file-menu-launch-deleted"))
+    } else if path.to_str().is_none() {
+        Some(tr!("file-menu-launch-not-utf8"))
+    } else {
+        None
+    };
+    let items = [
+        (
+            tr!("file-menu-open-editor"),
+            tr!("file-menu-open-editor-hint"),
+            crate::tabs::Action::OpenFile(path.clone()),
+        ),
+        (
+            tr!("file-menu-show-folder"),
+            tr!("file-menu-show-folder-hint"),
+            crate::tabs::Action::ShowFileFolder(path.clone()),
+        ),
+    ];
+    for (label, hint, action) in items {
+        if ui
+            .add_enabled(off.is_none(), egui::Button::new(label))
+            .on_hover_text(hint)
+            .on_disabled_hover_text(off.clone().unwrap_or_default())
+            .clicked()
+        {
+            actions.push(Action::Tabs(action));
+            ui.close();
+        }
+    }
+}
+
 /// The view: bar with the file and the tabs, then the blame or the history.
 pub(crate) fn file_view(
     ui: &mut Ui,

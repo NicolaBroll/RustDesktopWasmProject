@@ -33,6 +33,7 @@ mod graph;
 mod icons;
 mod ignore;
 mod keys;
+mod lfs;
 mod lines;
 mod list;
 mod merge;
@@ -49,12 +50,14 @@ mod settings;
 mod side_panel;
 mod stage;
 mod stash;
+mod submodule;
 mod sync;
 mod tabs;
 mod theme;
 mod tracking;
 mod view;
 mod word_diff;
+mod worktree;
 
 pub use credentials::{CredentialBox, CredentialDialog};
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
@@ -145,6 +148,12 @@ enum Action {
     Remotes(remotes::Action),
     /// Stashes.
     Stash(stash::Action),
+    /// Updating submodules.
+    Submodule(submodule::Action),
+    /// Linked worktrees: the "New worktree" dialog and the removal.
+    Worktree(worktree::Action),
+    /// The notice "git-lfs is not installed".
+    Lfs(lfs::Action),
     /// Merge, cherry-pick and revert.
     Merge(merge::Action),
     /// The interactive rebase editor.
@@ -219,6 +228,14 @@ enum Request {
     Remote(u64, remotes::Op),
     /// `stash.list`.
     Stashes(u64),
+    /// `submodule.list`.
+    Submodules(u64, bool),
+    /// `submodule.update` (the state is in [`submodule::SubmoduleBox`]).
+    Submodule(u64),
+    /// `worktree.list`.
+    Worktrees(u64),
+    /// `worktree.add`/`worktree.remove` (the state is in [`worktree::WorktreeBox`]).
+    Worktree(u64),
     /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (the state is in [`StashBox`]).
     Stash(u64, stash::Op),
     /// `repo.operation`: the operation in progress for the panel.
@@ -244,6 +261,10 @@ enum Request {
     Search(u64, u64),
     /// `diff.range` of the comparison with the request number of [`compare::CompareBox`].
     Compare(u64, u64),
+    /// `repo.lfs_status` (the state is in [`lfs::LfsBox`]).
+    LfsStatus(u64),
+    /// `repo.lfs_paths` (the paths sent are in [`lfs::LfsBox`]).
+    LfsPaths(u64),
 }
 
 /// The repo shown and the data read so far.
@@ -297,6 +318,12 @@ struct RepoView {
     remotes: RemotesBox,
     /// The stashes (`stash.list`), the selected stash, the push and drop dialogs.
     stash: StashBox,
+    /// The submodules (`submodule.list`) and the update in progress.
+    submodules: submodule::SubmoduleBox,
+    /// The linked worktrees (`worktree.list`), the "New worktree" dialog and the removal.
+    worktrees: worktree::WorktreeBox,
+    /// Git LFS: the files stored in it and the notice "git-lfs is not installed" (S63).
+    lfs: lfs::LfsBox,
     /// The merge started, the operation in progress (panel) and the Continue and Abort dialogs.
     merge: MergeBox,
     /// The interactive rebase editor.
@@ -353,6 +380,9 @@ impl RepoView {
             sync: SyncBox::default(),
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
+            submodules: submodule::SubmoduleBox::default(),
+            worktrees: worktree::WorktreeBox::default(),
+            lfs: lfs::LfsBox::default(),
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
             reset: reset::ResetBox::default(),
@@ -409,6 +439,7 @@ impl RepoView {
             || self.merge.modal_open()
             || self.rebase.modal_open()
             || self.reset.modal_open()
+            || self.worktrees.modal_open()
     }
 
     /// The last commit (HEAD), if it is among the loaded ones.
@@ -496,12 +527,17 @@ struct Tab {
     not_found: Option<String>,
     /// The answer of `repo.clone`/`repo.init`, collected by [`App`] for its dialog.
     clone_done: Option<Done>,
+    /// The worktree `worktree.add` just created: [`App`] opens it in a new tab.
+    open_worktree: Option<String>,
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
     notice: String,
     /// The watch of the repo and the refresh it asks for (S40).
     auto: refresh::AutoRefresh,
+    /// The repos (paths) that already showed the notice "git-lfs is not installed" in this tab:
+    /// once per repo per session (S63).
+    lfs_noticed: std::collections::HashSet<String>,
 }
 
 impl Tab {
@@ -516,15 +552,19 @@ impl Tab {
             opened: None,
             not_found: None,
             clone_done: None,
+            open_worktree: None,
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
             auto: refresh::AutoRefresh::default(),
+            lfs_noticed: std::collections::HashSet::new(),
         }
     }
 
     /// Opens `path` in this tab, in the background.
     fn open(&mut self, path: String) {
+        // A content search running would hold the session until it ends.
+        self.stop_search();
         let params = params(RepoOpenParams { path: path.clone() });
         self.submit("repo.open", params, Request::Open);
         self.requested = Some(path);
@@ -656,6 +696,9 @@ impl Tab {
             Action::Branch(action) => self.apply_branch(action),
             Action::Fetch(action) => self.apply_fetch(action),
             Action::Optimize(action) => self.apply_optimize(action),
+            Action::Submodule(action) => self.apply_submodule(action),
+            Action::Worktree(action) => self.apply_worktree(action),
+            Action::Lfs(action) => self.apply_lfs(action),
             Action::Sync(action) => self.apply_sync(action),
             Action::Remotes(action) => self.apply_remotes(action),
             Action::Stash(action) => self.apply_stash(action),
@@ -929,6 +972,9 @@ impl Tab {
         self.submit("edit.history", json!({}), Request::History(generation));
         self.request_remotes(generation);
         self.submit(stash::LIST, json!({}), Request::Stashes(generation));
+        self.request_submodules(generation, false);
+        self.request_worktrees(generation);
+        self.request_lfs_status(generation);
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
             self.request_page(first);
@@ -966,6 +1012,30 @@ impl Tab {
     /// The answer `done` to `request`: each area takes its own, the reads of the view are
     /// stored by [`Tab::store`].
     fn receive_one(&mut self, request: Request, done: Done) {
+        // Submodules left behind by a checkout, pull, merge...: the notice (S62b).
+        let moved = match request {
+            Request::Branch(g, _)
+            | Request::Merge(g, _)
+            | Request::Stash(g, _)
+            | Request::Sync(g)
+            | Request::Rebase(g)
+            | Request::Reset(g)
+            | Request::Undo(g)
+                if submodule::moves_submodules(&done.command) && done.result.is_ok() =>
+            {
+                Some(g)
+            }
+            _ => None,
+        };
+        if let Some(generation) = moved {
+            self.check_submodules(generation);
+        }
+        self.receive_request(request, done);
+        // A new status or diff: which of its files are stored in Git LFS (S63).
+        self.follow_lfs();
+    }
+
+    fn receive_request(&mut self, request: Request, done: Done) {
         match request {
             Request::Clone => self.clone_done = Some(done),
             // Details have their own state, errors included: the panel shows them.
@@ -1008,6 +1078,22 @@ impl Tab {
                 }
             }
             Request::Stash(generation, op) => self.receive_stash(generation, op, done),
+            // The submodule list also has its own error, in its section.
+            Request::Submodules(generation, check) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.submodules.receive_list(done.result, check);
+                }
+            }
+            Request::Submodule(generation) => self.receive_submodule(generation, done),
+            // The worktree list also has its own error, in its section.
+            Request::Worktrees(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.worktrees.receive_list(done.result);
+                }
+            }
+            Request::Worktree(generation) => self.receive_worktree(generation, done),
             // The operation in progress also has its own error, in the panel.
             Request::Operation(generation) => {
                 log_failure(&done);
@@ -1038,6 +1124,7 @@ impl Tab {
             Request::Search(generation, seq) => self.receive_search(generation, seq, done),
             // The comparison shows its errors in the details panel.
             Request::Compare(generation, seq) => self.receive_compare(generation, seq, done),
+            Request::LfsStatus(_) | Request::LfsPaths(_) => self.receive_lfs(request, done),
             // The diff too: errors in its view, old answers discarded.
             Request::Diff(generation, seq) => {
                 let result = done
@@ -1168,13 +1255,21 @@ impl Tab {
                 if let Some(repo) = self.current(generation) {
                     repo.refs = serde_json::from_value(value)?;
                     repo.update_labels();
+                    // A checkout or a renamed branch changes what the worktrees show.
+                    if repo.worktrees.shown() {
+                        self.request_worktrees(generation);
+                    }
                 }
             }
             Request::Status(generation) | Request::AutoStatus(generation) => {
                 if let Some(repo) = self.current(generation) {
                     let status: Status = serde_json::from_value(value)?;
+                    let submodules = repo.submodules.wants_list(&status);
                     repo.set_status(status);
                     self.follow_diff();
+                    if submodules {
+                        self.request_submodules(generation, false);
+                    }
                     if matches!(request, Request::AutoStatus(_)) {
                         self.after_auto_status(generation);
                     }
@@ -1236,6 +1331,10 @@ impl Tab {
             | Request::Remote(..)
             | Request::Stashes(..)
             | Request::Stash(..)
+            | Request::Submodules(..)
+            | Request::Submodule(..)
+            | Request::Worktrees(..)
+            | Request::Worktree(..)
             | Request::Operation(..)
             | Request::Merge(..)
             | Request::RebasePlan(..)
@@ -1246,7 +1345,9 @@ impl Tab {
             | Request::ConflictResolve(..)
             | Request::File(..)
             | Request::Search(..)
-            | Request::Compare(..) => {}
+            | Request::Compare(..)
+            | Request::LfsStatus(..)
+            | Request::LfsPaths(..) => {}
         }
         Ok(())
     }
@@ -1263,6 +1364,15 @@ impl Tab {
                 progress: self.executor.progress(running.ticket),
                 stop_hint: tr!("optimize-stop-hint"),
                 cancel: Action::Optimize(optimize::Action::Cancel),
+            });
+        }
+        if let Some(running) = r.submodules.running() {
+            return Some(view::Network {
+                what: running.extra.clone(),
+                cancelling: running.cancelling,
+                progress: self.executor.progress(running.ticket),
+                stop_hint: tr!("submodule-stop-hint"),
+                cancel: Action::Submodule(submodule::Action::Cancel),
             });
         }
         if let Some(running) = r.fetch.running() {
@@ -1329,7 +1439,7 @@ impl Tab {
         match &self.repo {
             Some(repo) => {
                 side_panels(ui, repo, &mut draft, writing, &mut actions);
-                self.dialogs(&ctx, repo, writing, &mut actions);
+                self.dialogs(&ctx, repo, writing, can_pick, &mut actions);
                 let center = Center {
                     writing,
                     focus_search,
@@ -1393,6 +1503,23 @@ impl Tab {
                 view::optimize_notice(ui, &repo.optimize, can_write, actions);
             });
         }
+        // Submodules left on another commit by the last checkout, pull, merge... (S62b).
+        if let Some(repo) = &self.repo
+            && !repo.submodules.outdated().is_empty()
+        {
+            let can_write = !writing && !repo.modal_open() && repo.submodules.running().is_none();
+            egui::Panel::top("submodule-outdated").show(ui, |ui| {
+                view::outdated_notice(ui, repo.submodules.outdated(), can_write, actions);
+            });
+        }
+        // The repo uses Git LFS but git-lfs is missing (S63): once per repo in this tab.
+        if let Some(repo) = &self.repo
+            && repo.lfs.notice()
+        {
+            egui::Panel::top("lfs-missing").show(ui, |ui| {
+                view::lfs_notice(ui, actions);
+            });
+        }
         // The automatic fetch suspended by an authentication error (S50), under the bar too.
         if let Some(repo) = &self.repo
             && let Some(suspended) = repo.auto_fetch.suspended()
@@ -1409,6 +1536,7 @@ impl Tab {
         ctx: &egui::Context,
         repo: &RepoView,
         writing: bool,
+        can_pick: bool,
         actions: &mut Vec<Action>,
     ) {
         if let Some(write) = &repo.confirm {
@@ -1467,6 +1595,12 @@ impl Tab {
         }
         if let Some(dialog) = repo.reset.dialog() {
             view::reset_dialog(ctx, dialog, actions);
+        }
+        if let Some(dialog) = repo.worktrees.dialog() {
+            view::worktree_dialog(ctx, dialog, repo, can_pick, actions);
+        }
+        if let Some(remove) = repo.worktrees.remove_dialog() {
+            view::confirm_worktree_remove(ctx, remove, actions);
         }
         if let Some(failure) = repo.merge.failure() {
             view::failure_window(

@@ -289,6 +289,21 @@ fn repo_reads() {
 }
 
 #[test]
+fn lfs_reads() {
+    let mut repo = MemoryBackend::new();
+    repo.set_lfs([RepoPath::from("big.bin")], false);
+    let (r, mut s) = opened_with(repo);
+    snap(
+        &r,
+        &mut s,
+        "repo.lfs_paths",
+        "",
+        json!({ "paths": ["README.md", "big.bin"] }),
+    );
+    snap(&r, &mut s, "repo.lfs_status", "", json!({}));
+}
+
+#[test]
 fn commit_and_file_reads() {
     let (r, mut s) = sample();
     snap(&r, &mut s, "commit.show", "rename", json!({ "id": id(12) }));
@@ -588,6 +603,27 @@ fn remotes() {
         "branch",
         json!({ "remote": "origin", "branch": "main" }),
     );
+    snap(
+        &r,
+        &mut s,
+        "remote.set_url",
+        "",
+        json!({ "name": "mirror", "url": "https://u:pw@example.com/new.git" }),
+    );
+    snap(
+        &r,
+        &mut s,
+        "remote.set_url",
+        "push",
+        json!({ "name": "mirror", "url": "ssh://git@example.com/new.git", "push": true }),
+    );
+    snap(
+        &r,
+        &mut s,
+        "remote.rename",
+        "",
+        json!({ "name": "mirror", "new_name": "copy" }),
+    );
 }
 
 #[test]
@@ -856,5 +892,70 @@ fn ignore_untracked() {
         "worktree.ignore",
         "",
         json!({ "patterns": ["/note.txt"], "file": "exclude" }),
+    );
+}
+
+#[test]
+fn submodules() {
+    use crate::{SubmoduleInfo, SubmoduleState};
+    let info = |path: &str, head: u64, state, untracked| SubmoduleInfo {
+        path: RepoPath::from(path),
+        name: Some(path.to_owned()),
+        url: Some(format!("../{path}")),
+        recorded: Some(oid(1)),
+        head: Some(oid(head)),
+        detached: true,
+        state,
+        changes: false,
+        untracked,
+        operation: None,
+        unreferenced: false,
+        ignored_overwritten: false,
+    };
+    let mut repo = clean_sample();
+    repo.set_submodules(vec![
+        info("lib", 2, SubmoduleState::DifferentCommit, false),
+        info("vendor/x", 3, SubmoduleState::LocalChanges, true),
+    ]);
+    let (r, mut s) = opened_with(repo);
+    snap(&r, &mut s, "submodule.list", "", json!({}));
+    snap(&r, &mut s, "submodule.update", "", json!({}));
+}
+
+#[test]
+fn worktrees() {
+    use crate::{MemoryWorktree, WorktreeContents, WorktreeInfo};
+    let mut repo = clean_sample();
+    repo.add_linked_worktree(MemoryWorktree {
+        info: WorktreeInfo {
+            path: "/old".into(),
+            main: false,
+            current: false,
+            bare: false,
+            head: Some(oid(1)),
+            branch: None,
+            detached: true,
+            locked: false,
+            lock_reason: None,
+            prunable: false,
+        },
+        contents: Some(WorktreeContents::default()),
+        unreferenced: true,
+    });
+    let (r, mut s) = opened_with(repo);
+    snap(&r, &mut s, "worktree.list", "", json!({}));
+    snap(
+        &r,
+        &mut s,
+        "worktree.add",
+        "",
+        json!({"path": "../topic", "new_branch": "topic"}),
+    );
+    snap(
+        &r,
+        &mut s,
+        "worktree.remove",
+        "",
+        json!({"path": "/old", "confirm": true}),
     );
 }

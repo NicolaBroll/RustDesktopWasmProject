@@ -3,10 +3,9 @@ name: ci
 on:
   push:
     branches: [master]
-  # Pull requests to dev (one per step) do not go through CI for now: the build is verified
-  # locally with `cargo xtask ci`.
+  # Pull requests to dev too (one per step): they are merged only with green checks.
   pull_request:
-    branches: [master]
+    branches: [dev, master]
 
 jobs:
   ci:
@@ -16,9 +15,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          # `cargo xtask ci` also runs clippy for the Windows target.
+          targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
+      # git-lfs for the LFS scenarios (crates/git/tests/lfs.rs; skipped without it).
+      - run: sudo apt-get install -y --no-install-recommends git-lfs
       # The same command used locally.
       - run: cargo xtask ci

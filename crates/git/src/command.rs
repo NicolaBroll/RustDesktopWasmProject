@@ -94,8 +94,11 @@ impl Git {
         self.askpass = Some(Askpass { program, prompter });
     }
 
-    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false <args> <paths>`, with empty
-    /// stdin, `GIT_TERMINAL_PROMPT=0` and `LC_ALL=C`. The rest of the environment is inherited (SSH
+    /// `git [-C <dir>] -c core.quotePath=false -c color.ui=false -c submodule.recurse=false <args>
+    /// <paths>`, with empty stdin, `GIT_TERMINAL_PROMPT=0` and `LC_ALL=C`. `submodule.recurse=false`:
+    /// no command recurses into submodules because of the user's configuration (a checkout, reset,
+    /// merge, rebase, stash or `git submodule update` would otherwise move nested submodules
+    /// without the checks of `submodule.update`); explicit `--recurse-submodules` flags still apply. The rest of the environment is inherited (SSH
     /// agent, credential helper). `paths` go after a `--` that the caller puts at the end of
     /// `args`.
     fn command(&self, dir: Option<&Path>, args: &[&str], paths: &[&OsStr]) -> Command {
@@ -103,14 +106,21 @@ impl Git {
         if let Some(dir) = dir {
             cmd.arg("-C").arg(dir);
         }
-        cmd.args(["-c", "core.quotePath=false", "-c", "color.ui=false"])
-            .args(args)
-            .args(paths)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C");
+        cmd.args([
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "color.ui=false",
+            "-c",
+            "submodule.recurse=false",
+        ])
+        .args(args)
+        .args(paths)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C");
         no_console_window(&mut cmd);
         for key in REPO_ENV
             .iter()
@@ -369,6 +379,30 @@ impl Git {
         on_segment: impl FnMut(Segment),
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Streamed, EngineError> {
+        self.run_network_with_paths(
+            dir,
+            args,
+            &[],
+            capture_stdout,
+            remote,
+            on_segment,
+            cancelled,
+        )
+    }
+
+    /// Like [`Git::run_network`], with `paths` (not necessarily UTF-8) after `args`, which must
+    /// end with `--` (e.g. `git submodule update -- <paths>`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn run_network_with_paths(
+        &self,
+        dir: &Path,
+        args: &[&str],
+        paths: &[&OsStr],
+        capture_stdout: bool,
+        remote: &str,
+        on_segment: impl FnMut(Segment),
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Streamed, EngineError> {
         let stdout = if capture_stdout {
             Stdout::Grace
         } else {
@@ -393,7 +427,7 @@ impl Git {
         });
         let Some((askpass, bridge, git_side, ssh_side)) = bridged else {
             return self.stream(
-                self.command(Some(dir), args, &[]),
+                self.command(Some(dir), args, paths),
                 stdout,
                 on_segment,
                 cancelled,
@@ -407,7 +441,7 @@ impl Git {
             env.push(("SSH_ASKPASS", askpass.program.clone()));
             env.push(("SSH_ASKPASS_REQUIRE", "force".into()));
         }
-        let mut cmd = self.command(Some(dir), args, &[]);
+        let mut cmd = self.command(Some(dir), args, paths);
         cmd.envs(env);
         let mut streamed = self.stream(cmd, stdout, on_segment, cancelled)?;
         streamed.auth_cancelled = bridge.cancelled() && !streamed.status.success();
@@ -753,6 +787,8 @@ mod tests {
                 "core.quotePath=false",
                 "-c",
                 "color.ui=false",
+                "-c",
+                "submodule.recurse=false",
                 "diff",
                 "--",
                 "a b.txt"

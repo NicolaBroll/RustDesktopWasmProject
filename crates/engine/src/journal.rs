@@ -44,7 +44,10 @@
 //! - **`remote.add` and `remote.remove` enter the journal** ([`JournalEntry::remote_add`],
 //!   [`JournalEntry::remote_remove`]): the entry holds the remote ([`RemoteSnapshot`]:
 //!   configuration, remote-tracking branches, upstreams that use it); undo and redo remove or
-//!   put it back, only if in the meantime it has not changed or been recreated.
+//!   put it back, only if in the meantime it has not changed or been recreated. `remote.set_url`
+//!   and `remote.rename` too ([`JournalEntry::remote_set_url`], [`JournalEntry::remote_rename`],
+//!   with [`RemoteChange`]): undo and redo write the other URL / name back, only if the repo
+//!   still has the one written.
 //! - **`stash.push` and `stash.drop` enter the journal** ([`JournalEntry::stash_push`],
 //!   [`JournalEntry::stash_drop`], with the stash in [`JournalEntry::stash`]): the undo of a push is
 //!   the `pop` of that stash (same HEAD, stash still in the list), the redo another push with
@@ -72,6 +75,7 @@ use crate::{
 };
 use crate::{DiscardLinesOutcome, LinesBackup, LinesRestore, discard_lines_description};
 use crate::{IgnoreOutcome, IgnoreRecord, IgnoreRestore, ignore_description};
+use crate::{RemoteChange, apply_remote_change, mask_url};
 use project_domain::Oid;
 use serde::{Deserialize, Serialize};
 
@@ -217,6 +221,12 @@ pub struct JournalEntry {
     /// the file has exactly the written ones, redo the other way round; neither moves refs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore: Option<IgnoreRecord>,
+    /// Only for `remote.set_url` and `remote.rename`: the URL before and after, or the old and new
+    /// name ([`RemoteChange`]). Undo writes the old value back, redo the new one, only if the repo
+    /// still has the other one ([`apply_remote_change`]). URLs are masked in the JSON, so it is not
+    /// read back (`skip_deserializing`).
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub remote_change: Option<RemoteChange>,
 }
 
 impl JournalEntry {
@@ -275,6 +285,7 @@ impl JournalEntry {
             clean: None,
             lines: None,
             ignore: None,
+            remote_change: None,
         })
     }
 
@@ -304,6 +315,7 @@ impl JournalEntry {
             clean: None,
             lines: None,
             ignore: None,
+            remote_change: None,
         }
     }
 
@@ -330,6 +342,7 @@ impl JournalEntry {
             clean: None,
             lines: Some(outcome.file.clone()),
             ignore: None,
+            remote_change: None,
         }
     }
 
@@ -359,6 +372,7 @@ impl JournalEntry {
             }),
             lines: None,
             ignore: None,
+            remote_change: None,
         }
     }
 
@@ -385,6 +399,7 @@ impl JournalEntry {
             clean: None,
             lines: None,
             ignore: outcome.record.clone(),
+            remote_change: None,
         }
     }
 
@@ -959,6 +974,7 @@ impl JournalEntry {
             clean: None,
             lines: None,
             ignore: None,
+            remote_change: None,
         }
     }
 
@@ -1025,6 +1041,79 @@ impl JournalEntry {
             None,
         );
         entry.remote = Some(snapshot);
+        entry
+    }
+
+    /// The entry of a `remote.set_url` that changed the URL key of `name` from `before` (`None`:
+    /// not set) to `after`; HEAD does not change and no ref moves.
+    pub fn remote_set_url(
+        name: &str,
+        push: bool,
+        before: Option<String>,
+        after: String,
+        head: HeadState,
+    ) -> Self {
+        let url = mask_url(&after).0;
+        let description = if push {
+            msg!("engine-journal-remote-set-push-url", name = name, url = url)
+        } else {
+            msg!("engine-journal-remote-set-url", name = name, url = url)
+        };
+        let mut entry = Self::branch_entry(
+            "remote.set_url",
+            description,
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            Vec::new(),
+            None,
+        );
+        entry.remote_change = Some(RemoteChange::Url {
+            name: name.to_owned(),
+            push,
+            before,
+            after,
+        });
+        entry
+    }
+
+    /// The entry of a `remote.rename` from `before` (the remote as it was) to `after` (as it is
+    /// now): `refs` lists the remote-tracking branches moved (old name deleted, new one created),
+    /// for display; undo and redo go through [`apply_remote_change`], not through these refs.
+    pub fn remote_rename(before: &RemoteSnapshot, after: &RemoteSnapshot, head: HeadState) -> Self {
+        let mut refs: Vec<RefChange> = before
+            .refs
+            .iter()
+            .map(|r| RefChange {
+                name: r.name.clone(),
+                before: Some(r.target),
+                after: None,
+            })
+            .collect();
+        refs.extend(after.refs.iter().map(|r| RefChange {
+            name: r.name.clone(),
+            before: None,
+            after: Some(r.target),
+        }));
+        let mut entry = Self::branch_entry(
+            "remote.rename",
+            msg!(
+                "engine-journal-remote-rename",
+                from = before.name,
+                to = after.name
+            ),
+            HeadChange {
+                before: head.clone(),
+                after: head,
+            },
+            refs,
+            None,
+        );
+        entry.remote_change = Some(RemoteChange::Rename {
+            from: before.name.clone(),
+            to: after.name.clone(),
+        });
         entry
     }
 
@@ -1326,6 +1415,9 @@ impl JournalEntry {
         }
         if self.command == "branch.set_upstream" {
             return self.apply_upstream(repo, redo);
+        }
+        if let Some(change) = &self.remote_change {
+            return apply_remote_change(repo, change, redo);
         }
         let request = if redo {
             self.redo_request()
@@ -1636,6 +1728,7 @@ mod tests {
             clean: None,
             lines: None,
             ignore: None,
+            remote_change: None,
         }
     }
 

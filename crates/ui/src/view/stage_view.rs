@@ -100,7 +100,7 @@ pub(crate) fn stage_panel(
             ui.separator();
         }
         let space = Space { height, below };
-        let shown = stage_section(ui, side, items, open, enabled, space, actions);
+        let shown = stage_section(ui, side, items, open, &repo.lfs, enabled, space, actions);
         // A list needs one row; beyond that it can give its room to the commit box.
         let least = if items.is_empty() {
             0.0
@@ -382,11 +382,13 @@ pub(super) fn list_height(rows: usize) -> f32 {
 
 /// Title with the count, button for the whole list (and for the unstaged one the "⋯" menu with
 /// "Discard all…"), then the files. Returns the height given to the list, 0 when it is empty.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn stage_section(
     ui: &mut Ui,
     side: Side,
     items: &[StageItem],
     open: Option<&DiffTarget>,
+    lfs: &crate::lfs::LfsBox,
     enabled: bool,
     space: Space,
     actions: &mut Vec<Action>,
@@ -529,6 +531,10 @@ pub(super) fn stage_section(
                     right = button_rect.left() - 4.0;
                 }
 
+                // Files stored in Git LFS: the badge before the button (S63).
+                if lfs.is_lfs(&item.path) {
+                    right = paint_lfs_badge(&painter, right, rect.center().y) - 4.0;
+                }
                 let left = badge.right() + 6.0;
                 let job = stage_path_job(item, &font, text, weak, right - left);
                 let galley = painter.layout_job(job);
@@ -632,6 +638,7 @@ pub(super) fn file_menu(
         _ => None,
     };
     file_menu_entries(ui, &item.path, None, blame_off, actions);
+    launch_entries(ui, &item.path, item.change == Change::Deleted, actions);
     ui.separator();
     let label = match op {
         StageOp::Stage if item.is_conflict() => tr!("stage-mark-resolved"),

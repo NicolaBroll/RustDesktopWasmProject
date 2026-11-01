@@ -10,7 +10,9 @@ use crate::fetch::{self, Failure};
 use crate::format::{self, change_letter, date_time, date_time_zone, file_path, file_score};
 use crate::graph::{self, LabelKind, RefLabel};
 use crate::list::{Anchor, CommitList};
-use crate::remotes::{self, AddDialog, AddFields, DeleteBranchDialog, RemoteText, RemoveDialog};
+use crate::remotes::{
+    self, AddDialog, AddFields, DeleteBranchDialog, EditDialog, EditKind, RemoteText, RemoveDialog,
+};
 use crate::search::{SearchBox, State as SearchState};
 use crate::stage::{self, PendingWrite, Side, StageItem, StageOp};
 use crate::stash::{DropDialog, PushDialog, PushFields, StashText};
@@ -34,6 +36,7 @@ mod conflict_view;
 mod credentials_view;
 mod details_view;
 mod file_view;
+mod lfs_view;
 mod optimize_view;
 mod rebase_view;
 mod refs;
@@ -42,10 +45,12 @@ mod reset_view;
 mod settings_view;
 mod stage_view;
 mod stash_view;
+mod submodule_view;
 mod sync_view;
 mod tab_strip;
 mod title_bar;
 mod top_bar;
+mod worktree_view;
 
 pub(crate) use auto_fetch_view::auto_fetch_notice;
 use auto_fetch_view::offline_icon;
@@ -61,6 +66,9 @@ pub(crate) use details_view::details_panel;
 use details_view::*;
 use file_view::file_menu_entries;
 pub(crate) use file_view::file_view;
+pub(crate) use file_view::{launch_entries, set_can_launch};
+use lfs_view::paint_lfs_badge;
+pub(crate) use lfs_view::{lfs_badge, lfs_notice};
 pub(crate) use optimize_view::optimize_notice;
 pub(crate) use rebase_view::rebase_editor;
 pub(crate) use refs::refs_panel;
@@ -73,6 +81,8 @@ pub(crate) use settings_view::settings_window;
 pub(crate) use stage_view::stage_panel;
 use stash_view::*;
 pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
+pub(crate) use submodule_view::outdated_notice;
+use submodule_view::submodule_section;
 use sync_view::*;
 pub(crate) use sync_view::{failure_window, sync_window};
 pub(crate) use tab_strip::{TabLabel, tab_strip_panel};
@@ -82,6 +92,8 @@ use top_bar::*;
 pub(crate) use top_bar::{
     RecentRepo, current_branch, repo_name, status_bar, top_bar, undo_enabled, welcome,
 };
+use worktree_view::worktree_section;
+pub(crate) use worktree_view::{confirm_worktree_remove, worktree_dialog};
 
 /// The network operation in progress (fetch, pull or push), for the bar.
 pub(crate) struct Network {

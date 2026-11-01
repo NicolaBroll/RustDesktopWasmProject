@@ -16,7 +16,8 @@ pub type OnChange = Arc<dyn Fn() + Send + Sync>;
 pub struct Capabilities {
     /// [`Platform::pick_folder`] opens a dialog.
     pub open_folder: bool,
-    /// [`Platform::show_folder`] and [`Platform::open_terminal`] start the system's programs.
+    /// [`Platform::show_folder`], [`Platform::open_terminal`] and [`Platform::open_file`] start
+    /// the system's programs.
     pub external_apps: bool,
 }
 
@@ -54,6 +55,14 @@ pub trait Platform: Send + Sync {
     /// Opens a terminal in `folder`, without waiting for it. The default as [`Self::show_folder`].
     fn open_terminal(&self, folder: &Path) -> std::io::Result<()> {
         let _ = folder;
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    /// Opens `file` (an absolute path) in `editor`, the "External editor" command line of the
+    /// settings (`{file}` stands for the path; without it the path is the last argument), or in
+    /// the system's default application if `editor` is blank. It never goes through a shell and
+    /// does not wait for the program. The default as [`Self::show_folder`].
+    fn open_file(&self, file: &Path, editor: &str) -> std::io::Result<()> {
+        let _ = (file, editor);
         Err(std::io::ErrorKind::Unsupported.into())
     }
 }

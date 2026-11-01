@@ -198,6 +198,23 @@ impl DiffState {
         true
     }
 
+    /// Shows the loaded diff as a file stored in Git LFS (`lfs`) or not (S63): the document is
+    /// rebuilt only if that changes, and then its selection is cleared.
+    pub fn set_lfs(&mut self, lfs: bool) {
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        let Some(Ok(doc)) = &mut open.answer else {
+            return;
+        };
+        if doc.lfs == lfs {
+            return;
+        }
+        let built = std::mem::replace(doc, DiffDoc::new(Diff::default(), &open.target.path));
+        *doc = built.with_lfs(&open.target.path, lfs);
+        open.selection.clear();
+    }
+
     /// The selected lines of the open diff (empty if there is none).
     pub fn selection(&self) -> Option<&LineSelection> {
         self.open.as_ref().map(|o| &o.selection)
@@ -265,6 +282,9 @@ pub struct DiffDoc {
     pub emphasis: HashMap<(usize, usize, usize), Vec<Range<usize>>>,
     /// The rows of the side by side view.
     pub split: Vec<SplitRow>,
+    /// The file is stored in Git LFS (S63): the rows show "Stored in Git LFS (`<size>`)" in place
+    /// of the pointer text, and no hunks or lines (see [`DiffDoc::with_lfs`]).
+    pub lfs: bool,
 }
 
 /// A row of the side by side view: the old file on the left, the new on the right.
@@ -283,7 +303,21 @@ impl DiffDoc {
     /// `diff` is the response of `diff.commit` for `path`: the engine also returns the files
     /// that have `path` as source (e.g. a copy from `path`); the ones that arrive at
     /// `path` are kept (two for a type change), or all of them if none arrives there.
-    pub fn new(mut diff: Diff, path: &RepoPath) -> Self {
+    pub fn new(diff: Diff, path: &RepoPath) -> Self {
+        Self::build(diff, path, false)
+    }
+
+    /// The same document for a file stored in Git LFS (`lfs`) or not: what git diffs of an LFS
+    /// file is its pointer, so each file gets the note with the size from the pointer instead
+    /// of its hunks (there are no lines to select).
+    pub fn with_lfs(self, path: &RepoPath, lfs: bool) -> Self {
+        if self.lfs == lfs {
+            return self;
+        }
+        Self::build(self.diff, path, lfs)
+    }
+
+    fn build(mut diff: Diff, path: &RepoPath, lfs: bool) -> Self {
         if diff.files.iter().any(|f| f.new_path == *path) {
             diff.files.retain(|f| f.new_path == *path);
         }
@@ -296,6 +330,10 @@ impl DiffDoc {
             }
             rows.push(Row::File(f));
             rows.extend(file_notes(file).into_iter().map(|n| Row::Note(f, n)));
+            if lfs {
+                rows.push(Row::Note(f, crate::lfs::note(file)));
+                continue;
+            }
             for (h, hunk) in file.hunks.iter().enumerate() {
                 rows.push(Row::Hunk(f, h));
                 max_number = max_number
@@ -311,7 +349,7 @@ impl DiffDoc {
                 }
             }
         }
-        let emphasis = emphasis(&diff);
+        let emphasis = if lfs { HashMap::new() } else { emphasis(&diff) };
         let split = split_rows(&diff, &rows);
         Self {
             diff,
@@ -320,11 +358,15 @@ impl DiffDoc {
             max_cols,
             emphasis,
             split,
+            lfs,
         }
     }
 
-    /// Lines added and removed in all files.
+    /// Lines added and removed in all files (none for an LFS file: they are pointer lines).
     pub fn line_counts(&self) -> (usize, usize) {
+        if self.lfs {
+            return (0, 0);
+        }
         self.diff
             .files
             .iter()

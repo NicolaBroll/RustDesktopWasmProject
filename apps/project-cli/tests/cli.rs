@@ -484,8 +484,12 @@ fn commands_lists_the_catalog() {
             "remote.push",
             "remote.push_tag",
             "remote.remove",
+            "remote.rename",
+            "remote.set_url",
             "repo.clone",
             "repo.init",
+            "repo.lfs_paths",
+            "repo.lfs_status",
             "repo.log",
             "repo.open",
             "repo.operation",
@@ -500,12 +504,17 @@ fn commands_lists_the_catalog() {
             "stash.list",
             "stash.pop",
             "stash.push",
+            "submodule.list",
+            "submodule.update",
             "tag.create",
             "tag.delete",
+            "worktree.add",
             "worktree.clean",
             "worktree.discard",
             "worktree.discard_lines",
-            "worktree.ignore"
+            "worktree.ignore",
+            "worktree.list",
+            "worktree.remove"
         ]
     );
     // Commands that modify the repo are marked.
@@ -550,6 +559,8 @@ fn commands_lists_the_catalog() {
             "remote.push",
             "remote.push_tag",
             "remote.remove",
+            "remote.rename",
+            "remote.set_url",
             "repo.clone",
             "repo.init",
             "repo.optimize",
@@ -559,12 +570,15 @@ fn commands_lists_the_catalog() {
             "stash.drop",
             "stash.pop",
             "stash.push",
+            "submodule.update",
             "tag.create",
             "tag.delete",
+            "worktree.add",
             "worktree.clean",
             "worktree.discard",
             "worktree.discard_lines",
-            "worktree.ignore"
+            "worktree.ignore",
+            "worktree.remove"
         ]
     );
 

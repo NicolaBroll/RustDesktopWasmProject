@@ -1,0 +1,32 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "messages": [
+    "Submodule path 'lib': checked out '910a2dec89025cc1beeb8da1658eec67f893a2ee'"
+  ],
+  "refused": [
+    {
+      "message": {
+        "args": {
+          "path": "vendor/x"
+        },
+        "key": "engine-submodule-untracked",
+        "text": "`vendor/x` has untracked files: commit, move or remove them first"
+      },
+      "path": "vendor/x",
+      "reason": "untracked_files"
+    }
+  ],
+  "unchanged": [],
+  "updated": [
+    {
+      "backup": "refs/project/backup/submodule-1",
+      "from": "975835de1c9756cebfc846100bfc1e42987bbcbf",
+      "path": "lib",
+      "to": "910a2dec89025cc1beeb8da1658eec67f893a2ee"
+    }
+  ],
+  "warnings": []
+}

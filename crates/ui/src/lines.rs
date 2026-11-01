@@ -65,6 +65,10 @@ pub fn partial(doc: &DiffDoc, source: DiffSource) -> Partial {
     let Some(direction) = direction(source) else {
         return Partial::Hidden;
     };
+    // A file in Git LFS: its lines are pointer lines, which the engine refuses (S63).
+    if doc.lfs {
+        return Partial::Hidden;
+    }
     let file = match &doc.diff.files[..] {
         [] => return Partial::Hidden,
         [file] => file,

@@ -14,6 +14,7 @@ mod discard;
 mod discard_lines;
 mod file;
 mod ignore;
+mod lfs;
 #[cfg(any(test, feature = "test-support"))]
 mod line_diff;
 mod lines;
@@ -27,13 +28,16 @@ mod push;
 mod rebase;
 mod remote;
 mod remote_admin;
+mod remote_edit;
 mod reset;
 mod restore;
 #[cfg(any(test, feature = "test-support"))]
 mod sample;
 mod search;
 mod stash;
+mod submodule;
 mod tag;
+mod worktree;
 
 #[cfg(test)]
 mod memory_diff_tests;
@@ -84,13 +88,15 @@ pub use ignore::{
     IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
     ignore_description, ignore_tracked_warning,
 };
+pub use lfs::{LFS_FILTER, LfsState};
 pub use lines::{LinePatch, LineSelection, apply_patch, file_digest, line_patch};
 pub use maintenance::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use memory::{
-    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
+    CleanStash, FetchFailure, MEMORY_MAIN_WORKTREE, MemoryBackend, MemoryOpener, MemoryWorktree,
+    StashedFile, WorktreeStash,
 };
 pub(crate) use merge::check_in_progress;
 pub use merge::{
@@ -121,6 +127,10 @@ pub use remote_admin::{
     check_remote_url, ensure_remote_gone, mask_url, masked_entry, owned_by, remote_dependents,
     remove_remote, restore_remote, split_branch_key,
 };
+pub use remote_edit::{
+    RemoteChange, apply_remote_change, nested_remote, rename_warnings, shown_url, url_key,
+    url_values,
+};
 pub use reset::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
@@ -132,7 +142,17 @@ pub use stash::{
     StashPopped, StashPush, StashRecord, check_stash_apply, check_stash_push, find_stash,
     pop_stash, stash_blocked, stash_branch, stash_local_changes,
 };
+pub use submodule::{
+    SUBMODULE_BACKUP_KIND, SubmoduleInfo, SubmoduleMoved, SubmoduleRefusal, SubmoduleRefusalReason,
+    SubmoduleState, SubmoduleUpdate, SubmoduleUpdated, UpdatePlan, nested_path, not_at_recorded,
+    plan_update, refusal_message, submodule_state, update_refusal,
+};
 pub use tag::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
+pub use worktree::{
+    WORKTREE_BACKUP_KIND, WorktreeAdd, WorktreeAdded, WorktreeContents, WorktreeInfo,
+    WorktreeRemove, WorktreeRemoved, WorktreeTarget, branch_in_worktree, check_worktree_path,
+    removal_needs_confirm, removal_refusal, unknown_worktree,
+};
 
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
@@ -241,6 +261,14 @@ pub trait GitRead {
     /// that `branch.set_upstream` and `branch.create` with `track` replace. A non-UTF-8 value
     /// gives [`EngineError::NotAllowed`] (it could not be written back). A read.
     fn local_upstream(&self, name: &str) -> Result<Vec<ConfigEntry>, EngineError>;
+
+    /// Which of `paths` are stored in Git LFS: their `filter` attribute is [`LFS_FILTER`] (`git
+    /// check-attr filter`, attributes of the worktree and the index), in the order given, each
+    /// once. Empty `paths` → empty, without running git. A read (`repo.lfs_paths`).
+    fn lfs_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>, EngineError>;
+
+    /// Whether the repo uses LFS and git-lfs is installed (`repo.lfs_status`). A read.
+    fn lfs_state(&self) -> Result<LfsState, EngineError>;
 }
 
 /// Index and worktree: stage, unstage, commit, discard and their restores. Part of
@@ -739,6 +767,31 @@ pub trait GitRemotes {
     /// origin: `remote.remove` rejects them, because it would remove only part of the remote.
     /// A read.
     fn remote_config_elsewhere(&self, name: &str) -> Result<Vec<String>, EngineError>;
+
+    // --- Changing a remote in place (S59). Names and URL already checked by the command (or the
+    // journal); only the repo file is written.
+
+    /// Sets the fetch URL (`remote.<name>.url`) or, with `push`, the push URL
+    /// (`remote.<name>.pushurl`) of the configured remote `name` to `url` (`git remote set-url
+    /// [--push] --end-of-options <name> <url>`: the key must have at most one value in the repo
+    /// file; checked by the caller). `None` removes the key (`git config --local --unset-all`; the
+    /// undo of a push URL that was not set). The URL is never shown unmasked in an error.
+    fn set_remote_url(
+        &mut self,
+        name: &str,
+        push: bool,
+        url: Option<&str>,
+    ) -> Result<(), EngineError>;
+
+    /// Renames the configured remote `from` to `to` (`git remote rename --no-progress
+    /// --end-of-options <from> <to>`): git moves the `remote.<from>` section, the default fetch
+    /// refspec, `refs/remotes/<from>/*` (with the symbolic `HEAD`), `branch.<b>.remote`,
+    /// `branch.<b>.pushRemote` and `remote.pushDefault` of the repo file. The caller checked
+    /// `to` (valid, not configured, nothing under `refs/remotes/<to>/`) and the nesting
+    /// ([`nested_remote`]). Returns git's warnings; a `to` git rejects →
+    /// [`EngineError::InvalidParams`], one that exists → [`EngineError::NotAllowed`], other
+    /// failures → [`EngineError::Git`] (git may have already moved part of it: the caller re-reads).
+    fn rename_remote(&mut self, from: &str, to: &str) -> Result<Vec<Message>, EngineError>;
 }
 
 /// Stash: list, push, apply, drop, store. Part of [`GitBackend`].
@@ -892,15 +945,61 @@ pub trait GitMaintenance {
     fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError>;
 }
 
+/// Submodules (`impl-docs/git/submodules.md`). Part of [`GitBackend`].
+pub trait GitSubmodules {
+    /// The submodules of the repo (the gitlinks of the index, in path order) with their state.
+    /// A read: nothing is written in the superproject or in the submodules.
+    fn submodules(&self) -> Result<Vec<SubmoduleInfo>, EngineError>;
+
+    /// `submodule.update`: checks out the recorded commit in the selected submodules, never in
+    /// one [`update_refusal`] refuses (listed in the result, nothing run for it). The detached
+    /// HEAD of each submodule about to move is saved first in a backup ref inside it; if a
+    /// backup fails nothing is run. May fetch (network: credentials through the prompter,
+    /// progress and cancellation from `job`). The request is already checked
+    /// ([`SubmoduleUpdate::check`]).
+    fn update_submodules(
+        &mut self,
+        request: &SubmoduleUpdate,
+        job: &JobContext,
+    ) -> Result<SubmoduleUpdated, EngineError>;
+}
+
+/// Linked worktrees (`impl-docs/git/worktrees.md`). Part of [`GitBackend`].
+pub trait GitWorktrees {
+    /// The worktrees of the repository, the main one first (`git worktree list`). A read.
+    fn worktrees(&self) -> Result<Vec<WorktreeInfo>, EngineError>;
+
+    /// `worktree.add`: a new worktree at `request.path` (absent or empty folder, never
+    /// `--force`) on an existing branch checked out nowhere else, or on a detached commit.
+    /// Moves no ref: a new branch is created first by the command. On failure the folder goes
+    /// back to how it was.
+    fn add_worktree(&mut self, request: &WorktreeAdd) -> Result<WorktreeAdded, EngineError>;
+
+    /// `worktree.remove`: deletes a linked worktree that [`removal_refusal`] lets through (never
+    /// `--force`), only with `confirm`; a detached HEAD with commits on no ref is saved first in
+    /// `refs/project/backup/worktree-...` (if the backup fails nothing is removed).
+    fn remove_worktree(&mut self, request: &WorktreeRemove)
+    -> Result<WorktreeRemoved, EngineError>;
+}
+
 /// An open repository: the union of the traits by area ([`GitRead`], [`GitIndex`], [`GitRefs`],
-/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`]). Every type that
+/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`], [`GitSubmodules`], [`GitWorktrees`]). Every type that
 /// implements all of them is a `GitBackend` (blanket impl); `Session` and the commands hold a
 /// `Box<dyn GitBackend>`. A caller with a concrete backend (`MemoryBackend`, `CliBackend`)
 /// imports the traits of the methods it calls.
 ///
 /// `Send` because the session may move it to a worker thread for slow commands (§6).
 pub trait GitBackend:
-    GitRead + GitIndex + GitRefs + GitRemotes + GitStash + GitOperations + GitMaintenance + Send
+    GitRead
+    + GitIndex
+    + GitRefs
+    + GitRemotes
+    + GitStash
+    + GitOperations
+    + GitMaintenance
+    + GitSubmodules
+    + GitWorktrees
+    + Send
 {
 }
 
@@ -912,6 +1011,8 @@ impl<T> GitBackend for T where
         + GitStash
         + GitOperations
         + GitMaintenance
+        + GitSubmodules
+        + GitWorktrees
         + Send
         + ?Sized
 {

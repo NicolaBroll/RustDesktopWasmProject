@@ -30,6 +30,7 @@ pub use builtin::discard::{DiscardLinesParams, DiscardLinesResult, DiscardParams
 pub use builtin::edit::{HistoryResult, UndoResult};
 pub use builtin::file::{FileBlameParams, FileLogParams, FileLogResult};
 pub use builtin::ignore::{IgnoreParams, IgnoreResult};
+pub use builtin::lfs::{LfsPathsParams, LfsPathsResult};
 pub use builtin::merge::{
     IncomingCommit, MergeAbortParams, MergeAbortResult, MergeApplied, MergeContinueParams,
     MergeContinueResult, MergeStartParams, MergeStartResult, RepoOperationResult,
@@ -49,7 +50,8 @@ pub use builtin::remote_tag::{
 };
 pub use builtin::remotes::{
     FetchErrorKind, RemoteAddFetch, RemoteAddFetchError, RemoteAddParams, RemoteAddResult,
-    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemovedRemote,
+    RemoteListEntry, RemoteListResult, RemoteRemoveParams, RemoteRemoveResult, RemoteRenameParams,
+    RemoteRenameResult, RemoteSetUrlParams, RemoteSetUrlResult, RemovedRemote,
 };
 pub use builtin::reset::{ResetParams, ResetPreviewParams, ResetPreviewResult, ResetResult};
 pub use builtin::search::{RepoSearchParams, RepoSearchResult};
@@ -70,15 +72,16 @@ pub use git::{
     BACKUP_PREFIX, BranchDeleted, CleanBackup, CleanOutcome, CleanRestore, CleanedFile,
     CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardLines, DiscardLinesOutcome,
     DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
-    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, HEADS_PREFIX, HeadState,
-    LinePatch, LineSelection, LinesBackup, LinesRestore, LogQuery, RefMove, RefRestore, RepoOpener,
-    RestoreOutcome, SearchField, SearchQuery, StagedVersion, WorktreeBackup, WorktreeRestore,
-    amend_impact, apply_patch, backup_message, branch_ref, branch_short, check_amend_published,
-    check_branch_name, check_commit_state, check_new_branch_name, check_no_operation,
-    check_remote_name, check_same_clean_plan, check_same_plan, clean_description, clean_plan,
-    default_remote, discard_description, discard_line_patch, discard_lines_confirm,
-    discard_lines_description, discard_lines_target, discard_plan, file_digest, line_patch,
-    path_matches, unknown_remote, valid_ref_name, versions_at_risk, versions_at_risk_hidden,
+    GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules,
+    GitWorktrees, HEADS_PREFIX, HeadState, LinePatch, LineSelection, LinesBackup, LinesRestore,
+    LogQuery, RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery,
+    StagedVersion, WorktreeBackup, WorktreeRestore, amend_impact, apply_patch, backup_message,
+    branch_ref, branch_short, check_amend_published, check_branch_name, check_commit_state,
+    check_new_branch_name, check_no_operation, check_remote_name, check_same_clean_plan,
+    check_same_plan, clean_description, clean_plan, default_remote, discard_description,
+    discard_line_patch, discard_lines_confirm, discard_lines_description, discard_lines_target,
+    discard_plan, file_digest, line_patch, path_matches, unknown_remote, valid_ref_name,
+    versions_at_risk, versions_at_risk_hidden,
 };
 pub use git::{
     BlameQuery, FileBlame, FileLogQuery, blame_binary, blame_is_binary, blame_missing_at,
@@ -87,8 +90,8 @@ pub use git::{
 /// The in-memory repo for tests (UI, MCP): not in the app binaries.
 #[cfg(any(test, feature = "test-support"))]
 pub use git::{
-    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
-    cleanup_message, is_binary_content, split_message,
+    CleanStash, FetchFailure, MEMORY_MAIN_WORKTREE, MemoryBackend, MemoryOpener, MemoryWorktree,
+    StashedFile, WorktreeStash, cleanup_message, is_binary_content, split_message,
 };
 pub use git::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
@@ -110,6 +113,7 @@ pub use git::{
     IgnoreFile, IgnoreOutcome, IgnoreRecord, IgnoreRequest, IgnoreRestore, check_ignore_patterns,
     ignore_description, ignore_tracked_warning,
 };
+pub use git::{LFS_FILTER, LfsState};
 pub use git::{
     MAX_REBASE_COMMITS, REBASE_RECORD, RebaseRecord, RebaseRequest, check_rebase_request,
     check_rebase_state, check_rebasing, explicit_squash_messages, plan_error, rebase_range,
@@ -136,11 +140,25 @@ pub use git::{
     remove_remote, restore_remote, split_branch_key,
 };
 pub use git::{
+    RemoteChange, apply_remote_change, nested_remote, rename_warnings, shown_url, url_key,
+    url_values,
+};
+pub use git::{
     ResetMode, ResetOutcome, ResetRecord, ResetRequest, check_same_reset_files, reset_files,
     reset_moved, status_paths, strict_conflicts,
 };
+pub use git::{
+    SUBMODULE_BACKUP_KIND, SubmoduleInfo, SubmoduleMoved, SubmoduleRefusal, SubmoduleRefusalReason,
+    SubmoduleState, SubmoduleUpdate, SubmoduleUpdated, UpdatePlan, nested_path, not_at_recorded,
+    plan_update, refusal_message, submodule_state, update_refusal,
+};
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use git::{TrackingBranch, UpstreamChange, resolve_tracking, upstream_label};
+pub use git::{
+    WORKTREE_BACKUP_KIND, WorktreeAdd, WorktreeAdded, WorktreeContents, WorktreeInfo,
+    WorktreeRemove, WorktreeRemoved, WorktreeTarget, branch_in_worktree, check_worktree_path,
+    removal_needs_confirm, removal_refusal, unknown_worktree,
+};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{BranchMove, HeadChange, Integration, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};

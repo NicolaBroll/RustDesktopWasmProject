@@ -75,8 +75,8 @@ remotes-list-error = Remoti non letti: { $error }
 remotes-add-button-hint = Aggiunge un remoto (nome e URL) e, se scelto, ne scarica subito i branch. «Annulla» lo toglie
 remotes-row-hint =
     { $tooltip }
-    Clic destro: fetch, rimozione
-remotes-menu-hint = Fetch, rimozione
+    Clic destro: fetch, modifica URL, rinomina, rimozione
+remotes-menu-hint = Fetch, modifica URL, rinomina, rimozione
 remotes-fetch-button = Fetch
 remotes-fetch-button-hint = Scarica commit, branch remoti e tag da «{ $name }». Non tocca branch locali, indice né file
 remotes-remove-button = Rimuovi…
@@ -120,3 +120,42 @@ remotes-tag-deleted-short = Tag eliminato dal remoto
 remotes-delete-tag-title = Eliminare il tag «{ $name }» da «{ $remote }»?
 remotes-delete-tag-explanation = Il tag «{ $name }» viene eliminato sul remoto «{ $remote }»: sparisce per tutti quelli che lo usano. Il tag locale non cambia.
 remotes-delete-tag-undo = Non si annulla con «Annulla»: il remoto è anche di altri. Il valore resta qui in un backup (refs/project/backup/push-delete-…). Se il tag è cambiato sul remoto dopo la lettura, l'eliminazione è rifiutata e non cambia niente.
+
+# Modifica URL e rinomina (remote_edit.rs, S59).
+remotes-edit-url-button = Modifica URL…
+remotes-edit-url-button-hint = Cambia l'URL da cui il remoto scarica (e, se serve, un URL di push separato). Branch remoti e upstream restano; «Annulla» rimette l'URL di prima
+remotes-rename-button = Rinomina…
+remotes-rename-button-hint = Rinomina il remoto: i suoi branch remoti e gli upstream che lo usano seguono il nuovo nome. Non si perde niente; «Annulla» rimette il nome di prima
+remotes-edit-url-title = Modifica URL di «{ $name }»
+remotes-edit-url-explanation = I branch remoti e gli upstream dei branch locali restano come sono; il prossimo Fetch usa il nuovo URL. «Annulla» rimette quello di prima.
+remotes-edit-fetch-url = URL di fetch
+remotes-edit-push-url = URL di push separato
+remotes-edit-push-url-tooltip = Facoltativo: dove va il Push, se non all'URL di fetch (remote.<nome>.pushurl). Vuoto lo lascia com'è
+remotes-edit-push-url-hint = facoltativo: lo stesso dell'URL di fetch
+remotes-edit-masked-note = L'URL attuale contiene credenziali ed è mostrato mascherato come suggerimento: scrivi tutto il nuovo URL, o lascia il campo vuoto per tenerlo.
+remotes-edit-to-ssh = Da HTTPS a SSH: git userà la tua chiave SSH invece della password o del token salvati; la chiave deve essere registrata sul server.
+remotes-edit-to-https = Da SSH a HTTPS: git non userà più la tua chiave SSH e chiederà nome utente e password o token (o userà il credential helper).
+remotes-edit-url-submit = Salva URL
+remotes-rename-title = Rinomina il remoto «{ $name }»
+remotes-rename-explanation = I branch remoti { $name }/* passano sotto il nuovo nome, e i branch locali che li seguono vanno con loro. Tag e branch locali non cambiano; «Annulla» rimette il nome di prima.
+remotes-rename-submit = Rinomina
+remotes-set-url-label = Modifica dell'URL di «{ $name }»
+remotes-set-push-url-label = Modifica dell'URL di push di «{ $name }»
+remotes-rename-label = Rinomina del remoto «{ $name }» in «{ $new }»
+remotes-set-url-failed = Modifica dell'URL di «{ $name }» non riuscita: { $error }
+remotes-set-push-url-failed = Modifica dell'URL di push di «{ $name }» non riuscita: { $error }
+remotes-rename-failed = Rinomina del remoto «{ $name }» non riuscita: { $error }
+remotes-url-set = URL di «{ $name }» cambiato in { $url }
+remotes-push-url-set = URL di push di «{ $name }» cambiato in { $url }
+remotes-url-unchanged = L'URL di «{ $name }» era già { $url }: niente cambiato
+remotes-push-url-unchanged = L'URL di push di «{ $name }» era già { $url }: niente cambiato
+remotes-url-set-undo = ; «Annulla» rimette quello di prima
+remotes-url-set-short = URL cambiato
+remotes-renamed = Remoto «{ $name }» rinominato in «{ $new }»
+remotes-renamed-refs = { $n ->
+    [one] ; 1 branch remoto spostato
+   *[other] ; { $n } branch remoti spostati
+}
+remotes-renamed-upstreams = ; upstream di { $names } ora su «{ $new }»
+remotes-renamed-undo = . «Annulla» rimette il nome di prima
+remotes-renamed-short = Remoto rinominato

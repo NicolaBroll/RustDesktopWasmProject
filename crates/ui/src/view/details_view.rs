@@ -254,6 +254,7 @@ pub(super) fn changed_files(
                         .then(|| tr!("details-blame-deleted"))
                         .or_else(|| file.is_submodule().then(|| tr!("details-blame-submodule")));
                     file_menu_entries(ui, &file.path, Some(commit), blame_off, actions);
+                    launch_entries(ui, &file.path, file.change == Change::Deleted, actions);
                 });
             }
         });

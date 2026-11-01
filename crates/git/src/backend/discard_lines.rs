@@ -6,7 +6,8 @@
 //! 1. status without `core.fsmonitor` and [`discard_lines_target`] (the refusals of
 //!    `worktree.discard`, only a modified file); the index entry (`ls-files -s`) is the status one;
 //! 2. the file's `diff.worktree` diff and [`discard_line_patch`] (digest, selection); the diff's
-//!    old side must be that index entry;
+//!    old side must be that index entry; a file stored in Git LFS is refused (its diff is the
+//!    pointer text, see `lfs.rs`);
 //! 3. every folder on the path is a real folder; the file is a regular file (`lstat`): its bytes
 //!    and mode (executable bit) are read once;
 //! 4. **clean and smudge**: the bytes cleaned (`hash-object -w --stdin --path=<path>`, with the
@@ -55,6 +56,7 @@ impl CliBackend {
         }
         let diff = self.diff(&selection.diff_spec())?;
         let prepared = discard_line_patch(&diff, selection)?;
+        self.refuse_lfs_lines(path)?;
         let changed = || EngineError::StaleDiff {
             path: path.to_string(),
             reason: msg!("engine-discard-lines-changed"),

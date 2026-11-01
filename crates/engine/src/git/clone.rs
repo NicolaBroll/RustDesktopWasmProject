@@ -20,6 +20,9 @@ pub struct CloneRequest {
     /// Shallow clone of this many commits (> 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<u32>,
+    /// Also clone and check out the submodules, recursively (`--recurse-submodules`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub submodules: bool,
 }
 
 /// What a clone reports besides the new repo: git's non-progress lines (warnings such as "You
@@ -75,7 +78,7 @@ impl InitRequest {
     }
 }
 
-fn check_path(id: &'static str, path: &str) -> Result<(), EngineError> {
+pub(super) fn check_path(id: &'static str, path: &str) -> Result<(), EngineError> {
     if path.is_empty() || path.contains('\0') {
         return Err(EngineError::InvalidParams {
             id,
@@ -120,6 +123,7 @@ mod tests {
             path: path.into(),
             branch: branch.map(Into::into),
             depth,
+            submodules: false,
         }
     }
 

@@ -6,16 +6,13 @@
 //! `c4`; in the worktree `b.txt` has a fifth, uncommitted line.
 
 use super::*;
+use crate::test_util::oid;
 use project_domain::{Change, ChangedFile, Commit, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use serde_json::json;
 use std::sync::Arc;
 
 const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig(n: u64) -> Signature {
     Signature {

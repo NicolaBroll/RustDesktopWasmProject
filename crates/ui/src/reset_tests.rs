@@ -6,13 +6,10 @@
 
 use super::*;
 use crate::merge::Received;
+use crate::test_util::oid;
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use serde_json::json;
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
     let mut opener = MemoryOpener::new();

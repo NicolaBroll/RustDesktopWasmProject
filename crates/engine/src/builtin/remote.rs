@@ -225,11 +225,11 @@ pub(super) fn remote_fetch(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util::oid;
     use crate::{
         CancelToken, EngineError, FetchFailure, JobContext, MemoryBackend, MemoryOpener, Progress,
         Registry, Session,
     };
-    use project_domain::Oid;
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
 
@@ -244,10 +244,6 @@ mod tests {
 
     fn sample() -> (Registry, Session) {
         opened_with(MemoryBackend::sample())
-    }
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
     }
 
     fn target(out: &Value, name: &str) -> Option<String> {

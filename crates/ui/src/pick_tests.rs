@@ -5,14 +5,11 @@ use super::super::{Dialog, Kind, OPERATION};
 use super::*;
 use crate::Ticket;
 use crate::discard::Phase;
+use crate::test_util::oid;
 use project_domain::{Change, ChangedFile, Commit, Operation, RepoPath, Signature, Status};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use serde_json::json;
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig(n: u64) -> Signature {
     Signature {

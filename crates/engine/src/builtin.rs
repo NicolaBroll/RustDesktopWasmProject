@@ -1024,6 +1024,7 @@ mod range_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::same;
     use crate::{GitRead, MemoryBackend, MemoryOpener};
     use project_domain::{CommitDetails, RefInfo, Status};
     use serde_json::json;
@@ -1239,12 +1240,6 @@ mod tests {
     }
 
     /// Reads `out` as `T` and checks that `T` gives the same JSON again.
-    fn same<T: serde::de::DeserializeOwned + Serialize>(out: Value) -> T {
-        let typed: T = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(to_json(&typed), out);
-        typed
-    }
-
     /// The typed results of `repo.open`, `repo.optimize`, `repo.log` and `diff.worktree`/
     /// `diff.index` read back the JSON of the command and give the same JSON again: the UI
     /// deserializes into them.

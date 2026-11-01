@@ -6,13 +6,10 @@
 //! binary `z.bin`), and 99, a root commit unrelated to the rest.
 
 use super::snapshot_tests::{id, opened_with, run};
+use crate::test_util::oid;
 use crate::{EngineError, MemoryBackend, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
 use serde_json::{Value, json};
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig() -> Signature {
     Signature {

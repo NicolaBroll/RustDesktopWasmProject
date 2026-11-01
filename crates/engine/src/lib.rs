@@ -14,6 +14,8 @@ mod job;
 mod journal;
 mod platform;
 mod session;
+#[cfg(test)]
+mod test_util;
 
 pub use builtin::branch::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,

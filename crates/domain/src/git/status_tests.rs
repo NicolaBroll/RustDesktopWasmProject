@@ -1,3 +1,4 @@
+use super::tests::oid;
 use super::*;
 use crate::DomainError;
 use proptest::prelude::*;
@@ -30,10 +31,6 @@ const UPSTREAM_GONE: &[u8] = include_bytes!("testdata/status-upstream-gone.bin")
 const IGNORED: &[u8] = include_bytes!("testdata/status-ignored.bin");
 /// `git -c status.renames=copies status --porcelain=v2 -z --branch --untracked-files=all`.
 const COPIES: &[u8] = include_bytes!("testdata/status-copies.bin");
-
-fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
-}
 
 fn zero() -> Oid {
     Oid::from_bytes([0; 20])

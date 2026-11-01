@@ -6,14 +6,11 @@
 
 use super::*;
 use crate::list::{CommitList, Seek};
+use crate::test_util::oid;
 use project_domain::{Commit, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use serde_json::json;
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn opened(n: u64, every: u64) -> (Registry, Session) {
     let mut repo = MemoryBackend::new();

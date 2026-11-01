@@ -6,6 +6,7 @@
 //! `c5` from `c4` changes `b.txt` (`five`), `main` at `c6`, merge of `c4` and `c5`
 //! with the content of `c5`, then `c7` on `main` changes `TWO` → `2`. HEAD on `main`.
 
+use crate::test_util::oid;
 use crate::{CancelToken, EngineError, JobContext, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::{
     Change, ChangedFile, Commit, EntryKind, Oid, RepoPath, Signature, StatusEntry, TrackedInfo,
@@ -14,10 +15,6 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig(n: i64) -> Signature {
     Signature {

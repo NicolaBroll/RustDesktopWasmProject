@@ -2,13 +2,10 @@
 //! parameters, the squash notices, the banner and the "Continue"/abort of a squash in progress.
 
 use super::*;
+use crate::test_util::oid;
 use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 /// Commit `n` with parent `parent` that brings `path` to the blob `100 + n` with `summary`.
 fn commit(repo: &mut MemoryBackend, n: u64, parent: Option<u64>, summary: &str, path: &str) {

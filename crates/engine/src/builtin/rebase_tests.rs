@@ -5,14 +5,12 @@
 //! (adds `c.txt`), `c4` "three" (`a.txt` = "three"); `main` at `c4`, HEAD on `main`, clean
 //! worktree. `side` at `c5` from `c1` (adds `n.txt`); `merged` at `c6`, merge of `c4` and `c5`.
 
+use crate::test_util::oid;
+use crate::test_util::same;
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, EntryKind, Oid, RepoPath, Signature};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn id(n: u64) -> String {
     oid(n).to_string()
@@ -565,12 +563,6 @@ fn a_rebase_from_the_terminal_is_offered_but_not_journaled() {
     assert!(r.run("rebase.continue", &mut s, json!({})).is_err());
     let aborted = run(&r, &mut s, "rebase.abort", json!({ "confirm": true }));
     assert_eq!(aborted["status"]["operation"], json!(null));
-}
-
-fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-    let typed: T = serde_json::from_value(out.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-    typed
 }
 
 /// The typed results read back the JSON of the commands and give the same JSON again: the UI

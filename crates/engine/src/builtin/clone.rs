@@ -45,6 +45,7 @@ pub(super) fn repo_init(s: &mut Session, request: InitRequest) -> Out {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util::same;
     use crate::{
         CancelToken, EngineError, GitRead as _, JobContext, LogQuery, MemoryBackend, MemoryOpener,
         Registry, Session,
@@ -275,11 +276,6 @@ mod tests {
     /// UI deserializes into them.
     #[test]
     fn results_round_trip() {
-        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-            let typed: T = serde_json::from_value(out.clone()).unwrap();
-            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-            typed
-        }
         let (r, mut s, _) = setup();
         let cloned: crate::RepoCloneResult =
             same(clone(&r, &mut s, json!({"url": "remote", "path": "dest"})).unwrap());

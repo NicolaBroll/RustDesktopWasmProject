@@ -577,6 +577,7 @@ mod tests {
 
     mod sample {
         use super::super::*;
+        use crate::test_util::oid;
         use project_domain::RefInfo;
         use project_engine::{GitRead, LogQuery, MemoryBackend, MemoryOpener, Registry, Session};
         use serde_json::json;
@@ -609,10 +610,6 @@ mod tests {
                 serde_json::from_value(registry.run("repo.refs", session, json!({})).unwrap())
                     .unwrap();
             refs.iter().find(|r| r.name == name).unwrap().target
-        }
-
-        fn oid(n: u64) -> Oid {
-            MemoryBackend::fake_oid(n)
         }
 
         #[test]

@@ -6,14 +6,11 @@
 //! `n.txt`: merges without conflicts); `ahead` at `c5` from `c2` (adds `c.txt`:
 //! fast-forward). HEAD on `main`, clean worktree.
 
+use crate::test_util::{oid, same};
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig(n: i64) -> Signature {
     Signature {
@@ -415,11 +412,6 @@ fn results_round_trip() {
         RepoOperationResult,
     };
     use project_domain::Operation;
-    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-        let typed: T = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        typed
-    }
     fn start(r: &Registry, s: &mut Session, params: Value) -> MergeStartResult {
         let out = run(r, s, "merge.start", params);
         assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());

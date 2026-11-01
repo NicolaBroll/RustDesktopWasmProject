@@ -765,6 +765,7 @@ pub(super) fn branch_rename(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util::same;
     use crate::{
         EngineError, GitIndex, GitRead, HeadState, MemoryBackend, MemoryOpener, Registry, Session,
     };
@@ -1319,10 +1320,6 @@ mod tests {
         use super::{
             BranchCheckoutResult, BranchCreateResult, BranchDeleteResult, BranchRenameResult,
         };
-        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
-            let typed: T = serde_json::from_value(out.clone()).unwrap();
-            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        }
         let (r, mut s) = open(clean_sample());
         let out = run(&r, &mut s, "branch.create", json!({ "name": "x" }));
         assert!(out.get("refs_error").is_none());

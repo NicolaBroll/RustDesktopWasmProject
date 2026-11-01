@@ -1,3 +1,4 @@
+use super::tests::oid;
 use super::*;
 use crate::DomainError;
 use proptest::prelude::*;
@@ -18,10 +19,6 @@ const LOG: &[u8] = include_bytes!("testdata/log.bin");
 
 /// Same command as [`LOG`] on the empty range `HEAD..HEAD`: zero bytes.
 const LOG_EMPTY: &[u8] = include_bytes!("testdata/log-empty.bin");
-
-fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
-}
 
 fn log() -> Vec<Commit> {
     parse_log(LOG).expect("valid real log")

@@ -1383,13 +1383,10 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::oid;
     use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
-    }
 
     fn sig(n: u64) -> Signature {
         Signature {

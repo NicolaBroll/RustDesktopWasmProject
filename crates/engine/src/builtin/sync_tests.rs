@@ -1,6 +1,7 @@
 //! Tests of `remote.pull` and `remote.push` on the `MemoryBackend` (the backends are also tested in
 //! `git/memory/sync_tests.rs` and, with real git, in `crates/git/tests/{pull,push}.rs`).
 
+use crate::test_util::{oid, same};
 use crate::{
     CancelToken, EngineError, FetchFailure, GitRead, JobContext, MemoryBackend, MemoryOpener,
     PullSettings, PushRejection, Registry, Session,
@@ -16,10 +17,6 @@ fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
     let r = Registry::builtin();
     r.run("repo.open", &mut s, json!({ "path": "r" })).unwrap();
     (r, s)
-}
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
 }
 
 fn target(r: &Registry, s: &mut Session, name: &str) -> Option<String> {
@@ -795,11 +792,6 @@ fn results_round_trip() {
         RemotePullResult, RemotePushResult, RemotePushTagResult,
     };
     use serde_json::Value;
-    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-        let typed: T = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        typed
-    }
     fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
         let out = r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"));
         assert!(out.get("refs_error").is_none() && out.get("status_error").is_none());

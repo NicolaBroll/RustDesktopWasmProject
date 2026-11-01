@@ -5,6 +5,7 @@
 //! `other` at `c3` from `c1` (`a.txt` = "theirs": `BothModified` conflict); `gone` at `c4` from `c1`
 //! (deletes `a.txt`: `DeletedByThem` conflict). HEAD on `main`, clean worktree.
 
+use crate::test_util::{oid, same};
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session, worktree_digest};
 use project_domain::{
     Change, ChangedFile, Commit, Conflict, EntryKind, Oid, RepoPath, Signature, StatusEntry,
@@ -14,10 +15,6 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig(n: i64) -> Signature {
     Signature {
@@ -384,11 +381,6 @@ fn submodule_and_link_are_refused() {
 #[test]
 fn results_round_trip() {
     use crate::{ConflictResolveResult, ConflictShowResult, VersionText};
-    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-        let typed: T = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        typed
-    }
     let (r, mut s) = merging("other");
     let shown: ConflictShowResult =
         same(run(&r, &mut s, "conflict.show", json!({ "path": "a.txt" })));

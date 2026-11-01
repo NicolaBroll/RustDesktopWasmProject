@@ -119,16 +119,11 @@ pub(super) fn index_unstage_lines(s: &mut Session, p: IndexLinesParams) -> Out {
 #[cfg(test)]
 mod tests {
     use super::IndexWriteResult;
+    use crate::test_util::same;
     use crate::{MemoryOpener, Registry, Session};
     use project_domain::FileDiff;
     use serde_json::{Value, json};
     use std::sync::Arc;
-
-    fn same(out: Value) -> IndexWriteResult {
-        let typed: IndexWriteResult = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        typed
-    }
 
     /// The digest and the line refs of the diff of `path` (`diff.worktree` or `diff.index`).
     fn lines(r: &Registry, s: &mut Session, id: &str, path: &str) -> (Value, Value) {
@@ -153,7 +148,7 @@ mod tests {
             serde_json::from_value(r.run("repo.status", s, json!({})).unwrap()).unwrap()
         };
 
-        let out = same(
+        let out = same::<IndexWriteResult>(
             r.run("index.stage", &mut s, json!({ "paths": ["note.txt"] }))
                 .unwrap(),
         );
@@ -161,7 +156,7 @@ mod tests {
         assert_eq!(out.status, status(&r, &mut s));
 
         let (digest, refs) = lines(&r, &mut s, "diff.worktree", "src/lib.rs");
-        let out = same(
+        let out = same::<IndexWriteResult>(
             r.run(
                 "index.stage_lines",
                 &mut s,
@@ -174,7 +169,7 @@ mod tests {
 
         // `src/lib.rs` is now `MM`: unstaging all its staged lines saves a backup first.
         let (digest, refs) = lines(&r, &mut s, "diff.index", "src/lib.rs");
-        let out = same(
+        let out = same::<IndexWriteResult>(
             r.run(
                 "index.unstage_lines",
                 &mut s,
@@ -186,7 +181,7 @@ mod tests {
         assert_eq!(out.status, status(&r, &mut s));
 
         // README.md is `MM`: the same for the whole file.
-        let out = same(
+        let out = same::<IndexWriteResult>(
             r.run("index.unstage", &mut s, json!({ "paths": ["README.md"] }))
                 .unwrap(),
         );

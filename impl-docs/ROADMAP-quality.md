@@ -212,11 +212,14 @@ Rules that apply to every step:
 - **Done when:** no function over 150 lines in `crates/ui`; UI tests unchanged and green; CI green.
 
 ### Q24 — Shared test helpers
-- [ ] **Agent:** `git-engine`
-- **Goal:** `same<T>` (typed result read back as the same JSON) is defined in 7 test modules of
-  `crates/engine/src/builtin*`, and `oid(n)` in ~12 test modules of `crates/engine` and
-  `crates/ui`. One `same` in a `#[cfg(test)]` module of the engine, one `oid` per crate.
-- **Done when:** one definition each per crate; tests unchanged and green; CI green.
+- [x] **Agent:** `git-engine`
+- **Goal:** `same<T>` (typed result read back as the same JSON) was defined in 15 test modules
+  of `crates/engine/src/builtin*`, and `oid(n)` in ~50 test modules of `crates/domain`,
+  `crates/engine` and `crates/ui`. Now `crate::test_util::{oid, same}` in the engine,
+  `crate::test_util::oid` in the UI (both `MemoryBackend::fake_oid`) and `tests::oid` (hex) in
+  the domain. The `oid(n: u8)` (`[n; 20]`) and `oid(c: char)` variants stay in their tests: they
+  give other ids, and the tests check them (short ids, order).
+- **Done when:** one definition each per crate and id scheme; tests unchanged and green; CI green.
 
 ## Phase Q3 — Optional
 

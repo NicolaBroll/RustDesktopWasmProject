@@ -1,3 +1,4 @@
+use super::tests::oid;
 use super::*;
 use crate::DomainError;
 
@@ -21,10 +22,6 @@ const EMPTY: &[u8] = include_bytes!("testdata/blame-empty.bin");
 const ROOT: &str = "29f3354a82c624f5d2e8b184350ae47239c5aa61";
 const EDIT: &str = "b6fb63de500305a82034f0526617adca0007be96";
 const LATIN1: &str = "a93f631b150ad54c4c8955cc86569605b0710cd7";
-
-fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
-}
 
 fn texts(blame: &Blame) -> Vec<&[u8]> {
     blame.lines.iter().map(|l| l.text.as_bytes()).collect()

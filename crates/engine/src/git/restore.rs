@@ -264,11 +264,7 @@ fn describe(value: Option<Oid>) -> Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MemoryBackend;
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
-    }
+    use crate::test_util::oid;
 
     fn restore() -> RefRestore {
         RefRestore {

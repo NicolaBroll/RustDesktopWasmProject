@@ -43,16 +43,11 @@ pub(super) fn commit_create(s: &mut Session, request: CommitRequest) -> Out {
 #[cfg(test)]
 mod tests {
     use super::CommitCreateResult;
+    use crate::test_util::same;
     use crate::{MemoryOpener, Registry, Session};
     use project_domain::Status;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::sync::Arc;
-
-    fn same(out: Value) -> CommitCreateResult {
-        let typed: CommitCreateResult = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        typed
-    }
 
     /// The typed result reads back the JSON of the command and gives the same JSON again (a
     /// commit and an `amend` with backup and `also_on`): the UI deserializes into it.
@@ -70,7 +65,7 @@ mod tests {
             serde_json::from_value(r.run("repo.status", s, json!({})).unwrap()).unwrap()
         };
 
-        let one = same(
+        let one = same::<CommitCreateResult>(
             r.run("commit.create", &mut s, json!({ "message": "One" }))
                 .unwrap(),
         );
@@ -87,7 +82,7 @@ mod tests {
             json!({ "name": "keep", "start": "HEAD" }),
         )
         .unwrap();
-        let amended = same(
+        let amended = same::<CommitCreateResult>(
             r.run(
                 "commit.create",
                 &mut s,

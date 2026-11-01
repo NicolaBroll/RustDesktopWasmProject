@@ -5,14 +5,12 @@
 //! `c11`; `README.md` changed in the stage and again outside it, `docs/guide.md` new in the
 //! stage, `src/lib.rs` changed outside it, `note.txt` untracked.
 
+use crate::test_util::oid;
+use crate::test_util::same;
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session};
-use project_domain::{Change, EntryKind, Oid, Operation, RepoPath, StatusEntry};
+use project_domain::{Change, EntryKind, Operation, RepoPath, StatusEntry};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
     let mut opener = MemoryOpener::default();
@@ -318,12 +316,6 @@ fn refusals() {
 fn repo_entries(repo: &MemoryBackend) -> Vec<StatusEntry> {
     use crate::GitRead;
     repo.status().unwrap().entries
-}
-
-fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-    let typed: T = serde_json::from_value(out.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-    typed
 }
 
 /// The typed results read back the JSON of the commands and give the same JSON again: the UI

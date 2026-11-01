@@ -2,14 +2,11 @@
 //! checkout, on the `MemoryBackend`. Sample repo: `main` at `oid(12)`, tag `v0.1.0` at
 //! `oid(10)`, `feature/graph` at `oid(9)`.
 
+use crate::test_util::oid;
 use crate::{EngineError, HeadState, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::{Commit, Head, Oid, Operation, Signature};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn clean_sample() -> MemoryBackend {
     let mut repo = MemoryBackend::sample();

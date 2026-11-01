@@ -109,16 +109,11 @@ mod tests {
         clean_sample, conflict_repo, id, opened_with, pull_rebase_conflict, run, sample,
     };
     use crate::builtin::{JournalState, reread};
+    use crate::test_util::same;
     use crate::{EngineError, MemoryOpener, Registry, Session};
     use project_domain::Status;
     use serde_json::{Value, json};
     use std::sync::Arc;
-
-    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: &Value) -> T {
-        let typed: T = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), *out);
-        typed
-    }
 
     /// The typed results read back the JSON of the three commands and give the same JSON
     /// again: the UI deserializes into them.
@@ -136,20 +131,20 @@ mod tests {
             serde_json::from_value(r.run("repo.status", s, json!({})).unwrap()).unwrap()
         };
 
-        let empty: HistoryResult = same(&r.run("edit.history", &mut s, json!({})).unwrap());
+        let empty: HistoryResult = same(r.run("edit.history", &mut s, json!({})).unwrap());
         assert!(empty.done.is_empty() && empty.undone.is_empty());
         assert_eq!(empty.journal, JournalState::default());
 
         r.run("commit.create", &mut s, json!({ "message": "One" }))
             .unwrap();
-        let history: HistoryResult = same(&r.run("edit.history", &mut s, json!({})).unwrap());
+        let history: HistoryResult = same(r.run("edit.history", &mut s, json!({})).unwrap());
         assert_eq!(history.done.len(), 1);
         assert_eq!(history.done[0].command, "commit.create");
         assert!(history.journal.can_undo && !history.journal.can_redo);
 
         let undo = r.run("edit.undo", &mut s, json!({})).unwrap();
         assert!(undo.get("redone").is_none() && undo.get("status_error").is_none());
-        let undo: UndoResult = same(&undo);
+        let undo: UndoResult = same(undo);
         // The undone commit is no longer reachable: undo saved it in a backup ref.
         let undone = undo.undone.as_ref().unwrap();
         assert_eq!(undone.id, history.done[0].id);
@@ -158,12 +153,12 @@ mod tests {
         assert_eq!(undo.status, Some(status(&r, &mut s)));
         assert!(!undo.journal.can_undo && undo.journal.can_redo);
 
-        let history: HistoryResult = same(&r.run("edit.history", &mut s, json!({})).unwrap());
+        let history: HistoryResult = same(r.run("edit.history", &mut s, json!({})).unwrap());
         assert!(history.done.is_empty() && history.undone.len() == 1);
 
         let redo = r.run("edit.redo", &mut s, json!({})).unwrap();
         assert!(redo.get("undone").is_none());
-        let redo: UndoResult = same(&redo);
+        let redo: UndoResult = same(redo);
         assert_eq!(redo.redone.map(|e| e.id), Some(history.undone[0].id));
         assert_eq!(redo.status, Some(status(&r, &mut s)));
         assert!(redo.journal.can_undo && !redo.journal.can_redo);

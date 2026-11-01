@@ -937,6 +937,7 @@ impl Tab {
 mod tests {
     use super::*;
     use crate::Ticket;
+    use crate::test_util::oid;
     use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
@@ -966,10 +967,6 @@ mod tests {
         let detail = result.as_ref().err().and_then(ErrorKind::detail);
         let expected = result.as_ref().err().and_then(ErrorKind::expected);
         sync.receive(ticket, result.map_err(|e| e.text()), kind, detail, expected)
-    }
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
     }
 
     fn main_head() -> Head {

@@ -240,6 +240,7 @@ pub(super) fn tag_delete(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util::same;
     use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session};
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -451,10 +452,6 @@ mod tests {
     #[test]
     fn results_round_trip() {
         use super::{TagCreateResult, TagDeleteResult};
-        fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
-            let typed: T = serde_json::from_value(out.clone()).unwrap();
-            assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-        }
         let (r, mut s) = sample();
         let out = r
             .run("tag.create", &mut s, json!({ "name": "v2" }))

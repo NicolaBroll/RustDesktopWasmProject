@@ -1,3 +1,4 @@
+use super::tests::oid;
 use super::*;
 use crate::DomainError;
 use proptest::prelude::*;
@@ -23,10 +24,6 @@ const SCRIPT: &str = include_str!("testdata/diff-tree.sh");
 
 const FILE: u32 = 0o100644;
 const ZERO: Oid = Oid::from_bytes([0; Oid::LEN]);
-
-fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
-}
 
 fn parse(input: &[u8]) -> Vec<ChangedFile> {
     parse_diff_tree(input).expect("valid real output")

@@ -1,4 +1,5 @@
 use super::refs::parse_track;
+use super::tests::oid;
 use super::*;
 use crate::DomainError;
 use proptest::prelude::*;
@@ -31,10 +32,6 @@ const SCRIPT: &str = include_str!("testdata/refs.sh");
 
 const BASE: &str = "bd2d8c9e18e2e352d32888c352e83b36addd5e08";
 const FORWARD: &str = "de58f806d585c7b14dda9c74dcc94f6282bcdd8a";
-
-fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
-}
 
 fn parse(input: &[u8]) -> Vec<RefInfo> {
     parse_refs(input).expect("valid real output")

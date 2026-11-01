@@ -52,7 +52,7 @@ enum Op {
 }
 
 /// The [`UndoResult`] of `op`, with the journal and the status after the move.
-fn undo_result(s: &mut Session, op: Op, entry: JournalEntry, outcome: RestoreOutcome) -> Out {
+fn undo_result(s: &Session, op: Op, entry: JournalEntry, outcome: RestoreOutcome) -> Out {
     let journal = JournalState::of(s.journal()?);
     let (status, status_error) = reread(s.repo()?.status());
     let (undone, redone) = match op {

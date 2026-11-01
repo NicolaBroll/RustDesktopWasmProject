@@ -131,7 +131,7 @@ impl CliBackend {
     }
 
     /// `<dest>/.git` is a file pointing to an administrative folder that was not in `before`.
-    fn created_here(&self, dest: &Path, before: &[PathBuf]) -> bool {
+    fn created_here(dest: &Path, before: &[PathBuf]) -> bool {
         let Ok(text) = fs::read(dest.join(".git")) else {
             return false;
         };
@@ -259,7 +259,7 @@ impl CliBackend {
                 return Err(failure(&args, &out));
             }
             // Registered by this run only if its `.git` points to a new administrative folder.
-            if registered().is_none() || !self.created_here(&dest.path, &admin_before) {
+            if registered().is_none() || !Self::created_here(&dest.path, &admin_before) {
                 return Err(dest.fail(failure(&args, &out)));
             }
             warnings.push(msg!(

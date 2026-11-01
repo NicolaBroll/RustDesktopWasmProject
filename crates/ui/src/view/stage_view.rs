@@ -100,7 +100,14 @@ pub(crate) fn stage_panel(
             ui.separator();
         }
         let space = Space { height, below };
-        let shown = stage_section(ui, side, items, open, &repo.lfs, enabled, space, actions);
+        let section = StageSection {
+            side,
+            items,
+            open,
+            lfs: &repo.lfs,
+            enabled,
+        };
+        let shown = section.show(ui, space, actions);
         // A list needs one row; beyond that it can give its room to the commit box.
         let least = if items.is_empty() {
             0.0
@@ -289,45 +296,50 @@ pub(super) fn commit_box(
     ui.add(egui::Label::new(RichText::new(hint).small().weak()).truncate());
 
     if let Some(error) = repo.commit.error() {
-        ui.add_space(4.0);
-        ui.horizontal_top(|ui| {
-            if ui
-                .small_button("x")
-                .on_hover_text(tr!("stage-hide"))
-                .clicked()
-            {
-                actions.push(Action::Commit(commit::Action::DismissError));
-            }
-            ui.add(
-                egui::Label::new(RichText::new(&error.message).color(ui.visuals().error_fg_color))
-                    .wrap(),
-            );
-        });
-        if let Some(output) = &error.output {
-            egui::ScrollArea::vertical()
-                .id_salt("commit-output")
-                .max_height(OUTPUT_HEIGHT)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    // A `&str` makes the field read-only, but selectable and copyable.
-                    ui.add(
-                        egui::TextEdit::multiline(&mut output.as_str())
-                            .id_salt("commit-output-text")
-                            .font(egui::TextStyle::Monospace)
-                            .desired_rows(1)
-                            .desired_width(f32::INFINITY),
-                    );
-                });
-            if ui
-                .small_button(tr!("stage-copy-output"))
-                .on_hover_text(tr!("stage-copy-output-help"))
-                .clicked()
-            {
-                ui.ctx().copy_text(output.clone());
-            }
-        }
+        commit_error(ui, error, actions);
     }
     body_height
+}
+
+/// The error of the last commit, with "x" to hide it and git's output, if any, with "Copy".
+fn commit_error(ui: &mut Ui, error: &commit::CommitError, actions: &mut Vec<Action>) {
+    ui.add_space(4.0);
+    ui.horizontal_top(|ui| {
+        if ui
+            .small_button("x")
+            .on_hover_text(tr!("stage-hide"))
+            .clicked()
+        {
+            actions.push(Action::Commit(commit::Action::DismissError));
+        }
+        ui.add(
+            egui::Label::new(RichText::new(&error.message).color(ui.visuals().error_fg_color))
+                .wrap(),
+        );
+    });
+    if let Some(output) = &error.output {
+        egui::ScrollArea::vertical()
+            .id_salt("commit-output")
+            .max_height(OUTPUT_HEIGHT)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                // A `&str` makes the field read-only, but selectable and copyable.
+                ui.add(
+                    egui::TextEdit::multiline(&mut output.as_str())
+                        .id_salt("commit-output-text")
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(1)
+                        .desired_width(f32::INFINITY),
+                );
+            });
+        if ui
+            .small_button(tr!("stage-copy-output"))
+            .on_hover_text(tr!("stage-copy-output-help"))
+            .clicked()
+        {
+            ui.ctx().copy_text(output.clone());
+        }
+    }
 }
 
 /// The title on the left and the buttons (`labels`, plus `extra` points of icon buttons, added
@@ -380,186 +392,212 @@ pub(super) fn list_height(rows: usize) -> f32 {
     rows.max(1) as f32 * (FILE_ROW_HEIGHT + 2.0)
 }
 
-/// Title with the count, button for the whole list (and for the unstaged one the "⋯" menu with
-/// "Discard all…"), then the files. Returns the height given to the list, 0 when it is empty.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn stage_section(
-    ui: &mut Ui,
+/// One of the two lists of the stage area.
+struct StageSection<'a> {
     side: Side,
-    items: &[StageItem],
-    open: Option<&DiffTarget>,
-    lfs: &crate::lfs::LfsBox,
+    items: &'a [StageItem],
+    /// The file whose diff is open.
+    open: Option<&'a DiffTarget>,
+    lfs: &'a crate::lfs::LfsBox,
+    /// No write in progress and no dialog open.
     enabled: bool,
-    space: Space,
-    actions: &mut Vec<Action>,
-) -> f32 {
-    let (title, op, all_label, all_help) = match side {
-        Side::Staged => (
-            tr!("stage-staged-title"),
-            StageOp::Unstage,
-            tr!("stage-unstage-all"),
-            tr!("stage-unstage-all-help"),
-        ),
-        Side::Unstaged => (
-            tr!("stage-unstaged-title"),
-            StageOp::Stage,
-            tr!("stage-stage-all"),
-            tr!("stage-stage-all-help"),
-        ),
-    };
-    // The "⋯" icon button: the icon and the button's padding.
-    let more_width = match side {
-        Side::Staged => 0.0,
-        Side::Unstaged => {
-            MORE_ICON + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x
+}
+
+impl StageSection<'_> {
+    /// Title with the count, button for the whole list (and for the unstaged one the "⋯" menu with
+    /// "Discard all…"), then the files. Returns the height given to the list, 0 when it is empty.
+    fn show(&self, ui: &mut Ui, space: Space, actions: &mut Vec<Action>) -> f32 {
+        let StageSection {
+            side,
+            items,
+            open,
+            lfs,
+            enabled,
+        } = *self;
+        let op = self.header(ui, actions);
+        if items.is_empty() {
+            let text = match side {
+                Side::Staged => tr!("stage-empty-staged"),
+                Side::Unstaged => tr!("stage-empty-unstaged"),
+            };
+            ui.weak(text);
+            return 0.0;
         }
-    };
-    let heading = tr!("stage-section-title", title = &title, n = items.len());
-    let title = RichText::new(heading).strong().into();
-    title_row(ui, title, &[&all_label], more_width, |ui| {
-        // Right to left: the menu at the edge, "Stage all" before it, apart from the
-        // destructive entry.
-        if side == Side::Unstaged {
-            unstaged_menu(ui, items, enabled, actions);
-        }
-        let button = ui
-            .add_enabled(
-                enabled && !items.is_empty(),
-                egui::Button::new(all_label.as_str()).small(),
-            )
-            .on_hover_text(all_help);
-        if button.clicked()
-            && let Some(paths) = stage::all_paths(items)
-        {
-            actions.push(Action::Stage(stage::Action::Write(op, paths)));
-        }
-    });
-    if items.is_empty() {
-        let text = match side {
-            Side::Staged => tr!("stage-empty-staged"),
-            Side::Unstaged => tr!("stage-empty-unstaged"),
+        // After the header, whose height depends on the width; at least a row, but never over the
+        // commit box under it: in a low window the list scrolls.
+        let available = ui.available_height();
+        let height = space
+            .height
+            .min(available - space.below)
+            .max(FILE_ROW_HEIGHT)
+            .min(available)
+            .max(0.0);
+        let source = match side {
+            Side::Staged => DiffSource::Index,
+            Side::Unstaged => DiffSource::Worktree,
         };
-        ui.weak(text);
-        return 0.0;
-    }
-    // After the header, whose height depends on the width; at least a row, but never over the
-    // commit box under it: in a low window the list scrolls.
-    let available = ui.available_height();
-    let height = space
-        .height
-        .min(available - space.below)
-        .max(FILE_ROW_HEIGHT)
-        .min(available)
-        .max(0.0);
-    let source = match side {
-        Side::Staged => DiffSource::Index,
-        Side::Unstaged => DiffSource::Worktree,
-    };
-    let font = theme::body();
-    let mono = theme::mono();
-    let text = ui.visuals().text_color();
-    let weak = ui.visuals().weak_text_color();
-    let button_label = match op {
-        StageOp::Stage => tr!("stage-stage"),
-        StageOp::Unstage => tr!("stage-unstage"),
-    };
-    let output = egui::ScrollArea::vertical()
-        .id_salt(("stage-area", side == Side::Staged))
-        .auto_shrink([false, true])
-        .max_height(height)
-        // egui keeps at least 64 px of a scrolled area: here the room computed above wins.
-        .min_scrolled_height(height)
-        .show_rows(ui, FILE_ROW_HEIGHT, items.len(), |ui, range| {
-            for item in &items[range] {
-                let (rect, response) = ui.allocate_exact_size(
-                    vec2(ui.available_width(), FILE_ROW_HEIGHT),
-                    Sense::click(),
-                );
-                let target = DiffTarget {
-                    source,
-                    path: item.path.clone(),
-                };
-                let selected = open == Some(&target);
-                // Over the button the row's response is not hovered: the pointer decides.
-                let hovered = ui.rect_contains_pointer(rect);
-                let (text, weak) = if selected {
-                    let color = ui.visuals().selection.stroke.color;
-                    (color, color.gamma_multiply(0.75))
-                } else {
-                    (text, weak)
-                };
-                if selected {
-                    ui.painter()
-                        .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
-                } else if hovered {
-                    ui.painter()
-                        .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
-                }
-                let painter = ui.painter_at(rect);
-                let badge = egui::Rect::from_center_size(
-                    egui::pos2(rect.left() + 11.0, rect.center().y),
-                    vec2(18.0, 16.0),
-                );
-                painter.rect_filled(badge, 3.0, theme::change(item.change));
-                painter.text(
-                    badge.center(),
-                    Align2::CENTER_CENTER,
-                    change_letter(item.change),
-                    mono.clone(),
-                    theme::ON_BADGE,
-                );
-
-                // On the right the row's button, only under the mouse and on the open file: a
-                // column of buttons on every row is noise.
-                let mut clicked = false;
-                let mut right = rect.right() - 4.0;
-                if hovered || selected {
-                    let button_w = 62.0;
-                    let button_rect = egui::Rect::from_min_max(
-                        egui::pos2(rect.right() - button_w, rect.top()),
-                        rect.right_bottom(),
+        let font = theme::body();
+        let mono = theme::mono();
+        let text = ui.visuals().text_color();
+        let weak = ui.visuals().weak_text_color();
+        let button_label = match op {
+            StageOp::Stage => tr!("stage-stage"),
+            StageOp::Unstage => tr!("stage-unstage"),
+        };
+        let output = egui::ScrollArea::vertical()
+            .id_salt(("stage-area", side == Side::Staged))
+            .auto_shrink([false, true])
+            .max_height(height)
+            // egui keeps at least 64 px of a scrolled area: here the room computed above wins.
+            .min_scrolled_height(height)
+            .show_rows(ui, FILE_ROW_HEIGHT, items.len(), |ui, range| {
+                for item in &items[range] {
+                    let (rect, response) = ui.allocate_exact_size(
+                        vec2(ui.available_width(), FILE_ROW_HEIGHT),
+                        Sense::click(),
                     );
-                    let mut cell = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(button_rect)
-                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    );
-                    clicked = cell
-                        .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
-                        .on_hover_text(row_action_help(op, item))
-                        .clicked();
-                    right = button_rect.left() - 4.0;
-                }
-
-                // Files stored in Git LFS: the badge before the button (S63).
-                if lfs.is_lfs(&item.path) {
-                    right = paint_lfs_badge(&painter, right, rect.center().y) - 4.0;
-                }
-                let left = badge.right() + 6.0;
-                let job = stage_path_job(item, &font, text, weak, right - left);
-                let galley = painter.layout_job(job);
-                let top = rect.center().y - galley.size().y / 2.0;
-                painter.galley(egui::pos2(left, top), galley, text);
-
-                let response = response.on_hover_text(stage_tooltip(op, item));
-                if (clicked || response.double_clicked()) && enabled {
-                    actions.push(Action::Stage(stage::Action::Write(
-                        op,
-                        vec![item.path.clone()],
-                    )));
-                } else if response.clicked() {
-                    actions.push(if item.is_conflict() && op == StageOp::Stage {
-                        Action::Conflict(conflict::Action::Open(item.path.clone()))
+                    let target = DiffTarget {
+                        source,
+                        path: item.path.clone(),
+                    };
+                    let selected = open == Some(&target);
+                    // Over the button the row's response is not hovered: the pointer decides.
+                    let hovered = ui.rect_contains_pointer(rect);
+                    let (text, weak) = if selected {
+                        let color = ui.visuals().selection.stroke.color;
+                        (color, color.gamma_multiply(0.75))
                     } else {
-                        Action::Diff(diff::Action::Open(target.clone()))
+                        (text, weak)
+                    };
+                    if selected {
+                        ui.painter()
+                            .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+                    } else if hovered {
+                        ui.painter().rect_filled(
+                            rect,
+                            2.0,
+                            ui.visuals().widgets.hovered.weak_bg_fill,
+                        );
+                    }
+                    let painter = ui.painter_at(rect);
+                    let badge = egui::Rect::from_center_size(
+                        egui::pos2(rect.left() + 11.0, rect.center().y),
+                        vec2(18.0, 16.0),
+                    );
+                    painter.rect_filled(badge, 3.0, theme::change(item.change));
+                    painter.text(
+                        badge.center(),
+                        Align2::CENTER_CENTER,
+                        change_letter(item.change),
+                        mono.clone(),
+                        theme::ON_BADGE,
+                    );
+
+                    // On the right the row's button, only under the mouse and on the open file: a
+                    // column of buttons on every row is noise.
+                    let mut clicked = false;
+                    let mut right = rect.right() - 4.0;
+                    if hovered || selected {
+                        let button_w = 62.0;
+                        let button_rect = egui::Rect::from_min_max(
+                            egui::pos2(rect.right() - button_w, rect.top()),
+                            rect.right_bottom(),
+                        );
+                        let mut cell = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(button_rect)
+                                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                        );
+                        clicked = cell
+                            .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
+                            .on_hover_text(row_action_help(op, item))
+                            .clicked();
+                        right = button_rect.left() - 4.0;
+                    }
+
+                    // Files stored in Git LFS: the badge before the button (S63).
+                    if lfs.is_lfs(&item.path) {
+                        right = paint_lfs_badge(&painter, right, rect.center().y) - 4.0;
+                    }
+                    let left = badge.right() + 6.0;
+                    let job = stage_path_job(item, &font, text, weak, right - left);
+                    let galley = painter.layout_job(job);
+                    let top = rect.center().y - galley.size().y / 2.0;
+                    painter.galley(egui::pos2(left, top), galley, text);
+
+                    let response = response.on_hover_text(stage_tooltip(op, item));
+                    if (clicked || response.double_clicked()) && enabled {
+                        actions.push(Action::Stage(stage::Action::Write(
+                            op,
+                            vec![item.path.clone()],
+                        )));
+                    } else if response.clicked() {
+                        actions.push(if item.is_conflict() && op == StageOp::Stage {
+                            Action::Conflict(conflict::Action::Open(item.path.clone()))
+                        } else {
+                            Action::Diff(diff::Action::Open(target.clone()))
+                        });
+                    }
+                    response.context_menu(|ui| {
+                        file_menu(ui, op, item, &target, enabled, actions);
                     });
                 }
-                response.context_menu(|ui| {
-                    file_menu(ui, op, item, &target, enabled, actions);
-                });
+            });
+        output.inner_rect.height()
+    }
+
+    /// The title with the count and the button for the whole list (and the "⋯" menu of the
+    /// unstaged one). Returns what the buttons of the rows do.
+    fn header(&self, ui: &mut Ui, actions: &mut Vec<Action>) -> StageOp {
+        let StageSection {
+            side,
+            items,
+            enabled,
+            ..
+        } = *self;
+        let (title, op, all_label, all_help) = match side {
+            Side::Staged => (
+                tr!("stage-staged-title"),
+                StageOp::Unstage,
+                tr!("stage-unstage-all"),
+                tr!("stage-unstage-all-help"),
+            ),
+            Side::Unstaged => (
+                tr!("stage-unstaged-title"),
+                StageOp::Stage,
+                tr!("stage-stage-all"),
+                tr!("stage-stage-all-help"),
+            ),
+        };
+        // The "⋯" icon button: the icon and the button's padding.
+        let more_width = match side {
+            Side::Staged => 0.0,
+            Side::Unstaged => {
+                MORE_ICON + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x
+            }
+        };
+        let heading = tr!("stage-section-title", title = &title, n = items.len());
+        let title = RichText::new(heading).strong().into();
+        title_row(ui, title, &[&all_label], more_width, |ui| {
+            // Right to left: the menu at the edge, "Stage all" before it, apart from the
+            // destructive entry.
+            if side == Side::Unstaged {
+                unstaged_menu(ui, items, enabled, actions);
+            }
+            let button = ui
+                .add_enabled(
+                    enabled && !items.is_empty(),
+                    egui::Button::new(all_label.as_str()).small(),
+                )
+                .on_hover_text(all_help);
+            if button.clicked()
+                && let Some(paths) = stage::all_paths(items)
+            {
+                actions.push(Action::Stage(stage::Action::Write(op, paths)));
             }
         });
-    output.inner_rect.height()
+        op
+    }
 }
 
 /// Size of the "⋯" icon of the section menu.

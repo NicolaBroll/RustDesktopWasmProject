@@ -400,16 +400,15 @@ impl Column<'_> {
             } else {
                 Vec::new()
             };
-            ref_menu(
-                ui,
+            RefMenu {
                 info,
                 is_head,
                 on_remote,
-                &remotes,
-                self.can_write,
-                &self.merge,
-                actions,
-            );
+                remotes: &remotes,
+                can_write: self.can_write,
+                merge: &self.merge,
+            }
+            .show(ui, actions);
         });
     }
 }
@@ -530,115 +529,135 @@ pub(super) fn ref_tooltip(info: &RefInfo, is_head: bool) -> String {
 /// branch, rename, pull, push and delete; on remote branches and tags new branch, new tag and merge, and on
 /// remote branches "Delete from the remote…" (`on_remote`: the remote and the branch on it); on tags
 /// push and delete, also from each of the configured `remotes`.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn ref_menu(
+struct RefMenu<'a> {
+    info: &'a RefInfo,
+    is_head: bool,
+    on_remote: Option<(String, String)>,
+    remotes: &'a [String],
+    can_write: bool,
+    merge: &'a merge::Gate,
+}
+
+impl RefMenu<'_> {
+    fn show(self, ui: &mut Ui, actions: &mut Vec<Action>) {
+        let RefMenu {
+            info,
+            is_head,
+            on_remote,
+            remotes,
+            can_write,
+            merge,
+        } = self;
+        let name = info.short_name();
+        if info.kind == RefKind::RemoteBranch && !name.ends_with("/HEAD") {
+            let button = ui
+                .add_enabled(can_write, egui::Button::new(tr!("refs-checkout")))
+                .on_hover_text(tr!("refs-checkout-remote-hint", name = name))
+                .on_disabled_hover_text(wait());
+            if button.clicked() {
+                actions.push(Action::Branch(branch::Action::CheckoutRemote(
+                    info.name.clone(),
+                )));
+                ui.close();
+            }
+        }
+        if info.kind == RefKind::LocalBranch {
+            let button = ui
+                .add_enabled(
+                    can_write && !is_head,
+                    egui::Button::new(tr!("refs-checkout")),
+                )
+                .on_hover_text(tr!("refs-checkout-hint", name = name))
+                .on_disabled_hover_text(if is_head {
+                    tr!("refs-already-active")
+                } else {
+                    wait()
+                });
+            if button.clicked() {
+                actions.push(Action::Branch(branch::Action::Checkout(name.to_owned())));
+                ui.close();
+            }
+        }
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(tr!("refs-new-branch")))
+            .on_hover_text(tr!("refs-new-branch-hint", id = info.target.short()))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            let (start, proposed) = Start::from_ref(info);
+            actions.push(Action::Branch(branch::Action::NewBranch(start, proposed)));
+            ui.close();
+        }
+        if info.kind == RefKind::LocalBranch {
+            let button = ui
+                .add_enabled(
+                    can_write,
+                    egui::Button::new(tr!("worktree-new-from-branch")),
+                )
+                .on_hover_text(tr!("worktree-new-from-branch-hint", name = name))
+                .on_disabled_hover_text(wait());
+            if button.clicked() {
+                actions.push(Action::Worktree(crate::worktree::Action::OpenAdd(Some(
+                    name.to_owned(),
+                ))));
+                ui.close();
+            }
+        }
+        let button = ui
+            .add_enabled(can_write, egui::Button::new(tr!("refs-new-tag")))
+            .on_hover_text(tr!("refs-new-tag-hint", id = info.target.short()))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::NewTag(
+                Start::from_ref(info).0,
+            )));
+            ui.close();
+        }
+        if !is_head {
+            merge_items(ui, name, name, merge, can_write, actions);
+        }
+        if let Some((remote, branch)) = on_remote {
+            ui.separator();
+            let color = if can_write {
+                ui.visuals().error_fg_color
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let button = ui
+                .add_enabled(
+                    can_write,
+                    egui::Button::new(RichText::new(tr!("refs-delete-remote")).color(color)),
+                )
+                .on_hover_text(tr!(
+                    "refs-delete-remote-hint",
+                    branch = &branch,
+                    remote = &remote
+                ))
+                .on_disabled_hover_text(wait());
+            if button.clicked() {
+                actions.push(Action::Remotes(remotes::Action::DeleteBranch(
+                    remote, branch,
+                )));
+                ui.close();
+            }
+        }
+        if info.kind == RefKind::Tag {
+            tag_items(ui, name, remotes, can_write, actions);
+        }
+        if info.kind == RefKind::LocalBranch {
+            local_branch_items(ui, info, is_head, can_write, actions);
+        }
+    }
+}
+
+/// The items of a local branch only: rename, pull, push, upstream and delete.
+fn local_branch_items(
     ui: &mut Ui,
     info: &RefInfo,
     is_head: bool,
-    on_remote: Option<(String, String)>,
-    remotes: &[String],
     can_write: bool,
-    merge: &merge::Gate,
     actions: &mut Vec<Action>,
 ) {
     let name = info.short_name();
-    if info.kind == RefKind::RemoteBranch && !name.ends_with("/HEAD") {
-        let button = ui
-            .add_enabled(can_write, egui::Button::new(tr!("refs-checkout")))
-            .on_hover_text(tr!("refs-checkout-remote-hint", name = name))
-            .on_disabled_hover_text(wait());
-        if button.clicked() {
-            actions.push(Action::Branch(branch::Action::CheckoutRemote(
-                info.name.clone(),
-            )));
-            ui.close();
-        }
-    }
-    if info.kind == RefKind::LocalBranch {
-        let button = ui
-            .add_enabled(
-                can_write && !is_head,
-                egui::Button::new(tr!("refs-checkout")),
-            )
-            .on_hover_text(tr!("refs-checkout-hint", name = name))
-            .on_disabled_hover_text(if is_head {
-                tr!("refs-already-active")
-            } else {
-                wait()
-            });
-        if button.clicked() {
-            actions.push(Action::Branch(branch::Action::Checkout(name.to_owned())));
-            ui.close();
-        }
-    }
-    let button = ui
-        .add_enabled(can_write, egui::Button::new(tr!("refs-new-branch")))
-        .on_hover_text(tr!("refs-new-branch-hint", id = info.target.short()))
-        .on_disabled_hover_text(wait());
-    if button.clicked() {
-        let (start, proposed) = Start::from_ref(info);
-        actions.push(Action::Branch(branch::Action::NewBranch(start, proposed)));
-        ui.close();
-    }
-    if info.kind == RefKind::LocalBranch {
-        let button = ui
-            .add_enabled(
-                can_write,
-                egui::Button::new(tr!("worktree-new-from-branch")),
-            )
-            .on_hover_text(tr!("worktree-new-from-branch-hint", name = name))
-            .on_disabled_hover_text(wait());
-        if button.clicked() {
-            actions.push(Action::Worktree(crate::worktree::Action::OpenAdd(Some(
-                name.to_owned(),
-            ))));
-            ui.close();
-        }
-    }
-    let button = ui
-        .add_enabled(can_write, egui::Button::new(tr!("refs-new-tag")))
-        .on_hover_text(tr!("refs-new-tag-hint", id = info.target.short()))
-        .on_disabled_hover_text(wait());
-    if button.clicked() {
-        actions.push(Action::Branch(branch::Action::NewTag(
-            Start::from_ref(info).0,
-        )));
-        ui.close();
-    }
-    if !is_head {
-        merge_items(ui, name, name, merge, can_write, actions);
-    }
-    if let Some((remote, branch)) = on_remote {
-        ui.separator();
-        let color = if can_write {
-            ui.visuals().error_fg_color
-        } else {
-            ui.visuals().weak_text_color()
-        };
-        let button = ui
-            .add_enabled(
-                can_write,
-                egui::Button::new(RichText::new(tr!("refs-delete-remote")).color(color)),
-            )
-            .on_hover_text(tr!(
-                "refs-delete-remote-hint",
-                branch = &branch,
-                remote = &remote
-            ))
-            .on_disabled_hover_text(wait());
-        if button.clicked() {
-            actions.push(Action::Remotes(remotes::Action::DeleteBranch(
-                remote, branch,
-            )));
-            ui.close();
-        }
-    }
-    if info.kind == RefKind::Tag {
-        tag_items(ui, name, remotes, can_write, actions);
-    }
-    if info.kind != RefKind::LocalBranch {
-        return;
-    }
     if !is_head {
         ui.separator();
     }

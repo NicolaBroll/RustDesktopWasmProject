@@ -34,6 +34,12 @@ pub(crate) fn commit_list(
     }
     let can_write = !writing && !repo.modal_open();
     let merge = merge::Gate::new(&repo.head, repo.status.as_ref());
+    let menu = CommitMenu {
+        repo,
+        merge: &merge,
+        can_write,
+        ask_detach,
+    };
     let list = &repo.list;
     // The "Uncommitted changes" row is row 0: commits start at `offset`.
     let header = repo.has_changes();
@@ -47,26 +53,7 @@ pub(crate) fn commit_list(
         ui.centered_and_justified(|ui| ui.weak(text));
         return;
     }
-    let style = RowStyle {
-        font: theme::body(),
-        mono: theme::mono(),
-        label: theme::small(),
-        text: ui.visuals().text_color(),
-        weak: ui.visuals().weak_text_color(),
-        tag_fill: ui.visuals().widgets.inactive.bg_fill,
-        head_fill: ui.visuals().strong_text_color(),
-        head_text: ui.visuals().panel_fill,
-        now: match dates {
-            DateFormat::Absolute => None,
-            DateFormat::Relative => Some(unix_now()),
-        },
-    };
-    // On the selected row the text takes the selection's color: gray on blue is hard to read.
-    let on_selection = RowStyle {
-        text: ui.visuals().selection.stroke.color,
-        weak: ui.visuals().selection.stroke.color.gamma_multiply(0.75),
-        ..style.clone()
-    };
+    let (style, on_selection) = row_styles(ui, dates);
     // One more row at the bottom while there are more commits to load.
     let rows = offset + list.commits().len() + usize::from(list.has_more());
     let step = ROW_HEIGHT + ui.spacing().item_spacing.y;
@@ -152,50 +139,7 @@ pub(crate) fn commit_list(
                     actions.push(Action::Select(index));
                 }
             }
-            let id = commit.id;
-            response.context_menu(|ui| {
-                compare_item(ui, repo, index, id, actions);
-                if ui
-                    .button(tr!("commit-copy-id"))
-                    .on_hover_text(tr!("commit-copy-id-hint", id = id.to_string()))
-                    .clicked()
-                {
-                    ui.ctx().copy_text(id.to_string());
-                    ui.close();
-                }
-                ui.separator();
-                let button = ui
-                    .add_enabled(can_write, egui::Button::new(tr!("commit-new-branch")))
-                    .on_hover_text(tr!("commit-new-branch-hint", id = id.short()))
-                    .on_disabled_hover_text(wait());
-                if button.clicked() {
-                    actions.push(Action::Branch(branch::Action::NewBranch(
-                        Start::from_commit(id),
-                        String::new(),
-                    )));
-                    ui.close();
-                }
-                let button = ui
-                    .add_enabled(can_write, egui::Button::new(tr!("commit-new-tag")))
-                    .on_hover_text(tr!("commit-new-tag-hint", id = id.short()))
-                    .on_disabled_hover_text(wait());
-                if button.clicked() {
-                    actions.push(Action::Branch(branch::Action::NewTag(Start::from_commit(
-                        id,
-                    ))));
-                    ui.close();
-                }
-                checkout_item(ui, repo, id, can_write, ask_detach, actions);
-                let what = merge::commit_name(id, &repo.refs);
-                // Already in HEAD: merging or cherry-picking it would change nothing.
-                let in_head = in_head_history(repo, id);
-                if !in_head {
-                    merge_items(ui, &id.to_string(), &what, &merge, can_write, actions);
-                }
-                pick_items(ui, commit, &what, &merge, !in_head, can_write, actions);
-                rebase_item(ui, repo, commit, &what, &merge, can_write, actions);
-                reset_item(ui, repo, commit, &what, can_write, actions);
-            });
+            response.context_menu(|ui| menu.show(ui, commit, index, actions));
             let labels = repo.labels.get(&commit.id).map_or(&[][..], Vec::as_slice);
             let text_rect = rect.with_min_x(rect.left() + graph_w);
             let more = commit_row(
@@ -221,6 +165,111 @@ pub(crate) fn commit_list(
     viewport.rows = output.inner;
     viewport.height = output.inner_rect.height();
     actions.push(Action::Visible(viewport.rows.end.saturating_sub(offset)));
+}
+
+/// The style of the rows, and the one of the selected row.
+fn row_styles(ui: &Ui, dates: DateFormat) -> (RowStyle, RowStyle) {
+    let style = RowStyle {
+        font: theme::body(),
+        mono: theme::mono(),
+        label: theme::small(),
+        text: ui.visuals().text_color(),
+        weak: ui.visuals().weak_text_color(),
+        tag_fill: ui.visuals().widgets.inactive.bg_fill,
+        head_fill: ui.visuals().strong_text_color(),
+        head_text: ui.visuals().panel_fill,
+        now: match dates {
+            DateFormat::Absolute => None,
+            DateFormat::Relative => Some(unix_now()),
+        },
+    };
+    // On the selected row the text takes the selection's color: gray on blue is hard to read.
+    let on_selection = RowStyle {
+        text: ui.visuals().selection.stroke.color,
+        weak: ui.visuals().selection.stroke.color.gamma_multiply(0.75),
+        ..style.clone()
+    };
+    (style, on_selection)
+}
+
+/// The context menu of a commit row.
+struct CommitMenu<'a> {
+    repo: &'a RepoView,
+    merge: &'a merge::Gate,
+    /// No write in progress and no dialog open.
+    can_write: bool,
+    /// "Check out this commit" asks first.
+    ask_detach: bool,
+}
+
+impl CommitMenu<'_> {
+    fn show(&self, ui: &mut Ui, commit: &Commit, index: usize, actions: &mut Vec<Action>) {
+        let id = commit.id;
+        compare_item(ui, self.repo, index, id, actions);
+        if ui
+            .button(tr!("commit-copy-id"))
+            .on_hover_text(tr!("commit-copy-id-hint", id = id.to_string()))
+            .clicked()
+        {
+            ui.ctx().copy_text(id.to_string());
+            ui.close();
+        }
+        ui.separator();
+        let button = ui
+            .add_enabled(self.can_write, egui::Button::new(tr!("commit-new-branch")))
+            .on_hover_text(tr!("commit-new-branch-hint", id = id.short()))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::NewBranch(
+                Start::from_commit(id),
+                String::new(),
+            )));
+            ui.close();
+        }
+        let button = ui
+            .add_enabled(self.can_write, egui::Button::new(tr!("commit-new-tag")))
+            .on_hover_text(tr!("commit-new-tag-hint", id = id.short()))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Branch(branch::Action::NewTag(Start::from_commit(
+                id,
+            ))));
+            ui.close();
+        }
+        checkout_item(ui, self.repo, id, self.can_write, self.ask_detach, actions);
+        let what = merge::commit_name(id, &self.repo.refs);
+        // Already in HEAD: merging or cherry-picking it would change nothing.
+        let in_head = in_head_history(self.repo, id);
+        if !in_head {
+            merge_items(
+                ui,
+                &id.to_string(),
+                &what,
+                self.merge,
+                self.can_write,
+                actions,
+            );
+        }
+        pick_items(
+            ui,
+            commit,
+            &what,
+            self.merge,
+            !in_head,
+            self.can_write,
+            actions,
+        );
+        rebase_item(
+            ui,
+            self.repo,
+            commit,
+            &what,
+            self.merge,
+            self.can_write,
+            actions,
+        );
+        reset_item(ui, self.repo, commit, &what, self.can_write, actions);
+    }
 }
 
 /// "Check out this commit" (S55): HEAD detached there, after the confirmation if `ask`. Off

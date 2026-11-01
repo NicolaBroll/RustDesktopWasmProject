@@ -1008,25 +1008,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
-            Action::ConfirmDeleteBranch => {
-                let generation = self.generation;
-                if self.executor.writing().is_some() {
-                    return;
-                }
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                let label = match repo.branch.dialog() {
-                    Some(Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
-
-                    _ => return,
-                };
-                if let Some(params) = repo.branch.confirm_delete() {
-                    repo.write_label = Some(label);
-                    let op = Op::Delete;
-                    self.submit(op.command(), params, Request::Branch(generation, op));
-                }
-            }
+            Action::ConfirmDeleteBranch => self.confirm_delete_branch(),
             Action::DeleteTag(name) => {
                 let generation = self.generation;
                 let Some(repo) = &mut self.repo else {
@@ -1043,26 +1025,7 @@ impl Tab {
                     self.submit(op.command(), params, Request::Branch(generation, op));
                 }
             }
-            Action::ConfirmDeleteTag => {
-                let generation = self.generation;
-                if self.executor.writing().is_some() {
-                    return;
-                }
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                let label = match repo.branch.dialog() {
-                    Some(Dialog::DeleteTag(d)) => {
-                        tr!("branch-tag-delete-label", name = &d.name)
-                    }
-                    _ => return,
-                };
-                if let Some(params) = repo.branch.confirm_delete_tag() {
-                    repo.write_label = Some(label);
-                    let op = Op::DeleteTag;
-                    self.submit(op.command(), params, Request::Branch(generation, op));
-                }
-            }
+            Action::ConfirmDeleteTag => self.confirm_delete_tag(),
             Action::CloseDialog => {
                 if let Some(repo) = &mut self.repo {
                     repo.branch.close();
@@ -1083,6 +1046,49 @@ impl Tab {
             | Action::DetachDontAsk(_)
             | Action::ConfirmCheckoutCommit
             | Action::CreateBranchHere => self.apply_detach(action),
+        }
+    }
+
+    /// [`Action::ConfirmDeleteBranch`]: the deletion again, with `confirm`.
+    fn confirm_delete_branch(&mut self) {
+        let generation = self.generation;
+        if self.executor.writing().is_some() {
+            return;
+        }
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let label = match repo.branch.dialog() {
+            Some(Dialog::Delete(d)) => tr!("branch-delete-label", name = &d.name),
+
+            _ => return,
+        };
+        if let Some(params) = repo.branch.confirm_delete() {
+            repo.write_label = Some(label);
+            let op = Op::Delete;
+            self.submit(op.command(), params, Request::Branch(generation, op));
+        }
+    }
+
+    /// [`Action::ConfirmDeleteTag`]: the tag deletion again, with `confirm`.
+    fn confirm_delete_tag(&mut self) {
+        let generation = self.generation;
+        if self.executor.writing().is_some() {
+            return;
+        }
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let label = match repo.branch.dialog() {
+            Some(Dialog::DeleteTag(d)) => {
+                tr!("branch-tag-delete-label", name = &d.name)
+            }
+            _ => return,
+        };
+        if let Some(params) = repo.branch.confirm_delete_tag() {
+            repo.write_label = Some(label);
+            let op = Op::DeleteTag;
+            self.submit(op.command(), params, Request::Branch(generation, op));
         }
     }
 

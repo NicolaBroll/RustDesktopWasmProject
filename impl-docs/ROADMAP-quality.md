@@ -203,7 +203,7 @@ Rules that apply to every step:
   on the write paths; CI green.
 
 ### Q23 — Long UI functions
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the UI functions over 150 lines (review of 2026-11-01: `view/commits.rs` `show` ~185,
   `view/clone_view.rs` ~180, `view/refs.rs` ~180, `merge.rs` `receive` ~175, `remotes.rs` ~165,
   `branch.rs` ~160 twice, `view/stage_view.rs` ~155 twice, `sync.rs` ~155) split by section

@@ -78,7 +78,7 @@ impl InitRequest {
     }
 }
 
-fn check_path(id: &'static str, path: &str) -> Result<(), EngineError> {
+pub(super) fn check_path(id: &'static str, path: &str) -> Result<(), EngineError> {
     if path.is_empty() || path.contains('\0') {
         return Err(EngineError::InvalidParams {
             id,

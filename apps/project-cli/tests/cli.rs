@@ -508,10 +508,13 @@ fn commands_lists_the_catalog() {
             "submodule.update",
             "tag.create",
             "tag.delete",
+            "worktree.add",
             "worktree.clean",
             "worktree.discard",
             "worktree.discard_lines",
-            "worktree.ignore"
+            "worktree.ignore",
+            "worktree.list",
+            "worktree.remove"
         ]
     );
     // Commands that modify the repo are marked.
@@ -570,10 +573,12 @@ fn commands_lists_the_catalog() {
             "submodule.update",
             "tag.create",
             "tag.delete",
+            "worktree.add",
             "worktree.clean",
             "worktree.discard",
             "worktree.discard_lines",
-            "worktree.ignore"
+            "worktree.ignore",
+            "worktree.remove"
         ]
     );
 

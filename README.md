@@ -314,6 +314,19 @@ the submodule. Result: `{"updated": [{"path", "from", "to", "backup"}], "unchang
 [{"path", "reason", "message"}], "messages", "warnings"}`. No journal entry (the superproject's refs
 do not move).
 
+Linked worktrees (`git worktree`; not to be confused with `worktree.discard`, `worktree.clean` and
+`worktree.ignore`, which act on the files of the working tree): `worktree.list {}` (read-only) gives
+`path`, `main`, `current`, `bare`, `head`, `branch`, `detached`, `locked`, `lock_reason`, `prunable`.
+`worktree.add {"path", "branch"? | "new_branch"?, "start"?}` creates one in an absent or empty folder
+(relative to the worktree root) on an existing branch checked out nowhere, on a new branch at
+`start` (journaled as `branch.create`) or detached at `start` (HEAD); never `--force`. Result:
+`{"path", "branch", "created_branch", "head", "messages", "warnings", "worktrees"}` plus the journal
+state. `worktree.remove {"path", "confirm": true}` deletes a linked worktree and its folder; refused
+for the main or current worktree, a locked one, an operation in progress there, changes, untracked,
+ignored or assume-unchanged/skip-worktree files. A detached HEAD with commits on no ref is saved in
+`refs/project/backup/worktree-...`. Result: `{"path", "backup", "messages", "worktrees"}`. Details:
+[impl-docs/git/worktrees.md](impl-docs/git/worktrees.md).
+
 Ahead/behind of the branches relative to the upstream are in `repo.refs` (`upstream.ahead`/`behind`) and
 in the `refs` of the fetch, pull and push results.
 

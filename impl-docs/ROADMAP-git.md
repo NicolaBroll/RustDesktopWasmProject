@@ -1106,3 +1106,13 @@ file of its function in [git/](git/) before the code.
   checked out elsewhere refused, path not empty refused, remove clean, remove with changes refused,
   locked worktree refused, main worktree refused, prunable entry) and on the `MemoryBackend`;
   `safety-reviewer` review; CI green.
+- **Status:** engine and backend done ([git/worktrees.md](git/worktrees.md)): `worktree.list`,
+  `worktree.add`, `worktree.remove` (ids distinct from `worktree.discard`/`clean`/`ignore`, which act
+  on the working tree files). Remove refuses changes, untracked, **ignored** and
+  assume-unchanged/skip-worktree files (no backup of them: git deletes ignored files silently),
+  operations in progress, locked, main and current worktrees; a detached HEAD with commits on no
+  ref is saved in `refs/project/backup/worktree-...`; a worktree whose folder is gone is removable.
+  `new_branch` is created with `update-ref` before `git worktree add` (rolled back on failure) and
+  journaled as `branch.create` (undo refused while checked out). Only git 2.30 options; `locked` /
+  `prunable` read from the administrative folder for git < 2.31. Tests: `crates/git/tests/worktrees.rs`
+  (also run with git 2.30.9), `builtin/worktrees.rs`. UI to do.

@@ -921,3 +921,41 @@ fn submodules() {
     snap(&r, &mut s, "submodule.list", "", json!({}));
     snap(&r, &mut s, "submodule.update", "", json!({}));
 }
+
+#[test]
+fn worktrees() {
+    use crate::{MemoryWorktree, WorktreeContents, WorktreeInfo};
+    let mut repo = clean_sample();
+    repo.add_linked_worktree(MemoryWorktree {
+        info: WorktreeInfo {
+            path: "/old".into(),
+            main: false,
+            current: false,
+            bare: false,
+            head: Some(oid(1)),
+            branch: None,
+            detached: true,
+            locked: false,
+            lock_reason: None,
+            prunable: false,
+        },
+        contents: Some(WorktreeContents::default()),
+        unreferenced: true,
+    });
+    let (r, mut s) = opened_with(repo);
+    snap(&r, &mut s, "worktree.list", "", json!({}));
+    snap(
+        &r,
+        &mut s,
+        "worktree.add",
+        "",
+        json!({"path": "../topic", "new_branch": "topic"}),
+    );
+    snap(
+        &r,
+        &mut s,
+        "worktree.remove",
+        "",
+        json!({"path": "/old", "confirm": true}),
+    );
+}

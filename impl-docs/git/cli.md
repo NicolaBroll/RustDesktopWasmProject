@@ -82,6 +82,14 @@ cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/me/
 cargo run -p project-cli -- --repo . run --cmd submodule.list
 cargo run -p project-cli -- --repo . run --cmd submodule.update
 cargo run -p project-cli -- --repo . run --cmd 'submodule.update={"paths":["vendor/lib"],"init":true,"recursive":true}'
+# linked worktrees (not worktree.discard/clean/ignore, which act on the files): list, add on an
+# existing branch, on a new branch (undo deletes it once the worktree is removed) or detached,
+# remove (refused with changes, untracked or ignored files, locked, main or current; asks confirm)
+cargo run -p project-cli -- --repo . run --cmd worktree.list
+cargo run -p project-cli -- --repo . run --cmd 'worktree.add={"path":"../app-feature","branch":"feature"}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.add={"path":"../app-fix","new_branch":"fix","start":"origin/main"}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.add={"path":"/tmp/app-review","start":"v1.2"}'
+cargo run -p project-cli -- --repo . run --cmd 'worktree.remove={"path":"../app-fix","confirm":true}'
 # fetch from a configured remote (remote branches and tags only; progress on stderr if it is a terminal)
 cargo run -p project-cli -- --repo . run --cmd remote.fetch --cmd 'remote.fetch={"remote":"origin","branch":"main"}'
 cargo run -p project-cli -- --repo . run --cmd 'remote.fetch={"prune":true}'

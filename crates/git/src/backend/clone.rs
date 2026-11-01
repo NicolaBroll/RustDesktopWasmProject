@@ -26,23 +26,36 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-/// The destination folder of a clone or init, checked and ready (existing and empty).
-struct Destination {
+/// The destination folder of a clone, init or `worktree.add`, checked and ready (existing and
+/// empty).
+pub(super) struct Destination {
     /// The path as given, for the messages.
     given: String,
-    /// Absolute (against the current directory), UTF-8.
-    path: PathBuf,
+    /// Absolute (against the current directory, or the base of [`Destination::prepare_in`]),
+    /// UTF-8.
+    pub(super) path: PathBuf,
     /// The folder was created by the command (it did not exist).
     created: bool,
 }
 
 impl Destination {
-    /// Checks `path` and creates it if absent. Nothing is written if it is refused.
+    /// Checks `path` (relative to the current directory) and creates it if absent. Nothing is
+    /// written if it is refused.
     fn prepare(path: &str) -> Result<Self, EngineError> {
+        Self::prepare_in(None, path)
+    }
+
+    /// [`Destination::prepare`] with a relative `path` taken against `base` (if given).
+    pub(super) fn prepare_in(base: Option<&Path>, path: &str) -> Result<Self, EngineError> {
         let other = |e: io::Error| {
             EngineError::NotAllowed(msg!("engine-other", text = format!("{path}: {e}")))
         };
-        let abs = std::path::absolute(path).map_err(other)?;
+        let abs = match base {
+            Some(base) if Path::new(path).is_relative() => {
+                std::path::absolute(base.join(path)).map_err(other)?
+            }
+            _ => std::path::absolute(path).map_err(other)?,
+        };
         // `..` resolved as the file system does (through links), so the folder created and checked
         // here is the one git receives.
         let abs = match (abs.parent(), abs.file_name()) {
@@ -86,7 +99,7 @@ impl Destination {
         })
     }
 
-    fn as_str(&self) -> &str {
+    pub(super) fn as_str(&self) -> &str {
         self.path.to_str().expect("checked in prepare")
     }
 
@@ -115,7 +128,7 @@ impl Destination {
     }
 
     /// `error` after cleaning up the destination; a failed cleanup is added to the text.
-    fn fail(&self, error: EngineError) -> EngineError {
+    pub(super) fn fail(&self, error: EngineError) -> EngineError {
         match self.restore() {
             Ok(()) => error,
             Err(e) => EngineError::GitWithReason {

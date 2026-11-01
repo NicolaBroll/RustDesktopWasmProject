@@ -1,0 +1,35 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "backup": "refs/project/backup/worktree-1",
+  "messages": [],
+  "path": "/old",
+  "worktrees": [
+    {
+      "bare": false,
+      "branch": "refs/heads/main",
+      "current": true,
+      "detached": false,
+      "head": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "lock_reason": null,
+      "locked": false,
+      "main": true,
+      "path": "/repo",
+      "prunable": false
+    },
+    {
+      "bare": false,
+      "branch": "refs/heads/topic",
+      "current": false,
+      "detached": false,
+      "head": "943ff9fc99de8f03f080aa269da8a4573c17d7d7",
+      "lock_reason": null,
+      "locked": false,
+      "main": false,
+      "path": "/repo/../topic",
+      "prunable": false
+    }
+  ]
+}

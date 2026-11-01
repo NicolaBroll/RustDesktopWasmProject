@@ -6,7 +6,7 @@
 //! destination contains a file that is untracked or ignored in the worktree; git also accepts
 //! some cases where the change matches the destination. The deletion backups
 //! go in [`MemoryBackend::commit_backups`] (`refs/project/backup/delete-<n>`).
-//! The in-memory repo has no extra worktrees or configuration: the upstream follows the
+//! The in-memory repo has no configuration: the upstream follows the
 //! rename and disappears with the deletion, like the `branch.<name>` section in git.
 
 use super::write::TreeEntry;
@@ -266,6 +266,13 @@ impl MemoryBackend {
             )));
         }
         let full = format!("{HEADS}{name}");
+        if let Some(w) = self.worktree_of_branch(&full) {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-branch-delete-other-worktree",
+                name = name,
+                worktree = w.path
+            )));
+        }
         self.check_value(&full, expected)?;
         let prefix = format!("{BACKUP_PREFIX}delete-");
         let n = self

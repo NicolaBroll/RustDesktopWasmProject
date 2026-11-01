@@ -36,3 +36,5 @@ engine-worktree-changed = `{ $path }` changed while the removal was being prepar
 engine-worktree-remove-failed = { $error } (the detached HEAD of the worktree is saved in `{ $backup }`)
 engine-worktree-add-hook = the worktree `{ $path }` was created, but git reported an error afterwards (a `post-checkout` hook?): { $message }
 engine-worktree-add-unexpected = the new worktree `{ $path }` is not on `{ $expected }` as requested but on `{ $found }` (empty: it is not listed): another process changed it meanwhile?
+engine-worktree-path-registered = `{ $path }` is already registered as a worktree whose folder is gone: remove that entry first (worktree.remove), nothing created
+engine-worktree-unreachable = the folder of `{ $path }` cannot be read ({ $reason }): it is not treated as gone, nothing removed

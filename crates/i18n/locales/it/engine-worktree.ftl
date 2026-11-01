@@ -36,3 +36,5 @@ engine-worktree-changed = `{ $path }` è cambiato mentre si preparava la rimozio
 engine-worktree-remove-failed = { $error } (l'HEAD staccato del worktree è salvato in `{ $backup }`)
 engine-worktree-add-hook = il worktree `{ $path }` è stato creato, ma git ha segnalato un errore dopo (un hook `post-checkout`?): { $message }
 engine-worktree-add-unexpected = il nuovo worktree `{ $path }` non è su `{ $expected }` come richiesto ma su `{ $found }` (vuoto: non è elencato): un altro processo l'ha cambiato nel frattempo?
+engine-worktree-path-registered = `{ $path }` è già registrato come worktree la cui cartella non esiste più: rimuovi prima quella voce (worktree.remove), nulla creato
+engine-worktree-unreachable = la cartella di `{ $path }` non è leggibile ({ $reason }): non viene considerata sparita, nulla rimosso

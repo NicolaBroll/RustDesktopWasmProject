@@ -32,7 +32,9 @@ Parameters: `{"path": string, "branch"?: string, "new_branch"?: string, "start"?
 
 - `path`: an absent folder (created) or an existing empty one, absolute or **relative to the root
   of the open worktree**; never a file, a link or a folder with something in it (the checks of
-  `repo.clone`, [clone.md](clone.md): `engine-clone-not-empty`, `-not-folder`, `-no-parent`). Empty,
+  `repo.clone`, [clone.md](clone.md): `engine-clone-not-empty`, `-not-folder`, `-no-parent`). A path
+  git still has an entry for (a worktree whose folder was deleted) → `engine-worktree-path-registered`
+  (remove that entry first). Empty,
   with NUL or a newline → `InvalidParams`.
 - `branch`: an existing local branch, checked out there. Checked out in any worktree (this one
   included) → `NotAllowed` `engine-worktree-branch-in-use` (git refuses it too).
@@ -60,7 +62,7 @@ another spelling of the same folder (relative to the root of the open worktree).
 Refused (`NotAllowed`, nothing written), in this order: not a worktree of this repository
 (`engine-worktree-unknown`, also a non-UTF-8 path), the main worktree (`-main`), the worktree open in
 this session (`-current`), locked (`-locked` / `-locked-reason`), the folder exists but no longer holds
-that worktree (`.git` missing or pointing to another repository: `-not-worktree`), an operation in
+that worktree (`.git` missing or pointing to another repository: `-not-worktree`), the folder or its `.git` cannot be read (`-unreachable`: never taken as gone), an operation in
 progress there (merge, rebase, cherry-pick, revert, bisect, am: `-operation`), tracked changes
 (staged, unstaged, conflicted, submodules included: `-changes`), untracked files (`-untracked`),
 **ignored files** (`-ignored`: `git worktree remove` deletes them without asking and a backup could be
@@ -80,7 +82,9 @@ Every option exists in git 2.30 (`GitVersion::MIN`): no `list -z` (2.36), no `--
    is not supported, `worktree.add` refuses one). `locked` from the porcelain line or, for older
    git, from `<common dir>/worktrees/<id>/locked` (the administrative folder whose `gitdir` file
    holds `<path>/.git`; common dir from `rev-parse --git-common-dir`); `prunable` from the
-   porcelain line or when `<path>/.git` does not exist (not for a locked worktree); `current` by
+   check `<path>/.git` reports "not found" (not for a locked worktree; any other error, e.g. no
+   permission or a share not mounted, is not prunable; git's own `prunable` line, which counts
+   those as gone, is ignored); `current` by
    comparing canonical paths.
 2. Add: the destination as for `repo.clone` (`Destination::prepare_in`, relative to the worktree
    root; an absent folder is created with `create_dir`), then `git worktree add --no-guess-remote
@@ -88,7 +92,8 @@ Every option exists in git 2.30 (`GitVersion::MIN`): no `list -z` (2.36), no `--
    <commit id>`. Never `--force`, `-b`/`-B`, `--lock`, `--orphan`. Failure: if the worktree is not
    registered the destination goes back to how it was (a created folder removed, an existing empty
    one emptied); if git says the path already exists, nothing is cleaned (someone wrote there); if
-   it is registered (a hook failed after the checkout), success with a warning. Afterwards the
+   it is registered by this run (its `<path>/.git` points to an administrative folder that did not
+   exist before; a hook failed after the checkout), success with a warning. Afterwards the
    worktree is looked up again and must be on the requested branch / commit, otherwise a warning.
 3. Remove: the entry is found (same bytes, or same canonical folder; not UTF-8 → unknown), the
    refusals of `removal_refusal` (shared with the `MemoryBackend`) are applied with the contents

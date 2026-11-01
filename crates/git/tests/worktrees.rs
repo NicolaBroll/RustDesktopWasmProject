@@ -454,3 +454,41 @@ fn a_folder_that_no_longer_holds_the_worktree_is_refused() {
     assert_eq!(key(&err), "engine-worktree-not-worktree");
     assert!(f.path("w/a.txt").exists());
 }
+
+#[test]
+fn add_refuses_the_path_of_a_stale_entry() {
+    let mut f = Fixture::new();
+    f.add("w", json!({}));
+    std::fs::remove_dir_all(f.path("w")).unwrap();
+    let path = f.at("w");
+    let err = f
+        .run("worktree.add", json!({"path": path, "new_branch": "n"}))
+        .unwrap_err();
+    assert_eq!(key(&err), "engine-worktree-path-registered", "{err}");
+    assert!(f.repo.git(&["branch", "--list", "n"]).is_empty());
+    assert!(!f.path("w").exists());
+    let err = f.run("edit.undo", json!({})).unwrap_err();
+    assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_folder_is_neither_prunable_nor_removed() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    std::fs::create_dir(f.path("p")).unwrap();
+    f.add("p/w", json!({}));
+    let mode = |m| std::fs::Permissions::from_mode(m);
+    std::fs::set_permissions(f.path("p"), mode(0o000)).unwrap();
+    if std::fs::read_dir(f.path("p")).is_ok() {
+        std::fs::set_permissions(f.path("p"), mode(0o755)).unwrap();
+        eprintln!("skipped: the folder stays readable (root)");
+        return;
+    }
+    let list = f.list();
+    let err = f.remove("p/w", true).unwrap_err();
+    std::fs::set_permissions(f.path("p"), mode(0o755)).unwrap();
+    assert_eq!(list[1]["prunable"], false, "{list:?}");
+    assert_eq!(key(&err), "engine-worktree-unreachable", "{err}");
+    assert!(f.path("p/w/a.txt").exists());
+}

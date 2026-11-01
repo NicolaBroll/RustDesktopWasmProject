@@ -4,7 +4,8 @@
 //! - list: `git worktree list --porcelain` (records separated by an empty line). Git older than
 //!   2.31 prints neither `locked` nor `prunable`: they are read from the administrative folder
 //!   `<common dir>/worktrees/<id>` (`locked` file; `gitdir` pointing to a `.git` that no longer
-//!   exists). A path is matched with the bytes of `gitdir`; paths with a newline are not
+//!   exists; git's own `prunable` line is not trusted, it also counts an unreadable folder as
+//!   gone). A path is matched with the bytes of `gitdir`; paths with a newline are not
 //!   supported (`worktree.add` refuses them);
 //! - add: the destination is checked and created as for `repo.clone` (absent or empty folder),
 //!   then `git worktree add --no-guess-remote --end-of-options <abs path> <branch>` or `git
@@ -110,7 +111,42 @@ fn lines(bytes: &[u8]) -> impl Iterator<Item = String> + '_ {
         .filter(|l| !l.is_empty())
 }
 
+/// The same folder, also when it does not exist: the canonical parent plus the last component.
+fn same_place(a: &Path, b: &Path) -> bool {
+    let place = |p: &Path| -> Option<PathBuf> {
+        canonical(p).or_else(|| Some(canonical(p.parent()?)?.join(p.file_name()?)))
+    };
+    matches!((place(a), place(b)), (Some(x), Some(y)) if x == y)
+}
+
 impl CliBackend {
+    /// The administrative folders `<common dir>/worktrees/<id>` that exist now.
+    fn admin_dirs(&self) -> Vec<PathBuf> {
+        let Ok(common) = self.common_dir() else {
+            return Vec::new();
+        };
+        fs::read_dir(common.join("worktrees"))
+            .map(|entries| entries.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default()
+    }
+
+    /// `<dest>/.git` is a file pointing to an administrative folder that was not in `before`.
+    fn created_here(&self, dest: &Path, before: &[PathBuf]) -> bool {
+        let Ok(text) = fs::read(dest.join(".git")) else {
+            return false;
+        };
+        let Some(gitdir) = text.trim_ascii().strip_prefix(b"gitdir: ") else {
+            return false;
+        };
+        let gitdir = dest.join(crate::command::os_from_bytes(gitdir));
+        let Some(gitdir) = canonical(&gitdir) else {
+            return false;
+        };
+        !before
+            .iter()
+            .any(|b| canonical(b).as_ref() == Some(&gitdir))
+    }
+
     /// The common git directory (shared by all worktrees), absolute.
     fn common_dir(&self) -> Result<PathBuf, EngineError> {
         let out = self.run(&["rev-parse", "--git-common-dir"])?;
@@ -152,8 +188,11 @@ impl CliBackend {
                 let reason = String::from_utf8_lossy(reason.trim_ascii()).into_owned();
                 info.lock_reason = (!reason.is_empty()).then_some(reason);
             }
-            if !info.locked && !info.prunable {
-                info.prunable = fs::symlink_metadata(path.join(".git")).is_err();
+            // Only a `.git` that is surely gone: an unreadable folder (permissions, a share not
+            // mounted) is not prunable, whatever git's own `prunable` line says.
+            if !info.locked {
+                info.prunable = fs::symlink_metadata(path.join(".git"))
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
             }
         }
         Ok(listed)
@@ -174,6 +213,19 @@ impl CliBackend {
         request: &WorktreeAdd,
     ) -> Result<WorktreeAdded, EngineError> {
         request.check()?;
+        // A path git still has an entry for (its folder deleted): git would refuse it after the
+        // folder is created, and the stale entry would look like the new worktree.
+        let wanted = self.workdir.join(&request.path);
+        if let Some(w) = self.listed_worktrees()?.into_iter().find(|l| {
+            l.raw == wanted.as_os_str().as_encoded_bytes()
+                || same_place(Path::new(&l.info.path), &wanted)
+        }) {
+            return Err(EngineError::NotAllowed(msg!(
+                "engine-worktree-path-registered",
+                path = w.info.path.as_str()
+            )));
+        }
+        let admin_before = self.admin_dirs();
         let dest = Destination::prepare_in(Some(&self.workdir), &request.path)?;
         let commit;
         let mut args = vec!["worktree", "add"];
@@ -206,7 +258,8 @@ impl CliBackend {
                 // Something appeared in the folder after the check: not ours to remove.
                 return Err(failure(&args, &out));
             }
-            if registered().is_none() {
+            // Registered by this run only if its `.git` points to a new administrative folder.
+            if registered().is_none() || !self.created_here(&dest.path, &admin_before) {
                 return Err(dest.fail(failure(&args, &out)));
             }
             warnings.push(msg!(
@@ -256,13 +309,24 @@ impl CliBackend {
     /// hold that worktree of this repository.
     fn worktree_contents(&self, path: &Path) -> Result<Option<WorktreeContents>, EngineError> {
         let shown = path.to_string_lossy();
-        if fs::symlink_metadata(path).is_err() {
-            return Ok(None);
+        let unreachable = |e: std::io::Error| {
+            EngineError::NotAllowed(msg!(
+                "engine-worktree-unreachable",
+                path = shown.as_ref(),
+                reason = e.to_string()
+            ))
+        };
+        match fs::symlink_metadata(path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(unreachable(e)),
         }
         let not_worktree =
             || EngineError::NotAllowed(msg!("engine-worktree-not-worktree", path = shown.as_ref()));
-        if fs::symlink_metadata(path.join(".git")).is_err() {
-            return Err(not_worktree());
+        match fs::symlink_metadata(path.join(".git")) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(not_worktree()),
+            Err(e) => return Err(unreachable(e)),
         }
         let opener = CliOpener {
             git: self.git.clone(),

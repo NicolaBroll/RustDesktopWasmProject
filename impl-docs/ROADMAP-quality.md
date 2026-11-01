@@ -202,6 +202,22 @@ Rules that apply to every step:
 - **Done when:** no function over 150 lines in `crates/engine` and `crates/git`; `safety-reviewer`
   on the write paths; CI green.
 
+### Q23 — Long UI functions
+- [ ] **Agent:** `egui-ui`
+- **Goal:** the UI functions over 150 lines (review of 2026-11-01: `view/commits.rs` `show` ~185,
+  `view/clone_view.rs` ~180, `view/refs.rs` ~180, `merge.rs` `receive` ~175, `remotes.rs` ~165,
+  `branch.rs` ~160 twice, `view/stage_view.rs` ~155 twice, `sync.rs` ~155) split by section
+  of the panel or by outcome; the `#[allow(clippy::too_many_arguments)]` of `stage_view.rs` and
+  `view/refs.rs` go away with a context struct.
+- **Done when:** no function over 150 lines in `crates/ui`; UI tests unchanged and green; CI green.
+
+### Q24 — Shared test helpers
+- [ ] **Agent:** `git-engine`
+- **Goal:** `same<T>` (typed result read back as the same JSON) is defined in 7 test modules of
+  `crates/engine/src/builtin*`, and `oid(n)` in ~12 test modules of `crates/engine` and
+  `crates/ui`. One `same` in a `#[cfg(test)]` module of the engine, one `oid` per crate.
+- **Done when:** one definition each per crate; tests unchanged and green; CI green.
+
 ## Phase Q3 — Optional
 
 ### Q30 — More pedantic lints

@@ -154,11 +154,11 @@ impl MemoryBackend {
         work.detach_to(request.plan.base);
         let mut outcome = work.rebase_run(state)?;
         outcome.backup = backup;
-        if !outcome.in_progress {
-            outcome.after = work.head_target().unwrap_or(request.expected);
+        outcome.after = if outcome.in_progress {
+            request.expected
         } else {
-            outcome.after = request.expected;
-        }
+            work.head_target().unwrap_or(request.expected)
+        };
         *self = work;
         Ok(outcome)
     }

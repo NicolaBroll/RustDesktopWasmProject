@@ -2375,7 +2375,6 @@ dependencies = [
  "project-core",
  "project-domain",
  "project-i18n",
- "proptest",
  "regex",
  "schemars",
  "serde",

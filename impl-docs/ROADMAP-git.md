@@ -13,8 +13,8 @@ Rules that apply to every step:
 - Steps that write to the user's repo (from S18 on) go through `safety-reviewer` before
   delivery.
 - Delivery of every step: green `cargo xtask ci` locally, pull request to `dev` and squash
-  merge. For now GitHub CI only runs on pull requests to `master`, not on those to
-  `dev`. The next step restarts from the updated `dev`; `dev` will go into `master` with a pull
+  merge **only after the GitHub checks are green** (`gh pr checks <n> --watch`: `ci` and the git
+  2.30 / latest jobs, which `cargo xtask ci` alone does not cover). The next step restarts from the updated `dev`; `dev` will go into `master` with a pull
   request.
 - **Desktop only** (decision of 2026-10-24, S31d): the wasm app (`project-web`) has been removed;
   it only served as a demo on the `MemoryBackend` and as a test bench with Playwright. The UI is

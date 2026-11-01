@@ -64,7 +64,7 @@ write to the user's repo also go through `safety-reviewer`.
 ## Before delivering
 
 ```sh
-cargo xtask ci           # fmt, clippy -D warnings, test, doc -D warnings, layering, cargo deny
+cargo xtask ci           # fmt, clippy -D warnings (also for Windows), test, doc -D warnings, layering, cargo deny
 cargo xtask ci --quiet   # the same, with output only from the step that fails
 ```
 

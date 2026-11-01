@@ -14,7 +14,8 @@ static QUIET: AtomicBool = AtomicBool::new(false);
 const USAGE: &str = "\
 usage: cargo xtask <task>
 
-  ci        fmt, clippy, test, doc, layering, cargo deny (licenses, bans, sources)
+  ci        fmt, clippy (also for Windows if the target is installed), test, doc, layering,
+            cargo deny (licenses, bans, sources)
             (`ci --quiet`: one line per step, output only of the failing step)
   layers    checks that every crate depends only on lower layers
   release   optimized desktop/CLI build";
@@ -52,6 +53,7 @@ fn ci() -> anyhow::Result<()> {
         "-D",
         "warnings",
     ])?;
+    windows_clippy()?;
     // With `--quiet` tests also print only failures, if the output is to be shown.
     if QUIET.load(Ordering::Relaxed) {
         cargo(&["test", "--workspace", "-q"])?;
@@ -64,6 +66,36 @@ fn ci() -> anyhow::Result<()> {
     deny()?;
     eprintln!("\nci: all green");
     Ok(())
+}
+
+/// Windows target of the Windows packages (`packaging/windows.sh`).
+const WINDOWS_TARGET: &str = "x86_64-pc-windows-gnu";
+
+/// `cargo clippy` of libraries and binaries for Windows: the `cfg(not(unix))` code is compiled
+/// nowhere else before packaging (a private non-unix function broke the 0.9.0 Windows build).
+/// Skipped, with a note, when the target is not installed (`rustup target add`).
+fn windows_clippy() -> anyhow::Result<()> {
+    let installed = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .is_ok_and(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|l| l == WINDOWS_TARGET)
+        });
+    if !installed {
+        eprintln!("==> clippy for Windows skipped: `rustup target add {WINDOWS_TARGET}` to run it");
+        return Ok(());
+    }
+    cargo(&[
+        "clippy",
+        "--workspace",
+        "--target",
+        WINDOWS_TARGET,
+        "--",
+        "-D",
+        "warnings",
+    ])
 }
 
 /// `cargo deny check licenses bans sources` (`deny.toml`): no network, always the same result.

@@ -82,6 +82,7 @@ impl Fixture {
 fn key(err: &EngineError) -> String {
     match err {
         EngineError::NotAllowed(m) => m.key().to_owned(),
+        EngineError::ConfirmRequired { reason, .. } => reason.key().to_owned(),
         EngineError::GitWithReason { reason, .. } => reason.key().to_owned(),
         other => format!("{other:?}"),
     }

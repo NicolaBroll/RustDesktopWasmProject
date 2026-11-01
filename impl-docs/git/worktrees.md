@@ -70,7 +70,7 @@ huge, e.g. a build folder), files marked `--assume-unchanged`, or `--skip-worktr
 (`-hidden`: git status cannot tell whether they changed). The messages give the count and the first
 path. A worktree whose folder is gone (`prunable`) has no files to check: only its entry is removed.
 
-Without `confirm` (after the refusals): `engine-worktree-remove-confirm`, which says whether a backup
+Without `confirm` (after the refusals): `ConfirmRequired` with `engine-worktree-remove-confirm`, which says whether a backup
 would be saved. Result: `{"path", "backup", "messages", "worktrees", "worktrees_error"?}`.
 
 ## Steps and guarantees (`CliBackend`)

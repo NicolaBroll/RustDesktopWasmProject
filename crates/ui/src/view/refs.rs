@@ -126,6 +126,9 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
             if !column.filtering && repo.submodules.shown() {
                 submodule_section(ui, repo, column.can_write, actions);
             }
+            if !column.filtering && repo.worktrees.shown() {
+                worktree_section(ui, repo, column.can_write, actions);
+            }
         });
     state.trees = Some(trees);
     for key in toggled {
@@ -576,6 +579,21 @@ pub(super) fn ref_menu(
         let (start, proposed) = Start::from_ref(info);
         actions.push(Action::Branch(branch::Action::NewBranch(start, proposed)));
         ui.close();
+    }
+    if info.kind == RefKind::LocalBranch {
+        let button = ui
+            .add_enabled(
+                can_write,
+                egui::Button::new(tr!("worktree-new-from-branch")),
+            )
+            .on_hover_text(tr!("worktree-new-from-branch-hint", name = name))
+            .on_disabled_hover_text(wait());
+        if button.clicked() {
+            actions.push(Action::Worktree(crate::worktree::Action::OpenAdd(Some(
+                name.to_owned(),
+            ))));
+            ui.close();
+        }
     }
     let button = ui
         .add_enabled(can_write, egui::Button::new(tr!("refs-new-tag")))

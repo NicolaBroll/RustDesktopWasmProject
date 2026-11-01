@@ -215,11 +215,15 @@ pub fn removal_refusal(
 
 /// `worktree.remove` without `confirm`: what it would do.
 pub fn removal_needs_confirm(path: &str, backup: bool) -> EngineError {
-    EngineError::NotAllowed(msg!(
-        "engine-worktree-remove-confirm",
-        path = path,
-        backup = if backup { "yes" } else { "no" }
-    ))
+    EngineError::ConfirmRequired {
+        command: "worktree.remove",
+        reason: msg!(
+            "engine-worktree-remove-confirm",
+            path = path,
+            backup = if backup { "yes" } else { "no" }
+        ),
+        expected: None,
+    }
 }
 
 #[cfg(test)]

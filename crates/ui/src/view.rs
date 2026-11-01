@@ -50,6 +50,7 @@ mod sync_view;
 mod tab_strip;
 mod title_bar;
 mod top_bar;
+mod worktree_view;
 
 pub(crate) use auto_fetch_view::auto_fetch_notice;
 use auto_fetch_view::offline_icon;
@@ -91,6 +92,8 @@ use top_bar::*;
 pub(crate) use top_bar::{
     RecentRepo, current_branch, repo_name, status_bar, top_bar, undo_enabled, welcome,
 };
+use worktree_view::worktree_section;
+pub(crate) use worktree_view::{confirm_worktree_remove, worktree_dialog};
 
 /// The network operation in progress (fetch, pull or push), for the bar.
 pub(crate) struct Network {

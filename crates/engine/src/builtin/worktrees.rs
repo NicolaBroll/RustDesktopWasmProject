@@ -474,7 +474,10 @@ mod tests {
             linked("/lost", |w| w.unreferenced = true),
         ]);
         let err = run(&r, &mut s, "worktree.remove", json!({"path": "/plain"})).unwrap_err();
-        not_allowed(err, "engine-worktree-remove-confirm");
+        assert!(
+            matches!(&err, EngineError::ConfirmRequired { reason, .. } if reason.key() == "engine-worktree-remove-confirm"),
+            "{err:?}"
+        );
         let err = run(&r, &mut s, "worktree.remove", json!({"path": "/lost"})).unwrap_err();
         assert!(
             err.to_string().contains("refs/project/backup/worktree-"),

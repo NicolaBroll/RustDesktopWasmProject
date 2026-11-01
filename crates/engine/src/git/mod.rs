@@ -37,6 +37,7 @@ mod search;
 mod stash;
 mod submodule;
 mod tag;
+mod worktree;
 
 #[cfg(test)]
 mod memory_diff_tests;
@@ -94,7 +95,8 @@ pub use maintenance::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use memory::{
-    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
+    CleanStash, FetchFailure, MEMORY_MAIN_WORKTREE, MemoryBackend, MemoryOpener, MemoryWorktree,
+    StashedFile, WorktreeStash,
 };
 pub(crate) use merge::check_in_progress;
 pub use merge::{
@@ -146,6 +148,11 @@ pub use submodule::{
     plan_update, refusal_message, submodule_state, update_refusal,
 };
 pub use tag::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
+pub use worktree::{
+    WORKTREE_BACKUP_KIND, WorktreeAdd, WorktreeAdded, WorktreeContents, WorktreeInfo,
+    WorktreeRemove, WorktreeRemoved, WorktreeTarget, branch_in_worktree, check_worktree_path,
+    removal_needs_confirm, removal_refusal, unknown_worktree,
+};
 
 use crate::{EngineError, JobContext, Message};
 use project_domain::{
@@ -957,8 +964,26 @@ pub trait GitSubmodules {
     ) -> Result<SubmoduleUpdated, EngineError>;
 }
 
+/// Linked worktrees (`impl-docs/git/worktrees.md`). Part of [`GitBackend`].
+pub trait GitWorktrees {
+    /// The worktrees of the repository, the main one first (`git worktree list`). A read.
+    fn worktrees(&self) -> Result<Vec<WorktreeInfo>, EngineError>;
+
+    /// `worktree.add`: a new worktree at `request.path` (absent or empty folder, never
+    /// `--force`) on an existing branch checked out nowhere else, or on a detached commit.
+    /// Moves no ref: a new branch is created first by the command. On failure the folder goes
+    /// back to how it was.
+    fn add_worktree(&mut self, request: &WorktreeAdd) -> Result<WorktreeAdded, EngineError>;
+
+    /// `worktree.remove`: deletes a linked worktree that [`removal_refusal`] lets through (never
+    /// `--force`), only with `confirm`; a detached HEAD with commits on no ref is saved first in
+    /// `refs/project/backup/worktree-...` (if the backup fails nothing is removed).
+    fn remove_worktree(&mut self, request: &WorktreeRemove)
+    -> Result<WorktreeRemoved, EngineError>;
+}
+
 /// An open repository: the union of the traits by area ([`GitRead`], [`GitIndex`], [`GitRefs`],
-/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`], [`GitSubmodules`]). Every type that
+/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`], [`GitSubmodules`], [`GitWorktrees`]). Every type that
 /// implements all of them is a `GitBackend` (blanket impl); `Session` and the commands hold a
 /// `Box<dyn GitBackend>`. A caller with a concrete backend (`MemoryBackend`, `CliBackend`)
 /// imports the traits of the methods it calls.
@@ -973,6 +998,7 @@ pub trait GitBackend:
     + GitOperations
     + GitMaintenance
     + GitSubmodules
+    + GitWorktrees
     + Send
 {
 }
@@ -986,6 +1012,7 @@ impl<T> GitBackend for T where
         + GitOperations
         + GitMaintenance
         + GitSubmodules
+        + GitWorktrees
         + Send
         + ?Sized
 {

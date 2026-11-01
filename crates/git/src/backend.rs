@@ -25,6 +25,7 @@ mod stash;
 mod submodule;
 mod sync;
 mod tag;
+mod worktrees;
 
 use crate::GitVersion;
 use crate::command::{Git, failure, os_from_bytes, path_from_output, stderr_text};
@@ -42,14 +43,14 @@ use project_engine::{
     CommitOutcome, CommitRequest, ConfigEntry, ConflictResolution, ConflictResolved,
     ConflictVersions, CredentialPrompter, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
     FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance,
-    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules, HeadState, InitRequest,
-    JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest,
-    Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest, PullSettings,
-    PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted,
-    RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion,
-    StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed,
-    UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
-    versions_at_risk_hidden,
+    GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules, GitWorktrees, HeadState,
+    InitRequest, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
+    MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
+    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
+    RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery,
+    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
+    TagPush, TagPushed, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
+    path_matches, versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1724,6 +1725,26 @@ impl GitOperations for CliBackend {
 
     fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.abort_rebase()
+    }
+}
+
+impl GitWorktrees for CliBackend {
+    fn worktrees(&self) -> Result<Vec<project_engine::WorktreeInfo>, EngineError> {
+        self.list_worktrees()
+    }
+
+    fn add_worktree(
+        &mut self,
+        request: &project_engine::WorktreeAdd,
+    ) -> Result<project_engine::WorktreeAdded, EngineError> {
+        self.add_linked_worktree(request)
+    }
+
+    fn remove_worktree(
+        &mut self,
+        request: &project_engine::WorktreeRemove,
+    ) -> Result<project_engine::WorktreeRemoved, EngineError> {
+        self.remove_linked_worktree(request)
     }
 }
 

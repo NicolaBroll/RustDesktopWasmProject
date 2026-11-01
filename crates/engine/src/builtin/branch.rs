@@ -244,15 +244,15 @@ pub struct BranchSetUpstreamResult {
 }
 
 /// The local branch `full` among the refs, `None` if there is none.
-fn find<'a>(refs: &'a [RefInfo], full: &str) -> Option<&'a RefInfo> {
+pub(super) fn find<'a>(refs: &'a [RefInfo], full: &str) -> Option<&'a RefInfo> {
     refs.iter().find(|r| r.name == full)
 }
 
-fn missing(name: &str) -> EngineError {
+pub(super) fn missing(name: &str) -> EngineError {
     EngineError::NotAllowed(msg!("engine-branch-no-local", name = name.escape_debug()))
 }
 
-fn taken(name: &str) -> EngineError {
+pub(super) fn taken(name: &str) -> EngineError {
     EngineError::NotAllowed(msg!("engine-branch-exists", name = name.escape_debug()))
 }
 

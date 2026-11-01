@@ -1092,7 +1092,7 @@ file of its function in [git/](git/) before the code.
   repo per tab (= engine session), "Close" hides it. Tests: `crates/ui/src/lfs_tests.rs`.
 
 ### S64 — Worktrees (only if needed)
-- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
 - **Goal:** today `git worktree list` is only read to refuse checking out a branch that is used
   elsewhere. Add `worktree.list {}` (path, branch or detached HEAD, locked, prunable),
   `worktree.add {"path", "branch"?: string, "new_branch"?: string, "start"?: rev}` (path absent or
@@ -1106,3 +1106,20 @@ file of its function in [git/](git/) before the code.
   checked out elsewhere refused, path not empty refused, remove clean, remove with changes refused,
   locked worktree refused, main worktree refused, prunable entry) and on the `MemoryBackend`;
   `safety-reviewer` review; CI green.
+- **Status:** engine and backend done ([git/worktrees.md](git/worktrees.md)): `worktree.list`,
+  `worktree.add`, `worktree.remove` (ids distinct from `worktree.discard`/`clean`/`ignore`, which act
+  on the working tree files). Remove refuses changes, untracked, **ignored** and
+  assume-unchanged/skip-worktree files (no backup of them: git deletes ignored files silently),
+  operations in progress, locked, main and current worktrees; a detached HEAD with commits on no
+  ref is saved in `refs/project/backup/worktree-...`; a worktree whose folder is gone is removable.
+  `new_branch` is created with `update-ref` before `git worktree add` (rolled back on failure) and
+  journaled as `branch.create` (undo refused while checked out). Only git 2.30 options; `locked` /
+  `prunable` read from the administrative folder for git < 2.31. Tests: `crates/git/tests/worktrees.rs`
+  (also run with git 2.30.9), `builtin/worktrees.rs`. `safety-reviewer` review done: a path git
+  still has an entry for is refused before anything is created; only "not found" means a folder is
+  gone (an unreadable or unmounted one is never pruned); without `confirm`, `ConfirmRequired`. UI
+  (`crates/ui/src/worktree.rs`, `view/worktree_view.rs`): "Worktrees" section when there is more
+  than one (branch or detached, badges here/locked/missing; Open in a new tab, Show in file
+  manager, Remove… with confirmation), "New worktree from this branch…" in the branch menu and
+  "+" in the section header (folder with Browse…, existing branch / new branch / detached commit;
+  opened in a new tab).

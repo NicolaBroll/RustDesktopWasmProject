@@ -57,6 +57,7 @@ mod theme;
 mod tracking;
 mod view;
 mod word_diff;
+mod worktree;
 
 pub use credentials::{CredentialBox, CredentialDialog};
 pub use executor::{Done, ErrorKind, Executor, Job, Ticket, Wake};
@@ -149,6 +150,8 @@ enum Action {
     Stash(stash::Action),
     /// Updating submodules.
     Submodule(submodule::Action),
+    /// Linked worktrees: the "New worktree" dialog and the removal.
+    Worktree(worktree::Action),
     /// The notice "git-lfs is not installed".
     Lfs(lfs::Action),
     /// Merge, cherry-pick and revert.
@@ -229,6 +232,10 @@ enum Request {
     Submodules(u64, bool),
     /// `submodule.update` (the state is in [`submodule::SubmoduleBox`]).
     Submodule(u64),
+    /// `worktree.list`.
+    Worktrees(u64),
+    /// `worktree.add`/`worktree.remove` (the state is in [`worktree::WorktreeBox`]).
+    Worktree(u64),
     /// `stash.push`/`stash.apply`/`stash.pop`/`stash.drop` (the state is in [`StashBox`]).
     Stash(u64, stash::Op),
     /// `repo.operation`: the operation in progress for the panel.
@@ -313,6 +320,8 @@ struct RepoView {
     stash: StashBox,
     /// The submodules (`submodule.list`) and the update in progress.
     submodules: submodule::SubmoduleBox,
+    /// The linked worktrees (`worktree.list`), the "New worktree" dialog and the removal.
+    worktrees: worktree::WorktreeBox,
     /// Git LFS: the files stored in it and the notice "git-lfs is not installed" (S63).
     lfs: lfs::LfsBox,
     /// The merge started, the operation in progress (panel) and the Continue and Abort dialogs.
@@ -372,6 +381,7 @@ impl RepoView {
             remotes: RemotesBox::default(),
             stash: StashBox::default(),
             submodules: submodule::SubmoduleBox::default(),
+            worktrees: worktree::WorktreeBox::default(),
             lfs: lfs::LfsBox::default(),
             merge: MergeBox::default(),
             rebase: RebaseBox::default(),
@@ -429,6 +439,7 @@ impl RepoView {
             || self.merge.modal_open()
             || self.rebase.modal_open()
             || self.reset.modal_open()
+            || self.worktrees.modal_open()
     }
 
     /// The last commit (HEAD), if it is among the loaded ones.
@@ -516,6 +527,8 @@ struct Tab {
     not_found: Option<String>,
     /// The answer of `repo.clone`/`repo.init`, collected by [`App`] for its dialog.
     clone_done: Option<Done>,
+    /// The worktree `worktree.add` just created: [`App`] opens it in a new tab.
+    open_worktree: Option<String>,
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
@@ -539,6 +552,7 @@ impl Tab {
             opened: None,
             not_found: None,
             clone_done: None,
+            open_worktree: None,
             viewport: ListViewport::default(),
             error: String::new(),
             notice: String::new(),
@@ -683,6 +697,7 @@ impl Tab {
             Action::Fetch(action) => self.apply_fetch(action),
             Action::Optimize(action) => self.apply_optimize(action),
             Action::Submodule(action) => self.apply_submodule(action),
+            Action::Worktree(action) => self.apply_worktree(action),
             Action::Lfs(action) => self.apply_lfs(action),
             Action::Sync(action) => self.apply_sync(action),
             Action::Remotes(action) => self.apply_remotes(action),
@@ -958,6 +973,7 @@ impl Tab {
         self.request_remotes(generation);
         self.submit(stash::LIST, json!({}), Request::Stashes(generation));
         self.request_submodules(generation, false);
+        self.request_worktrees(generation);
         self.request_lfs_status(generation);
         if let Some(repo) = &mut self.repo {
             let first = repo.list.reset();
@@ -1070,6 +1086,14 @@ impl Tab {
                 }
             }
             Request::Submodule(generation) => self.receive_submodule(generation, done),
+            // The worktree list also has its own error, in its section.
+            Request::Worktrees(generation) => {
+                log_failure(&done);
+                if let Some(repo) = self.current(generation) {
+                    repo.worktrees.receive_list(done.result);
+                }
+            }
+            Request::Worktree(generation) => self.receive_worktree(generation, done),
             // The operation in progress also has its own error, in the panel.
             Request::Operation(generation) => {
                 log_failure(&done);
@@ -1231,6 +1255,10 @@ impl Tab {
                 if let Some(repo) = self.current(generation) {
                     repo.refs = serde_json::from_value(value)?;
                     repo.update_labels();
+                    // A checkout or a renamed branch changes what the worktrees show.
+                    if repo.worktrees.shown() {
+                        self.request_worktrees(generation);
+                    }
                 }
             }
             Request::Status(generation) | Request::AutoStatus(generation) => {
@@ -1305,6 +1333,8 @@ impl Tab {
             | Request::Stash(..)
             | Request::Submodules(..)
             | Request::Submodule(..)
+            | Request::Worktrees(..)
+            | Request::Worktree(..)
             | Request::Operation(..)
             | Request::Merge(..)
             | Request::RebasePlan(..)
@@ -1409,7 +1439,7 @@ impl Tab {
         match &self.repo {
             Some(repo) => {
                 side_panels(ui, repo, &mut draft, writing, &mut actions);
-                self.dialogs(&ctx, repo, writing, &mut actions);
+                self.dialogs(&ctx, repo, writing, can_pick, &mut actions);
                 let center = Center {
                     writing,
                     focus_search,
@@ -1506,6 +1536,7 @@ impl Tab {
         ctx: &egui::Context,
         repo: &RepoView,
         writing: bool,
+        can_pick: bool,
         actions: &mut Vec<Action>,
     ) {
         if let Some(write) = &repo.confirm {
@@ -1564,6 +1595,12 @@ impl Tab {
         }
         if let Some(dialog) = repo.reset.dialog() {
             view::reset_dialog(ctx, dialog, actions);
+        }
+        if let Some(dialog) = repo.worktrees.dialog() {
+            view::worktree_dialog(ctx, dialog, repo, can_pick, actions);
+        }
+        if let Some(remove) = repo.worktrees.remove_dialog() {
+            view::confirm_worktree_remove(ctx, remove, actions);
         }
         if let Some(failure) = repo.merge.failure() {
             view::failure_window(

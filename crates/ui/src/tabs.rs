@@ -44,6 +44,10 @@ pub(crate) enum Action {
     OpenSubmodule(RepoPath),
     /// Shows the folder of the submodule at that path in the system's file manager.
     ShowSubmoduleFolder(RepoPath),
+    /// Shows that folder (absolute: a linked worktree, S64) in the system's file manager.
+    ShowWorktreeFolder(String),
+    /// "Browse…" of the "New worktree" dialog of the tab shown: the folder goes in its field.
+    PickWorktreeFolder,
 }
 
 /// Key of the state in the eframe storage.
@@ -117,6 +121,8 @@ enum Pick {
     Open,
     /// "Browse…" of the clone dialog: the destination.
     Destination,
+    /// "Browse…" of the "New worktree" dialog of the tab with that id.
+    Worktree(u64),
 }
 
 impl App {
@@ -284,9 +290,15 @@ impl App {
         match folder {
             Some((Pick::Open, folder)) => self.open(folder),
             Some((Pick::Destination, folder)) => self.clone.set_folder(&folder),
+            Some((Pick::Worktree(id), folder)) => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+                    tab.worktree_folder(&folder);
+                }
+            }
             None => {}
         }
         self.receive_clone();
+        let mut new_worktrees = Vec::new();
         for tab in &mut self.tabs {
             tab.receive();
             tab.request_operation();
@@ -294,6 +306,11 @@ impl App {
             if let Some(path) = tab.not_found.take() {
                 self.recent.retain(|p| *p != path);
             }
+            new_worktrees.extend(tab.open_worktree.take());
+        }
+        // A worktree just created (S64) opens in a new tab.
+        for path in new_worktrees {
+            self.open(path);
         }
         let mut index = 0;
         while index < self.tabs.len() {
@@ -411,6 +428,27 @@ impl App {
             }),
             Action::ShowSubmoduleFolder(path) => {
                 self.launch(Some(&path), |platform, folder| platform.show_folder(folder));
+            }
+            Action::ShowWorktreeFolder(folder) => {
+                let tab = &mut self.tabs[self.active];
+                let folder = Path::new(&folder);
+                // Absolute, as `worktree.list` gives it: never taken for an option.
+                let result = if folder.is_absolute() {
+                    self.platform.show_folder(folder)
+                } else {
+                    Err(std::io::ErrorKind::InvalidInput.into())
+                };
+                match result {
+                    Ok(()) => tab.error.clear(),
+                    Err(e) => {
+                        log::error!("{}: {e}", folder.display());
+                        tab.error = tr!("title-bar-launch-failed", error = e.to_string());
+                    }
+                }
+            }
+            Action::PickWorktreeFolder => {
+                let id = self.tabs[self.active].id;
+                self.pick_folder(ctx, Pick::Worktree(id));
             }
             Action::OpenSubmodule(path) => {
                 let tab = &mut self.tabs[self.active];

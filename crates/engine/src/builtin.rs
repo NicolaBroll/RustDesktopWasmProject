@@ -25,6 +25,7 @@ pub(crate) mod stage;
 pub(crate) mod stash;
 pub(crate) mod submodule;
 pub(crate) mod tag;
+pub(crate) mod worktrees;
 
 use crate::{
     Access::{Read, Write},
@@ -49,6 +50,7 @@ impl Registry {
         r.add_remotes();
         r.add_stashes();
         r.add_submodules();
+        r.add_worktrees();
         r.add_merges();
         r.add_rebase();
         r.add_edit();
@@ -401,6 +403,31 @@ impl Registry {
             r#"{"name": string, "new_name": string}"#,
             Write,
             remotes::remote_rename,
+        );
+    }
+
+    /// Linked worktrees (not the `worktree.*` commands on the files of the working tree).
+    fn add_worktrees(&mut self) {
+        self.add(
+            "worktree.list",
+            "Linked worktrees of the repository (not the working tree files)",
+            "{}",
+            Read,
+            worktrees::worktree_list,
+        );
+        self.add(
+            "worktree.add",
+            "Create a linked worktree on a branch or commit",
+            r#"{"path": string (absent or empty folder), "branch"?: string (existing, checked out nowhere) | "new_branch"?: string, "start"?: rev (HEAD; not with branch)}"#,
+            Write,
+            worktrees::worktree_add,
+        );
+        self.add(
+            "worktree.remove",
+            "Remove a clean linked worktree (deletes its folder)",
+            r#"{"path": string, "confirm": true}"#,
+            Write,
+            worktrees::worktree_remove,
         );
     }
 
@@ -1100,10 +1127,13 @@ mod tests {
                 "submodule.update",
                 "tag.create",
                 "tag.delete",
+                "worktree.add",
                 "worktree.clean",
                 "worktree.discard",
                 "worktree.discard_lines",
-                "worktree.ignore"
+                "worktree.ignore",
+                "worktree.list",
+                "worktree.remove"
             ]
         );
         let ids: Vec<_> = r.search("COMMIT HISTORY").map(|c| c.id).collect();
@@ -1159,10 +1189,12 @@ mod tests {
                 "submodule.update",
                 "tag.create",
                 "tag.delete",
+                "worktree.add",
                 "worktree.clean",
                 "worktree.discard",
                 "worktree.discard_lines",
-                "worktree.ignore"
+                "worktree.ignore",
+                "worktree.remove"
             ]
         );
         let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();

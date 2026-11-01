@@ -73,10 +73,10 @@ pub use git::{
     CommitOutcome, CommitRequest, ConfigEntry, DiffSpec, DiscardLines, DiscardLinesOutcome,
     DiscardOutcome, DiscardedFile, FetchOutcome, FetchRequest, GitBackend, GitIndex,
     GitMaintenance, GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules,
-    HEADS_PREFIX, HeadState, LinePatch, LineSelection, LinesBackup, LinesRestore, LogQuery,
-    RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery, StagedVersion,
-    WorktreeBackup, WorktreeRestore, amend_impact, apply_patch, backup_message, branch_ref,
-    branch_short, check_amend_published, check_branch_name, check_commit_state,
+    GitWorktrees, HEADS_PREFIX, HeadState, LinePatch, LineSelection, LinesBackup, LinesRestore,
+    LogQuery, RefMove, RefRestore, RepoOpener, RestoreOutcome, SearchField, SearchQuery,
+    StagedVersion, WorktreeBackup, WorktreeRestore, amend_impact, apply_patch, backup_message,
+    branch_ref, branch_short, check_amend_published, check_branch_name, check_commit_state,
     check_new_branch_name, check_no_operation, check_remote_name, check_same_clean_plan,
     check_same_plan, clean_description, clean_plan, default_remote, discard_description,
     discard_line_patch, discard_lines_confirm, discard_lines_description, discard_lines_target,
@@ -90,8 +90,8 @@ pub use git::{
 /// The in-memory repo for tests (UI, MCP): not in the app binaries.
 #[cfg(any(test, feature = "test-support"))]
 pub use git::{
-    CleanStash, FetchFailure, MemoryBackend, MemoryOpener, StashedFile, WorktreeStash,
-    cleanup_message, is_binary_content, split_message,
+    CleanStash, FetchFailure, MEMORY_MAIN_WORKTREE, MemoryBackend, MemoryOpener, MemoryWorktree,
+    StashedFile, WorktreeStash, cleanup_message, is_binary_content, split_message,
 };
 pub use git::{
     CloneOutcome, CloneRequest, InitRequest, clone_no_such_branch, destination_no_parent,
@@ -154,6 +154,11 @@ pub use git::{
 };
 pub use git::{TAGS_PREFIX, check_new_tag_name, check_tag_name, tag_ref};
 pub use git::{TrackingBranch, UpstreamChange, resolve_tracking, upstream_label};
+pub use git::{
+    WORKTREE_BACKUP_KIND, WorktreeAdd, WorktreeAdded, WorktreeContents, WorktreeInfo,
+    WorktreeRemove, WorktreeRemoved, WorktreeTarget, branch_in_worktree, check_worktree_path,
+    removal_needs_confirm, removal_refusal, unknown_worktree,
+};
 pub use job::{CancelToken, JobContext, Progress, ProgressSink};
 pub use journal::{BranchMove, HeadChange, Integration, Journal, JournalEntry, RefChange};
 pub use message::{Message, MessageArg, ToArg};

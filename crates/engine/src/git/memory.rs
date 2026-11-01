@@ -21,6 +21,7 @@ mod stash;
 mod submodule;
 mod sync;
 mod tags;
+mod worktree;
 mod write;
 
 pub use clean::CleanStash;
@@ -30,6 +31,7 @@ use rebase::MemoryRebase;
 pub use remote::FetchFailure;
 use remote::MemoryRemote;
 use stash::MemoryStash;
+pub use worktree::{MEMORY_MAIN_WORKTREE, MemoryWorktree};
 
 use super::line_diff;
 use super::{
@@ -168,6 +170,10 @@ pub struct MemoryBackend {
     /// The paths stored in Git LFS and whether git-lfs is installed ([`MemoryBackend::set_lfs`]).
     lfs_files: BTreeSet<RepoPath>,
     lfs_installed: bool,
+    /// The linked worktrees ([`MemoryBackend::add_linked_worktree`], `worktree.add`).
+    linked_worktrees: Vec<MemoryWorktree>,
+    /// Paths that exist and are not empty ([`MemoryBackend::occupy_path`]).
+    occupied_paths: BTreeSet<String>,
 }
 
 impl Default for MemoryBackend {
@@ -220,6 +226,8 @@ impl MemoryBackend {
             lfs_files: Default::default(),
             lfs_installed: true,
             submodule_backups: Vec::new(),
+            linked_worktrees: Vec::new(),
+            occupied_paths: BTreeSet::new(),
         }
     }
 
@@ -1242,6 +1250,26 @@ impl GitOperations for MemoryBackend {
 
     fn rebase_abort(&mut self) -> Result<MergeAborted, EngineError> {
         self.rebase_stop()
+    }
+}
+
+impl super::GitWorktrees for MemoryBackend {
+    fn worktrees(&self) -> Result<Vec<super::WorktreeInfo>, EngineError> {
+        Ok(self.memory_worktrees())
+    }
+
+    fn add_worktree(
+        &mut self,
+        request: &super::WorktreeAdd,
+    ) -> Result<super::WorktreeAdded, EngineError> {
+        self.memory_add_worktree(request)
+    }
+
+    fn remove_worktree(
+        &mut self,
+        request: &super::WorktreeRemove,
+    ) -> Result<super::WorktreeRemoved, EngineError> {
+        self.memory_remove_worktree(request)
     }
 }
 

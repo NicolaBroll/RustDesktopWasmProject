@@ -718,7 +718,7 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
     let warnings: Vec<Message> = r
         .warnings
         .iter()
-        .filter(|w| !(!r.conflicts.is_empty() && w.key() == "engine-stash-kept-conflicts"))
+        .filter(|w| r.conflicts.is_empty() || w.key() != "engine-stash-kept-conflicts")
         .cloned()
         .collect();
     notice.push_str(&messages_text(&warnings));

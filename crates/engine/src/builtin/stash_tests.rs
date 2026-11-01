@@ -2,6 +2,7 @@
 //! undo/redo on the `MemoryBackend` (sample repo: `README.md` `MM`, `docs/guide.md` `A.`,
 //! `src/lib.rs` `.M`, `note.txt` untracked).
 
+use crate::test_util::same;
 use crate::{
     EngineError, GitRead, GitStash, MemoryBackend, MemoryOpener, Registry, Session, StashPush,
 };
@@ -720,10 +721,6 @@ fn stash_commands_need_an_open_repo() {
 #[test]
 fn results_round_trip() {
     use super::{StashApplyResult, StashDropResult, StashListResult, StashPushResult};
-    fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) {
-        let typed: T = serde_json::from_value(out.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-    }
     let (r, mut s) = opened();
     same::<StashListResult>(run(&r, &mut s, "stash.list", json!({})));
     let out = run(

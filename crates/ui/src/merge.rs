@@ -1129,24 +1129,7 @@ impl Tab {
     /// The actions of this function, routed by [`Tab::apply`].
     pub(crate) fn apply_merge(&mut self, action: Action) {
         match action {
-            Action::Merge { rev, what } => {
-                let generation = self.generation;
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                if self.executor.writing().is_some() || repo.modal_open() {
-                    return;
-                }
-                let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
-                    return;
-                };
-                if let Some((params, label)) = repo.merge.start(rev, what, into, Mode::Auto, None) {
-                    repo.write_error = None;
-                    repo.write_label = Some(label);
-                    let op = Op::Start;
-                    self.submit(op.command(), params, Request::Merge(generation, op));
-                }
-            }
+            Action::Merge { rev, what } => self.start_merge(rev, what),
             Action::OpenMerge { rev, what } => {
                 let Some(repo) = &mut self.repo else {
                     return;
@@ -1240,39 +1223,7 @@ impl Tab {
                 rev,
                 what,
                 parents,
-            } => {
-                let generation = self.generation;
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                if self.executor.writing().is_some() || repo.modal_open() {
-                    return;
-                }
-                let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
-                    return;
-                };
-                // The parents of a merge commit, with the name and subject if known.
-                let parents = parents
-                    .into_iter()
-                    .map(|id| {
-                        let name = commit_name(id, &repo.refs);
-                        let summary = repo
-                            .list
-                            .commits()
-                            .iter()
-                            .find(|c| c.id == id)
-                            .map(|c| c.summary.clone());
-                        (id, name, summary)
-                    })
-                    .collect();
-                if let Some((params, label)) = repo.merge.start_pick(pick, rev, what, into, parents)
-                {
-                    repo.write_error = None;
-                    repo.write_label = Some(label);
-                    let op = Op::Pick(pick);
-                    self.submit(op.command(), params, Request::Merge(generation, op));
-                }
-            }
+            } => self.start_pick(pick, rev, what, parents),
             Action::Mainline(n) => {
                 if let Some(repo) = &mut self.repo {
                     repo.merge.set_mainline(n);
@@ -1302,6 +1253,61 @@ impl Tab {
                     repo.merge.dismiss();
                 }
             }
+        }
+    }
+
+    /// [`Action::Merge`]: starts the merge at once, if nothing else is in progress.
+    fn start_merge(&mut self, rev: String, what: String) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || repo.modal_open() {
+            return;
+        }
+        let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
+            return;
+        };
+        if let Some((params, label)) = repo.merge.start(rev, what, into, Mode::Auto, None) {
+            repo.write_error = None;
+            repo.write_label = Some(label);
+            let op = Op::Start;
+            self.submit(op.command(), params, Request::Merge(generation, op));
+        }
+    }
+
+    /// [`Action::Pick`]: starts the cherry-pick or revert, or opens the parent dialog for a merge
+    /// commit.
+    fn start_pick(&mut self, pick: Pick, rev: Oid, what: String, parents: Vec<Oid>) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || repo.modal_open() {
+            return;
+        }
+        let Gate::Into(into) = Gate::new(&repo.head, repo.status.as_ref()) else {
+            return;
+        };
+        // The parents of a merge commit, with the name and subject if known.
+        let parents = parents
+            .into_iter()
+            .map(|id| {
+                let name = commit_name(id, &repo.refs);
+                let summary = repo
+                    .list
+                    .commits()
+                    .iter()
+                    .find(|c| c.id == id)
+                    .map(|c| c.summary.clone());
+                (id, name, summary)
+            })
+            .collect();
+        if let Some((params, label)) = repo.merge.start_pick(pick, rev, what, into, parents) {
+            repo.write_error = None;
+            repo.write_label = Some(label);
+            let op = Op::Pick(pick);
+            self.submit(op.command(), params, Request::Merge(generation, op));
         }
     }
 
@@ -1383,13 +1389,10 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::oid;
     use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
-    }
 
     fn sig(n: u64) -> Signature {
         Signature {

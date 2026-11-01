@@ -7,7 +7,7 @@ const REV_PARSE: &[u8] = include_bytes!("testdata/rev-parse.txt");
 
 const HEX: &str = "8b07c4c7c77b9a070f20c81b2948722f1ccfac5d";
 
-fn oid(hex: &str) -> Oid {
+pub(super) fn oid(hex: &str) -> Oid {
     Oid::from_hex(hex.as_bytes()).expect("valid test oid")
 }
 

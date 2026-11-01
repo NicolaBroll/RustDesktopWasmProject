@@ -1,15 +1,12 @@
 //! [`GitRefs::reset`] on the [`MemoryBackend`]: the checks between the command and the write
 //! and the undo/redo refusals (the command flow is in `builtin/reset_tests.rs`).
 
+use crate::test_util::oid;
 use crate::{
     EngineError, GitIndex, GitRead, GitRefs, HeadState, Journal, JournalEntry, MemoryBackend,
     RefMove, RefRestore, ResetMode, ResetRequest, reset_files,
 };
 use project_domain::{Change, Conflict, EntryKind, Oid, RepoPath, StatusEntry, UnmergedInfo};
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn request(mode: ResetMode, expected: Oid, target: Oid, files: Vec<RepoPath>) -> ResetRequest {
     let main = "refs/heads/main".to_owned();

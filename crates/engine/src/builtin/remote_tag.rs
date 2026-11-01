@@ -337,16 +337,13 @@ pub(super) fn remote_delete_tag(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_util::oid;
     use crate::{
         EngineError, FetchFailure, MemoryBackend, MemoryOpener, PushRejection, Registry, Session,
     };
     use project_domain::Oid;
     use serde_json::{Value, json};
     use std::sync::Arc;
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
-    }
 
     /// The tag object of `v0.1.0` in the sample.
     fn sample_tag_object() -> Oid {

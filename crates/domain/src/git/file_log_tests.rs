@@ -1,3 +1,4 @@
+use super::tests::oid;
 use super::*;
 use crate::DomainError;
 
@@ -17,10 +18,6 @@ const LATIN1: &[u8] = include_bytes!("testdata/file-log-latin1.bin");
 const EMPTY: &[u8] = include_bytes!("testdata/file-log-empty.bin");
 
 const MERGE: &str = "6e3fced0409379cb380a1c9e8c256a33fce472ed";
-
-fn oid(hex: &str) -> Oid {
-    Oid::from_hex(hex.as_bytes()).expect("valid test oid")
-}
 
 fn summary(entries: &[FileLogEntry]) -> Vec<(&str, Change, String, Option<String>)> {
     entries

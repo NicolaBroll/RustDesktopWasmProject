@@ -1143,12 +1143,6 @@ impl LogQuery {
         }
     }
 
-    /// Same page, with the stash bases too (goes with [`LogQuery::from_all_refs`]).
-    pub fn with_stashes(mut self) -> Self {
-        self.stashes = true;
-        self
-    }
-
     /// Same page, starting from `rev`.
     pub fn from_rev(mut self, rev: impl Into<String>) -> Self {
         self.rev = Some(rev.into());

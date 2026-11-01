@@ -2,11 +2,8 @@
 //! `builtin/remote.rs`).
 
 use super::*;
+use crate::test_util::oid;
 use crate::{CancelToken, GitRead, GitRemotes, LogQuery};
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn request(remote: &str, branch: Option<&str>) -> FetchRequest {
     FetchRequest {

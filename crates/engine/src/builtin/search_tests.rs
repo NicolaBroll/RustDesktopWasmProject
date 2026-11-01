@@ -3,6 +3,7 @@
 //! The sample repo (commits 1..=12 on `main`, `feature/graph` merged at 10, `src/main.rs`
 //! renamed to `src/bin/app.rs` in 12) plus commit 14 on the unmerged branch `wip`.
 
+use crate::test_util::oid;
 use crate::{
     CancelToken, EngineError, GitRead, JobContext, LogQuery, MemoryBackend, MemoryOpener, Registry,
     Session,
@@ -10,10 +11,6 @@ use crate::{
 use project_domain::{Commit, Oid, Signature};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn repo() -> MemoryBackend {
     let mut repo = MemoryBackend::sample();

@@ -1056,26 +1056,7 @@ impl Tab {
                     repo.remotes.hide_url(hide);
                 }
             }
-            Action::SubmitAdd => {
-                let generation = self.generation;
-                if self.executor.writing().is_some() {
-                    return;
-                }
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                let Some((params, label)) = repo.remotes.submit_add() else {
-                    return;
-                };
-                repo.write_error = None;
-                repo.write_label = Some(label);
-                let op = Op::Add;
-                let ticket = self.executor.submit(op.command(), params);
-                self.pending.insert(ticket, Request::Remote(generation, op));
-                if let Some(repo) = &mut self.repo {
-                    repo.remotes.add_started(ticket);
-                }
-            }
+            Action::SubmitAdd => self.submit_remote_add(),
             Action::CancelAdd => {
                 if let Some(ticket) = self.repo.as_mut().and_then(|r| r.remotes.cancel()) {
                     self.executor.cancel(ticket);
@@ -1111,45 +1092,8 @@ impl Tab {
                     self.submit(op.command(), params, Request::Remote(generation, op));
                 }
             }
-            Action::DeleteBranch(remote, branch) => {
-                let generation = self.generation;
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                if self.executor.writing().is_some() || repo.modal_open() {
-                    return;
-                }
-                let label = tr!(
-                    "remotes-delete-branch-check-label",
-                    name = format!("{remote}/{branch}")
-                );
-                if let Some(params) = repo.remotes.start_delete_branch(remote, branch) {
-                    repo.write_error = None;
-                    repo.write_label = Some(label);
-                    let op = Op::DeleteBranch;
-                    self.submit(op.command(), params, Request::Remote(generation, op));
-                }
-            }
-            Action::DeleteTag(remote, name) => {
-                let generation = self.generation;
-                let Some(repo) = &mut self.repo else {
-                    return;
-                };
-                if self.executor.writing().is_some() || repo.modal_open() {
-                    return;
-                }
-                let label = tr!(
-                    "remotes-delete-tag-check-label",
-                    name = name.as_str(),
-                    remote = remote.as_str()
-                );
-                if let Some(params) = repo.remotes.start_delete_tag(remote, name) {
-                    repo.write_error = None;
-                    repo.write_label = Some(label);
-                    let op = Op::DeleteTag;
-                    self.submit(op.command(), params, Request::Remote(generation, op));
-                }
-            }
+            Action::DeleteBranch(remote, branch) => self.delete_remote_branch(remote, branch),
+            Action::DeleteTag(remote, name) => self.delete_remote_tag(remote, name),
             Action::ConfirmDeleteBranch | Action::ConfirmDeleteTag => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
@@ -1200,6 +1144,71 @@ impl Tab {
                     repo.remotes.dismiss();
                 }
             }
+        }
+    }
+
+    /// [`Action::SubmitAdd`]: submits `remote.add` from the dialog.
+    fn submit_remote_add(&mut self) {
+        let generation = self.generation;
+        if self.executor.writing().is_some() {
+            return;
+        }
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        let Some((params, label)) = repo.remotes.submit_add() else {
+            return;
+        };
+        repo.write_error = None;
+        repo.write_label = Some(label);
+        let op = Op::Add;
+        let ticket = self.executor.submit(op.command(), params);
+        self.pending.insert(ticket, Request::Remote(generation, op));
+        if let Some(repo) = &mut self.repo {
+            repo.remotes.add_started(ticket);
+        }
+    }
+
+    /// [`Action::DeleteBranch`]: checks the deletion of `branch` from `remote` first.
+    fn delete_remote_branch(&mut self, remote: String, branch: String) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || repo.modal_open() {
+            return;
+        }
+        let label = tr!(
+            "remotes-delete-branch-check-label",
+            name = format!("{remote}/{branch}")
+        );
+        if let Some(params) = repo.remotes.start_delete_branch(remote, branch) {
+            repo.write_error = None;
+            repo.write_label = Some(label);
+            let op = Op::DeleteBranch;
+            self.submit(op.command(), params, Request::Remote(generation, op));
+        }
+    }
+
+    /// [`Action::DeleteTag`]: checks the deletion of the tag `name` from `remote` first.
+    fn delete_remote_tag(&mut self, remote: String, name: String) {
+        let generation = self.generation;
+        let Some(repo) = &mut self.repo else {
+            return;
+        };
+        if self.executor.writing().is_some() || repo.modal_open() {
+            return;
+        }
+        let label = tr!(
+            "remotes-delete-tag-check-label",
+            name = name.as_str(),
+            remote = remote.as_str()
+        );
+        if let Some(params) = repo.remotes.start_delete_tag(remote, name) {
+            repo.write_error = None;
+            repo.write_label = Some(label);
+            let op = Op::DeleteTag;
+            self.submit(op.command(), params, Request::Remote(generation, op));
         }
     }
 

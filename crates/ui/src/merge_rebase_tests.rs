@@ -2,13 +2,10 @@
 //! "Continue" without a message (it may stop again on the next commit) and two-step abort.
 
 use super::*;
+use crate::test_util::oid;
 use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 /// Commit `n` ("c<n>") with parent `parent` that brings `a.txt` to the blob with content `text`.
 fn commit(repo: &mut MemoryBackend, n: u64, parent: Option<u64>, summary: &str) {

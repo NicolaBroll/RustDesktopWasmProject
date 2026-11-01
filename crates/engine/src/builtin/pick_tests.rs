@@ -7,14 +7,12 @@
 //! in conflict); `merged` at `c6`, merge commit of `c1` and `c4` (adds `n.txt`). HEAD on
 //! `main`, clean worktree.
 
+use crate::test_util::oid;
+use crate::test_util::same;
 use crate::{EngineError, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, EntryKind, Oid, RepoPath, Signature};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn sig(name: &str, n: i64) -> Signature {
     Signature {
@@ -456,12 +454,6 @@ fn continue_resolved_as_head_points_to_abort() {
     assert!(matches!(err, EngineError::NotAllowed(_)), "{err}");
     assert!(err.to_string().contains("cherry_pick.abort"), "{err}");
     assert_eq!(status(&r, &mut s)["operation"], "CherryPick");
-}
-
-fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-    let typed: T = serde_json::from_value(out.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-    typed
 }
 
 /// The typed results read back the JSON of the commands and give the same JSON again: the UI

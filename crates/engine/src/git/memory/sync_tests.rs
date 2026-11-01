@@ -6,11 +6,8 @@ use crate::GitRefs;
 use crate::GitRemotes;
 use crate::git::memory::merge::merge_partial;
 use crate::git::{HeadState, RefMove};
+use crate::test_util::oid;
 use project_domain::RepoPath;
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 fn entry(oid: Oid) -> (u32, Oid) {
     (0o100644, oid)

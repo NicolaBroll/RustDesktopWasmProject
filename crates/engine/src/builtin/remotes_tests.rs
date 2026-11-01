@@ -1,5 +1,7 @@
 //! Tests of `remote.list`, `remote.add`, `remote.remove` on the `MemoryBackend`.
 
+use crate::test_util::oid;
+use crate::test_util::same;
 use crate::{EngineError, GitRemotes, MemoryBackend, MemoryOpener, Registry, Session};
 use project_domain::Oid;
 use serde_json::{Value, json};
@@ -16,10 +18,6 @@ fn opened_with(repo: MemoryBackend) -> (Registry, Session) {
 
 fn run(r: &Registry, s: &mut Session, id: &str, params: Value) -> Value {
     r.run(id, s, params).unwrap_or_else(|e| panic!("{id}: {e}"))
-}
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
 }
 
 fn remote_refs(s: &Session, remote: &str) -> Vec<(String, Oid)> {
@@ -657,12 +655,6 @@ fn a_failed_put_back_writes_the_config_and_keeps_the_journal_entry() {
     );
     let history = run(&r, &mut s, "edit.history", json!({}));
     assert_eq!(history["done"][0]["command"], "remote.remove");
-}
-
-fn same<T: serde::de::DeserializeOwned + serde::Serialize>(out: Value) -> T {
-    let typed: T = serde_json::from_value(out.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&typed).unwrap(), out);
-    typed
 }
 
 /// The typed results read back the JSON of the commands and give the same JSON again: the UI

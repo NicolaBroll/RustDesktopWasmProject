@@ -9,6 +9,7 @@
 //! `INSTA_UPDATE=always cargo test -p project-engine snapshot_tests` (or `cargo insta review`).
 //! The repos and helpers marked `pub(super)` are shared with the journal tests of `edit.rs`.
 
+use crate::test_util::oid;
 use crate::{MemoryBackend, MemoryOpener, PullSettings, Registry, Session};
 use project_domain::{Change, ChangedFile, Commit, Oid, RepoPath, Signature};
 use serde_json::{Value, json};
@@ -19,10 +20,6 @@ const EXCLUDED: &[(&str, &str)] = &[];
 
 /// Prefix of the snapshot files of this module (`<crate>__<module path>__`).
 const SNAPSHOT_PREFIX: &str = "project_engine__builtin__snapshot_tests__";
-
-fn oid(n: u64) -> Oid {
-    MemoryBackend::fake_oid(n)
-}
 
 pub(super) fn id(n: u64) -> String {
     oid(n).to_string()

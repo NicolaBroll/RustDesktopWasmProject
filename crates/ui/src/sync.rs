@@ -426,22 +426,7 @@ impl SyncBox {
         let label = request.label();
         let command = request.op.command();
         let error = match result {
-            Ok(value) => {
-                let outcome = match request.op {
-                    Op::Pull => serde_json::from_value::<RemotePullResult>(value).map(pull_outcome),
-                    Op::Push => serde_json::from_value::<RemotePushResult>(value).map(push_outcome),
-                    Op::PushTag => {
-                        serde_json::from_value::<RemotePushTagResult>(value).map(push_tag_outcome)
-                    }
-                };
-                return match outcome {
-                    Ok(outcome) => Received::Done(Box::new(outcome)),
-                    Err(e) => Received::Failed {
-                        message: crate::unexpected_result(command, e),
-                        reload: true,
-                    },
-                };
-            }
+            Ok(value) => return received_ok(request.op, command, value),
             Err(error) => error,
         };
         let branch = request.branch.clone();
@@ -599,6 +584,22 @@ fn rejection_short(reason: PushRejection) -> String {
         PushRejection::Hook => tr!("sync-rejection-short-hook"),
         PushRejection::TagExists => tr!("sync-rejection-short-tag-exists"),
         PushRejection::Other => tr!("sync-rejection-short-other"),
+    }
+}
+
+/// A successful answer of `command`: the outcome read from `value`.
+fn received_ok(op: Op, command: &str, value: Value) -> Received {
+    let outcome = match op {
+        Op::Pull => serde_json::from_value::<RemotePullResult>(value).map(pull_outcome),
+        Op::Push => serde_json::from_value::<RemotePushResult>(value).map(push_outcome),
+        Op::PushTag => serde_json::from_value::<RemotePushTagResult>(value).map(push_tag_outcome),
+    };
+    match outcome {
+        Ok(outcome) => Received::Done(Box::new(outcome)),
+        Err(e) => Received::Failed {
+            message: crate::unexpected_result(command, e),
+            reload: true,
+        },
     }
 }
 
@@ -937,6 +938,7 @@ impl Tab {
 mod tests {
     use super::*;
     use crate::Ticket;
+    use crate::test_util::oid;
     use project_domain::{Change, ChangedFile, Commit, RepoPath, Signature};
     use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
@@ -966,10 +968,6 @@ mod tests {
         let detail = result.as_ref().err().and_then(ErrorKind::detail);
         let expected = result.as_ref().err().and_then(ErrorKind::expected);
         sync.receive(ticket, result.map_err(|e| e.text()), kind, detail, expected)
-    }
-
-    fn oid(n: u64) -> Oid {
-        MemoryBackend::fake_oid(n)
     }
 
     fn main_head() -> Head {

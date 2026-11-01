@@ -281,7 +281,7 @@ impl MemoryBackend {
             }
             let prefix = format!("remote.{name}.");
             self.config
-                .retain(|key, _| !key.strip_prefix(&prefix).is_some_and(|v| !v.contains('.')));
+                .retain(|key, _| key.strip_prefix(&prefix).is_none_or(|v| v.contains('.')));
         }
         for entry in &snapshot.upstreams {
             let Some((branch, var)) = split_branch_key(&entry.key) else {

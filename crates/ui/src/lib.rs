@@ -53,6 +53,8 @@ mod stash;
 mod submodule;
 mod sync;
 mod tabs;
+#[cfg(test)]
+mod test_util;
 mod theme;
 mod tracking;
 mod view;

@@ -743,9 +743,19 @@ impl Tab {
         }
     }
 
+    /// Asks for the diff of `target`. The job also decodes the answer and builds its document
+    /// ([`DiffDoc`]): for a large diff that takes hundreds of milliseconds, not to be spent on
+    /// the UI thread.
     fn request_diff(&mut self, target: &DiffTarget, seq: u64) {
         let (command, params) = target.request();
-        self.submit(command, params, Request::Diff(self.generation, seq));
+        let path = target.path.clone();
+        let ticket = self
+            .executor
+            .submit_prepared(command, params, move |value| {
+                decode::<Diff>(command, value).map(|diff| DiffDoc::new(diff, &path))
+            });
+        self.pending
+            .insert(ticket, Request::Diff(self.generation, seq));
     }
 
     /// The loaded diff with its selection, if it allows partial selection.
@@ -1129,9 +1139,12 @@ impl Tab {
             Request::LfsStatus(_) | Request::LfsPaths(_) => self.receive_lfs(request, done),
             // The diff too: errors in its view, old answers discarded.
             Request::Diff(generation, seq) => {
-                let result = done
-                    .result
-                    .and_then(|value| decode::<Diff>(&done.command, value));
+                let prepared = self
+                    .executor
+                    .take_prepared::<Result<DiffDoc, String>>(done.ticket);
+                let result = done.result.and_then(|_| {
+                    prepared.unwrap_or_else(|| Err(tr!("app-no-result", command = &done.command)))
+                });
                 if let Some(repo) = self.current(generation) {
                     repo.diff.receive(seq, result);
                 }

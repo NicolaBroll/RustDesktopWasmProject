@@ -8,6 +8,9 @@
 //! Every command starts with [`Registry::run_with`] and a [`JobContext`] for its ticket: the
 //! last [`Progress`] received is read with [`Executor::progress`], and [`Executor::cancel`]
 //! cancels it (S25, `remote.fetch`). Commands that are not slow ignore both.
+//!
+//! A result that is slow to turn into what the UI shows (a large diff) is prepared in the job
+//! too, after the session is released: [`Executor::submit_prepared`].
 
 use project_engine::{
     CancelToken, EngineError, JobContext, Message, MessageArg, Platform, Progress, PullOperation,
@@ -15,6 +18,7 @@ use project_engine::{
 };
 use project_i18n::tr;
 use serde_json::Value;
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -236,18 +240,26 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 /// sink only updates the tickets present: one already collected does not come back.
 type ProgressMap = Arc<Mutex<HashMap<Ticket, Option<Progress>>>>;
 
+/// What [`Executor::submit_prepared`] made of a command's result, off the UI thread.
+pub type Prepared = Box<dyn Any + Send>;
+
+/// Turns a command's result into what the UI shows (see [`Executor::submit_prepared`]).
+type Prepare = Box<dyn FnOnce(Value) -> Prepared + Send>;
+
 /// Sends commands to the shared session and collects their results.
 pub struct Executor {
     session: Arc<Mutex<Session>>,
     registry: Arc<Registry>,
     platform: Arc<dyn Platform>,
     wake: Wake,
-    sender: Sender<Done>,
-    receiver: Receiver<Done>,
+    sender: Sender<(Done, Option<Prepared>)>,
+    receiver: Receiver<(Done, Option<Prepared>)>,
     next: u64,
     running: Vec<Job>,
     progress: ProgressMap,
     cancel: HashMap<Ticket, CancelToken>,
+    /// What the commands collected by the last [`Executor::poll`] prepared.
+    prepared: HashMap<Ticket, Prepared>,
 }
 
 impl Executor {
@@ -269,6 +281,7 @@ impl Executor {
             running: Vec::new(),
             progress: Arc::default(),
             cancel: HashMap::new(),
+            prepared: HashMap::new(),
         }
     }
 
@@ -281,6 +294,39 @@ impl Executor {
     /// Like [`Executor::submit`]; with `asks` false git's credential questions get no dialog
     /// (the automatic fetch): a missing credential is an authentication error.
     pub fn submit_with(&mut self, command: &str, params: Value, asks: bool) -> Ticket {
+        self.start(command, params, asks, None)
+    }
+
+    /// Like [`Executor::submit`], and the job goes on to turn the result into what the UI shows
+    /// with `prepare`, off the UI thread and with the session already released: decoding a large
+    /// result and building its view would freeze the window. The [`Done`] of the command then
+    /// carries no value (`Ok(Value::Null)`): what `prepare` returned is collected with
+    /// [`Executor::take_prepared`]. A failed command prepares nothing.
+    pub fn submit_prepared<T: Send + 'static>(
+        &mut self,
+        command: &str,
+        params: Value,
+        prepare: impl FnOnce(Value) -> T + Send + 'static,
+    ) -> Ticket {
+        let prepare: Prepare = Box::new(move |value| Box::new(prepare(value)));
+        self.start(command, params, true, Some(prepare))
+    }
+
+    /// What the command `ticket`, sent with [`Executor::submit_prepared`], prepared. To be taken
+    /// while handling its [`Done`]: the next [`Executor::poll`] drops what nobody took (the
+    /// answers that arrive too late to be shown).
+    pub fn take_prepared<T: 'static>(&mut self, ticket: Ticket) -> Option<T> {
+        let prepared = self.prepared.remove(&ticket)?;
+        prepared.downcast().ok().map(|boxed| *boxed)
+    }
+
+    fn start(
+        &mut self,
+        command: &str,
+        params: Value,
+        asks: bool,
+        prepare: Option<Prepare>,
+    ) -> Ticket {
         let ticket = Ticket(self.next);
         self.next += 1;
         let writes = self.registry.get(command).is_some_and(|spec| spec.writes);
@@ -327,14 +373,27 @@ impl Executor {
                 .run_with(&reply.command, &mut session, params, job)
                 .map_err(|e| Failure::of(&e));
             drop(session);
-            reply.send(result);
+            match (result, prepare) {
+                (Ok(value), Some(prepare)) => {
+                    let prepared = prepare(value);
+                    reply.send(Ok(Value::Null), Some(prepared));
+                }
+                (result, _) => reply.send(result, None),
+            }
         }));
         ticket
     }
 
     /// The commands finished since the last call, in the order they finished. Does not block.
     pub fn poll(&mut self) -> Vec<Done> {
-        let done: Vec<Done> = self.receiver.try_iter().collect();
+        self.prepared.clear();
+        let mut done = Vec::new();
+        for (finished, prepared) in self.receiver.try_iter() {
+            if let Some(prepared) = prepared {
+                self.prepared.insert(finished.ticket, prepared);
+            }
+            done.push(finished);
+        }
         self.running
             .retain(|job| done.iter().all(|d| d.ticket != job.ticket));
         if !done.is_empty() {
@@ -392,24 +451,24 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 struct Reply {
     ticket: Ticket,
     command: String,
-    sender: Sender<Done>,
+    sender: Sender<(Done, Option<Prepared>)>,
     wake: Wake,
     sent: bool,
 }
 
 impl Reply {
-    fn send(mut self, result: Result<Value, Failure>) {
-        self.deliver(result);
+    fn send(mut self, result: Result<Value, Failure>, prepared: Option<Prepared>) {
+        self.deliver(result, prepared);
     }
 
-    fn deliver(&mut self, result: Result<Value, Failure>) {
+    fn deliver(&mut self, result: Result<Value, Failure>, prepared: Option<Prepared>) {
         self.sent = true;
         let (error_kind, error_detail, confirm_expected, confirm_bytes) = match &result {
             Ok(_) => (None, None, None, None),
             Err(f) => (Some(f.kind), f.detail.clone(), f.expected.clone(), f.bytes),
         };
         // If the UI is already closed nobody is waiting for the result.
-        let _ = self.sender.send(Done {
+        let done = Done {
             ticket: self.ticket,
             command: self.command.clone(),
             result: result.map_err(|f| f.message),
@@ -417,7 +476,8 @@ impl Reply {
             error_detail,
             confirm_expected,
             confirm_bytes,
-        });
+        };
+        let _ = self.sender.send((done, prepared));
         (self.wake)();
     }
 }
@@ -425,13 +485,14 @@ impl Reply {
 impl Drop for Reply {
     fn drop(&mut self) {
         if !self.sent {
-            self.deliver(Err(Failure {
+            let failure = Failure {
                 kind: ErrorKind::Other,
                 detail: None,
                 message: tr!("app-no-result", command = &self.command),
                 expected: None,
                 bytes: None,
-            }));
+            };
+            self.deliver(Err(failure), None);
         }
     }
 }
@@ -574,6 +635,61 @@ mod tests {
         assert!(done.iter().any(|d| d.ticket == open && d.result.is_ok()));
         assert_eq!(after[0].ticket, status);
         assert!(after[0].result.is_ok(), "{:?}", after[0].result);
+    }
+
+    #[test]
+    fn a_result_is_prepared_in_the_job_off_the_callers_thread() {
+        let (mut ex, _) = executor(TestPlatform::Threads);
+        let caller = std::thread::current().id();
+        let ticket = ex.submit_prepared("test.slow", json!({ "n": 7 }), move |value| {
+            (value["echo"]["n"].as_u64(), std::thread::current().id())
+        });
+        assert_eq!(ex.take_prepared::<()>(ticket), None, "not done yet");
+        let done = wait(&mut ex, 1);
+        // The value went to `prepare`: the UI thread has nothing left to decode.
+        assert_eq!(done[0].result, Ok(Value::Null));
+        // Asked with another type: nothing, and what was prepared is gone with it.
+        let (n, thread) = ex
+            .take_prepared::<(Option<u64>, std::thread::ThreadId)>(ticket)
+            .expect("prepared");
+        assert_eq!(n, Some(7));
+        assert_ne!(thread, caller);
+        assert_eq!(
+            ex.take_prepared::<(Option<u64>, std::thread::ThreadId)>(ticket),
+            None
+        );
+    }
+
+    #[test]
+    fn a_prepared_result_nobody_takes_is_dropped_and_a_failure_prepares_nothing() {
+        let (mut ex, _) = executor(TestPlatform::Inline);
+        let dropped = Arc::new(());
+        let held = Arc::clone(&dropped);
+        let open = json!({ "path": MemoryOpener::SAMPLE_PATH });
+        let ticket = ex.submit_prepared("repo.open", open, move |_| held);
+        assert_eq!(ex.poll().len(), 1);
+        assert_eq!(Arc::strong_count(&dropped), 2, "kept until the next poll");
+        assert!(ex.poll().is_empty());
+        assert_eq!(Arc::strong_count(&dropped), 1);
+        assert_eq!(ex.take_prepared::<Arc<()>>(ticket), None);
+
+        // A failed command: its error as usual, `prepare` is not called.
+        let ticket = ex.submit_prepared("test.missing", json!({}), |_| -> u8 {
+            panic!("nothing to prepare")
+        });
+        let done = ex.poll();
+        assert!(done[0].result.is_err());
+        assert_eq!(ex.take_prepared::<u8>(ticket), None);
+
+        // A `prepare` that panics (its thread ends) is a command without a result, not one in
+        // progress forever.
+        let (mut ex, _) = executor(TestPlatform::Threads);
+        let ticket = ex.submit_prepared("test.slow", json!({}), |_| -> u8 { panic!("boom") });
+        let done = wait(&mut ex, 1);
+        assert_eq!(done[0].ticket, ticket);
+        assert!(done[0].result.is_err());
+        assert_eq!(ex.take_prepared::<u8>(ticket), None);
+        assert!(!ex.is_busy());
     }
 
     #[test]

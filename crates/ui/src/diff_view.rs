@@ -549,7 +549,7 @@ fn paint_row(
             painter.text(
                 pos2(title.right() + 3.0 * PAD, mid),
                 Align2::LEFT_CENTER,
-                file_summary(file),
+                file_summary(file, doc.file_counts(*f)),
                 style.title.clone(),
                 style.weak,
             );
@@ -611,7 +611,7 @@ fn paint_row(
             };
             paint_words(
                 painter,
-                doc.emphasis.get(&(*f, *h, *l)),
+                doc.emphasis(*f, *h, *l).as_deref(),
                 text_x,
                 rect,
                 words,
@@ -694,7 +694,7 @@ fn paint_text(painter: &egui::Painter, content: &str, at: egui::Pos2, style: &St
 /// The background of the changed words (`columns`) of a line whose text starts at `text_x`.
 fn paint_words(
     painter: &egui::Painter,
-    columns: Option<&Vec<std::ops::Range<usize>>>,
+    columns: Option<&[std::ops::Range<usize>]>,
     text_x: f32,
     row: Rect,
     color: Color32,
@@ -807,7 +807,7 @@ fn paint_side(
     let text_x = gutter.right() + PAD;
     paint_words(
         &painter,
-        doc.emphasis.get(&(f, h, l)),
+        doc.emphasis(f, h, l).as_deref(),
         text_x,
         rect,
         words,

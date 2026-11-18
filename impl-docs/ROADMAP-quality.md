@@ -277,3 +277,32 @@ the UI thread when a result arrives.
   20 000 lines, 330 ms for 200 000); the first screen of long changed lines 25-30 ms once, then
   nothing. Still on the UI thread, at 200 000 lines only: 20-30 ms when a reload brings the same
   diff (comparing it and freeing the copy) and 12-26 ms to free the document on close.
+
+## Phase Q5 — UI tests
+
+### Q50 — Smoke tests of the drawing code
+- [x] **Agent:** `egui-ui`
+- **Goal:** the ~17 000 lines that draw (`view/`, `diff_view.rs`, `merge_view.rs`) ran in no
+  test: the 378 tests of `crates/ui` drive the state and reach 1.5% of those lines. A view that
+  panics, that is not drawn in its state or that reuses an id showed only by hand on the desktop
+  app.
+- **Done when:** every panel, dialog and menu is drawn by a test that checks what it shows; the
+  measure is repeatable; CI green.
+- **Done:** `crates/ui/src/view_tests.rs` (module `tabs::view_tests`, it needs the private state
+  of `App`): `Screen` draws the whole `App` with `Context::run_ui` and
+  `eframe::Frame::_new_kittest()` on a `MemoryBackend`, applies `Action`s as the end of a frame
+  does, simulates the pointer (`click_on` a painted text) and returns the texts painted; every
+  frame fails on egui's id-clash warning (a test checks that the warning is seen). 21 tests,
+  0.2 s: welcome, the panels at several sizes down to 160x90, the custom window frame, stage
+  area and its confirmations, diffs (unified, side by side, line selection, renamed file), the
+  dialogs of branches, tags, remotes, stashes, merge, cherry-pick, reset, rebase, worktrees,
+  clone, settings and credentials, a merge in conflict with its editor, rejected push and forced
+  push, failed fetch and pull, blame, history, search, compare, two tabs, the light theme, the
+  notices under the bar, and the context menus of commits, refs, remotes, files, submodules and
+  of the menu bar. `make view-coverage` (llvm-tools of the toolchain, installed by
+  `post-create.sh`): 81% of the functions and 75% of the lines of the drawing code, from 3.5%
+  and 1.5%.
+- **Not reached:** what a click does inside the dialogs (the handlers that push an `Action`:
+  the state they lead to is tested by the area's own tests), a command in progress with its
+  progress bar and "Stop" (the test platform answers at once), the stash-conflict window, the
+  drag of rows in the rebase editor and of the window edges.

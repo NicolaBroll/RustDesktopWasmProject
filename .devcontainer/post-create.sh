@@ -22,6 +22,9 @@ sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mi
     wixl
 rustup target add x86_64-pc-windows-gnu
 
+# llvm-profdata and llvm-cov of the toolchain, for `make view-coverage`.
+rustup component add llvm-tools
+
 # git-lfs for the LFS scenarios (`crates/git/tests/lfs.rs`, skipped without it).
 sudo apt-get install -y --no-install-recommends git-lfs
 

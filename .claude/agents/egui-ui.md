@@ -26,6 +26,10 @@ Rules:
 - Destructive actions show a confirmation that explains what happens, and only then send
   `"confirm": true`.
 
+A new panel, dialog or menu gets its state in the smoke tests of the drawing code
+(`crates/ui/src/view_tests.rs`: the app drawn without a window, the texts painted read back);
+`make view-coverage` shows what they do not reach.
+
 Visual check on the desktop app (`AGENTS.md`, "Seeing the app"): `make demo-repo`,
 `make desktop-start REPO=target/demo-repo`, reach the part you changed with
 `DISPLAY=:99 xdotool` (click, type), take a screenshot with `DISPLAY=:99 import -window root

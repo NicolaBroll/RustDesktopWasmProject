@@ -830,6 +830,10 @@ fn twin(paths: &[Option<&str>], index: usize) -> Option<usize> {
 }
 
 #[cfg(test)]
+#[path = "view_tests.rs"]
+mod view_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::clone::Kind;

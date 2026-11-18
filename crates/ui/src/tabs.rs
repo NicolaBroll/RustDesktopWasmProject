@@ -59,6 +59,9 @@ const MAX_RECENT: usize = 10;
 /// Seconds between two checks of which recent folders still exist.
 const CHECK_EVERY: f64 = 1.0;
 
+/// Seconds within which a second click makes a double click: the default of Windows.
+const DOUBLE_CLICK_DELAY: f64 = 0.5;
+
 /// What survives between one launch and the next.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -137,6 +140,10 @@ impl App {
     ) -> Self {
         crate::icons::install(&cc.egui_ctx);
         crate::theme::install_text_styles(&cc.egui_ctx);
+        // egui's 0.3 s is shorter than what the systems allow (500 ms by default on Windows):
+        // a calm double click was read as two clicks.
+        cc.egui_ctx
+            .options_mut(|o| o.input_options.max_double_click_delay = DOUBLE_CLICK_DELAY);
         let ctx = cc.egui_ctx.clone();
         let wake: Wake = Arc::new(move || ctx.request_repaint());
         let saved = cc

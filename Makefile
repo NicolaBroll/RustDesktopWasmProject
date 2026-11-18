@@ -7,7 +7,7 @@ DEMO        ?= target/demo-repo
 
 .DEFAULT_GOAL := help
 .PHONY: help setup run desktop-shot desktop-start desktop-stop demo-repo cli build release appimage windows \
-        check fmt fmt-check clippy test layers ci clean
+        check fmt fmt-check clippy test view-coverage layers ci clean
 
 help: ## Show this list
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -79,6 +79,19 @@ clippy: ## Lint (warning = error)
 
 test: ## Run the tests
 	cargo test --workspace
+
+view-coverage: ## How much of the drawing code (crates/ui: view/, diff_view, merge_view) the smoke tests run
+	@rustup component list --installed | grep -q llvm-tools || rustup component add llvm-tools
+	@mkdir -p target/cov
+	@prof="$$(mktemp -d "$(CURDIR)/target/cov/prof.XXXXXX")"; \
+	tools="$$(rustc --print sysroot)/lib/rustlib/$$(rustc -vV | sed -n 's/^host: //p')/bin"; \
+	RUSTFLAGS="-C instrument-coverage" CARGO_TARGET_DIR=target/cov LLVM_PROFILE_FILE="$$prof/%p-%m.profraw" \
+		cargo test -q -p project-ui --lib view_tests && \
+	"$$tools/llvm-profdata" merge -sparse "$$prof"/*.profraw -o "$$prof/view.profdata" && \
+	"$$tools/llvm-cov" report \
+		"$$(ls -t target/cov/debug/deps/project_ui-* | grep -v '\.d$$' | head -1)" \
+		-instr-profile="$$prof/view.profdata" \
+		crates/ui/src/view.rs crates/ui/src/view/*.rs crates/ui/src/diff_view.rs crates/ui/src/merge_view.rs
 
 layers: ## Check the layering between crates
 	cargo xtask layers

@@ -619,8 +619,14 @@ conflicting with `main` on `src/lib.rs`: «Stash…», then «Merge into «main�
   Scenarios to cover over time: empty repo, detached HEAD, conflicted merge, interrupted rebase,
   submodule, worktree, binary files, CRLF line endings, non-UTF-8 names.
 - **CLI**: end-to-end tests such as `apps/project-cli/tests/cli.rs`.
-- **UI**: unit tests of the views and of the `Executor` on the `MemoryBackend`; the layout is
-  checked on the desktop app on Xvfb with the demo repo (`make desktop-start`, `xdotool`,
+- **UI**: unit tests of the state of each area and of the `Executor` on the `MemoryBackend`.
+  The drawing code has smoke tests (`crates/ui/src/view_tests.rs`): the whole `App` is drawn
+  without a window (`egui::Context::run_ui`), brought to a state with the same `Action`s the
+  views produce or with a simulated pointer (a menu opens where the text is), and the texts
+  painted are read back from the shapes of the frame. Every frame also fails on egui's warning
+  for an id used by two widgets. A new panel, dialog or menu gets its state there;
+  `make view-coverage` says how much of the drawing code the smoke tests run. How it looks is
+  still checked on the desktop app on Xvfb with the demo repo (`make desktop-start`, `xdotool`,
   `import`).
 
 ## 10. Agents

@@ -446,8 +446,7 @@ impl RepoView {
 
     /// The last commit (HEAD), if it is among the loaded ones.
     fn head_commit(&self) -> Option<&Commit> {
-        let head = self.head.target()?;
-        self.list.commits().iter().find(|c| c.id == head)
+        self.list.commit(self.head.target()?)
     }
 
     /// The state of the "Commit" button.

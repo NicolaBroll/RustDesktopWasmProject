@@ -48,6 +48,8 @@ pub(crate) enum Action {
     ShowWorktreeFolder(String),
     /// "Browse…" of the "New worktree" dialog of the tab shown: the folder goes in its field.
     PickWorktreeFolder,
+    /// Opens that window of the Help menu, or closes the one open.
+    Help(Option<view::Help>),
 }
 
 /// Key of the state in the eframe storage.
@@ -80,8 +82,11 @@ pub struct App {
     active: usize,
     /// Repos opened successfully, most recent first.
     recent: Vec<String>,
-    /// The recent repos whose folder no longer exists, as of `checked_at`.
+    /// The recent repos whose folder no longer exists, as of the last check that answered.
     missing: HashSet<String>,
+    /// The check of the recent folders in progress and its answer: it touches the disk (a folder
+    /// on a network drive that does not answer would freeze the window), so it runs as a job.
+    missing_check: MissingCheck,
     /// When `missing` was computed (egui time, seconds); `None`: to compute again.
     checked_at: Option<f64>,
     /// The id of the next tab created (see `Tab::id`).
@@ -115,6 +120,8 @@ pub struct App {
     settings_box: SettingsBox,
     /// The questions of git and ssh for the user (S52), one modal at a time.
     credentials: CredentialBox,
+    /// The window of the Help menu that is open.
+    help: Option<view::Help>,
 }
 
 /// What the folder chosen in the dialog is for.
@@ -195,6 +202,7 @@ impl App {
             active: 0,
             recent: saved.recent.clone(),
             missing: HashSet::new(),
+            missing_check: MissingCheck::default(),
             checked_at: None,
             next_id: 0,
             platform,
@@ -211,6 +219,7 @@ impl App {
             settings_saved: Some(Settings::default()),
             settings_box: SettingsBox::default(),
             credentials: CredentialBox::default(),
+            help: None,
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -457,6 +466,7 @@ impl App {
                 let id = self.tabs[self.active].id;
                 self.pick_folder(ctx, Pick::Worktree(id));
             }
+            Action::Help(help) => self.help = help,
             Action::OpenSubmodule(path) => {
                 let tab = &mut self.tabs[self.active];
                 let Some(root) = tab.repo_path().map(Path::new) else {
@@ -585,17 +595,32 @@ impl App {
         }
     }
 
-    /// Recomputes which recent folders are missing, at most every [`CHECK_EVERY`] seconds: not
-    /// on every frame, each check touches the disk.
+    /// Asks again which recent folders are missing, at most every [`CHECK_EVERY`] seconds and
+    /// one check at a time: each one touches the disk, so it runs as a job and its answer is
+    /// collected here on a later frame (at once, where the platform runs jobs inside `spawn`).
     fn check_missing(&mut self, now: f64) {
-        if self
+        let due = self
             .checked_at
-            .is_some_and(|t| now - t < CHECK_EVERY && now >= t)
-        {
-            return;
+            .is_none_or(|t| now - t >= CHECK_EVERY || now < t);
+        if due && !self.missing_check.running.swap(true, Ordering::AcqRel) {
+            self.checked_at = Some(now);
+            let recent = self.recent.clone();
+            let found = Arc::clone(&self.missing_check.found);
+            // Cleared when the job ends or is dropped: a check that never ran does not stop the
+            // next ones.
+            let checking = Checking(Arc::clone(&self.missing_check.running));
+            let wake = Arc::clone(&self.wake);
+            self.platform.spawn(Box::new(move || {
+                let answer = missing(&recent, |p| Path::new(p).is_dir());
+                *found.lock().unwrap_or_else(|e| e.into_inner()) = Some(answer);
+                drop(checking);
+                wake();
+            }));
         }
-        self.checked_at = Some(now);
-        self.missing = missing(&self.recent, |p| Path::new(p).is_dir());
+        let found = &self.missing_check.found;
+        if let Some(found) = found.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            self.missing = found;
+        }
     }
 
     /// The recent list for the menus, with the missing folders marked.
@@ -640,8 +665,8 @@ impl App {
         let popup = egui::Popup::is_any_open(ctx);
         let modal = self.clone.dialog().is_some()
             || self.settings_box.open
+            || self.help.is_some()
             || self.credentials.open().is_some()
-            || ctx.memory(|m| m.top_modal_layer().is_some())
             || self.tabs[self.active]
                 .repo
                 .as_ref()
@@ -742,6 +767,11 @@ impl eframe::App for App {
                 .zip(self.cloning.as_ref())
                 .and_then(|(running, tab)| tab.executor.progress(running.ticket));
             view::clone_dialog(&ctx, dialog, progress.as_ref(), can_pick, &mut actions);
+        } else if let Some(help) = self.help {
+            // Modal as the other two.
+            actions.clear();
+            strip.clear();
+            view::help_dialog(&ctx, help, &mut actions);
         }
         if let Some(prompt) = self.credentials.open_mut() {
             // Over everything, the tab's dialogs and clone included: what happened under it is
@@ -818,6 +848,24 @@ fn absolute_file(root: &Path, file: &RepoPath) -> std::io::Result<std::path::Pat
 struct Picking(Arc<AtomicBool>);
 
 impl Drop for Picking {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// The check of the recent folders (see [`App::check_missing`]).
+#[derive(Default)]
+struct MissingCheck {
+    /// A check is running: the next one waits for it.
+    running: Arc<AtomicBool>,
+    /// The answer of the last check, until the UI takes it.
+    found: Arc<Mutex<Option<HashSet<String>>>>,
+}
+
+/// Marks the check of the recent folders finished when dropped.
+struct Checking(Arc<AtomicBool>);
+
+impl Drop for Checking {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
     }
@@ -901,6 +949,64 @@ mod tests {
         second(Some("a".to_owned()));
         app.receive();
         assert_eq!(paths(&app), [Some("a")]);
+    }
+
+    /// Keeps the jobs until the test runs or drops them.
+    #[derive(Default)]
+    struct Held {
+        jobs: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    }
+
+    impl Platform for Held {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(None);
+        }
+        fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+            self.jobs.lock().unwrap().push(job);
+        }
+    }
+
+    #[test]
+    fn the_recent_folders_are_checked_off_the_ui_thread_one_check_at_a_time() {
+        let platform = Arc::new(Held::default());
+        let saved = Saved {
+            recent: vec!["/no/such/folder".to_owned()],
+            ..Saved::default()
+        };
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(MemoryOpener::new()),
+            Arc::new(|| {}),
+            saved,
+            None,
+        );
+        let held = |platform: &Held| platform.jobs.lock().unwrap().len();
+        // The check waits in its job: the frame goes on without an answer.
+        app.check_missing(10.0);
+        assert_eq!(held(&platform), 1);
+        assert!(app.missing.is_empty());
+        // A folder that does not answer: no second check piles up behind the first.
+        app.check_missing(20.0);
+        assert_eq!(held(&platform), 1);
+        let job = platform.jobs.lock().unwrap().pop().unwrap();
+        job();
+        // The answer is taken on the next frame; the check was due long ago, so it starts again.
+        app.check_missing(20.1);
+        assert!(app.missing.contains("/no/such/folder"));
+        assert_eq!(held(&platform), 1);
+        let job = platform.jobs.lock().unwrap().pop().unwrap();
+        job();
+        app.check_missing(20.5);
+        assert_eq!(held(&platform), 0, "checked less than a second ago");
+        // A job the platform drops without running does not stop the next checks.
+        app.check_missing(30.0);
+        assert_eq!(held(&platform), 1);
+        platform.jobs.lock().unwrap().clear();
+        app.check_missing(40.0);
+        assert_eq!(held(&platform), 1);
     }
 
     /// An app with repos `a` and `b`, restored from `saved`, after the answers arrived.

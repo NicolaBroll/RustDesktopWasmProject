@@ -62,8 +62,26 @@ pub(crate) fn title_bar_panel(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec
     panel
         .frame(frame)
         .show(ui, |ui| title_bar(ui, bar, actions));
-    about_dialog(ui.ctx());
-    shortcuts_dialog(ui.ctx());
+}
+
+/// A window of the Help menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Help {
+    /// "Keyboard shortcuts".
+    Shortcuts,
+    /// "About".
+    About,
+}
+
+/// The window of the Help menu that is open, modal: closing it is an action like every other.
+pub(crate) fn help_dialog(ctx: &egui::Context, help: Help, actions: &mut Vec<Action>) {
+    let close = match help {
+        Help::Shortcuts => shortcuts_dialog(ctx),
+        Help::About => about_dialog(ctx),
+    };
+    if close {
+        actions.push(Action::Tabs(tabs::Action::Help(None)));
+    }
 }
 
 fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
@@ -176,13 +194,15 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         }
     });
     ui.menu_button(tr!("title-bar-help"), |ui| {
-        if ui.button(tr!("title-bar-shortcuts")).clicked() {
-            ui.ctx().data_mut(|d| d.insert_temp(shortcuts_id(), true));
-            ui.close();
-        }
-        if ui.button(tr!("title-bar-about")).clicked() {
-            ui.ctx().data_mut(|d| d.insert_temp(about_id(), true));
-            ui.close();
+        let items = [
+            (tr!("title-bar-shortcuts"), Help::Shortcuts),
+            (tr!("title-bar-about"), Help::About),
+        ];
+        for (label, help) in items {
+            if ui.button(label).clicked() {
+                actions.push(Action::Tabs(tabs::Action::Help(Some(help))));
+                ui.close();
+            }
         }
     });
 }
@@ -234,15 +254,8 @@ fn app_icon(ui: &mut Ui, png: &'static [u8], size: f32) {
     }
 }
 
-fn about_id() -> egui::Id {
-    egui::Id::unique("title-bar-about")
-}
-
-/// "About": icon, name, version, license and where the project lives.
-fn about_dialog(ctx: &egui::Context) {
-    if !ctx.data(|d| d.get_temp::<bool>(about_id()).unwrap_or(false)) {
-        return;
-    }
+/// "About": icon, name, version, license and where the project lives. True when it is closed.
+fn about_dialog(ctx: &egui::Context) -> bool {
     let modal = egui::Modal::new(egui::Id::unique("about-dialog")).show(ctx, |ui| {
         ui.set_width(300.0);
         let mut close = false;
@@ -267,20 +280,12 @@ fn about_dialog(ctx: &egui::Context) {
         });
         close
     });
-    if modal.inner || modal.should_close() {
-        ctx.data_mut(|d| d.remove_temp::<bool>(about_id()));
-    }
-}
-
-fn shortcuts_id() -> egui::Id {
-    egui::Id::unique("title-bar-shortcuts")
+    modal.inner || modal.should_close()
 }
 
 /// Help → "Keyboard shortcuts": every shortcut of [`SHORTCUTS`], those of one command on one row.
-fn shortcuts_dialog(ctx: &egui::Context) {
-    if !ctx.data(|d| d.get_temp::<bool>(shortcuts_id()).unwrap_or(false)) {
-        return;
-    }
+/// True when it is closed.
+fn shortcuts_dialog(ctx: &egui::Context) -> bool {
     let modal = egui::Modal::new(egui::Id::unique("shortcuts-dialog")).show(ctx, |ui| {
         ui.set_width(460.0);
         ui.heading(tr!("keys-title"));
@@ -313,9 +318,7 @@ fn shortcuts_dialog(ctx: &egui::Context) {
             .show(ui, |_| {}, |ui| ui.button(tr!("keys-close")).clicked())
             .1
     });
-    if modal.inner || modal.should_close() {
-        ctx.data_mut(|d| d.remove_temp::<bool>(shortcuts_id()));
-    }
+    modal.inner || modal.should_close()
 }
 
 /// Set when the app hands the move or the resize of the window to the system: from then on the

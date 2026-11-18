@@ -57,7 +57,9 @@ pub use conflict::{
 pub use diff::{DIFF_ARGS, Diff, FileDiff, Hunk, Line, LineKind, NO_NEWLINE_MARKER, parse_diff};
 pub use diff_tree::{ChangedFile, CommitDetails, DIFF_TREE_ARGS, parse_diff_tree};
 pub use file_log::{FILE_LOG_ARGS, FileLogEntry, parse_file_log};
-pub use graph::{GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes};
+pub use graph::{
+    GraphBuilder, GraphLayout, GraphRow, GraphSegment, layout_graph, layout_graph_nodes,
+};
 pub use ignore::{
     IgnoreAppend, IgnoreKind, IgnorePattern, PatternProblem, append_ignore_patterns,
     check_ignore_pattern, ignore_pattern,

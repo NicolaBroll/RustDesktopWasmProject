@@ -537,6 +537,25 @@ proptest! {
         check_invariants(&nodes, &g);
     }
 
+    /// Pages of any size give the layout of all the commits together.
+    #[test]
+    fn pages_give_the_same_layout(nodes in arb_history(), cuts in prop::collection::vec(any::<u16>(), 0..6)) {
+        let whole = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));
+        let mut cuts: Vec<usize> = cuts.iter().map(|&c| usize::from(c) % (nodes.len() + 1)).collect();
+        cuts.push(nodes.len());
+        cuts.sort_unstable();
+        let mut builder = GraphBuilder::default();
+        let mut start = 0;
+        for end in cuts {
+            builder.extend(nodes[start..end].iter().map(|(c, ps)| (c, ps.as_slice())));
+            start = end;
+            // What is shown between one page and the next is a whole layout too.
+            let so_far = layout_graph_nodes(nodes[..end].iter().map(|(c, ps)| (c, ps.as_slice())));
+            prop_assert_eq!(builder.layout(), &so_far);
+        }
+        prop_assert_eq!(builder.into_layout(), whole);
+    }
+
     #[test]
     fn deterministic(nodes in arb_graph()) {
         let a = layout_graph_nodes(nodes.iter().map(|(c, ps)| (c, ps.as_slice())));

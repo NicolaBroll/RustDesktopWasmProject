@@ -63,16 +63,32 @@ fn lane_name<'a>(label: &'a RefLabel, remotes: &[String]) -> Option<&'a str> {
 
 /// The colors of the graph, row by row: the dot of each commit and each of its segments (in the
 /// order of [`project_domain::GraphRow::segments`]).
+///
+/// A lane keeps one color from where it opens to where it closes: that of the first branch found
+/// on it from the top (see [`name_color`]), so adding a commit on another lane does not repaint
+/// it; a lane without a branch takes the color of its column.
+///
+/// Built a page at a time with [`LaneColors::extend`], like the layout
+/// ([`project_domain::GraphBuilder`]): rows keep the run they are on, not its color, because a
+/// branch found further down colors the rows above it too.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LaneColors {
-    pub commits: Vec<Color32>,
-    pub segments: Vec<Vec<Color32>>,
+    /// A run is one opening of a lane: its column and the color of the first branch on it.
+    runs: Vec<(usize, Option<Color32>)>,
+    /// The run of each commit.
+    commits: Vec<usize>,
+    /// The run of each segment of each row.
+    segments: Vec<Vec<usize>>,
+    /// The run leaving the last row on each lane.
+    outgoing: HashMap<usize, usize>,
 }
 
 impl LaneColors {
     /// The color of the commit of row `row` (the first lane's for a row out of range).
     pub fn commit(&self, row: usize) -> Color32 {
-        self.commits.get(row).copied().unwrap_or(PALETTE[0])
+        self.commits
+            .get(row)
+            .map_or(PALETTE[0], |&run| self.color(run))
     }
 
     /// The color of segment `segment` of row `row`.
@@ -80,90 +96,105 @@ impl LaneColors {
         self.segments
             .get(row)
             .and_then(|s| s.get(segment))
-            .copied()
-            .unwrap_or(PALETTE[0])
+            .map_or(PALETTE[0], |&run| self.color(run))
+    }
+
+    fn color(&self, run: usize) -> Color32 {
+        let (lane, named) = self.runs[run];
+        named.unwrap_or_else(|| lane_color(lane))
+    }
+
+    /// The rows colored so far.
+    pub fn rows(&self) -> usize {
+        self.commits.len()
+    }
+
+    /// Colors the rows of `layout` after the ones already done; `id` gives the commit of a row.
+    /// `layout` is the one of the calls before with rows added at the end
+    /// ([`project_domain::GraphBuilder::extend`]), `labels` and `remotes` are the same: the
+    /// result is that of one call on the whole layout. The segments of the last row done may
+    /// have changed where they arrive, which changes only what enters the first new row.
+    pub fn extend(
+        &mut self,
+        layout: &GraphLayout,
+        id: impl Fn(usize) -> Option<Oid>,
+        labels: &HashMap<Oid, Vec<RefLabel>>,
+        remotes: &[String],
+    ) {
+        for index in self.commits.len()..layout.rows.len() {
+            let row = &layout.rows[index];
+            // The run entering each lane from the row above.
+            let incoming: HashMap<usize, usize> = index
+                .checked_sub(1)
+                .map(|above| {
+                    layout.rows[above]
+                        .segments
+                        .iter()
+                        .filter(|s| s.to == s.lane)
+                        .map(|s| (s.lane, self.outgoing[&s.lane]))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let column = row.column;
+            let run = match incoming.get(&column) {
+                Some(&run) => run,
+                None => self.open_run(column),
+            };
+            if self.runs[run].1.is_none() {
+                self.runs[run].1 = id(index)
+                    .and_then(|id| labels.get(&id))
+                    .and_then(|list| list.iter().find_map(|l| lane_name(l, remotes)))
+                    .map(name_color);
+            }
+            self.commits.push(run);
+            let mut outgoing: HashMap<usize, usize> = HashMap::new();
+            let mut row_runs = Vec::with_capacity(row.segments.len());
+            for segment in &row.segments {
+                let lane = segment.lane;
+                let seg_run = if lane == column {
+                    run
+                } else if let Some(&r) = outgoing.get(&lane) {
+                    r
+                } else if row
+                    .segments
+                    .iter()
+                    .any(|s| s.from == lane && s.lane == lane)
+                {
+                    // A lane passing by (also when a second parent joins it).
+                    match incoming.get(&lane) {
+                        Some(&r) => r,
+                        None => self.open_run(lane),
+                    }
+                } else {
+                    // A fork: a lane opens for a parent.
+                    self.open_run(lane)
+                };
+                outgoing.insert(lane, seg_run);
+                row_runs.push(seg_run);
+            }
+            self.segments.push(row_runs);
+            self.outgoing = outgoing;
+        }
+    }
+
+    /// A new run of the lane `lane`, without a branch yet.
+    fn open_run(&mut self, lane: usize) -> usize {
+        self.runs.push((lane, None));
+        self.runs.len() - 1
     }
 }
 
-/// The colors of `layout` (rows of the commits `ids`, same order). A lane keeps one color from
-/// where it opens to where it closes: that of the first branch found on it from the top (see
-/// [`name_color`]), so adding a commit on another lane does not repaint it; a lane without a
-/// branch takes the color of its column.
+/// The colors of the whole `layout` (rows of the commits `ids`, same order).
+#[cfg(test)]
 pub fn lane_colors(
     layout: &GraphLayout,
     ids: &[Oid],
     labels: &HashMap<Oid, Vec<RefLabel>>,
     remotes: &[String],
 ) -> LaneColors {
-    // A run is one opening of a lane: its column and the name of the first branch on it.
-    let mut runs: Vec<(usize, Option<&str>)> = Vec::new();
-    let mut commit_runs = Vec::with_capacity(layout.rows.len());
-    let mut segment_runs = Vec::with_capacity(layout.rows.len());
-    // The run entering each lane from the row above.
-    let mut incoming: HashMap<usize, usize> = HashMap::new();
-    for (index, row) in layout.rows.iter().enumerate() {
-        let column = row.column;
-        let run = match incoming.get(&column) {
-            Some(&run) => run,
-            None => open_run(&mut runs, column),
-        };
-        if runs[run].1.is_none() {
-            runs[run].1 = ids
-                .get(index)
-                .and_then(|id| labels.get(id))
-                .and_then(|list| list.iter().find_map(|l| lane_name(l, remotes)));
-        }
-        commit_runs.push(run);
-        let mut outgoing: HashMap<usize, usize> = HashMap::new();
-        let mut row_runs = Vec::with_capacity(row.segments.len());
-        for segment in &row.segments {
-            let lane = segment.lane;
-            let seg_run = if lane == column {
-                run
-            } else if let Some(&r) = outgoing.get(&lane) {
-                r
-            } else if row
-                .segments
-                .iter()
-                .any(|s| s.from == lane && s.lane == lane)
-            {
-                // A lane passing by (also when a second parent joins it).
-                match incoming.get(&lane) {
-                    Some(&r) => r,
-                    None => open_run(&mut runs, lane),
-                }
-            } else {
-                // A fork: a lane opens for a parent.
-                open_run(&mut runs, lane)
-            };
-            outgoing.insert(lane, seg_run);
-            row_runs.push(seg_run);
-        }
-        segment_runs.push(row_runs);
-        incoming = row
-            .segments
-            .iter()
-            .filter(|s| s.to == s.lane)
-            .map(|s| (s.lane, outgoing[&s.lane]))
-            .collect();
-    }
-    let color = |run: usize| {
-        let (lane, name) = runs[run];
-        name.map_or_else(|| lane_color(lane), name_color)
-    };
-    LaneColors {
-        commits: commit_runs.into_iter().map(color).collect(),
-        segments: segment_runs
-            .into_iter()
-            .map(|row| row.into_iter().map(color).collect())
-            .collect(),
-    }
-}
-
-/// A new run of the lane `lane`, without a name yet.
-fn open_run(runs: &mut Vec<(usize, Option<&str>)>, lane: usize) -> usize {
-    runs.push((lane, None));
-    runs.len() - 1
+    let mut colors = LaneColors::default();
+    colors.extend(layout, |row| ids.get(row).copied(), labels, remotes);
+    colors
 }
 
 /// Width of the graph column for `lanes` lanes, with a margin on each side.
@@ -339,6 +370,57 @@ mod tests {
             .enumerate()
             .map(|(row, &(id, _))| (id, colors.commit(row)))
             .collect()
+    }
+
+    /// A history with side branches merged back and refs here and there, colored a page at a
+    /// time as the list does: the same colors as all at once, whatever the page size.
+    #[test]
+    fn pages_give_the_same_colors() {
+        let total: u8 = 120;
+        let mut seed: u32 = 7;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 16) as u8
+        };
+        let ids: Vec<Oid> = (0..total).map(oid).collect();
+        let mut refs = Vec::new();
+        let parents: Vec<Vec<Oid>> = (0..total)
+            .map(|n| {
+                let left = total - n - 1;
+                let mut parents = Vec::new();
+                if left > 0 {
+                    parents.push(oid(n + 1));
+                }
+                if left > 2 && next() % 4 == 0 {
+                    parents.push(oid(n + 2 + next() % (left - 1).min(12)));
+                }
+                if next() % 9 == 0 {
+                    refs.push(info(&format!("b{n}"), RefKind::LocalBranch, n));
+                }
+                parents
+            })
+            .collect();
+        let head = Head::Branch {
+            name: "b0".to_owned(),
+            target: None,
+        };
+        let labels = ref_labels(&refs, &head);
+        let nodes = || ids.iter().zip(parents.iter().map(Vec::as_slice));
+        let whole = project_domain::layout_graph_nodes(nodes());
+        assert!(whole.width > 2, "the history has side branches");
+        let expected = lane_colors(&whole, &ids, &labels, &[]);
+        assert_eq!(expected.rows(), ids.len());
+
+        for page in [1, 7, 50, 500] {
+            let mut builder = project_domain::GraphBuilder::default();
+            let mut colors = LaneColors::default();
+            for start in (0..ids.len()).step_by(page) {
+                builder.extend(nodes().skip(start).take(page));
+                colors.extend(builder.layout(), |row| ids.get(row).copied(), &labels, &[]);
+                assert_eq!(colors.rows(), builder.layout().rows.len());
+            }
+            assert_eq!(colors, expected, "pages of {page}");
+        }
     }
 
     #[test]

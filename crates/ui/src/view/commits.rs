@@ -629,27 +629,35 @@ pub(super) fn paint_graph(
     }
 }
 
-/// The colors of the graph's lanes ([`graph::lane_colors`]), computed again only when the graph,
-/// the refs or the remotes change.
+/// The colors of the graph's lanes ([`graph::LaneColors`]): the rows of a page that arrived are
+/// added to the ones kept, all are computed again only when the graph starts again or the refs or
+/// the remotes change.
 fn lane_colors(ui: &Ui, repo: &RepoView) -> std::sync::Arc<graph::LaneColors> {
     type Key = (u64, u64, Vec<String>);
-    let remotes = repo.remotes.names();
-    let key: Key = (repo.list.graph_version(), repo.refs_version, remotes);
+    type Cached = (Key, std::sync::Arc<graph::LaneColors>);
+    let list = &repo.list;
+    let key: Key = (
+        list.graph_version(),
+        repo.refs_version,
+        repo.remotes.names(),
+    );
     let id = ui.make_persistent_id(("lane-colors", &repo.path));
-    if let Some((cached, colors)) =
-        ui.data(|d| d.get_temp::<(Key, std::sync::Arc<graph::LaneColors>)>(id))
-        && cached == key
-    {
-        return colors;
+    // Taken out, so the colors are extended in place: nobody else holds them between frames.
+    let mut colors = ui
+        .data_mut(|d| d.remove_temp::<Cached>(id))
+        .filter(|(cached, _)| *cached == key)
+        .map(|(_, colors)| colors)
+        .unwrap_or_default();
+    if colors.rows() != list.graph().rows.len() {
+        let commits = list.commits();
+        std::sync::Arc::make_mut(&mut colors).extend(
+            list.graph(),
+            |row| commits.get(row).map(|c| c.id),
+            &repo.labels,
+            &key.2,
+        );
     }
-    let ids: Vec<_> = repo.list.commits().iter().map(|c| c.id).collect();
-    let colors = std::sync::Arc::new(graph::lane_colors(
-        repo.list.graph(),
-        &ids,
-        &repo.labels,
-        &key.2,
-    ));
-    ui.data_mut(|d| d.insert_temp(id, (key, colors.clone())));
+    ui.data_mut(|d| d.insert_temp::<Cached>(id, (key, colors.clone())));
     colors
 }
 

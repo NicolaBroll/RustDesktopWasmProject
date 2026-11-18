@@ -237,3 +237,34 @@ Rules that apply to every step:
   log line. Either carry it like `RepoPath` (string or byte array in JSON) or document the limit
   in `impl-docs/git/reading.md` and show a message instead of the log line.
 - **Done when:** the decision is written down; test of the chosen behavior; CI green.
+
+## Phase Q4 — UI performance
+
+From the review of the GUI of 2026-11-18: work that grows with the size of the repo and runs on
+the UI thread when a result arrives.
+
+### Q40 — Graph lanes and colors a page at a time
+- [x] **Agent:** `git-domain`, then `egui-ui`
+- **Goal:** every page of `repo.log` (500 commits) recomputed the lanes and their colors of all
+  the loaded commits on the UI thread: measured on a synthetic history of 100 000 commits (release
+  build), 16 ms of `layout_graph` plus 45 ms of `lane_colors` per page, growing with the rows
+  loaded. Both become incremental; the result does not change.
+- **Done when:** a page costs its own commits; property test "pages give the same layout"; UI
+  test "pages give the same colors"; CI green.
+- **Done:** `project_domain::GraphBuilder` (`extend`, `extend_commits`, `layout`) keeps lanes and
+  pending segments between pages, `layout_graph`/`layout_graph_nodes` feed it once.
+  `CommitList` holds the builder; `graph_version` now grows only when the graph starts again
+  from the first page. `graph::LaneColors` keeps the run of each row and segment (the color is
+  read from the run, because a branch further down colors the rows above) and `extend`s by the
+  new rows; the cache of `view/commits.rs` extends it in place and rebuilds it only when the
+  graph version, the refs or the remotes change.
+
+### Q41 — Large diffs off the UI thread
+- [ ] **Agent:** `egui-ui`
+- **Goal:** `DiffDoc::build` (rows, word diff of every changed pair, side by side rows) runs on
+  the UI thread when `diff.commit` answers, with no limit on the number of lines: a generated
+  file of hundreds of thousands of lines freezes the window. Measure it first; then either build
+  the document off the UI thread or show a "large diff" notice with "Show anyway" above a
+  threshold, whichever the numbers call for.
+- **Done when:** opening a diff of 200 000 lines keeps the frame under ~16 ms on the UI thread,
+  or asks first; UI tests; CI green.

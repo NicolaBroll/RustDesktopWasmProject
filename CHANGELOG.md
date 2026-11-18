@@ -6,6 +6,11 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Scrolling down a very long history stays smooth: the graph of the commits that load is added
+  to the one already drawn instead of being computed again from the top.
+
 ### Fixed
 
 - "Copy name", "Copy commit id", "Copy path" and the other copy buttons now fill the system

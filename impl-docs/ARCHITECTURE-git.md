@@ -119,6 +119,13 @@ the commit's column and the segments toward the next row.
 Invariants to verify with property tests: every parent–child edge is drawn exactly
 once; no commit occupies two columns; free lanes are reused (limited width).
 
+The commit list loads the log a page at a time: `GraphBuilder` keeps the active lanes between
+one page and the next, so a page costs its own commits and not all the loaded ones
+(`layout_graph` is the builder fed once). Rows already computed do not change, except the
+segments of the last one, dangling until the next commit arrives; the property test checks that
+pages of any size give the layout of all the commits together. The UI colors the lanes the same
+way (`LaneColors::extend` in `crates/ui/src/graph.rs`).
+
 
 The patch builder for line staging is in [git/stage.md](git/stage.md).
 

@@ -578,6 +578,14 @@ impl RefMenu<'_> {
                 ui.close();
             }
         }
+        if ui
+            .button(tr!("refs-copy-name"))
+            .on_hover_text(tr!("refs-copy-name-hint", name = name))
+            .clicked()
+        {
+            ui.ctx().copy_text(name.to_owned());
+            ui.close();
+        }
         let button = ui
             .add_enabled(can_write, egui::Button::new(tr!("refs-new-branch")))
             .on_hover_text(tr!("refs-new-branch-hint", id = info.target.short()))

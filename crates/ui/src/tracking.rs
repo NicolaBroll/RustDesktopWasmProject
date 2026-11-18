@@ -158,7 +158,6 @@ impl BranchBox {
             return false;
         }
         if let Some(Dialog::Name(dialog)) = &mut self.dialog {
-            dialog.checkout_after = true;
             dialog.error = Some(message);
         }
         true

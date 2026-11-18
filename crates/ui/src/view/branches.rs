@@ -111,6 +111,17 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             actions.push(Action::Branch(branch::Action::Track(track)));
         }
     }
+    if matches!(dialog.kind, NameKind::Create(_)) {
+        ui.add_space(6.0);
+        let mut checkout = dialog.checkout_after;
+        let check = egui::Checkbox::new(&mut checkout, tr!("branch-checkout-checkbox"));
+        let response = ui
+            .add_enabled(dialog.running.is_none(), check)
+            .on_hover_text(tr!("branch-checkout-checkbox-hint"));
+        if response.changed() {
+            actions.push(Action::Branch(branch::Action::CheckoutAfter(checkout)));
+        }
+    }
     if let Some(error) = &dialog.error {
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());

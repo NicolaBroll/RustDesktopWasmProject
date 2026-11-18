@@ -154,7 +154,7 @@ fn set_url_refusals_change_nothing() {
         ),
     ];
     for (params, why) in cases {
-        let err = r.run("remote.set_url", &mut s, params.clone()).unwrap_err();
+        let err = r.run("remote.set_url", &mut s, params).unwrap_err();
         assert!(matches!(err, EngineError::NotAllowed(_)), "{why}: {err}");
     }
     for params in [

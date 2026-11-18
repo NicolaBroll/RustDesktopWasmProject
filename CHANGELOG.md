@@ -6,6 +6,10 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-18
+
+Everyday branch work: a new branch becomes the current one, and ref names can be copied.
+
 ### Added
 
 - "Copy name" in the context menu of branches and tags copies the name to the clipboard.
@@ -13,7 +17,24 @@ All notable changes to BinariGit. The format follows
 ### Changed
 
 - A new branch is checked out right after it is created ("Switch to the new branch" in the dialog,
-  on by default).
+  on by default). If local changes block the checkout, the branch is created anyway and the
+  current one stays.
+
+### Packages
+
+- Linux: `BinariGit-0.11.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.11.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.11.0-x86_64.msi` and `BinariGit-0.11.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- The ssh passphrase and host-key prompts need OpenSSH 8.4 or newer.
+- The credential prompt of a Git LFS server has not been tested against a real server.
+- No macOS build.
 
 ## [0.10.1] - 2026-11-01
 
@@ -477,7 +498,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.8.0...v0.9.0

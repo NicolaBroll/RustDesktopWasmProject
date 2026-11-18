@@ -278,6 +278,27 @@ the UI thread when a result arrives.
   nothing. Still on the UI thread, at 200 000 lines only: 20-30 ms when a reload brings the same
   diff (comparing it and freeing the copy) and 12-26 ms to free the document on close.
 
+### Q42 — Recent folders checked in a job, commit rows by id, Help windows in the app state
+- [x] **Agent:** `egui-ui`
+- **Goal:** the leftovers of the review that need no decision. `App::check_missing` called
+  `Path::is_dir` on every recent repo once a second on the UI thread: a folder on a network drive
+  that does not answer froze the window. `CommitList::position` scanned the loaded commits, and
+  the frame asks it for HEAD (changes row, stage panel). "About" and "Keyboard shortcuts" kept
+  their open flag in egui's temporary data, outside `App`, so `App::shortcuts` had to ask egui
+  whether a modal layer was open.
+- **Done when:** no disk access on the UI thread for the recent list; the Help windows open and
+  close with an `Action`; UI tests; CI green.
+- **Done:** the check runs with `Platform::spawn`, one at a time (`MissingCheck`: a flag cleared
+  when the job ends or is dropped, the answer taken on a later frame). `CommitList` keeps the
+  row of every loaded commit by id (`commit(id)`, `index_of`, `seek`, `anchor`).
+  `tabs::Action::Help(Option<view::Help>)` and `App::help`: the window is drawn by `App::ui` as
+  the settings and clone ones, and `top_modal_layer` is gone from `App::shortcuts`.
+- **Checked and left as they are:** the windows of a failed fetch, pull or push are deliberately
+  not modal (`failure_window`: "It does not block the rest of the window") and
+  `RepoView::modal_open` agrees with that: whether they should be is a UX question. The colors
+  written outside `theme.rs` are grouped in one place per area (the diff `Style`, the graph
+  palette). The per-frame `recent_view()` and `labels()` allocate a few short strings.
+
 ## Phase Q5 — UI tests
 
 ### Q50 — Smoke tests of the drawing code

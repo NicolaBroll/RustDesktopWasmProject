@@ -16,6 +16,8 @@ All notable changes to BinariGit. The format follows
 
 ### Fixed
 
+- A recent repository on a network drive that does not answer no longer freezes the window: the
+  check of the recent folders runs in the background.
 - "Copy name", "Copy commit id", "Copy path" and the other copy buttons now fill the system
   clipboard: until now the text stayed inside the app.
 - A double click (checkout of a branch, among others) is recognised up to half a second between

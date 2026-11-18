@@ -5,6 +5,7 @@
 use project_domain::{Commit, GraphBuilder, GraphLayout, Oid};
 use project_engine::LogQuery;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Commits requested for each page of `repo.log`.
 pub const PAGE: usize = 500;
@@ -66,6 +67,8 @@ pub struct Anchor {
 #[derive(Debug, Default)]
 pub struct CommitList {
     commits: Vec<Commit>,
+    /// The row of every loaded commit: looked up on every frame (HEAD, the changes row).
+    rows: HashMap<Oid, usize>,
     /// Graph lanes of all loaded commits, one row per commit. A page that arrives adds its
     /// rows (a lane may come from the pages before), at the cost of that page only.
     graph: GraphBuilder,
@@ -168,6 +171,8 @@ impl CommitList {
         if request.skip == 0 {
             let selected = self.selected_commit().map(|c| c.id);
             self.commits = commits;
+            self.rows.clear();
+            self.index_rows(0);
             self.selected = selected
                 .and_then(|id| self.position(id))
                 .or((!self.commits.is_empty()).then_some(0));
@@ -176,7 +181,9 @@ impl CommitList {
             self.graph_version += 1;
         } else {
             self.graph.extend_commits(&commits);
+            let from = self.commits.len();
             self.commits.extend(commits);
+            self.index_rows(from);
         }
         self.has_more = has_more;
         true
@@ -245,8 +252,21 @@ impl CommitList {
         self.position(id)
     }
 
+    /// The loaded commit `id`.
+    pub fn commit(&self, id: Oid) -> Option<&Commit> {
+        self.commits.get(self.position(id)?)
+    }
+
     fn position(&self, id: Oid) -> Option<usize> {
-        self.commits.iter().position(|c| c.id == id)
+        self.rows.get(&id).copied()
+    }
+
+    /// Records the rows of the commits from row `from` on.
+    fn index_rows(&mut self, from: usize) {
+        for (row, commit) in self.commits.iter().enumerate().skip(from) {
+            // A log lists a commit once; were it twice, the first row is the one shown.
+            self.rows.entry(commit.id).or_insert(row);
+        }
     }
 
     /// Selects row `index` (mouse click); outside the list it does nothing.

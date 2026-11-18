@@ -915,13 +915,35 @@ fn menus_open_under_the_pointer() {
     assert_shows(&menu, &["Keyboard shortcuts", "About BinariGit"]);
     let painted = screen.click_on(&menu, "Keyboard shortcuts", Primary);
     assert_shows(&painted, &["Ctrl+Shift+P", "Push the current branch"]);
+    assert_eq!(screen.app.help, Some(view::Help::Shortcuts));
     let painted = screen.click_on(&painted, "Close", Primary);
+    assert_eq!(screen.app.help, None);
     let menu = screen.click_on(&painted, "Help", Primary);
     let painted = screen.click_on(&menu, "About BinariGit", Primary);
     assert_shows(
         &painted,
         &["A graphical git client", "License: MIT OR Apache-2.0"],
     );
+
+    // The window is modal: the shortcuts of the tab under it do nothing, Esc closes it.
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    screen.frame(vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+    screen.frames(2);
+    assert!(!screen.repo().search.is_open(), "Ctrl+F reached the tab");
+    assert_eq!(screen.app.help, Some(view::Help::About));
+    screen.frame(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+    screen.frames(2);
+    assert_eq!(screen.app.help, None);
+    // Without the window the same keys are the tab's again.
+    screen.frame(vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+    screen.frames(2);
+    assert!(screen.repo().search.is_open());
 }
 
 #[test]

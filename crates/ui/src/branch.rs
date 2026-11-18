@@ -52,6 +52,8 @@ pub(crate) enum Action {
     ConfirmDeleteTag,
     /// The "Track" checkbox of the new-branch dialog (from a remote branch) changed.
     Track(bool),
+    /// The "Switch to the new branch" checkbox of the new-branch dialog changed.
+    CheckoutAfter(bool),
     /// "Check out" on a remote branch (full name, `refs/remotes/...`): switches to the local
     /// branch that tracks it, creating it if needed (see [`crate::tracking`]).
     CheckoutRemote(String),
@@ -185,7 +187,8 @@ pub struct NameDialog {
     pub running: Option<Running>,
     /// "Track `<remote>/<branch>`": only for a new branch from a remote branch, on by default.
     pub track: bool,
-    /// Switch to the new branch once created ("Check out" on a remote branch whose name is taken).
+    /// Switch to the new branch once created: on by default for a new branch, where the dialog
+    /// has a checkbox for it; always at the detached HEAD.
     pub checkout_after: bool,
 }
 
@@ -405,6 +408,7 @@ impl BranchBox {
         if self.busy() {
             return false;
         }
+        let checkout_after = matches!(kind, NameKind::Create(_) | NameKind::Here(_));
         self.dialog = Some(Dialog::Name(NameDialog {
             kind,
             name,
@@ -412,7 +416,7 @@ impl BranchBox {
             error: None,
             running: None,
             track: true,
-            checkout_after: false,
+            checkout_after,
         }));
         true
     }
@@ -423,6 +427,16 @@ impl BranchBox {
             && dialog.running.is_none()
         {
             dialog.track = track;
+        }
+    }
+
+    /// The "Switch to the new branch" checkbox of the name dialog changed.
+    pub fn set_checkout_after(&mut self, checkout: bool) {
+        if let Some(Dialog::Name(dialog)) = &mut self.dialog
+            && dialog.running.is_none()
+            && matches!(dialog.kind, NameKind::Create(_))
+        {
+            dialog.checkout_after = checkout;
         }
     }
 
@@ -1031,6 +1045,11 @@ impl Tab {
                     repo.branch.close();
                 }
             }
+            Action::CheckoutAfter(checkout) => {
+                if let Some(repo) = self.repo.as_mut() {
+                    repo.branch.set_checkout_after(checkout);
+                }
+            }
             Action::Track(track) => {
                 if let Some(repo) = &mut self.repo {
                     repo.branch.set_track(track);
@@ -1147,7 +1166,7 @@ impl Tab {
                         self.request_page(first);
                     }
                 }
-                // "Check out" on a remote branch: the tracking branch exists, now switch to it.
+                // The new branch exists, now switch to it.
                 if let Some(name) = then_checkout {
                     self.apply_branch(Action::Checkout(name));
                 }

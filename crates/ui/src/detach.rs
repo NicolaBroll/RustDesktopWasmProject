@@ -74,13 +74,7 @@ impl BranchBox {
     /// Opens the new-branch dialog at the detached HEAD, shown at `id`: the branch is created
     /// where HEAD is and then checked out.
     pub fn open_here(&mut self, id: Oid) -> bool {
-        if !self.open_name(NameKind::Here(id), String::new()) {
-            return false;
-        }
-        if let Some(Dialog::Name(dialog)) = &mut self.dialog {
-            dialog.checkout_after = true;
-        }
-        true
+        self.open_name(NameKind::Here(id), String::new())
     }
 }
 

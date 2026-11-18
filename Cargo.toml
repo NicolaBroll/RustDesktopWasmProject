@@ -49,6 +49,7 @@ fluent-syntax = "0.12"
 # UI
 egui = "0.37"
 eframe = { version = "0.37", default-features = false, features = [
+    "clipboard",
     "default_fonts",
     "glow",
     "persistence",

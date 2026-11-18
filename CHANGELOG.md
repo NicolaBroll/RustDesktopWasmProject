@@ -6,6 +6,13 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- "Copy name", "Copy commit id", "Copy path" and the other copy buttons now fill the system
+  clipboard: until now the text stayed inside the app.
+- A double click (checkout of a branch, among others) is recognised up to half a second between
+  the two clicks, as on Windows, instead of 0.3 s: a calm double click did nothing.
+
 ## [0.11.0] - 2026-11-18
 
 Everyday branch work: a new branch becomes the current one, and ref names can be copied.

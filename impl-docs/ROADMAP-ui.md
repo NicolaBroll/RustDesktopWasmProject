@@ -314,6 +314,17 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
 - **Done:** `scale` (90–150%, Ctrl+= / Ctrl+- / Ctrl+0 in place of egui's zoom keys) and
   `dates` (absolute / relative) in the settings, saved with the theme.
 
+### U54 — New branch checked out, "Copy name" on refs
+- [x] **Agent:** `egui-ui`
+- **Goal:** a new branch is almost always created to work on it, and its name is often needed
+  elsewhere (terminal, pull request). The new-branch dialog gets "Switch to the new branch", on
+  by default (`branch.create`, then `branch.checkout`); the context menu of branches and tags
+  gets "Copy name".
+- **Done when:** unit test of the dialog state; "Copy name" fills the clipboard; CI green.
+- **Done:** `NameDialog::checkout_after` on by default for a new branch, with its checkbox (a
+  refused checkout leaves the branch created and opens the usual dialog); "Copy name" copies the
+  short name of the ref.
+
 ### Left for later (they need new engine commands or `Platform` capabilities)
 
 Discard a hunk / selected lines (new write command with backup), "Add to .gitignore", git

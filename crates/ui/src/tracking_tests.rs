@@ -271,11 +271,13 @@ fn a_taken_name_opens_the_dialog_that_tracks_and_checks_out() {
         Some("refs/remotes/origin/main")
     );
 
-    // Unchecked "Track": a plain branch at the commit, not checked out.
+    // Unchecked "Track" and "Switch to the new branch": a plain branch at the commit, not
+    // checked out.
     let (start, _) = Start::from_ref(info);
     let target = start.target;
     assert!(b.open_create(start, "plain".to_owned()));
     b.set_track(false);
+    b.set_checkout_after(false);
     let (op, params, _) = b.submit_name().unwrap();
     assert_eq!(
         params,
@@ -285,6 +287,20 @@ fn a_taken_name_opens_the_dialog_that_tracks_and_checks_out() {
     let outcome = done(send(&mut b, &r, &mut s, op, params));
     assert_eq!(outcome.then_checkout, None);
     assert_eq!(upstream_of(&outcome.refs.unwrap(), "plain"), None);
+
+    // A new branch is checked out once created unless the checkbox is unchecked; a tag never.
+    let info = all.iter().find(|i| i.name == "refs/heads/main").unwrap();
+    assert!(b.open_create(Start::from_ref(info).0, "next".to_owned()));
+    let (op, params, _) = b.submit_name().unwrap();
+    b.name_started(Ticket::for_test(4));
+    let outcome = done(send(&mut b, &r, &mut s, op, params));
+    assert_eq!(outcome.then_checkout.as_deref(), Some("next"));
+    assert!(b.open_tag(Start::from_ref(info).0));
+    b.set_checkout_after(true);
+    let Some(Dialog::Name(dialog)) = b.dialog() else {
+        panic!()
+    };
+    assert!(!dialog.checkout_after);
 }
 
 #[test]

@@ -6,6 +6,15 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- "Copy name" in the context menu of branches and tags copies the name to the clipboard.
+
+### Changed
+
+- A new branch is checked out right after it is created ("Switch to the new branch" in the dialog,
+  on by default).
+
 ## [0.10.1] - 2026-11-01
 
 Maintenance release: code cleanup with no change in behavior.

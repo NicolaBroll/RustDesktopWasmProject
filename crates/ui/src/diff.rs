@@ -13,8 +13,10 @@ use crate::{Tab, word_diff};
 use project_domain::{Change, Diff, FileDiff, LineKind, Oid, RepoPath};
 use project_engine::{DiffCommitParams, DiffParams, DiffRangeParams};
 use project_i18n::tr;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// The actions of this area, dispatched by [`Tab::apply`](crate::Tab::apply).
 #[derive(Debug, Clone)]
@@ -177,9 +179,10 @@ impl DiffState {
         self.open.as_ref().map(|o| &o.target)
     }
 
-    /// The response to request `seq`. Kept only if it is the one of the open diff:
-    /// returns `false` if it was discarded.
-    pub fn receive(&mut self, seq: u64, result: Result<Diff, String>) -> bool {
+    /// The response to request `seq`, as the document built from it off the UI thread
+    /// ([`Tab::request_diff`]). Kept only if it is the one of the open diff: returns `false` if
+    /// it was discarded.
+    pub fn receive(&mut self, seq: u64, result: Result<DiffDoc, String>) -> bool {
         let Some(open) = &mut self.open else {
             return false;
         };
@@ -188,12 +191,12 @@ impl DiffState {
         }
         open.reloading = false;
         // The same diff again: document, selection and scroll stay as they are.
-        if let (Some(Ok(doc)), Ok(diff)) = (&open.answer, &result)
-            && doc.diff == *diff
+        if let (Some(Ok(doc)), Ok(new)) = (&open.answer, &result)
+            && doc.diff == new.diff
         {
             return true;
         }
-        open.answer = Some(result.map(|diff| DiffDoc::new(diff, &open.target.path)));
+        open.answer = Some(result);
         open.selection.clear();
         true
     }
@@ -277,15 +280,38 @@ pub struct DiffDoc {
     pub number_width: usize,
     /// Text columns of the widest row (after tabs and any cut).
     pub max_cols: usize,
-    /// The changed parts of the paired removed and added lines, in columns, by
-    /// `(file, hunk, line)` (see [`word_diff`]).
-    pub emphasis: HashMap<(usize, usize, usize), Vec<Range<usize>>>,
+    /// Lines added and removed in each file.
+    counts: Vec<(usize, usize)>,
+    /// The removed line and the added line that takes its place, each by `(file, hunk, line)`
+    /// with the line of the other (see [`word_diff::pairs`]).
+    pairs: HashMap<LineKey, usize>,
+    /// The changed parts of the paired lines asked for so far (see [`DiffDoc::emphasis`]).
+    emphasis: EmphasisCache,
     /// The rows of the side by side view.
     pub split: Vec<SplitRow>,
     /// The file is stored in Git LFS (S63): the rows show "Stored in Git LFS (`<size>`)" in place
     /// of the pointer text, and no hunks or lines (see [`DiffDoc::with_lfs`]).
     pub lfs: bool,
 }
+
+/// A line of the document: `(file, hunk, line)`.
+type LineKey = (usize, usize, usize);
+
+/// Columns to highlight in a line.
+pub type Columns = Arc<[Range<usize>]>;
+
+/// The changed parts of the paired lines compared so far; `None`: too different to highlight.
+/// Not part of what a document is: two documents are equal whatever was asked of them.
+#[derive(Debug, Clone, Default)]
+struct EmphasisCache(RefCell<HashMap<LineKey, Option<Columns>>>);
+
+impl PartialEq for EmphasisCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for EmphasisCache {}
 
 /// A row of the side by side view: the old file on the left, the new on the right.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +350,7 @@ impl DiffDoc {
         let mut rows = Vec::new();
         let mut max_number = 0;
         let mut max_cols = 0;
+        let mut pairs = HashMap::new();
         for (f, file) in diff.files.iter().enumerate() {
             if f > 0 {
                 rows.push(Row::Gap);
@@ -335,6 +362,11 @@ impl DiffDoc {
                 continue;
             }
             for (h, hunk) in file.hunks.iter().enumerate() {
+                let kinds: Vec<LineKind> = hunk.lines.iter().map(|l| l.kind).collect();
+                for (old, new) in word_diff::pairs(&kinds) {
+                    pairs.insert((f, h, old), new);
+                    pairs.insert((f, h, new), old);
+                }
                 rows.push(Row::Hunk(f, h));
                 max_number = max_number
                     .max(hunk.old_start + hunk.old_count)
@@ -349,17 +381,55 @@ impl DiffDoc {
                 }
             }
         }
-        let emphasis = if lfs { HashMap::new() } else { emphasis(&diff) };
         let split = split_rows(&diff, &rows);
+        let counts = diff.files.iter().map(FileDiff::line_counts).collect();
         Self {
             diff,
             rows,
             number_width: number_width(max_number),
             max_cols,
-            emphasis,
+            counts,
+            pairs,
+            emphasis: EmphasisCache::default(),
             split,
             lfs,
         }
+    }
+
+    /// The changed parts of line `l` of hunk `h` of file `f`, in columns, if it is a removed
+    /// line or the added line that takes its place and the two are alike enough (see
+    /// [`word_diff`]).
+    ///
+    /// Compared the first time a line is asked for, so only the lines that get drawn: comparing
+    /// every pair of a large diff of long lines takes seconds.
+    pub fn emphasis(&self, f: usize, h: usize, l: usize) -> Option<Columns> {
+        let other = *self.pairs.get(&(f, h, l))?;
+        let mut cache = self.emphasis.0.borrow_mut();
+        if let Some(known) = cache.get(&(f, h, l)) {
+            return known.clone();
+        }
+        let lines = &self.diff.files.get(f)?.hunks.get(h)?.lines;
+        let (old, new) = match lines.get(l)?.kind {
+            LineKind::Removed => (l, other),
+            _ => (other, l),
+        };
+        let a = lines[old].content.to_string_lossy();
+        let b = lines.get(new)?.content.to_string_lossy();
+        let (in_old, in_new) = match word_diff::changed(&a, &b) {
+            Some((in_old, in_new)) => (
+                Some(Columns::from(columns(&a, &in_old))),
+                Some(Columns::from(columns(&b, &in_new))),
+            ),
+            None => (None, None),
+        };
+        cache.insert((f, h, old), in_old);
+        cache.insert((f, h, new), in_new);
+        cache.get(&(f, h, l)).cloned().flatten()
+    }
+
+    /// Lines added and removed in file `f`.
+    pub fn file_counts(&self, f: usize) -> (usize, usize) {
+        self.counts.get(f).copied().unwrap_or_default()
     }
 
     /// Lines added and removed in all files (none for an LFS file: they are pointer lines).
@@ -367,31 +437,10 @@ impl DiffDoc {
         if self.lfs {
             return (0, 0);
         }
-        self.diff
-            .files
+        self.counts
             .iter()
-            .map(FileDiff::line_counts)
             .fold((0, 0), |(a, d), (fa, fd)| (a + fa, d + fd))
     }
-}
-
-/// The changed parts of every pair of removed and added lines, in columns.
-fn emphasis(diff: &Diff) -> HashMap<(usize, usize, usize), Vec<Range<usize>>> {
-    let mut out = HashMap::new();
-    for (f, file) in diff.files.iter().enumerate() {
-        for (h, hunk) in file.hunks.iter().enumerate() {
-            let kinds: Vec<LineKind> = hunk.lines.iter().map(|l| l.kind).collect();
-            for (old, new) in word_diff::pairs(&kinds) {
-                let a = hunk.lines[old].content.to_string_lossy();
-                let b = hunk.lines[new].content.to_string_lossy();
-                if let Some((in_old, in_new)) = word_diff::changed(&a, &b) {
-                    out.insert((f, h, old), columns(&a, &in_old));
-                    out.insert((f, h, new), columns(&b, &in_new));
-                }
-            }
-        }
-    }
-    out
 }
 
 /// The side by side rows: the unified rows, with each run of removed lines next to the run of
@@ -450,10 +499,11 @@ pub fn file_title(file: &FileDiff) -> String {
     }
 }
 
-/// Kind of change, similarity and changed lines, e.g. `renamed 92%  +1 -1`.
-pub fn file_summary(file: &FileDiff) -> String {
+/// Kind of change, similarity and changed lines (`counts`: added and removed), e.g.
+/// `renamed 92%  +1 -1`.
+pub fn file_summary(file: &FileDiff, counts: (usize, usize)) -> String {
     let mut summary = file_kind(file);
-    let (added, removed) = file.line_counts();
+    let (added, removed) = counts;
     if added + removed > 0 {
         summary.push_str(&format!("  +{added} -{removed}"));
     }
@@ -702,6 +752,12 @@ mod tests {
         Diff { files }
     }
 
+    /// The response `result` to request `seq`, with the document built for the open file.
+    fn receive(state: &mut DiffState, seq: u64, result: Result<Diff, String>) -> bool {
+        let path = state.target().map(|t| t.path.clone()).unwrap_or_default();
+        state.receive(seq, result.map(|diff| DiffDoc::new(diff, &path)))
+    }
+
     #[test]
     fn opening_asks_once_and_keeps_the_answer() {
         let mut s = DiffState::default();
@@ -709,7 +765,8 @@ mod tests {
         let seq = s.open(target(1, "a.rs")).expect("first request");
         assert_eq!(s.open(target(1, "a.rs")), None);
         assert_eq!(s.pane(), Pane::Loading(&target(1, "a.rs")));
-        assert!(s.receive(
+        assert!(receive(
+            &mut s,
             seq,
             Ok(diff(vec![file(
                 Change::Modified,
@@ -720,7 +777,7 @@ mod tests {
         ));
         assert!(matches!(s.pane(), Pane::Loaded(t, _) if *t == target(1, "a.rs")));
         // A second response with the same number does not replace the first.
-        assert!(!s.receive(seq, Err("late".to_owned())));
+        assert!(!receive(&mut s, seq, Err("late".to_owned())));
         assert_eq!(s.open(target(1, "a.rs")), None);
     }
 
@@ -730,13 +787,13 @@ mod tests {
         let first = s.open(target(1, "a.rs")).unwrap();
         let second = s.open(target(1, "b.rs")).unwrap();
         assert_ne!(first, second);
-        assert!(!s.receive(first, Ok(diff(Vec::new()))));
+        assert!(!receive(&mut s, first, Ok(diff(Vec::new()))));
         assert_eq!(s.pane(), Pane::Loading(&target(1, "b.rs")));
         // Same path, different commit: it is another diff.
         let third = s.open(target(2, "b.rs")).unwrap();
-        assert!(!s.receive(second, Ok(diff(Vec::new()))));
+        assert!(!receive(&mut s, second, Ok(diff(Vec::new()))));
         s.close();
-        assert!(!s.receive(third, Ok(diff(Vec::new()))));
+        assert!(!receive(&mut s, third, Ok(diff(Vec::new()))));
         assert_eq!(s.pane(), Pane::Closed);
         assert_eq!(s.target(), None);
     }
@@ -746,13 +803,13 @@ mod tests {
         let mut s = DiffState::default();
         let seq = s.open(target(1, "a.rs")).unwrap();
         assert_eq!(s.retry(), None, "nothing to retry while loading");
-        assert!(s.receive(seq, Err("unknown commit".to_owned())));
+        assert!(receive(&mut s, seq, Err("unknown commit".to_owned())));
         assert_eq!(s.pane(), Pane::Failed(&target(1, "a.rs"), "unknown commit"));
         let again = s.retry().expect("new request");
         assert_ne!(again, seq);
         assert_eq!(s.pane(), Pane::Loading(&target(1, "a.rs")));
         // Reopening the same file after an error also requests it.
-        assert!(s.receive(again, Err("again".to_owned())));
+        assert!(receive(&mut s, again, Err("again".to_owned())));
         assert!(s.open(target(1, "a.rs")).is_some());
     }
 
@@ -808,7 +865,10 @@ mod tests {
         );
         renamed.similarity = Some(92);
         assert_eq!(file_title(&renamed), "src/main.rs -> src/bin/app.rs");
-        assert_eq!(file_summary(&renamed), "renamed  92%  +2 -1");
+        assert_eq!(
+            file_summary(&renamed, renamed.line_counts()),
+            "renamed  92%  +2 -1"
+        );
         assert_eq!(file_kind(&renamed), "renamed  92%");
         assert!(file_notes(&renamed).is_empty());
 
@@ -849,7 +909,7 @@ mod tests {
         let mut sub = file(Change::Modified, "vendor/lib", "vendor/lib", vec![hunk()]);
         sub.old_mode = Some(0o160000);
         sub.new_mode = Some(0o160000);
-        assert!(file_summary(&sub).contains("[submodule]"));
+        assert!(file_summary(&sub, sub.line_counts()).contains("[submodule]"));
         assert_eq!(file_notes(&sub).len(), 1);
 
         let mut conflict = file(Change::Unmerged, "x", "x", Vec::new());
@@ -916,7 +976,7 @@ mod tests {
         let mut state = DiffState::default();
         assert_eq!(state.reload(), None, "nothing to reload");
         let first = state.open(target(1, "a")).unwrap();
-        assert!(state.receive(first, Ok(Diff { files: Vec::new() })));
+        assert!(receive(&mut state, first, Ok(Diff { files: Vec::new() })));
         let second = state.reload().unwrap();
         assert_ne!(first, second);
         assert!(
@@ -925,8 +985,8 @@ mod tests {
         );
         assert!(state.is_reloading());
         // The response of the old request no longer counts.
-        assert!(!state.receive(first, Ok(Diff { files: Vec::new() })));
-        assert!(state.receive(second, Ok(Diff { files: Vec::new() })));
+        assert!(!receive(&mut state, first, Ok(Diff { files: Vec::new() })));
+        assert!(receive(&mut state, second, Ok(Diff { files: Vec::new() })));
         assert!(matches!(state.pane(), Pane::Loaded(..)));
         assert!(!state.is_reloading());
     }
@@ -935,7 +995,7 @@ mod tests {
     fn reload_after_an_error_shows_the_loading_state() {
         let mut state = DiffState::default();
         let first = state.open(target(1, "a")).unwrap();
-        assert!(state.receive(first, Err("boom".into())));
+        assert!(receive(&mut state, first, Err("boom".into())));
         state.reload().unwrap();
         assert!(matches!(state.pane(), Pane::Loading(_)));
         assert!(!state.is_reloading());
@@ -951,7 +1011,7 @@ mod tests {
             "nothing to select while loading"
         );
         let one = || diff(vec![file(Change::Modified, "a.rs", "a.rs", vec![hunk()])]);
-        assert!(state.receive(seq, Ok(one())));
+        assert!(receive(&mut state, seq, Ok(one())));
         let (_, doc, selection) = state.loaded_mut().unwrap();
         let doc = doc.clone();
         selection.click(&doc, 3, false);
@@ -962,7 +1022,7 @@ mod tests {
             Some(1),
             "reload: the selection stays while the old diff is shown"
         );
-        assert!(state.receive(again, Ok(one())));
+        assert!(receive(&mut state, again, Ok(one())));
         assert_eq!(
             state.selection().map(LineSelection::len),
             Some(1),
@@ -970,7 +1030,7 @@ mod tests {
         );
         let changed = state.reload().unwrap();
         let two = diff(vec![file(Change::Added, "a.rs", "a.rs", vec![hunk()])]);
-        assert!(state.receive(changed, Ok(two)));
+        assert!(receive(&mut state, changed, Ok(two)));
         assert!(
             state.selection().unwrap().is_empty(),
             "different diff: selection cleared"
@@ -1060,7 +1120,14 @@ mod tests {
             &"a.rs".into(),
         );
         // After the tab (4 columns): `let total = price * ` is 20 columns.
-        assert_eq!(doc.emphasis[&(0, 0, 0)], [24..25]);
-        assert_eq!(doc.emphasis[&(0, 0, 1)], [24..27]);
+        assert_eq!(doc.emphasis(0, 0, 0).as_deref(), Some(&[24..25][..]));
+        assert_eq!(doc.emphasis(0, 0, 1).as_deref(), Some(&[24..27][..]));
+        // Asked again, in the other order, out of range: the same answers.
+        assert_eq!(doc.emphasis(0, 0, 1).as_deref(), Some(&[24..27][..]));
+        assert_eq!(doc.emphasis(0, 0, 0).as_deref(), Some(&[24..25][..]));
+        assert_eq!(doc.emphasis(0, 0, 2), None);
+        assert_eq!(doc.emphasis(0, 1, 0), None);
+        // What was asked does not make two documents differ.
+        assert_eq!(doc, DiffDoc::new(doc.diff.clone(), &"a.rs".into()));
     }
 }

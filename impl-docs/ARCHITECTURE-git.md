@@ -370,6 +370,15 @@ fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 - Desktop: a thread (or a small pool).
 - Tests: a platform may run the job immediately, inside `spawn`.
 
+Turning a large result into what the UI shows is slow work too. `Executor::submit_prepared`
+runs a function on the result inside the job, after the session is released, and the UI collects
+what it returned with `take_prepared` while handling the `Done` (which then carries no value);
+what nobody takes is dropped at the next `poll`. The diff uses it: the job decodes the JSON and
+builds the `DiffDoc` (rows, widths, side by side rows), which for 200 000 lines takes about
+300 ms. The word-by-word comparison of the changed lines is not done there: `DiffDoc::emphasis`
+compares a pair of lines the first time one of them is drawn and keeps the answer, because
+comparing every pair of a large diff of long lines takes seconds.
+
 `Platform::watch(repo, on_change) -> Option<Watch>` (S40) watches the git directory of a repo and
 calls `on_change` from its own thread; dropping the `Watch` stops it. The default is `None` (test
 platforms); the use is in §8, "Automatic refresh".

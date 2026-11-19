@@ -31,7 +31,11 @@ pub(super) fn remote_row(
             .background_color(ui.visuals().selection.bg_fill.gamma_multiply(0.6));
         ui.label(text).on_hover_text(hint);
     }
-    ui.label(RichText::new(count.to_string()).small().weak());
+    ui.label(
+        RichText::new(count.to_string())
+            .small()
+            .color(theme::counter(ui.visuals())),
+    );
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let more = egui::Button::new(icons::text(icons::MORE, 14.0)).frame(false);
         egui::containers::menu::MenuButton::from_button(more)
@@ -83,11 +87,7 @@ pub(super) fn remote_menu(
         }
     }
     ui.separator();
-    let color = if can_write {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), can_write);
     let button = ui
         .add_enabled(
             can_write,

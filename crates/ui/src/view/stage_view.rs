@@ -472,8 +472,7 @@ impl StageSection<'_> {
                     // Over the button the row's response is not hovered: the pointer decides.
                     let hovered = ui.rect_contains_pointer(rect);
                     let (text, weak) = if selected {
-                        let color = ui.visuals().selection.stroke.color;
-                        (color, color.gamma_multiply(0.75))
+                        theme::on_selection(ui.visuals())
                     } else {
                         (text, weak)
                     };
@@ -625,11 +624,7 @@ fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut 
         .ui(ui, |ui| {
             let paths = discard::discardable_paths(items);
             let can = enabled && paths.is_some();
-            let color = if can {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().weak_text_color()
-            };
+            let color = theme::destructive(ui.visuals(), can);
             let label = RichText::new(tr!("stage-discard-all")).color(color);
             let button = ui
                 .add_enabled(can, egui::Button::new(label))
@@ -642,11 +637,7 @@ fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut 
             }
             // Only when there are untracked files: deleting is not discarding.
             if let Some(paths) = clean::untracked_paths(items) {
-                let color = if enabled {
-                    ui.visuals().error_fg_color
-                } else {
-                    ui.visuals().weak_text_color()
-                };
+                let color = theme::destructive(ui.visuals(), enabled);
                 let label =
                     RichText::new(tr!("stage-delete-untracked", n = paths.len())).color(color);
                 let button = ui
@@ -711,11 +702,7 @@ pub(super) fn file_menu(
     }
     if op == StageOp::Stage && clean::deletable(item) {
         ui.separator();
-        let color = if enabled {
-            ui.visuals().error_fg_color
-        } else {
-            ui.visuals().weak_text_color()
-        };
+        let color = theme::destructive(ui.visuals(), enabled);
         let button = ui
             .add_enabled(
                 enabled,
@@ -736,11 +723,7 @@ pub(super) fn file_menu(
             .add_enabled(
                 enabled && reason.is_none(),
                 egui::Button::new(RichText::new(tr!("stage-discard-file")).color(
-                    if reason.is_none() && enabled {
-                        ui.visuals().error_fg_color
-                    } else {
-                        ui.visuals().weak_text_color()
-                    },
+                    theme::destructive(ui.visuals(), reason.is_none() && enabled),
                 )),
             )
             .on_hover_text(tr!("stage-discard-file-help"))

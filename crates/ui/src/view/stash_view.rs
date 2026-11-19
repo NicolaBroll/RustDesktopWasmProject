@@ -211,11 +211,7 @@ pub(super) fn stash_actions(
     if menu {
         ui.separator();
     }
-    let color = if can_write {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), can_write);
     let button = ui
         .add_enabled(
             can_write,

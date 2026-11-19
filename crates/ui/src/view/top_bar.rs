@@ -31,7 +31,7 @@ pub(super) fn upstream_label(ui: &mut Ui, upstream: &Upstream) {
             .color(ui.visuals().warn_fg_color)
             .small()
     } else {
-        RichText::new(short).weak()
+        RichText::new(short).color(theme::counter(ui.visuals()))
     };
     ui.label(text).on_hover_text(long);
 }

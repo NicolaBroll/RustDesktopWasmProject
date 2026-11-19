@@ -156,7 +156,10 @@ pub(super) fn commit_header(
         });
     if commit.is_merge() {
         ui.add_space(4.0);
-        ui.colored_label(theme::MERGE, tr!("details-merge-commit"));
+        ui.colored_label(
+            theme::merge(ui.visuals().dark_mode),
+            tr!("details-merge-commit"),
+        );
     }
     ui.add_space(4.0);
 }

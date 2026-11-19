@@ -199,7 +199,7 @@ pub(crate) fn worktree_dialog(
         ui.add_space(6.0);
         ui.add(egui::Label::new(tr!("worktree-add-explanation")).wrap());
         ui.add_space(8.0);
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = default_enter(ui);
         let mut fields = dialog.fields.clone();
         let mut changed = false;
         egui::Grid::new("worktree-fields")

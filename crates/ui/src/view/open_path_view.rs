@@ -23,7 +23,7 @@ pub(crate) fn open_path_dialog(
         }
         ui.add(egui::Label::new(tr!("tabs-open-path-explanation")).wrap());
         ui.add_space(8.0);
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = default_enter(ui);
         let mut path = dialog.path.clone();
         let field = ui.add(
             egui::TextEdit::singleline(&mut path)

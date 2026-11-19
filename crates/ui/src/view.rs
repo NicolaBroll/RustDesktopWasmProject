@@ -158,6 +158,27 @@ pub(crate) fn cancel_button() -> egui::Button<'static> {
     egui::Button::new(tr!("common-cancel"))
 }
 
+/// Enter as the press of a dialog's default button: true only while the keyboard is in a text
+/// field or on nothing. On a focused button or checkbox Enter is that widget's own click
+/// ("Cancel" focused and Enter cancels, it does not also confirm), and a key held down from the
+/// dialog before is not a press. Called before the dialog's widgets are drawn: a single-line
+/// field gives up the focus when it sees Enter.
+pub(crate) fn default_enter(ui: &Ui) -> bool {
+    let free = ui.ctx().text_edit_focused() || ui.memory(|m| m.focused().is_none());
+    let pressed = |event: &egui::Event| {
+        matches!(
+            event,
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                pressed: true,
+                repeat: false,
+                ..
+            }
+        )
+    };
+    free && ui.input(|i| i.events.iter().any(pressed))
+}
+
 /// When an entry that writes is disabled because it is waiting: the reason.
 fn wait() -> String {
     tr!("common-wait")

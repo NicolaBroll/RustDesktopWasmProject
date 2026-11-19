@@ -325,6 +325,7 @@ impl CloneBox {
                 explanation: error,
                 git: detail,
                 stash: false,
+                retry: None,
             }),
             _ => Some(Failure {
                 title: match d.kind {
@@ -334,6 +335,7 @@ impl CloneBox {
                 explanation: error,
                 git: detail,
                 stash: false,
+                retry: None,
             }),
         };
         Received::Failed

@@ -41,3 +41,4 @@ top-bar-recent-forget = Remove missing
 top-bar-recent-forget-hint = Drops from the recent list the repositories whose folder no longer exists (no folder is touched)
 top-bar-last-fetch = Last fetch: { $when }
 top-bar-last-fetch-none = No fetch since the repository was opened
+top-bar-more-hint = The buttons the toolbar has no room for

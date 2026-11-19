@@ -24,6 +24,7 @@
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure};
 use crate::running::Running;
+use crate::stash_retry::{Retry, Route};
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 pub use pick::{MainlineDialog, Pick};
@@ -396,13 +397,16 @@ pub enum Dialog {
 
 /// The merge, cherry-pick or revert started and not yet answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Starting {
+pub struct Starting {
     /// What is merged or applied, as shown (branch name or abbreviated id).
     what: String,
     /// The branch it is merged into or applied onto.
     into: String,
     /// A squash merge: its own texts.
     squash: bool,
+    /// The parameters as they were sent: a start refused for local changes is sent again with
+    /// these after a stash ("Stash and …", U68).
+    params: Value,
 }
 
 /// The UI state for merge and in-progress operation.
@@ -556,8 +560,25 @@ impl MergeBox {
         });
         let label = start_label(&what, &into, squash);
         self.failure = None;
-        self.starting = Some(Starting { what, into, squash });
+        self.starting = Some(Starting {
+            what,
+            into,
+            squash,
+            params: params.clone(),
+        });
         Some((params, label))
+    }
+
+    /// The start refused for local changes is sent again after a stash ("Stash and …", U68):
+    /// waits for its answer as when it was first sent.
+    pub(crate) fn restart(&mut self, starting: Starting) {
+        self.failure = None;
+        self.starting = Some(starting);
+    }
+
+    /// The refused start window, to note HEAD in its retry or to take it.
+    pub(crate) fn failure_mut(&mut self) -> Option<&mut Failure> {
+        self.failure.as_mut()
     }
 
     /// Opens the "Continue" dialog with the message prepared by git, for the operation that
@@ -703,7 +724,18 @@ impl MergeBox {
         let title = if starting.squash { "Squash" } else { "Merge" };
         match result {
             Err(_) if kind == Some(ErrorKind::LocalChanges) => {
-                local_changes(&mut self.failure, title, &what, detail.as_deref())
+                let button = if starting.squash {
+                    tr!("stash-retry-squash")
+                } else {
+                    tr!("stash-retry-merge")
+                };
+                let retry = Retry::new(
+                    starting.params.clone(),
+                    what.clone(),
+                    button,
+                    Route::Merge(Op::Start, starting),
+                );
+                local_changes(&mut self.failure, title, &what, detail.as_deref(), retry)
             }
             Err(e) => {
                 // Engine refusals (detached HEAD, operation in progress, rev that does not
@@ -729,6 +761,7 @@ impl MergeBox {
                     explanation: explanation.clone(),
                     git,
                     stash: false,
+                    retry: None,
                 });
                 Received::Failed {
                     message: explanation,
@@ -850,14 +883,17 @@ impl MergeBox {
 }
 
 /// A start (`title`: Merge, Cherry-pick, Revert; `what`: its description) refused for
-/// uncommitted local changes: the window with "Stash…"; nothing changed.
+/// uncommitted local changes: the window with "Stash…"; nothing changed. `retry`: the start as
+/// it was sent, which the stash dialog opened from that window can send again.
 fn local_changes(
     failure: &mut Option<Failure>,
     title: &str,
     what: &str,
     files: Option<&str>,
+    retry: Retry,
 ) -> Received {
-    let window = fetch::local_changes_failure(tr!("merge-refused-title", title = title), files);
+    let mut window = fetch::local_changes_failure(tr!("merge-refused-title", title = title), files);
+    window.retry = Some(Box::new(retry));
     let message = tr!("merge-refused", what = what, error = &window.explanation);
     *failure = Some(window);
     Received::Failed {

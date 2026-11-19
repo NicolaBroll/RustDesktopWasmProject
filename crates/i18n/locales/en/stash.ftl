@@ -88,3 +88,22 @@ stash-notice-help = These files are conflicted and git has no operation in progr
 stash-notice-help-apply = { $name } was applied, but the same lines have changed since the commit it was created on: these files are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: { $name } stays in the list.
 stash-notice-help-pop = { $name } was applied, but the same lines have changed since the commit it was created on: these files are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: { $name } stays in the list (the pop doesn't drop it).
 stash-notice-how = To resolve the conflicts: click a file, choose in the conflict editor and “Mark as resolved” (or fix the file and stage it from the changes area). Then, if it's no longer needed, drop the stash. While conflicts remain, neither Stash nor Apply is possible.
+# "Stash and retry" (U68): the stash dialog opened from a command refused for local changes.
+# $label: the description of that command (sync-label-…, merge-start-label, branch-checkout-label…);
+# $name: the stash just made (stash@{0}); $reason: stash-retry-dropped-….
+stash-retry-pull = Stash and pull
+stash-retry-merge = Stash and merge
+stash-retry-squash = Stash and squash
+stash-retry-cherry-pick = Stash and cherry-pick
+stash-retry-revert = Stash and revert
+stash-retry-checkout = Stash and check out “{ $name }”
+stash-retry-body = The first button puts the changes into a stash, then runs the refused command again ({ $label }). They are not put back by themselves: bring them back with Apply or Pop from the Stashes section.
+stash-retry-help = Stashes the changes and, only if the stash succeeds, sends the refused command again as it was. The stash stays in the list
+stash-retry-plain-help = Only stashes the changes: the refused command is not sent again
+stash-retry-dropped = Changes stashed in { $name }. Not started again: { $label } ({ $reason }); start it again yourself
+stash-retry-dropped-head = the current branch or its commit is no longer the one it was refused on
+stash-retry-dropped-operation = an operation is in progress
+stash-retry-dropped-unknown = the state of the repository could not be checked
+stash-retry-dropped-busy = another operation or a dialog is in the way
+stash-retry-done = Changes stashed in { $name }. { $notice }
+stash-retry-kept = Did not complete: { $label }. The changes stay in { $name }: bring them back with Apply or Pop from the Stashes section.

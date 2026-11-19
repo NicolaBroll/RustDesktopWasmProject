@@ -355,8 +355,14 @@ pub(super) fn push_stash_dialog(
         .filter(|item| item.change == Change::Untracked)
         .count();
     ui.add(egui::Label::new(tr!("stash-dialog-body")).wrap());
+    // Opened from a refusal: what "Stash and …" does after the stash.
+    if let Some(retry) = &dialog.retry {
+        ui.add_space(4.0);
+        let text = tr!("stash-retry-body", label = retry.label());
+        ui.add(egui::Label::new(text).wrap());
+    }
     ui.add_space(8.0);
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let enter = default_enter(ui);
     let mut fields: PushFields = dialog.fields.clone();
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -400,13 +406,34 @@ pub(super) fn push_stash_dialog(
         ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
     }
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let idle = dialog.running.is_none();
-        let clicked = ui
-            .add_enabled(idle, primary_button(ui, tr!("stash-submit"), idle))
-            .clicked();
-        if (clicked || enter) && dialog.running.is_none() {
-            actions.push(Action::Stash(stash::Action::Submit));
+        match &dialog.retry {
+            // Opened from a refusal: "Stash and …" is the default, the plain stash stays.
+            Some(retry) => {
+                let and_retry = ui
+                    .add_enabled(idle, primary_button(ui, retry.button(), idle))
+                    .on_hover_text(tr!("stash-retry-help"))
+                    .clicked();
+                let plain = ui
+                    .add_enabled(idle, egui::Button::new(tr!("stash-submit")))
+                    .on_hover_text(tr!("stash-retry-plain-help"))
+                    .clicked();
+                // One of the two, never both: the retry writes a second time.
+                if plain {
+                    actions.push(Action::Stash(stash::Action::Submit));
+                } else if (and_retry || enter) && idle {
+                    actions.push(Action::Stash(stash::Action::SubmitAndRetry));
+                }
+            }
+            None => {
+                let clicked = ui
+                    .add_enabled(idle, primary_button(ui, tr!("stash-submit"), idle))
+                    .clicked();
+                if (clicked || enter) && idle {
+                    actions.push(Action::Stash(stash::Action::Submit));
+                }
+            }
         }
         if ui.add_enabled(idle, cancel_button()).clicked() {
             actions.push(Action::Stash(stash::Action::CloseDialog));

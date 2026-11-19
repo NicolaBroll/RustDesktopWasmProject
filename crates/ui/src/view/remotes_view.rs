@@ -143,7 +143,7 @@ pub(super) fn add_remote_dialog(
     ui.add_space(6.0);
     ui.add(egui::Label::new(tr!("remotes-add-explanation")).wrap());
     ui.add_space(8.0);
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let enter = default_enter(ui);
     let mut fields: AddFields = dialog.fields.clone();
     let mut changed = false;
     egui::Grid::new("remote-fields")
@@ -367,7 +367,7 @@ pub(super) fn edit_remote_dialog(ui: &mut Ui, dialog: &EditDialog, actions: &mut
     ui.add_space(6.0);
     ui.add(egui::Label::new(explanation).wrap());
     ui.add_space(8.0);
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let enter = default_enter(ui);
     let mut fields = dialog.fields.clone();
     let mut changed = false;
     let editable = !dialog.sending;

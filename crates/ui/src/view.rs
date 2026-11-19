@@ -54,7 +54,7 @@ mod top_bar;
 mod worktree_view;
 
 pub(crate) use auto_fetch_view::auto_fetch_notice;
-use auto_fetch_view::offline_icon;
+use auto_fetch_view::{offline_badge, offline_hint};
 pub(crate) use branches::branch_dialog;
 pub(crate) use clone_view::clone_dialog;
 use clone_view::create_buttons;
@@ -124,6 +124,38 @@ pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
                 ui.add(egui::Label::new(RichText::new(git.trim_end()).monospace()).wrap());
             });
     }
+}
+
+/// The default button of a dialog or of a panel, the one that does what the dialog is for
+/// ("Create branch", "Stash", "Clone", "Commit"): the accent fill while it can be pressed, so
+/// it stands apart from "Cancel" beside it; egui's grey when it cannot (`enabled`, the same
+/// value given to `add_enabled`).
+pub(crate) fn primary_button(
+    ui: &Ui,
+    label: impl Into<String>,
+    enabled: bool,
+) -> egui::Button<'static> {
+    if enabled {
+        let (fill, text) = theme::primary(ui.visuals());
+        egui::Button::new(RichText::new(label).color(text)).fill(fill)
+    } else {
+        egui::Button::new(label.into())
+    }
+}
+
+/// The default button of a dialog that destroys something (discard, delete, drop, force): the
+/// red fill instead of the accent of [`primary_button`].
+pub(crate) fn danger_button(ui: &Ui, label: impl Into<String>) -> egui::Button<'static> {
+    let visuals = ui.visuals();
+    egui::Button::new(RichText::new(label).color(visuals.strong_text_color()))
+        .fill(visuals.error_fg_color.gamma_multiply(0.35))
+}
+
+/// The other button of a dialog whose default button does something: it closes the dialog and
+/// nothing happens. One wording for all of them; the dialogs that only inform (failure,
+/// details, shortcuts, about, settings) say "Close".
+pub(crate) fn cancel_button() -> egui::Button<'static> {
+    egui::Button::new(tr!("common-cancel"))
 }
 
 /// When an entry that writes is disabled because it is waiting: the reason.

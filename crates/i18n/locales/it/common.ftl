@@ -1,5 +1,8 @@
 # Text shared by several areas.
 
+# The button beside the default button of a dialog: closes it, nothing happens. "Chiudi" and
+# not "Annulla": "Annulla" is the Undo of the top bar, which the confirmations name in their text.
+common-cancel = Chiudi
 common-wait = Aspetta l'operazione in corso (o chiudi il dialogo aperto)
 common-git-message = Messaggio di git:
 common-oid-hint =

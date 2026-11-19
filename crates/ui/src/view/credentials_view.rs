@@ -53,7 +53,7 @@ pub(crate) fn credential_dialog(
                 if ui.button(tr!("credentials-trust")).clicked() {
                     push(actions, credentials::Action::Answer);
                 }
-                if ui.button(tr!("credentials-cancel")).clicked() {
+                if ui.add(cancel_button()).clicked() {
                     push(actions, credentials::Action::Cancel);
                 }
             });
@@ -90,10 +90,14 @@ pub(crate) fn credential_dialog(
         ui.add(egui::Label::new(RichText::new(hint).weak().small()).wrap());
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button(tr!("credentials-ok")).clicked() || enter {
+            if ui
+                .add(primary_button(ui, tr!("credentials-ok"), true))
+                .clicked()
+                || enter
+            {
                 push(actions, credentials::Action::Answer);
             }
-            if ui.button(tr!("credentials-cancel")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 push(actions, credentials::Action::Cancel);
             }
         });

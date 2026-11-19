@@ -352,6 +352,9 @@ struct RepoView {
     select_after_load: Option<Oid>,
     /// HEAD when the automatic refresh in progress started (see `refresh::log_stale`).
     refresh_head: Option<Option<Oid>>,
+    /// The repo was just opened and nothing was selected by hand yet: the first status decides
+    /// what the tab shows first (see [`RepoView::set_status`]).
+    first_selection: bool,
 }
 
 impl RepoView {
@@ -401,6 +404,7 @@ impl RepoView {
             history: History::default(),
             select_after_load,
             refresh_head: None,
+            first_selection: true,
         };
         view.update_labels();
         view
@@ -417,8 +421,12 @@ impl RepoView {
     }
 
     /// New repo status, from `repo.status` or a write. Without changes the changes
-    /// row disappears: if it was selected we go back to the commit.
+    /// row disappears: if it was selected we go back to the commit. The first status of a repo
+    /// just opened selects "Uncommitted changes" when there are any (the stage area in front:
+    /// what was left to do), unless something was selected by hand in the meantime; never a
+    /// later one, so a refresh leaves the selection where it is.
     fn set_status(&mut self, status: Status) {
+        let first = std::mem::take(&mut self.first_selection);
         self.head = status.head.clone();
         self.stage = StageLists::new(&status);
         self.conflict.follow_status(&status);
@@ -430,6 +438,8 @@ impl RepoView {
             self.confirm = None;
             self.discard.cancel();
             self.clean.cancel();
+        } else if first {
+            self.select_worktree(true);
         }
         self.update_labels();
     }
@@ -460,6 +470,25 @@ impl RepoView {
     /// The last commit (HEAD), if it is among the loaded ones.
     fn head_commit(&self) -> Option<&Commit> {
         self.list.commit(self.head.target()?)
+    }
+
+    /// HEAD as the starting point of a new branch or tag (Ctrl+B, the "+" of "Local branches"
+    /// and of "Tags"): the current branch, as "New branch from here…" of its menu, or HEAD's
+    /// commit when detached. `None`: no commit yet.
+    fn head_start(&self) -> Option<branch::Start> {
+        let current = view::current_branch(&self.head).and_then(|name| {
+            let local = project_domain::RefKind::LocalBranch;
+            self.refs
+                .iter()
+                .find(|r| r.kind == local && r.short_name() == name)
+        });
+        Some(match current {
+            Some(info) => branch::Start::from_ref(info).0,
+            None => match self.head_commit() {
+                Some(commit) => branch::Start::of_commit(commit),
+                None => branch::Start::from_commit(self.head.target()?),
+            },
+        })
     }
 
     /// The state of the "Commit" button.
@@ -640,6 +669,8 @@ impl Tab {
             repo.search.keep();
             // A plain selection goes back from the comparison to one commit.
             repo.compare.close();
+            // Chosen by hand before the first status arrived: it stays.
+            repo.first_selection = false;
         }
         match action {
             // The tabs, the folder dialog, clone, settings and credentials belong to `App`.
@@ -1019,18 +1050,7 @@ impl Tab {
             }
             // As "New branch…" of the menu of the current branch (or of HEAD's commit).
             Command::NewBranch => {
-                let start = match view::current_branch(&repo.head).and_then(|name| {
-                    let local = project_domain::RefKind::LocalBranch;
-                    repo.refs
-                        .iter()
-                        .find(|r| r.kind == local && r.short_name() == name)
-                }) {
-                    Some(info) => branch::Start::from_ref(info).0,
-                    None => match repo.head_commit() {
-                        Some(commit) => branch::Start::of_commit(commit),
-                        None => branch::Start::from_commit(repo.head.target()?),
-                    },
-                };
+                let start = repo.head_start()?;
                 (!writing).then_some(Action::Branch(branch::Action::NewBranch(
                     start,
                     String::new(),
@@ -1391,9 +1411,12 @@ impl Tab {
                     if page.skip == 0 {
                         repo.search.refresh();
                     }
+                    // Under a selected changes row the list keeps its own selection; it gets
+                    // one if it has none (the first status arrived before the first page), so
+                    // there is a commit to go back to when the changes are gone.
                     if page.skip == 0
                         && let Some(id) = repo.select_after_load.take()
-                        && !repo.worktree_selected
+                        && (!repo.worktree_selected || repo.list.selected().is_none())
                     {
                         repo.list.select_id(id);
                     }

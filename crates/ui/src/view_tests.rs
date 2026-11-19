@@ -26,7 +26,13 @@ impl Platform for Inline {
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         job();
     }
+    fn home_folder(&self) -> Option<PathBuf> {
+        Some(HOME.into())
+    }
 }
+
+/// The home folder of the test platform.
+const HOME: &str = "/home/tester";
 
 /// A text painted in a frame and where.
 #[derive(Debug, Clone)]
@@ -390,7 +396,11 @@ fn welcome_without_a_repo() {
 #[test]
 fn the_repo_with_its_panels_at_any_size() {
     let mut screen = sample();
-    let painted = screen.frames(1);
+    // A repo with uncommitted changes opens on them (U67): the stage area in front.
+    assert!(screen.repo().worktree_selected);
+    assert_shows(&screen.frames(1), &["Staged (2)", "Commit message"]);
+    let head = screen.repo().head.target().expect("a commit");
+    let painted = screen.act(A::SelectCommit(head));
     assert_shows(
         &painted,
         &[
@@ -452,7 +462,7 @@ fn the_stage_area_and_its_confirmations() {
     );
     screen.shows(
         A::Discard(discard::Action::Discard(vec!["README.md".into()])),
-        &["Discard changes?", "Don't discard"],
+        &["Discard changes?", "Cancel"],
     );
     screen.act(A::Discard(discard::Action::Cancel));
     screen.shows(
@@ -581,7 +591,7 @@ fn branch_and_tag_dialogs() {
         ),
         (
             B::DeleteTag("v0.1.0".to_owned()),
-            &["Delete tag “v0.1.0”?", "Don't delete"],
+            &["Delete tag “v0.1.0”?", "Cancel"],
         ),
         (
             B::SetUpstream("main".to_owned()),
@@ -992,17 +1002,21 @@ fn a_rejected_push_and_failed_network_commands() {
     );
     // The failure is a modal dialog: the arrows do not move the selection under it, and Esc
     // closes it.
-    let selected = screen.repo().list.selected();
+    let selection = |screen: &Screen| {
+        let repo = screen.repo();
+        (repo.worktree_selected, repo.list.selected())
+    };
+    let selected = selection(&screen);
     screen.frame(vec![key(egui::Key::ArrowDown)]);
     screen.frames(2);
-    assert_eq!(screen.repo().list.selected(), selected);
+    assert_eq!(selection(&screen), selected);
     assert!(screen.repo().failure().is_some());
     screen.frame(vec![key(egui::Key::Escape)]);
     screen.frames(2);
     assert!(screen.repo().failure().is_none(), "Esc closes it");
     screen.frame(vec![key(egui::Key::ArrowDown)]);
     screen.frames(2);
-    assert_ne!(screen.repo().list.selected(), selected, "the keys are back");
+    assert_ne!(selection(&screen), selected, "the keys are back");
 
     // A failed pull is the same dialog; Enter presses "Close", which has the keyboard.
     screen.shows(
@@ -1641,4 +1655,146 @@ fn the_open_by_path_dialog() {
     screen.key(egui::Key::Escape, egui::Modifiers::NONE);
     assert!(screen.app.path_dialog.is_none());
     assert_eq!(screen.app.tabs.len(), 2);
+}
+
+/// U67: "Local branches" and "Tags" have the "+" of "Remotes" and "Stashes": the dialogs of
+/// "New branch from here…" and "New tag here…" at HEAD, with "Cancel" beside the default button.
+#[test]
+fn the_plus_of_local_branches_and_of_tags() {
+    use crate::branch::Action as B;
+    let plus = |painted: &[Painted], title: &str| {
+        let header = painted
+            .iter()
+            .find(|p| p.text.starts_with(title))
+            .unwrap_or_else(|| panic!("{title:?} is not on screen"));
+        painted
+            .iter()
+            .find(|p| p.text == crate::icons::PLUS && (p.pos.y - header.pos.y).abs() < 10.0)
+            .unwrap_or_else(|| panic!("no + beside {title:?}"))
+            .pos
+    };
+    let mut screen = sample();
+    let pos = plus(&screen.frames(2), "Local branches");
+    let painted = screen.click(pos + egui::vec2(4.0, 6.0), Primary);
+    assert_shows(
+        &painted,
+        &[
+            "New branch",
+            "The branch starts at main",
+            "Create branch",
+            "Cancel",
+        ],
+    );
+    let painted = screen.act(A::Branch(B::CloseDialog));
+    let pos = plus(&painted, "Tags");
+    let painted = screen.click(pos + egui::vec2(4.0, 6.0), Primary);
+    assert_shows(&painted, &["New tag", "Create tag", "Cancel"]);
+}
+
+/// U67: what "Amend" changes is one cut row where the hint of the button is, not four wrapped
+/// rows that push the fields up: the box is where it was, ticked or not.
+#[test]
+fn ticking_amend_does_not_move_the_commit_box() {
+    use crate::commit::Action as C;
+    let top = |painted: &[Painted]| {
+        let title = painted.iter().find(|p| p.text == "Commit message");
+        title.expect("the commit box").pos.y
+    };
+    let mut screen = sample();
+    let before = top(&screen.frames(2));
+    let painted = screen.act(A::Commit(C::SetAmend(true)));
+    let warning = painted
+        .iter()
+        .find(|p| p.text.starts_with("The last commit"))
+        .expect("the warning");
+    assert!(warning.cut, "one row, cut to the panel: {warning:?}");
+    assert!(warning.text.contains("The message is the current one"));
+    assert_eq!(top(&painted), before, "ticked");
+    let painted = screen.act(A::Commit(C::SetAmend(false)));
+    assert_eq!(top(&painted), before, "unticked");
+    assert!(
+        !painted
+            .iter()
+            .any(|p| p.text.starts_with("The last commit"))
+    );
+}
+
+/// U67: the settings window is as tall as its tallest page: title and "Close" stay where they
+/// are from one page to the other.
+#[test]
+fn the_settings_window_keeps_its_size_between_pages() {
+    use crate::settings::{Action as S, Section};
+    let corners = |painted: &[Painted]| {
+        let pos = |text: &str| {
+            let found = painted.iter().rfind(|p| p.text == text);
+            found
+                .unwrap_or_else(|| panic!("{text:?} is not on screen"))
+                .pos
+        };
+        (pos("Settings"), pos("Close"))
+    };
+    let mut screen = sample();
+    let general = corners(&screen.act(A::Settings(S::Open)));
+    let remotes = corners(&screen.shows(
+        A::Settings(S::Section(Section::Remotes)),
+        &["Automatic fetch"],
+    ));
+    assert_eq!(general, remotes);
+    let back = corners(&screen.act(A::Settings(S::Section(Section::General))));
+    assert_eq!(general, back);
+}
+
+/// U67: the automatic fetch that cannot reach the remote is a badge on "Fetch", painted over
+/// the button: no button of the bar moves when it appears.
+#[test]
+fn the_offline_badge_does_not_move_the_toolbar() {
+    let buttons = ["Undo", "Fetch", "Pull", "Push", "Refresh"];
+    let places = |painted: &[Painted]| {
+        let x = |text: &&str| painted.iter().find(|p| p.text == *text).map(|p| p.pos.x);
+        buttons.iter().map(x).collect::<Vec<_>>()
+    };
+    let clouds = |painted: &[Painted]| {
+        let cloud = |p: &&Painted| p.text == crate::icons::CLOUD;
+        painted.iter().filter(cloud).count()
+    };
+    let mut screen = sample();
+    let before = screen.frames(2);
+    let repo = screen.app.tabs[0].repo.as_mut().expect("open repo");
+    repo.auto_fetch
+        .unreachable("fatal: unable to access 'https://example.com/'".into());
+    let after = screen.frames(2);
+    assert_eq!(clouds(&after), clouds(&before) + 1, "the badge");
+    assert!(places(&before).iter().all(Option::is_some));
+    assert_eq!(places(&after), places(&before));
+}
+
+/// U67: blame and file history go back with the button of the diff header, and the clone
+/// dialog proposes the folder from the URL, beside the repo open.
+#[test]
+fn one_back_button_and_a_proposed_clone_folder() {
+    use crate::clone::{Action as C, Fields, Kind};
+    use crate::file::{Action as F, Mode};
+    let mut screen = sample();
+    let painted = screen.act(A::File(F::Open {
+        path: "README.md".into(),
+        rev: None,
+        mode: Mode::Blame,
+    }));
+    assert_shows(&painted, &["< Graph", "Blame"]);
+    assert!(!painted.iter().any(|p| p.text == "Close"));
+    screen.act(A::File(F::Close));
+
+    screen.act(A::Clone(C::Open(Kind::Clone)));
+    let painted = screen.act(A::Clone(C::Fields(Fields {
+        url: "git@example.com:owner/widgets.git".to_owned(),
+        ..Fields::default()
+    })));
+    assert_shows(&painted, &["Clone", "Cancel"]);
+    // The repo open has a relative path here, so no folder beside it: the home folder.
+    let url = "git@example.com:owner/widgets.git";
+    let folder = clone_base(&[PATH.to_owned()], Some(HOME.into()))
+        .and_then(|base| clone::proposed_folder(&base, url))
+        .expect("a folder is proposed");
+    assert!(folder.ends_with("widgets"), "{folder}");
+    assert!(painted.iter().any(|p| p.text == folder), "{folder}");
 }

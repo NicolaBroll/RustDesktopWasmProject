@@ -8,7 +8,6 @@ credentials-remote = Remote: { $remote }
 credentials-host-key-explanation = ssh does not know this server yet. Trust it only if the fingerprint above matches the one published by the server's owner.
 credentials-trust = Trust and continue
 credentials-ok = OK
-credentials-cancel = Cancel
 credentials-show = Show
 credentials-hide = Hide
 credentials-hint-helper = Saved only by your git credential helper: without one you will be asked again next time.

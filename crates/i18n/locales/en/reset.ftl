@@ -22,7 +22,6 @@ reset-hard-backup = They are first saved in a backup (refs/project/backup/reset-
 reset-hard-untracked = Untracked files are not touched.
 reset-warning = Warning: { $warning }
 reset-button = Reset ({ $mode })
-reset-cancel = Cancel
 reset-sending = Resetting…
 reset-label = Reset ({ $mode }) of { $moving } to { $id }
 reset-refused = The reset was refused, nothing changed: { $error }

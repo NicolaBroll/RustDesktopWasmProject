@@ -277,19 +277,14 @@ pub(crate) fn worktree_dialog(
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
+            let can = dialog.can_submit();
             let create = ui
-                .add_enabled(
-                    dialog.can_submit(),
-                    egui::Button::new(tr!("worktree-add-submit")),
-                )
+                .add_enabled(can, primary_button(ui, tr!("worktree-add-submit"), can))
                 .on_disabled_hover_text(dialog.problem().unwrap_or_else(wait));
             if (create.clicked() || enter) && dialog.can_submit() {
                 actions.push(Action::Worktree(worktree::Action::Submit));
             }
-            if ui
-                .add_enabled(!running, egui::Button::new(tr!("confirm-cancel")))
-                .clicked()
-            {
+            if ui.add_enabled(!running, cancel_button()).clicked() {
                 actions.push(Action::Worktree(worktree::Action::CloseAdd));
             }
             if running {
@@ -417,15 +412,12 @@ pub(crate) fn confirm_worktree_remove(
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let label = tr!("worktree-remove-button");
-                    let button = egui::Button::new(
-                        RichText::new(label).color(ui.visuals().strong_text_color()),
-                    )
-                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+                    let button = danger_button(ui, label);
                     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.add(button).clicked() && !enter {
                         actions.push(Action::Worktree(worktree::Action::ConfirmRemove));
                     }
-                    let cancel = ui.button(tr!("confirm-cancel"));
+                    let cancel = ui.add(cancel_button());
                     if ui.memory(|m| m.focused().is_none()) {
                         cancel.request_focus();
                     }

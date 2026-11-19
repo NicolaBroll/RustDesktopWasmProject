@@ -75,14 +75,12 @@ stash-include-untracked-help = Mette nello stash anche i file nuovi non ancora a
 stash-keep-index = Tieni lo stage
 stash-keep-index-help = Quello che è in stage resta in stage (e nei file), ma è salvato anche nello stash; il resto si mette da parte
 stash-submit = Stash
-stash-close = Chiudi
 stash-sending = Stash…
 stash-drop-title = Eliminare { $name }?
 stash-drop-body = Lo stash «{ $title }» esce dall'elenco: le modifiche che contiene non si potranno più applicare da qui. I file del repo non cambiano.
 stash-drop-what-happens = Cosa succede:
 stash-drop-undo = Con «Annulla» nella barra in alto lo stash torna in cima all'elenco (stash@{"{"}0{"}"}), finché l'app resta aperta: il diario delle operazioni è in memoria. Dopo la chiusura resta il backup del suo commit in refs/project/backup/stash-….
 stash-drop-confirm = Elimina lo stash
-stash-drop-keep = Non eliminare
 # The notice in the tab: conflicted files and no operation in progress (U63).
 stash-notice-title = Conflitti da uno stash
 stash-notice-title-applied = Conflitti da { $name }, che resta nell'elenco

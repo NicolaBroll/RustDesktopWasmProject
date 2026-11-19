@@ -29,10 +29,10 @@ pub(crate) fn confirm_write(ctx: &egui::Context, write: &PendingWrite, actions: 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let label = tr!("confirm-resolve-button", n = n);
-            if ui.button(label).clicked() {
+            if ui.add(primary_button(ui, label, true)).clicked() {
                 actions.push(Action::Stage(stage::Action::Confirm));
             }
-            if ui.button(tr!("confirm-cancel")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 actions.push(Action::Stage(stage::Action::Cancel));
             }
         });
@@ -84,13 +84,11 @@ pub(crate) fn confirm_discard(ctx: &egui::Context, pending: &Discard, actions: &
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let label = tr!("confirm-discard-button", n = n);
-            let button =
-                egui::Button::new(RichText::new(label).color(ui.visuals().strong_text_color()))
-                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, label);
             if ui.add(button).clicked() {
                 actions.push(Action::Discard(discard::Action::Confirm));
             }
-            if ui.button(tr!("confirm-discard-keep")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 actions.push(Action::Discard(discard::Action::Cancel));
             }
         });
@@ -138,14 +136,12 @@ fn confirm_discard_lines(
         ui.add(egui::Label::new(tr!("confirm-discard-lines-backup")).wrap());
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let button =
-                egui::Button::new(RichText::new(button).color(ui.visuals().strong_text_color()))
-                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, button);
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui.add(button).clicked() && !enter {
                 actions.push(Action::Discard(discard::Action::Confirm));
             }
-            let cancel = ui.button(tr!("confirm-cancel"));
+            let cancel = ui.add(cancel_button());
             if ui.memory(|m| m.focused().is_none()) {
                 cancel.request_focus();
             }
@@ -196,14 +192,12 @@ pub(crate) fn confirm_clean(ctx: &egui::Context, pending: &Clean, actions: &mut 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let label = tr!("clean-confirm-button", n = n);
-            let button =
-                egui::Button::new(RichText::new(label).color(ui.visuals().strong_text_color()))
-                    .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, label);
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui.add(button).clicked() && !enter {
                 actions.push(Action::Clean(clean::Action::Confirm));
             }
-            let cancel = ui.button(tr!("confirm-cancel"));
+            let cancel = ui.add(cancel_button());
             if ui.memory(|m| m.focused().is_none()) {
                 cancel.request_focus();
             }
@@ -247,10 +241,13 @@ pub(crate) fn confirm_amend(
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button(tr!("confirm-amend-button")).clicked() {
+            if ui
+                .add(primary_button(ui, tr!("confirm-amend-button"), true))
+                .clicked()
+            {
                 actions.push(Action::Commit(commit::Action::Confirm));
             }
-            if ui.button(tr!("confirm-cancel")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 actions.push(Action::Commit(commit::Action::Cancel));
             }
         });

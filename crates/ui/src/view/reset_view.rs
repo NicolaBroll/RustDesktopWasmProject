@@ -87,18 +87,19 @@ pub(crate) fn reset_dialog(ctx: &egui::Context, dialog: &ResetDialog, actions: &
         ui.horizontal(|ui| {
             let hard = dialog.mode == Mode::Hard
                 && matches!(&dialog.phase, Phase::Ready(p) | Phase::Sending(p) if !p.files.is_empty());
-            let mut button = egui::Button::new(
-                RichText::new(tr!("reset-button", mode = dialog.mode.param()))
-                    .color(ui.visuals().strong_text_color()),
-            );
-            if hard {
-                button = button.fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
-            }
-            if ui.add_enabled(dialog.can_submit(), button).clicked() {
+            let label = tr!("reset-button", mode = dialog.mode.param());
+            let can = dialog.can_submit();
+            // A hard reset that overwrites files is red; the others are the default button.
+            let button = if hard {
+                danger_button(ui, label)
+            } else {
+                primary_button(ui, label, can)
+            };
+            if ui.add_enabled(can, button).clicked() {
                 actions.push(Action::Reset(reset::Action::Submit));
             }
             if ui
-                .add_enabled(!sending, egui::Button::new(tr!("reset-cancel")))
+                .add_enabled(!sending, cancel_button())
                 .clicked()
             {
                 actions.push(Action::Reset(reset::Action::Close));

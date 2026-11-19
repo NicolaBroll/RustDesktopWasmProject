@@ -61,7 +61,6 @@ pub(crate) fn top_bar(
         ui.separator();
         let enabled = can_write && network.is_none();
         fetch_buttons(ui, repo, enabled, actions);
-        offline_icon(ui, &repo.auto_fetch);
         sync_buttons(ui, repo, enabled, actions);
         ui.separator();
         stash_push_button(
@@ -323,13 +322,26 @@ fn fetch_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<
     let mut hint = with_shortcut(ui.ctx(), &tr!("top-bar-fetch-hint"), Command::Fetch);
     hint.push('\n');
     hint.push_str(&last_fetch_text(repo.auto_fetch.last_fetch()));
+    // The automatic fetch that cannot reach the remote: a badge on the button and the reason in
+    // its tooltip, also while the button waits.
+    let offline = offline_hint(&repo.auto_fetch);
+    let mut waiting = wait();
+    if let Some(offline) = &offline {
+        for text in [&mut hint, &mut waiting] {
+            text.push_str("\n\n");
+            text.push_str(offline);
+        }
+    }
     let button = ui
         .add_enabled(
             enabled,
             ToolButton::new(icons::FETCH, &tr!("top-bar-fetch")),
         )
         .on_hover_text(hint)
-        .on_disabled_hover_text(wait());
+        .on_disabled_hover_text(waiting);
+    if offline.is_some() {
+        offline_badge(ui, button.rect);
+    }
     if button.clicked() {
         actions.push(Action::Fetch(fetch::Action::Fetch(None)));
     }

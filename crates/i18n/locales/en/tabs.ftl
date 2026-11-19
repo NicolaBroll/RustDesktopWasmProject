@@ -10,4 +10,3 @@ tabs-open-path-title = Open repository
 tabs-open-path-explanation = Type or paste the path of the repository's folder.
 tabs-open-path-hint = /path/to/repository
 tabs-open-path-open = Open
-tabs-open-path-cancel = Cancel

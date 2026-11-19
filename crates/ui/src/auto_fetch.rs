@@ -11,7 +11,7 @@
 //!
 //! Errors never open a window: authentication suspends the timer of the tab and leaves a notice
 //! under the bar with "Retry"; an unreachable remote doubles the wait (up to [`MAX_WAIT`], back to
-//! the interval after a fetch that works) and shows only an icon in the bar.
+//! the interval after a fetch that works) and shows only a badge on "Fetch".
 
 use crate::fetch;
 use crate::{Done, ErrorKind, RepoView, Tab};
@@ -162,7 +162,7 @@ impl AutoFetch {
         self.suspended.as_ref().filter(|_| !self.off())
     }
 
-    /// git's text of the network error, for the icon in the bar (not while off).
+    /// git's text of the network error, for the badge on "Fetch" (not while off).
     pub fn offline(&self) -> Option<&str> {
         self.offline.as_deref().filter(|_| !self.off())
     }

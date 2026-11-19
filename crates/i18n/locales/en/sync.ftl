@@ -95,7 +95,6 @@ sync-force-confirm-changed = The remote branch has changed since you saw this co
 sync-force-confirm-lost = What is lost on the remote:
 sync-force-confirm-button = Force push
 sync-force-confirm-gone = The remote-tracking branch no longer exists: close, Fetch and try again
-sync-force-confirm-cancel = Don't force
 sync-label-push-tag = Push of tag “{ $tag }” to “{ $remote }”
 sync-push-tag-new = Tag “{ $tag }” published on “{ $remote }” (at { $id })
 sync-push-tag-new-annotated = Annotated tag “{ $tag }” published on “{ $remote }” (at { $id })

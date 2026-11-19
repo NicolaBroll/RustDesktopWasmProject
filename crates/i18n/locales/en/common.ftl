@@ -1,5 +1,7 @@
 # Text shared by several areas.
 
+# The button beside the default button of a dialog: closes it, nothing happens.
+common-cancel = Cancel
 common-wait = Wait for the current operation (or close the open dialog)
 common-git-message = Message from git:
 common-oid-hint =

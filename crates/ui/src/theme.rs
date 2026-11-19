@@ -35,7 +35,10 @@ pub(crate) fn mono() -> FontId {
 /// [`light`]).
 pub(crate) fn install_text_styles(ctx: &egui::Context) {
     ctx.style_mut_of(egui::Theme::Dark, |style| dark(&mut style.visuals));
-    ctx.style_mut_of(egui::Theme::Light, |style| light(&mut style.visuals));
+    ctx.style_mut_of(egui::Theme::Light, |style| {
+        light(&mut style.visuals);
+        light_scroll(&mut style.spacing.scroll);
+    });
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (TextStyle::Small, small()),
@@ -76,6 +79,17 @@ fn light(visuals: &mut egui::Visuals) {
     visuals.error_fg_color = Color32::from_rgb(0xb4, 0x14, 0x1e);
     visuals.selection.stroke.color = Color32::from_rgb(0, 40, 70);
 }
+
+/// The scrollbar handle of the light theme. egui paints it with the text color of a widget in
+/// its state, at an opacity: under the mouse or dragged that is black at full opacity, a black
+/// bar on a white-grey panel. At this opacity it is a mid grey, darker on the handle than
+/// beside it, and still at least 3:1 against the panel.
+fn light_scroll(scroll: &mut egui::style::ScrollStyle) {
+    scroll.interact_handle_opacity = LIGHT_HANDLE_OPACITY;
+}
+
+/// Opacity of the scrollbar handle of the light theme while the mouse is on the bar.
+const LIGHT_HANDLE_OPACITY: f32 = 0.6;
 
 /// The border of fields and buttons in the light theme: at least 3:1 against the panel, as
 /// a field's border should be.
@@ -237,6 +251,43 @@ mod tests {
         let mut visuals = egui::Visuals::light();
         light(&mut visuals);
         visuals
+    }
+
+    /// The scrollbar handle of the light theme under the mouse and dragged: a mid grey (it was
+    /// black), at least 3:1 against the panel and against the bar's own background.
+    #[test]
+    fn the_light_scrollbar_handle_is_a_mid_grey_that_reads() {
+        let visuals = light_theme();
+        let mut scroll = egui::style::ScrollStyle::default();
+        light_scroll(&mut scroll);
+        assert!(scroll.floating && scroll.foreground_color, "egui's default");
+        let panel = visuals.panel_fill;
+        let bar = over(
+            visuals.extreme_bg_color,
+            scroll.interact_background_opacity,
+            panel,
+        );
+        let states = [
+            ("beside the handle", &visuals.widgets.inactive),
+            ("on the handle", &visuals.widgets.hovered),
+            ("dragged", &visuals.widgets.active),
+        ];
+        for (what, widget) in states {
+            let color = widget.fg_stroke.color;
+            let handle = over(color, scroll.interact_handle_opacity, bar);
+            reads(what, handle, panel, 3.0);
+            reads(what, handle, bar, 3.0);
+            let ratio = contrast(handle, panel);
+            assert!(ratio <= 7.0, "{what}: {ratio:.2}, as dark as text");
+        }
+        // The mouse in the area, not on the bar: the same grey, on the panel.
+        let idle = visuals.widgets.inactive.fg_stroke.color;
+        reads(
+            "in the area",
+            over(idle, scroll.active_handle_opacity, panel),
+            panel,
+            3.0,
+        );
     }
 
     #[track_caller]

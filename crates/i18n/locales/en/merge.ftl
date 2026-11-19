@@ -110,7 +110,6 @@ merge-message-label = Message of the { $noun }
 merge-create-button = Create { $noun }
 merge-committing-hint = Commit in progress
 merge-write-message = Write the message
-merge-close = Close
 merge-rebase-continue-text = Git goes on with the remaining commits of the rebase: the commit it stopped on is created with what is staged and keeps its message. It may stop again on the next conflict.
 merge-rebase-continue-text-branch = Git goes on with the remaining commits of the rebase of “{ $branch }”: the commit it stopped on is created with what is staged and keeps its message. It may stop again on the next conflict; when it finishes, “Undo” in the top bar puts the branch back.
 merge-rebase-continue-button = Continue { $name }

@@ -1340,7 +1340,7 @@ mod tests {
             panic!()
         };
         assert!(reason.contains("stash@{0}"), "{reason}");
-        // Nothing changed until confirmed; "Don't drop" closes.
+        // Nothing changed until confirmed; "Cancel" closes.
         list(&registry, &mut session, &mut b);
         assert_eq!(b.list().unwrap().len(), 1);
         b.close();

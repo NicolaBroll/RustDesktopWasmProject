@@ -96,32 +96,33 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
                     title = tr!("refs-local-branches"),
                     n = local.matches
                 );
-                section(
-                    ui,
-                    "ref-local",
-                    icons::BRANCH,
-                    &title,
-                    true,
-                    |_| {},
-                    |ui| {
-                        column.rows(ui, "ref-local", local, &mut toggled, actions);
-                    },
-                );
+                let mut added = Vec::new();
+                let add = |ui: &mut Ui| {
+                    let hint = tr!("refs-add-branch-hint");
+                    if let Some(start) = column.add_from_head(ui, hint) {
+                        let new = branch::Action::NewBranch(start, String::new());
+                        added.push(Action::Branch(new));
+                    }
+                };
+                section(ui, "ref-local", icons::BRANCH, &title, true, add, |ui| {
+                    column.rows(ui, "ref-local", local, &mut toggled, actions);
+                });
+                actions.extend(added);
             }
             remotes_section(ui, &column, remote, &mut toggled, actions);
             if !column.filtering || tags.matches > 0 {
                 let title = tr!("refs-section", title = tr!("refs-tags"), n = tags.matches);
-                section(
-                    ui,
-                    "ref-tag",
-                    icons::TAG,
-                    &title,
-                    false,
-                    |_| {},
-                    |ui| {
-                        column.rows(ui, "ref-tag", tags, &mut toggled, actions);
-                    },
-                );
+                let mut added = Vec::new();
+                let add = |ui: &mut Ui| {
+                    let hint = tr!("refs-add-tag-hint");
+                    if let Some(start) = column.add_from_head(ui, hint) {
+                        added.push(Action::Branch(branch::Action::NewTag(start)));
+                    }
+                };
+                section(ui, "ref-tag", icons::TAG, &title, false, add, |ui| {
+                    column.rows(ui, "ref-tag", tags, &mut toggled, actions);
+                });
+                actions.extend(added);
             }
             if !column.filtering {
                 stash_section(ui, repo, column.can_write, actions);
@@ -316,6 +317,21 @@ struct Column<'a> {
 }
 
 impl Column<'_> {
+    /// The "+" of "Local branches" and of "Tags": HEAD as the starting point when clicked, for
+    /// the same dialog as "New branch from here…" (Ctrl+B) or "New tag here…". Disabled, with
+    /// the reason on hover, during a write or with a dialog open and before the first commit.
+    fn add_from_head(&self, ui: &mut Ui, hint: String) -> Option<Start> {
+        let start = self.repo.head_start();
+        let button = add_button(ui, self.can_write && start.is_some())
+            .on_hover_text(hint)
+            .on_disabled_hover_text(if start.is_some() {
+                wait()
+            } else {
+                tr!("refs-add-no-commit")
+            });
+        start.filter(|_| button.clicked())
+    }
+
     /// The rows of a section; the folders clicked end up in `toggled` (`<salt>:<path>`).
     fn rows(
         &self,

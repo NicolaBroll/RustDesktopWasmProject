@@ -8,7 +8,6 @@ credentials-remote = Remoto: { $remote }
 credentials-host-key-explanation = ssh non conosce ancora questo server. Fidati solo se l'impronta qui sopra coincide con quella pubblicata da chi gestisce il server.
 credentials-trust = Fidati e continua
 credentials-ok = OK
-credentials-cancel = Annulla
 credentials-show = Mostra
 credentials-hide = Nascondi
 credentials-hint-helper = Salvate solo dal credential helper di git: senza, ti verranno chieste di nuovo la prossima volta.

@@ -1,5 +1,5 @@
 //! Every key used in the UI code exists in all languages. Keys always go through the `tr!`
-//! macro with a literal (`tr!("merge-close")`): here they are read from the sources.
+//! macro with a literal (`tr!("common-cancel")`): here they are read from the sources.
 
 use project_i18n::Lang;
 use std::path::Path;

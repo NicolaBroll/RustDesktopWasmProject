@@ -12,7 +12,6 @@ sync-pull-cancelled = { $label } cancelled: the branch was not touched (remote-t
 sync-push-cancelled = { $label } cancelled: if the upload had already finished the remote may have been updated; Fetch to check
 sync-failed-auth = { $label } failed: authentication rejected or required
 sync-failed-unreachable = { $label } failed: remote unreachable
-sync-pull-conflict = { $label } aborted: the { $operation } has conflicts, the repo is as it was
 sync-rejected = { $label } rejected: { $reason }
 sync-not-possible-title = { $label } not possible
 sync-not-possible = { $label } not possible: { $error }
@@ -71,17 +70,6 @@ sync-push-set-upstream = ; upstream set to { $target }
 sync-push-status-not-reread = Push done, but the status could not be reread: { $error }
 sync-push-refs-not-reread = Push done, but the refs could not be reread: { $error }
 sync-close = Close
-sync-conflict-title = Pull aborted: conflicts
-sync-conflict-explanation = The { $operation } with the upstream stopped on a conflict and was aborted: the repo is as it was before the pull (branch, index and files didn't change). The fetch, however, is done: the remote-tracking branch shows the incoming commits.
-sync-conflict-hint = You can pull again with { $other } (or the same strategy): a pull that stops on a conflict now stays in progress and the files are resolved here, then “Continue…” or “Abort…” in the top panel; or keep working on the branch and integrate later, or resolve from a terminal.
-sync-conflict-no-files = Git didn't list the files.
-sync-conflict-files = { $n ->
-    [one] Conflicted file:
-   *[other] { $n } conflicted files:
-}
-sync-engine-message = Engine message
-sync-pull-with = Pull with { $other }
-sync-pull-with-hint = Retry the pull with { $other } instead of { $operation }, just this once (the configuration doesn't change)
 sync-rejected-title = Push rejected
 sync-rejected-branch = Branch: “{ $branch }”
 sync-pull-button = Pull

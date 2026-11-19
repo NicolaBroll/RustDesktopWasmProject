@@ -83,8 +83,7 @@ use stash_view::*;
 pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
 pub(crate) use submodule_view::outdated_notice;
 use submodule_view::submodule_section;
-use sync_view::*;
-pub(crate) use sync_view::{failure_window, sync_window};
+pub(crate) use sync_view::{failure_dialog, sync_window};
 pub(crate) use tab_strip::{TabLabel, tab_strip_panel};
 pub use title_bar::WindowFrame;
 pub(crate) use title_bar::{

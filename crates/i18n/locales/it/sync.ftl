@@ -12,7 +12,6 @@ sync-pull-cancelled = { $label } interrotto: il branch non è stato toccato (i b
 sync-push-cancelled = { $label } interrotto: se l'invio era già finito il remoto potrebbe essere aggiornato; fare Fetch per controllare
 sync-failed-auth = { $label } non riuscito: autenticazione rifiutata o richiesta
 sync-failed-unreachable = { $label } non riuscito: remoto non raggiungibile
-sync-pull-conflict = { $label } annullato: il { $operation } ha conflitti, il repo è com'era
 sync-rejected = { $label } rifiutato: { $reason }
 sync-not-possible-title = { $label } non possibile
 sync-not-possible = { $label } non possibile: { $error }
@@ -65,17 +64,6 @@ sync-push-set-upstream = ; upstream impostato su { $target }
 sync-push-status-not-reread = Push fatto, ma lo stato non si rilegge: { $error }
 sync-push-refs-not-reread = Push fatto, ma i ref non si rileggono: { $error }
 sync-close = Chiudi
-sync-conflict-title = Pull annullato: conflitti
-sync-conflict-explanation = Il { $operation } con l'upstream si è fermato in conflitto ed è stato annullato: il repo è com'era prima del pull (branch, indice e file non sono cambiati). Il fetch invece è fatto: il branch remoto mostra i commit arrivati.
-sync-conflict-hint = Si può rifare il pull con { $other } (o con la stessa strategia): un pull che va in conflitto ora resta in corso e i file si risolvono qui, poi «Continua…» o «Annulla…» nel riquadro in alto; oppure continuare a lavorare sul branch e integrare dopo, o risolvere da terminale.
-sync-conflict-no-files = Git non ha indicato i file.
-sync-conflict-files = { $n ->
-    [one] File in conflitto:
-   *[other] { $n } file in conflitto:
-}
-sync-engine-message = Messaggio del motore
-sync-pull-with = Pull con { $other }
-sync-pull-with-hint = Riprova il pull con { $other } invece di { $operation }, solo per questa volta (la configurazione non cambia)
 sync-rejected-title = Push rifiutato
 sync-rejected-branch = Branch: «{ $branch }»
 sync-pull-button = Pull

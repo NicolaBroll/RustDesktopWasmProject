@@ -371,7 +371,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   warnings and errors that name a ref are shown as they are.
 
 ### U62 — Error dialogs are modal; one dialog for "local changes"
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** `failure_window` (fetch failed, remote error, merge or pull refused) is a floating
   `egui::Window`: Esc does not close it, the keyboard stays under it, two of them (fetch and
   merge) lie exactly on top of each other, it stays when the user fixed the cause elsewhere
@@ -385,6 +385,14 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   not move the selection under it; merge refused then fetch failed never show two windows;
   checkout of `experiment` with `src/lib.rs` modified offers "Stash…"; smoke tests updated; CI
   green.
+- **Done:** `view::failure_dialog` is an `egui::Modal` (Esc or Enter close it, the keyboard
+  starts on "Stash…" or "Close", "Copy message" when git said something). `failure.rs`: each
+  area keeps its failure, `RepoView::failure` shows the oldest one waiting and `modal_open`
+  counts it, so nothing starts under it; "Stash…" opens the stash dialog even with another
+  failure waiting. A refused checkout is `BranchBox::refusal`, the same dialog: when the status
+  does not show every file as a tracked change, the text adds that untracked files need
+  "Include untracked files". Removed: the pull conflict window, `ErrorKind::PullConflict` (the
+  engine error now gets the generic failure dialog), the UI's own pull `Strategy`.
 
 ### U63 — Rejected push and stash conflicts are notices in the tab
 - [ ] **Agent:** `egui-ui`

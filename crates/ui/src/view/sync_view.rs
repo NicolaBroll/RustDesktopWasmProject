@@ -1,51 +1,64 @@
 use super::*;
 use crate::{fetch, stash, sync};
 
-/// The window of a failed operation: what happened, what to do, git's text, and "Stash…"
-/// for a refusal because of local changes. It does not block the rest of the window;
-/// `dismiss` closes it.
-pub(crate) fn failure_window(
+/// The dialog of a failed or refused operation: what happened, what to do, git's text (with
+/// "Copy message") and "Stash…" for a refusal because of local changes. Modal like the
+/// confirmations: Esc closes it, the keyboard starts on "Stash…" or "Close" (Enter presses
+/// it); `dismiss` closes it.
+pub(crate) fn failure_dialog(
     ctx: &egui::Context,
-    id: &str,
     failure: &Failure,
-    dismiss: Action,
+    dismiss: &Action,
     actions: &mut Vec<Action>,
 ) {
-    let mut open = true;
-    egui::Window::new(&failure.title)
-        .id(egui::Id::unique(id))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(420.0)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.add(egui::Label::new(&failure.explanation).wrap());
-            git_text(ui, failure.git.as_deref());
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if failure.stash
-                    && ui
-                        .button(tr!("stage-stash-button"))
-                        .on_hover_text(tr!("common-stash-button-help"))
-                        .clicked()
-                {
-                    actions.push(dismiss.clone());
-                    actions.push(Action::Stash(stash::Action::Open));
-                }
-                if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(dismiss.clone());
-                }
+    let modal = egui::Modal::new(egui::Id::unique("failure")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        ui.heading(&failure.title);
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(&failure.explanation).wrap());
+        let git = failure.git.as_deref().filter(|g| !g.trim().is_empty());
+        git_text(ui, git);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            // Enter presses the focused button: the stash when offered, otherwise "Close".
+            let stash = failure.stash.then(|| {
+                ui.button(tr!("stage-stash-button"))
+                    .on_hover_text(tr!("common-stash-button-help"))
             });
+            let close = ui.button(tr!("sync-close"));
+            if ui.memory(|m| m.focused().is_none()) {
+                stash.as_ref().unwrap_or(&close).request_focus();
+            }
+            if stash.is_some_and(|s| s.clicked()) {
+                actions.push(dismiss.clone());
+                actions.push(Action::Stash(stash::Action::Open));
+            }
+            if close.clicked() {
+                actions.push(dismiss.clone());
+            }
+            if let Some(git) = git
+                && ui
+                    .button(tr!("common-copy-message"))
+                    .on_hover_text(tr!("common-copy-message-help"))
+                    .clicked()
+            {
+                ui.ctx().copy_text(format!(
+                    "{}\n{}\n\n{}",
+                    failure.title,
+                    failure.explanation,
+                    git.trim_end()
+                ));
+            }
         });
-    if !open {
-        actions.push(dismiss);
+    });
+    if modal.should_close() {
+        actions.push(dismiss.clone());
     }
 }
 
-/// The pull and push window: error, conflict, rejection or force confirmation. `writing`:
-/// a write is in progress; `can_write`: no write and no dialog, the buttons that
-/// retry are enabled.
+/// The pull and push window: rejection or force confirmation (a failure is drawn by
+/// [`failure_dialog`], one at a time with those of the other areas). `writing`: a write is in
+/// progress; `can_write`: no write and no dialog, the buttons that retry are enabled.
 pub(crate) fn sync_window(
     ctx: &egui::Context,
     window: &Window,
@@ -54,96 +67,9 @@ pub(crate) fn sync_window(
     actions: &mut Vec<Action>,
 ) {
     match window {
-        Window::Failure(failure) => {
-            failure_window(
-                ctx,
-                "sync-error",
-                failure,
-                Action::Sync(sync::Action::Dismiss),
-                actions,
-            );
-        }
-        Window::Conflict(conflict) => conflict_window(ctx, conflict, can_write, actions),
+        Window::Failure(_) => {}
         Window::Rejected(rejected) => rejected_window(ctx, rejected, can_write, actions),
         Window::ConfirmForce(confirm) => confirm_force(ctx, confirm, writing, actions),
-    }
-}
-
-/// Maximum height of the conflicted file list; beyond it scrolls.
-pub(super) const CONFLICT_LIST_HEIGHT: f32 = 160.0;
-
-/// Pull stopped on a conflict and already aborted by the engine (today only the rebase: a stopped merge stays
-/// in progress and is resolved from the operation panel).
-pub(super) fn conflict_window(
-    ctx: &egui::Context,
-    conflict: &sync::Conflict,
-    can_write: bool,
-    actions: &mut Vec<Action>,
-) {
-    let mut open = true;
-    let operation = conflict.operation.to_string();
-    egui::Window::new(tr!("sync-conflict-title"))
-        .id(egui::Id::unique("pull-conflict"))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(460.0)
-        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.add(
-                egui::Label::new(tr!("sync-conflict-explanation", operation = &operation)).wrap(),
-            );
-            ui.add_space(4.0);
-            ui.add(
-                egui::Label::new(tr!("sync-conflict-hint", other = conflict.other().name())).wrap(),
-            );
-            ui.add_space(6.0);
-            let n = conflict.files.len();
-            ui.strong(match n {
-                0 => tr!("sync-conflict-no-files"),
-                n => tr!("sync-conflict-files", n = n),
-            });
-            let row = ui.text_style_height(&egui::TextStyle::Monospace);
-            egui::ScrollArea::vertical()
-                .id_salt("conflict-file")
-                .max_height(CONFLICT_LIST_HEIGHT)
-                .auto_shrink([false, true])
-                .show_rows(ui, row, n, |ui, range| {
-                    for path in &conflict.files[range] {
-                        ui.monospace(path);
-                    }
-                });
-            ui.add_space(6.0);
-            ui.collapsing(tr!("sync-engine-message"), |ui| {
-                ui.add(egui::Label::new(RichText::new(&conflict.message).monospace()).wrap());
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let other = conflict.other();
-                let button = ui
-                    .add_enabled(
-                        can_write,
-                        egui::Button::new(tr!("sync-pull-with", other = other.name())),
-                    )
-                    .on_hover_text(tr!(
-                        "sync-pull-with-hint",
-                        other = other.name(),
-                        operation = &operation
-                    ))
-                    .on_disabled_hover_text(wait());
-                if button.clicked() {
-                    actions.push(Action::Sync(sync::Action::Pull(
-                        conflict.branch.clone(),
-                        Some(other),
-                    )));
-                }
-                if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(Action::Sync(sync::Action::Dismiss));
-                }
-            });
-        });
-    if !open {
-        actions.push(Action::Sync(sync::Action::Dismiss));
     }
 }
 

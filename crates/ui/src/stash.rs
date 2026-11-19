@@ -730,9 +730,11 @@ impl Tab {
     pub(crate) fn apply_stash(&mut self, action: Action) {
         match action {
             Action::Open => {
+                // "Stash…" in a failure dialog closes it first; another failure still waiting
+                // does not keep the stash dialog from opening (it is shown above it).
                 if let Some(repo) = &mut self.repo
                     && self.executor.writing().is_none()
-                    && !repo.modal_open()
+                    && !repo.dialog_open()
                 {
                     repo.stash.open_push();
                 }

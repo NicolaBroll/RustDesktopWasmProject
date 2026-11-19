@@ -21,7 +21,6 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
                 };
                 delete_tag_dialog(ui, delete, reason, actions);
             }
-            Dialog::Refused(refused) => refused_dialog(ui, refused, actions),
             Dialog::Upstream(dialog) => upstream_dialog(ui, dialog, actions),
             Dialog::Detach(dialog) => detach_dialog(ui, dialog, actions),
         }
@@ -210,32 +209,6 @@ pub(super) fn delete_tag_dialog(
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
-}
-
-/// Maximum height of the file list of the refused checkout; beyond it scrolls.
-pub(super) const REFUSED_LIST_HEIGHT: f32 = 160.0;
-
-pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &mut Vec<Action>) {
-    ui.heading(tr!("branch-refused-heading", name = &refused.name));
-    ui.add_space(6.0);
-    ui.add(egui::Label::new(tr!("branch-refused-text")).wrap());
-    ui.add_space(6.0);
-    let n = refused.files.len();
-    ui.strong(tr!("branch-refused-files", n = n));
-    let row = ui.text_style_height(&egui::TextStyle::Monospace);
-    egui::ScrollArea::vertical()
-        .id_salt("checkout-files")
-        .max_height(REFUSED_LIST_HEIGHT)
-        .auto_shrink([false, true])
-        .show_rows(ui, row, n, |ui, range| {
-            for path in &refused.files[range] {
-                ui.monospace(path);
-            }
-        });
-    ui.add_space(10.0);
-    if ui.button(tr!("branch-close")).clicked() {
-        actions.push(Action::Branch(branch::Action::CloseDialog));
-    }
 }
 
 /// The confirmation of "Check out this commit": what a detached HEAD means, "Don't ask again".

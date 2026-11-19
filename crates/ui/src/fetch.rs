@@ -47,7 +47,8 @@ pub struct Fetching {
     pub auto: bool,
 }
 
-/// A fetch that failed for a reason to explain: the window with git's text.
+/// An operation that failed for a reason to explain: what the failure dialog shows
+/// ([`crate::failure`]), with git's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     pub title: String,
@@ -55,7 +56,7 @@ pub struct Failure {
     pub explanation: String,
     /// git's text (stderr), if any.
     pub git: Option<String>,
-    /// Refused for uncommitted local changes: the window offers "Stash…".
+    /// Refused for uncommitted local changes: the dialog offers "Stash…".
     pub stash: bool,
 }
 
@@ -283,7 +284,7 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
     }
 }
 
-/// The window of an operation (`title`) refused because of uncommitted changes to `files`:
+/// The dialog of an operation (`title`) refused because of uncommitted changes to `files`:
 /// the UI's text instead of the engine's (meant for CLI and MCP), with "Stash…".
 pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
     Failure {

@@ -767,12 +767,73 @@ fn a_rejected_push_and_failed_network_commands() {
     let mut screen = Screen::open(repo);
     screen.shows(
         A::Fetch(F::Fetch(None)),
-        &["Authentication failed", "Message from git:", git],
+        &[
+            "Authentication failed",
+            "Message from git:",
+            git,
+            "Close",
+            "Copy message",
+        ],
     );
-    screen.act(A::Fetch(F::DismissError));
+    // The failure is a modal dialog: the arrows do not move the selection under it, and Esc
+    // closes it.
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let selected = screen.repo().list.selected();
+    screen.frame(vec![key(egui::Key::ArrowDown)]);
+    screen.frames(2);
+    assert_eq!(screen.repo().list.selected(), selected);
+    assert!(screen.repo().failure().is_some());
+    screen.frame(vec![key(egui::Key::Escape)]);
+    screen.frames(2);
+    assert!(screen.repo().failure().is_none(), "Esc closes it");
+    screen.frame(vec![key(egui::Key::ArrowDown)]);
+    screen.frames(2);
+    assert_ne!(screen.repo().list.selected(), selected, "the keys are back");
+
+    // A failed pull is the same dialog; Enter presses "Close", which has the keyboard.
     screen.shows(
         A::Sync(S::Pull(None, None)),
-        &["Pull of “main” failed", "Authentication failed"],
+        &["Pull of “main” failed", "Authentication failed", "Close"],
+    );
+    screen.frame(vec![key(egui::Key::Enter)]);
+    screen.frames(2);
+    assert_eq!(screen.repo().sync.window(), None, "Enter closes it");
+    assert!(!screen.repo().modal_open());
+
+    // A checkout refused for the local changes: the short text of merge and pull, and
+    // "Stash…" with the keyboard, so Enter opens the stash dialog.
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::Checkout("feature/graph".into())),
+        &[
+            "Cannot check out “feature/graph”",
+            "You have uncommitted changes in README.md",
+            "Close",
+        ],
+    );
+    let dialog = painted
+        .iter()
+        .position(|p| p.text == "Cannot check out “feature/graph”")
+        .expect("the title");
+    assert!(
+        painted[dialog..].iter().any(|p| p.text == "Stash…"),
+        "“Stash…” is in the dialog"
+    );
+    assert!(
+        !painted.iter().any(|p| p.text.contains("would overwrite")),
+        "the long text of the engine is gone"
+    );
+    screen.frame(vec![key(egui::Key::Enter)]);
+    let painted = screen.shows_frames(&["Stash changes", "Include untracked files"]);
+    assert!(screen.repo().failure().is_none());
+    assert!(
+        !painted.iter().any(|p| p.text.contains("Cannot check out")),
+        "one dialog at a time"
     );
 }
 

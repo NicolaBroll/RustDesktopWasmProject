@@ -471,6 +471,9 @@ pub(super) fn drop_stash_dialog(
     });
 }
 
+/// Maximum height of the conflicted file list; beyond it scrolls.
+const CONFLICT_LIST_HEIGHT: f32 = 160.0;
+
 /// Apply or pop stopped on conflicts: the stash is partly applied and stays in the list; the
 /// conflicted files are resolved and staged from the changes area.
 pub(crate) fn stash_conflicts_window(

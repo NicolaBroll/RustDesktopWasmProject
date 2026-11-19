@@ -96,6 +96,7 @@ pub(crate) fn commit_list(
                     &style
                 };
                 changes_row(ui, rect, &response, repo, column, graph_w, style);
+                theme::focus_ring(ui, &response, rect);
                 header_rect = Some(rect);
                 if response.clicked() {
                     actions.push(Action::SelectWorktree);
@@ -131,6 +132,7 @@ pub(crate) fn commit_list(
                 let tint = theme::search_match(ui.visuals().dark_mode);
                 ui.painter().rect_filled(rect, 2.0, tint);
             }
+            theme::focus_ring(ui, &response, rect);
             if response.clicked() {
                 // Ctrl+click (Cmd on macOS): compares with the selected commit.
                 if ui.input(|i| i.modifiers.command) {

@@ -53,6 +53,7 @@ fn next(
 /// Before showing the panel `salt` of `ui` (left or right): sets the width egui will draw it at
 /// to the user's one, clamped to `range` (the range the panel is then shown with).
 pub(crate) fn prepare(ui: &egui::Ui, salt: &str, default: f32, range: Rangef) {
+    pass_focus(ui, salt);
     let panel = panel_id(ui, salt);
     let memory = panel.with("preferred-width");
     let ctx = ui.ctx();
@@ -75,6 +76,41 @@ pub(crate) fn prepare(ui: &egui::Ui, salt: &str, default: f32, range: Rangef) {
         // Only the size counts: the panel places itself on its side.
         state.outer_rect.set_width(width.asked);
         ctx.data_mut(|d| d.insert_persisted::<PanelState>(panel, state));
+    }
+}
+
+/// Before showing the resizable panel `salt` of `ui`: egui makes a Tab stop of the panel's edge,
+/// which the keyboard cannot use and which shows no focus. When the focus lands there it goes
+/// on to the next widget, or back to the one before with Shift+Tab.
+pub(crate) fn pass_focus(ui: &egui::Ui, salt: &str) {
+    let ctx = ui.ctx();
+    let direction = Id::unique("side-panel-focus-back");
+    let tab = ctx.input(|i| {
+        i.events.iter().rev().find_map(|event| match event {
+            egui::Event::Key {
+                key: egui::Key::Tab,
+                pressed: true,
+                modifiers,
+                ..
+            } => Some(modifiers.shift),
+            _ => None,
+        })
+    });
+    if let Some(back) = tab {
+        // The edge takes the focus during this frame or at the start of the next one.
+        ctx.data_mut(|d| d.insert_temp(direction, back));
+        ctx.request_repaint();
+    }
+    if ctx.memory(|m| m.has_focus(resize_id(panel_id(ui, salt)))) {
+        let back = ctx.data(|d| d.get_temp::<bool>(direction)).unwrap_or(false);
+        ctx.memory_mut(|m| {
+            m.move_focus(if back {
+                egui::FocusDirection::Previous
+            } else {
+                egui::FocusDirection::Next
+            });
+        });
+        ctx.request_repaint();
     }
 }
 

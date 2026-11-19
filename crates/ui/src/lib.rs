@@ -29,6 +29,7 @@ mod executor;
 mod failure;
 mod fetch;
 mod file;
+mod file_nav;
 mod format;
 mod graph;
 mod icons;
@@ -858,10 +859,13 @@ impl Tab {
         }
     }
 
-    /// The tab's shortcuts ([`keys`]) and the list keys: arrows, Page up/down, Home/End. With
-    /// the diff open, Esc closes it and the arrows stay with the diff view. Only if no text field
-    /// is receiving the keyboard (Ctrl+F also from a field); nothing with a menu or a
-    /// confirmation open: the keys, Esc too, are theirs.
+    /// The tab's shortcuts ([`keys`]) and the list keys: arrows, Page up/down, Home/End, and
+    /// Enter, which opens the first file of what is selected. With a diff open, Esc closes it
+    /// and the arrows and Home/End walk the file list it comes from ([`file_nav`]). Only if no
+    /// text field is receiving the keyboard (Ctrl+F also from a field); nothing with a menu or
+    /// a confirmation open: the keys, Esc too, are theirs. While a widget that is not a text
+    /// field has the keyboard (Tab) the shortcuts work, but the arrows move the focus and Enter
+    /// presses that widget: they are not list keys.
     fn keyboard(&self, ctx: &egui::Context, pressed: &keys::Pressed, actions: &mut Vec<Action>) {
         let Some(repo) = &self.repo else {
             return;
@@ -882,7 +886,7 @@ impl Tab {
                 actions.push(action);
             }
         }
-        if ctx.egui_wants_keyboard_input() {
+        if keys::typing(ctx) {
             return;
         }
         // With the conflict editor open the list is not in view.
@@ -900,13 +904,41 @@ impl Tab {
             }
             return;
         }
-        if repo.diff.target().is_some() {
+        let focused = ctx.memory(|m| m.focused().is_some());
+        if let Some(open) = repo.diff.target() {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 // First deselect, then close.
                 if repo.diff.selection().is_some_and(|s| !s.is_empty()) {
                     actions.push(Action::Lines(lines::Action::Clear));
                 } else {
                     actions.push(Action::Diff(diff::Action::Close));
+                }
+                return;
+            }
+            // The file list of the open diff: the last key pressed decides.
+            let steps = ctx.input(|i| {
+                use file_nav::Step;
+                let keys = [
+                    (egui::Key::ArrowDown, Step::Next, !focused),
+                    (egui::Key::ArrowUp, Step::Previous, !focused),
+                    (egui::Key::Home, Step::First, true),
+                    (egui::Key::End, Step::Last, true),
+                ];
+                keys.into_iter()
+                    .filter(|(_, _, on)| *on)
+                    .flat_map(|(key, step, _)| std::iter::repeat_n(step, i.num_presses(key)))
+                    .collect::<Vec<_>>()
+            });
+            if !steps.is_empty() {
+                let files = repo.shown_files();
+                let mut target = open.clone();
+                for step in steps {
+                    if let Some(next) = file_nav::step(&files, &target, step) {
+                        target = next;
+                    }
+                }
+                if target != *open {
+                    actions.push(Action::Diff(diff::Action::Walk(target)));
                 }
             }
             return;
@@ -923,20 +955,32 @@ impl Tab {
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
         ctx.input(|i| {
+            // The arrows of a focused widget move the focus (egui): the selection stays.
             let keys = [
-                (egui::Key::ArrowDown, Action::Move(1)),
-                (egui::Key::ArrowUp, Action::Move(-1)),
-                (egui::Key::PageDown, Action::Move(page)),
-                (egui::Key::PageUp, Action::Move(-page)),
-                (egui::Key::Home, Action::Edge(true)),
-                (egui::Key::End, Action::Edge(false)),
+                (egui::Key::ArrowDown, Action::Move(1), !focused),
+                (egui::Key::ArrowUp, Action::Move(-1), !focused),
+                (egui::Key::PageDown, Action::Move(page), true),
+                (egui::Key::PageUp, Action::Move(-page), true),
+                (egui::Key::Home, Action::Edge(true), true),
+                (egui::Key::End, Action::Edge(false), true),
             ];
-            for (key, action) in keys {
+            for (key, action, on) in keys {
                 for _ in 0..i.num_presses(key) {
-                    actions.push(action.clone());
+                    if on {
+                        actions.push(action.clone());
+                    }
                 }
             }
         });
+        // Enter: the first file of the selected commit (or of the changes) opens, and the
+        // arrows are then its list's. Not while a widget has the keyboard: Enter presses it.
+        let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.is_none());
+        if enter
+            && !focused
+            && let Some(first) = repo.shown_files().into_iter().next()
+        {
+            actions.push(Action::Diff(diff::Action::Walk(first)));
+        }
     }
 
     /// The action of a toolbar or stage panel shortcut, with the same gates as its button; `None`
@@ -973,8 +1017,28 @@ impl Tab {
                     .any(|item| item.path == target.path)
                     .then(|| Action::Stage(stage::Action::Write(op, vec![target.path.clone()])))
             }
-            // Find is the tab's own (above), the others belong to `App`.
+            // As "New branch…" of the menu of the current branch (or of HEAD's commit).
+            Command::NewBranch => {
+                let start = match view::current_branch(&repo.head).and_then(|name| {
+                    let local = project_domain::RefKind::LocalBranch;
+                    repo.refs
+                        .iter()
+                        .find(|r| r.kind == local && r.short_name() == name)
+                }) {
+                    Some(info) => branch::Start::from_ref(info).0,
+                    None => branch::Start::from_commit(repo.head.target()?),
+                };
+                (!writing).then_some(Action::Branch(branch::Action::NewBranch(
+                    start,
+                    String::new(),
+                )))
+            }
+            // Find is the tab's own (above), Confirm the commit box's and the dialogs'; the
+            // others belong to `App`.
             Command::Find
+            | Command::Confirm
+            | Command::OpenRepo
+            | Command::CloseTab
             | Command::Settings
             | Command::NextTab
             | Command::PreviousTab
@@ -1465,6 +1529,8 @@ impl Tab {
             repo.sync.follow(&repo.head, &repo.refs);
         }
         self.keyboard(&ctx, pressed, &mut actions);
+        let reveal = self.repo.as_ref().and_then(|r| r.diff.revealed()).is_some();
+        view::set_reveal_file(&ctx, reveal);
         let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
@@ -1501,6 +1567,7 @@ impl Tab {
         if let Some(repo) = &mut self.repo {
             repo.commit.draft = draft;
             repo.list.take_scroll_to();
+            repo.diff.take_reveal();
             repo.scroll_header = false;
         }
         actions

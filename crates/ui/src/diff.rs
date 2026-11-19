@@ -23,6 +23,9 @@ use std::sync::Arc;
 pub(crate) enum Action {
     /// Opens a file's diff of the selected commit in place of the graph.
     Open(DiffTarget),
+    /// [`Action::Open`] from the keyboard (arrows in a file list, Enter on the commit): the
+    /// file's row is also brought into view in its list.
+    Walk(DiffTarget),
     /// Closes the diff and returns to the graph.
     Close,
     /// Asks again for the open diff after an error.
@@ -117,6 +120,9 @@ struct Open {
 pub struct DiffState {
     open: Option<Open>,
     next: u64,
+    /// The open file was chosen with the keyboard: its list scrolls to its row at the next
+    /// frame ([`DiffState::take_reveal`] after it).
+    reveal: bool,
 }
 
 impl DiffState {
@@ -173,6 +179,22 @@ impl DiffState {
     /// Closes the view: incoming responses will be discarded.
     pub fn close(&mut self) {
         self.open = None;
+        self.reveal = false;
+    }
+
+    /// The row of the open file is to be brought into view in its list.
+    pub fn reveal(&mut self) {
+        self.reveal = self.open.is_some();
+    }
+
+    /// The file whose row the list brings into view in this frame.
+    pub fn revealed(&self) -> Option<&DiffTarget> {
+        self.target().filter(|_| self.reveal)
+    }
+
+    /// The frame that scrolled the list is drawn.
+    pub fn take_reveal(&mut self) {
+        self.reveal = false;
     }
 
     pub fn target(&self) -> Option<&DiffTarget> {
@@ -661,14 +683,18 @@ pub fn line_prefix(kind: LineKind) -> char {
 impl Tab {
     /// The actions of this area, dispatched by [`Tab::apply`].
     pub(crate) fn apply_diff(&mut self, action: Action) {
+        let walk = matches!(action, Action::Walk(_));
         match action {
-            Action::Open(target) => {
+            Action::Open(target) | Action::Walk(target) => {
                 if let Some(repo) = &mut self.repo {
                     repo.conflict.close();
                     repo.file.close();
                 }
                 if let Some(seq) = self.repo.as_mut().and_then(|r| r.diff.open(target.clone())) {
                     self.request_diff(&target, seq);
+                }
+                if walk && let Some(repo) = &mut self.repo {
+                    repo.diff.reveal();
                 }
             }
             Action::Close => {

@@ -3,7 +3,7 @@
 //! shows only on the active tab and under the mouse.
 
 use super::*;
-use crate::tabs;
+use crate::{keys, tabs};
 use egui::{Pos2, Rect, Stroke};
 
 /// Height of the strip.
@@ -143,9 +143,11 @@ fn tab(
             ui,
             Rect::from_center_size(close_rect.center(), vec2(12.0, 12.0)),
         );
-    } else if active || hovered {
+    } else if active || hovered || close.has_focus() {
         close_icon(ui, close_rect, &close, label.writing);
     }
+    theme::focus_ring(ui, &response, rect.shrink(1.0));
+    theme::focus_ring(ui, &close, close_rect);
 
     let closes = close.clicked() || response.middle_clicked();
     if closes && !label.writing {
@@ -155,6 +157,8 @@ fn tab(
     }
     close.on_hover_text(if label.writing {
         tr!("tabs-close-writing")
+    } else if active {
+        keys::with_shortcut(ui.ctx(), &tr!("tabs-close-hint"), keys::Command::CloseTab)
     } else {
         tr!("tabs-close-hint")
     });
@@ -197,5 +201,6 @@ fn new_tab_button(ui: &mut Ui) -> egui::Response {
     let d = 5.0;
     painter.line_segment([center - vec2(d, 0.0), center + vec2(d, 0.0)], stroke);
     painter.line_segment([center - vec2(0.0, d), center + vec2(0.0, d)], stroke);
+    theme::focus_ring(ui, &response, square);
     response.on_hover_text(tr!("tabs-new-hint"))
 }

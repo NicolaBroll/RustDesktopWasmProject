@@ -374,6 +374,12 @@ impl ContinueDialog {
     pub fn is_blank(&self) -> bool {
         self.kind.has_message() && self.message.trim().is_empty()
     }
+
+    /// The dialog's button is enabled, and Ctrl+Enter presses it: nothing is being sent and
+    /// the message, where one is needed, is written.
+    pub fn can_submit(&self) -> bool {
+        self.running.is_none() && !self.is_blank()
+    }
 }
 
 /// The open dialog: one at a time.
@@ -1495,6 +1501,28 @@ mod tests {
         b.start(rev.into(), rev.into(), "main".into(), Mode::Auto, None)
             .unwrap()
             .0
+    }
+
+    #[test]
+    fn the_finish_dialog_confirms_only_with_a_message_and_nothing_running() {
+        let dialog = |kind, message: &str, running| ContinueDialog {
+            kind,
+            message: message.to_owned(),
+            error: None,
+            git: None,
+            running,
+        };
+        let sending = Some(Running::new(Ticket::for_test(1)));
+        // The button, and Ctrl+Enter with it (U64).
+        assert!(dialog(Kind::Merge, "Merge branch 'other'", None).can_submit());
+        assert!(!dialog(Kind::Merge, " \n", None).can_submit(), "blank");
+        assert!(
+            !dialog(Kind::Merge, "Merge", sending).can_submit(),
+            "sending"
+        );
+        // A rebase goes on without a message.
+        assert!(dialog(Kind::Rebase, "", None).can_submit());
+        assert!(!dialog(Kind::Rebase, "", sending).can_submit());
     }
 
     #[test]

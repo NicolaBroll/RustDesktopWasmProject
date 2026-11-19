@@ -674,7 +674,7 @@ impl App {
         let commands = if popup || modal {
             Vec::new()
         } else {
-            keys::take(ctx, ctx.egui_wants_keyboard_input())
+            keys::take(ctx, keys::typing(ctx))
         };
         keys::Pressed { commands, popup }
     }
@@ -687,6 +687,14 @@ impl App {
             .iter()
             .filter_map(|command| match command {
                 Command::Settings => Some(crate::Action::Settings(settings::Action::Open)),
+                // As File → "Open repository…", which is not there without a folder dialog.
+                Command::OpenRepo => self
+                    .platform
+                    .capabilities()
+                    .open_folder
+                    .then_some(crate::Action::Tabs(Action::PickFolder)),
+                // As the "×" of the tab shown (which does not close while it writes).
+                Command::CloseTab => Some(crate::Action::Tabs(Action::CloseTab(self.active))),
                 Command::NextTab => Some(crate::Action::Tabs(Action::SwitchTab(
                     (self.active + 1) % len,
                 ))),
@@ -1277,6 +1285,35 @@ mod tests {
         );
         press(&mut app, Command::ZoomReset);
         assert_eq!(app.settings.scale, Scale::NORMAL);
+    }
+
+    #[test]
+    fn ctrl_w_closes_the_tab_shown_and_ctrl_o_asks_for_a_folder() {
+        let saved = Saved {
+            tabs: vec!["a".into(), "b".into()],
+            active: 1,
+            recent: Vec::new(),
+        };
+        let mut app = app(saved, None);
+        let ctx = egui::Context::default();
+        for action in app.app_shortcuts(&[Command::CloseTab]) {
+            app.apply(&ctx, action);
+        }
+        assert_eq!(paths(&app), [Some("a")]);
+        // Without a folder dialog (as File → "Open repository…", which is not there) nothing.
+        assert!(app.app_shortcuts(&[Command::OpenRepo]).is_empty());
+        let platform = Arc::new(Deferred::default());
+        let app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(MemoryOpener::new()),
+            Arc::new(|| {}),
+            Saved::default(),
+            None,
+        );
+        assert!(matches!(
+            app.app_shortcuts(&[Command::OpenRepo]).as_slice(),
+            [crate::Action::Tabs(Action::PickFolder)]
+        ));
     }
 
     #[test]

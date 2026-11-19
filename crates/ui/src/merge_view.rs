@@ -242,6 +242,8 @@ pub(crate) fn merge_dialog(
 /// note that the branch will not appear as merged) or fast-forward only.
 fn start_dialog(ui: &mut Ui, dialog: &StartDialog, actions: &mut Vec<Action>) {
     let (what, into) = (dialog.what.as_str(), dialog.into.as_str());
+    // Ctrl+Enter is the dialog's button: read before the message field is drawn.
+    let confirm = crate::keys::confirm(ui.ctx());
     ui.heading(tr!("merge-start-heading", what = what, into = into));
     ui.add_space(6.0);
     for mode in Mode::CHOICES {
@@ -285,7 +287,7 @@ fn start_dialog(ui: &mut Ui, dialog: &StartDialog, actions: &mut Vec<Action>) {
         } else {
             tr!("merge-start-button")
         };
-        if ui.button(RichText::new(label).strong()).clicked() {
+        if ui.button(RichText::new(label).strong()).clicked() || confirm {
             actions.push(Action::Merge(merge::Action::SubmitMerge));
         }
         if ui.button(tr!("merge-close")).clicked() {
@@ -301,8 +303,11 @@ fn continue_dialog(
     actions: &mut Vec<Action>,
 ) {
     let kind = dialog.kind;
+    // Ctrl+Enter is the dialog's button, also from the message field (where Enter is a new
+    // line): read before the field is drawn.
+    let confirm = crate::keys::confirm(ui.ctx()) && dialog.can_submit();
     if !kind.has_message() {
-        return rebase_continue_dialog(ui, repo, dialog, actions);
+        return rebase_continue_dialog(ui, repo, dialog, confirm, actions);
     }
     let noun = kind.commit_noun();
     ui.heading(tr!("merge-finish-heading", name = kind.name()));
@@ -336,10 +341,9 @@ fn continue_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let enabled = dialog.running.is_none() && !dialog.is_blank();
         let button = ui
             .add_enabled(
-                enabled,
+                dialog.can_submit(),
                 egui::Button::new(tr!("merge-create-button", noun = &noun)),
             )
             .on_disabled_hover_text(if dialog.running.is_some() {
@@ -347,7 +351,7 @@ fn continue_dialog(
             } else {
                 tr!("merge-write-message")
             });
-        if button.clicked() {
+        if button.clicked() || confirm {
             actions.push(Action::Merge(merge::Action::SubmitContinue));
         }
         if ui
@@ -372,6 +376,7 @@ fn rebase_continue_dialog(
     ui: &mut Ui,
     repo: &RepoView,
     dialog: &ContinueDialog,
+    confirm: bool,
     actions: &mut Vec<Action>,
 ) {
     let name = dialog.kind.name();
@@ -402,7 +407,7 @@ fn rebase_continue_dialog(
                 ),
             )
             .on_disabled_hover_text(tr!("merge-continuing"));
-        if button.clicked() {
+        if button.clicked() || confirm {
             actions.push(Action::Merge(merge::Action::SubmitContinue));
         }
         if ui

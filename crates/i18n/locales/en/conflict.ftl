@@ -1,5 +1,5 @@
 # Conflict editor (conflict.rs, view/conflict_view.rs).
-# $command: command id; $path: file path; $backup: backup ref or path.
+# $command: command id; $path: file path.
 
 conflict-worktree-not-text = the working tree file is not text or does not exist
 conflict-no-blocks = the result has no blocks to choose
@@ -9,8 +9,8 @@ conflict-label-delete = Deleting { $path } to resolve the conflict
 conflict-label-resolve = Resolving the conflict in { $path }
 conflict-resolved-path = Conflict in { $path } resolved and staged
 conflict-resolved = Conflict resolved and staged
-conflict-resolved-backup = ; the previous file is saved in { $backup }
-conflict-resolved-index-backup = ; index backup in { $backup }
+conflict-resolved-backup = ; the previous file is saved in a backup
+conflict-resolved-index-backup = ; a backup of the index was saved
 conflict-stale = The file changed after it was read: reloaded, make your choices again
 conflict-resolve-failed = Resolution failed: { $error }
 conflict-title = Conflict

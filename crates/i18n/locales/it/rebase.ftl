@@ -43,7 +43,7 @@ rebase-stopped-short = Rebase fermo
 rebase-done = Rebase di «{ $branch }» fatto: { $before ->
         [one] 1 commit è diventato
        *[other] { $before } commit sono diventati
-    } { $after }, il branch è su { $id }; il branch com'era è in { $backup }. «Annulla» lo rimette
+    } { $after }, il branch è su { $id }; il branch com'era resta in un backup. «Annulla» lo rimette
 rebase-confirm-heading = Riscrivere commit pubblicati?
 rebase-confirm-text = Questi commit sono già su un branch remoto. Dopo il rebase il branch differisce da quello remoto: per pubblicarlo servirà un push forzato, e chi ha i vecchi commit dovrà riallinearsi.
 rebase-confirm-button = Riscrivi comunque

@@ -33,6 +33,9 @@ impl Platform for Inline {
 struct Painted {
     text: String,
     pos: egui::Pos2,
+    width: f32,
+    /// Cut with "…" (`text` is the whole one).
+    cut: bool,
 }
 
 /// The app on a screen that nobody sees.
@@ -87,6 +90,14 @@ impl Screen {
     #[track_caller]
     fn shows(&mut self, action: crate::Action, wanted: &[&str]) -> Vec<Painted> {
         let painted = self.act(action);
+        assert_shows(&painted, wanted);
+        painted
+    }
+
+    /// Two frames without input, and the texts that must be on screen.
+    #[track_caller]
+    fn shows_frames(&mut self, wanted: &[&str]) -> Vec<Painted> {
+        let painted = self.frames(2);
         assert_shows(&painted, wanted);
         painted
     }
@@ -172,6 +183,8 @@ fn collect(shape: &egui::Shape, out: &mut Vec<Painted>) {
         egui::Shape::Text(text) => out.push(Painted {
             text: text.galley.text().to_owned(),
             pos: text.pos,
+            width: text.galley.size().x,
+            cut: text.galley.elided,
         }),
         _ => {}
     }
@@ -1040,6 +1053,69 @@ fn submodules_worktrees_and_lfs() {
             "You have uncommitted changes in README.md",
         ],
     );
+}
+
+/// The status bar at the bottom: one line cut before the repo path, the backup ref and the rest
+/// of the text only on hover.
+#[test]
+fn a_long_status_message_is_one_cut_line() {
+    use std::time::{Duration, Instant};
+    let long = "Undone: Amend 83c3266 “Make the greeting configurable and document the new option \
+                in the README, with an example for every platform and a note about the default \
+                value” (was 77ef74e); a backup was saved";
+    let backup = "refs/project/backup/undo-1795097584-316326506";
+    let mut screen = sample();
+    for size in [egui::vec2(1200.0, 760.0), egui::vec2(760.0, 520.0)] {
+        screen.size = size;
+        let text = crate::status::with_backup(long.to_owned(), Some(backup));
+        screen.app.tabs[0].notice.set(text);
+        let painted = screen.frames(2);
+        let message = painted
+            .iter()
+            .find(|p| p.text.starts_with("Undone: Amend"))
+            .expect("the message is drawn");
+        assert!(message.cut && message.text == long, "{message:?}");
+        assert!(!painted.iter().any(|p| p.text.contains("refs/project")));
+        // The repo path is the last text equal to it, at the bottom right: the message ends
+        // before it and keeps most of the bar.
+        let path = painted.iter().rfind(|p| p.text == PATH).expect("the path");
+        assert!((path.pos.y - message.pos.y).abs() < 8.0, "{path:?}");
+        let end = message.pos.x + message.width;
+        assert!(end <= path.pos.x, "{end} over {path:?}");
+        assert!(message.width >= size.x * 0.5, "{message:?}");
+        // Hover: the whole message, then the backup ref on its own line.
+        let over = message.pos + egui::vec2(40.0, 6.0);
+        screen.frame(vec![egui::Event::PointerMoved(over)]);
+        let hover = screen.frames(12);
+        let whole = format!("{long}\nBackup: {backup}");
+        assert!(
+            hover.iter().any(|p| p.text == whole),
+            "{:#?}",
+            hover.iter().map(|p| &p.text).collect::<Vec<_>>()
+        );
+        screen.frame(vec![egui::Event::PointerMoved(ELSEWHERE)]);
+    }
+    // An old notice stays (drawn weak), and a short one is whole.
+    let tab = &mut screen.app.tabs[0];
+    let old = Instant::now() - Duration::from_secs(60);
+    tab.notice
+        .set_at("Fetch from “origin” done".to_owned(), old);
+    assert_eq!(tab.notice.fresh_for(Instant::now()), None);
+    let painted = screen.shows_frames(&["Fetch from “origin” done"]);
+    let notice = painted.iter().find(|p| p.text.starts_with("Fetch from"));
+    assert!(notice.is_some_and(|p| !p.cut), "{notice:?}");
+    // An error in several lines is one line too, and takes the place of the notice.
+    let rejected = "rejected ".repeat(40);
+    screen.app.tabs[0].error = format!("Push failed: {rejected}\nhint: fetch first");
+    let painted = screen.frames(2);
+    let error = painted
+        .iter()
+        .find(|p| p.text.starts_with("Push failed"))
+        .expect("the error is drawn");
+    assert!(error.cut && !error.text.contains('\n'), "{error:?}");
+    assert!(!painted.iter().any(|p| p.text.contains("Fetch from")));
+    let path = painted.iter().rfind(|p| p.text == PATH).expect("the path");
+    assert!(error.pos.x + error.width <= path.pos.x);
 }
 
 #[test]

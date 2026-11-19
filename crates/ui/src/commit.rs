@@ -255,19 +255,16 @@ fn notice(result: &CommitOutcome) -> String {
     }
     let id = result.commit.id.short();
     let mut text = match (result.previous, &result.backup) {
-        (Some(previous), Some(backup)) => tr!(
-            "commit-amended",
-            id = id,
-            previous = previous.short(),
-            backup = backup
-        ),
-        (None, Some(backup)) => tr!("commit-created-backup", id = id, backup = backup),
+        (Some(previous), Some(_)) => {
+            tr!("commit-amended", id = id, previous = previous.short())
+        }
+        (None, Some(_)) => tr!("commit-created-backup", id = id),
         (_, None) => tr!("commit-created", id = id),
     };
     if !result.also_on.is_empty() {
         text.push_str(&tr!("commit-also-on", refs = result.also_on.join(", ")));
     }
-    text
+    crate::status::with_backup(text, result.backup.as_deref())
 }
 
 /// The other local branches and tags that point exactly at `head` (full names): with amend
@@ -499,7 +496,7 @@ impl Tab {
                     repo.select_after_load = Some(id);
                 }
                 self.error.clear();
-                self.notice = notice;
+                self.notice.set(notice);
                 self.follow_diff();
                 // The new commit on top (with amend the old one disappears) and the shifted
                 // ref labels.
@@ -744,8 +741,9 @@ mod tests {
         assert_eq!(
             notice(&amend),
             format!(
-                "Commit {id} created in place of {}; backup of the previous commit in \
-                 refs/project/backup/amend-1; the previous commit is still on refs/tags/v1",
+                "Commit {id} created in place of {}; a backup of the previous commit was saved; \
+                 the previous commit is still on refs/tags/v1\n\
+                 Backup: refs/project/backup/amend-1",
                 other.short()
             )
         );

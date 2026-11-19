@@ -262,7 +262,7 @@ impl Tab {
         repo.auto_fetch.observe(now, interval, fetching);
         // Everything after the fetch has been read again (the log too): the new commits.
         if !busy && let Some(moved) = repo.auto_fetch.take_news() {
-            self.notice = news_text(&moved, repo.list.commits());
+            self.notice.set(news_text(&moved, repo.list.commits()));
         }
         if !shown
             || app_blocked
@@ -317,7 +317,7 @@ impl Tab {
                 if kind == Some(ErrorKind::AuthCancelled) {
                     repo.auto_fetch.suspend(None);
                 }
-                self.notice = notice;
+                self.notice.set(notice);
                 self.refresh_light();
             }
             fetch::Received::Failed { message, reload } => {

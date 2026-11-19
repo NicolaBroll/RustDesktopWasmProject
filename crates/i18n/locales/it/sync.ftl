@@ -46,8 +46,8 @@ sync-pull-rebase = { $what }: rebase di { $n ->
    *[other] { $n } commit locali
 } su { $upstream } ({ $range })
 sync-pull-merge-default = ; merge perché pull.rebase non è configurato (git config pull.rebase true per il rebase)
-sync-pull-backup-in-progress = ; il branch com'era è in { $backup }
-sync-pull-backup = ; backup in { $backup }, «Annulla» lo riporta indietro
+sync-pull-backup-in-progress = ; il branch com'era resta in un backup
+sync-pull-backup = ; backup salvato, «Annulla» lo riporta indietro
 sync-pull-status-not-reread = Pull fatto, ma lo stato non si rilegge: { $error }
 sync-pull-refs-not-reread = Pull fatto, ma i ref non si rileggono: { $error }
 # $summary: empty or “ (summary)” with the leading space.
@@ -60,7 +60,7 @@ sync-push-forced = Push forzato di «{ $branch }» su { $target }{ $summary }: {
 sync-push-up-to-date = Push di «{ $branch }»: { $target } è già aggiornato
 sync-push-to-push-remote = ; su «{ $remote }» (branch.{ $branch }.pushRemote)
 sync-push-to-push-default = ; su «{ $remote }» (remote.pushDefault)
-sync-push-backup = ; il remoto com'era è salvato in { $backup }
+sync-push-backup = ; il remoto com'era è salvato in un backup
 sync-push-set-upstream = ; upstream impostato su { $target }
 sync-push-status-not-reread = Push fatto, ma lo stato non si rilegge: { $error }
 sync-push-refs-not-reread = Push fatto, ma i ref non si rileggono: { $error }

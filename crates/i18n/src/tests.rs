@@ -82,37 +82,27 @@ fn an_optional_count_can_disappear() {
     let notice = |n: usize| {
         get(Lang::En).tr_args(
             "merge-aborted-notice",
-            [
-                ("title", Arg::from("Merge")),
-                ("backup", Arg::from("B")),
-                ("n", Arg::from(n)),
-            ],
+            [("title", Arg::from("Merge")), ("n", Arg::from(n))],
         )
     };
-    assert!(notice(0).starts_with("Merge aborted: index and working tree saved first in B; "));
-    assert!(notice(1).contains("in B (1 file); "));
-    assert!(notice(2).contains("in B (2 files); "));
+    assert!(
+        notice(0).starts_with("Merge aborted: index and working tree saved first in a backup; ")
+    );
+    assert!(notice(1).contains("in a backup (1 file); "));
+    assert!(notice(2).contains("in a backup (2 files); "));
     let it = get(Lang::It).tr_args(
         "merge-aborted-notice",
-        [
-            ("title", Arg::from("Merge")),
-            ("backup", Arg::from("B")),
-            ("n", Arg::from(3)),
-        ],
+        [("title", Arg::from("Merge")), ("n", Arg::from(3))],
     );
     // The Italian text is a different translation of the same message, with the same arguments.
     assert_ne!(
         it,
         get(Lang::En).tr_args(
             "merge-aborted-notice",
-            [
-                ("title", Arg::from("Merge")),
-                ("backup", Arg::from("B")),
-                ("n", Arg::from(3)),
-            ],
+            [("title", Arg::from("Merge")), ("n", Arg::from(3)),],
         )
     );
-    assert!(it.contains('B') && it.contains('3'));
+    assert!(it.contains("Merge") && it.contains('3'));
 }
 
 #[test]

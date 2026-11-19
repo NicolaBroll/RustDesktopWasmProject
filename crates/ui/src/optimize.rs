@@ -236,12 +236,12 @@ impl Tab {
                 .receive(done.ticket, done.result, done.error_kind, done.error_detail);
         match received {
             Received::Done => {
-                self.notice = tr!("optimize-done");
+                self.notice.set(tr!("optimize-done"));
                 self.error.clear();
                 self.load();
             }
             Received::Cancelled => {
-                self.notice = tr!("optimize-cancelled");
+                self.notice.set(tr!("optimize-cancelled"));
                 self.error.clear();
             }
             Received::Failed(message) => {

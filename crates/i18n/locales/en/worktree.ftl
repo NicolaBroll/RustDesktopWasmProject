@@ -72,4 +72,4 @@ worktree-remove-button = Remove worktree
 worktree-remove-refused-title = The worktree cannot be removed
 worktree-close = Close
 worktree-removed = Worktree “{ $path }” removed
-worktree-removed-backup = Worktree “{ $path }” removed; its commits on no branch are saved in { $backup }
+worktree-removed-backup = Worktree “{ $path }” removed; its commits on no branch are saved in a backup

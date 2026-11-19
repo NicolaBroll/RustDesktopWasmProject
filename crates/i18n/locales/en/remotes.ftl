@@ -60,8 +60,8 @@ remotes-removed = Remote “{ $name }” removed ({ $n ->
 remotes-removed-upstreams = ; no upstream anymore: { $names }
 remotes-removed-push-remotes = ; removed the pushRemote of { $names }
 remotes-removed-push-default = ; removed remote.pushDefault
-remotes-removed-backup = ; backup in { $backup }
-remotes-removed-backups = ; { $n } backups in refs/project/backup/remote-…
+remotes-removed-backup = ; a backup was saved
+remotes-removed-backups = ; { $n } backups were saved
 remotes-removed-undo = . “Undo” restores it
 remotes-removed-short = Remote removed
 remotes-delete-branch-check-label = Checking deletion of “{ $name }”
@@ -73,7 +73,7 @@ remotes-branch-deleted-only-here = ; { $n ->
     [one] 1 commit was
    *[other] { $n } commits were
 } only there
-remotes-branch-deleted-backup = ; backup in { $backup }
+remotes-branch-deleted-backup = ; a backup was saved
 remotes-branch-deleted-upstreams = ; upstream gone for { $names }
 remotes-branch-deleted-short = Branch deleted from the remote
 remotes-section = Remotes

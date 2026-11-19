@@ -51,8 +51,8 @@ remotes-removed = Remoto «{ $name }» rimosso ({ $n ->
 remotes-removed-upstreams = ; senza upstream: { $names }
 remotes-removed-push-remotes = ; tolto il pushRemote di { $names }
 remotes-removed-push-default = ; tolto remote.pushDefault
-remotes-removed-backup = ; backup in { $backup }
-remotes-removed-backups = ; { $n } backup in refs/project/backup/remote-…
+remotes-removed-backup = ; backup salvato
+remotes-removed-backups = ; { $n } backup salvati
 remotes-removed-undo = . «Annulla» lo rimette
 remotes-removed-short = Remoto rimosso
 remotes-delete-branch-check-label = Controllo eliminazione di «{ $name }»
@@ -64,7 +64,7 @@ remotes-branch-deleted-only-here = ; { $n ->
     [one] 1 commit era
    *[other] { $n } commit erano
 } solo lì
-remotes-branch-deleted-backup = ; backup in { $backup }
+remotes-branch-deleted-backup = ; backup salvato
 remotes-branch-deleted-upstreams = ; upstream sparito per { $names }
 remotes-branch-deleted-short = Branch eliminato dal remoto
 remotes-section = Remoti

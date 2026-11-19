@@ -40,11 +40,11 @@ merge-concluded-notice-branch = { $title } finished: { $noun } { $id } created o
 merge-abort-refused = Cannot abort the { $name }: { $error }
 merge-abort-failed = Aborting the { $name } failed: { $error }
 merge-aborted = { $title } aborted
-merge-aborted-notice = { $title } aborted: index and working tree saved first in { $backup }{ $n ->
+merge-aborted-notice = { $title } aborted: index and working tree saved first in a backup{ $n ->
         [0] {""}
         [one] {" "}(1 file)
        *[other] {" "}({ $n } files)
-    }; restore them with `git stash apply { $backup }`. It cannot be undone with “Undo”
+    }; `git stash apply <backup>` restores them. It cannot be undone with “Undo”
 merge-warning = warning: { $warning }
 merge-status-not-reloaded = the status could not be reloaded: { $error }
 merge-refs-not-reloaded = the refs could not be reloaded: { $error }
@@ -66,7 +66,7 @@ merge-rebase-stopped-before-commit = Rebase stopped again before a commit (a hoo
 merge-rebase-stopped-short = Rebase stopped again
 merge-rebase-finished = Rebase finished: HEAD at { $id }
 merge-rebase-finished-branch = Rebase of “{ $branch }” finished: the branch is at { $id }
-merge-rebase-backup = ; the branch as it was is in { $backup }
+merge-rebase-backup = ; the branch as it was is kept in a backup
 merge-merged = “{ $name }” merged into “{ $branch }” ({ $commits }): merge commit { $id }. “Undo” undoes it
 merge-pick-stopped-before-commit = { $title } of “{ $what }” onto “{ $branch }” stopped before the commit (a hook or signing?): finish it with “Continue { $name }…” in the panel at the top, or abort it
 merge-pick-stopped = { $title } of “{ $what }” onto “{ $branch }” stopped: { $files }. Resolve them and mark them as resolved in the staging area, then “Continue { $name }…” in the panel at the top (or “Abort { $name }…”)

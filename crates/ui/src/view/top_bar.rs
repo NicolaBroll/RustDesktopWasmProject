@@ -1,6 +1,6 @@
 use super::*;
 use crate::keys::{Command, with_shortcut};
-use crate::{discard, fetch, sync, tabs};
+use crate::{discard, fetch, status, sync, tabs};
 
 /// Last component of the path, for the title.
 pub(crate) fn repo_name(path: &str) -> &str {
@@ -472,40 +472,162 @@ fn slow_job<'a>(ui: &Ui, running: &'a [Job]) -> Option<&'a Job> {
     shown
 }
 
+/// The share of the bar a message that needs it always gets: the repo path on the right is
+/// cut to leave it.
+const MESSAGE_SHARE: f32 = 0.6;
+
+/// How the message of the status bar is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    /// A command in progress or a fresh notice.
+    Plain,
+    /// A notice older than [`status::FRESH`].
+    Old,
+    Error,
+}
+
+/// The message of the status bar: `text` whole (the hover text), of which the bar draws one line.
+struct StatusText {
+    text: String,
+    spinner: bool,
+    tone: Tone,
+}
+
+impl StatusText {
+    /// The line on the bar: the first one of a notice (the backup refs follow it), an error
+    /// with its lines joined.
+    fn line(&self) -> std::borrow::Cow<'_, str> {
+        match self.tone {
+            Tone::Error => status::one_line(&self.text),
+            Tone::Plain | Tone::Old => status::line(&self.text).into(),
+        }
+    }
+
+    /// The width the line takes when nothing cuts it, spinner included.
+    fn width(&self, ui: &Ui) -> f32 {
+        let spinner = if self.spinner {
+            ui.spacing().interact_size.y + ui.spacing().item_spacing.x
+        } else {
+            0.0
+        };
+        spinner + text_width(ui, &self.line())
+    }
+
+    /// One line, cut with "…" where the room ends; the whole text on hover if the line does not
+    /// say it all, and in the clipboard from the context menu.
+    fn show(&self, ui: &mut Ui) {
+        if self.spinner {
+            ui.spinner();
+        }
+        let line = self.line();
+        let cut = text_width(ui, &line) > ui.available_width();
+        let text = RichText::new(&*line);
+        let text = match self.tone {
+            Tone::Plain => text,
+            Tone::Old => text.weak(),
+            Tone::Error => text.color(ui.visuals().error_fg_color),
+        };
+        let label = ui.add(
+            egui::Label::new(text)
+                .truncate()
+                .show_tooltip_when_elided(false)
+                .sense(Sense::click()),
+        );
+        // The hover text cannot be selected: the menu copies it whole, backup refs included.
+        let whole = self.text.trim_end();
+        label.context_menu(|ui| {
+            if ui.button(tr!("status-copy")).clicked() {
+                ui.ctx().copy_text(whole.to_owned());
+                ui.close();
+            }
+        });
+        if cut || line.len() < whole.len() {
+            label.on_hover_text(whole);
+        }
+    }
+}
+
+/// The width of `text` on one line of the body font.
+fn text_width(ui: &Ui, text: &str) -> f32 {
+    let wrap = Some(egui::TextWrapMode::Extend);
+    egui::WidgetText::from(text)
+        .into_galley(ui, wrap, f32::INFINITY, egui::TextStyle::Body)
+        .size()
+        .x
+}
+
+/// What the status bar says at `now`: the command in progress, else the error, else the notice
+/// (weak once it is old: a repaint is asked for that moment).
+fn status_text(
+    ui: &Ui,
+    running: &[Job],
+    write: Option<&str>,
+    error: &str,
+    notice: &status::Notice,
+    now: std::time::Instant,
+) -> Option<StatusText> {
+    let (text, spinner, tone) = if let Some(write) = write {
+        (tr!("top-bar-running", what = write), true, Tone::Plain)
+    } else if let Some(job) = slow_job(ui, running) {
+        let text = match running.len() - 1 {
+            0 => tr!("top-bar-running", what = &job.command),
+            n => tr!("top-bar-running-queued", what = &job.command, n = n),
+        };
+        (text, true, Tone::Plain)
+    } else if !error.is_empty() {
+        (error.to_owned(), false, Tone::Error)
+    } else if !notice.is_empty() {
+        let tone = match notice.fresh_for(now) {
+            Some(left) => {
+                ui.ctx().request_repaint_after(left);
+                Tone::Plain
+            }
+            None => Tone::Old,
+        };
+        (notice.to_string(), false, tone)
+    } else {
+        return None;
+    };
+    Some(StatusText {
+        text,
+        spinner,
+        tone,
+    })
+}
+
 /// `write` is the write in progress, described: it takes precedence over the other commands. `notice`
 /// is an informational message, shown if there is nothing in progress and no error. `repo`: the repo
-/// shown, for its path on the right.
+/// shown, for its path on the right. The message is one line: the items on the right are laid out
+/// first and it is cut in the room they leave, which is at least [`MESSAGE_SHARE`] of the bar.
 pub(crate) fn status_bar(
     ui: &mut Ui,
     repo: Option<&RepoView>,
     running: &[Job],
     write: Option<&str>,
     error: &str,
-    notice: &str,
+    notice: &status::Notice,
 ) {
+    let message = status_text(ui, running, write, error, notice, std::time::Instant::now());
     ui.horizontal(|ui| {
-        if let Some(write) = write {
-            ui.spinner();
-            ui.label(tr!("top-bar-running", what = write));
-        } else if let Some(job) = slow_job(ui, running) {
-            ui.spinner();
-            let text = match running.len() - 1 {
-                0 => tr!("top-bar-running", what = &job.command),
-                n => tr!("top-bar-running-queued", what = &job.command, n = n),
-            };
-            ui.label(text);
-        } else if !error.is_empty() {
-            ui.colored_label(ui.visuals().error_fg_color, error);
-        } else if !notice.is_empty() {
-            ui.label(notice);
-        }
+        let width = ui.available_width();
+        let gap = ui.spacing().item_spacing.x;
+        let wanted = message.as_ref().map_or(0.0, |m| m.width(ui) + gap);
+        // What the message does not need, and never more than what its share leaves.
+        let right = (width - wanted).max(width * (1.0 - MESSAGE_SHARE));
         // On the right where the repo is (the changed files are on the graph's first row).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             egui::warn_if_debug_build(ui);
-            let Some(repo) = repo else {
-                return;
-            };
-            ui.add(egui::Label::new(RichText::new(&repo.path).small().weak()).truncate());
+            if let Some(repo) = repo {
+                let room = (right - (width - ui.available_width())).max(0.0);
+                let size = vec2(room, ui.available_height());
+                ui.allocate_ui_with_layout(size, *ui.layout(), |ui| {
+                    ui.add(egui::Label::new(RichText::new(&repo.path).small().weak()).truncate());
+                });
+            }
+            if let Some(message) = &message {
+                let left = egui::Layout::left_to_right(egui::Align::Center);
+                ui.with_layout(left, |ui| message.show(ui));
+            }
         });
     });
 }

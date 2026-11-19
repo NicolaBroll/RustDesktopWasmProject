@@ -78,25 +78,28 @@ impl BranchBox {
     }
 }
 
-/// The engine warnings as the text appended to a notice, with the commits saved when leaving a
-/// detached HEAD said plainly; `backup` named even if no warning does.
+/// The engine warnings as the text appended last to a notice, with the commits saved when
+/// leaving a detached HEAD said plainly; `backup` told even if no warning does. The names of the
+/// backup refs follow on their own line (the hover text of the status bar).
 pub(crate) fn backup_text(warnings: &[Message], backup: Option<&str>) -> String {
-    let mut saved = false;
+    let mut refs: Vec<String> = Vec::new();
     let texts: Vec<String> = warnings
         .iter()
         .map(|w| match saved_commits(w) {
             Some((n, name)) => {
-                saved = true;
-                tr!("detach-saved", n = n, backup = name)
+                refs.push(name);
+                tr!("detach-saved", n = n)
             }
             None => w.text(),
         })
         .collect();
     let mut text = warnings_text(&texts);
-    if let Some(backup) = backup.filter(|b| !saved && !texts.iter().any(|t| t.contains(b))) {
-        text += &warnings_text(&[tr!("detach-saved-unknown", backup = backup)]);
+    let untold = |b: &&str| refs.is_empty() && !texts.iter().any(|t| t.contains(*b));
+    if let Some(backup) = backup.filter(untold) {
+        text += &warnings_text(&[tr!("detach-saved-unknown")]);
+        refs.push(backup.to_owned());
     }
-    text
+    crate::status::with_backups(text, &refs)
 }
 
 /// The count and the backup of the "commits saved" warning.

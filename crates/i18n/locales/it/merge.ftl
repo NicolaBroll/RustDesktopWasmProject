@@ -55,11 +55,11 @@ merge-abort-failed = Annullamento { $name ->
        *[other] del
     } { $name } non riuscito: { $error }
 merge-aborted = { $title } annullato
-merge-aborted-notice = { $title } annullato: indice e worktree salvati prima in { $backup }{ $n ->
+merge-aborted-notice = { $title } annullato: indice e worktree salvati prima in un backup{ $n ->
         [0] {""}
         [one] {" "}(1 file)
        *[other] {" "}({ $n } file)
-    }; si rimettono con `git stash apply { $backup }`. Non si annulla con «Annulla»
+    }; si rimettono con `git stash apply <backup>`. Non si annulla con «Annulla»
 merge-warning = attenzione: { $warning }
 merge-status-not-reloaded = lo stato non si rilegge: { $error }
 merge-refs-not-reloaded = i ref non si rileggono: { $error }
@@ -78,7 +78,7 @@ merge-rebase-stopped-before-commit = Rebase fermo di nuovo prima di un commit (u
 merge-rebase-stopped-short = Rebase fermo di nuovo
 merge-rebase-finished = Rebase concluso: HEAD su { $id }
 merge-rebase-finished-branch = Rebase di «{ $branch }» concluso: il branch è su { $id }
-merge-rebase-backup = ; il branch com'era è in { $backup }
+merge-rebase-backup = ; il branch com'era resta in un backup
 merge-merged = «{ $name }» unito in «{ $branch }» ({ $commits }): commit di merge { $id }. «Annulla» lo annulla
 merge-pick-stopped-before-commit = { $title } di «{ $what }» su «{ $branch }» fermo prima del commit (un hook o la firma?): concluderlo con «Continua { $name ->
         [squash] lo

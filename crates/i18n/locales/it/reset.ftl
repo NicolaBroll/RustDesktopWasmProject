@@ -30,7 +30,7 @@ reset-done = Reset ({ $mode }) di { $moving } a { $id }
 reset-done-backup = ; le modifiche locali di { $n ->
     [one] 1 file sono salvate
    *[other] { $n } file sono salvate
-} in { $backup } (git stash apply { $stash })
-reset-done-index-backup = ; lo stage precedente è salvato in { $backup }
-reset-done-commit-backups = ; i commit non più raggiungibili sono salvati in { $refs }
+} in un backup (git stash apply { $stash })
+reset-done-index-backup = ; lo stage precedente è salvato in un backup
+reset-done-commit-backups = ; i commit non più raggiungibili restano in un backup
 reset-done-short = Reset fatto

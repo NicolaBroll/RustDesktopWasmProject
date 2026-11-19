@@ -50,6 +50,7 @@ mod settings;
 mod side_panel;
 mod stage;
 mod stash;
+mod status;
 mod submodule;
 mod sync;
 mod tabs;
@@ -533,7 +534,7 @@ struct Tab {
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
-    notice: String,
+    notice: status::Notice,
     /// The watch of the repo and the refresh it asks for (S40).
     auto: refresh::AutoRefresh,
     /// The repos (paths) that already showed the notice "git-lfs is not installed" in this tab:
@@ -556,7 +557,7 @@ impl Tab {
             open_worktree: None,
             viewport: ListViewport::default(),
             error: String::new(),
-            notice: String::new(),
+            notice: status::Notice::default(),
             auto: refresh::AutoRefresh::default(),
             lfs_noticed: std::collections::HashSet::new(),
         }
@@ -583,7 +584,7 @@ impl Tab {
     /// `repo.open`, with git's messages (`notice`) in the status bar.
     fn created(&mut self, value: Value, notice: String) {
         match self.store(Request::Open, value) {
-            Ok(()) => self.notice = notice,
+            Ok(()) => self.notice.set(notice),
             Err(e) => {
                 self.error = unexpected_result("repo.clone", e);
             }
@@ -1224,9 +1225,10 @@ impl Tab {
                 self.error.clear();
                 // Staged versions that existed only in the index: saved before
                 // writing, this is said in the status bar.
-                self.notice = backup
-                    .map(|r| tr!("app-index-backup", backup = r))
-                    .unwrap_or_default();
+                self.notice.set(match &backup {
+                    Some(_) => status::with_backup(tr!("app-index-backup"), backup.as_deref()),
+                    None => String::new(),
+                });
                 self.follow_diff();
             }
             Err(e) => {

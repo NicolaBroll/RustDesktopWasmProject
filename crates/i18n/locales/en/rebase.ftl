@@ -46,7 +46,7 @@ rebase-done = Rebase of “{ $branch }” done: { $before ->
     } became { $after ->
         [one] 1
        *[other] { $after }
-    }, the branch is at { $id }; the branch as it was is in { $backup }. “Undo” puts it back
+    }, the branch is at { $id }; the branch as it was is kept in a backup. “Undo” puts it back
 rebase-confirm-heading = Rewrite published commits?
 rebase-confirm-text = These commits are already on a remote branch. After the rebase the branch differs from the remote one: pushing it will need a force push, and whoever has the old commits will have to realign.
 rebase-confirm-button = Rewrite anyway

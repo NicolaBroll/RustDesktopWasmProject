@@ -1045,12 +1045,8 @@ fn abort_outcome(r: MergeAbortResult, op: Kind) -> Outcome {
         r.status_error,
         r.refs_error,
     );
-    let notice = tr!(
-        "merge-aborted-notice",
-        title = title,
-        backup = &r.backup,
-        n = r.files.len()
-    );
+    let notice = tr!("merge-aborted-notice", title = title, n = r.files.len());
+    let notice = crate::status::with_backups(notice, &[&r.backup]);
     Outcome {
         notice,
         status: r.status,
@@ -1090,10 +1086,10 @@ fn rebase_continue_outcome(r: RebaseContinueResult) -> Outcome {
             ),
             None => tr!("merge-rebase-finished", id = r.after.short()),
         };
-        if let Some(backup) = &r.backup {
-            notice.push_str(&tr!("merge-rebase-backup", backup = backup));
+        if r.backup.is_some() {
+            notice.push_str(&tr!("merge-rebase-backup"));
         }
-        notice
+        crate::status::with_backup(notice, r.backup.as_deref())
     };
     let what = if r.in_progress {
         tr!("merge-rebase-stopped-short")
@@ -1355,7 +1351,7 @@ impl Tab {
                 } else if outcome.moved && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
                 if !refs_read {
@@ -1614,7 +1610,7 @@ mod tests {
         assert_eq!(label, "Aborting the merge");
         let outcome = done(run(&r, &mut s, &mut b, Op::Abort(Kind::Merge), params));
         assert!(
-            outcome.notice.contains("refs/project/backup/merge-abort-"),
+            crate::status::hides(&outcome.notice, "refs/project/backup/merge-abort-"),
             "{}",
             outcome.notice
         );

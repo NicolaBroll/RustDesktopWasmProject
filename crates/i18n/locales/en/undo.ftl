@@ -9,4 +9,7 @@ undo-nothing-to-redo = Nothing to redo
 undo-undone = Undone: { $description }
 undo-redone = Redone: { $description }
 undo-done = Done
-undo-backups = ; backup in { $refs }
+undo-backups = ; { $n ->
+    [one] a backup was saved
+   *[other] { $n } backups were saved
+}

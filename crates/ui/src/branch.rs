@@ -795,20 +795,15 @@ fn tag_create_outcome(r: TagCreateResult) -> Outcome {
 /// The outcome of `tag.delete`.
 fn tag_delete_outcome(r: TagDeleteResult) -> Outcome {
     let tag = tag_short(&r.tag);
-    let (id, backup) = (r.target.short(), &r.backup);
+    let id = r.target.short();
     let notice = if r.annotated {
-        tr!(
-            "branch-tag-deleted-annotated",
-            tag = tag,
-            id = id,
-            backup = backup
-        )
+        tr!("branch-tag-deleted-annotated", tag = tag, id = id)
     } else {
-        tr!("branch-tag-deleted", tag = tag, id = id, backup = backup)
+        tr!("branch-tag-deleted", tag = tag, id = id)
     };
     Outcome {
         op: Op::DeleteTag,
-        notice,
+        notice: crate::status::with_backups(notice, &[&r.backup]),
         refs: r.refs,
         status: None,
         warning: r.refs_error.map(refs_warning),
@@ -867,7 +862,7 @@ fn checkout_outcome(r: BranchCheckoutResult) -> Outcome {
 fn delete_notice(r: &BranchDeleteResult) -> String {
     let branch = branch_short(&r.branch);
     let id = r.target.short();
-    let (unmerged, backup) = (r.unmerged, &r.backup);
+    let unmerged = r.unmerged;
     let upstream = r
         .removed_config
         .iter()
@@ -877,16 +872,14 @@ fn delete_notice(r: &BranchDeleteResult) -> String {
             "branch-deleted",
             branch = branch,
             id = id,
-            unmerged = unmerged,
-            backup = backup
+            unmerged = unmerged
         )
     } else if upstream {
         tr!(
             "branch-deleted-upstream",
             branch = branch,
             id = id,
-            unmerged = unmerged,
-            backup = backup
+            unmerged = unmerged
         )
     } else {
         let keys: Vec<&str> = r.removed_config.iter().map(|c| c.key.as_str()).collect();
@@ -895,7 +888,6 @@ fn delete_notice(r: &BranchDeleteResult) -> String {
             branch = branch,
             id = id,
             unmerged = unmerged,
-            backup = backup,
             keys = keys.join(", ")
         )
     }
@@ -905,7 +897,10 @@ fn delete_notice(r: &BranchDeleteResult) -> String {
 fn delete_outcome(r: BranchDeleteResult) -> Outcome {
     Outcome {
         op: Op::Delete,
-        notice: delete_notice(&r) + &messages_text(&r.warnings),
+        notice: crate::status::with_backups(
+            delete_notice(&r) + &messages_text(&r.warnings),
+            &[&r.backup],
+        ),
         refs: r.refs,
         status: None,
         warning: r.refs_error.map(refs_warning),
@@ -1146,7 +1141,7 @@ impl Tab {
                 if checkout && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 if checkout {
                     self.follow_diff();
@@ -1551,7 +1546,7 @@ mod tests {
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("tag-delete-1"),
+            crate::status::hides(&outcome.notice, "tag-delete-1"),
             "{}",
             outcome.notice
         );
@@ -1688,9 +1683,10 @@ mod tests {
         let deleted = done(send(&mut b, &r, &mut s, Op::Delete, check));
         assert!(!has_branch(&deleted, "trial"));
         assert!(
-            deleted
-                .notice
-                .contains("backup in refs/project/backup/delete-"),
+            crate::status::line(&deleted.notice).contains("; a backup was saved")
+                && deleted
+                    .notice
+                    .ends_with("\nBackup: refs/project/backup/delete-1"),
             "{}",
             deleted.notice
         );

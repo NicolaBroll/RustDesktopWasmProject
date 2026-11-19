@@ -278,8 +278,10 @@ fn squash_abort_confirmed() {
     let outcome = done(run(&r, &mut s, &mut b, op, params));
     assert!(
         outcome.notice.starts_with(
-            "Squash aborted: index and working tree saved first in refs/project/backup/merge-abort-"
-        ),
+            "Squash aborted: index and working tree saved first in a backup (1 file); "
+        ) && outcome
+            .notice
+            .contains("\nBackup: refs/project/backup/merge-abort-"),
         "{}",
         outcome.notice
     );

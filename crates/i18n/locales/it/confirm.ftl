@@ -4,7 +4,7 @@ confirm-resolve-title = { $n ->
     [one] Segnare il conflitto come risolto?
    *[other] Segnare i conflitti come risolti?
 }
-confirm-resolve-body = Mettere in stage un file in conflitto lo segna come risolto: nell'indice va il contenuto attuale del file nel worktree, così com'è, compresi eventuali marcatori di conflitto (<<<<<<<, =======, >>>>>>>) rimasti. Le versioni del conflitto (base, nostra e loro) escono dall'indice. Controllare prima che il file sia davvero risolto.
+confirm-resolve-body = Mettere in stage un file in conflitto lo segna come risolto: nell'indice va il contenuto attuale del file nel worktree, così com'è, compresi eventuali marcatori di conflitto (<<<<<<<, =======, >>>>>>>) rimasti. Le versioni del conflitto (base, nostra e loro) escono dall'indice. Controlla prima che il file sia davvero risolto.
 confirm-resolve-files = { $n ->
     [one] File in conflitto:
    *[other] { $n } file in conflitto:

@@ -473,7 +473,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   (2.5:1); both themes are checked by `text_levels_read` in `theme.rs`.
 
 ### U66 — Layout bugs and wording
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** the conflict editor's "Theirs (<40-character id>)" heading is letter-spaced and
   wraps on three lines; the stash details show the whole id, which wraps over "Created on"; the
   floating scrollbar of the left panel covers the "+" and "⋯" buttons (a thick black bar in the
@@ -488,6 +488,21 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   asked for while the app has a credential dialog.
 - **Done when:** screenshots of the four layouts at 760x520; texts changed in both locales;
   i18n tests green; CI green.
+- **Done:** conflict headings on one cut line (whole on hover), a whole id in a marker shown as
+  the incoming branch (`origin/main`) or short (`conflict::side_name`); the editor's buttons
+  are laid out first and the path and the count are cut before them. Stash details: short id
+  and copy icon (`view::oid_copy`, shared with the commit details). The rows of the left panel
+  end before the floating scrollbar (`scrollbar_gutter`, always reserved: no jump). A stage
+  panel too low for its headers, a row per list and one row of message scrolls as a whole
+  (`StageLayout::scrolls`), and the row button is as wide as its text. Folder dialog:
+  `Platform::pick_folder` now answers `Result<Option<String>, NoDialog>`; the app tells a
+  dialog `rfd` could not show from one closed by the error `rfd` logs when zenity cannot start
+  (`apps/project/src/dialog.rs`), the status bar says what is missing and the "Open repository"
+  dialog with a path field opens (also File → "Open by path…"). Texts: Italian "Metti in
+  stage"/"Togli dallo stage" for files, lines and hunks, "Remoti", imperatives in the UI areas
+  (the `engine-*` errors keep the infinitive); English singular/plural in the "stopped"
+  messages, the subject in "starts at commit … (…)"; the clone dialog says the app asks for the
+  credentials git's configuration does not give.
 
 ### U67 — Finding things, dialogs, small polish
 - [ ] **Agent:** `egui-ui`

@@ -2,10 +2,11 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // no console on Windows in release
 
+mod dialog;
 mod launch;
 mod watch;
 
-use project_engine::{Capabilities, OnChange, Platform, Watch};
+use project_engine::{Capabilities, OnChange, OnPicked, Platform, Watch};
 use project_git::CliOpener;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,7 +19,7 @@ fn main() -> eframe::Result {
     if let Some(code) = project_git::askpass_client() {
         std::process::exit(code);
     }
-    env_logger::init();
+    dialog::init_logger();
 
     // Network commands ask for credentials through the UI.
     // The dialog gets the window's context when the App is created.
@@ -92,18 +93,15 @@ impl Platform for NativePlatform {
 
     /// The dialog is created here, on the UI thread (macOS wants the main thread), and shown by
     /// `rfd` without blocking it: on Linux and Windows on a thread of its own. A job thread waits
-    /// for the result, so the window keeps repainting while the dialog is open.
-    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
+    /// for the result, so the window keeps repainting while the dialog is open. A dialog that
+    /// could not be shown (Linux without portal and without zenity) is an error, not a dialog
+    /// closed by the user: see [`dialog`].
+    fn pick_folder(&self, on_done: OnPicked) {
+        let mark = dialog::mark();
         let picking = self.dialog.clone().pick_folder();
         self.spawn(Box::new(move || {
-            let folder = pollster::block_on(picking).and_then(|handle| {
-                let path = handle.path().to_path_buf().into_os_string().into_string();
-                if let Err(path) = &path {
-                    log::error!("{}: the path is not UTF-8", path.to_string_lossy());
-                }
-                path.ok()
-            });
-            on_done(folder);
+            let chosen = pollster::block_on(picking).map(|handle| handle.path().to_path_buf());
+            on_done(dialog::outcome(chosen, mark));
         }));
     }
 

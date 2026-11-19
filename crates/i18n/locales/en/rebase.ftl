@@ -37,7 +37,10 @@ rebase-close = Close
 rebase-label = Interactive rebase of “{ $branch }”
 rebase-refused = Not possible: { $error }
 rebase-failed = Rebase of “{ $branch }” failed: { $error }. The repository is reloaded to show its current state
-rebase-stopped = Rebase of “{ $branch }” stopped: { $files }. Resolve them and mark them as resolved in the staging area, then “Continue rebase…” in the panel at the top (or “Abort rebase…”)
+rebase-stopped = Rebase of “{ $branch }” stopped: { $n ->
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue rebase…” in the panel at the top (or “Abort rebase…”)
 rebase-stopped-before-commit = Rebase of “{ $branch }” stopped before a commit (a hook or signing?): finish it with “Continue rebase…” in the panel at the top, or abort it
 rebase-stopped-short = Rebase stopped
 rebase-done = Rebase of “{ $branch }” done: { $before ->

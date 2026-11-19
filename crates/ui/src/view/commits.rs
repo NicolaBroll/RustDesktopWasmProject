@@ -224,7 +224,7 @@ impl CommitMenu<'_> {
             .on_disabled_hover_text(wait());
         if button.clicked() {
             actions.push(Action::Branch(branch::Action::NewBranch(
-                Start::from_commit(id),
+                Start::of_commit(commit),
                 String::new(),
             )));
             ui.close();
@@ -234,8 +234,8 @@ impl CommitMenu<'_> {
             .on_hover_text(tr!("commit-new-tag-hint", id = id.short()))
             .on_disabled_hover_text(wait());
         if button.clicked() {
-            actions.push(Action::Branch(branch::Action::NewTag(Start::from_commit(
-                id,
+            actions.push(Action::Branch(branch::Action::NewTag(Start::of_commit(
+                commit,
             ))));
             ui.close();
         }

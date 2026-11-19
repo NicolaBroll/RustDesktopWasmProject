@@ -15,14 +15,44 @@ pub(crate) fn stage_panel(
     actions: &mut Vec<Action>,
 ) {
     // The commit box takes what the part above leaves, measured in the previous frame: headers
-    // and one row per list stay visible, and in a low window the box's body loses rows.
+    // and one row per list stay visible, and in a low window the box's body loses rows. Lower
+    // than that (a banner over a small window, titles on two rows) the whole panel scrolls:
+    // nothing is drawn over something else.
     let layout_id = ui.make_persistent_id("stage-layout");
-    let mut layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
-    let room = ui.available_height() - layout.upper_min - layout.box_frame - layout.box_fixed;
+    let layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
     let row = ui.text_style_height(&egui::TextStyle::Body);
-    let body_rows = ((room - BODY_MARGIN) / row)
-        .floor()
-        .clamp(1.0, BODY_ROWS as f32) as usize;
+    let least = layout.least(row);
+    let low = layout.scrolls(ui.available_height(), row);
+    // Always inside the scroll area, which scrolls only when low: the ids of the fields do
+    // not change (and the focus stays) when a banner appears.
+    egui::ScrollArea::new([false, low])
+        .id_salt("stage-panel")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if low {
+                // The buttons at the right edge are never under the scrollbar.
+                let width = ui.available_width() - scrollbar_gutter(ui.spacing());
+                let (rect, _) = ui.allocate_exact_size(vec2(width, least), Sense::hover());
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                stage_content(&mut content, repo, draft, writing, layout_id, actions);
+            } else {
+                stage_content(ui, repo, draft, writing, layout_id, actions);
+            }
+        });
+}
+
+/// The stage area in the height of `ui`: the commit box at the bottom, the lists above.
+fn stage_content(
+    ui: &mut Ui,
+    repo: &RepoView,
+    draft: &mut CommitDraft,
+    writing: bool,
+    layout_id: egui::Id,
+    actions: &mut Vec<Action>,
+) {
+    let mut layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
+    let row = ui.text_style_height(&egui::TextStyle::Body);
+    let body_rows = layout.body_rows(ui.available_height(), row);
     let panel = egui::Panel::bottom("commit-message")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
@@ -141,6 +171,27 @@ struct StageLayout {
 }
 
 impl StageLayout {
+    /// The height the panel needs to show its headers, one row per list and the commit box
+    /// with one row of body (`row`: the height of a row of text).
+    fn least(&self, row: f32) -> f32 {
+        self.upper_min + self.box_frame + self.box_fixed + BODY_MARGIN + row
+    }
+
+    /// The rows of the message body in a panel of that height: up to [`BODY_ROWS`], fewer when
+    /// the lists would be left without their row, never less than one.
+    fn body_rows(&self, height: f32, row: f32) -> usize {
+        let room = height - self.upper_min - self.box_frame - self.box_fixed;
+        ((room - BODY_MARGIN) / row)
+            .floor()
+            .clamp(1.0, BODY_ROWS as f32) as usize
+    }
+
+    /// Whether a panel of that height is too low even with one row of body: then it scrolls,
+    /// tall [`Self::least`]. Never before the first measure.
+    fn scrolls(&self, height: f32, row: f32) -> bool {
+        self.upper_min > 0.0 && height + 0.5 < self.least(row)
+    }
+
     /// More than half a point apart: below that a new pass would change nothing.
     fn differs(&self, other: &Self) -> bool {
         [
@@ -506,21 +557,18 @@ impl StageSection<'_> {
                     let mut clicked = false;
                     let mut right = rect.right() - 4.0;
                     if hovered || selected {
-                        let button_w = 62.0;
-                        let button_rect = egui::Rect::from_min_max(
-                            egui::pos2(rect.right() - button_w, rect.top()),
-                            rect.right_bottom(),
-                        );
+                        // As wide as its text, which changes with the language: the path is
+                        // cut before it.
                         let mut cell = ui.new_child(
                             egui::UiBuilder::new()
-                                .max_rect(button_rect)
+                                .max_rect(rect)
                                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
                         );
-                        clicked = cell
+                        let button = cell
                             .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
-                            .on_hover_text(row_action_help(op, item))
-                            .clicked();
-                        right = button_rect.left() - 4.0;
+                            .on_hover_text(row_action_help(op, item));
+                        clicked = button.clicked();
+                        right = button.rect.left() - 4.0;
                     }
 
                     // Files stored in Git LFS: the badge before the button (S63).
@@ -528,7 +576,7 @@ impl StageSection<'_> {
                         right = paint_lfs_badge(&painter, right, rect.center().y) - 4.0;
                     }
                     let left = badge.right() + 6.0;
-                    let job = stage_path_job(item, &font, text, weak, right - left);
+                    let job = stage_path_job(item, &font, text, weak, (right - left).max(0.0));
                     let galley = painter.layout_job(job);
                     let top = rect.center().y - galley.size().y / 2.0;
                     painter.galley(egui::pos2(left, top), galley, text);
@@ -850,4 +898,41 @@ pub(super) fn stage_tooltip(op: StageOp, item: &StageItem) -> String {
         lines.push(tr!("stage-tooltip-right"));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row of text.
+    const ROW: f32 = 17.0;
+
+    fn layout() -> StageLayout {
+        StageLayout {
+            upper_min: 200.0,
+            box_fixed: 120.0,
+            box_frame: 13.0,
+        }
+    }
+
+    #[test]
+    fn the_commit_box_gives_up_rows_before_the_lists_do() {
+        let layout = layout();
+        // Headers and one row per list, the box with one row of body.
+        assert_eq!(layout.least(ROW), 354.0);
+        assert_eq!(layout.body_rows(600.0, ROW), BODY_ROWS);
+        assert_eq!(layout.body_rows(380.0, ROW), 2);
+        assert_eq!(layout.body_rows(354.0, ROW), 1);
+        // Lower still: one row stays, and the panel scrolls as tall as that.
+        assert_eq!(layout.body_rows(300.0, ROW), 1);
+        assert!(!layout.scrolls(600.0, ROW));
+        assert!(!layout.scrolls(354.0, ROW));
+        assert!(layout.scrolls(353.0, ROW));
+        assert!(layout.scrolls(300.0, ROW));
+    }
+
+    #[test]
+    fn nothing_scrolls_before_the_first_measure() {
+        assert!(!StageLayout::default().scrolls(10.0, ROW));
+    }
 }

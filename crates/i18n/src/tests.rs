@@ -53,11 +53,12 @@ fn keys_start_with_their_area_and_load_without_errors() {
 fn plurals_follow_the_language() {
     let it = get(Lang::It);
     let en = get(Lang::En);
-    let files = |i18n: &I18n, n: usize| i18n.tr_args("merge-conflict-files", [("n", Arg::from(n))]);
-    assert_eq!(files(it, 1), "1 file in conflitto");
-    assert_eq!(files(it, 3), "3 file in conflitto");
-    assert_eq!(files(en, 1), "1 conflicted file");
-    assert_eq!(files(en, 3), "3 conflicted files");
+    let files =
+        |i18n: &I18n, n: usize| i18n.tr_args("merge-conflicts-label", [("n", Arg::from(n))]);
+    assert_eq!(files(it, 1), "1 file in conflitto:");
+    assert_eq!(files(it, 3), "3 file in conflitto:");
+    assert_eq!(files(en, 1), "1 conflicted file:");
+    assert_eq!(files(en, 3), "3 conflicted files:");
 }
 
 #[test]
@@ -71,9 +72,9 @@ fn parameters_have_no_unicode_isolation_marks() {
 fn the_macro_uses_the_current_language() {
     // The other tests use `get`: only this one touches the global language.
     assert_eq!(lang(), Lang::En);
-    let expected = "2 conflicted files";
-    assert_eq!(tr!("merge-conflict-files", n = 2), expected);
-    assert!(current().has("merge-conflict-files"));
+    let expected = "2 conflicted files:";
+    assert_eq!(tr!("merge-conflicts-label", n = 2), expected);
+    assert!(current().has("merge-conflicts-label"));
     assert!(!current().has("merge-nope"));
 }
 

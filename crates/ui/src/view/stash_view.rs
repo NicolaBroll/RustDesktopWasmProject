@@ -249,17 +249,8 @@ pub(crate) fn stash_panel(
             ui.monospace(&stash.name);
             ui.end_row();
             ui.weak(tr!("stash-field-commit"));
-            ui.horizontal_wrapped(|ui| {
-                let id = stash.id.to_string();
-                ui.add(egui::Label::new(RichText::new(&id).monospace()).selectable(true));
-                if ui
-                    .small_button(tr!("stash-copy"))
-                    .on_hover_text(tr!("stash-copy-help"))
-                    .clicked()
-                {
-                    ui.ctx().copy_text(id);
-                }
-            });
+            // As the "Commit" row of a commit: a 40-character id wraps in a narrow panel.
+            oid_copy(ui, stash.id);
             ui.end_row();
             ui.weak(tr!("stash-field-created-on"));
             ui.horizontal_wrapped(|ui| {

@@ -1,6 +1,6 @@
 # Text shared by several areas.
 
-common-wait = Aspettare l'operazione in corso (o chiudere il dialogo aperto)
+common-wait = Aspetta l'operazione in corso (o chiudi il dialogo aperto)
 common-git-message = Messaggio di git:
 common-oid-hint =
     { $id }

@@ -123,8 +123,8 @@ impl Platform for Manual {
     fn capabilities(&self) -> Capabilities {
         Capabilities::default()
     }
-    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-        on_done(None);
+    fn pick_folder(&self, on_done: project_engine::OnPicked) {
+        on_done(Ok(None));
     }
     fn spawn(&self, job: Job) {
         if let Some(held) = self.held.lock().unwrap().as_mut() {

@@ -179,6 +179,15 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         {
             actions.push(Action::Tabs(tabs::Action::PickFolder));
         }
+        // Without the system's folder dialog too: the path is typed.
+        if ui
+            .button(tr!("title-bar-open-path"))
+            .on_hover_text(tr!("title-bar-open-path-hint"))
+            .clicked()
+        {
+            actions.push(Action::Tabs(tabs::Action::OpenByPath));
+            ui.close();
+        }
         create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
         if bar.can_launch {

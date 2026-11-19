@@ -546,11 +546,7 @@ fn start_outcome(r: RebaseStartResult, rows: usize, produced: usize) -> Outcome 
                 }
                 tr!("rebase-stopped-before-commit", branch = branch)
             }
-            n => tr!(
-                "rebase-stopped",
-                branch = branch,
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("rebase-stopped", branch = branch, n = n),
         }
     } else {
         let done = tr!(

@@ -3,6 +3,8 @@
 title-bar-file = File
 title-bar-open = Open repository…
 title-bar-open-hint = Open a repository in a new tab
+title-bar-open-path = Open by path…
+title-bar-open-path-hint = Type the path of a repository's folder
 title-bar-title = BinariGit
 title-bar-title-repo = { $repo } — BinariGit
 title-bar-minimize = Minimize

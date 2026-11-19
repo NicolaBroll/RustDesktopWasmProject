@@ -20,8 +20,8 @@ impl Platform for Inline {
             external_apps: true,
         }
     }
-    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-        on_done(None);
+    fn pick_folder(&self, on_done: project_engine::OnPicked) {
+        on_done(Ok(None));
     }
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         job();
@@ -1554,4 +1554,91 @@ fn the_keyboard_walks_the_files_and_opens_the_new_branch_dialog() {
     assert!(!screen.repo().modal_open());
     screen.key(egui::Key::W, egui::Modifiers::COMMAND);
     assert!(screen.tab().repo.is_none(), "Ctrl+W closes the tab");
+}
+
+/// U66: too low for its headers, a row per list and the commit box (a banner over a small
+/// window), the stage panel scrolls instead of drawing one part over another.
+#[test]
+fn a_low_stage_panel_keeps_a_row_per_list() {
+    let mut screen = sample();
+    screen.act(A::SelectWorktree);
+    for size in [egui::vec2(760.0, 520.0), egui::vec2(760.0, 300.0)] {
+        screen.size = size;
+        let painted = screen.frames(4);
+        let all = |text: &str| -> Vec<f32> {
+            let found = painted.iter().filter(|p| p.text == text);
+            found.map(|p| p.pos.y).collect()
+        };
+        let y = |text: &str| match all(text)[..] {
+            [y] => y,
+            ref found => panic!("{text:?} is on screen {} times at {size}", found.len()),
+        };
+        // README.md is the first file of both lists.
+        let [staged, unstaged] = all("README.md")[..] else {
+            panic!("no file row per list at {size}");
+        };
+        // Each header, its button and its first file: one under the other, none over the next.
+        let rows = [y("Staged (2)"), staged, y("Unstaged (3)"), unstaged];
+        for pair in rows.windows(2) {
+            assert!(pair[1] - pair[0] >= 14.0, "{rows:?} at {size}");
+        }
+        assert!(
+            (y("Unstage all") - rows[0]).abs() < 14.0,
+            "{rows:?} at {size}"
+        );
+        assert!(
+            (y("Stage all") - rows[2]).abs() < 14.0,
+            "{rows:?} at {size}"
+        );
+        // The commit box, when in view, starts under the last list.
+        if let Some(message) = painted.iter().find(|p| p.text == "Commit message") {
+            assert!(message.pos.y - rows[3] >= 14.0, "{rows:?} at {size}");
+        }
+    }
+}
+
+/// U66: the id of a stash is shown short, as a commit's: whole, it wrapped over the next row.
+#[test]
+fn the_id_of_a_stash_is_shown_short() {
+    use crate::stash::Action as S;
+    let mut screen = sample();
+    screen.act(A::Stash(S::Open));
+    screen.act(A::Stash(S::Submit));
+    let id = screen.repo().stash.list().unwrap_or_default()[0].id;
+    let painted = screen.act(A::Stash(S::Select(id)));
+    assert!(painted.iter().any(|p| p.text == id.short()), "short id");
+    assert!(!painted.iter().any(|p| p.text.contains(&id.to_string())));
+}
+
+/// U66: the "Open repository" dialog where the path is typed, from the File menu or when the
+/// system's folder dialog cannot be shown.
+#[test]
+fn the_open_by_path_dialog() {
+    use crate::tabs::Action as T;
+    let mut screen = sample();
+    let painted = screen.shows(
+        A::Tabs(T::OpenByPath),
+        &["Open repository", "Type or paste the path", "Cancel"],
+    );
+    // Nothing typed: Enter opens nothing and the dialog stays.
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(screen.app.path_dialog.is_some());
+    assert_eq!(screen.app.tabs.len(), 1);
+    // Typed: in the field, and Enter opens it as a folder chosen would be (here it is missing:
+    // the tab says so, the dialog is gone).
+    assert!(painted.iter().any(|p| p.text == "Open"));
+    screen.frame(vec![egui::Event::Text("/no/such/repo".to_owned())]);
+    screen.frames(2);
+    let dialog = screen.app.path_dialog.as_ref().expect("still open");
+    assert_eq!(dialog.path, "/no/such/repo");
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(screen.app.path_dialog.is_none());
+    assert_eq!(screen.app.tabs.len(), 2);
+    assert!(screen.tab().repo.is_none());
+    assert!(!screen.tab().error.is_empty());
+    // Esc closes it without opening anything.
+    screen.act(A::Tabs(T::OpenByPath));
+    screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(screen.app.path_dialog.is_none());
+    assert_eq!(screen.app.tabs.len(), 2);
 }

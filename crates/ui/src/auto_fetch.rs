@@ -230,13 +230,11 @@ pub fn news_text(moved: &[RefUpdate], commits: &[Commit]) -> String {
 }
 
 impl RepoView {
-    /// Something the automatic fetch waits for: a dialog or an error window open, an operation in
-    /// progress (merge, rebase, cherry-pick, revert), the status not read yet.
+    /// Something the automatic fetch waits for: a dialog open (the one of a failure too) or the
+    /// rejected push window, an operation in progress (merge, rebase, cherry-pick, revert), the
+    /// status not read yet.
     pub(crate) fn auto_fetch_blocked(&self) -> bool {
         self.modal_open()
-            || self.fetch.failure().is_some()
-            || self.remotes.failure().is_some()
-            || self.merge.failure().is_some()
             || self.sync.window().is_some()
             || self.stash.conflicts().is_some()
             || self.conflict.editor().is_some()

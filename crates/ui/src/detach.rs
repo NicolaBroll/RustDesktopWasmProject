@@ -2,8 +2,8 @@
 //! (`commit.checkout`), after a small confirmation that explains detached HEAD (skipped with
 //! "Don't ask again", a setting), and "Create branch here…" in the top bar (`branch.create`
 //! without `start`, then `branch.checkout`). Data only, no egui, in the same [`BranchBox`] as the
-//! other branch dialogs: one at a time. A checkout refused because of local changes opens the same
-//! dialog as `branch.checkout`; the commits a checkout leaves behind on a detached HEAD are saved
+//! other branch dialogs: one at a time. A checkout refused because of local changes is explained
+//! like the one of `branch.checkout`; the commits a checkout leaves behind on a detached HEAD are saved
 //! by the engine and named in the notice.
 
 use crate::branch::{Action, BranchBox, Dialog, NameKind, Op, Outcome};

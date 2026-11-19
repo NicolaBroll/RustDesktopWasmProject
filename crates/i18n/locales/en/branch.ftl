@@ -58,12 +58,6 @@ branch-delete-backup = Before deleting, a backup of the commit is saved (refs/pr
 branch-delete-button = Delete branch
 branch-dont-delete = Don't delete
 branch-refused-heading = Cannot check out “{ $name }”
-branch-refused-text = The checkout would overwrite local changes: these paths are modified (staged or not) or untracked (also inside a folder that is a file in the branch, or in a submodule), and they differ in the target branch. Nothing was changed. Commit, discard or stash these changes and try again.
-branch-refused-files = { $n ->
-        [0] Git did not list the files.
-        [one] File:
-       *[other] { $n } files:
-    }
 branch-tag-delete-label = Deleting tag “{ $name }”
 branch-tag-delete-refused = Cannot delete tag “{ $name }”: { $error }
 branch-tag-delete-failed = Deleting tag “{ $name }” failed: { $error }

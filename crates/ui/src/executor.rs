@@ -20,8 +20,8 @@
 #[cfg(doc)]
 use project_engine::CommandSpec;
 use project_engine::{
-    CancelToken, EngineError, JobContext, Message, MessageArg, Platform, Progress, PullOperation,
-    PushRejection, Registry, Session,
+    CancelToken, EngineError, JobContext, Message, MessageArg, Platform, Progress, PushRejection,
+    Registry, Session,
 };
 use project_i18n::tr;
 use serde_json::Value;
@@ -118,10 +118,6 @@ pub enum ErrorKind {
     RemoteUnreachable,
     /// [`EngineError::Cancelled`]: cancelled with [`Executor::cancel`].
     Cancelled,
-    /// [`EngineError::PullConflict`]: the merge or rebase of the pull stopped on a conflict
-    /// and was aborted (the repo is as before, the fetch stays done); the conflicted files
-    /// are in [`Done::error_detail`], one per line.
-    PullConflict(PullOperation),
     /// [`EngineError::PushRejected`]: the push was rejected and nothing changed; git's text
     /// (including a hook's output) is in [`Done::error_detail`].
     PushRejected(PushRejection),
@@ -152,7 +148,6 @@ impl ErrorKind {
             EngineError::AuthCancelled { .. } => ErrorKind::AuthCancelled,
             EngineError::RemoteUnreachable { .. } => ErrorKind::RemoteUnreachable,
             EngineError::Cancelled { .. } => ErrorKind::Cancelled,
-            EngineError::PullConflict { operation, .. } => ErrorKind::PullConflict(*operation),
             EngineError::PushRejected { reason, .. } => ErrorKind::PushRejected(*reason),
             _ => ErrorKind::Other,
         }
@@ -179,8 +174,7 @@ impl ErrorKind {
 
     /// The detail to put in [`Done::error_detail`]: the reason of a confirmation, git's stderr,
     /// the files a checkout would overwrite (one per line), git's text for a remote that
-    /// rejects the credentials or cannot be reached, the conflicted files of a pull (one per
-    /// line), git's text of a rejected push.
+    /// rejects the credentials or cannot be reached, git's text of a rejected push.
     pub fn detail(error: &EngineError) -> Option<String> {
         match error {
             EngineError::ConfirmRequired { reason, .. }
@@ -190,8 +184,7 @@ impl ErrorKind {
             | EngineError::RemoteUnreachable { message, .. }
             | EngineError::PushRejected { message, .. } => Some(message.clone()),
             EngineError::AuthCancelled { remote } => Some(remote.clone()),
-            EngineError::PullConflict { files, .. }
-            | EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
+            EngineError::CheckoutConflict { files, .. } => Some(files.join("\n")),
             EngineError::NotAllowed(m) => local_changes_files(m),
             _ => None,
         }
@@ -597,7 +590,9 @@ impl Drop for Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_engine::{Access, Capabilities, EngineError, MemoryOpener, Platform};
+    use project_engine::{
+        Access, Capabilities, EngineError, MemoryOpener, Platform, PullOperation,
+    };
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -1123,14 +1118,10 @@ mod tests {
             files: vec!["a.txt".into(), "b/c.rs".into()],
             message: "CONFLICT (content): ...".into(),
         };
-        assert_eq!(
-            ErrorKind::of(&conflict),
-            ErrorKind::PullConflict(PullOperation::Rebase)
-        );
-        assert_eq!(
-            ErrorKind::detail(&conflict).as_deref(),
-            Some("a.txt\nb/c.rs")
-        );
+        // No backend produces it since S32: it has no kind of its own, the engine's text (which
+        // names the files) goes in the generic failure dialog.
+        assert_eq!(ErrorKind::of(&conflict), ErrorKind::Other);
+        assert_eq!(ErrorKind::detail(&conflict), None);
         let rejected = EngineError::PushRejected {
             remote: "origin".into(),
             branch: "main".into(),

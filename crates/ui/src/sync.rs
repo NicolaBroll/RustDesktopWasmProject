@@ -3,18 +3,19 @@
 //!
 //! One network operation at a time: fetch, pull and push are writes
 //! ([`CommandSpec::writes`](project_engine::CommandSpec)), and the UI does not send one while
-//! another is in progress. Rejections to explain open a window:
+//! another is in progress. What needs explaining:
 //!
 //! - pull whose merge or rebase stopped on a conflict: not an error, the operation **stays in
 //!   progress** as with `merge.start` (`in_progress` in the result; the rebase since S32). The
 //!   re-read status makes the in-progress operation panel appear (Continue/Abort merge or rebase)
 //!   and the stage area opens with the files;
-//! - pull stopped on a conflict and aborted by the engine ([`ErrorKind::PullConflict`], no longer
-//!   produced since S32 but still handled): the repo is as before; the window lists the files and
-//!   proposes the other strategy;
-//! - rejected push ([`ErrorKind::PushRejected`]): non-fast-forward proposes "Pull" and, as a
-//!   second choice, "Force (with lease)…"; stale lease proposes "Fetch"; a hook shows its
-//!   output.
+//! - rejected push ([`ErrorKind::PushRejected`]): a window; non-fast-forward proposes "Pull"
+//!   and, as a second choice, "Force (with lease)…"; stale lease proposes "Fetch"; a hook shows
+//!   its output;
+//! - every other failure or refusal (credentials, network, local changes, detached HEAD, a git
+//!   error): the modal failure dialog ([`Window::Failure`], shown one at a time with those of
+//!   the other areas, see [`crate::failure`]). A pull aborted by the engine on a conflict
+//!   (`EngineError::PullConflict`, which no backend produces since S32) is one of these.
 //!
 //! The force never starts from a bar button: only from that window, first with
 //! `"force": true` and without `confirm`. If the remote would lose commits the engine answers
@@ -28,9 +29,9 @@ use crate::{Done, Tab, params};
 use project_domain::remote_short;
 use project_domain::{Head, Oid, RefInfo, Status};
 use project_engine::{
-    PullApplied, PullOperation, PullStrategy, PushKind, PushRejection, PushRemoteSource,
-    RemotePullParams, RemotePullResult, RemotePushParams, RemotePushResult, RemotePushTagParams,
-    RemotePushTagResult, StrategySource, TagPushKind,
+    PullApplied, PullStrategy, PushKind, PushRejection, PushRemoteSource, RemotePullParams,
+    RemotePullResult, RemotePushParams, RemotePushResult, RemotePushTagParams, RemotePushTagResult,
+    StrategySource, TagPushKind,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -40,7 +41,7 @@ use serde_json::{Value, json};
 pub(crate) enum Action {
     /// Pull the given branch (`None`: HEAD's), with the given strategy (`None`:
     /// the configured one).
-    Pull(Option<String>, Option<Strategy>),
+    Pull(Option<String>, Option<PullStrategy>),
     /// Push the given branch (`None`: HEAD's), never forced.
     Push(Option<String>),
     /// Push the tag (second value, short name) to the remote (first value), never forced.
@@ -80,37 +81,6 @@ impl Op {
     }
 }
 
-/// The strategy requested for a pull (`None` in the request: the configured one).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Strategy {
-    Merge,
-    Rebase,
-}
-
-impl Strategy {
-    fn engine(self) -> PullStrategy {
-        match self {
-            Strategy::Merge => PullStrategy::Merge,
-            Strategy::Rebase => PullStrategy::Rebase,
-        }
-    }
-
-    /// The other strategy than the operation that stopped on a conflict.
-    pub fn other_than(operation: PullOperation) -> Self {
-        match operation {
-            PullOperation::Merge => Strategy::Rebase,
-            PullOperation::Rebase => Strategy::Merge,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Strategy::Merge => "merge",
-            Strategy::Rebase => "rebase",
-        }
-    }
-}
-
 /// What to ask for: pull or push, of which branch, with which options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -118,7 +88,7 @@ pub struct Request {
     /// The local branch (short name); `None` = HEAD's.
     pub branch: Option<String>,
     /// Pull only: the strategy instead of the configuration.
-    pub strategy: Option<Strategy>,
+    pub strategy: Option<PullStrategy>,
     /// Push only: `"force": true` (always with lease in the engine).
     pub force: bool,
     /// Forced push only: `"confirm": true`, after the click in the confirmation.
@@ -131,7 +101,7 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn pull(branch: Option<String>, strategy: Option<Strategy>) -> Self {
+    pub fn pull(branch: Option<String>, strategy: Option<PullStrategy>) -> Self {
         Self {
             op: Op::Pull,
             branch,
@@ -176,7 +146,7 @@ impl Request {
             Op::Pull => params(RemotePullParams {
                 remote: None,
                 branch: self.branch.clone(),
-                strategy: self.strategy.map(Strategy::engine),
+                strategy: self.strategy,
             }),
             Op::Push | Op::PushTag => params(RemotePushParams {
                 remote: None,
@@ -201,25 +171,6 @@ impl Request {
             (Op::Push, true, Some(branch)) => tr!("sync-label-force-branch", branch = branch),
             (Op::Push, true, None) => tr!("sync-label-force"),
         }
-    }
-}
-
-/// A pull stopped on a conflict and already aborted by the engine: today only the rebase (the stopped merge
-/// stays in progress, [`Outcome::show_changes`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conflict {
-    /// The pull's branch (`None`: HEAD's).
-    pub branch: Option<String>,
-    pub operation: PullOperation,
-    pub files: Vec<String>,
-    /// The engine's message (with the upstream and what to do from the terminal).
-    pub message: String,
-}
-
-impl Conflict {
-    /// The strategy to propose to retry.
-    pub fn other(&self) -> Strategy {
-        Strategy::other_than(self.operation)
     }
 }
 
@@ -273,9 +224,9 @@ impl ConfirmForce {
 /// The window opened after a pull or push.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Window {
-    /// Error to explain (credentials, network, rejection with a long message, git error).
+    /// Error to explain (credentials, network, rejection with a long message, git error): the
+    /// modal failure dialog.
     Failure(Failure),
-    Conflict(Conflict),
     Rejected(Rejected),
     /// The force confirmation: it is a modal dialog.
     ConfirmForce(ConfirmForce),
@@ -334,7 +285,8 @@ impl SyncBox {
         self.window.as_ref()
     }
 
-    /// True if the force confirmation is open: while it is, no writes.
+    /// True if the force confirmation is open: while it is, no writes. A [`Window::Failure`] is
+    /// modal too, counted with the other failures ([`crate::RepoView::failure`]).
     pub fn modal_open(&self) -> bool {
         matches!(self.window, Some(Window::ConfirmForce(_)))
     }
@@ -461,30 +413,6 @@ impl SyncBox {
                 Received::Failed {
                     message: tr!("sync-failed-unreachable", label = &label),
                     reload: false,
-                }
-            }
-            Some(ErrorKind::PullConflict(operation)) => {
-                let files = detail
-                    .as_deref()
-                    .unwrap_or_default()
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                self.window = Some(Window::Conflict(Conflict {
-                    branch,
-                    operation,
-                    files,
-                    message: error,
-                }));
-                // The fetch is done: the remote-tracking branch is re-read.
-                Received::Failed {
-                    message: tr!(
-                        "sync-pull-conflict",
-                        label = &label,
-                        operation = operation.to_string()
-                    ),
-                    reload: true,
                 }
             }
             Some(ErrorKind::PushRejected(reason)) => {
@@ -1089,7 +1017,7 @@ mod tests {
     fn params_and_labels() {
         assert_eq!(Request::pull(None, None).params(), json!({}));
         assert_eq!(
-            Request::pull(Some("x".into()), Some(Strategy::Rebase)).params(),
+            Request::pull(Some("x".into()), Some(PullStrategy::Rebase)).params(),
             json!({ "branch": "x", "strategy": "rebase" })
         );
         assert_eq!(Request::push(None).params(), json!({}));
@@ -1263,7 +1191,7 @@ mod tests {
             &r,
             &mut s,
             &mut sync,
-            Request::pull(None, Some(Strategy::Rebase)),
+            Request::pull(None, Some(PullStrategy::Rebase)),
         );
         let Received::Done(outcome) = received else {
             panic!("{received:?}")

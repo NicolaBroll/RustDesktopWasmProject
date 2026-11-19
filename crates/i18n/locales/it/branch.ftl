@@ -58,12 +58,6 @@ branch-delete-backup = Prima di eliminare si salva un backup del commit (refs/pr
 branch-delete-button = Elimina il branch
 branch-dont-delete = Non eliminare
 branch-refused-heading = Checkout di «{ $name }» non possibile
-branch-refused-text = Il checkout sovrascriverebbe modifiche locali: questi percorsi sono modificati (in stage o no) o non tracciati (anche dentro una cartella che nel branch è un file, o in un submodule), e nel branch di destinazione sono diversi. Niente è stato modificato. Committare, scartare o mettere da parte queste modifiche e riprovare.
-branch-refused-files = { $n ->
-        [0] Git non ha indicato i file.
-        [one] File:
-       *[other] { $n } file:
-    }
 branch-tag-delete-label = Eliminazione del tag «{ $name }»
 branch-tag-delete-refused = Impossibile eliminare il tag «{ $name }»: { $error }
 branch-tag-delete-failed = Eliminazione del tag «{ $name }» non riuscita: { $error }

@@ -7,13 +7,16 @@
 //! Deletion happens in two steps like discard: first without `confirm`, which deletes a merged
 //! branch right away or answers `ConfirmRequired`; only after the click in the confirmation
 //! dialog, `"confirm": true`. A checkout refused because it would overwrite local changes
-//! opens a dialog with the files.
+//! is explained by the common failure dialog ([`crate::failure`]), with "Stash…" as for a merge
+//! or a pull.
 
 use crate::discard::{History, Phase};
+use crate::fetch::{self, Failure};
 use crate::running::Running;
+use crate::stage::StageLists;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, messages_text};
-use project_domain::{Oid, RefInfo, RefKind, Status};
+use project_domain::{Change, Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
 use project_engine::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
@@ -78,6 +81,8 @@ pub(crate) enum Action {
     CreateBranchHere,
     /// Closes the open branch dialog without sending anything.
     CloseDialog,
+    /// Closes the dialog of a checkout refused for local changes.
+    DismissRefusal,
 }
 
 /// A command on branches.
@@ -301,11 +306,54 @@ pub struct DeleteTagDialog {
 
 /// The refused checkout: it would overwrite local changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Refused {
-    /// The short name of the branch.
-    pub name: String,
-    /// The files listed by git.
+pub struct Refusal {
+    /// The files listed by git: changes to tracked files, but also untracked or ignored files
+    /// the target contains.
     pub files: Vec<String>,
+    /// What the failure dialog shows.
+    pub failure: Failure,
+}
+
+/// How many files of a refused checkout are named in the dialog; the others become "and N more".
+pub const REFUSED_FILES_SHOWN: usize = 8;
+
+impl Refusal {
+    /// The checkout of `name` (the short name of the branch, or `commit <id>`) refused for
+    /// `files`: the short text of merge and pull, with "Stash…".
+    fn new(name: &str, files: Vec<String>) -> Self {
+        let shown = files
+            .iter()
+            .take(REFUSED_FILES_SHOWN)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let text = match files.len() {
+            0 => None,
+            n if n > REFUSED_FILES_SHOWN => Some(tr!(
+                "common-files-and-more",
+                files = shown,
+                n = n - REFUSED_FILES_SHOWN
+            )),
+            _ => Some(shown),
+        };
+        let failure = fetch::local_changes_failure(
+            tr!("branch-refused-heading", name = name),
+            text.as_deref(),
+        );
+        Self { files, failure }
+    }
+
+    /// True if every file is a change to a tracked file in `stage`: a plain stash sets them all
+    /// aside. False with an untracked or ignored file, one the status does not show, or no file
+    /// named by git.
+    fn all_tracked(&self, stage: &StageLists) -> bool {
+        let tracked = |file: &String| {
+            stage.staged.iter().chain(&stage.unstaged).any(|item| {
+                item.change != Change::Untracked && item.path.to_string_lossy() == *file
+            })
+        };
+        !self.files.is_empty() && self.files.iter().all(tracked)
+    }
 }
 
 /// The open branch dialog (or the deletion being checked, still without a dialog).
@@ -314,7 +362,6 @@ pub enum Dialog {
     Name(NameDialog),
     Delete(DeleteDialog),
     DeleteTag(DeleteTagDialog),
-    Refused(Refused),
     /// The "Set upstream" window.
     Upstream(crate::tracking::UpstreamDialog),
     /// The confirmation of "Check out this commit" (S55).
@@ -332,6 +379,8 @@ pub struct BranchBox {
     pub(crate) track: Option<String>,
     /// The upstream removal in progress, short name of the branch (no dialog).
     pub(crate) unset: Option<String>,
+    /// The last checkout refused for local changes, until its dialog is closed.
+    pub(crate) refusal: Option<Refusal>,
 }
 
 /// What came back from a `branch.*` command.
@@ -343,7 +392,7 @@ pub enum Received {
     Inline,
     /// The deletion needs confirmation: the dialog opens.
     Confirm,
-    /// Checkout refused because of local changes: the dialog with the files opens.
+    /// Checkout refused because of local changes: [`BranchBox::refusal`] explains it.
     Refused,
     /// Refused or failed: the message to show; with `reload` everything is reloaded
     /// (the operation may have been done, or half done).
@@ -372,8 +421,36 @@ impl BranchBox {
         self.dialog.as_ref().filter(|d| match d {
             Dialog::Delete(delete) => matches!(delete.phase, Phase::Confirm { .. }),
             Dialog::DeleteTag(delete) => matches!(delete.phase, Phase::Confirm { .. }),
-            Dialog::Name(_) | Dialog::Refused(_) | Dialog::Upstream(_) | Dialog::Detach(_) => true,
+            Dialog::Name(_) | Dialog::Upstream(_) | Dialog::Detach(_) => true,
         })
+    }
+
+    /// The checkout refused for local changes to explain in the failure dialog, if any.
+    pub fn refusal(&self) -> Option<&Failure> {
+        self.refusal.as_ref().map(|r| &r.failure)
+    }
+
+    /// Closes the dialog of the refused checkout.
+    pub fn dismiss_refusal(&mut self) {
+        self.refusal = None;
+    }
+
+    /// Completes the refusal with what the status knows: if not all the files are changes to
+    /// tracked files, the text says that a stash takes untracked files only on request (and
+    /// ignored ones never).
+    pub(crate) fn check_refusal(&mut self, stage: &StageLists) {
+        if let Some(refusal) = &mut self.refusal
+            && !refusal.all_tracked(stage)
+        {
+            refusal.failure.explanation = format!(
+                "{} {}",
+                refusal.failure.explanation,
+                tr!(
+                    "common-local-changes-untracked",
+                    option = tr!("stash-include-untracked")
+                )
+            );
+        }
     }
 
     /// True if a dialog is open: no other writes, keys go to it.
@@ -565,7 +642,7 @@ impl BranchBox {
             Some(Dialog::Name(dialog)) => dialog.running.is_none(),
             Some(Dialog::Delete(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
             Some(Dialog::DeleteTag(delete)) => matches!(delete.phase, Phase::Confirm { .. }),
-            Some(Dialog::Refused(_) | Dialog::Detach(_)) => true,
+            Some(Dialog::Detach(_)) => true,
             Some(Dialog::Upstream(dialog)) => dialog.running.is_none(),
             None => false,
         };
@@ -636,6 +713,7 @@ impl BranchBox {
         let Some(name) = self.checkout.take() else {
             return unexpected(op);
         };
+        self.refusal = None;
         match result {
             Err(_) if kind == Some(ErrorKind::CheckoutConflict) => {
                 let files = detail
@@ -644,7 +722,7 @@ impl BranchBox {
                     .filter(|l| !l.is_empty())
                     .map(str::to_owned)
                     .collect();
-                self.dialog = Some(Dialog::Refused(Refused { name, files }));
+                self.refusal = Some(Refusal::new(&name, files));
                 Received::Refused
             }
             Err(e) => {
@@ -1040,6 +1118,11 @@ impl Tab {
                     repo.branch.close();
                 }
             }
+            Action::DismissRefusal => {
+                if let Some(repo) = &mut self.repo {
+                    repo.branch.dismiss_refusal();
+                }
+            }
             Action::CheckoutAfter(checkout) => {
                 if let Some(repo) = self.repo.as_mut() {
                     repo.branch.set_checkout_after(checkout);
@@ -1121,7 +1204,12 @@ impl Tab {
             done.error_detail,
             done.confirm_expected,
         ) {
-            Received::Inline | Received::Confirm | Received::Refused => {
+            Received::Inline | Received::Confirm => {
+                self.error.clear();
+                self.notice.clear();
+            }
+            Received::Refused => {
+                repo.branch.check_refusal(&repo.stage);
                 self.error.clear();
                 self.notice.clear();
             }
@@ -1408,14 +1496,37 @@ mod tests {
         assert!(!reload);
     }
 
+    /// A refused checkout answered to `b` with the files git named.
+    fn refuse(b: &mut BranchBox, files: &str) {
+        b.start_checkout("feature/x".to_owned()).unwrap();
+        let r = b.receive(
+            Op::Checkout,
+            Err("refused".to_owned()),
+            Some(ErrorKind::CheckoutConflict),
+            Some(files.to_owned()),
+            None,
+        );
+        assert!(matches!(r, Received::Refused));
+    }
+
+    fn stage_item(path: &str, change: Change) -> crate::stage::StageItem {
+        crate::stage::StageItem {
+            path: path.into(),
+            change,
+            original: None,
+            conflict: None,
+        }
+    }
+
+    /// The checkout refused for local changes is the failure dialog of merge and pull: the
+    /// short text with the files and "Stash…", not a branch dialog.
     #[test]
-    fn checkout_conflicts_open_the_list_of_files() {
+    fn a_refused_checkout_is_the_common_failure_with_stash() {
         let mut b = BranchBox::default();
         assert_eq!(
             b.start_checkout("feature/x".to_owned()).unwrap(),
             json!({ "name": "feature/x" })
         );
-        assert!(!b.modal_open());
         let r = b.receive(
             Op::Checkout,
             Err("refused".to_owned()),
@@ -1424,15 +1535,75 @@ mod tests {
             None,
         );
         assert!(matches!(r, Received::Refused));
+        assert!(b.dialog().is_none(), "no branch dialog");
         assert_eq!(
-            b.dialog(),
-            Some(&Dialog::Refused(Refused {
-                name: "feature/x".to_owned(),
-                files: vec!["README.md".to_owned(), "src/lib.rs".to_owned()],
-            }))
+            b.refusal(),
+            Some(&Failure {
+                title: "Cannot check out “feature/x”".to_owned(),
+                explanation: "You have uncommitted changes in README.md, src/lib.rs: commit or \
+                              stash them, then try again."
+                    .to_owned(),
+                git: None,
+                stash: true,
+            })
         );
-        b.close();
-        assert!(b.dialog().is_none());
+        b.dismiss_refusal();
+        assert!(b.refusal().is_none());
+
+        // Git named no file: the text without names; a new checkout drops the old refusal.
+        refuse(&mut b, "");
+        let text = &b.refusal().unwrap().explanation;
+        assert!(text.starts_with("You have uncommitted changes:"), "{text}");
+        b.start_checkout("feature/x".to_owned()).unwrap();
+        let r = b.receive(
+            Op::Checkout,
+            Err("no".into()),
+            Some(ErrorKind::NotAllowed),
+            None,
+            None,
+        );
+        assert!(matches!(r, Received::Failed { .. }));
+        assert!(b.refusal().is_none());
+
+        // Many files: the first ones, then how many more.
+        let many: Vec<String> = (0..REFUSED_FILES_SHOWN + 3)
+            .map(|i| format!("f{i}"))
+            .collect();
+        refuse(&mut b, &many.join("\n"));
+        let text = &b.refusal().unwrap().explanation;
+        assert!(text.contains("f7 and 3 more:"), "{text}");
+        assert!(!text.contains("f8"), "{text}");
+    }
+
+    /// A plain stash does not set untracked files aside: when the status does not show every
+    /// file as a change to a tracked file, the text names the option of the stash dialog.
+    #[test]
+    fn a_refusal_for_untracked_files_names_the_stash_option() {
+        let stage = StageLists {
+            staged: vec![stage_item("README.md", Change::Modified)],
+            unstaged: vec![
+                stage_item("src/lib.rs", Change::Modified),
+                stage_item("new.txt", Change::Untracked),
+            ],
+        };
+        let hint = "“Include untracked files”";
+
+        let mut b = BranchBox::default();
+        refuse(&mut b, "README.md\nsrc/lib.rs");
+        b.check_refusal(&stage);
+        let failure = b.refusal().unwrap();
+        assert!(!failure.explanation.contains(hint), "{failure:?}");
+        assert!(failure.stash);
+
+        // Untracked, ignored (not in the status at all) or no file named: the hint, and
+        // "Stash…" stays (with the option it helps).
+        for files in ["README.md\nnew.txt", "ignored.log", ""] {
+            refuse(&mut b, files);
+            b.check_refusal(&stage);
+            let failure = b.refusal().unwrap();
+            assert!(failure.explanation.contains(hint), "{files}: {failure:?}");
+            assert!(failure.stash);
+        }
 
         b.start_checkout("x".to_owned()).unwrap();
         let r = b.receive(
@@ -1803,15 +1974,13 @@ mod tests {
             send(&mut b, &r, &mut s, Op::Checkout, params),
             Received::Refused
         ));
-        let Some(Dialog::Refused(refused)) = b.dialog() else {
-            panic!()
-        };
-        assert!(!refused.files.is_empty());
+        let refused = b.refusal.as_ref().expect("refusal");
         assert!(
             refused.files.iter().any(|f| f == "README.md"),
             "{refused:?}"
         );
-        b.close();
+        assert!(refused.failure.explanation.contains("README.md"));
+        b.dismiss_refusal();
 
         let mut clean = MemoryBackend::sample();
         clean.set_entries(Vec::new());

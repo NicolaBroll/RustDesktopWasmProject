@@ -26,6 +26,7 @@ mod diff;
 mod diff_view;
 mod discard;
 mod executor;
+mod failure;
 mod fetch;
 mod file;
 mod format;
@@ -315,7 +316,7 @@ struct RepoView {
     auto_fetch: auto_fetch::AutoFetch,
     /// The commit-graph notice and `repo.optimize` in progress.
     optimize: OptimizeBox,
-    /// The pull or push in progress and the open window (conflict, rejection, force confirmation).
+    /// The pull or push in progress and the open window (failure, rejection, force confirmation).
     sync: SyncBox,
     /// The configured remotes (`remote.list`) and the dialogs to add and remove them.
     remotes: RemotesBox,
@@ -339,6 +340,8 @@ struct RepoView {
     file: file::FileBox,
     /// The search in the history: field, matches, next/previous.
     search: search::SearchBox,
+    /// The order of the failure dialogs waiting: one is shown at a time.
+    failures: failure::Queue,
     /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
     /// What Undo and Redo would do.
@@ -392,6 +395,7 @@ impl RepoView {
             conflict: ConflictBox::default(),
             file: file::FileBox::default(),
             search: search::SearchBox::default(),
+            failures: failure::Queue::default(),
             status_seq: 0,
             history: History::default(),
             select_after_load,
@@ -428,9 +432,15 @@ impl RepoView {
         self.update_labels();
     }
 
-    /// True if a confirmation is open (stage of conflicts, published amend, discard) or a
-    /// branch dialog: while it is, no writes and the keys go only to it.
+    /// True if a confirmation is open (stage of conflicts, published amend, discard), a
+    /// branch dialog or the dialog of a failure: while it is, no writes and the keys go only to
+    /// it.
     fn modal_open(&self) -> bool {
+        self.dialog_open() || self.failure().is_some()
+    }
+
+    /// True if a confirmation or a dialog other than the one of a failure is open.
+    fn dialog_open(&self) -> bool {
         self.confirm.is_some()
             || self.commit.confirm().is_some()
             || self.discard.confirm().is_some()
@@ -1449,6 +1459,9 @@ impl Tab {
     ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
+        if let Some(repo) = &mut self.repo {
+            repo.queue_failures();
+        }
         self.keyboard(&ctx, pressed, &mut actions);
         let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
@@ -1573,24 +1586,6 @@ impl Tab {
         if let Some(pending) = repo.clean.confirm() {
             view::confirm_clean(ctx, pending, actions);
         }
-        if let Some(failure) = repo.fetch.failure() {
-            view::failure_window(
-                ctx,
-                "fetch-error",
-                failure,
-                Action::Fetch(fetch::Action::DismissError),
-                actions,
-            );
-        }
-        if let Some(failure) = repo.remotes.failure() {
-            view::failure_window(
-                ctx,
-                "remote-error",
-                failure,
-                Action::Remotes(remotes::Action::DismissError),
-                actions,
-            );
-        }
         if let Some(dialog) = repo.remotes.dialog() {
             let progress = repo
                 .remotes
@@ -1627,15 +1622,6 @@ impl Tab {
         if let Some(remove) = repo.worktrees.remove_dialog() {
             view::confirm_worktree_remove(ctx, remove, actions);
         }
-        if let Some(failure) = repo.merge.failure() {
-            view::failure_window(
-                ctx,
-                "merge-error",
-                failure,
-                Action::Merge(merge::Action::DismissError),
-                actions,
-            );
-        }
         if let Some(confirm) = repo.commit.confirm() {
             let branch = match &repo.head {
                 Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
@@ -1644,6 +1630,10 @@ impl Tab {
             let left_behind =
                 commit::refs_left_behind(&repo.refs, repo.head.target(), branch.as_deref());
             view::confirm_amend(ctx, confirm, &left_behind, actions);
+        }
+        // Last, so above any other dialog; one failure at a time.
+        if let Some((source, failure)) = repo.failure() {
+            view::failure_dialog(ctx, failure, &source.dismiss(), actions);
         }
     }
 

@@ -1053,6 +1053,11 @@ impl CliBackend {
 }
 
 impl GitRead for CliBackend {
+    /// The same repository: the backend keeps nothing of what it reads or writes.
+    fn reader(&self) -> Box<dyn GitBackend> {
+        Box::new(self.clone())
+    }
+
     fn head(&self) -> Result<Head, EngineError> {
         let args = ["symbolic-ref", "--quiet", "HEAD"];
         let out = self.git.output(Some(&self.workdir), &args)?;

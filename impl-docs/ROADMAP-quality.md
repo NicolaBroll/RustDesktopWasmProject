@@ -299,6 +299,42 @@ the UI thread when a result arrives.
   written outside `theme.rs` are grouped in one place per area (the diff `Style`, the graph
   palette). The per-frame `recent_view()` and `labels()` allocate a few short strings.
 
+### Q43 — Reads beside a write
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer` (reads now run during the writes)
+- **Goal:** point 3 of the review. A job holds the session for the whole command, so during a
+  fetch, a pull, a push or a commit with a slow hook every read waited: a clicked commit showed
+  no details and no diff until the end, also during the automatic fetch.
+- **Done when:** a read submitted during a write answers before the write ends; an answer read
+  before a write ended never reaches the UI after that write's own; the reads take no lock in
+  the repository; engine, UI and real-git tests; CI green.
+- **Done:** `Session::reader()`: a second session on the same repo that only reads
+  (`GitRead::reader`: the same repository for the `CliBackend`, a copy for the `MemoryBackend`);
+  `repo_mut`, `journal`, `repo_and_journal` and the opens refuse on it. `CommandSpec::reader`
+  marks the commands that may run there: the `Access::Read` ones except `repo.open` and
+  `edit.history` (`needs_session`). The `Executor` runs them on the reader, takes a new reader
+  after every command that writes or opens, and reads again an answer overtaken by a write
+  (`executor::Reading`; architecture §4 "Session" and §6 "Reads beside a write"). CLI and MCP
+  are unchanged. Tests: the catalog of the readers with parameters that reach every handler
+  (`the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`), executor tests on threads,
+  and `crates/git/tests/reader.rs` (every read leaves `.git/index` byte for byte as it was, free
+  to lock it or with `index.lock` held; a reader writes nothing). Tried in the app: with a
+  commit held 15 s by a `pre-commit` hook, the details and the diff of another commit load at
+  once, and the new commit appears when the hook ends.
+- **From the safety review** (no way to lose data found; reads and writes run side by side in
+  120 rounds of add, commit, stash, checkout, gc, rebase with no failed write): a read answered
+  during a write marks the tab for the automatic refresh, because a write that fails re-reads
+  nothing (`Tab::receive`); a read on which git fails is asked again on the session, after the
+  write (a file or `refs/stash` missing for a moment); a write that panics still counts as a
+  change (`Changing`); an answer about a repo no longer open is not read again.
+- **Left as they are:** the reads still run one at a time among themselves (a content search
+  holds the others; it is cancelled when the query or the repo changes). A read overtaken by a
+  write starts again from the beginning, so a long content search or blame takes longer if a
+  stage or a fetch ends meanwhile. "Refresh" is off during a write. In a Git LFS repo a read can
+  make `git-lfs` write `.git/config` and its hooks once per clone, as before this step, now
+  possibly beside a command that writes the configuration (`config.lock`; not reproduced in 40
+  tries).
+- **Not verified:** Windows, where the app's reading and writing git processes now overlap.
+
 ## Phase Q5 — UI tests
 
 ### Q50 — Smoke tests of the drawing code

@@ -22,6 +22,13 @@ are opened only for the part being touched (the section cited here, the function
   through the askpass bridge of `Git::run_network` with a prompter, answers never logged or kept
   ([sync.md](sync.md) "Credential prompts"); no `--autostash`,
   `--force` (only `--force-with-lease` with the expected oid), `git pull`.
+- **A read runs beside a write** (§6 "Reads beside a write"): the UI runs the `Access::Read`
+  commands on a `Session::reader` while a write holds the session. A read therefore uses only
+  `Session::repo()`, and its git calls take no lock on the index or the refs and do not write
+  them (`--no-optional-locks`, for `git diff` also `-c diff.autoRefreshIndex=false`). A new read is
+  added to the lists of `the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`
+  (`builtin.rs`) and of `crates/git/tests/reader.rs`; one that reads the journal is marked
+  `needs_session()` instead.
 - Paths stay bytes (`RepoPath`): `from_utf8_lossy` only for displayed text.
 - Every command: tests on the `MemoryBackend`; every `CliBackend` method: integration tests in
   `crates/git/tests` with the scenarios in `common/`.

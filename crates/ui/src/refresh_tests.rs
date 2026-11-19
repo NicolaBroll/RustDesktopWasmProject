@@ -96,10 +96,27 @@ fn the_log_is_stale_only_if_refs_or_head_changed() {
     assert!(log_stale(&[r(a)], &[r(a)], None, Some(a)), "unknown");
 }
 
-/// Jobs run inside `spawn`; `watch` keeps the callback for the test.
+/// Jobs run inside `spawn`, or wait for the test after [`Manual::hold`]; `watch` keeps the
+/// callback for the test.
 #[derive(Default)]
 struct Manual {
     on_change: Mutex<Option<OnChange>>,
+    held: Mutex<Option<Vec<Job>>>,
+}
+
+type Job = Box<dyn FnOnce() + Send>;
+
+impl Manual {
+    /// From now on the jobs wait for [`Manual::run`].
+    fn hold(&self) {
+        *self.held.lock().unwrap() = Some(Vec::new());
+    }
+
+    /// Runs the waiting job `index` (in the order they were sent, among those left).
+    fn run(&self, index: usize) {
+        let job = self.held.lock().unwrap().as_mut().unwrap().remove(index);
+        job();
+    }
 }
 
 impl Platform for Manual {
@@ -109,7 +126,11 @@ impl Platform for Manual {
     fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
         on_done(None);
     }
-    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+    fn spawn(&self, job: Job) {
+        if let Some(held) = self.held.lock().unwrap().as_mut() {
+            held.push(job);
+            return;
+        }
         job();
     }
     fn watch(&self, _: &str, on_change: OnChange) -> Option<Watch> {
@@ -211,5 +232,37 @@ fn an_open_dialog_defers_the_refresh_until_it_closes() {
     tab.repo.as_mut().unwrap().branch = crate::BranchBox::default();
     tab.tick(now, true);
     assert!(settle(&mut tab).iter().any(|c| c == "repo.status"));
+    assert!(!tab.auto.is_dirty());
+}
+
+#[test]
+fn a_read_answered_beside_a_write_is_read_again_when_the_tab_is_idle() {
+    let platform = Arc::new(Manual::default());
+    let mut tab = tab(&platform);
+    assert!(!tab.auto.is_dirty(), "reads with no write in progress");
+    let generation = tab.generation;
+
+    // A commit that will fail (a hook, here the empty message) and re-read nothing; the status
+    // asked meanwhile does not wait for it and may have seen the repo in the middle of it.
+    platform.hold();
+    let commit = json!({ "message": "" });
+    tab.submit("commit.create", commit, Request::Commit(generation));
+    tab.submit("repo.status", json!({}), Request::Status(generation));
+    platform.run(1);
+    tab.receive();
+    assert!(tab.executor.writing().is_some());
+    assert!(tab.auto.is_dirty());
+
+    let now = Instant::now();
+    tab.tick(now, true);
+    assert!(tab.auto.is_dirty(), "not while the write is in progress");
+    platform.run(0);
+    tab.receive();
+    assert!(!tab.executor.is_busy());
+
+    *platform.held.lock().unwrap() = None;
+    tab.tick(now, true);
+    let seen = settle(&mut tab);
+    assert!(seen.iter().any(|c| c == "repo.status"), "{seen:?}");
     assert!(!tab.auto.is_dirty());
 }

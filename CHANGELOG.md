@@ -13,6 +13,9 @@ All notable changes to BinariGit. The format follows
 - Opening a very large diff no longer freezes the window: it is prepared in the background, and
   the changed words of a line are worked out when the line comes into view. A diff of thousands
   of long changed lines used to block the app for seconds.
+- Commit details, diffs, history, blame and search no longer wait for a fetch, pull or push in
+  progress (or for a commit held by a slow hook): they are read beside it, and the view is read
+  again when the operation ends.
 
 ### Fixed
 

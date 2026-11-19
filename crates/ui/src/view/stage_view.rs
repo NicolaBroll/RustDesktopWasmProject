@@ -60,7 +60,10 @@ pub(crate) fn stage_panel(
                 .write_label
                 .clone()
                 .unwrap_or_else(|| tr!("stage-writing-fallback"));
-            ui.weak(tr!("stage-in-progress", label = label));
+            // One row cut to the panel: an undo is labelled with the whole description of what
+            // it undoes, and a row wider than the panel would widen it.
+            let text = RichText::new(tr!("stage-in-progress", label = label)).weak();
+            ui.add(egui::Label::new(text).truncate());
         });
     }
     if let Some(error) = &repo.write_error {
@@ -281,7 +284,8 @@ pub(super) fn commit_box(
                 .write_label
                 .clone()
                 .unwrap_or_else(|| tr!("stage-commit-button"));
-            ui.weak(tr!("stage-in-progress", label = label));
+            let text = RichText::new(tr!("stage-in-progress", label = label)).weak();
+            ui.add(egui::Label::new(text).truncate());
         } else {
             ui.weak(tr!("stage-commit-shortcut"));
         }

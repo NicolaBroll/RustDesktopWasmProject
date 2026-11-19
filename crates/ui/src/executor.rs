@@ -267,11 +267,33 @@ struct Reading {
     /// then run on the session itself). A read keeps the one it started with.
     session: Option<Arc<Mutex<Session>>>,
     changes: u64,
+    /// [`Session::opens`]: an answer about a repo that is no longer the open one is not read
+    /// again (the UI drops it).
+    opens: u64,
 }
 
 impl Reading {
     fn of(session: &Session) -> Option<Arc<Mutex<Session>>> {
         session.reader().ok().map(|s| Arc::new(Mutex::new(s)))
+    }
+}
+
+/// Around a command on the session: when it ends, also with a panic, a command that writes or
+/// opens leaves the reads a new reader and counts as a change.
+struct Changing<'a> {
+    reading: &'a Mutex<Reading>,
+    session: &'a mut Session,
+    writes: bool,
+}
+
+impl Drop for Changing<'_> {
+    fn drop(&mut self) {
+        let mut reading = lock(self.reading);
+        if self.writes || self.session.opens() != reading.opens {
+            reading.session = Reading::of(self.session);
+            reading.opens = self.session.opens();
+            reading.changes += 1;
+        }
     }
 }
 
@@ -303,6 +325,7 @@ impl Executor {
         let reading = Reading {
             session: Reading::of(&session),
             changes: 0,
+            opens: session.opens(),
         };
         Self {
             reading: Arc::new(Mutex::new(reading)),
@@ -411,9 +434,9 @@ impl Executor {
             };
             if reads {
                 loop {
-                    let (reader, seen) = {
+                    let (reader, seen, repo) = {
                         let reading = lock(&reading);
-                        (reading.session.clone(), reading.changes)
+                        (reading.session.clone(), reading.changes, reading.opens)
                     };
                     // No repo open: nothing to read beside the session.
                     let Some(reader) = reader else { break };
@@ -423,9 +446,17 @@ impl Executor {
                         params.clone(),
                         job.clone(),
                     );
+                    // git failed: perhaps on what a write in progress is changing (a file or
+                    // a ref gone for a moment). Asked again on the session, after that write.
+                    if matches!(
+                        result,
+                        Err(EngineError::Git { .. } | EngineError::GitWithReason { .. })
+                    ) {
+                        break;
+                    }
                     let (result, prepared) = answer(result);
                     let reading = lock(&reading);
-                    if reading.changes == seen {
+                    if reading.changes == seen || reading.opens != repo {
                         reply.send(result, prepared);
                         return;
                     }
@@ -433,13 +464,14 @@ impl Executor {
                 }
             }
             let mut session = lock(&session);
-            let opens = session.opens();
-            let result = registry.run_with(&reply.command, &mut session, params, job);
-            if writes || session.opens() != opens {
-                let mut reading = lock(&reading);
-                reading.session = Reading::of(&session);
-                reading.changes += 1;
-            }
+            let result = {
+                let changing = Changing {
+                    reading: &reading,
+                    session: &mut session,
+                    writes,
+                };
+                registry.run_with(&reply.command, &mut *changing.session, params, job)
+            };
             drop(session);
             let (result, prepared) = answer(result);
             reply.send(result, prepared);
@@ -635,6 +667,24 @@ mod tests {
         panic!("fake command that panics");
     }
 
+    /// A write that changes the repo and then panics.
+    fn commit_then_panic(s: &mut Session, _: Value) -> Result<Value, EngineError> {
+        s.repo_mut()?
+            .commit(&project_engine::CommitRequest::new("before the panic"))?;
+        panic!("fake write that panics");
+    }
+
+    /// A read on which git fails beside the session, as on a file a write is replacing.
+    fn fails_on_the_reader(s: &mut Session, _: Value) -> Result<Value, EngineError> {
+        if s.is_reader() {
+            return Err(EngineError::Git {
+                command: "diff".into(),
+                stderr: "fatal: stat 'a.txt': No such file or directory".into(),
+            });
+        }
+        Ok(json!({ "read": "on the session" }))
+    }
+
     /// How many times [`head_then_slow`] ran.
     static HEAD_READS: AtomicUsize = AtomicUsize::new(0);
 
@@ -655,6 +705,14 @@ mod tests {
         registry.add("test.cancel", "test", "{}", Access::Read, until_cancelled);
         registry.add("test.write", "test", "{}", Access::Write, slow_write);
         registry.add("test.head", "test", "{}", Access::Read, head_then_slow);
+        registry.add(
+            "test.flaky",
+            "test",
+            "{}",
+            Access::Read,
+            fails_on_the_reader,
+        );
+        registry.add("test.wreck", "test", "{}", Access::Write, commit_then_panic);
         registry
     }
 
@@ -773,6 +831,45 @@ mod tests {
         assert_eq!(head(&done[1]), created);
         assert_ne!(head(&done[1]), before);
         assert_eq!(HEAD_READS.load(Ordering::SeqCst), ran + 2);
+    }
+
+    #[test]
+    fn a_read_git_fails_beside_a_write_is_asked_again_after_it() {
+        let mut ex = opened(TestPlatform::Threads);
+        let start = Instant::now();
+        let write = ex.submit("test.write", json!({}));
+        let read = ex.submit("test.flaky", json!({}));
+        let done = wait(&mut ex, 2);
+        assert!(start.elapsed() >= SLOW);
+        assert_eq!(done[0].ticket, write);
+        assert_eq!(done[1].ticket, read);
+        assert_eq!(done[1].result, Ok(json!({ "read": "on the session" })));
+    }
+
+    #[test]
+    fn an_answer_about_a_repo_no_longer_open_is_not_read_again() {
+        let mut ex = opened(TestPlatform::Threads);
+        let start = Instant::now();
+        let read = ex.submit("test.slow", json!({}));
+        let open = ex.submit("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH }));
+        let done = wait(&mut ex, 2);
+        assert_eq!(done[0].ticket, open);
+        assert_eq!(done[1].ticket, read);
+        assert!(done[1].result.is_ok());
+        assert!(start.elapsed() < SLOW * 2, "the read ran twice");
+    }
+
+    #[test]
+    fn a_write_that_panics_still_leaves_the_reads_what_it_wrote() {
+        let mut ex = opened(TestPlatform::Threads);
+        let wreck = ex.submit("test.wreck", json!({}));
+        let done = wait(&mut ex, 1);
+        assert_eq!(done[0].ticket, wreck);
+        assert!(done[0].result.is_err());
+
+        ex.submit("repo.log", json!({ "limit": 1 }));
+        let log = wait(&mut ex, 1)[0].result.clone().unwrap();
+        assert_eq!(log["commits"][0]["summary"], "before the panic");
     }
 
     #[test]

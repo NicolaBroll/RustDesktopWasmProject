@@ -24,8 +24,8 @@ are opened only for the part being touched (the section cited here, the function
   `--force` (only `--force-with-lease` with the expected oid), `git pull`.
 - **A read runs beside a write** (§6 "Reads beside a write"): the UI runs the `Access::Read`
   commands on a `Session::reader` while a write holds the session. A read therefore uses only
-  `Session::repo()`, and its git calls take no lock and write nothing in the repository
-  (`--no-optional-locks`, for `git diff` also `-c diff.autoRefreshIndex=false`). A new read is
+  `Session::repo()`, and its git calls take no lock on the index or the refs and do not write
+  them (`--no-optional-locks`, for `git diff` also `-c diff.autoRefreshIndex=false`). A new read is
   added to the lists of `the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`
   (`builtin.rs`) and of `crates/git/tests/reader.rs`; one that reads the journal is marked
   `needs_session()` instead.

@@ -1013,7 +1013,16 @@ impl Tab {
     }
 
     fn receive(&mut self) {
+        let mut writing = self.executor.writing().map(|job| job.ticket);
         for done in self.executor.poll() {
+            if writing == Some(done.ticket) {
+                writing = None;
+            } else if writing.is_some() {
+                // A read answered beside a write (it does not wait for it) may show the repo
+                // in the middle of it, and a write that fails re-reads nothing: the automatic
+                // refresh reads again when the tab is idle.
+                self.auto.mark();
+            }
             if let Some(request) = self.pending.remove(&done.ticket) {
                 self.receive_one(request, done);
             }

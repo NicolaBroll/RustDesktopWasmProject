@@ -315,13 +315,25 @@ the UI thread when a result arrives.
   after every command that writes or opens, and reads again an answer overtaken by a write
   (`executor::Reading`; architecture §4 "Session" and §6 "Reads beside a write"). CLI and MCP
   are unchanged. Tests: the catalog of the readers with parameters that reach every handler
-  (`the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`), three executor tests on
-  threads, and `crates/git/tests/reader.rs` (every read leaves `.git/index` byte for byte as it
-  was, free to lock it or with `index.lock` held; a reader writes nothing).
+  (`the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`), executor tests on threads,
+  and `crates/git/tests/reader.rs` (every read leaves `.git/index` byte for byte as it was, free
+  to lock it or with `index.lock` held; a reader writes nothing). Tried in the app: with a
+  commit held 15 s by a `pre-commit` hook, the details and the diff of another commit load at
+  once, and the new commit appears when the hook ends.
+- **From the safety review** (no way to lose data found; reads and writes run side by side in
+  120 rounds of add, commit, stash, checkout, gc, rebase with no failed write): a read answered
+  during a write marks the tab for the automatic refresh, because a write that fails re-reads
+  nothing (`Tab::receive`); a read on which git fails is asked again on the session, after the
+  write (a file or `refs/stash` missing for a moment); a write that panics still counts as a
+  change (`Changing`); an answer about a repo no longer open is not read again.
 - **Left as they are:** the reads still run one at a time among themselves (a content search
-  holds the others; it is cancelled when the query or the repo changes). The automatic refresh
-  waits for the executor to be idle and "Refresh" is off during a write: the write's answer
-  re-reads what it changed.
+  holds the others; it is cancelled when the query or the repo changes). A read overtaken by a
+  write starts again from the beginning, so a long content search or blame takes longer if a
+  stage or a fetch ends meanwhile. "Refresh" is off during a write. In a Git LFS repo a read can
+  make `git-lfs` write `.git/config` and its hooks once per clone, as before this step, now
+  possibly beside a command that writes the configuration (`config.lock`; not reproduced in 40
+  tries).
+- **Not verified:** Windows, where the app's reading and writing git processes now overlap.
 
 ## Phase Q5 — UI tests
 

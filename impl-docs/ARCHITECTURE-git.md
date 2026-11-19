@@ -413,7 +413,7 @@ with `CommandSpec::reader`; the others (writes, `repo.open`, `edit.history`) run
 as before, one at a time. With no repo open there is no reader and the reads run on the session.
 The reads still run one at a time among themselves.
 
-Two rules keep the view right (`executor::Reading`):
+These rules keep the view right (`executor::Reading`, `Tab::receive`):
 
 - **A command that writes or opens takes a new reader** before it answers, while it still holds
   the session: the in-memory repo of the tests gives a copy, and `repo.open` changes repo. A read
@@ -424,12 +424,30 @@ Two rules keep the view right (`executor::Reading`):
   otherwise it reads again. So the UI sees either the read and then the write, whose answer
   re-reads what it changed as it always did, or the write and then a read made after it: the new
   status brought by an `index.stage` is not overwritten by a `repo.status` that started earlier.
+  A write that panics counts too (`Changing`, on drop). An answer about a repo that is no longer
+  the open one is sent as it is: the tab drops it by generation.
+- **A read answered while a write is in progress is read again when the tab is idle.** It may
+  have seen the repository in the middle of the write (a hook that moves files away and puts them
+  back, a ref already moved by a fetch still running), and a write that fails re-reads nothing.
+  `Tab::receive` marks the tab for the automatic refresh (§8), which runs once nothing is in
+  progress.
+- **A read on which git fails is asked again on the session**, where it waits for the write: a
+  file or a ref can be missing for a moment while a checkout or a stash replaces it
+  (`fatal: stat 'f': No such file or directory`, `bad revision 'refs/stash'`), and that error
+  must not reach the view. Only `EngineError::Git`/`GitWithReason`: an unknown revision or
+  refused parameters are answered at once.
 
-What a read may see is the repository in the middle of a write (a ref already moved by a fetch
-that is still running): the same as running `git log` in a terminal meanwhile. Reads take no lock
-in the repository (`--no-optional-locks`, `diff.autoRefreshIndex=false`, §5), so they cannot make
-the write fail on `index.lock`. The automatic refresh (§8) still waits for the executor to be
-idle, and the write commands are still disabled during a write.
+Reads take no lock on the index or on the refs and do not write them (`--no-optional-locks`,
+`diff.autoRefreshIndex=false`, §5; `crates/git/tests/reader.rs`), so they cannot make the write
+fail on `index.lock`. What they start can still write elsewhere in the git directory, as it
+already did: a clean filter (`git-lfs filter-process` on a file whose `stat` data are stale writes
+`lfs.repositoryformatversion` in `.git/config`, under `config.lock`, and its hooks if missing,
+once per clone), `core.fsmonitor` starting its daemon, a partial clone fetching the objects of a
+diff. The write commands are still disabled during a write, and "Refresh" too. A read overtaken
+by a write starts again from the beginning: a long content search or blame takes longer if a
+stage or a fetch ends meanwhile. Not tried on Windows, where a file held open by a reading git can
+make a rename or a delete of the writing one fail: git retries them, as it must with any editor
+that runs `git status` in the background.
 
 ### Progress and cancellation (S25)
 

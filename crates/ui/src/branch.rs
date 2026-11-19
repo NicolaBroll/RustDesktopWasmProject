@@ -16,7 +16,7 @@ use crate::running::Running;
 use crate::stage::StageLists;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, messages_text};
-use project_domain::{Change, Oid, RefInfo, RefKind, Status};
+use project_domain::{Change, Commit, Oid, RefInfo, RefKind, Status};
 use project_domain::{branch_short, tag_short};
 use project_engine::{
     BranchCheckoutParams, BranchCheckoutResult, BranchCreateParams, BranchCreateResult,
@@ -128,6 +128,9 @@ pub struct Start {
     pub label: String,
     /// The full name (`refs/remotes/...`) when it is a remote branch: the new branch can track it.
     pub remote: Option<String>,
+    /// What the dialog adds in parentheses after the label: the short id for a ref, the subject
+    /// for a commit (whose label is the id already); `None`: nothing to add.
+    pub detail: Option<String>,
 }
 
 impl Start {
@@ -151,16 +154,28 @@ impl Start {
             target: info.target,
             label,
             remote,
+            detail: Some(info.target.short()),
         };
         (start, name)
     }
 
-    /// The starting point of a commit in the list.
+    /// The starting point of a commit by its id alone.
     pub fn from_commit(id: Oid) -> Self {
         Start {
             target: id,
             label: tr!("branch-start-commit", id = id.short()),
             remote: None,
+            detail: None,
+        }
+    }
+
+    /// The starting point of a commit of the list: with its subject, which says more than the
+    /// id a second time.
+    pub fn of_commit(commit: &Commit) -> Self {
+        let subject = commit.summary.trim();
+        Start {
+            detail: (!subject.is_empty()).then(|| subject.to_owned()),
+            ..Self::from_commit(commit.id)
         }
     }
 }
@@ -1305,6 +1320,9 @@ mod tests {
         assert_eq!(Start::from_ref(&tag).1, "");
         let commit = Start::from_commit(Oid::from_bytes([7; 20]));
         assert!(commit.label.starts_with("commit "), "{}", commit.label);
+        // The id is in the label: the parenthesis is for the subject, never the id again.
+        assert_eq!(commit.detail, None);
+        assert_eq!(start.detail, Some(start.target.short()));
     }
 
     #[test]
@@ -1644,7 +1662,7 @@ mod tests {
     fn with_unmerged_branch() -> MemoryBackend {
         let mut repo = MemoryBackend::sample();
         let head = repo.log(&LogQuery::page(0, 1)).unwrap().remove(0);
-        let extra = project_domain::Commit {
+        let extra = Commit {
             id: Oid::from_bytes([0xee; 20]),
             parents: vec![head.id],
             summary: "Unmerged trial".to_owned(),

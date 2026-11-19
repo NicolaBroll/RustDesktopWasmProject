@@ -242,7 +242,7 @@ fn start_notice(r: &PickStartResult, pick: Pick, starting: &Starting) -> String 
                 title = title,
                 what = what,
                 branch = branch,
-                files = tr!("merge-conflict-files", n = n),
+                n = n,
                 name = name
             ),
         };

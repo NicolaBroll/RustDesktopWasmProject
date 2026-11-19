@@ -86,6 +86,9 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // The rows end before the scrollbar, whether it is there or not (no jump when it
+            // appears): the "+" and "⋯" at their right edge are never under it.
+            ui.set_max_width(ui.available_width() - scrollbar_gutter(ui.spacing()));
             let [local, remote, tags] = &trees.sections;
             if !column.filtering || local.matches > 0 {
                 let title = tr!(
@@ -199,6 +202,17 @@ fn build_trees(
         }
     });
     Trees { key, sections }
+}
+
+/// The width a floating scrollbar covers at the right edge of its area when the mouse is on
+/// it (a bar that is not floating takes its own room: nothing to keep free).
+pub(super) fn scrollbar_gutter(spacing: &egui::Spacing) -> f32 {
+    let scroll = &spacing.scroll;
+    if scroll.floating {
+        (scroll.bar_width + scroll.bar_outer_margin - scroll.floating_allocated_width).max(0.0)
+    } else {
+        0.0
+    }
 }
 
 /// A section of the column: caret, icon, title and on the right what `header_right` adds (a "+");
@@ -926,5 +940,21 @@ mod tests {
         // Past the end, or above the start.
         assert_eq!(visible_rows(3, 50.0, clip(0.0, 1000.0)), 0..3);
         assert_eq!(visible_rows(100, 500.0, clip(0.0, 100.0)), 0..0);
+    }
+
+    /// U66: the rows leave free what the floating scrollbar covers when the mouse is on it; a
+    /// bar with its own room needs nothing.
+    #[test]
+    fn the_rows_end_before_a_floating_scrollbar() {
+        let with = |scroll| egui::Spacing {
+            scroll,
+            ..egui::Spacing::default()
+        };
+        let floating = with(egui::style::ScrollStyle::floating());
+        assert_eq!(scrollbar_gutter(&floating), floating.scroll.bar_width);
+        assert_eq!(
+            scrollbar_gutter(&with(egui::style::ScrollStyle::solid())),
+            0.0
+        );
     }
 }

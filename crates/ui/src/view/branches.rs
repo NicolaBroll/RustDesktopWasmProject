@@ -42,11 +42,11 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     ui.add_space(6.0);
     match &dialog.kind {
         NameKind::Create(start) => {
-            ui.label(tr!(
-                "branch-create-text",
-                start = &start.label,
-                id = start.target.short()
-            ));
+            let text = match &start.detail {
+                Some(detail) => tr!("branch-create-text", start = &start.label, detail = detail),
+                None => tr!("branch-create-text-bare", start = &start.label),
+            };
+            ui.add(egui::Label::new(text).wrap());
         }
         NameKind::Here(id) => {
             ui.add(egui::Label::new(tr!("branch-here-text", id = id.short())).wrap());
@@ -55,11 +55,11 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             ui.label(tr!("branch-rename-text", name = old));
         }
         NameKind::Tag(start) => {
-            ui.label(tr!(
-                "branch-tag-text",
-                start = &start.label,
-                id = start.target.short()
-            ));
+            let text = match &start.detail {
+                Some(detail) => tr!("branch-tag-text", start = &start.label, detail = detail),
+                None => tr!("branch-tag-text-bare", start = &start.label),
+            };
+            ui.add(egui::Label::new(text).wrap());
         }
     }
     ui.add_space(6.0);

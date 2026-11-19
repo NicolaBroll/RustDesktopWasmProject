@@ -11,7 +11,7 @@ use crate::keys::{self, Command};
 use crate::settings::{self, Change, Scale, Settings, SettingsBox};
 use crate::{Tab, view};
 use project_domain::RepoPath;
-use project_engine::{Platform, Registry, RepoOpener, Session};
+use project_engine::{NoDialog, Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -26,6 +26,13 @@ pub(crate) enum Action {
     PickFolder,
     /// Opens the repo in a tab: a new one, the empty one shown, or the one where it is already open.
     Open(String),
+    /// The "Open repository" dialog with the path to type, in place of the system's folder
+    /// dialog.
+    OpenByPath,
+    /// The path typed in that dialog.
+    PathText(String),
+    /// Closes that dialog.
+    ClosePath,
     /// Shows the tab at that index.
     SwitchTab(usize),
     /// Closes the tab at that index (not while it is writing).
@@ -96,7 +103,10 @@ pub struct App {
     wake: Wake,
     /// Folder chosen in the dialog, and what for: it arrives from a callback, on desktop from
     /// another thread when the dialog closes.
-    picked: Arc<Mutex<Option<(Pick, String)>>>,
+    picked: Arc<Mutex<Option<Picked>>>,
+    /// The "Open repository" dialog with the path to type: open from the File menu, or on its
+    /// own when the system's folder dialog cannot be shown.
+    path_dialog: Option<PathDialog>,
     /// A folder dialog is open: a second "Open…" does nothing until it closes.
     picking: Arc<AtomicBool>,
     /// The state last written to the storage: written again only when it changes.
@@ -122,6 +132,37 @@ pub struct App {
     credentials: CredentialBox,
     /// The window of the Help menu that is open.
     help: Option<view::Help>,
+}
+
+/// What a folder dialog was for and how it ended: the folder, or the dialog that could not be
+/// shown (one closed without a choice leaves nothing).
+type Picked = (Pick, Result<String, NoDialog>);
+
+/// The in-app "Open repository" dialog: the path of the folder is typed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PathDialog {
+    pub path: String,
+    /// Why it opened on its own (the system's dialog did not), to show in it.
+    pub note: Option<String>,
+}
+
+impl PathDialog {
+    /// The path to open: what was typed without the spaces around it, if anything is left.
+    pub fn target(&self) -> Option<&str> {
+        Some(self.path.trim()).filter(|p| !p.is_empty())
+    }
+}
+
+/// What to tell the user when the system's folder dialog could not be shown.
+fn no_dialog_text(no_dialog: &NoDialog) -> String {
+    if no_dialog.needs.is_empty() {
+        tr!("tabs-folder-dialog-failed")
+    } else {
+        tr!(
+            "tabs-folder-dialog-failed-needs",
+            needs = no_dialog.needs.join(", ")
+        )
+    }
 }
 
 /// What the folder chosen in the dialog is for.
@@ -209,6 +250,7 @@ impl App {
             opener,
             wake,
             picked: Arc::default(),
+            path_dialog: None,
             picking: Arc::default(),
             saved: saved.clone(),
             focused: None,
@@ -304,9 +346,10 @@ impl App {
     fn receive(&mut self) {
         let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
         match folder {
-            Some((Pick::Open, folder)) => self.open(folder),
-            Some((Pick::Destination, folder)) => self.clone.set_folder(&folder),
-            Some((Pick::Worktree(id), folder)) => {
+            Some((what, Err(no_dialog))) => self.no_folder_dialog(what, &no_dialog),
+            Some((Pick::Open, Ok(folder))) => self.open(folder),
+            Some((Pick::Destination, Ok(folder))) => self.clone.set_folder(&folder),
+            Some((Pick::Worktree(id), Ok(folder))) => {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
                     tab.worktree_folder(&folder);
                 }
@@ -380,6 +423,19 @@ impl App {
         }
     }
 
+    /// The system's folder dialog could not be shown: the status bar says so and what it needs
+    /// (it used to do nothing at all). "Open…" goes on with the dialog where the path is typed;
+    /// the "Browse…" of a dialog has its own field for that.
+    fn no_folder_dialog(&mut self, what: Pick, no_dialog: &NoDialog) {
+        let text = no_dialog_text(no_dialog);
+        log::error!("{text}");
+        if what == Pick::Open {
+            let dialog = self.path_dialog.get_or_insert_with(PathDialog::default);
+            dialog.note = Some(text.clone());
+        }
+        self.tabs[self.active].error = text;
+    }
+
     /// The folder dialog, one at a time: the choice arrives in `picked` with `what`.
     fn pick_folder(&mut self, ctx: &egui::Context, what: Pick) {
         if self.picking.swap(true, Ordering::AcqRel) {
@@ -391,7 +447,8 @@ impl App {
         let picking = Picking(Arc::clone(&self.picking));
         let ctx = ctx.clone();
         self.platform.pick_folder(Box::new(move |folder| {
-            if let Some(folder) = folder {
+            // A dialog closed without a choice leaves nothing.
+            if let Some(folder) = folder.transpose() {
                 *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some((what, folder));
             }
             drop(picking);
@@ -416,7 +473,19 @@ impl App {
     fn apply_tabs(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::PickFolder => self.pick_folder(ctx, Pick::Open),
-            Action::Open(path) => self.open(path),
+            Action::Open(path) => {
+                self.path_dialog = None;
+                self.open(path);
+            }
+            Action::OpenByPath => {
+                self.path_dialog.get_or_insert_with(PathDialog::default);
+            }
+            Action::PathText(path) => {
+                if let Some(dialog) = &mut self.path_dialog {
+                    dialog.path = path;
+                }
+            }
+            Action::ClosePath => self.path_dialog = None,
             Action::SwitchTab(index) => {
                 if index < self.tabs.len() {
                     self.active = index;
@@ -666,6 +735,7 @@ impl App {
         let modal = self.clone.dialog().is_some()
             || self.settings_box.open
             || self.help.is_some()
+            || self.path_dialog.is_some()
             || self.credentials.open().is_some()
             || self.tabs[self.active]
                 .repo
@@ -780,6 +850,11 @@ impl eframe::App for App {
             actions.clear();
             strip.clear();
             view::help_dialog(&ctx, help, &mut actions);
+        } else if let Some(dialog) = &self.path_dialog {
+            // Modal as the others.
+            actions.clear();
+            strip.clear();
+            view::open_path_dialog(&ctx, dialog, &mut actions);
         }
         if let Some(prompt) = self.credentials.open_mut() {
             // Over everything, the tab's dialogs and clone included: what happened under it is
@@ -902,15 +977,15 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-            on_done(None);
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(Ok(None));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();
         }
     }
 
-    type OnPicked = Box<dyn FnOnce(Option<String>) + Send>;
+    use project_engine::OnPicked;
 
     /// Keeps the dialog "open": the callbacks wait in `pending` until the test calls them.
     #[derive(Default)]
@@ -951,12 +1026,79 @@ mod tests {
         let first = platform.pending.lock().unwrap().pop().unwrap();
         assert!(platform.pending.lock().unwrap().is_empty());
         // Cancelled: the next click opens a dialog again.
-        first(None);
+        first(Ok(None));
         app.apply(&ctx, crate::Action::Tabs(Action::PickFolder));
         let second = platform.pending.lock().unwrap().pop().unwrap();
-        second(Some("a".to_owned()));
+        second(Ok(Some("a".to_owned())));
         app.receive();
         assert_eq!(paths(&app), [Some("a")]);
+    }
+
+    /// U66: a system dialog that cannot be shown used to look like one closed by the user.
+    #[test]
+    fn a_folder_dialog_that_cannot_open_says_so_and_asks_for_the_path() {
+        let platform = Arc::new(Deferred::default());
+        let mut opener = MemoryOpener::new();
+        opener.insert("a", MemoryBackend::sample());
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            None,
+        );
+        let ctx = egui::Context::default();
+        let pick = |app: &mut App, action: crate::Action, answer: project_engine::Picked| {
+            app.apply(&ctx, action);
+            let on_done = platform.pending.lock().unwrap().pop().unwrap();
+            on_done(answer);
+            app.receive();
+        };
+        let open = || crate::Action::Tabs(Action::PickFolder);
+        // Closed by the user: nothing to say.
+        pick(&mut app, open(), Ok(None));
+        assert_eq!(app.path_dialog, None);
+        assert_eq!(app.tabs[0].error, "");
+        // Not shown: the status bar says what is missing, and the path can be typed.
+        let needs = vec!["xdg-desktop-portal".to_owned(), "zenity".to_owned()];
+        pick(&mut app, open(), Err(NoDialog { needs }));
+        let error = app.tabs[0].error.clone();
+        assert_eq!(
+            error,
+            "The system's folder dialog did not open: it needs one of xdg-desktop-portal, \
+             zenity. Type the path of the folder instead."
+        );
+        let dialog = app.path_dialog.as_ref().expect("the path dialog");
+        assert_eq!(dialog.note.as_deref(), Some(error.as_str()));
+        assert_eq!(dialog.target(), None);
+        app.apply(
+            &ctx,
+            crate::Action::Tabs(Action::PathText("  a ".to_owned())),
+        );
+        let target = app.path_dialog.as_ref().and_then(PathDialog::target);
+        assert_eq!(target, Some("a"));
+        app.apply(&ctx, crate::Action::Tabs(Action::Open("a".to_owned())));
+        // The repo opens and reads itself: every answer in.
+        for _ in 0..4 {
+            app.receive();
+        }
+        assert_eq!(app.path_dialog, None);
+        assert_eq!(paths(&app), [Some("a")]);
+        // "Browse…" of a dialog has its own field: only the message.
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Open(Kind::Clone)));
+        let browse = crate::Action::Clone(clone::Action::Browse);
+        pick(&mut app, browse, Err(NoDialog::default()));
+        assert_eq!(app.path_dialog, None);
+        assert_eq!(
+            app.tabs[app.active].error,
+            "The system's folder dialog did not open. Type the path of the folder instead."
+        );
+        // From the File menu the dialog opens without a note, and "Cancel" closes it.
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Close));
+        app.apply(&ctx, crate::Action::Tabs(Action::OpenByPath));
+        assert_eq!(app.path_dialog, Some(PathDialog::default()));
+        app.apply(&ctx, crate::Action::Tabs(Action::ClosePath));
+        assert_eq!(app.path_dialog, None);
     }
 
     /// Keeps the jobs until the test runs or drops them.
@@ -970,7 +1112,7 @@ mod tests {
             Capabilities::default()
         }
         fn pick_folder(&self, on_done: OnPicked) {
-            on_done(None);
+            on_done(Ok(None));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             self.jobs.lock().unwrap().push(job);
@@ -1366,7 +1508,7 @@ mod tests {
             }
         }
         fn pick_folder(&self, on_done: OnPicked) {
-            on_done(Some("/work".to_owned()));
+            on_done(Ok(Some("/work".to_owned())));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             self.jobs.lock().unwrap().push(job);
@@ -1523,8 +1665,8 @@ mod tests {
                 ..Capabilities::default()
             }
         }
-        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-            on_done(None);
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(Ok(None));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();

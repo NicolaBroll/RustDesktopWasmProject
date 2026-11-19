@@ -12,6 +12,21 @@ pub type Watch = Box<dyn Send>;
 /// Called by a [`Platform::watch`] when the repository changed, from any thread.
 pub type OnChange = Arc<dyn Fn() + Send + Sync>;
 
+/// The system's folder dialog could not be shown (not the same as a dialog the user closed).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NoDialog {
+    /// The programs of the system that show the dialog, one of which is missing (on Linux
+    /// `xdg-desktop-portal`, `zenity`); empty if the platform cannot say.
+    pub needs: Vec<String>,
+}
+
+/// How a [`Platform::pick_folder`] ended: the folder, `None` if the user gave up, or the
+/// dialog that could not be shown.
+pub type Picked = Result<Option<String>, NoDialog>;
+
+/// Called by [`Platform::pick_folder`] when the dialog closes, from any thread.
+pub type OnPicked = Box<dyn FnOnce(Picked) + Send>;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Capabilities {
     /// [`Platform::pick_folder`] opens a dialog.
@@ -23,11 +38,12 @@ pub struct Capabilities {
 
 pub trait Platform: Send + Sync {
     fn capabilities(&self) -> Capabilities;
-    /// Asks the user for a folder; `None` if they cancel or if the platform has no folders
-    /// (see [`Capabilities::open_folder`]). The path is a string because it is passed to
-    /// `repo.open`: a folder with a non-UTF-8 name gives `None`. It does not block: `on_done` may
-    /// be called later, from another thread (on desktop, when the dialog closes).
-    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>);
+    /// Asks the user for a folder; `Ok(None)` if they cancel or if the platform has no folders
+    /// (see [`Capabilities::open_folder`]), `Err` if the system's dialog could not be shown: the
+    /// UI then says so and asks for the path itself. The path is a string because it is passed
+    /// to `repo.open`: a folder with a non-UTF-8 name gives `Ok(None)`. It does not block:
+    /// `on_done` may be called later, from another thread (on desktop, when the dialog closes).
+    fn pick_folder(&self, on_done: OnPicked);
     /// Runs `job` off the UI thread (see `impl-docs/ARCHITECTURE-git.md` §6): a
     /// thread on desktop; a test platform may run it immediately, before returning.
     fn spawn(&self, job: Box<dyn FnOnce() + Send>);

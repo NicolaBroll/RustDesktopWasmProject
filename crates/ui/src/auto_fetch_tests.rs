@@ -34,8 +34,8 @@ impl Platform for Jobs {
     fn capabilities(&self) -> Capabilities {
         Capabilities::default()
     }
-    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-        on_done(None);
+    fn pick_folder(&self, on_done: project_engine::OnPicked) {
+        on_done(Ok(None));
     }
     fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         if *self.hold.lock().unwrap() {

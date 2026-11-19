@@ -17,11 +17,12 @@ use crate::running::Running;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::{
-    Choice, Conflict, ConflictText, RepoPath, Status, parse_conflicts, resolve_all, resolve_block,
+    Choice, Conflict, ConflictText, Oid, RepoPath, Status, parse_conflicts, resolve_all,
+    resolve_block,
 };
 use project_engine::{
     ConflictResolveParams, ConflictResolveResult, ConflictShowParams, ConflictShowResult,
-    VersionText,
+    IncomingCommit, VersionText,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -97,6 +98,20 @@ pub struct BlockInfo {
     pub line: usize,
     /// The block has the base version (`diff3` style): the "Base" button is there.
     pub has_base: bool,
+}
+
+/// The name of a side for the heading of its column. A marker label that is a whole commit id
+/// (git writes it when a commit is merged by id, as a pull does) becomes the label of that
+/// incoming commit (its branch, e.g. `origin/main`) or, if it is not among `incoming`, the short
+/// id; any other label (`HEAD`, a branch, "Stashed changes") stays as git wrote it.
+pub fn side_name(label: &str, incoming: &[IncomingCommit]) -> String {
+    match label.parse::<Oid>() {
+        Ok(id) => match incoming.iter().find(|i| i.id == id) {
+            Some(commit) => commit.label.clone(),
+            None => id.short(),
+        },
+        Err(_) => label.to_owned(),
+    }
 }
 
 /// What awaits the two-step confirmation.

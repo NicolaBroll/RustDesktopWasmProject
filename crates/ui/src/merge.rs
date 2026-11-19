@@ -934,12 +934,7 @@ fn start_notice(r: &MergeStartResult, starting: &Starting) -> String {
     if r.in_progress {
         return match r.conflicts.len() {
             0 => tr!("merge-stopped-before-commit", name = name, branch = branch),
-            n => tr!(
-                "merge-stopped",
-                name = name,
-                branch = branch,
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("merge-stopped", name = name, branch = branch, n = n),
         };
     }
     let id = r.after.short();
@@ -973,12 +968,7 @@ fn squash_notice(r: &MergeStartResult, name: &str, commits: &str) -> String {
                 name = name,
                 branch = branch
             ),
-            n => tr!(
-                "merge-squash-stopped",
-                name = name,
-                branch = branch,
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("merge-squash-stopped", name = name, branch = branch, n = n),
         };
     }
     if r.strategy == MergeApplied::UpToDate {
@@ -1078,10 +1068,7 @@ fn rebase_continue_outcome(r: RebaseContinueResult) -> Outcome {
                 }
                 tr!("merge-rebase-stopped-before-commit")
             }
-            n => tr!(
-                "merge-rebase-stopped",
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("merge-rebase-stopped", n = n),
         }
     } else {
         let mut notice = match &r.branch {

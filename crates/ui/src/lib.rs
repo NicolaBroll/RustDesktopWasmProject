@@ -1026,7 +1026,10 @@ impl Tab {
                         .find(|r| r.kind == local && r.short_name() == name)
                 }) {
                     Some(info) => branch::Start::from_ref(info).0,
-                    None => branch::Start::from_commit(repo.head.target()?),
+                    None => match repo.head_commit() {
+                        Some(commit) => branch::Start::of_commit(commit),
+                        None => branch::Start::from_commit(repo.head.target()?),
+                    },
                 };
                 (!writing).then_some(Action::Branch(branch::Action::NewBranch(
                     start,
@@ -1803,11 +1806,7 @@ fn central_panel(
         dates,
         ask_detach,
     } = center;
-    let incoming = repo
-        .merge
-        .info()
-        .and_then(|i| i.incoming.first())
-        .map(|i| i.label.as_str());
+    let incoming = repo.merge.info().map_or(&[][..], |i| &i.incoming);
     let conflict_write = !writing && !repo.modal_open();
     egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
         _ if repo.conflict.editor().is_some() => {

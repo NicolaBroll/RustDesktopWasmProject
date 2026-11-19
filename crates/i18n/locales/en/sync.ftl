@@ -28,14 +28,14 @@ sync-rejection-short-hook = a pre-push hook stopped it
 sync-rejection-short-other = rejected by git
 sync-pull-stopped = { $what }: merge of { $upstream } stopped before the commit (a hook or signing?): finish it with “Continue merge…” in the top panel, or abort it
 sync-pull-stopped-conflicts = { $what }: merge of { $upstream } stopped: { $n ->
-    [one] 1 conflicted file
-   *[other] { $n } conflicted files
-}. Resolve them and mark them as resolved in the staging area, then “Continue merge…” in the top panel (or “Abort merge…”, which puts the branch back as it was)
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue merge…” in the top panel (or “Abort merge…”, which puts the branch back as it was)
 sync-pull-stopped-rebase = { $what }: rebase onto { $upstream } stopped before a commit (a hook or signing?): finish it with “Continue rebase…” in the top panel, or abort it
 sync-pull-stopped-conflicts-rebase = { $what }: rebase onto { $upstream } stopped: { $n ->
-    [one] 1 conflicted file
-   *[other] { $n } conflicted files
-}. Resolve them and mark them as resolved in the staging area, then “Continue rebase…” in the top panel (or “Abort rebase…”, which puts the branch back as it was)
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue rebase…” in the top panel (or “Abort rebase…”, which puts the branch back as it was)
 sync-pull-up-to-date = { $what }: already up to date with { $upstream }
 sync-pull-up-to-date-ahead = { $what }: already up to date with { $upstream } ({ $n ->
     [one] 1 local commit

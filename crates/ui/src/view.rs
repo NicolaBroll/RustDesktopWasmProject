@@ -37,6 +37,7 @@ mod credentials_view;
 mod details_view;
 mod file_view;
 mod lfs_view;
+mod open_path_view;
 mod optimize_view;
 mod rebase_view;
 mod refs;
@@ -69,6 +70,7 @@ pub(crate) use file_view::file_view;
 pub(crate) use file_view::{launch_entries, set_can_launch};
 use lfs_view::paint_lfs_badge;
 pub(crate) use lfs_view::{lfs_badge, lfs_notice};
+pub(crate) use open_path_view::open_path_dialog;
 pub(crate) use optimize_view::optimize_notice;
 pub(crate) use rebase_view::rebase_editor;
 pub(crate) use refs::refs_panel;
@@ -137,6 +139,24 @@ fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
     if response.clicked() {
         actions.push(Action::SelectCommit(id));
     }
+}
+
+/// The short id on one line and the icon that copies the full one (also shown on hover): the
+/// "Commit" row of the details of a commit and of a stash.
+fn oid_copy(ui: &mut Ui, id: Oid) {
+    ui.horizontal(|ui| {
+        let full = id.to_string();
+        ui.add(egui::Label::new(RichText::new(id.short()).monospace()))
+            .on_hover_text(&full);
+        let copy = egui::Button::new(icons::text(icons::COPY, 13.0)).frame(false);
+        if ui
+            .add(copy)
+            .on_hover_text(tr!("details-copy-hint"))
+            .clicked()
+        {
+            ui.ctx().copy_text(full);
+        }
+    });
 }
 
 /// Path on one line, cut with `…` if it does not fit in `width`. For renames and copies

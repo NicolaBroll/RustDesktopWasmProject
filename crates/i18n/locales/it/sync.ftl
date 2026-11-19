@@ -9,7 +9,7 @@ sync-label-force = Push forzato
 sync-label-force-branch = Push forzato di «{ $branch }»
 sync-unexpected-response = risposta di pull o push inattesa
 sync-pull-cancelled = { $label } interrotto: il branch non è stato toccato (i branch remoti già scaricati restano)
-sync-push-cancelled = { $label } interrotto: se l'invio era già finito il remoto potrebbe essere aggiornato; fare Fetch per controllare
+sync-push-cancelled = { $label } interrotto: se l'invio era già finito il remoto potrebbe essere aggiornato; fai Fetch per controllare
 sync-failed-auth = { $label } non riuscito: autenticazione rifiutata o richiesta
 sync-failed-unreachable = { $label } non riuscito: remoto non raggiungibile
 sync-rejected = { $label } rifiutato: { $reason }
@@ -26,10 +26,16 @@ sync-rejection-short-stale-lease = il remoto si è spostato dall'ultimo fetch: f
 sync-rejection-short-remote = il remoto ha rifiutato l'aggiornamento
 sync-rejection-short-hook = un hook pre-push l'ha fermato
 sync-rejection-short-other = rifiutato da git
-sync-pull-stopped = { $what }: merge di { $upstream } fermo prima del commit (un hook o la firma?): concluderlo con «Continua il merge…» nel riquadro in alto, o annullarlo
-sync-pull-stopped-conflicts = { $what }: merge di { $upstream } fermo: { $n } file in conflitto. Risolverli e segnarli come risolti nell'area di stage, poi «Continua il merge…» nel riquadro in alto (o «Annulla il merge…», che riporta il branch com'era)
-sync-pull-stopped-rebase = { $what }: rebase su { $upstream } fermo prima di un commit (un hook o la firma?): concluderlo con «Continua il rebase…» nel riquadro in alto, o annullarlo
-sync-pull-stopped-conflicts-rebase = { $what }: rebase su { $upstream } fermo: { $n } file in conflitto. Risolverli e segnarli come risolti nell'area di stage, poi «Continua il rebase…» nel riquadro in alto (o «Annulla il rebase…», che riporta il branch com'era)
+sync-pull-stopped = { $what }: merge di { $upstream } fermo prima del commit (un hook o la firma?): concludilo con «Continua il merge…» nel riquadro in alto, o annullalo
+sync-pull-stopped-conflicts = { $what }: merge di { $upstream } fermo: { $n ->
+    [one] 1 file in conflitto. Risolvilo e segnalo come risolto
+   *[other] { $n } file in conflitto. Risolvili e segnali come risolti
+} nell'area di stage, poi «Continua il merge…» nel riquadro in alto (o «Annulla il merge…», che riporta il branch com'era)
+sync-pull-stopped-rebase = { $what }: rebase su { $upstream } fermo prima di un commit (un hook o la firma?): concludilo con «Continua il rebase…» nel riquadro in alto, o annullalo
+sync-pull-stopped-conflicts-rebase = { $what }: rebase su { $upstream } fermo: { $n ->
+    [one] 1 file in conflitto. Risolvilo e segnalo come risolto
+   *[other] { $n } file in conflitto. Risolvili e segnali come risolti
+} nell'area di stage, poi «Continua il rebase…» nel riquadro in alto (o «Annulla il rebase…», che riporta il branch com'era)
 sync-pull-up-to-date = { $what }: già aggiornato con { $upstream }
 sync-pull-up-to-date-ahead = { $what }: già aggiornato con { $upstream } ({ $n ->
     [one] 1 commit locale
@@ -88,7 +94,7 @@ sync-force-confirm-backup = Prima del push il branch remoto com'era si salva in 
 sync-force-confirm-changed = Il branch remoto è cambiato da quando hai visto questa conferma: niente è stato pubblicato. Controlla di nuovo i commit qui sotto.
 sync-force-confirm-lost = Cosa si perde sul remoto:
 sync-force-confirm-button = Forza il push
-sync-force-confirm-gone = Il branch remoto locale non c'è più: chiudere, fare Fetch e riprovare
+sync-force-confirm-gone = Il branch remoto locale non c'è più: chiudi, fai Fetch e riprova
 sync-force-confirm-cancel = Non forzare
 sync-label-push-tag = Push del tag «{ $tag }» su «{ $remote }»
 sync-push-tag-new = Tag «{ $tag }» pubblicato su «{ $remote }» (su { $id })

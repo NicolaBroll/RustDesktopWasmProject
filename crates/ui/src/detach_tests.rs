@@ -184,7 +184,8 @@ fn the_notice_names_the_commits_saved() {
     let out = done(send(&mut b, &r, &mut s, Op::CheckoutCommit, params));
     assert!(
         out.notice.ends_with(
-            "; warning: 1 commit not on any branch was saved as refs/project/backup/detached-1"
+            "; warning: 1 commit not on any branch was saved in a backup\n\
+             Backup: refs/project/backup/detached-1"
         ),
         "{}",
         out.notice
@@ -196,7 +197,7 @@ fn the_notice_names_the_commits_saved() {
     let out = done(send(&mut b, &r, &mut s, Op::Checkout, params));
     assert!(
         out.notice
-            .contains("1 commit not on any branch was saved as"),
+            .contains("1 commit not on any branch was saved in a backup\nBackup: refs/"),
         "{}",
         out.notice
     );
@@ -207,7 +208,8 @@ fn a_backup_without_its_warning_is_still_named() {
     let text = backup_text(&[], Some("refs/project/backup/detached-9"));
     assert_eq!(
         text,
-        "; warning: the commits not on any branch were saved as refs/project/backup/detached-9"
+        "; warning: the commits not on any branch were saved in a backup\n\
+         Backup: refs/project/backup/detached-9"
     );
     assert_eq!(backup_text(&[], None), "");
 }

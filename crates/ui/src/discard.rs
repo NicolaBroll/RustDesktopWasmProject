@@ -208,20 +208,11 @@ impl Finished {
     fn lines(result: DiscardLinesResult, pick: &LinesPick) -> Self {
         let path = result.file.path.to_string_lossy().into_owned();
         let mut notice = match pick.hunk {
-            Some(h) => tr!(
-                "discard-lines-done-hunk",
-                hunk = h + 1,
-                path = path,
-                backup = &result.backup
-            ),
-            None => tr!(
-                "discard-lines-done",
-                n = pick.lines.len(),
-                path = path,
-                backup = &result.backup
-            ),
+            Some(h) => tr!("discard-lines-done-hunk", hunk = h + 1, path = path),
+            None => tr!("discard-lines-done", n = pick.lines.len(), path = path),
         };
         notice.push_str(&crate::messages_text(&result.warnings));
+        let notice = crate::status::with_backups(notice, &[&result.backup]);
         Finished {
             notice,
             status: result.status,
@@ -378,14 +369,14 @@ impl DiscardBox {
 
 /// The message for the status bar after `worktree.discard`.
 fn notice(result: &DiscardResult) -> String {
-    match result.files.as_slice() {
+    let text = match result.files.as_slice() {
         [one] => tr!(
             "discard-done-one",
-            path = one.path.to_string_lossy().into_owned(),
-            backup = &result.backup
+            path = one.path.to_string_lossy().into_owned()
         ),
-        many => tr!("discard-done-many", n = many.len(), backup = &result.backup),
-    }
+        many => tr!("discard-done-many", n = many.len()),
+    };
+    crate::status::with_backups(text, &[&result.backup])
 }
 
 /// The state of the operation journal: what "Undo" would undo and what "Redo" would redo.
@@ -466,10 +457,10 @@ fn undo_notice(result: &UndoResult) -> String {
         (None, None) => tr!("undo-done"),
     };
     if !result.backups.is_empty() {
-        text.push_str(&tr!("undo-backups", refs = result.backups.join(", ")));
+        text.push_str(&tr!("undo-backups", n = result.backups.len()));
     }
     text.push_str(&crate::messages_text(&result.warnings));
-    text
+    crate::status::with_backups(text, &result.backups)
 }
 
 impl Tab {
@@ -577,7 +568,7 @@ impl Tab {
                         self.submit("repo.status", json!({}), Request::Status(generation));
                     }
                 }
-                self.notice = notice;
+                self.notice.set(notice);
             }
             Received::Failed {
                 message,
@@ -628,7 +619,7 @@ impl Tab {
                 if let Some(status) = status {
                     repo.set_status(status);
                 }
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error = status_error
                     .map(|e| tr!("app-done-status-unread", error = e))
                     .unwrap_or_default();
@@ -849,7 +840,10 @@ mod tests {
             panic!()
         };
         let notice = result.notice;
-        assert!(notice.contains("refs/project/backup/discard-"), "{notice}");
+        assert!(
+            crate::status::hides(&notice, "refs/project/backup/discard-"),
+            "{notice}"
+        );
         assert!(notice.contains("src/lib.rs"), "{notice}");
         let history = History::from(result.journal);
         assert!(history.can_undo);
@@ -868,6 +862,16 @@ mod tests {
         let notice = undo_notice(&undo);
         assert!(notice.starts_with("Undone: Discard"), "{notice}");
         assert!(undo.journal.can_redo && !undo.journal.can_undo);
+        // An undo that saved a backup says so; the ref is named only for the hover text.
+        let mut saved = undo;
+        saved.backups = vec!["refs/project/backup/undo-1".to_owned()];
+        let notice = undo_notice(&saved);
+        let line = crate::status::line(&notice);
+        assert!(line.ends_with("; a backup was saved"), "{notice}");
+        assert!(
+            notice.ends_with("\nBackup: refs/project/backup/undo-1"),
+            "{notice}"
+        );
         let diff_after = registry
             .run(
                 "diff.worktree",
@@ -1026,7 +1030,7 @@ mod tests {
         };
         assert!(
             result.notice.starts_with("Hunk 1 of src/lib.rs discarded")
-                && result.notice.contains("refs/project/backup/discard-"),
+                && crate::status::hides(&result.notice, "refs/project/backup/discard-"),
             "{}",
             result.notice
         );

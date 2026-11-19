@@ -11,11 +11,11 @@ clean-check-label-many = Checking before deleting { $n ->
    *[other] { $n } untracked files
 }
 clean-not-allowed = { $label } not possible: { $error }
-clean-done-one = { $path } deleted; backup in { $backup }. “Undo” puts it back
+clean-done-one = { $path } deleted; a backup was saved. “Undo” puts it back
 clean-done-many = { $n ->
     [one] 1 untracked file
    *[other] { $n } untracked files
-} deleted; backup in { $backup }. “Undo” puts them back
+} deleted; a backup was saved. “Undo” puts them back
 clean-status-not-reread = Files deleted, but the status can't be reread: { $reason }
 clean-size-bytes = { $n ->
     [one] 1 byte

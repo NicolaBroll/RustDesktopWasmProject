@@ -29,7 +29,7 @@ fetch-updated = { $what }: { $n ->
 fetch-pruned-backups = ; { $n ->
     [one] i commit presenti solo su un branch eliminato restano in un backup
    *[other] i commit presenti solo su { $n } branch eliminati restano in backup
-} (refs/project/backup/prune-…)
+}
 fetch-refs-not-reread = Fetch fatto, ma i ref non si rileggono: { $error }
 fetch-progress-remote = remoto: { $phase }
 fetch-phase-enumerating = Enumerazione oggetti

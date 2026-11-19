@@ -553,14 +553,14 @@ fn start_outcome(r: RebaseStartResult, rows: usize, produced: usize) -> Outcome 
             ),
         }
     } else {
-        tr!(
+        let done = tr!(
             "rebase-done",
             branch = branch,
             before = rows,
             after = produced,
-            id = r.after.short(),
-            backup = &r.backup
-        )
+            id = r.after.short()
+        );
+        crate::status::with_backups(done, &[&r.backup])
     };
     let what = if r.in_progress {
         tr!("rebase-stopped-short")

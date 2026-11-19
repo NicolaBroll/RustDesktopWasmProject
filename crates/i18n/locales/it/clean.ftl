@@ -5,11 +5,11 @@ clean-label-many = Eliminazione di { $n } file non tracciati
 clean-check-label-one = Controllo per eliminazione di { $path }
 clean-check-label-many = Controllo per eliminazione di { $n } file non tracciati
 clean-not-allowed = { $label } non possibile: { $error }
-clean-done-one = { $path } eliminato; backup in { $backup }. «Annulla» lo rimette
+clean-done-one = { $path } eliminato; backup salvato. «Annulla» lo rimette
 clean-done-many = { $n ->
     [one] 1 file non tracciato eliminato
    *[other] { $n } file non tracciati eliminati
-}; backup in { $backup }. «Annulla» li rimette
+}; backup salvato. «Annulla» li rimette
 clean-status-not-reread = File eliminati, ma lo stato non si rilegge: { $reason }
 clean-size-bytes = { $n } byte
 clean-size-kb = { $n } KB

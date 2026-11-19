@@ -25,17 +25,17 @@ branch-deleted = Branch «{ $branch }» eliminato (era su { $id }{ $unmerged ->
         [0] {""}
         [one] , con 1 commit non unito
        *[other] , con { $unmerged } commit non uniti
-    }); backup in { $backup }. «Annulla» lo ricrea
+    }); backup salvato. «Annulla» lo ricrea
 branch-deleted-upstream = Branch «{ $branch }» eliminato (era su { $id }{ $unmerged ->
         [0] {""}
         [one] , con 1 commit non unito
        *[other] , con { $unmerged } commit non uniti
-    }); backup in { $backup }; tolta anche l'impostazione dell'upstream. «Annulla» lo ricrea con la sua configurazione
+    }); backup salvato; tolta anche l'impostazione dell'upstream. «Annulla» lo ricrea con la sua configurazione
 branch-deleted-config = Branch «{ $branch }» eliminato (era su { $id }{ $unmerged ->
         [0] {""}
         [one] , con 1 commit non unito
        *[other] , con { $unmerged } commit non uniti
-    }); backup in { $backup }; tolta anche la configurazione { $keys }. «Annulla» lo ricrea con la sua configurazione
+    }); backup salvato; tolta anche la configurazione { $keys }. «Annulla» lo ricrea con la sua configurazione
 branch-renamed = Branch «{ $previous }» rinominato in «{ $branch }». «Annulla» gli rimette il nome di prima
 branch-refs-warning = Fatto, ma i ref non si rileggono: { $error }
 
@@ -67,8 +67,8 @@ branch-refused-files = { $n ->
 branch-tag-delete-label = Eliminazione del tag «{ $name }»
 branch-tag-delete-refused = Impossibile eliminare il tag «{ $name }»: { $error }
 branch-tag-delete-failed = Eliminazione del tag «{ $name }» non riuscita: { $error }
-branch-tag-deleted = Tag «{ $tag }» eliminato (era su { $id }); backup in { $backup }. «Annulla» lo ricrea
-branch-tag-deleted-annotated = Tag annotato «{ $tag }» eliminato (era su { $id }); l'oggetto tag è in { $backup }. «Annulla» lo ricrea
+branch-tag-deleted = Tag «{ $tag }» eliminato (era su { $id }); backup salvato. «Annulla» lo ricrea
+branch-tag-deleted-annotated = Tag annotato «{ $tag }» eliminato (era su { $id }); l'oggetto tag resta in un backup. «Annulla» lo ricrea
 branch-tag-delete-heading = Eliminare il tag «{ $name }»?
 branch-tag-delete-text = Il tag viene eliminato solo qui: i remoti tengono la loro copia (per quello c'è «Elimina dal remoto…»).
 branch-tag-delete-backup = Prima di eliminarlo, il tag viene salvato in un backup (refs/project/backup/tag-delete-…), con messaggio e autore se è annotato: «Annulla» nella barra in alto lo ricrea sullo stesso valore, finché l'app resta aperta.

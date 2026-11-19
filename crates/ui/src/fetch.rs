@@ -355,7 +355,7 @@ pub(crate) fn outcome(r: RemoteFetchResult) -> Outcome {
         tr!("fetch-pruned-backups", n = r.backups.len())
     };
     Outcome {
-        notice: summary + &backups + &warnings,
+        notice: crate::status::with_backups(summary + &backups + &warnings, &r.backups),
         changed: r.updated.as_ref().is_none_or(|u| !u.is_empty()),
         moved: r
             .updated
@@ -498,7 +498,7 @@ impl Tab {
                     repo.refs = refs;
                     repo.update_labels();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 if !refs_read {
                     self.submit("repo.refs", json!({}), Request::Refs(generation));
@@ -508,7 +508,7 @@ impl Tab {
                 }
             }
             Received::Cancelled { notice } => {
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error.clear();
                 // Some remote branch may already be updated.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));

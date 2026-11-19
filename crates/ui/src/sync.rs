@@ -663,13 +663,12 @@ fn pull_outcome(r: RemotePullResult) -> Outcome {
         notice.push_str(&tr!("sync-pull-merge-default"));
     }
     match &r.backup {
-        Some(backup) if r.in_progress => {
-            notice.push_str(&tr!("sync-pull-backup-in-progress", backup = backup));
-        }
-        Some(backup) => notice.push_str(&tr!("sync-pull-backup", backup = backup)),
+        Some(_) if r.in_progress => notice.push_str(&tr!("sync-pull-backup-in-progress")),
+        Some(_) => notice.push_str(&tr!("sync-pull-backup")),
         None => {}
     }
     notice.push_str(&crate::messages_text(&r.warnings));
+    let notice = crate::status::with_backup(notice, r.backup.as_deref());
     let moved_head = r.after != r.before
         && r.status
             .as_ref()
@@ -740,13 +739,14 @@ fn push_outcome(r: RemotePushResult) -> Outcome {
         | PushRemoteSource::Origin
         | PushRemoteSource::Only => {}
     }
-    if let Some(backup) = &r.backup {
-        notice.push_str(&tr!("sync-push-backup", backup = backup));
+    if r.backup.is_some() {
+        notice.push_str(&tr!("sync-push-backup"));
     }
     if r.set_upstream {
         notice.push_str(&tr!("sync-push-set-upstream", target = &target));
     }
     notice.push_str(&crate::messages_text(&r.warnings));
+    let notice = crate::status::with_backup(notice, r.backup.as_deref());
     let warning = match (r.status_error, r.refs_error) {
         (Some(e), _) => Some(tr!("sync-push-status-not-reread", error = e)),
         (None, Some(e)) => Some(tr!("sync-push-refs-not-reread", error = e)),
@@ -897,7 +897,7 @@ impl Tab {
                 } else if outcome.moved_head && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
                 if !refs_read {
@@ -916,7 +916,7 @@ impl Tab {
                 self.notice.clear();
             }
             Received::Cancelled { notice, reload } => {
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error.clear();
                 if reload {
                     self.load();
@@ -1150,7 +1150,7 @@ mod tests {
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("refs/project/backup/pull-1"),
+            crate::status::hides(&outcome.notice, "refs/project/backup/pull-1"),
             "{}",
             outcome.notice
         );
@@ -1242,7 +1242,7 @@ mod tests {
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("refs/project/backup/pull-1"),
+            crate::status::hides(&outcome.notice, "refs/project/backup/pull-1"),
             "{}",
             outcome.notice
         );
@@ -1419,7 +1419,10 @@ mod tests {
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.contains("refs/project/backup/push-1"));
+        assert!(crate::status::hides(
+            &outcome.notice,
+            "refs/project/backup/push-1"
+        ));
         assert!(!sync.modal_open());
     }
 

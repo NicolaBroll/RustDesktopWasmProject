@@ -25,17 +25,17 @@ branch-deleted = Branch “{ $branch }” deleted (was at { $id }{ $unmerged ->
         [0] {""}
         [one] , with 1 unmerged commit
        *[other] , with { $unmerged } unmerged commits
-    }); backup in { $backup }. “Undo” recreates it
+    }); a backup was saved. “Undo” recreates it
 branch-deleted-upstream = Branch “{ $branch }” deleted (was at { $id }{ $unmerged ->
         [0] {""}
         [one] , with 1 unmerged commit
        *[other] , with { $unmerged } unmerged commits
-    }); backup in { $backup }; its upstream setting was removed too. “Undo” recreates it with its configuration
+    }); a backup was saved; its upstream setting was removed too. “Undo” recreates it with its configuration
 branch-deleted-config = Branch “{ $branch }” deleted (was at { $id }{ $unmerged ->
         [0] {""}
         [one] , with 1 unmerged commit
        *[other] , with { $unmerged } unmerged commits
-    }); backup in { $backup }; the configuration { $keys } was removed too. “Undo” recreates it with its configuration
+    }); a backup was saved; the configuration { $keys } was removed too. “Undo” recreates it with its configuration
 branch-renamed = Branch “{ $previous }” renamed to “{ $branch }”. “Undo” restores the previous name
 branch-refs-warning = Done, but the refs could not be reloaded: { $error }
 
@@ -67,8 +67,8 @@ branch-refused-files = { $n ->
 branch-tag-delete-label = Deleting tag “{ $name }”
 branch-tag-delete-refused = Cannot delete tag “{ $name }”: { $error }
 branch-tag-delete-failed = Deleting tag “{ $name }” failed: { $error }
-branch-tag-deleted = Tag “{ $tag }” deleted (was at { $id }); backup in { $backup }. “Undo” recreates it
-branch-tag-deleted-annotated = Annotated tag “{ $tag }” deleted (was at { $id }); the tag object is in { $backup }. “Undo” recreates it
+branch-tag-deleted = Tag “{ $tag }” deleted (was at { $id }); a backup was saved. “Undo” recreates it
+branch-tag-deleted-annotated = Annotated tag “{ $tag }” deleted (was at { $id }); the tag object is kept in a backup. “Undo” recreates it
 branch-tag-delete-heading = Delete tag “{ $name }”?
 branch-tag-delete-text = The tag is deleted only here: the remotes keep their copy (use “Delete from the remote…” for that).
 branch-tag-delete-backup = Before deleting, the tag is saved in a backup (refs/project/backup/tag-delete-…), with the message and author of an annotated tag: “Undo” in the top bar recreates it on the same value, as long as the app stays open.

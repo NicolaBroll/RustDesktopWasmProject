@@ -1,7 +1,7 @@
 # App messages: command replies, network bar (lib.rs, executor.rs).
 
 app-commit-not-loaded = commit { $id } is not among the loaded ones
-app-index-backup = Index backup saved in { $backup }
+app-index-backup = A backup of the index was saved
 app-write-stale = { $label } failed: the file has changed: review the diff and redo the selection (the diff has been reloaded)
 app-done-status-unread = Done, but the status could not be reloaded: { $error }
 app-no-result = `{ $command }` ended without a result

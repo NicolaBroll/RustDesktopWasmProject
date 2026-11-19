@@ -9,7 +9,7 @@ detach-checkout-label = Checking out commit { $id }
 detach-checked-out = HEAD detached at { $id }: you are not on a branch. “Create branch here…” keeps new commits; “Undo” goes back
 detach-already = HEAD is already detached at { $id }
 detach-saved = { $n ->
-    [one] 1 commit not on any branch was saved as { $backup }
-   *[other] { $n } commits not on any branch were saved as { $backup }
+    [one] 1 commit not on any branch was saved in a backup
+   *[other] { $n } commits not on any branch were saved in a backup
 }
-detach-saved-unknown = the commits not on any branch were saved as { $backup }
+detach-saved-unknown = the commits not on any branch were saved in a backup

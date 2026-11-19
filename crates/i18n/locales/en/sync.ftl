@@ -52,8 +52,8 @@ sync-pull-rebase = { $what }: rebase of { $n ->
    *[other] { $n } local commits
 } onto { $upstream } ({ $range })
 sync-pull-merge-default = ; merge because pull.rebase is not configured (git config pull.rebase true to rebase)
-sync-pull-backup-in-progress = ; the branch as it was is in { $backup }
-sync-pull-backup = ; backup in { $backup }, “Undo” reverts it
+sync-pull-backup-in-progress = ; the branch as it was is kept in a backup
+sync-pull-backup = ; a backup was saved, “Undo” reverts it
 sync-pull-status-not-reread = Pull done, but the status could not be reread: { $error }
 sync-pull-refs-not-reread = Pull done, but the refs could not be reread: { $error }
 # $summary: empty or “ (summary)” with the leading space.
@@ -66,7 +66,7 @@ sync-push-forced = Force push of “{ $branch }” to { $target }{ $summary }: {
 sync-push-up-to-date = Push of “{ $branch }”: { $target } is already up to date
 sync-push-to-push-remote = ; to “{ $remote }” (branch.{ $branch }.pushRemote)
 sync-push-to-push-default = ; to “{ $remote }” (remote.pushDefault)
-sync-push-backup = ; the remote as it was is saved in { $backup }
+sync-push-backup = ; the remote as it was is saved in a backup
 sync-push-set-upstream = ; upstream set to { $target }
 sync-push-status-not-reread = Push done, but the status could not be reread: { $error }
 sync-push-refs-not-reread = Push done, but the refs could not be reread: { $error }

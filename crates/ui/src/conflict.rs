@@ -530,12 +530,16 @@ impl ConflictBox {
                     Some(path) => tr!("conflict-resolved-path", path = path),
                     None => tr!("conflict-resolved"),
                 };
-                if let Some(backup) = &resolved.backup {
-                    notice.push_str(&tr!("conflict-resolved-backup", backup = backup));
+                if resolved.backup.is_some() {
+                    notice.push_str(&tr!("conflict-resolved-backup"));
                 }
-                if let Some(backup) = &resolved.index_backup {
-                    notice.push_str(&tr!("conflict-resolved-index-backup", backup = backup));
+                if resolved.index_backup.is_some() {
+                    notice.push_str(&tr!("conflict-resolved-index-backup"));
                 }
+                let backups = [&resolved.backup, &resolved.index_backup];
+                let backups: Vec<&str> =
+                    backups.into_iter().flatten().map(String::as_str).collect();
+                let notice = crate::status::with_backups(notice, &backups);
                 Received::Done {
                     status: Box::new(resolved.status),
                     notice,
@@ -634,7 +638,7 @@ impl Tab {
             Received::Done { status, notice } => {
                 log::info!("{}: {notice}", done.command);
                 repo.set_status(*status);
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error.clear();
                 self.follow_diff();
             }

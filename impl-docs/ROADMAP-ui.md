@@ -352,7 +352,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   the panel for a frame, a drag of the edge.
 
 ### U61 — Status bar: one clipped line, no ref names, old messages fade
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** a long message (undo of a commit with a long subject, pull stopped on conflicts)
   runs over the repo path and overlaps the label at the right edge, at 1200 px too; the
   messages print `refs/project/backup/…` and stay until the next one, even for hours. The
@@ -362,6 +362,13 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
 - **Done when:** at 760x520 and 1200x760, in both languages, no status text overlaps the right
   side after an undo of an amend and after a pull with conflicts; unit test of the expiry; CI
   green.
+- **Done:** `status_bar` lays out the right side first (the path gives way down to 40% of the
+  bar) and cuts the message, one line, in the room left; an error in several lines is joined.
+  `status.rs`: `Notice` (the tab's message and when it was set, weak after 10 s with a repaint
+  asked for that moment) and `with_backups`, which every message builder calls last: the texts
+  say "a backup was saved" and the ref names follow on a line "Backup: …" that only the hover
+  text shows; "Copy message" in the message's context menu copies the whole text. Engine
+  warnings and errors that name a ref are shown as they are.
 
 ### U62 — Error dialogs are modal; one dialog for "local changes"
 - [ ] **Agent:** `egui-ui`

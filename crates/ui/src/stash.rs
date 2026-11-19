@@ -659,10 +659,10 @@ impl StashBox {
                     let mut notice = tr!(
                         "stash-drop-done",
                         name = &result.stash.name,
-                        title = result.stash.title(),
-                        backup = result.backup.as_deref().unwrap_or_default()
+                        title = result.stash.title()
                     );
                     notice.push_str(&messages_text(&result.warnings));
+                    let notice = crate::status::with_backup(notice, result.backup.as_deref());
                     Received::Done(Box::new(Outcome {
                         op: Op::Drop,
                         notice,
@@ -706,7 +706,7 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
     let name = &stash.name;
     let mut notice = match (op, r.conflicts.len(), r.dropped) {
         (Op::Pop, 0, true) => match &r.backup {
-            Some(backup) => tr!("stash-pop-done-backup", name = name, backup = backup),
+            Some(_) => tr!("stash-pop-done-backup", name = name),
             None => tr!("stash-pop-done", name = name),
         },
         (Op::Pop, 0, false) => tr!("stash-pop-not-dropped", name = name),
@@ -722,7 +722,7 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
         .cloned()
         .collect();
     notice.push_str(&messages_text(&warnings));
-    notice
+    crate::status::with_backup(notice, r.backup.as_deref())
 }
 
 impl Tab {
@@ -863,7 +863,7 @@ impl Tab {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
                 // The drop does not touch files; the others do, and if the status did not arrive it is
@@ -1151,11 +1151,17 @@ mod tests {
         assert!(
             outcome
                 .notice
-                .starts_with("stash@{0} applied and dropped from the list; backup in refs/"),
+                .starts_with("stash@{0} applied and dropped from the list; a backup was saved"),
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.ends_with("“Undo” doesn't revert it"));
+        // The ref is named after the message, for the hover text of the status bar.
+        let (line, backup) = outcome.notice.split_once('\n').expect("backup line");
+        assert!(line.ends_with("“Undo” doesn't revert it"), "{line}");
+        assert!(
+            backup.starts_with("Backup: refs/project/backup/stash-"),
+            "{backup}"
+        );
         assert!(outcome.reload_log);
         assert!(outcome.history.is_none());
         assert_eq!(b.list(), Some(&[][..]));
@@ -1341,9 +1347,14 @@ mod tests {
             outcome.notice
         );
         assert!(
+            crate::status::line(&outcome.notice).contains("dropped; a backup was saved. “Undo”"),
+            "{}",
+            outcome.notice
+        );
+        assert!(
             outcome
                 .notice
-                .contains("backup in refs/project/backup/stash-")
+                .contains("\nBackup: refs/project/backup/stash-")
         );
         assert!(
             outcome

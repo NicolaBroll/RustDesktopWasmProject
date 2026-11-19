@@ -53,11 +53,12 @@ fn keys_start_with_their_area_and_load_without_errors() {
 fn plurals_follow_the_language() {
     let it = get(Lang::It);
     let en = get(Lang::En);
-    let files = |i18n: &I18n, n: usize| i18n.tr_args("merge-conflict-files", [("n", Arg::from(n))]);
-    assert_eq!(files(it, 1), "1 file in conflitto");
-    assert_eq!(files(it, 3), "3 file in conflitto");
-    assert_eq!(files(en, 1), "1 conflicted file");
-    assert_eq!(files(en, 3), "3 conflicted files");
+    let files =
+        |i18n: &I18n, n: usize| i18n.tr_args("merge-conflicts-label", [("n", Arg::from(n))]);
+    assert_eq!(files(it, 1), "1 file in conflitto:");
+    assert_eq!(files(it, 3), "3 file in conflitto:");
+    assert_eq!(files(en, 1), "1 conflicted file:");
+    assert_eq!(files(en, 3), "3 conflicted files:");
 }
 
 #[test]
@@ -71,9 +72,9 @@ fn parameters_have_no_unicode_isolation_marks() {
 fn the_macro_uses_the_current_language() {
     // The other tests use `get`: only this one touches the global language.
     assert_eq!(lang(), Lang::En);
-    let expected = "2 conflicted files";
-    assert_eq!(tr!("merge-conflict-files", n = 2), expected);
-    assert!(current().has("merge-conflict-files"));
+    let expected = "2 conflicted files:";
+    assert_eq!(tr!("merge-conflicts-label", n = 2), expected);
+    assert!(current().has("merge-conflicts-label"));
     assert!(!current().has("merge-nope"));
 }
 
@@ -82,37 +83,27 @@ fn an_optional_count_can_disappear() {
     let notice = |n: usize| {
         get(Lang::En).tr_args(
             "merge-aborted-notice",
-            [
-                ("title", Arg::from("Merge")),
-                ("backup", Arg::from("B")),
-                ("n", Arg::from(n)),
-            ],
+            [("title", Arg::from("Merge")), ("n", Arg::from(n))],
         )
     };
-    assert!(notice(0).starts_with("Merge aborted: index and working tree saved first in B; "));
-    assert!(notice(1).contains("in B (1 file); "));
-    assert!(notice(2).contains("in B (2 files); "));
+    assert!(
+        notice(0).starts_with("Merge aborted: index and working tree saved first in a backup; ")
+    );
+    assert!(notice(1).contains("in a backup (1 file); "));
+    assert!(notice(2).contains("in a backup (2 files); "));
     let it = get(Lang::It).tr_args(
         "merge-aborted-notice",
-        [
-            ("title", Arg::from("Merge")),
-            ("backup", Arg::from("B")),
-            ("n", Arg::from(3)),
-        ],
+        [("title", Arg::from("Merge")), ("n", Arg::from(3))],
     );
     // The Italian text is a different translation of the same message, with the same arguments.
     assert_ne!(
         it,
         get(Lang::En).tr_args(
             "merge-aborted-notice",
-            [
-                ("title", Arg::from("Merge")),
-                ("backup", Arg::from("B")),
-                ("n", Arg::from(3)),
-            ],
+            [("title", Arg::from("Merge")), ("n", Arg::from(3)),],
         )
     );
-    assert!(it.contains('B') && it.contains('3'));
+    assert!(it.contains("Merge") && it.contains('3'));
 }
 
 #[test]

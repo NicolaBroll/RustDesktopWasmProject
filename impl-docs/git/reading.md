@@ -112,7 +112,8 @@ on `repo.log` (`contains_literal`, `SearchQuery::id_matches`, trees compared wit
   `Executor::submit` (each job has its `CancelToken`) and stops it with `Executor::cancel(ticket)`;
   `Git::run_cancellable` polls the token and kills git's process group, the command ends with
   `Cancelled { command: "repo.search" }`. A new search must cancel the previous ticket first: the
-  running one holds the session, so anything submitted after it waits until it ends.
+  running one holds the session of the reads (architecture §6), so every read submitted after it
+  waits until it ends.
 - Text: one argument glued to the option (`-S<text>`/`-G<text>`), so a text starting with `-` stays a
   text; no NUL or newline (`InvalidParams`, as above); non-UTF-8 bytes in the files are matched as bytes
   (`LC_ALL=C`).

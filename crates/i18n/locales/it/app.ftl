@@ -1,7 +1,7 @@
 # App messages: command replies, network bar (lib.rs, executor.rs).
 
 app-commit-not-loaded = il commit { $id } non è tra quelli caricati
-app-index-backup = Backup dell'indice salvato in { $backup }
+app-index-backup = Backup dell'indice salvato
 app-write-stale = { $label } non riuscito: il file è cambiato: rileggi il diff e rifai la selezione (il diff è stato riletto)
 app-done-status-unread = Fatto, ma lo stato non si rilegge: { $error }
 app-no-result = `{ $command }` è terminato senza risultato

@@ -165,6 +165,12 @@ use serde::{Deserialize, Serialize};
 ///
 /// [`GitBackend`].
 pub trait GitRead {
+    /// A second handle on this repository, for the reads of a
+    /// [`Session::reader`](crate::Session::reader), which run while this one is busy with a
+    /// write. It may show the repository as it is now and not follow what this handle writes
+    /// afterwards (`MemoryBackend`: a copy), so the caller takes a new one after every write.
+    fn reader(&self) -> Box<dyn GitBackend>;
+
     /// Where HEAD points.
     fn head(&self) -> Result<Head, EngineError>;
 

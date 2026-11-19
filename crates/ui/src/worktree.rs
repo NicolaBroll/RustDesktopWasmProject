@@ -539,10 +539,9 @@ pub fn added_notice(result: &AddResult) -> String {
 /// The notice after `worktree.remove`.
 pub fn removed_notice(result: &RemoveResult) -> String {
     match &result.backup {
-        Some(backup) => tr!(
-            "worktree-removed-backup",
-            path = &result.path,
-            backup = backup
+        Some(backup) => crate::status::with_backup(
+            tr!("worktree-removed-backup", path = &result.path),
+            Some(backup),
         ),
         None => tr!("worktree-removed", path = &result.path),
     }
@@ -632,7 +631,7 @@ impl Tab {
                 Added::Done(result) => {
                     log::info!("{ADD}: {}", result.path);
                     repo.history = result.journal.clone().into();
-                    self.notice = added_notice(&result);
+                    self.notice.set(added_notice(&result));
                     self.error.clear();
                     // `App` opens it in a new tab.
                     self.open_worktree = Some(result.path.clone());
@@ -654,7 +653,7 @@ impl Tab {
             Removed::Shown => {}
             Removed::Done(result) => {
                 log::info!("{REMOVE}: {}", result.path);
-                self.notice = removed_notice(&result);
+                self.notice.set(removed_notice(&result));
                 self.error.clear();
             }
             Removed::Failed => {

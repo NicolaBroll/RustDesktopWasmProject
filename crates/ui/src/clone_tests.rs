@@ -29,7 +29,7 @@ fn split(
 /// A clone dialog with these fields.
 fn dialog(kind: Kind, url: &str, path: &str) -> CloneBox {
     let mut b = CloneBox::default();
-    b.open(kind);
+    b.open(kind, None);
     b.set_fields(Fields {
         url: url.into(),
         path: path.into(),
@@ -115,7 +115,7 @@ fn a_clone_opens_the_repo_and_closes_the_dialog() {
         panic!("not opened");
     };
     assert_eq!(value["path"], "dest");
-    assert_eq!(notice, "");
+    assert_eq!(notice, "Cloned remote into dest.");
     assert!(b.dialog().is_none());
     assert_eq!(s.path(), Some("dest"));
 }
@@ -218,12 +218,105 @@ fn fields_are_read_only_while_running_and_kinds_switch_only_when_idle() {
     b.started(Ticket::for_test(1));
     b.set_fields(Fields::default());
     b.set_folder("/elsewhere");
-    b.open(Kind::Init);
+    b.open(Kind::Init, None);
     let d = b.dialog().unwrap();
     assert_eq!((d.kind, d.fields.path.as_str()), (Kind::Clone, "dest"));
     let mut b = dialog(Kind::Clone, "remote", "dest");
-    b.open(Kind::Clone);
+    b.open(Kind::Clone, None);
     assert_eq!(b.dialog().unwrap().fields.url, "remote", "same kind: kept");
-    b.open(Kind::Init);
+    b.open(Kind::Init, None);
     assert_eq!(b.dialog().unwrap().kind, Kind::Init);
+}
+
+/// U67: the name the folder is proposed with, for the forms of URL git accepts.
+#[test]
+fn the_name_of_a_clone_comes_from_the_url() {
+    for (url, name) in [
+        ("https://example.com/owner/repo.git", Some("repo")),
+        ("https://example.com/owner/repo", Some("repo")),
+        ("https://example.com/owner/repo.git/", Some("repo")),
+        ("git@example.com:owner/repo.git", Some("repo")),
+        ("git@example.com:repo", Some("repo")),
+        ("ssh://git@example.com:2222/owner/repo.git", Some("repo")),
+        ("/srv/git/demo-origin.git", Some("demo-origin")),
+        ("../other/", Some("other")),
+        (r"C:\repos\work\", Some("work")),
+        ("  https://example.com/a/b  ", Some("b")),
+        ("https://", None),
+        ("", None),
+        ("..", None),
+    ] {
+        assert_eq!(repo_name(url), name, "{url:?}");
+    }
+    let joined = |name: &str| Path::new("/work").join(name).to_string_lossy().into_owned();
+    assert_eq!(
+        proposed_folder("/work", "git@example.com:owner/repo.git"),
+        Some(joined("repo"))
+    );
+    assert_eq!(proposed_folder("/work", "https://"), None);
+}
+
+/// U67: the folder is proposed from the URL in the folder the app gives, until the user types
+/// one; "Browse…" changes the folder and the name keeps following the URL.
+#[test]
+fn the_folder_follows_the_url_until_it_is_typed() {
+    let joined = |base: &str, name: &str| Path::new(base).join(name).to_string_lossy().into_owned();
+    let path = |b: &CloneBox| b.dialog().unwrap().fields.path.clone();
+    // The view sends the fields as they are on screen, with one of them edited.
+    let typed = |b: &mut CloneBox, url: Option<&str>, folder: Option<&str>| {
+        let mut fields = b.dialog().unwrap().fields.clone();
+        if let Some(url) = url {
+            fields.url = url.to_owned();
+        }
+        if let Some(folder) = folder {
+            fields.path = folder.to_owned();
+        }
+        b.set_fields(fields);
+    };
+    let mut b = CloneBox::default();
+    b.open(Kind::Clone, Some("/work".to_owned()));
+    assert_eq!(path(&b), "", "nothing to propose without a URL");
+    typed(&mut b, Some("https://host/a/first.git"), None);
+    assert_eq!(path(&b), joined("/work", "first"));
+    typed(&mut b, Some("git@host:a/second.git"), None);
+    assert_eq!(path(&b), joined("/work", "second"), "it follows the URL");
+    typed(&mut b, Some("https://"), None);
+    assert_eq!(path(&b), "", "no name yet");
+    // Typed by hand: the URL no longer changes it.
+    typed(&mut b, None, Some("/mine/copy"));
+    typed(&mut b, Some("https://host/a/third.git"), None);
+    assert_eq!(path(&b), "/mine/copy");
+    // Emptied: proposed again.
+    typed(&mut b, None, Some(""));
+    assert_eq!(path(&b), joined("/work", "third"));
+    // "Browse…": the chosen folder, and the name goes on following the URL.
+    b.set_folder("/elsewhere");
+    assert_eq!(path(&b), joined("/elsewhere", "third"));
+    typed(&mut b, Some("https://host/a/fourth"), None);
+    assert_eq!(path(&b), joined("/elsewhere", "fourth"));
+    typed(&mut b, Some(""), None);
+    assert_eq!(path(&b), "/elsewhere", "the chosen folder itself");
+    // A new repository has no URL: nothing is proposed. No folder known: the same.
+    let mut b = CloneBox::default();
+    b.open(Kind::Init, Some("/work".to_owned()));
+    typed(&mut b, Some("https://host/a/b.git"), None);
+    assert_eq!(path(&b), "");
+    let mut b = dialog(Kind::Clone, "https://host/a/b.git", "");
+    assert_eq!(path(&b), "");
+    typed(&mut b, Some("https://host/a/c.git"), None);
+    assert_eq!(path(&b), "");
+}
+
+/// U67: a finished clone says what was cloned and where, then what git said.
+#[test]
+fn a_finished_clone_is_announced() {
+    assert_eq!(
+        cloned_notice("git@host:owner/repo.git", "/work/repo", &[]),
+        "Cloned repo into /work/repo."
+    );
+    let empty = ["warning: You appear to have cloned an empty repository.".to_owned()];
+    assert_eq!(
+        cloned_notice("https://", "/work/copy", &empty),
+        "Cloned copy into /work/copy. warning: You appear to have cloned an empty repository."
+    );
 }

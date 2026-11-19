@@ -5,6 +5,7 @@ engine-unknown-command = comando sconosciuto: `{ $id }`
 engine-invalid-params = parametri non validi per `{ $id }`: { $reason }
 engine-repo-not-found = `{ $path }` non è un repository git: { $reason }
 engine-no-repo = nessun repository aperto: aprirne uno con `repo.open`
+engine-reader-session = questa sessione legge soltanto il repository
 engine-unknown-rev = revisione sconosciuta: `{ $rev }`
 engine-git-not-found = impossibile eseguire `git`: { $error }
 engine-git-too-old = git { $found } non è supportato: serve almeno la versione { $required }

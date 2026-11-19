@@ -237,3 +237,129 @@ Rules that apply to every step:
   log line. Either carry it like `RepoPath` (string or byte array in JSON) or document the limit
   in `impl-docs/git/reading.md` and show a message instead of the log line.
 - **Done when:** the decision is written down; test of the chosen behavior; CI green.
+
+## Phase Q4 — UI performance
+
+From the review of the GUI of 2026-11-18: work that grows with the size of the repo and runs on
+the UI thread when a result arrives.
+
+### Q40 — Graph lanes and colors a page at a time
+- [x] **Agent:** `git-domain`, then `egui-ui`
+- **Goal:** every page of `repo.log` (500 commits) recomputed the lanes and their colors of all
+  the loaded commits on the UI thread: measured on a synthetic history of 100 000 commits (release
+  build), 16 ms of `layout_graph` plus 45 ms of `lane_colors` per page, growing with the rows
+  loaded. Both become incremental; the result does not change.
+- **Done when:** a page costs its own commits; property test "pages give the same layout"; UI
+  test "pages give the same colors"; CI green.
+- **Done:** `project_domain::GraphBuilder` (`extend`, `extend_commits`, `layout`) keeps lanes and
+  pending segments between pages, `layout_graph`/`layout_graph_nodes` feed it once.
+  `CommitList` holds the builder; `graph_version` now grows only when the graph starts again
+  from the first page. `graph::LaneColors` keeps the run of each row and segment (the color is
+  read from the run, because a branch further down colors the rows above) and `extend`s by the
+  new rows; the cache of `view/commits.rs` extends it in place and rebuilds it only when the
+  graph version, the refs or the remotes change.
+
+### Q41 — Large diffs off the UI thread
+- [x] **Agent:** `egui-ui`
+- **Goal:** `decode::<Diff>` and `DiffDoc::build` (rows, word diff of every changed pair, side by
+  side rows) ran on the UI thread when `diff.commit` answered, with no limit on the number of
+  lines. Measured (release build): 200 000 added lines 320 ms, 100 000 changed pairs 835 ms,
+  10 000 pairs of long lines (~390 words) 5.6 s of frozen window, almost all of it the word diff.
+- **Done when:** opening those diffs costs the UI thread less than a frame; UI tests; CI green.
+- **Done:** `Executor::submit_prepared(command, params, prepare)` runs `prepare` on the result
+  in the job, after the session is released; `take_prepared::<T>(ticket)` gives it to whoever
+  handles the `Done`, and what nobody takes is dropped at the next `poll`. `Tab::request_diff`
+  uses it to decode and build the `DiffDoc`; `DiffState::receive` takes the document. The word
+  diff is no longer in the build: `DiffDoc::emphasis(f, h, l)` compares a pair of lines the first
+  time one is drawn and keeps the answer (the pairs are found at build time, which is cheap).
+  The line counts of the bar and of the file titles, recounted on every frame, are kept in the
+  document. Measured after: `receive` under 1 µs for every case above (the job takes 35 ms for
+  20 000 lines, 330 ms for 200 000); the first screen of long changed lines 25-30 ms once, then
+  nothing. Still on the UI thread, at 200 000 lines only: 20-30 ms when a reload brings the same
+  diff (comparing it and freeing the copy) and 12-26 ms to free the document on close.
+
+### Q42 — Recent folders checked in a job, commit rows by id, Help windows in the app state
+- [x] **Agent:** `egui-ui`
+- **Goal:** the leftovers of the review that need no decision. `App::check_missing` called
+  `Path::is_dir` on every recent repo once a second on the UI thread: a folder on a network drive
+  that does not answer froze the window. `CommitList::position` scanned the loaded commits, and
+  the frame asks it for HEAD (changes row, stage panel). "About" and "Keyboard shortcuts" kept
+  their open flag in egui's temporary data, outside `App`, so `App::shortcuts` had to ask egui
+  whether a modal layer was open.
+- **Done when:** no disk access on the UI thread for the recent list; the Help windows open and
+  close with an `Action`; UI tests; CI green.
+- **Done:** the check runs with `Platform::spawn`, one at a time (`MissingCheck`: a flag cleared
+  when the job ends or is dropped, the answer taken on a later frame). `CommitList` keeps the
+  row of every loaded commit by id (`commit(id)`, `index_of`, `seek`, `anchor`).
+  `tabs::Action::Help(Option<view::Help>)` and `App::help`: the window is drawn by `App::ui` as
+  the settings and clone ones, and `top_modal_layer` is gone from `App::shortcuts`.
+- **Checked and left as they are:** the windows of a failed fetch, pull or push are deliberately
+  not modal (`failure_window`: "It does not block the rest of the window") and
+  `RepoView::modal_open` agrees with that: whether they should be is a UX question. The colors
+  written outside `theme.rs` are grouped in one place per area (the diff `Style`, the graph
+  palette). The per-frame `recent_view()` and `labels()` allocate a few short strings.
+
+### Q43 — Reads beside a write
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer` (reads now run during the writes)
+- **Goal:** point 3 of the review. A job holds the session for the whole command, so during a
+  fetch, a pull, a push or a commit with a slow hook every read waited: a clicked commit showed
+  no details and no diff until the end, also during the automatic fetch.
+- **Done when:** a read submitted during a write answers before the write ends; an answer read
+  before a write ended never reaches the UI after that write's own; the reads take no lock in
+  the repository; engine, UI and real-git tests; CI green.
+- **Done:** `Session::reader()`: a second session on the same repo that only reads
+  (`GitRead::reader`: the same repository for the `CliBackend`, a copy for the `MemoryBackend`);
+  `repo_mut`, `journal`, `repo_and_journal` and the opens refuse on it. `CommandSpec::reader`
+  marks the commands that may run there: the `Access::Read` ones except `repo.open` and
+  `edit.history` (`needs_session`). The `Executor` runs them on the reader, takes a new reader
+  after every command that writes or opens, and reads again an answer overtaken by a write
+  (`executor::Reading`; architecture §4 "Session" and §6 "Reads beside a write"). CLI and MCP
+  are unchanged. Tests: the catalog of the readers with parameters that reach every handler
+  (`the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`), executor tests on threads,
+  and `crates/git/tests/reader.rs` (every read leaves `.git/index` byte for byte as it was, free
+  to lock it or with `index.lock` held; a reader writes nothing). Tried in the app: with a
+  commit held 15 s by a `pre-commit` hook, the details and the diff of another commit load at
+  once, and the new commit appears when the hook ends.
+- **From the safety review** (no way to lose data found; reads and writes run side by side in
+  120 rounds of add, commit, stash, checkout, gc, rebase with no failed write): a read answered
+  during a write marks the tab for the automatic refresh, because a write that fails re-reads
+  nothing (`Tab::receive`); a read on which git fails is asked again on the session, after the
+  write (a file or `refs/stash` missing for a moment); a write that panics still counts as a
+  change (`Changing`); an answer about a repo no longer open is not read again.
+- **Left as they are:** the reads still run one at a time among themselves (a content search
+  holds the others; it is cancelled when the query or the repo changes). A read overtaken by a
+  write starts again from the beginning, so a long content search or blame takes longer if a
+  stage or a fetch ends meanwhile. "Refresh" is off during a write. In a Git LFS repo a read can
+  make `git-lfs` write `.git/config` and its hooks once per clone, as before this step, now
+  possibly beside a command that writes the configuration (`config.lock`; not reproduced in 40
+  tries).
+- **Not verified:** Windows, where the app's reading and writing git processes now overlap.
+
+## Phase Q5 — UI tests
+
+### Q50 — Smoke tests of the drawing code
+- [x] **Agent:** `egui-ui`
+- **Goal:** the ~17 000 lines that draw (`view/`, `diff_view.rs`, `merge_view.rs`) ran in no
+  test: the 378 tests of `crates/ui` drive the state and reach 1.5% of those lines. A view that
+  panics, that is not drawn in its state or that reuses an id showed only by hand on the desktop
+  app.
+- **Done when:** every panel, dialog and menu is drawn by a test that checks what it shows; the
+  measure is repeatable; CI green.
+- **Done:** `crates/ui/src/view_tests.rs` (module `tabs::view_tests`, it needs the private state
+  of `App`): `Screen` draws the whole `App` with `Context::run_ui` and
+  `eframe::Frame::_new_kittest()` on a `MemoryBackend`, applies `Action`s as the end of a frame
+  does, simulates the pointer (`click_on` a painted text) and returns the texts painted; every
+  frame fails on egui's id-clash warning (a test checks that the warning is seen). 21 tests,
+  0.2 s: welcome, the panels at several sizes down to 160x90, the custom window frame, stage
+  area and its confirmations, diffs (unified, side by side, line selection, renamed file), the
+  dialogs of branches, tags, remotes, stashes, merge, cherry-pick, reset, rebase, worktrees,
+  clone, settings and credentials, a merge in conflict with its editor, rejected push and forced
+  push, failed fetch and pull, blame, history, search, compare, two tabs, the light theme, the
+  notices under the bar, and the context menus of commits, refs, remotes, files, submodules and
+  of the menu bar. `make view-coverage` (llvm-tools of the toolchain, installed by
+  `post-create.sh`): 81% of the functions and 75% of the lines of the drawing code, from 3.5%
+  and 1.5%.
+- **Not reached:** what a click does inside the dialogs (the handlers that push an `Action`:
+  the state they lead to is tested by the area's own tests), a command in progress with its
+  progress bar and "Stop" (the test platform answers at once), the stash-conflict window, the
+  drag of rows in the rebase editor and of the window edges.

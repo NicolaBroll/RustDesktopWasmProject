@@ -40,11 +40,11 @@ merge-concluded-notice-branch = { $title } finished: { $noun } { $id } created o
 merge-abort-refused = Cannot abort the { $name }: { $error }
 merge-abort-failed = Aborting the { $name } failed: { $error }
 merge-aborted = { $title } aborted
-merge-aborted-notice = { $title } aborted: index and working tree saved first in { $backup }{ $n ->
+merge-aborted-notice = { $title } aborted: index and working tree saved first in a backup{ $n ->
         [0] {""}
         [one] {" "}(1 file)
        *[other] {" "}({ $n } files)
-    }; restore them with `git stash apply { $backup }`. It cannot be undone with “Undo”
+    }; `git stash apply <backup>` restores them. It cannot be undone with “Undo”
 merge-warning = warning: { $warning }
 merge-status-not-reloaded = the status could not be reloaded: { $error }
 merge-refs-not-reloaded = the refs could not be reloaded: { $error }
@@ -53,23 +53,28 @@ merge-commits = { $n ->
     [one] 1 commit
    *[other] { $n } commits
 }
-merge-conflict-files = { $n ->
-    [one] 1 conflicted file
-   *[other] { $n } conflicted files
-}
 merge-stopped-before-commit = Merge of “{ $name }” into “{ $branch }” stopped before the commit (a hook?): finish it with “Continue merge…” in the panel at the top, or abort it
-merge-stopped = Merge of “{ $name }” into “{ $branch }” stopped: { $files }. Resolve them and mark them as resolved in the staging area, then “Continue merge…” in the panel at the top (or “Abort merge…”)
+merge-stopped = Merge of “{ $name }” into “{ $branch }” stopped: { $n ->
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue merge…” in the panel at the top (or “Abort merge…”)
 merge-up-to-date = “{ $branch }” already contains “{ $name }”: nothing to merge
 merge-fast-forward = Fast-forward: “{ $branch }” moved forward by { $commits } to “{ $name }” ({ $id }). “Undo” moves it back
-merge-rebase-stopped = Rebase stopped again on the next commit: { $files }. Resolve them and mark them as resolved in the staging area, then “Continue rebase…” in the panel at the top (or “Abort rebase…”)
+merge-rebase-stopped = Rebase stopped again on the next commit: { $n ->
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue rebase…” in the panel at the top (or “Abort rebase…”)
 merge-rebase-stopped-before-commit = Rebase stopped again before a commit (a hook or signing?): finish it with “Continue rebase…” in the panel at the top, or abort it
 merge-rebase-stopped-short = Rebase stopped again
 merge-rebase-finished = Rebase finished: HEAD at { $id }
 merge-rebase-finished-branch = Rebase of “{ $branch }” finished: the branch is at { $id }
-merge-rebase-backup = ; the branch as it was is in { $backup }
+merge-rebase-backup = ; the branch as it was is kept in a backup
 merge-merged = “{ $name }” merged into “{ $branch }” ({ $commits }): merge commit { $id }. “Undo” undoes it
 merge-pick-stopped-before-commit = { $title } of “{ $what }” onto “{ $branch }” stopped before the commit (a hook or signing?): finish it with “Continue { $name }…” in the panel at the top, or abort it
-merge-pick-stopped = { $title } of “{ $what }” onto “{ $branch }” stopped: { $files }. Resolve them and mark them as resolved in the staging area, then “Continue { $name }…” in the panel at the top (or “Abort { $name }…”)
+merge-pick-stopped = { $title } of “{ $what }” onto “{ $branch }” stopped: { $n ->
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue { $name }…” in the panel at the top (or “Abort { $name }…”)
 merge-cherry-picked = “{ $what }” applied onto “{ $branch }”: commit { $id }. “Undo” undoes it
 merge-reverted = Changes of “{ $what }” reverted on “{ $branch }” with commit { $id }. “Undo” removes it
 
@@ -105,7 +110,6 @@ merge-message-label = Message of the { $noun }
 merge-create-button = Create { $noun }
 merge-committing-hint = Commit in progress
 merge-write-message = Write the message
-merge-close = Close
 merge-rebase-continue-text = Git goes on with the remaining commits of the rebase: the commit it stopped on is created with what is staged and keeps its message. It may stop again on the next conflict.
 merge-rebase-continue-text-branch = Git goes on with the remaining commits of the rebase of “{ $branch }”: the commit it stopped on is created with what is staged and keeps its message. It may stop again on the next conflict; when it finishes, “Undo” in the top bar puts the branch back.
 merge-rebase-continue-button = Continue { $name }
@@ -125,7 +129,10 @@ merge-mainline-hint = With parent { $n } (mainline)
 
 # Squash merge (S58): status-bar messages.
 merge-squash-stopped-before-commit = Squash of “{ $name }” into “{ $branch }” stopped before the commit (a hook or signing?): finish it with “Continue squash…” in the panel at the top, or abort it
-merge-squash-stopped = Squash of “{ $name }” into “{ $branch }” stopped: { $files }. Resolve them and mark them as resolved in the staging area, then “Continue squash…” in the panel at the top (or “Abort squash…”)
+merge-squash-stopped = Squash of “{ $name }” into “{ $branch }” stopped: { $n ->
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue squash…” in the panel at the top (or “Abort squash…”)
 merge-squash-nothing = Nothing to squash: the changes of “{ $name }” are already on “{ $branch }”. Nothing was written
 merge-squashed = “{ $name }” squashed into “{ $branch }” ({ $commits }): one commit { $id }. “{ $name }” does not appear as merged. “Undo” undoes it
 

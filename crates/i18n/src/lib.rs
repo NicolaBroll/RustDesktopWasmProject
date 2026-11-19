@@ -6,7 +6,7 @@
 //!
 //! ```
 //! use project_i18n::tr;
-//! let text = tr!("merge-conflict-files", n = 3);
+//! let text = tr!("merge-conflicts-label", n = 3);
 //! ```
 //!
 //! There is a single language for the whole app ([`set_lang`]): it changes at once, without a

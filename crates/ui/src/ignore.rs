@@ -243,7 +243,7 @@ impl Tab {
                         self.submit("repo.status", json!({}), Request::Status(generation));
                     }
                 }
-                self.notice = notice;
+                self.notice.set(notice);
             }
             Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);

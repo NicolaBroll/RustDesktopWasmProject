@@ -13,11 +13,11 @@ discard-check-label-many = Checking before discarding changes to { $n ->
    *[other] { $n } files
 }
 discard-not-allowed = { $label } not possible: { $error }
-discard-done-one = Changes to { $path } discarded; backup in { $backup }. “Undo” brings them back
+discard-done-one = Changes to { $path } discarded; a backup was saved. “Undo” brings them back
 discard-done-many = Changes to { $n ->
     [one] 1 file
    *[other] { $n } files
-} discarded; backup in { $backup }. “Undo” brings them back
+} discarded; a backup was saved. “Undo” brings them back
 discard-status-not-reread = Changes discarded, but the status can't be reread: { $reason }
 discard-lines-label = Discarding { $n ->
     [one] 1 line
@@ -28,5 +28,5 @@ discard-lines-check-label = Checking before discarding lines of { $path }
 discard-lines-done = { $n ->
     [one] 1 line
    *[other] { $n } lines
-} of { $path } discarded; backup of the file in { $backup }. “Undo” brings them back
-discard-lines-done-hunk = Hunk { $hunk } of { $path } discarded; backup of the file in { $backup }. “Undo” brings it back
+} of { $path } discarded; a backup of the file was saved. “Undo” brings them back
+discard-lines-done-hunk = Hunk { $hunk } of { $path } discarded; a backup of the file was saved. “Undo” brings it back

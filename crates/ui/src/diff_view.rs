@@ -174,7 +174,8 @@ fn toolbar(
                 let path = target.path.to_string_lossy();
                 let label = egui::Label::new(egui::RichText::new(path.as_ref()).strong())
                     .truncate()
-                    .sense(Sense::click());
+                    // For the context menu, which the keyboard does not open: not a Tab stop.
+                    .sense(Sense::CLICK);
                 let deleted = matches!(pane, Pane::Loaded(_, doc)
                     if doc.diff.files.first().is_some_and(|f| f.change == Change::Deleted));
                 ui.add(label)
@@ -421,6 +422,10 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
                     Mark::None
                 };
                 paint_row(ui, doc, row, rect, gutter, &style, mark);
+                if response.has_focus() {
+                    // The part in view: the row is as wide as the longest line.
+                    crate::theme::paint_focus_ring(ui, rect.intersect(ui.clip_rect()));
+                }
                 if selectable {
                     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if response.clicked() {
@@ -549,7 +554,7 @@ fn paint_row(
             painter.text(
                 pos2(title.right() + 3.0 * PAD, mid),
                 Align2::LEFT_CENTER,
-                file_summary(file),
+                file_summary(file, doc.file_counts(*f)),
                 style.title.clone(),
                 style.weak,
             );
@@ -611,7 +616,7 @@ fn paint_row(
             };
             paint_words(
                 painter,
-                doc.emphasis.get(&(*f, *h, *l)),
+                doc.emphasis(*f, *h, *l).as_deref(),
                 text_x,
                 rect,
                 words,
@@ -694,7 +699,7 @@ fn paint_text(painter: &egui::Painter, content: &str, at: egui::Pos2, style: &St
 /// The background of the changed words (`columns`) of a line whose text starts at `text_x`.
 fn paint_words(
     painter: &egui::Painter,
-    columns: Option<&Vec<std::ops::Range<usize>>>,
+    columns: Option<&[std::ops::Range<usize>]>,
     text_x: f32,
     row: Rect,
     color: Color32,
@@ -807,7 +812,7 @@ fn paint_side(
     let text_x = gutter.right() + PAD;
     paint_words(
         &painter,
-        doc.emphasis.get(&(f, h, l)),
+        doc.emphasis(f, h, l).as_deref(),
         text_x,
         rect,
         words,

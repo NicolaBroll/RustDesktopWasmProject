@@ -89,22 +89,7 @@ pub(super) fn commit_header(
         .spacing(vec2(12.0, 4.0))
         .show(ui, |ui| {
             ui.weak(tr!("details-commit"));
-            // The short id on one line, the full one on hover and in the copy.
-            ui.horizontal(|ui| {
-                let id = commit.id.to_string();
-                ui.add(egui::Label::new(
-                    RichText::new(commit.id.short()).monospace(),
-                ))
-                .on_hover_text(&id);
-                let copy = egui::Button::new(icons::text(icons::COPY, 13.0)).frame(false);
-                if ui
-                    .add(copy)
-                    .on_hover_text(tr!("details-copy-hint"))
-                    .clicked()
-                {
-                    ui.ctx().copy_text(id);
-                }
-            });
+            oid_copy(ui, commit.id);
             ui.end_row();
 
             ui.weak(if commit.parents.len() == 1 {
@@ -156,7 +141,10 @@ pub(super) fn commit_header(
         });
     if commit.is_merge() {
         ui.add_space(4.0);
-        ui.colored_label(theme::MERGE, tr!("details-merge-commit"));
+        ui.colored_label(
+            theme::merge(ui.visuals().dark_mode),
+            tr!("details-merge-commit"),
+        );
     }
     ui.add_space(4.0);
 }
@@ -166,6 +154,38 @@ const FILES_TITLE: f32 = 32.0;
 
 /// Height of a row of the file list.
 pub(super) const FILE_ROW_HEIGHT: f32 = 20.0;
+
+fn reveal_file_id() -> egui::Id {
+    egui::Id::unique("reveal-open-file")
+}
+
+/// Called by the tab every frame, before its panels are drawn: the file lists bring the row of
+/// the open file into view (it was chosen with the keyboard, [`crate::file_nav`]).
+pub(crate) fn set_reveal_file(ctx: &egui::Context, reveal: bool) {
+    ctx.data_mut(|d| d.insert_temp(reveal_file_id(), reveal));
+}
+
+/// Inside `ScrollArea::show_rows` of a file list, before the rows from `first` on are drawn:
+/// when the open file was chosen with the keyboard, scrolls the list as little as needed to show
+/// its row `open`, drawn or not.
+pub(super) fn reveal_open_row(ui: &Ui, first: usize, open: Option<usize>, row_height: f32) {
+    let Some(open) = open else {
+        return;
+    };
+    if !ui
+        .ctx()
+        .data(|d| d.get_temp(reveal_file_id()).unwrap_or(false))
+    {
+        return;
+    }
+    let step = row_height + ui.spacing().item_spacing.y;
+    let top = ui.cursor().top() + (open as f32 - first as f32) * step;
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(ui.cursor().left(), top),
+        vec2(ui.available_width(), row_height),
+    );
+    ui.scroll_to_rect(rect, None);
+}
 
 /// List of the changed files of `source` (a commit or a comparison), virtualized: only the
 /// visible rows are drawn. A click on a file opens its diff; the file of the open diff (`open`)
@@ -188,6 +208,10 @@ pub(super) fn changed_files(
         .id_salt("details-file")
         .auto_shrink(false)
         .show_rows(ui, FILE_ROW_HEIGHT, files.len(), |ui, range| {
+            let open_row = open
+                .filter(|t| t.source == source)
+                .and_then(|t| files.iter().position(|f| f.path == t.path));
+            reveal_open_row(ui, range.start, open_row, FILE_ROW_HEIGHT);
             for file in &files[range] {
                 let (rect, response) = ui.allocate_exact_size(
                     vec2(ui.available_width(), FILE_ROW_HEIGHT),
@@ -204,6 +228,7 @@ pub(super) fn changed_files(
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
+                theme::focus_ring(ui, &response, rect);
                 let painter = ui.painter_at(rect);
                 let color = theme::change(file.change);
                 let badge = egui::Rect::from_center_size(

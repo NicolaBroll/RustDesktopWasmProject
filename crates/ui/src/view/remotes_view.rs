@@ -31,7 +31,11 @@ pub(super) fn remote_row(
             .background_color(ui.visuals().selection.bg_fill.gamma_multiply(0.6));
         ui.label(text).on_hover_text(hint);
     }
-    ui.label(RichText::new(count.to_string()).small().weak());
+    ui.label(
+        RichText::new(count.to_string())
+            .small()
+            .color(theme::counter(ui.visuals())),
+    );
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let more = egui::Button::new(icons::text(icons::MORE, 14.0)).frame(false);
         egui::containers::menu::MenuButton::from_button(more)
@@ -83,11 +87,7 @@ pub(super) fn remote_menu(
         }
     }
     ui.separator();
-    let color = if can_write {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), can_write);
     let button = ui
         .add_enabled(
             can_write,
@@ -143,7 +143,7 @@ pub(super) fn add_remote_dialog(
     ui.add_space(6.0);
     ui.add(egui::Label::new(tr!("remotes-add-explanation")).wrap());
     ui.add_space(8.0);
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let enter = default_enter(ui);
     let mut fields: AddFields = dialog.fields.clone();
     let mut changed = false;
     egui::Grid::new("remote-fields")
@@ -219,20 +219,15 @@ pub(super) fn add_remote_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(
-                dialog.can_submit(),
-                egui::Button::new(tr!("remotes-add-submit")),
-            )
+            .add_enabled(can, primary_button(ui, tr!("remotes-add-submit"), can))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::Remotes(remotes::Action::SubmitAdd));
         }
         if ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("remotes-close")),
-            )
+            .add_enabled(dialog.running.is_none(), cancel_button())
             .clicked()
         {
             actions.push(Action::Remotes(remotes::Action::CloseDialog));
@@ -314,15 +309,11 @@ pub(super) fn delete_branch_dialog(
     ui.add(egui::Label::new(undo).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("remotes-delete-branch-confirm"))
-                .color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("remotes-delete-branch-confirm"));
         if ui.add_enabled(delete.expected.is_some(), button).clicked() {
             actions.push(confirm);
         }
-        if ui.button(tr!("remotes-delete-branch-cancel")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Remotes(remotes::Action::CloseDialog));
         }
     });
@@ -347,14 +338,11 @@ pub(super) fn remove_remote_dialog(
     ui.add(egui::Label::new(tr!("remotes-remove-undo")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("remotes-remove-confirm")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("remotes-remove-confirm"));
         if ui.add(button).clicked() {
             actions.push(Action::Remotes(remotes::Action::ConfirmRemove));
         }
-        if ui.button(tr!("remotes-remove-cancel")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Remotes(remotes::Action::CloseDialog));
         }
     });
@@ -379,7 +367,7 @@ pub(super) fn edit_remote_dialog(ui: &mut Ui, dialog: &EditDialog, actions: &mut
     ui.add_space(6.0);
     ui.add(egui::Label::new(explanation).wrap());
     ui.add_space(8.0);
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let enter = default_enter(ui);
     let mut fields = dialog.fields.clone();
     let mut changed = false;
     let editable = !dialog.sending;
@@ -449,16 +437,14 @@ pub(super) fn edit_remote_dialog(ui: &mut Ui, dialog: &EditDialog, actions: &mut
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(dialog.can_submit(), egui::Button::new(submit))
+            .add_enabled(can, primary_button(ui, submit, can))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::Remotes(remotes::Action::SubmitEdit));
         }
-        if ui
-            .add_enabled(editable, egui::Button::new(tr!("remotes-close")))
-            .clicked()
-        {
+        if ui.add_enabled(editable, cancel_button()).clicked() {
             actions.push(Action::Remotes(remotes::Action::CloseDialog));
         }
         if dialog.sending {

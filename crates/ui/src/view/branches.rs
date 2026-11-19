@@ -21,7 +21,6 @@ pub(crate) fn branch_dialog(ctx: &egui::Context, dialog: &Dialog, actions: &mut 
                 };
                 delete_tag_dialog(ui, delete, reason, actions);
             }
-            Dialog::Refused(refused) => refused_dialog(ui, refused, actions),
             Dialog::Upstream(dialog) => upstream_dialog(ui, dialog, actions),
             Dialog::Detach(dialog) => detach_dialog(ui, dialog, actions),
         }
@@ -43,11 +42,11 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     ui.add_space(6.0);
     match &dialog.kind {
         NameKind::Create(start) => {
-            ui.label(tr!(
-                "branch-create-text",
-                start = &start.label,
-                id = start.target.short()
-            ));
+            let text = match &start.detail {
+                Some(detail) => tr!("branch-create-text", start = &start.label, detail = detail),
+                None => tr!("branch-create-text-bare", start = &start.label),
+            };
+            ui.add(egui::Label::new(text).wrap());
         }
         NameKind::Here(id) => {
             ui.add(egui::Label::new(tr!("branch-here-text", id = id.short())).wrap());
@@ -56,18 +55,20 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
             ui.label(tr!("branch-rename-text", name = old));
         }
         NameKind::Tag(start) => {
-            ui.label(tr!(
-                "branch-tag-text",
-                start = &start.label,
-                id = start.target.short()
-            ));
+            let text = match &start.detail {
+                Some(detail) => tr!("branch-tag-text", start = &start.label, detail = detail),
+                None => tr!("branch-tag-text-bare", start = &start.label),
+            };
+            ui.add(egui::Label::new(text).wrap());
         }
     }
     ui.add_space(6.0);
     let id = ui.make_persistent_id("branch-name");
     // Enter in the field sends the name: read before the field, which would otherwise take it.
-    let enter = ui.memory(|m| m.has_focus(id))
-        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    // Ctrl+Enter from anywhere in the dialog, the tag's message too.
+    let enter = crate::keys::confirm(ui.ctx())
+        || (ui.memory(|m| m.has_focus(id))
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)));
     let mut name = dialog.name.clone();
     let edit = egui::TextEdit::singleline(&mut name)
         .id(id)
@@ -128,17 +129,15 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(dialog.can_submit(), egui::Button::new(button))
+            .add_enabled(can, primary_button(ui, button, can))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::Branch(branch::Action::SubmitName));
         }
         if ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("branch-close")),
-            )
+            .add_enabled(dialog.running.is_none(), cancel_button())
             .clicked()
         {
             actions.push(Action::Branch(branch::Action::CloseDialog));
@@ -169,14 +168,11 @@ pub(super) fn delete_dialog(
     ui.add(egui::Label::new(tr!("branch-delete-backup")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("branch-delete-button")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("branch-delete-button"));
         if ui.add(button).clicked() {
             actions.push(Action::Branch(branch::Action::ConfirmDeleteBranch));
         }
-        if ui.button(tr!("branch-dont-delete")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
@@ -199,43 +195,14 @@ pub(super) fn delete_tag_dialog(
     ui.add(egui::Label::new(tr!("branch-tag-delete-backup")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("branch-tag-delete-button")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("branch-tag-delete-button"));
         if ui.add_enabled(delete.expected.is_some(), button).clicked() {
             actions.push(Action::Branch(branch::Action::ConfirmDeleteTag));
         }
-        if ui.button(tr!("branch-dont-delete")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
-}
-
-/// Maximum height of the file list of the refused checkout; beyond it scrolls.
-pub(super) const REFUSED_LIST_HEIGHT: f32 = 160.0;
-
-pub(super) fn refused_dialog(ui: &mut Ui, refused: &branch::Refused, actions: &mut Vec<Action>) {
-    ui.heading(tr!("branch-refused-heading", name = &refused.name));
-    ui.add_space(6.0);
-    ui.add(egui::Label::new(tr!("branch-refused-text")).wrap());
-    ui.add_space(6.0);
-    let n = refused.files.len();
-    ui.strong(tr!("branch-refused-files", n = n));
-    let row = ui.text_style_height(&egui::TextStyle::Monospace);
-    egui::ScrollArea::vertical()
-        .id_salt("checkout-files")
-        .max_height(REFUSED_LIST_HEIGHT)
-        .auto_shrink([false, true])
-        .show_rows(ui, row, n, |ui, range| {
-            for path in &refused.files[range] {
-                ui.monospace(path);
-            }
-        });
-    ui.add_space(10.0);
-    if ui.button(tr!("branch-close")).clicked() {
-        actions.push(Action::Branch(branch::Action::CloseDialog));
-    }
 }
 
 /// The confirmation of "Check out this commit": what a detached HEAD means, "Don't ask again".
@@ -258,7 +225,10 @@ pub(super) fn detach_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        if ui.button(tr!("detach-button")).clicked() {
+        if ui
+            .add(primary_button(ui, tr!("detach-button"), true))
+            .clicked()
+        {
             if dialog.dont_ask {
                 actions.push(Action::Settings(crate::settings::Action::Change(
                     crate::settings::Change::SkipDetachConfirm(true),
@@ -266,7 +236,7 @@ pub(super) fn detach_dialog(
             }
             actions.push(Action::Branch(branch::Action::ConfirmCheckoutCommit));
         }
-        if ui.button(tr!("confirm-cancel")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
@@ -294,8 +264,9 @@ pub(super) fn upstream_dialog(
     ui.add_space(6.0);
     let idle = dialog.running.is_none();
     let id = ui.make_persistent_id("upstream-filter");
-    let enter = ui.memory(|m| m.has_focus(id))
-        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let enter = crate::keys::confirm(ui.ctx())
+        || (ui.memory(|m| m.has_focus(id))
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)));
     let mut filter = dialog.filter.clone();
     let response = ui.add(
         egui::TextEdit::singleline(&mut filter)
@@ -350,19 +321,14 @@ pub(super) fn upstream_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(
-                dialog.can_submit(),
-                egui::Button::new(tr!("branch-upstream-button")),
-            )
+            .add_enabled(can, primary_button(ui, tr!("branch-upstream-button"), can))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::Branch(branch::Action::SubmitUpstream));
         }
-        if ui
-            .add_enabled(idle, egui::Button::new(tr!("branch-close")))
-            .clicked()
-        {
+        if ui.add_enabled(idle, cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
         if !idle {

@@ -26,8 +26,10 @@ mod diff;
 mod diff_view;
 mod discard;
 mod executor;
+mod failure;
 mod fetch;
 mod file;
+mod file_nav;
 mod format;
 mod graph;
 mod icons;
@@ -50,6 +52,8 @@ mod settings;
 mod side_panel;
 mod stage;
 mod stash;
+mod stash_retry;
+mod status;
 mod submodule;
 mod sync;
 mod tabs;
@@ -314,7 +318,7 @@ struct RepoView {
     auto_fetch: auto_fetch::AutoFetch,
     /// The commit-graph notice and `repo.optimize` in progress.
     optimize: OptimizeBox,
-    /// The pull or push in progress and the open window (conflict, rejection, force confirmation).
+    /// The pull or push in progress and the open window (failure, rejection, force confirmation).
     sync: SyncBox,
     /// The configured remotes (`remote.list`) and the dialogs to add and remove them.
     remotes: RemotesBox,
@@ -338,6 +342,8 @@ struct RepoView {
     file: file::FileBox,
     /// The search in the history: field, matches, next/previous.
     search: search::SearchBox,
+    /// The order of the failure dialogs waiting: one is shown at a time.
+    failures: failure::Queue,
     /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
     /// What Undo and Redo would do.
@@ -347,6 +353,9 @@ struct RepoView {
     select_after_load: Option<Oid>,
     /// HEAD when the automatic refresh in progress started (see `refresh::log_stale`).
     refresh_head: Option<Option<Oid>>,
+    /// The repo was just opened and nothing was selected by hand yet: the first status decides
+    /// what the tab shows first (see [`RepoView::set_status`]).
+    first_selection: bool,
 }
 
 impl RepoView {
@@ -391,10 +400,12 @@ impl RepoView {
             conflict: ConflictBox::default(),
             file: file::FileBox::default(),
             search: search::SearchBox::default(),
+            failures: failure::Queue::default(),
             status_seq: 0,
             history: History::default(),
             select_after_load,
             refresh_head: None,
+            first_selection: true,
         };
         view.update_labels();
         view
@@ -411,11 +422,16 @@ impl RepoView {
     }
 
     /// New repo status, from `repo.status` or a write. Without changes the changes
-    /// row disappears: if it was selected we go back to the commit.
+    /// row disappears: if it was selected we go back to the commit. The first status of a repo
+    /// just opened selects "Uncommitted changes" when there are any (the stage area in front:
+    /// what was left to do), unless something was selected by hand in the meantime; never a
+    /// later one, so a refresh leaves the selection where it is.
     fn set_status(&mut self, status: Status) {
+        let first = std::mem::take(&mut self.first_selection);
         self.head = status.head.clone();
         self.stage = StageLists::new(&status);
         self.conflict.follow_status(&status);
+        self.stash.follow_status(&status);
         self.status_seq += 1;
         self.status = Some(status);
         if self.stage.is_empty() {
@@ -423,13 +439,21 @@ impl RepoView {
             self.confirm = None;
             self.discard.cancel();
             self.clean.cancel();
+        } else if first {
+            self.select_worktree(true);
         }
         self.update_labels();
     }
 
-    /// True if a confirmation is open (stage of conflicts, published amend, discard) or a
-    /// branch dialog: while it is, no writes and the keys go only to it.
+    /// True if a confirmation is open (stage of conflicts, published amend, discard), a
+    /// branch dialog or the dialog of a failure: while it is, no writes and the keys go only to
+    /// it.
     fn modal_open(&self) -> bool {
+        self.dialog_open() || self.failure().is_some()
+    }
+
+    /// True if a confirmation or a dialog other than the one of a failure is open.
+    fn dialog_open(&self) -> bool {
         self.confirm.is_some()
             || self.commit.confirm().is_some()
             || self.discard.confirm().is_some()
@@ -446,8 +470,26 @@ impl RepoView {
 
     /// The last commit (HEAD), if it is among the loaded ones.
     fn head_commit(&self) -> Option<&Commit> {
-        let head = self.head.target()?;
-        self.list.commits().iter().find(|c| c.id == head)
+        self.list.commit(self.head.target()?)
+    }
+
+    /// HEAD as the starting point of a new branch or tag (Ctrl+B, the "+" of "Local branches"
+    /// and of "Tags"): the current branch, as "New branch from here…" of its menu, or HEAD's
+    /// commit when detached. `None`: no commit yet.
+    fn head_start(&self) -> Option<branch::Start> {
+        let current = view::current_branch(&self.head).and_then(|name| {
+            let local = project_domain::RefKind::LocalBranch;
+            self.refs
+                .iter()
+                .find(|r| r.kind == local && r.short_name() == name)
+        });
+        Some(match current {
+            Some(info) => branch::Start::from_ref(info).0,
+            None => match self.head_commit() {
+                Some(commit) => branch::Start::of_commit(commit),
+                None => branch::Start::from_commit(self.head.target()?),
+            },
+        })
     }
 
     /// The state of the "Commit" button.
@@ -534,7 +576,7 @@ struct Tab {
     viewport: ListViewport,
     error: String,
     /// Informational message in the status bar (e.g. the saved index backup).
-    notice: String,
+    notice: status::Notice,
     /// The watch of the repo and the refresh it asks for (S40).
     auto: refresh::AutoRefresh,
     /// The repos (paths) that already showed the notice "git-lfs is not installed" in this tab:
@@ -557,7 +599,7 @@ impl Tab {
             open_worktree: None,
             viewport: ListViewport::default(),
             error: String::new(),
-            notice: String::new(),
+            notice: status::Notice::default(),
             auto: refresh::AutoRefresh::default(),
             lfs_noticed: std::collections::HashSet::new(),
         }
@@ -565,7 +607,7 @@ impl Tab {
 
     /// Opens `path` in this tab, in the background.
     fn open(&mut self, path: String) {
-        // A content search running would hold the session until it ends.
+        // A content search running is of the repo being left.
         self.stop_search();
         let params = params(RepoOpenParams { path: path.clone() });
         self.submit("repo.open", params, Request::Open);
@@ -584,7 +626,7 @@ impl Tab {
     /// `repo.open`, with git's messages (`notice`) in the status bar.
     fn created(&mut self, value: Value, notice: String) {
         match self.store(Request::Open, value) {
-            Ok(()) => self.notice = notice,
+            Ok(()) => self.notice.set(notice),
             Err(e) => {
                 self.error = unexpected_result("repo.clone", e);
             }
@@ -628,11 +670,13 @@ impl Tab {
             repo.search.keep();
             // A plain selection goes back from the comparison to one commit.
             repo.compare.close();
+            // Chosen by hand before the first status arrived: it stays.
+            repo.first_selection = false;
         }
         match action {
             // The tabs, the folder dialog, clone, settings and credentials belong to `App`.
             Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) | Action::Credentials(_) => {}
-            // During a write (a fetch can last) reads would wait in the queue.
+            // During a write: its answer re-reads what it changed.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
                     self.auto.clear();
@@ -743,9 +787,19 @@ impl Tab {
         }
     }
 
+    /// Asks for the diff of `target`. The job also decodes the answer and builds its document
+    /// ([`DiffDoc`]): for a large diff that takes hundreds of milliseconds, not to be spent on
+    /// the UI thread.
     fn request_diff(&mut self, target: &DiffTarget, seq: u64) {
         let (command, params) = target.request();
-        self.submit(command, params, Request::Diff(self.generation, seq));
+        let path = target.path.clone();
+        let ticket = self
+            .executor
+            .submit_prepared(command, params, move |value| {
+                decode::<Diff>(command, value).map(|diff| DiffDoc::new(diff, &path))
+            });
+        self.pending
+            .insert(ticket, Request::Diff(self.generation, seq));
     }
 
     /// The loaded diff with its selection, if it allows partial selection.
@@ -837,10 +891,13 @@ impl Tab {
         }
     }
 
-    /// The tab's shortcuts ([`keys`]) and the list keys: arrows, Page up/down, Home/End. With
-    /// the diff open, Esc closes it and the arrows stay with the diff view. Only if no text field
-    /// is receiving the keyboard (Ctrl+F also from a field); nothing with a menu or a
-    /// confirmation open: the keys, Esc too, are theirs.
+    /// The tab's shortcuts ([`keys`]) and the list keys: arrows, Page up/down, Home/End, and
+    /// Enter, which opens the first file of what is selected. With a diff open, Esc closes it
+    /// and the arrows and Home/End walk the file list it comes from ([`file_nav`]). Only if no
+    /// text field is receiving the keyboard (Ctrl+F also from a field); nothing with a menu or
+    /// a confirmation open: the keys, Esc too, are theirs. While a widget that is not a text
+    /// field has the keyboard (Tab) the shortcuts work, but the arrows move the focus and Enter
+    /// presses that widget: they are not list keys.
     fn keyboard(&self, ctx: &egui::Context, pressed: &keys::Pressed, actions: &mut Vec<Action>) {
         let Some(repo) = &self.repo else {
             return;
@@ -861,7 +918,7 @@ impl Tab {
                 actions.push(action);
             }
         }
-        if ctx.egui_wants_keyboard_input() {
+        if keys::typing(ctx) {
             return;
         }
         // With the conflict editor open the list is not in view.
@@ -879,13 +936,41 @@ impl Tab {
             }
             return;
         }
-        if repo.diff.target().is_some() {
+        let focused = ctx.memory(|m| m.focused().is_some());
+        if let Some(open) = repo.diff.target() {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 // First deselect, then close.
                 if repo.diff.selection().is_some_and(|s| !s.is_empty()) {
                     actions.push(Action::Lines(lines::Action::Clear));
                 } else {
                     actions.push(Action::Diff(diff::Action::Close));
+                }
+                return;
+            }
+            // The file list of the open diff: the last key pressed decides.
+            let steps = ctx.input(|i| {
+                use file_nav::Step;
+                let keys = [
+                    (egui::Key::ArrowDown, Step::Next, !focused),
+                    (egui::Key::ArrowUp, Step::Previous, !focused),
+                    (egui::Key::Home, Step::First, true),
+                    (egui::Key::End, Step::Last, true),
+                ];
+                keys.into_iter()
+                    .filter(|(_, _, on)| *on)
+                    .flat_map(|(key, step, _)| std::iter::repeat_n(step, i.num_presses(key)))
+                    .collect::<Vec<_>>()
+            });
+            if !steps.is_empty() {
+                let files = repo.shown_files();
+                let mut target = open.clone();
+                for step in steps {
+                    if let Some(next) = file_nav::step(&files, &target, step) {
+                        target = next;
+                    }
+                }
+                if target != *open {
+                    actions.push(Action::Diff(diff::Action::Walk(target)));
                 }
             }
             return;
@@ -902,20 +987,32 @@ impl Tab {
         let page = isize::try_from(self.viewport.rows.len().saturating_sub(2).max(1))
             .unwrap_or(isize::MAX);
         ctx.input(|i| {
+            // The arrows of a focused widget move the focus (egui): the selection stays.
             let keys = [
-                (egui::Key::ArrowDown, Action::Move(1)),
-                (egui::Key::ArrowUp, Action::Move(-1)),
-                (egui::Key::PageDown, Action::Move(page)),
-                (egui::Key::PageUp, Action::Move(-page)),
-                (egui::Key::Home, Action::Edge(true)),
-                (egui::Key::End, Action::Edge(false)),
+                (egui::Key::ArrowDown, Action::Move(1), !focused),
+                (egui::Key::ArrowUp, Action::Move(-1), !focused),
+                (egui::Key::PageDown, Action::Move(page), true),
+                (egui::Key::PageUp, Action::Move(-page), true),
+                (egui::Key::Home, Action::Edge(true), true),
+                (egui::Key::End, Action::Edge(false), true),
             ];
-            for (key, action) in keys {
+            for (key, action, on) in keys {
                 for _ in 0..i.num_presses(key) {
-                    actions.push(action.clone());
+                    if on {
+                        actions.push(action.clone());
+                    }
                 }
             }
         });
+        // Enter: the first file of the selected commit (or of the changes) opens, and the
+        // arrows are then its list's. Not while a widget has the keyboard: Enter presses it.
+        let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.is_none());
+        if enter
+            && !focused
+            && let Some(first) = repo.shown_files().into_iter().next()
+        {
+            actions.push(Action::Diff(diff::Action::Walk(first)));
+        }
     }
 
     /// The action of a toolbar or stage panel shortcut, with the same gates as its button; `None`
@@ -952,8 +1049,20 @@ impl Tab {
                     .any(|item| item.path == target.path)
                     .then(|| Action::Stage(stage::Action::Write(op, vec![target.path.clone()])))
             }
-            // Find is the tab's own (above), the others belong to `App`.
+            // As "New branch…" of the menu of the current branch (or of HEAD's commit).
+            Command::NewBranch => {
+                let start = repo.head_start()?;
+                (!writing).then_some(Action::Branch(branch::Action::NewBranch(
+                    start,
+                    String::new(),
+                )))
+            }
+            // Find is the tab's own (above), Confirm the commit box's and the dialogs'; the
+            // others belong to `App`.
             Command::Find
+            | Command::Confirm
+            | Command::OpenRepo
+            | Command::CloseTab
             | Command::Settings
             | Command::NextTab
             | Command::PreviousTab
@@ -1004,7 +1113,16 @@ impl Tab {
     }
 
     fn receive(&mut self) {
+        let mut writing = self.executor.writing().map(|job| job.ticket);
         for done in self.executor.poll() {
+            if writing == Some(done.ticket) {
+                writing = None;
+            } else if writing.is_some() {
+                // A read answered beside a write (it does not wait for it) may show the repo
+                // in the middle of it, and a write that fails re-reads nothing: the automatic
+                // refresh reads again when the tab is idle.
+                self.auto.mark();
+            }
             if let Some(request) = self.pending.remove(&done.ticket) {
                 self.receive_one(request, done);
             }
@@ -1032,7 +1150,19 @@ impl Tab {
         if let Some(generation) = moved {
             self.check_submodules(generation);
         }
+        // The answer of the command sent again after a stash ("Stash and …", U68).
+        let retried = self
+            .repo
+            .as_mut()
+            .and_then(|r| r.stash.take_retried(done.ticket));
+        let ok = done.result.is_ok();
         self.receive_request(request, done);
+        if let Some(repo) = &mut self.repo {
+            repo.note_refused_head();
+        }
+        if let Some(sent) = retried {
+            self.retry_answered(&sent, ok);
+        }
         // A new status or diff: which of its files are stored in Git LFS (S63).
         self.follow_lfs();
     }
@@ -1129,9 +1259,12 @@ impl Tab {
             Request::LfsStatus(_) | Request::LfsPaths(_) => self.receive_lfs(request, done),
             // The diff too: errors in its view, old answers discarded.
             Request::Diff(generation, seq) => {
-                let result = done
-                    .result
-                    .and_then(|value| decode::<Diff>(&done.command, value));
+                let prepared = self
+                    .executor
+                    .take_prepared::<Result<DiffDoc, String>>(done.ticket);
+                let result = done.result.and_then(|_| {
+                    prepared.unwrap_or_else(|| Err(tr!("app-no-result", command = &done.command)))
+                });
                 if let Some(repo) = self.current(generation) {
                     repo.diff.receive(seq, result);
                 }
@@ -1203,9 +1336,10 @@ impl Tab {
                 self.error.clear();
                 // Staged versions that existed only in the index: saved before
                 // writing, this is said in the status bar.
-                self.notice = backup
-                    .map(|r| tr!("app-index-backup", backup = r))
-                    .unwrap_or_default();
+                self.notice.set(match &backup {
+                    Some(_) => status::with_backup(tr!("app-index-backup"), backup.as_deref()),
+                    None => String::new(),
+                });
                 self.follow_diff();
             }
             Err(e) => {
@@ -1290,9 +1424,12 @@ impl Tab {
                     if page.skip == 0 {
                         repo.search.refresh();
                     }
+                    // Under a selected changes row the list keeps its own selection; it gets
+                    // one if it has none (the first status arrived before the first page), so
+                    // there is a commit to go back to when the changes are gone.
                     if page.skip == 0
                         && let Some(id) = repo.select_after_load.take()
-                        && !repo.worktree_selected
+                        && (!repo.worktree_selected || repo.list.selected().is_none())
                     {
                         repo.list.select_id(id);
                     }
@@ -1426,7 +1563,13 @@ impl Tab {
     ) -> Vec<Action> {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
+        if let Some(repo) = &mut self.repo {
+            repo.queue_failures();
+            repo.sync.follow(&repo.head, &repo.refs);
+        }
         self.keyboard(&ctx, pressed, &mut actions);
+        let reveal = self.repo.as_ref().and_then(|r| r.diff.revealed()).is_some();
+        view::set_reveal_file(&ctx, reveal);
         let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
         let writing = self.executor.writing().is_some();
         // The message draft is written directly (UI state, not repo state): it is
@@ -1463,6 +1606,7 @@ impl Tab {
         if let Some(repo) = &mut self.repo {
             repo.commit.draft = draft;
             repo.list.take_scroll_to();
+            repo.diff.take_reveal();
             repo.scroll_header = false;
         }
         actions
@@ -1494,6 +1638,24 @@ impl Tab {
             let can_write = !writing && !repo.modal_open() && !repo.merge.busy();
             egui::Panel::top("operation").show(ui, |ui| {
                 merge_view::banner(ui, repo, operation, can_write, actions);
+            });
+        }
+        // Conflicted files that no operation in progress explains: a stash applied with
+        // conflicts (U63). Never together with the operation panel.
+        if let Some(repo) = &self.repo
+            && let Some(conflicts) = repo.stash.conflicts()
+        {
+            egui::Panel::top("stash-conflicts").show(ui, |ui| {
+                view::stash_conflicts_notice(ui, repo, conflicts, actions);
+            });
+        }
+        // The last rejected push (U63), below the operation panel if both are there.
+        if let Some(repo) = &self.repo
+            && let Some(rejected) = repo.sync.rejected()
+        {
+            let can_write = !writing && !repo.modal_open();
+            egui::Panel::top("push-rejected").show(ui, |ui| {
+                view::rejected_notice(ui, rejected, can_write, actions);
             });
         }
         // The commit-graph notice (S36), under the bar too.
@@ -1550,24 +1712,6 @@ impl Tab {
         if let Some(pending) = repo.clean.confirm() {
             view::confirm_clean(ctx, pending, actions);
         }
-        if let Some(failure) = repo.fetch.failure() {
-            view::failure_window(
-                ctx,
-                "fetch-error",
-                failure,
-                Action::Fetch(fetch::Action::DismissError),
-                actions,
-            );
-        }
-        if let Some(failure) = repo.remotes.failure() {
-            view::failure_window(
-                ctx,
-                "remote-error",
-                failure,
-                Action::Remotes(remotes::Action::DismissError),
-                actions,
-            );
-        }
         if let Some(dialog) = repo.remotes.dialog() {
             let progress = repo
                 .remotes
@@ -1579,12 +1723,8 @@ impl Tab {
         if let Some(dialog) = repo.stash.dialog() {
             view::stash_dialog(ctx, repo, dialog, actions);
         }
-        if let Some(conflicts) = repo.stash.conflicts() {
-            view::stash_conflicts_window(ctx, conflicts, actions);
-        }
         if let Some(window) = repo.sync.window() {
-            let can_write = !writing && !repo.modal_open();
-            view::sync_window(ctx, window, writing, can_write, actions);
+            view::sync_window(ctx, window, writing, actions);
         }
         if let Some(dialog) = repo.branch.dialog() {
             view::branch_dialog(ctx, dialog, actions);
@@ -1604,15 +1744,6 @@ impl Tab {
         if let Some(remove) = repo.worktrees.remove_dialog() {
             view::confirm_worktree_remove(ctx, remove, actions);
         }
-        if let Some(failure) = repo.merge.failure() {
-            view::failure_window(
-                ctx,
-                "merge-error",
-                failure,
-                Action::Merge(merge::Action::DismissError),
-                actions,
-            );
-        }
         if let Some(confirm) = repo.commit.confirm() {
             let branch = match &repo.head {
                 Head::Branch { name, .. } => Some(format!("{HEADS_PREFIX}{name}")),
@@ -1621,6 +1752,10 @@ impl Tab {
             let left_behind =
                 commit::refs_left_behind(&repo.refs, repo.head.target(), branch.as_deref());
             view::confirm_amend(ctx, confirm, &left_behind, actions);
+        }
+        // Last, so above any other dialog; one failure at a time.
+        if let Some((source, failure)) = repo.failure() {
+            view::failure_dialog(ctx, failure, source, actions);
         }
     }
 
@@ -1707,11 +1842,7 @@ fn central_panel(
         dates,
         ask_detach,
     } = center;
-    let incoming = repo
-        .merge
-        .info()
-        .and_then(|i| i.incoming.first())
-        .map(|i| i.label.as_str());
+    let incoming = repo.merge.info().map_or(&[][..], |i| &i.incoming);
     let conflict_write = !writing && !repo.modal_open();
     egui::CentralPanel::default().show(ui, |ui| match repo.diff.pane() {
         _ if repo.conflict.editor().is_some() => {

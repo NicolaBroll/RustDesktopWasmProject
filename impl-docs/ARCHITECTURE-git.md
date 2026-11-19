@@ -119,6 +119,13 @@ the commit's column and the segments toward the next row.
 Invariants to verify with property tests: every parent–child edge is drawn exactly
 once; no commit occupies two columns; free lanes are reused (limited width).
 
+The commit list loads the log a page at a time: `GraphBuilder` keeps the active lanes between
+one page and the next, so a page costs its own commits and not all the loaded ones
+(`layout_graph` is the builder fed once). Rows already computed do not change, except the
+segments of the last one, dangling until the next commit arrives; the property test checks that
+pages of any size give the layout of all the commits together. The UI colors the lanes the same
+way (`LaneColors::extend` in `crates/ui/src/graph.rs`).
+
 
 The patch builder for line staging is in [git/stage.md](git/stage.md).
 
@@ -267,6 +274,18 @@ what the UI shows (status, refs, first page of the log) for now lives in the UI.
 with the document snapshots of the original example was removed (S08): undo and redo
 exist only on the journal.
 
+`Session::reader()` gives a second session on the same repo that only reads it, for the UI's
+executor (§6): it has no journal, and `repo_mut`, `journal`, `repo_and_journal` and the functions
+that open a repo refuse on it (`NotAllowed`, `engine-reader-session`), so a command that is not a
+pure read fails there before changing anything. Its backend comes from `GitRead::reader`: the
+`CliBackend` gives the same repository (it keeps nothing of what it reads or writes), the
+`MemoryBackend` a copy of the repo as it is now, so a new reader is taken after every command
+that writes or opens. `CommandSpec::reader` says which commands may run there: every
+`Access::Read` one except `repo.open` and `edit.history` (`needs_session`), which read or change
+the session itself. The flag is not in the catalog of CLI and MCP, which have one session and
+run one command at a time. `Session::opens()` counts the repos opened, to know when the open
+one was replaced.
+
 ### Commands
 
 Every operation is a command with a stable id and JSON parameters. Reads return data
@@ -363,6 +382,15 @@ fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 - Desktop: a thread (or a small pool).
 - Tests: a platform may run the job immediately, inside `spawn`.
 
+Turning a large result into what the UI shows is slow work too. `Executor::submit_prepared`
+runs a function on the result inside the job, after the session is released, and the UI collects
+what it returned with `take_prepared` while handling the `Done` (which then carries no value);
+what nobody takes is dropped at the next `poll`. The diff uses it: the job decodes the JSON and
+builds the `DiffDoc` (rows, widths, side by side rows), which for 200 000 lines takes about
+300 ms. The word-by-word comparison of the changed lines is not done there: `DiffDoc::emphasis`
+compares a pair of lines the first time one of them is drawn and keeps the answer, because
+comparing every pair of a large diff of long lines takes seconds.
+
 `Platform::watch(repo, on_change) -> Option<Watch>` (S40) watches the git directory of a repo and
 calls `on_change` from its own thread; dropping the `Watch` stops it. The default is `None` (test
 platforms); the use is in §8, "Automatic refresh".
@@ -375,6 +403,51 @@ read from stderr with `--progress`. `remote.pull` and `remote.push` (S26) use th
 cancellation seen after the fetch stops the command before integrating, never in the middle of a merge or
 a rebase), the push uses it for the whole `git push` (cancelled midway, the remote may already
 have updated the branch).
+
+### Reads beside a write (Q43)
+
+A read no longer waits for the write in progress: a fetch, a push, a commit with a slow hook
+hold the session for seconds or minutes, and selecting a commit showed nothing until the end.
+The `Executor` keeps a second session, `Session::reader()` (§4), and runs there the commands
+with `CommandSpec::reader`; the others (writes, `repo.open`, `edit.history`) run on the session
+as before, one at a time. With no repo open there is no reader and the reads run on the session.
+The reads still run one at a time among themselves.
+
+These rules keep the view right (`executor::Reading`, `Tab::receive`):
+
+- **A command that writes or opens takes a new reader** before it answers, while it still holds
+  the session: the in-memory repo of the tests gives a copy, and `repo.open` changes repo. A read
+  in progress keeps the reader it started with.
+- **An answer read before a write ended never arrives after that write's answer.** The write
+  adds one to a counter before it answers; a read notes the counter when it starts and, with its
+  answer ready, sends it only if the counter is the same (check and send under one lock),
+  otherwise it reads again. So the UI sees either the read and then the write, whose answer
+  re-reads what it changed as it always did, or the write and then a read made after it: the new
+  status brought by an `index.stage` is not overwritten by a `repo.status` that started earlier.
+  A write that panics counts too (`Changing`, on drop). An answer about a repo that is no longer
+  the open one is sent as it is: the tab drops it by generation.
+- **A read answered while a write is in progress is read again when the tab is idle.** It may
+  have seen the repository in the middle of the write (a hook that moves files away and puts them
+  back, a ref already moved by a fetch still running), and a write that fails re-reads nothing.
+  `Tab::receive` marks the tab for the automatic refresh (§8), which runs once nothing is in
+  progress.
+- **A read on which git fails is asked again on the session**, where it waits for the write: a
+  file or a ref can be missing for a moment while a checkout or a stash replaces it
+  (`fatal: stat 'f': No such file or directory`, `bad revision 'refs/stash'`), and that error
+  must not reach the view. Only `EngineError::Git`/`GitWithReason`: an unknown revision or
+  refused parameters are answered at once.
+
+Reads take no lock on the index or on the refs and do not write them (`--no-optional-locks`,
+`diff.autoRefreshIndex=false`, §5; `crates/git/tests/reader.rs`), so they cannot make the write
+fail on `index.lock`. What they start can still write elsewhere in the git directory, as it
+already did: a clean filter (`git-lfs filter-process` on a file whose `stat` data are stale writes
+`lfs.repositoryformatversion` in `.git/config`, under `config.lock`, and its hooks if missing,
+once per clone), `core.fsmonitor` starting its daemon, a partial clone fetching the objects of a
+diff. The write commands are still disabled during a write, and "Refresh" too. A read overtaken
+by a write starts again from the beginning: a long content search or blame takes longer if a
+stage or a fetch ends meanwhile. Not tried on Windows, where a file held open by a reading git can
+make a rename or a delete of the writing one fail: git retries them, as it must with any editor
+that runs `git status` in the background.
 
 ### Progress and cancellation (S25)
 
@@ -396,9 +469,9 @@ cancelled). This way the extension does not change the signature of the command 
   (e.g. in a `Mutex`) and request a frame, not draw.
 - **The UI** (`Executor`): for `remote.fetch` it calls `run_with` in the `Platform::spawn` job with
   a sink that stores the ticket's last `Progress` and calls `wake`, and keeps the ticket's `CancelToken`
-  for a "Cancel" button. The session stays locked by the job for the whole fetch
-  (§6): reads sent in the meantime wait for the end. The `MemoryBackend` finishes
-  immediately (fake events with the same shape).
+  for a "Cancel" button. The session stays locked by the job for the whole fetch: the reads sent
+  in the meantime run on the reader session (§6, "Reads beside a write"). The `MemoryBackend`
+  finishes immediately (fake events with the same shape).
 - **Cancellation**: the `CliBackend` checks the token every 50 ms while git runs; if it is
   cancelled it sends SIGTERM to the fetch's process group (git, ssh, `git-remote-http`,
   `index-pack`: git removes its own `.lock` files), after 3 seconds SIGKILL, and the command gives
@@ -603,8 +676,14 @@ conflicting with `main` on `src/lib.rs`: «Stash…», then «Merge into «main�
   Scenarios to cover over time: empty repo, detached HEAD, conflicted merge, interrupted rebase,
   submodule, worktree, binary files, CRLF line endings, non-UTF-8 names.
 - **CLI**: end-to-end tests such as `apps/project-cli/tests/cli.rs`.
-- **UI**: unit tests of the views and of the `Executor` on the `MemoryBackend`; the layout is
-  checked on the desktop app on Xvfb with the demo repo (`make desktop-start`, `xdotool`,
+- **UI**: unit tests of the state of each area and of the `Executor` on the `MemoryBackend`.
+  The drawing code has smoke tests (`crates/ui/src/view_tests.rs`): the whole `App` is drawn
+  without a window (`egui::Context::run_ui`), brought to a state with the same `Action`s the
+  views produce or with a simulated pointer (a menu opens where the text is), and the texts
+  painted are read back from the shapes of the frame. Every frame also fails on egui's warning
+  for an id used by two widgets. A new panel, dialog or menu gets its state there;
+  `make view-coverage` says how much of the drawing code the smoke tests run. How it looks is
+  still checked on the desktop app on Xvfb with the demo repo (`make desktop-start`, `xdotool`,
   `import`).
 
 ## 10. Agents

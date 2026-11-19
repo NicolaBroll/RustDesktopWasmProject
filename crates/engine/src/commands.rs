@@ -24,12 +24,27 @@ pub struct CommandSpec {
     /// `repo.clone`, `repo.init`): the MCP server refuses it, because it cannot confine those paths
     /// to its root.
     pub outside_repo: bool,
+    /// True if the command only reads the open repository and nothing of the session (which
+    /// repo is open, the journal): it gives the same answer on a
+    /// [`Session::reader`](crate::Session::reader), where the UI runs it so that it does not wait
+    /// for a write in progress. Every [`Access::Read`] command is one unless marked with
+    /// [`CommandSpec::needs_session`]. Not in the catalog of CLI and MCP, which have one session.
+    #[serde(skip)]
+    pub reader: bool,
 }
 
 impl CommandSpec {
     /// Marks the command as [`CommandSpec::outside_repo`].
-    pub fn takes_paths_outside_repo(&mut self) {
+    pub fn takes_paths_outside_repo(&mut self) -> &mut Self {
         self.outside_repo = true;
+        self
+    }
+
+    /// The command reads or changes the session itself (`repo.open` opens a repo in it,
+    /// `edit.history` reads its journal): not a [`CommandSpec::reader`].
+    pub fn needs_session(&mut self) -> &mut Self {
+        self.reader = false;
+        self
     }
 }
 
@@ -48,7 +63,8 @@ fn params_schema<P: JsonSchema>() -> Value {
 /// What a command does to the repository ([`CommandSpec::writes`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
-    /// Only reads.
+    /// Only reads. If it reads the open repository and nothing else it can run on a
+    /// [`Session::reader`](crate::Session::reader) ([`CommandSpec::reader`]).
     Read,
     /// Modifies the repository (index, worktree, refs).
     Write,
@@ -83,6 +99,7 @@ impl Registry {
             params: params_schema::<P>(),
             writes: access == Access::Write,
             outside_repo: false,
+            reader: access == Access::Read,
         };
         let run: Handler = Box::new(move |session, params| {
             let params =

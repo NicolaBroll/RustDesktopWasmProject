@@ -288,3 +288,29 @@ fn old_answers_dropped_and_closing_on_new_state() {
     b.follow_status(&status);
     assert!(b.editor().is_none());
 }
+
+/// U66: a pull merges the remote commit by id, and git writes the 40 characters in the marker:
+/// the heading shows the branch that commit is on, or the short id.
+#[test]
+fn a_whole_id_in_a_marker_is_named_or_cut_short() {
+    let id = oid(7);
+    let incoming = [IncomingCommit {
+        id,
+        label: "origin/main".to_owned(),
+        summary: None,
+        refs: vec!["refs/remotes/origin/main".to_owned()],
+    }];
+    assert_eq!(side_name(&id.to_string(), &incoming), "origin/main");
+    assert_eq!(side_name(&id.to_string(), &[]), id.short());
+    assert_eq!(side_name(&oid(8).to_string(), &incoming), oid(8).short());
+    // What is not a whole id stays as git wrote it.
+    for label in [
+        "HEAD",
+        "feature",
+        "Stashed changes",
+        "Updated upstream",
+        "1a2b3c4 (Fix)",
+    ] {
+        assert_eq!(side_name(label, &incoming), label);
+    }
+}

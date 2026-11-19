@@ -1,5 +1,5 @@
 //! The automatic fetch (S50) in the window: the notice under the bar when an authentication error
-//! suspended it, the icon in the bar while the remote is unreachable.
+//! suspended it, the badge on the "Fetch" button while the remote is unreachable.
 
 use crate::Action;
 use crate::auto_fetch::{AutoFetch, Suspended};
@@ -42,17 +42,28 @@ pub(crate) fn auto_fetch_notice(ui: &mut Ui, suspended: &Suspended, actions: &mu
         });
 }
 
-/// The icon next to "Fetch" while the remote cannot be reached; the explanation on hover.
-pub(crate) fn offline_icon(ui: &mut Ui, auto: &AutoFetch) {
-    let Some(detail) = auto.offline() else {
-        return;
-    };
+/// Why the automatic fetch is failing and when it tries again, while the remote cannot be
+/// reached: the text the "Fetch" button adds to its tooltip under the [`offline_badge`].
+pub(crate) fn offline_hint(auto: &AutoFetch) -> Option<String> {
+    let detail = auto.offline()?;
     let minutes = auto.wait().map_or(0, |w| w.as_secs().div_ceil(60));
-    let icon = RichText::new(icons::CLOUD)
-        .font(icons::font(16.0))
-        .color(ui.visuals().warn_fg_color);
-    ui.label(icon).on_hover_text(format!(
+    Some(format!(
         "{}\n\n{detail}",
         tr!("fetch-auto-offline", minutes = minutes)
-    ));
+    ))
 }
+
+/// The orange cloud at the top right corner of the "Fetch" button (`button`: its rectangle)
+/// while the remote cannot be reached. Painted over the button, like the counts of Pull and
+/// Push: it takes no room, so the toolbar does not move when it appears or goes away.
+pub(crate) fn offline_badge(ui: &Ui, button: egui::Rect) {
+    let color = ui.visuals().warn_fg_color;
+    let galley = ui
+        .painter()
+        .layout_no_wrap(icons::CLOUD.to_owned(), icons::font(BADGE), color);
+    let pos = egui::pos2(button.right() - galley.size().x - 2.0, button.top() + 2.0);
+    ui.painter().galley(pos, galley, color);
+}
+
+/// Size of the cloud of [`offline_badge`], in points.
+const BADGE: f32 = 13.0;

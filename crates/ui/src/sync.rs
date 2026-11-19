@@ -3,20 +3,23 @@
 //!
 //! One network operation at a time: fetch, pull and push are writes
 //! ([`CommandSpec::writes`](project_engine::CommandSpec)), and the UI does not send one while
-//! another is in progress. Rejections to explain open a window:
+//! another is in progress. What needs explaining:
 //!
 //! - pull whose merge or rebase stopped on a conflict: not an error, the operation **stays in
 //!   progress** as with `merge.start` (`in_progress` in the result; the rebase since S32). The
 //!   re-read status makes the in-progress operation panel appear (Continue/Abort merge or rebase)
 //!   and the stage area opens with the files;
-//! - pull stopped on a conflict and aborted by the engine ([`ErrorKind::PullConflict`], no longer
-//!   produced since S32 but still handled): the repo is as before; the window lists the files and
-//!   proposes the other strategy;
-//! - rejected push ([`ErrorKind::PushRejected`]): non-fast-forward proposes "Pull" and, as a
-//!   second choice, "Force (with lease)…"; stale lease proposes "Fetch"; a hook shows its
-//!   output.
+//! - rejected push ([`ErrorKind::PushRejected`]): a situation that lasts, so a notice in the
+//!   tab ([`SyncBox::rejected`]) and not a dialog: non-fast-forward proposes "Pull", stale lease
+//!   "Fetch"; "Details…" opens the modal [`Window::Details`] with git's text (the hook output)
+//!   and, as a second choice for a non-fast-forward, "Force (with lease)…". The notice blocks
+//!   nothing and goes away by itself: see [`SyncBox::follow`];
+//! - every other failure or refusal (credentials, network, local changes, detached HEAD, a git
+//!   error): the modal failure dialog ([`Window::Failure`], shown one at a time with those of
+//!   the other areas, see [`crate::failure`]). A pull aborted by the engine on a conflict
+//!   (`EngineError::PullConflict`, which no backend produces since S32) is one of these.
 //!
-//! The force never starts from a bar button: only from that window, first with
+//! The force never starts from a bar button: only from the details dialog, first with
 //! `"force": true` and without `confirm`. If the remote would lose commits the engine answers
 //! `ConfirmRequired` with the commits, and the confirmation opens; `"confirm": true` only after the click.
 
@@ -24,13 +27,14 @@ use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
 use crate::running::Running;
+use crate::stash_retry::{Retry, Route};
 use crate::{Done, Tab, params};
 use project_domain::remote_short;
-use project_domain::{Head, Oid, RefInfo, Status};
+use project_domain::{HEADS_PREFIX, Head, Oid, RefInfo, Status};
 use project_engine::{
-    PullApplied, PullOperation, PullStrategy, PushKind, PushRejection, PushRemoteSource,
-    RemotePullParams, RemotePullResult, RemotePushParams, RemotePushResult, RemotePushTagParams,
-    RemotePushTagResult, StrategySource, TagPushKind,
+    PullApplied, PullStrategy, PushKind, PushRejection, PushRemoteSource, RemotePullParams,
+    RemotePullResult, RemotePushParams, RemotePushResult, RemotePushTagParams, RemotePushTagResult,
+    StrategySource, TagPushKind,
 };
 use project_i18n::tr;
 use serde_json::{Value, json};
@@ -40,20 +44,25 @@ use serde_json::{Value, json};
 pub(crate) enum Action {
     /// Pull the given branch (`None`: HEAD's), with the given strategy (`None`:
     /// the configured one).
-    Pull(Option<String>, Option<Strategy>),
+    Pull(Option<String>, Option<PullStrategy>),
     /// Push the given branch (`None`: HEAD's), never forced.
     Push(Option<String>),
     /// Push the tag (second value, short name) to the remote (first value), never forced.
     PushTag(String, String),
-    /// "Force (with lease)…" in the rejected push window: `"force": true` without
+    /// "Force (with lease)…" in the details of the rejected push: `"force": true` without
     /// `confirm`.
     ForcePush,
     /// "Force the push" in the confirmation: `"force": true, "confirm": true`.
     ConfirmForcePush,
     /// "Stop" the pull or push in progress.
     Cancel,
-    /// Closes the pull and push window (also the force confirmation, without forcing).
+    /// Closes the pull and push dialog (also the force confirmation, without forcing). The
+    /// notice of the rejected push stays.
     Dismiss,
+    /// "Details…" in the notice of the rejected push: git's text and the force.
+    RejectedDetails,
+    /// "×" in the notice of the rejected push (and "Fetch" for a stale lease): it goes away.
+    DismissRejected,
 }
 
 /// The Registry command ids.
@@ -80,37 +89,6 @@ impl Op {
     }
 }
 
-/// The strategy requested for a pull (`None` in the request: the configured one).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Strategy {
-    Merge,
-    Rebase,
-}
-
-impl Strategy {
-    fn engine(self) -> PullStrategy {
-        match self {
-            Strategy::Merge => PullStrategy::Merge,
-            Strategy::Rebase => PullStrategy::Rebase,
-        }
-    }
-
-    /// The other strategy than the operation that stopped on a conflict.
-    pub fn other_than(operation: PullOperation) -> Self {
-        match operation {
-            PullOperation::Merge => Strategy::Rebase,
-            PullOperation::Rebase => Strategy::Merge,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Strategy::Merge => "merge",
-            Strategy::Rebase => "rebase",
-        }
-    }
-}
-
 /// What to ask for: pull or push, of which branch, with which options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -118,7 +96,7 @@ pub struct Request {
     /// The local branch (short name); `None` = HEAD's.
     pub branch: Option<String>,
     /// Pull only: the strategy instead of the configuration.
-    pub strategy: Option<Strategy>,
+    pub strategy: Option<PullStrategy>,
     /// Push only: `"force": true` (always with lease in the engine).
     pub force: bool,
     /// Forced push only: `"confirm": true`, after the click in the confirmation.
@@ -131,7 +109,7 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn pull(branch: Option<String>, strategy: Option<Strategy>) -> Self {
+    pub fn pull(branch: Option<String>, strategy: Option<PullStrategy>) -> Self {
         Self {
             op: Op::Pull,
             branch,
@@ -176,7 +154,7 @@ impl Request {
             Op::Pull => params(RemotePullParams {
                 remote: None,
                 branch: self.branch.clone(),
-                strategy: self.strategy.map(Strategy::engine),
+                strategy: self.strategy,
             }),
             Op::Push | Op::PushTag => params(RemotePushParams {
                 remote: None,
@@ -204,32 +182,19 @@ impl Request {
     }
 }
 
-/// A pull stopped on a conflict and already aborted by the engine: today only the rebase (the stopped merge
-/// stays in progress, [`Outcome::show_changes`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conflict {
-    /// The pull's branch (`None`: HEAD's).
-    pub branch: Option<String>,
-    pub operation: PullOperation,
-    pub files: Vec<String>,
-    /// The engine's message (with the upstream and what to do from the terminal).
-    pub message: String,
-}
-
-impl Conflict {
-    /// The strategy to propose to retry.
-    pub fn other(&self) -> Strategy {
-        Strategy::other_than(self.operation)
-    }
-}
-
 /// A rejected push: nothing changed, neither on the remote nor locally.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected {
-    /// The push's branch (`None`: HEAD's).
+    /// The push's branch (`None`: the push of a tag).
     pub branch: Option<String>,
+    /// Push of a tag only: the remote and the tag (short name).
+    pub tag: Option<(String, String)>,
     pub reason: PushRejection,
-    /// What happened and what to do.
+    /// What was rejected, for the notice: `Push of «main» rejected`.
+    pub title: String,
+    /// What to do, in one sentence, for the notice.
+    pub summary: String,
+    /// What happened and what to do, in full, for the details.
     pub explanation: String,
     /// Git's text (the hook output, the `[rejected]` line).
     pub git: Option<String>,
@@ -244,6 +209,31 @@ impl Rejected {
     /// True if the remote moved since the last fetch: the fetch is proposed.
     pub fn stale(&self) -> bool {
         self.reason == PushRejection::StaleLease
+    }
+
+    /// True if the details offer "Force (with lease)…": a non-fast-forward of a branch.
+    pub fn can_force(&self) -> bool {
+        self.non_fast_forward() && self.branch.is_some()
+    }
+}
+
+/// The rejected push shown as a notice in the tab, and what makes it go away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Notice {
+    rejected: Rejected,
+    /// The current branch when the push was rejected (`None`: detached HEAD).
+    on: Option<String>,
+    /// The branch was seen behind its upstream since the rejection. A push can be rejected
+    /// while the refs still say "not behind" (nobody fetched yet): only "behind, then no
+    /// longer behind" says that the remote's commits were integrated.
+    seen_behind: bool,
+}
+
+/// The short name of the current branch (`None`: detached HEAD).
+fn current_branch(head: &Head) -> Option<&str> {
+    match head {
+        Head::Branch { name, .. } => Some(name),
+        Head::Detached(_) => None,
     }
 }
 
@@ -270,29 +260,33 @@ impl ConfirmForce {
     }
 }
 
-/// The window opened after a pull or push.
+/// The dialog opened after a pull or push: all modal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Window {
-    /// Error to explain (credentials, network, rejection with a long message, git error).
+    /// Error to explain (credentials, network, rejection with a long message, git error): the
+    /// modal failure dialog.
     Failure(Failure),
-    Conflict(Conflict),
-    Rejected(Rejected),
-    /// The force confirmation: it is a modal dialog.
+    /// "Details…" of the rejected push: the explanation, git's text and, for a
+    /// non-fast-forward, "Force (with lease)…".
+    Details(Rejected),
+    /// The force confirmation.
     ConfirmForce(ConfirmForce),
 }
 
-/// Pull and push: the one in progress and the open window.
+/// Pull and push: the one in progress, the open dialog and the notice of a rejected push.
 #[derive(Debug, Default)]
 pub struct SyncBox {
     running: Option<Running<Request>>,
     window: Option<Window>,
+    /// The last rejected push, while it is worth saying: one at a time, the newest.
+    rejected: Option<Notice>,
 }
 
 /// What arrived from `remote.pull` or `remote.push`.
 #[derive(Debug)]
 pub enum Received {
     Done(Box<Outcome>),
-    /// The engine asks for the force confirmation: the window is open.
+    /// The engine asks for the force confirmation: its dialog is open.
     Confirm,
     /// Interrupted: with `reload` refs, status and log are re-read (the pull's fetch or the push
     /// may have updated something).
@@ -300,8 +294,9 @@ pub enum Received {
         notice: String,
         reload: bool,
     },
-    /// Failed or rejected: the message for the status bar (the details, if needed,
-    /// in the window); with `reload` refs, status and log are re-read.
+    /// Failed or rejected: the message for the status bar (the details, if needed, in the
+    /// failure dialog or in the notice of the rejected push); with `reload` refs, status and
+    /// log are re-read.
     Failed {
         message: String,
         reload: bool,
@@ -334,19 +329,102 @@ impl SyncBox {
         self.window.as_ref()
     }
 
-    /// True if the force confirmation is open: while it is, no writes.
+    /// True if the force confirmation or the details of a rejected push are open: while they
+    /// are, no writes. A [`Window::Failure`] is modal too, counted with the other failures
+    /// ([`crate::RepoView::failure`]). The notice of a rejected push is not a dialog: it blocks
+    /// nothing.
     pub fn modal_open(&self) -> bool {
-        matches!(self.window, Some(Window::ConfirmForce(_)))
+        matches!(
+            self.window,
+            Some(Window::ConfirmForce(_) | Window::Details(_))
+        )
     }
 
-    /// Closes the window.
+    /// Closes the dialog; the notice of a rejected push stays.
     pub fn dismiss(&mut self) {
         self.window = None;
     }
 
+    /// The failure dialog, to note HEAD in its retry or to take it ("Stash and …", U68).
+    pub(crate) fn failure_mut(&mut self) -> Option<&mut Failure> {
+        match &mut self.window {
+            Some(Window::Failure(failure)) => Some(failure),
+            _ => None,
+        }
+    }
+
+    /// The rejected push to show as a notice in the tab, if any.
+    pub fn rejected(&self) -> Option<&Rejected> {
+        self.rejected.as_ref().map(|notice| &notice.rejected)
+    }
+
+    /// "Details…" in the notice: the modal dialog with git's text. False without a notice.
+    pub fn open_details(&mut self) -> bool {
+        let Some(notice) = &self.rejected else {
+            return false;
+        };
+        self.window = Some(Window::Details(notice.rejected.clone()));
+        true
+    }
+
+    /// "×" in the notice: it goes away.
+    pub fn dismiss_rejected(&mut self) {
+        self.rejected = None;
+    }
+
+    /// The repo as it is now, seen before drawing: the notice of a rejected push goes away
+    /// when the current branch is no longer the one it was rejected on, when the pushed branch
+    /// is gone and, for a non-fast-forward, when the branch was behind its upstream and no
+    /// longer is (a fetch followed by a merge, a refresh after a pull from the terminal; a
+    /// pull from the app removes it with its answer).
+    pub fn follow(&mut self, head: &Head, refs: &[RefInfo]) {
+        let Some(notice) = &mut self.rejected else {
+            return;
+        };
+        if notice.on.as_deref() != current_branch(head) {
+            self.rejected = None;
+            return;
+        }
+        let Some(branch) = &notice.rejected.branch else {
+            return;
+        };
+        let name = format!("{HEADS_PREFIX}{branch}");
+        let Some(local) = refs.iter().find(|r| r.name == name) else {
+            self.rejected = None;
+            return;
+        };
+        if !notice.rejected.non_fast_forward() {
+            return;
+        }
+        match local.upstream.as_ref().and_then(|u| u.behind) {
+            Some(0) if notice.seen_behind => self.rejected = None,
+            Some(0) | None => {}
+            Some(_) => notice.seen_behind = true,
+        }
+    }
+
+    /// A pull or push of `request` went well: the notice of the rejected push of the same
+    /// branch (or tag) has nothing more to say. Also when the pull's merge or rebase stopped
+    /// on a conflict: what the notice asked for was done, and the panel of the operation in
+    /// progress says what is left to do.
+    fn succeeded(&mut self, request: &Request) {
+        let same = self.rejected.as_ref().is_some_and(|notice| {
+            let rejected = &notice.rejected;
+            match request.op {
+                Op::Pull => rejected.non_fast_forward() && rejected.branch == request.branch,
+                Op::Push | Op::PushTag => {
+                    rejected.branch == request.branch && rejected.tag == request.tag
+                }
+            }
+        });
+        if same {
+            self.rejected = None;
+        }
+    }
+
     /// The request, if there is not already a pull or push in progress, with the branch pinned: without
     /// `branch` (bar buttons) HEAD's branch as shown now (`head`) is used. This way the
-    /// windows that come out of it (rejection, force confirmation) always send the branch by name,
+    /// notice and dialogs that come out of it (rejection, force confirmation) always send the branch by name,
     /// even if HEAD meanwhile changes from the terminal. With a detached HEAD it stays `None` and the engine
     /// refuses.
     pub fn request(&self, mut request: Request, head: &Head) -> Option<Request> {
@@ -362,13 +440,13 @@ impl SyncBox {
         Some(request)
     }
 
-    /// "Force (with lease)…" from the window of the push rejected as non-fast-forward: the push
-    /// with `"force": true` and without `confirm`. From nowhere else.
+    /// "Force (with lease)…" from the details of the push rejected as non-fast-forward: the
+    /// push with `"force": true` and without `confirm`. From nowhere else.
     pub fn force(&self) -> Option<Request> {
-        let Some(Window::Rejected(rejected)) = &self.window else {
+        let Some(Window::Details(rejected)) = &self.window else {
             return None;
         };
-        if !rejected.non_fast_forward() || self.running.is_some() || rejected.branch.is_none() {
+        if !rejected.can_force() || self.running.is_some() {
             return None;
         }
         Some(Request {
@@ -393,7 +471,8 @@ impl SyncBox {
         })
     }
 
-    /// The request started with `ticket`: the window closes.
+    /// The request started with `ticket`: the dialog closes (the notice of a rejected push
+    /// stays until the answer says otherwise).
     pub fn started(&mut self, ticket: crate::Ticket, request: Request) {
         self.window = None;
         self.running = Some(Running::with(ticket, request));
@@ -404,7 +483,7 @@ impl SyncBox {
         self.running.as_mut()?.cancel()
     }
 
-    /// The command's answer for `ticket`.
+    /// The command's answer for `ticket`; `head`: HEAD as the tab shows it now.
     pub fn receive(
         &mut self,
         ticket: crate::Ticket,
@@ -412,6 +491,7 @@ impl SyncBox {
         kind: Option<ErrorKind>,
         detail: Option<String>,
         expected: Option<String>,
+        head: &Head,
     ) -> Received {
         let request = match self.running.take() {
             Some(running) if running.ticket == ticket => running.extra,
@@ -426,7 +506,13 @@ impl SyncBox {
         let label = request.label();
         let command = request.op.command();
         let error = match result {
-            Ok(value) => return received_ok(request.op, command, value),
+            Ok(value) => {
+                let received = received_ok(request.op, command, value);
+                if matches!(received, Received::Done(_)) {
+                    self.succeeded(&request);
+                }
+                return received;
+            }
             Err(error) => error,
         };
         let branch = request.branch.clone();
@@ -463,37 +549,21 @@ impl SyncBox {
                     reload: false,
                 }
             }
-            Some(ErrorKind::PullConflict(operation)) => {
-                let files = detail
-                    .as_deref()
-                    .unwrap_or_default()
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                self.window = Some(Window::Conflict(Conflict {
-                    branch,
-                    operation,
-                    files,
-                    message: error,
-                }));
-                // The fetch is done: the remote-tracking branch is re-read.
-                Received::Failed {
-                    message: tr!(
-                        "sync-pull-conflict",
-                        label = &label,
-                        operation = operation.to_string()
-                    ),
-                    reload: true,
-                }
-            }
+            // A notice in the tab, not a dialog: it replaces the one of an earlier rejection.
             Some(ErrorKind::PushRejected(reason)) => {
-                self.window = Some(Window::Rejected(Rejected {
-                    branch,
-                    reason,
-                    explanation: rejection_text(reason),
-                    git: detail,
-                }));
+                self.rejected = Some(Notice {
+                    rejected: Rejected {
+                        branch,
+                        tag: request.tag.clone(),
+                        reason,
+                        title: tr!("sync-rejected-notice-title", label = &label),
+                        summary: rejection_summary(reason),
+                        explanation: rejection_text(reason),
+                        git: detail,
+                    },
+                    on: current_branch(head).map(str::to_owned),
+                    seen_behind: false,
+                });
                 Received::Failed {
                     message: tr!(
                         "sync-rejected",
@@ -517,10 +587,20 @@ impl SyncBox {
             }
             // Uncommitted changes: the UI's text with "Stash…"; the fetch may be done, re-read.
             Some(ErrorKind::LocalChanges) => {
-                let failure = fetch::local_changes_failure(
+                let mut failure = fetch::local_changes_failure(
                     tr!("sync-not-possible-title", label = &label),
                     detail.as_deref(),
                 );
+                // Only a pull is refused this way, and only a pull is ever sent again after a
+                // stash: with the parameters of this request, as they were sent.
+                if request.op == Op::Pull {
+                    failure.retry = Some(Box::new(Retry::new(
+                        request.params(),
+                        label.clone(),
+                        tr!("stash-retry-pull"),
+                        Route::Pull(request.clone()),
+                    )));
+                }
                 let message = tr!(
                     "sync-not-possible",
                     label = &label,
@@ -541,6 +621,7 @@ impl SyncBox {
                     explanation: error.clone(),
                     git: None,
                     stash: false,
+                    retry: None,
                 }));
                 Received::Failed {
                     message: tr!("sync-not-possible", label = &label, error = error),
@@ -553,6 +634,7 @@ impl SyncBox {
                     explanation: error.clone(),
                     git: detail,
                     stash: false,
+                    retry: None,
                 }));
                 Received::Failed {
                     message: tr!("common-failed", label = &label, error = error),
@@ -563,7 +645,7 @@ impl SyncBox {
     }
 }
 
-/// What to explain in the window of a rejected push.
+/// What to explain in the details of a rejected push.
 fn rejection_text(reason: PushRejection) -> String {
     match reason {
         PushRejection::NonFastForward => tr!("sync-rejection-non-fast-forward"),
@@ -572,6 +654,18 @@ fn rejection_text(reason: PushRejection) -> String {
         PushRejection::Hook => tr!("sync-rejection-hook"),
         PushRejection::TagExists => tr!("sync-rejection-tag-exists"),
         PushRejection::Other => tr!("sync-rejection-other"),
+    }
+}
+
+/// What to do about a rejected push, in one sentence: the notice in the tab.
+fn rejection_summary(reason: PushRejection) -> String {
+    match reason {
+        PushRejection::NonFastForward => tr!("sync-rejection-notice-non-fast-forward"),
+        PushRejection::StaleLease => tr!("sync-rejection-notice-stale-lease"),
+        PushRejection::RemoteRejected => tr!("sync-rejection-notice-remote"),
+        PushRejection::Hook => tr!("sync-rejection-notice-hook"),
+        PushRejection::TagExists => tr!("sync-rejection-notice-tag-exists"),
+        PushRejection::Other => tr!("sync-rejection-notice-other"),
     }
 }
 
@@ -663,13 +757,12 @@ fn pull_outcome(r: RemotePullResult) -> Outcome {
         notice.push_str(&tr!("sync-pull-merge-default"));
     }
     match &r.backup {
-        Some(backup) if r.in_progress => {
-            notice.push_str(&tr!("sync-pull-backup-in-progress", backup = backup));
-        }
-        Some(backup) => notice.push_str(&tr!("sync-pull-backup", backup = backup)),
+        Some(_) if r.in_progress => notice.push_str(&tr!("sync-pull-backup-in-progress")),
+        Some(_) => notice.push_str(&tr!("sync-pull-backup")),
         None => {}
     }
     notice.push_str(&crate::messages_text(&r.warnings));
+    let notice = crate::status::with_backup(notice, r.backup.as_deref());
     let moved_head = r.after != r.before
         && r.status
             .as_ref()
@@ -740,13 +833,14 @@ fn push_outcome(r: RemotePushResult) -> Outcome {
         | PushRemoteSource::Origin
         | PushRemoteSource::Only => {}
     }
-    if let Some(backup) = &r.backup {
-        notice.push_str(&tr!("sync-push-backup", backup = backup));
+    if r.backup.is_some() {
+        notice.push_str(&tr!("sync-push-backup"));
     }
     if r.set_upstream {
         notice.push_str(&tr!("sync-push-set-upstream", target = &target));
     }
     notice.push_str(&crate::messages_text(&r.warnings));
+    let notice = crate::status::with_backup(notice, r.backup.as_deref());
     let warning = match (r.status_error, r.refs_error) {
         (Some(e), _) => Some(tr!("sync-push-status-not-reread", error = e)),
         (None, Some(e)) => Some(tr!("sync-push-refs-not-reread", error = e)),
@@ -808,9 +902,10 @@ impl Tab {
             Action::PushTag(remote, name) => {
                 self.send_sync(Request::push_tag(remote, name), false);
             }
+            // The click is in the details dialog, which is the open dialog.
             Action::ForcePush => {
                 if let Some(request) = self.repo.as_ref().and_then(|r| r.sync.force()) {
-                    self.send_sync(request, false);
+                    self.send_sync(request, true);
                 }
             }
             Action::ConfirmForcePush => {
@@ -828,12 +923,24 @@ impl Tab {
                     repo.sync.dismiss();
                 }
             }
+            Action::RejectedDetails => {
+                if let Some(repo) = &mut self.repo
+                    && !repo.modal_open()
+                {
+                    repo.sync.open_details();
+                }
+            }
+            Action::DismissRejected => {
+                if let Some(repo) = &mut self.repo {
+                    repo.sync.dismiss_rejected();
+                }
+            }
         }
     }
 
     /// Sends a pull or push, if there is no other write in progress (fetch included: one network
-    /// operation at a time) nor an open dialog; `confirmed`: it is the click in the
-    /// force confirmation, which is itself the open dialog.
+    /// operation at a time) nor an open dialog; `confirmed`: it is the click in the details of
+    /// a rejected push or in the force confirmation, which are themselves the open dialog.
     pub(crate) fn send_sync(&mut self, request: Request, confirmed: bool) {
         let generation = self.generation;
         let Some(repo) = &mut self.repo else {
@@ -857,8 +964,8 @@ impl Tab {
 
     /// Answer of `remote.pull`/`remote.push`: refs, status and journal from the answer, then the re-read
     /// log (all refs: the commits that arrived, the moved branch, the updated
-    /// remote-tracking branch); after a pull of the active branch the new HEAD is selected. A rejection opens
-    /// its window.
+    /// remote-tracking branch); after a pull of the active branch the new HEAD is selected. A
+    /// rejected push leaves its notice in the tab.
     pub(crate) fn receive_sync(&mut self, generation: u64, done: Done) {
         // A push may create a remote branch, a pull downloads some.
         if self.current(generation).is_some() {
@@ -874,6 +981,7 @@ impl Tab {
             done.error_kind,
             done.error_detail,
             done.confirm_expected,
+            &repo.head,
         );
         match received {
             Received::Done(outcome) => {
@@ -897,7 +1005,7 @@ impl Tab {
                 } else if outcome.moved_head && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
                 if !refs_read {
@@ -916,7 +1024,7 @@ impl Tab {
                 self.notice.clear();
             }
             Received::Cancelled { notice, reload } => {
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error.clear();
                 if reload {
                     self.load();
@@ -967,7 +1075,8 @@ mod tests {
         let kind = result.as_ref().err().map(ErrorKind::of);
         let detail = result.as_ref().err().and_then(ErrorKind::detail);
         let expected = result.as_ref().err().and_then(ErrorKind::expected);
-        sync.receive(ticket, result.map_err(|e| e.text()), kind, detail, expected)
+        let text = result.map_err(|e| e.text());
+        sync.receive(ticket, text, kind, detail, expected, &head)
     }
 
     fn main_head() -> Head {
@@ -995,23 +1104,22 @@ mod tests {
     }
 
     #[test]
-    fn force_and_pull_from_the_windows_keep_the_branch_after_a_checkout() {
+    fn force_and_pull_from_the_notice_keep_the_branch_after_a_checkout() {
         let (r, mut s) = open(diverged(None));
         r.run("remote.fetch", &mut s, json!({})).unwrap();
         let mut sync = SyncBox::default();
         run(&r, &mut s, &mut sync, Request::push(None));
-        let Some(Window::Rejected(rejected)) = sync.window() else {
-            panic!("{:?}", sync.window())
-        };
+        let rejected = sync.rejected().expect("the notice").clone();
         assert_eq!(rejected.branch.as_deref(), Some("main"));
-        // Checkout from the terminal while the window is open.
+        assert!(sync.open_details());
+        // Checkout from the terminal while the details are open.
         r.run(
             "branch.checkout",
             &mut s,
             json!({ "name": "feature/graph" }),
         )
         .unwrap();
-        let pull = Request::pull(rejected.branch.clone(), None);
+        let pull = Request::pull(rejected.branch, None);
         assert_eq!(pull.params(), json!({ "branch": "main" }));
         let force = sync.force().unwrap();
         assert_eq!(force.params(), json!({ "branch": "main", "force": true }));
@@ -1089,7 +1197,7 @@ mod tests {
     fn params_and_labels() {
         assert_eq!(Request::pull(None, None).params(), json!({}));
         assert_eq!(
-            Request::pull(Some("x".into()), Some(Strategy::Rebase)).params(),
+            Request::pull(Some("x".into()), Some(PullStrategy::Rebase)).params(),
             json!({ "branch": "x", "strategy": "rebase" })
         );
         assert_eq!(Request::push(None).params(), json!({}));
@@ -1114,6 +1222,7 @@ mod tests {
             Some(ErrorKind::Cancelled),
             None,
             None,
+            &main_head(),
         );
         let Received::Cancelled { notice, reload } = r else {
             panic!("{r:?}")
@@ -1150,7 +1259,7 @@ mod tests {
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("refs/project/backup/pull-1"),
+            crate::status::hides(&outcome.notice, "refs/project/backup/pull-1"),
             "{}",
             outcome.notice
         );
@@ -1242,7 +1351,7 @@ mod tests {
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("refs/project/backup/pull-1"),
+            crate::status::hides(&outcome.notice, "refs/project/backup/pull-1"),
             "{}",
             outcome.notice
         );
@@ -1263,7 +1372,7 @@ mod tests {
             &r,
             &mut s,
             &mut sync,
-            Request::pull(None, Some(Strategy::Rebase)),
+            Request::pull(None, Some(PullStrategy::Rebase)),
         );
         let Received::Done(outcome) = received else {
             panic!("{received:?}")
@@ -1337,7 +1446,7 @@ mod tests {
         assert_eq!(
             sync.force(),
             None,
-            "the force does not start without the window"
+            "the force does not start without the details dialog"
         );
         let received = run(&r, &mut s, &mut sync, Request::push(None));
         let Received::Failed { message, reload } = received else {
@@ -1348,16 +1457,27 @@ mod tests {
             message.contains("the remote has commits you don't have: Pull"),
             "{message}"
         );
-        let Some(Window::Rejected(rejected)) = sync.window() else {
-            panic!("{:?}", sync.window())
-        };
+        // A notice in the tab, not a dialog: nothing is blocked.
+        assert_eq!(sync.window(), None);
+        assert!(!sync.modal_open());
+        let rejected = sync.rejected().expect("the notice").clone();
         assert!(rejected.non_fast_forward());
+        assert_eq!(rejected.title, "Push of “main” rejected");
+        assert_eq!(
+            rejected.summary,
+            "The remote has commits you don't have: Pull to integrate them, then push again."
+        );
         assert!(
             rejected
                 .explanation
                 .starts_with("The remote has commits you don't have: Pull to integrate them")
         );
         assert!(rejected.git.as_deref().unwrap().contains("[rejected]"));
+        // The force is offered only in the details, which are a modal dialog.
+        assert_eq!(sync.force(), None);
+        assert!(sync.open_details());
+        assert!(sync.modal_open());
+        assert_eq!(sync.window(), Some(&Window::Details(rejected)));
 
         // "Force (with lease)…": force without confirm. The local remote-tracking branch is old (the
         // remote has 20, here it has not arrived yet): the lease stops it.
@@ -1365,17 +1485,24 @@ mod tests {
         assert_eq!(force.params(), json!({ "branch": "main", "force": true }));
         let received = run(&r, &mut s, &mut sync, force);
         assert!(matches!(received, Received::Failed { .. }), "{received:?}");
-        let Some(Window::Rejected(stale)) = sync.window() else {
-            panic!("{:?}", sync.window())
-        };
+        assert_eq!(
+            sync.window(),
+            None,
+            "the details closed when the push started"
+        );
+        let stale = sync.rejected().expect("the notice").clone();
         assert!(stale.stale());
+        assert_eq!(stale.title, "Force push of “main” rejected");
         assert!(stale.explanation.contains("Fetch and check"));
+        assert!(sync.open_details());
         assert_eq!(sync.force(), None, "after the stale lease no force");
+        sync.dismiss();
 
         // After the fetch the force would remove 20: the engine asks for confirmation.
         r.run("remote.fetch", &mut s, json!({})).unwrap();
         let received = run(&r, &mut s, &mut sync, Request::push(None));
         assert!(matches!(received, Received::Failed { .. }));
+        assert!(sync.open_details());
         let force = sync.force().unwrap();
         let received = run(&r, &mut s, &mut sync, force);
         assert!(matches!(received, Received::Confirm), "{received:?}");
@@ -1419,8 +1546,134 @@ mod tests {
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.contains("refs/project/backup/push-1"));
+        assert!(crate::status::hides(
+            &outcome.notice,
+            "refs/project/backup/push-1"
+        ));
         assert!(!sync.modal_open());
+    }
+
+    fn refs(r: &Registry, s: &mut Session) -> Vec<RefInfo> {
+        serde_json::from_value(r.run("repo.refs", s, json!({})).unwrap()).unwrap()
+    }
+
+    /// A push of `main` rejected because the remote has commit 20: the notice.
+    fn rejected_main() -> (Registry, Session, SyncBox) {
+        let (r, mut s) = open(diverged(None));
+        let mut sync = SyncBox::default();
+        let received = run(&r, &mut s, &mut sync, Request::push(None));
+        assert!(matches!(received, Received::Failed { .. }), "{received:?}");
+        assert!(sync.rejected().is_some());
+        (r, s, sync)
+    }
+
+    #[test]
+    fn the_rejected_notice_blocks_nothing_and_is_dismissed() {
+        let (r, mut s, mut sync) = rejected_main();
+        assert!(!sync.modal_open(), "a notice is not a dialog");
+        assert_eq!(sync.window(), None);
+        // The refs still say "not behind" (nobody fetched): that is not a reason to hide it.
+        let now = refs(&r, &mut s);
+        sync.follow(&main_head(), &now);
+        sync.follow(&main_head(), &now);
+        assert!(sync.rejected().is_some());
+        // Another pull or push can start while it is there.
+        assert!(
+            sync.request(Request::pull(None, None), &main_head())
+                .is_some()
+        );
+        // The details are a dialog; closing them leaves the notice.
+        assert!(sync.open_details());
+        assert!(sync.modal_open());
+        sync.dismiss();
+        assert!(!sync.modal_open());
+        assert!(sync.rejected().is_some());
+        // "×".
+        sync.dismiss_rejected();
+        assert_eq!(sync.rejected(), None);
+        assert!(!sync.open_details(), "no details without a notice");
+    }
+
+    #[test]
+    fn the_rejected_notice_goes_when_the_branch_is_no_longer_behind() {
+        let (r, mut s, mut sync) = rejected_main();
+        // A fetch shows the branch behind: the notice still has something to say.
+        r.run("remote.fetch", &mut s, json!({})).unwrap();
+        let behind = refs(&r, &mut s);
+        sync.follow(&main_head(), &behind);
+        assert!(sync.rejected().is_some());
+        // A pull done elsewhere (the terminal), seen by a refresh: no longer behind.
+        r.run("remote.pull", &mut s, json!({})).unwrap();
+        let merged = refs(&r, &mut s);
+        let head: Head = {
+            let status = r.run("repo.status", &mut s, json!({})).unwrap();
+            serde_json::from_value(status["head"].clone()).unwrap()
+        };
+        sync.follow(&head, &merged);
+        assert_eq!(sync.rejected(), None);
+    }
+
+    #[test]
+    fn the_rejected_notice_goes_with_a_pull_from_it() {
+        // "Pull" in the notice, without a fetch before: the refs never showed the branch behind.
+        let (r, mut s, mut sync) = rejected_main();
+        let branch = sync.rejected().unwrap().branch.clone();
+        let received = run(&r, &mut s, &mut sync, Request::pull(branch, None));
+        assert!(matches!(received, Received::Done(_)), "{received:?}");
+        assert_eq!(sync.rejected(), None);
+
+        // A pull that stops on a conflict did what the notice asked for: the panel of the
+        // merge in progress takes over.
+        let (r, mut s) = open(diverged(Some("src/bin/app.rs")));
+        let mut sync = SyncBox::default();
+        run(&r, &mut s, &mut sync, Request::push(None));
+        assert!(sync.rejected().is_some());
+        let received = run(&r, &mut s, &mut sync, Request::pull(None, None));
+        let Received::Done(outcome) = received else {
+            panic!("{received:?}")
+        };
+        assert!(outcome.show_changes, "stopped on a conflict");
+        assert_eq!(sync.rejected(), None);
+    }
+
+    #[test]
+    fn the_rejected_notice_goes_with_a_successful_push_of_that_branch() {
+        let (r, mut s, mut sync) = rejected_main();
+        // The push of another branch says nothing about `main`.
+        r.run("branch.create", &mut s, json!({ "name": "fresh" }))
+            .unwrap();
+        let received = run(&r, &mut s, &mut sync, Request::push(Some("fresh".into())));
+        assert!(matches!(received, Received::Done(_)), "{received:?}");
+        assert!(sync.rejected().is_some());
+        // A push rejected again replaces the notice; one that fails otherwise leaves it.
+        let received = run(&r, &mut s, &mut sync, Request::push(None));
+        assert!(matches!(received, Received::Failed { .. }), "{received:?}");
+        assert!(sync.rejected().is_some());
+        // Integrated from the terminal, then the push goes through.
+        r.run("remote.pull", &mut s, json!({})).unwrap();
+        let received = run(&r, &mut s, &mut sync, Request::push(None));
+        assert!(matches!(received, Received::Done(_)), "{received:?}");
+        assert_eq!(sync.rejected(), None);
+    }
+
+    #[test]
+    fn the_rejected_notice_goes_when_the_current_branch_changes() {
+        let (r, mut s, mut sync) = rejected_main();
+        let now = refs(&r, &mut s);
+        let other = Head::Branch {
+            name: "feature/graph".into(),
+            target: Some(oid(12)),
+        };
+        sync.follow(&other, &now);
+        assert_eq!(sync.rejected(), None);
+
+        // Detached HEAD is a change too; and so is the pushed branch that no longer exists.
+        let (r, mut s, mut sync) = rejected_main();
+        sync.follow(&Head::Detached(oid(12)), &refs(&r, &mut s));
+        assert_eq!(sync.rejected(), None);
+        let (_, _, mut sync) = rejected_main();
+        sync.follow(&main_head(), &[]);
+        assert_eq!(sync.rejected(), None);
     }
 
     #[test]
@@ -1487,10 +1740,10 @@ mod tests {
             message.contains("the remote already has this tag on another value"),
             "{message}"
         );
-        let Some(Window::Rejected(rejected)) = sync.window() else {
-            panic!()
-        };
+        let rejected = sync.rejected().expect("the notice").clone();
         assert_eq!(rejected.reason, PushRejection::TagExists);
+        assert_eq!(rejected.title, "Push of tag “v0.1.0” to “origin” rejected");
+        assert!(sync.open_details());
         assert!(
             rejected.explanation.contains("a tag is never overwritten"),
             "{}",
@@ -1506,11 +1759,10 @@ mod tests {
         let (r, mut s) = open(repo);
         let mut sync = SyncBox::default();
         run(&r, &mut s, &mut sync, Request::push(None));
-        let Some(Window::Rejected(rejected)) = sync.window() else {
-            panic!("{:?}", sync.window())
-        };
+        let rejected = sync.rejected().expect("the notice").clone();
         assert_eq!(rejected.reason, PushRejection::Hook);
         assert_eq!(rejected.git.as_deref(), Some("pre-push: tests failed"));
+        assert!(sync.open_details());
         assert_eq!(sync.force(), None);
     }
 
@@ -1525,6 +1777,7 @@ mod tests {
             Some(ErrorKind::ConfirmRequired),
             Some("motivo".into()),
             None,
+            &main_head(),
         );
         assert!(matches!(r, Received::Failed { .. }), "{r:?}");
         assert!(!sync.modal_open());
@@ -1547,6 +1800,7 @@ mod tests {
             Some(ErrorKind::ConfirmRequired),
             Some("the local remote-tracking branch is gone".into()),
             None,
+            &main_head(),
         );
         assert!(matches!(r, Received::Confirm), "{r:?}");
         let Some(Window::ConfirmForce(confirm)) = sync.window() else {
@@ -1562,13 +1816,13 @@ mod tests {
         r.run("remote.fetch", &mut s, json!({})).unwrap();
         // The confirmation seen when `origin/main` was still on 11; now it is on 20.
         let mut sync = SyncBox {
-            running: None,
             window: Some(Window::ConfirmForce(ConfirmForce {
                 branch: Some("main".into()),
                 reason: "old reason".into(),
                 expected: Some(oid(11)),
                 changed: false,
             })),
+            ..SyncBox::default()
         };
         let confirmed = sync.confirm_force().unwrap();
         assert_eq!(

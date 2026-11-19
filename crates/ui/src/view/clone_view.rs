@@ -1,5 +1,5 @@
 //! The "Clone…" and "New repository…" dialog (S46): URL (clone only), destination folder with
-//! "Browse…", optional branch and depth; during the clone, git's progress and "Cancel".
+//! "Browse…", optional branch and depth; during the clone, git's progress and "Stop".
 
 use super::*;
 use crate::clone::{self, CloneDialog, Kind};
@@ -44,7 +44,7 @@ pub(crate) fn clone_dialog(
         ui.add_space(6.0);
         ui.add(egui::Label::new(explanation).wrap());
         ui.add_space(8.0);
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = default_enter(ui);
         let mut fields = dialog.fields.clone();
         let changed = clone_fields(ui, dialog, &mut fields, can_pick, actions);
         if changed {
@@ -177,7 +177,7 @@ fn clone_fields(
     changed
 }
 
-/// "Clone"/"Create" and "Cancel"/"Close", then the progress while the work runs.
+/// "Clone"/"Create" and "Cancel" (while the clone runs: "Stop"), then the progress.
 fn clone_footer(
     ui: &mut Ui,
     dialog: &CloneDialog,
@@ -190,10 +190,11 @@ fn clone_footer(
             Kind::Clone => tr!("clone-submit"),
             Kind::Init => tr!("clone-init-submit"),
         };
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(dialog.can_submit(), egui::Button::new(label))
+            .add_enabled(can, primary_button(ui, label, can))
             .clicked();
-        if (clicked || enter) && dialog.can_submit() {
+        if (clicked || enter) && can {
             actions.push(Action::Clone(clone::Action::Submit));
         }
         match dialog.running {
@@ -210,7 +211,7 @@ fn clone_footer(
                 }
             }
             None => {
-                if ui.button(tr!("clone-close")).clicked() {
+                if ui.add(cancel_button()).clicked() {
                     actions.push(Action::Clone(clone::Action::Close));
                 }
             }

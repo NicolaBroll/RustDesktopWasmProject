@@ -86,6 +86,9 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // The rows end before the scrollbar, whether it is there or not (no jump when it
+            // appears): the "+" and "⋯" at their right edge are never under it.
+            ui.set_max_width(ui.available_width() - scrollbar_gutter(ui.spacing()));
             let [local, remote, tags] = &trees.sections;
             if !column.filtering || local.matches > 0 {
                 let title = tr!(
@@ -93,32 +96,33 @@ pub(crate) fn refs_panel(ui: &mut Ui, repo: &RepoView, writing: bool, actions: &
                     title = tr!("refs-local-branches"),
                     n = local.matches
                 );
-                section(
-                    ui,
-                    "ref-local",
-                    icons::BRANCH,
-                    &title,
-                    true,
-                    |_| {},
-                    |ui| {
-                        column.rows(ui, "ref-local", local, &mut toggled, actions);
-                    },
-                );
+                let mut added = Vec::new();
+                let add = |ui: &mut Ui| {
+                    let hint = tr!("refs-add-branch-hint");
+                    if let Some(start) = column.add_from_head(ui, hint) {
+                        let new = branch::Action::NewBranch(start, String::new());
+                        added.push(Action::Branch(new));
+                    }
+                };
+                section(ui, "ref-local", icons::BRANCH, &title, true, add, |ui| {
+                    column.rows(ui, "ref-local", local, &mut toggled, actions);
+                });
+                actions.extend(added);
             }
             remotes_section(ui, &column, remote, &mut toggled, actions);
             if !column.filtering || tags.matches > 0 {
                 let title = tr!("refs-section", title = tr!("refs-tags"), n = tags.matches);
-                section(
-                    ui,
-                    "ref-tag",
-                    icons::TAG,
-                    &title,
-                    false,
-                    |_| {},
-                    |ui| {
-                        column.rows(ui, "ref-tag", tags, &mut toggled, actions);
-                    },
-                );
+                let mut added = Vec::new();
+                let add = |ui: &mut Ui| {
+                    let hint = tr!("refs-add-tag-hint");
+                    if let Some(start) = column.add_from_head(ui, hint) {
+                        added.push(Action::Branch(branch::Action::NewTag(start)));
+                    }
+                };
+                section(ui, "ref-tag", icons::TAG, &title, false, add, |ui| {
+                    column.rows(ui, "ref-tag", tags, &mut toggled, actions);
+                });
+                actions.extend(added);
             }
             if !column.filtering {
                 stash_section(ui, repo, column.can_write, actions);
@@ -201,6 +205,17 @@ fn build_trees(
     Trees { key, sections }
 }
 
+/// The width a floating scrollbar covers at the right edge of its area when the mouse is on
+/// it (a bar that is not floating takes its own room: nothing to keep free).
+pub(super) fn scrollbar_gutter(spacing: &egui::Spacing) -> f32 {
+    let scroll = &spacing.scroll;
+    if scroll.floating {
+        (scroll.bar_width + scroll.bar_outer_margin - scroll.floating_allocated_width).max(0.0)
+    } else {
+        0.0
+    }
+}
+
 /// A section of the column: caret, icon, title and on the right what `header_right` adds (a "+");
 /// the body only when open. A click on the header opens or closes it.
 pub(super) fn section(
@@ -227,6 +242,7 @@ pub(super) fn section(
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
+    theme::focus_ring(ui, &response, rect);
     let caret = if state.is_open() {
         icons::CARET_DOWN
     } else {
@@ -301,6 +317,21 @@ struct Column<'a> {
 }
 
 impl Column<'_> {
+    /// The "+" of "Local branches" and of "Tags": HEAD as the starting point when clicked, for
+    /// the same dialog as "New branch from here…" (Ctrl+B) or "New tag here…". Disabled, with
+    /// the reason on hover, during a write or with a dialog open and before the first commit.
+    fn add_from_head(&self, ui: &mut Ui, hint: String) -> Option<Start> {
+        let start = self.repo.head_start();
+        let button = add_button(ui, self.can_write && start.is_some())
+            .on_hover_text(hint)
+            .on_disabled_hover_text(if start.is_some() {
+                wait()
+            } else {
+                tr!("refs-add-no-commit")
+            });
+        start.filter(|_| button.clicked())
+    }
+
     /// The rows of a section; the folders clicked end up in `toggled` (`<salt>:<path>`).
     fn rows(
         &self,
@@ -479,6 +510,7 @@ pub(super) fn row_response(ui: &mut Ui, id: egui::Id) -> egui::Response {
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
+    theme::focus_ring(ui, &response, rect);
     response
 }
 
@@ -507,7 +539,11 @@ fn folder_row(ui: &mut Ui, depth: usize, path: &str, name: &str, count: usize, o
     caret(ui, open);
     ui.label(icons::text(icons::FOLDER, 13.0).weak());
     ui.add(egui::Label::new(name).truncate().selectable(false));
-    ui.label(RichText::new(count.to_string()).small().weak());
+    ui.label(
+        RichText::new(count.to_string())
+            .small()
+            .color(theme::counter(ui.visuals())),
+    );
     response.clicked()
 }
 
@@ -625,11 +661,7 @@ impl RefMenu<'_> {
         }
         if let Some((remote, branch)) = on_remote {
             ui.separator();
-            let color = if can_write {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().weak_text_color()
-            };
+            let color = theme::destructive(ui.visuals(), can_write);
             let button = ui
                 .add_enabled(
                     can_write,
@@ -725,11 +757,7 @@ fn local_branch_items(
     upstream_items(ui, info, can_write, actions);
     ui.separator();
     let enabled = can_write && !is_head;
-    let color = if enabled {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), enabled);
     let button = ui
         .add_enabled(
             enabled,
@@ -810,11 +838,7 @@ fn tag_items(
         }
     }
     ui.separator();
-    let color = if can_write {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), can_write);
     let button = ui
         .add_enabled(
             can_write,
@@ -932,5 +956,21 @@ mod tests {
         // Past the end, or above the start.
         assert_eq!(visible_rows(3, 50.0, clip(0.0, 1000.0)), 0..3);
         assert_eq!(visible_rows(100, 500.0, clip(0.0, 100.0)), 0..0);
+    }
+
+    /// U66: the rows leave free what the floating scrollbar covers when the mouse is on it; a
+    /// bar with its own room needs nothing.
+    #[test]
+    fn the_rows_end_before_a_floating_scrollbar() {
+        let with = |scroll| egui::Spacing {
+            scroll,
+            ..egui::Spacing::default()
+        };
+        let floating = with(egui::style::ScrollStyle::floating());
+        assert_eq!(scrollbar_gutter(&floating), floating.scroll.bar_width);
+        assert_eq!(
+            scrollbar_gutter(&with(egui::style::ScrollStyle::solid())),
+            0.0
+        );
     }
 }

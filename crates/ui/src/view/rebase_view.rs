@@ -62,6 +62,8 @@ pub(crate) fn rebase_editor(ctx: &egui::Context, editor: &Editor, actions: &mut 
 
 fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Action>) {
     let editing = editor.phase == Phase::Editing;
+    // Ctrl+Enter is the "run" button: read before the message field is drawn.
+    let confirm = crate::keys::confirm(ui.ctx());
     let check = editor.check();
     let bad_step = match &check {
         Check::Invalid { step, .. } => *step,
@@ -113,20 +115,15 @@ fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Actio
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
+        let ready = editing && check == Check::Ready;
         let run = ui
-            .add_enabled(
-                editing && check == Check::Ready,
-                egui::Button::new(RichText::new(tr!("rebase-run")).strong()),
-            )
+            .add_enabled(ready, primary_button(ui, tr!("rebase-run"), ready))
             .on_hover_text(tr!("rebase-run-hint", branch = &editor.branch));
-        if run.clicked() {
+        if run.clicked() || (confirm && ready) {
             actions.push(Action::Rebase(rebase::Action::Run));
         }
         if ui
-            .add_enabled(
-                editor.phase != Phase::Sending,
-                egui::Button::new(tr!("rebase-close")),
-            )
+            .add_enabled(editor.phase != Phase::Sending, cancel_button())
             .clicked()
         {
             actions.push(Action::Rebase(rebase::Action::Close));
@@ -168,6 +165,7 @@ fn steps(
                     ui.painter()
                         .rect_filled(rect, 2.0, visuals.widgets.hovered.weak_bg_fill);
                 }
+                theme::focus_ring(ui, &response, rect);
                 if response.clicked() {
                     actions.push(Action::Rebase(rebase::Action::Select(i)));
                 }
@@ -377,10 +375,7 @@ fn confirm_dialog(ctx: &egui::Context, reason: &str, actions: &mut Vec<Action>) 
         ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let button = egui::Button::new(
-                RichText::new(tr!("rebase-confirm-button")).color(ui.visuals().strong_text_color()),
-            )
-            .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, tr!("rebase-confirm-button"));
             if ui.add(button).clicked() {
                 actions.push(Action::Rebase(rebase::Action::Confirm));
             }
@@ -420,5 +415,6 @@ fn arrow(ui: &mut Ui, up: bool, enabled: bool) -> egui::Response {
         color,
         egui::Stroke::NONE,
     ));
+    theme::focus_ring(ui, &response, rect);
     response
 }

@@ -13,9 +13,9 @@ fetch-who = Il remoto
 fetch-who-remote = Il remoto «{ $remote }»
 fetch-nothing-changed = Niente è stato modificato.
 fetch-auth-title = Autenticazione non riuscita
-fetch-auth-explanation = { $who } ha rifiutato le credenziali, oppure non è stato possibile chiederle (nome utente, password, passphrase della chiave SSH, conferma della chiave dell'host). Controllare quanto inserito e riprovare; un credential helper (git config credential.helper) o la chiave caricata in ssh-agent (ssh-add) evitano che vengano chieste ogni volta.
+fetch-auth-explanation = { $who } ha rifiutato le credenziali, oppure non è stato possibile chiederle (nome utente, password, passphrase della chiave SSH, conferma della chiave dell'host). Controlla quanto inserito e riprova; un credential helper (git config credential.helper) o la chiave caricata in ssh-agent (ssh-add) evitano che vengano chieste ogni volta.
 fetch-unreachable-title = Remoto non raggiungibile
-fetch-unreachable-explanation = { $who } non risponde: controllare l'indirizzo del remoto (git remote -v), la rete e che il repository esista sul server.
+fetch-unreachable-explanation = { $who } non risponde: controlla l'indirizzo del remoto (git remote -v), la rete e che il repository esista sul server.
 fetch-ref-tag = tag { $tag }
 fetch-done = { $what } fatto
 fetch-nothing-new = { $what }: niente di nuovo
@@ -29,7 +29,7 @@ fetch-updated = { $what }: { $n ->
 fetch-pruned-backups = ; { $n ->
     [one] i commit presenti solo su un branch eliminato restano in un backup
    *[other] i commit presenti solo su { $n } branch eliminati restano in backup
-} (refs/project/backup/prune-…)
+}
 fetch-refs-not-reread = Fetch fatto, ma i ref non si rileggono: { $error }
 fetch-progress-remote = remoto: { $phase }
 fetch-phase-enumerating = Enumerazione oggetti

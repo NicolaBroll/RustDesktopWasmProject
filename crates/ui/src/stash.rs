@@ -7,21 +7,30 @@
 //!
 //! - **Push**: a dialog with an optional message, "include untracked" and "keep the
 //!   index"; an engine refusal (nothing to stash, conflicts, operation in progress)
-//!   stays in the dialog. It enters the journal: "Undo" reapplies it.
+//!   stays in the dialog. It enters the journal: "Undo" reapplies it. Opened from the failure
+//!   dialog of a command refused for local changes, the dialog also offers "Stash and …": the
+//!   stash and then that command again ([`crate::stash_retry`], U68).
 //! - **Apply/pop**: always with `index` and `expected` (the id seen): if the list changed the
 //!   engine refuses and the list is reread. They do not enter the journal: the notice does not offer
 //!   "Undo" (which would concern the previous operation). With non-empty `conflicts` it is a
-//!   partial success: a window opens with the files, to be resolved from the stage area.
+//!   partial success: "Uncommitted changes" is selected and the notice of the conflicts names
+//!   the stash.
+//! - **Conflicts left by a stash**: git has no "stash in progress" state, so the notice in the
+//!   tab ([`StashBox::conflicts`]) is derived from the status: conflicted files and no
+//!   operation in progress. It is there after a restart too and goes away with the last
+//!   conflict.
 //! - **Drop**: in two steps like removing a remote: first without `confirm` (the engine
 //!   always answers with `ConfirmRequired` and what would be lost), then, only after the click in the
 //!   red dialog, `"confirm": true`.
 
 use crate::discard::{History, Phase};
+use crate::failure::Source;
 use crate::messages_text;
 use crate::running::Running;
+use crate::stash_retry::{Retry, Sent};
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, format};
-use project_domain::{Oid, Signature, Status};
+use project_domain::{Oid, RepoPath, Signature, Status, StatusEntry};
 use project_engine::{
     Message, StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashEntry,
     StashListResult, StashPush, StashPushResult,
@@ -34,10 +43,16 @@ use serde_json::{Value, json};
 pub(crate) enum Action {
     /// Opens the "Stash" dialog to set changes aside.
     Open,
+    /// "Stash…" in the failure dialog of this area: closes it and opens the "Stash" dialog,
+    /// which offers to send the refused command again after the stash (U68).
+    OpenAfter(Source),
     /// The fields of the "Stash" dialog changed.
     Fields(PushFields),
-    /// Submits the "Stash" dialog (`stash.push`).
+    /// Submits the "Stash" dialog (`stash.push`); nothing else follows.
     Submit,
+    /// "Stash and …" in a dialog opened from a refusal: `stash.push` and, only if it succeeds,
+    /// the refused command again.
+    SubmitAndRetry,
     /// Selects the stash with this id: its files on the right, its base in the graph.
     Select(Oid),
     /// Applies the stash with this id (`true`: pop, i.e. apply and, if all goes well, delete
@@ -52,8 +67,6 @@ pub(crate) enum Action {
     ConfirmDrop,
     /// Closes the open stash dialog without sending anything.
     CloseDialog,
-    /// Closes the apply or pop conflicts window.
-    DismissConflicts,
 }
 
 /// The id of the command that lists the stashes.
@@ -165,6 +178,11 @@ pub struct PushDialog {
     pub error: Option<String>,
     /// The running command.
     pub running: Option<Running>,
+    /// The dialog was opened from a refusal for local changes: the refused command, offered as
+    /// "Stash and …" ([`crate::stash_retry`]). `None` from the toolbar and the stage panel.
+    pub retry: Option<Retry>,
+    /// The submit in progress was "Stash and …": only then the retry follows the stash.
+    then_retry: bool,
 }
 
 impl PushDialog {
@@ -207,13 +225,23 @@ pub enum Dialog {
     Drop(DropDialog),
 }
 
-/// Apply or pop stopped on conflicts: the stash is partly applied, the files are to be resolved.
+/// An apply or pop of this session that stopped on conflicts: the stash is partly applied and
+/// stays in the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conflicts {
+pub struct Applied {
     pub op: Op,
     /// `stash@{n}` as it was when it was applied.
     pub stash: String,
-    pub files: Vec<String>,
+}
+
+/// The notice of the conflicts a stash left: the conflicted files of the status while no
+/// operation is in progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Conflicts<'a> {
+    /// The apply or pop that left them, if it was done in this session.
+    pub applied: Option<&'a Applied>,
+    /// The conflicted files, in the order of the status: never empty.
+    pub files: &'a [RepoPath],
 }
 
 /// The stash list, the selected stash and the dialogs: one dialog at a time.
@@ -231,11 +259,16 @@ pub struct StashBox {
     applying: Option<(Op, StashEntry)>,
     /// "Restore the index too" for apply and pop (`restore_index`).
     pub restore_index: bool,
-    /// The conflicts window after apply or pop.
-    conflicts: Option<Conflicts>,
+    /// The last apply or pop that stopped on conflicts, until the status has no more.
+    applied: Option<Applied>,
+    /// The conflicted files of the last status read, if no operation is in progress (an
+    /// operation shows them in its own panel).
+    conflicted: Vec<RepoPath>,
     /// The stashes already applied by a pop that then failed to remove them from the list: the
     /// changes are in the files, the pop must not be repeated (Drop stays).
     popped: Vec<Oid>,
+    /// The command sent again after a stash and not yet answered ("Stash and …", U68).
+    retried: Option<Sent>,
 }
 
 /// What came back from a stash command.
@@ -263,9 +296,15 @@ pub struct Outcome {
     pub history: Option<History>,
     /// A problem after the successful operation (list or status not reread).
     pub warning: Option<String>,
+    /// Apply or pop stopped on conflicts: "Uncommitted changes" is selected, so the files to
+    /// resolve are in front of the user.
+    pub show_changes: bool,
     /// True if the log must be reread: the set of stash bases changed (push, drop, successful
     /// pop), and a base that no branch contains leaves the graph.
     pub reload_log: bool,
+    /// A push submitted with "Stash and …" succeeded: the refused command to send again now,
+    /// once, and the name of the stash just made. Never set otherwise.
+    pub retry: Option<(Retry, String)>,
 }
 
 impl StashBox {
@@ -334,18 +373,33 @@ impl StashBox {
         self.dialog().is_some()
     }
 
-    /// The conflicts window of apply or pop, if it is open.
-    pub fn conflicts(&self) -> Option<&Conflicts> {
-        self.conflicts.as_ref()
+    /// The notice of the conflicts left by a stash, if the last status read has conflicted
+    /// files and no operation in progress.
+    pub fn conflicts(&self) -> Option<Conflicts<'_>> {
+        (!self.conflicted.is_empty()).then(|| Conflicts {
+            applied: self.applied.as_ref(),
+            files: &self.conflicted,
+        })
     }
 
-    /// Closes the conflicts window.
-    pub fn dismiss(&mut self) {
-        self.conflicts = None;
+    /// The status just read: the conflicted files that no operation in progress explains. With
+    /// the last conflict resolved the apply or pop that left them is forgotten.
+    pub fn follow_status(&mut self, status: &Status) {
+        self.conflicted.clear();
+        if status.operation.is_none() {
+            let conflicted = status.entries.iter().filter(|e| e.is_conflict());
+            self.conflicted
+                .extend(conflicted.map(|e: &StatusEntry| e.path.clone()));
+        }
+        if self.conflicted.is_empty() {
+            self.applied = None;
+        }
     }
 
-    /// Opens the "Stash" dialog with empty fields.
-    pub fn open_push(&mut self) -> bool {
+    /// Opens the "Stash" dialog with empty fields. `retry`: the command refused for local
+    /// changes whose failure dialog it is opened from, offered as "Stash and …"; `None` (the
+    /// toolbar, the stage panel): a plain stash, nothing follows it.
+    pub fn open_push(&mut self, retry: Option<Retry>) -> bool {
         if self.dialog.is_some() {
             return false;
         }
@@ -353,6 +407,8 @@ impl StashBox {
             fields: PushFields::default(),
             error: None,
             running: None,
+            retry,
+            then_retry: false,
         }));
         true
     }
@@ -367,15 +423,37 @@ impl StashBox {
     }
 
     /// Submit of the "Stash" dialog: parameters and description. `None` if it cannot be done.
+    /// A plain stash: the command a dialog opened from a refusal offers is not sent again.
     pub fn submit_push(&mut self) -> Option<(Value, String)> {
+        self.submit(false)
+    }
+
+    /// "Stash and …": like [`StashBox::submit_push`], and the refused command follows if the
+    /// stash succeeds. `None` also if the dialog was not opened from a refusal.
+    pub fn submit_push_and_retry(&mut self) -> Option<(Value, String)> {
+        self.submit(true)
+    }
+
+    fn submit(&mut self, then_retry: bool) -> Option<(Value, String)> {
         let Some(Dialog::Push(dialog)) = &mut self.dialog else {
             return None;
         };
-        if dialog.running.is_some() {
+        if dialog.running.is_some() || (then_retry && dialog.retry.is_none()) {
             return None;
         }
         dialog.error = None;
+        dialog.then_retry = then_retry;
         Some((dialog.params(), tr!("stash-push-label")))
+    }
+
+    /// The command sent again after the stash started: its answer is told apart by the ticket.
+    pub(crate) fn retry_sent(&mut self, sent: Sent) {
+        self.retried = Some(sent);
+    }
+
+    /// The answer `ticket` is the one of the command sent again after a stash: taken, once.
+    pub(crate) fn take_retried(&mut self, ticket: Ticket) -> Option<Sent> {
+        self.retried.take_if(|sent| sent.ticket == ticket)
     }
 
     /// The command of [`StashBox::submit_push`] started with `ticket`.
@@ -405,7 +483,6 @@ impl StashBox {
             Op::Pop => tr!("stash-pop-label", name = &stash.name),
             _ => tr!("stash-apply-label", name = &stash.name),
         };
-        self.conflicts = None;
         self.applying = Some((op, stash));
         Some((params, label))
     }
@@ -500,6 +577,9 @@ impl StashBox {
                 }
             }
             Ok(value) => {
+                // The stash succeeded: the refused command follows only if "Stash and …" was
+                // the button pressed. Taken out of the dialog, which closes: once.
+                let retry = dialog.retry.take().filter(|_| dialog.then_retry);
                 self.dialog = None;
                 match crate::decode::<StashPushResult>(Op::Push.command(), value) {
                     Ok(result) => {
@@ -524,7 +604,9 @@ impl StashBox {
                             status: result.status,
                             history: Some(result.journal.into()),
                             warning,
+                            show_changes: false,
                             reload_log: true,
+                            retry: retry.map(|retry| (retry, result.stash.name.clone())),
                         }))
                     }
                     Err(message) => Received::Failed {
@@ -588,11 +670,13 @@ impl StashBox {
                     if let Some(list) = result.stashes.clone() {
                         self.set_list(list);
                     }
-                    if !result.conflicts.is_empty() {
-                        self.conflicts = Some(Conflicts {
+                    // The notice of the conflicts comes from the status (with the result, or
+                    // reread): here only which stash left them.
+                    let show_changes = !result.conflicts.is_empty();
+                    if show_changes {
+                        self.applied = Some(Applied {
                             op,
                             stash: stash.name.clone(),
-                            files: result.conflicts.clone(),
                         });
                     }
                     let notice = apply_notice(&result, op, &stash);
@@ -602,7 +686,9 @@ impl StashBox {
                         status: result.status,
                         history: None,
                         warning,
+                        show_changes,
                         reload_log: result.dropped,
+                        retry: None,
                     }))
                 }
                 Err(message) => Received::Failed {
@@ -659,17 +745,19 @@ impl StashBox {
                     let mut notice = tr!(
                         "stash-drop-done",
                         name = &result.stash.name,
-                        title = result.stash.title(),
-                        backup = result.backup.as_deref().unwrap_or_default()
+                        title = result.stash.title()
                     );
                     notice.push_str(&messages_text(&result.warnings));
+                    let notice = crate::status::with_backup(notice, result.backup.as_deref());
                     Received::Done(Box::new(Outcome {
                         op: Op::Drop,
                         notice,
                         status: None,
                         history: Some(result.journal.into()),
                         warning,
+                        show_changes: false,
                         reload_log: true,
+                        retry: None,
                     }))
                 }
                 Err(message) => Received::Failed {
@@ -706,7 +794,7 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
     let name = &stash.name;
     let mut notice = match (op, r.conflicts.len(), r.dropped) {
         (Op::Pop, 0, true) => match &r.backup {
-            Some(backup) => tr!("stash-pop-done-backup", name = name, backup = backup),
+            Some(_) => tr!("stash-pop-done-backup", name = name),
             None => tr!("stash-pop-done", name = name),
         },
         (Op::Pop, 0, false) => tr!("stash-pop-not-dropped", name = name),
@@ -714,7 +802,7 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
         (_, n, _) => tr!("stash-apply-conflicts", name = name, n = n),
     };
     notice.push_str(&tr!("stash-not-undoable"));
-    // The engine warning about a pop with conflicts repeats what the window explains.
+    // The engine warning about a pop with conflicts repeats what the notice explains.
     let warnings: Vec<Message> = r
         .warnings
         .iter()
@@ -722,27 +810,27 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
         .cloned()
         .collect();
     notice.push_str(&messages_text(&warnings));
-    notice
+    crate::status::with_backup(notice, r.backup.as_deref())
 }
 
 impl Tab {
     /// The actions of this function, routed by [`Tab::apply`].
     pub(crate) fn apply_stash(&mut self, action: Action) {
         match action {
-            Action::Open => {
-                if let Some(repo) = &mut self.repo
-                    && self.executor.writing().is_none()
-                    && !repo.modal_open()
-                {
-                    repo.stash.open_push();
-                }
+            Action::Open => self.open_stash(None),
+            // The refused command is taken from the failure before its dialog is closed (the
+            // retry goes with it); a failure with nothing to retry opens a plain stash.
+            Action::OpenAfter(source) => {
+                let retry = self.repo.as_mut().and_then(|r| r.take_refused(source));
+                self.apply(source.dismiss());
+                self.open_stash(retry);
             }
             Action::Fields(fields) => {
                 if let Some(repo) = &mut self.repo {
                     repo.stash.set_fields(fields);
                 }
             }
-            Action::Submit => {
+            Action::Submit | Action::SubmitAndRetry => {
                 let generation = self.generation;
                 if self.executor.writing().is_some() {
                     return;
@@ -750,7 +838,12 @@ impl Tab {
                 let Some(repo) = &mut self.repo else {
                     return;
                 };
-                if let Some((params, label)) = repo.stash.submit_push() {
+                let submitted = if matches!(action, Action::SubmitAndRetry) {
+                    repo.stash.submit_push_and_retry()
+                } else {
+                    repo.stash.submit_push()
+                };
+                if let Some((params, label)) = submitted {
                     repo.write_error = None;
                     repo.write_label = Some(label);
                     let op = Op::Push;
@@ -829,17 +922,25 @@ impl Tab {
                     repo.stash.close();
                 }
             }
-            Action::DismissConflicts => {
-                if let Some(repo) = &mut self.repo {
-                    repo.stash.dismiss();
-                }
-            }
+        }
+    }
+
+    /// Opens the "Stash" dialog, with the refused command to offer if it comes from a failure
+    /// dialog. Another failure still waiting does not keep it from opening (it is shown above
+    /// it).
+    fn open_stash(&mut self, retry: Option<Retry>) {
+        if let Some(repo) = &mut self.repo
+            && self.executor.writing().is_none()
+            && !repo.dialog_open()
+        {
+            repo.stash.open_push(retry);
         }
     }
 
     /// Response of `stash.*`: list, status and journal from the response, the stash labels
     /// in the graph redone and, if the bases changed, the log reread. A refused push stays
-    /// in its dialog; the conflicts of apply and pop open their window.
+    /// in its dialog; after an apply or pop with conflicts "Uncommitted changes" is selected
+    /// (the notice of the conflicts comes from the status).
     pub(crate) fn receive_stash(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
@@ -863,7 +964,10 @@ impl Tab {
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
                 }
-                self.notice = outcome.notice;
+                if outcome.show_changes {
+                    repo.select_worktree(true);
+                }
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
                 // The drop does not touch files; the others do, and if the status did not arrive it is
@@ -876,6 +980,11 @@ impl Tab {
                 {
                     let first = repo.list.reset();
                     self.request_page(first);
+                }
+                // "Stash and …": the stash is made, the refused command goes again from here
+                // (only reads were sent above: no other write can start before it).
+                if let Some((retry, stash)) = outcome.retry {
+                    self.retry_after_stash(generation, retry, stash, status_read);
                 }
             }
             Received::Failed { message, reload } => {
@@ -897,10 +1006,8 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_domain::{Change, ChangedFile, Commit, EntryKind, RepoPath};
-    use project_engine::{
-        GitRead, GitStash, MemoryBackend, MemoryOpener, Registry, Session, StashPush,
-    };
+    use project_domain::RepoPath;
+    use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
 
     fn opened(repo: MemoryBackend) -> (Registry, Session) {
@@ -934,7 +1041,7 @@ mod tests {
     }
 
     fn push(registry: &Registry, session: &mut Session, b: &mut StashBox, fields: PushFields) {
-        assert!(b.open_push());
+        assert!(b.open_push(None));
         b.set_fields(fields);
         let (params, _) = b.submit_push().unwrap();
         b.push_started(Ticket::for_test(1));
@@ -1024,6 +1131,8 @@ mod tests {
             },
             error: None,
             running: None,
+            retry: None,
+            then_retry: false,
         };
         assert_eq!(
             d.params(),
@@ -1051,8 +1160,8 @@ mod tests {
         list(&registry, &mut session, &mut b);
         assert_eq!(b.list(), Some(&[][..]));
 
-        assert!(b.open_push());
-        assert!(!b.open_push(), "one dialog at a time");
+        assert!(b.open_push(None));
+        assert!(!b.open_push(None), "one dialog at a time");
         assert!(b.modal_open());
         b.set_fields(PushFields {
             message: "test".into(),
@@ -1120,7 +1229,7 @@ mod tests {
         let mut b = StashBox::default();
         push(&registry, &mut session, &mut b, PushFields::default());
         // Only the untracked files remain: without "include untracked" there is nothing.
-        b.open_push();
+        b.open_push(None);
         let (params, _) = b.submit_push().unwrap();
         b.push_started(Ticket::for_test(1));
         let r = run(&registry, &mut session, &mut b, Op::Push, params);
@@ -1151,11 +1260,17 @@ mod tests {
         assert!(
             outcome
                 .notice
-                .starts_with("stash@{0} applied and dropped from the list; backup in refs/"),
+                .starts_with("stash@{0} applied and dropped from the list; a backup was saved"),
             "{}",
             outcome.notice
         );
-        assert!(outcome.notice.ends_with("“Undo” doesn't revert it"));
+        // The ref is named after the message, for the hover text of the status bar.
+        let (line, backup) = outcome.notice.split_once('\n').expect("backup line");
+        assert!(line.ends_with("“Undo” doesn't revert it"), "{line}");
+        assert!(
+            backup.starts_with("Backup: refs/project/backup/stash-"),
+            "{backup}"
+        );
         assert!(outcome.reload_log);
         assert!(outcome.history.is_none());
         assert_eq!(b.list(), Some(&[][..]));
@@ -1202,53 +1317,9 @@ mod tests {
         ));
     }
 
-    /// The sample repo with the stashed changes, then a commit that changes
-    /// `README.md` on `main`: the stash goes into conflict on that file.
-    fn moved_head() -> MemoryBackend {
-        let mut repo = MemoryBackend::sample();
-        let old = match &repo.status().unwrap().entries[0].kind {
-            EntryKind::Ordinary(info) => info.oid_head,
-            other => panic!("{other:?}"),
-        };
-        repo.stash_push(&StashPush::default()).unwrap();
-        let head = repo.head().unwrap().target().unwrap();
-        let new = MemoryBackend::fake_oid(4242);
-        repo.set_blob(new, "README changed on main\n");
-        let id = MemoryBackend::fake_oid(4243);
-        let who = Signature {
-            name: "Ada".to_owned(),
-            email: "ada@example.com".to_owned(),
-            time: 1_800_000_000,
-            offset_min: 0,
-        };
-        repo.insert_commit(Commit {
-            id,
-            parents: vec![head],
-            author: who.clone(),
-            committer: who,
-            summary: "README".to_owned(),
-            body: String::new(),
-        });
-        repo.set_changes(
-            id,
-            vec![ChangedFile {
-                path: RepoPath::from("README.md"),
-                change: Change::Modified,
-                original: None,
-                score: None,
-                old_mode: 0o100644,
-                new_mode: 0o100644,
-                old_oid: old,
-                new_oid: new,
-            }],
-        );
-        repo.set_branch("main", id);
-        repo
-    }
-
     #[test]
-    fn conflicts_open_the_window_and_pop_keeps_the_stash() {
-        let (registry, mut session) = opened(moved_head());
+    fn conflicts_are_a_notice_from_the_status_and_pop_keeps_the_stash() {
+        let (registry, mut session) = opened(crate::test_util::stash_in_conflict());
         let mut b = StashBox::default();
         list(&registry, &mut session, &mut b);
         let stash = b.list().unwrap()[0].clone();
@@ -1265,24 +1336,38 @@ mod tests {
             !outcome.reload_log,
             "the stash stays: the bases do not change"
         );
+        assert!(outcome.show_changes, "the files to resolve are shown");
         let status = outcome.status.unwrap();
-        assert!(
-            status
-                .entries
-                .iter()
-                .any(|e| matches!(e.kind, EntryKind::Unmerged(_)))
-        );
-        let conflicts = b.conflicts().unwrap();
-        assert_eq!(conflicts.op, Op::Pop);
-        assert_eq!(conflicts.stash, "stash@{0}");
-        assert_eq!(conflicts.files, ["README.md"]);
+        assert!(status.has_conflicts());
+        assert_eq!(status.operation, None);
         assert_eq!(
             b.list().unwrap().len(),
             1,
             "a pop with conflicts does not drop"
         );
-        b.dismiss();
-        assert!(b.conflicts().is_none());
+
+        // The notice comes from the status, not from the answer: until it is read, nothing.
+        assert_eq!(b.conflicts(), None);
+        b.follow_status(&status);
+        let conflicts = b.conflicts().expect("the notice");
+        let applied = conflicts.applied.expect("applied in this session");
+        assert_eq!((applied.op, applied.stash.as_str()), (Op::Pop, "stash@{0}"));
+        assert_eq!(conflicts.files, [RepoPath::from("README.md")]);
+        assert!(!b.modal_open(), "a notice is not a dialog");
+
+        // After a restart nobody remembers the pop: the status alone gives the notice.
+        let mut restarted = StashBox::default();
+        restarted.follow_status(&status);
+        let conflicts = restarted.conflicts().expect("the notice");
+        assert_eq!(conflicts.applied, None);
+        assert_eq!(conflicts.files, [RepoPath::from("README.md")]);
+        assert!(!restarted.modal_open());
+
+        // An operation in progress shows its conflicts in its own panel.
+        let mut merging = status.clone();
+        merging.operation = Some(project_domain::Operation::Merge);
+        restarted.follow_status(&merging);
+        assert_eq!(restarted.conflicts(), None);
 
         // With the conflict open another apply is refused: the reason in the status bar.
         let (params, _) = b.start_apply(stash.id, false).unwrap();
@@ -1293,6 +1378,16 @@ mod tests {
         };
         assert!(message.contains("conflicted files"), "{message}");
         assert!(!reload);
+        assert!(b.conflicts().is_some(), "the notice stays");
+
+        // The last conflict resolved: the notice goes away by itself and the pop is forgotten
+        // (a later conflict is not said to come from that stash).
+        let mut resolved = status.clone();
+        resolved.entries.retain(|e| !e.is_conflict());
+        b.follow_status(&resolved);
+        assert_eq!(b.conflicts(), None);
+        b.follow_status(&status);
+        assert_eq!(b.conflicts().expect("the notice").applied, None);
     }
 
     #[test]
@@ -1319,7 +1414,7 @@ mod tests {
             panic!()
         };
         assert!(reason.contains("stash@{0}"), "{reason}");
-        // Nothing changed until confirmed; "Don't drop" closes.
+        // Nothing changed until confirmed; "Cancel" closes.
         list(&registry, &mut session, &mut b);
         assert_eq!(b.list().unwrap().len(), 1);
         b.close();
@@ -1341,9 +1436,14 @@ mod tests {
             outcome.notice
         );
         assert!(
+            crate::status::line(&outcome.notice).contains("dropped; a backup was saved. “Undo”"),
+            "{}",
+            outcome.notice
+        );
+        assert!(
             outcome
                 .notice
-                .contains("backup in refs/project/backup/stash-")
+                .contains("\nBackup: refs/project/backup/stash-")
         );
         assert!(
             outcome

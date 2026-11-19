@@ -2,9 +2,10 @@
 //! mouse and keyboard selection, graph lanes. Data only, no egui: tested with unit
 //! tests.
 
-use project_domain::{Commit, GraphLayout, Oid, layout_graph};
+use project_domain::{Commit, GraphBuilder, GraphLayout, Oid};
 use project_engine::LogQuery;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Commits requested for each page of `repo.log`.
 pub const PAGE: usize = 500;
@@ -66,11 +67,14 @@ pub struct Anchor {
 #[derive(Debug, Default)]
 pub struct CommitList {
     commits: Vec<Commit>,
-    /// Graph lanes of all loaded commits, one row per commit. They are recomputed when
-    /// a page arrives, not on every frame: a lane may depend on commits from different
-    /// pages.
-    graph: GraphLayout,
-    /// Grows every time [`CommitList::graph`] is computed again: caches of its colors key on it.
+    /// The row of every loaded commit: looked up on every frame (HEAD, the changes row).
+    rows: HashMap<Oid, usize>,
+    /// Graph lanes of all loaded commits, one row per commit. A page that arrives adds its
+    /// rows (a lane may come from the pages before), at the cost of that page only.
+    graph: GraphBuilder,
+    /// Grows every time [`CommitList::graph`] starts again from the first page; with the same
+    /// version rows are only added, and the last one gets its segments resolved. Caches of its
+    /// colors key on it.
     graph_version: u64,
     has_more: bool,
     /// The requested page that has not arrived yet.
@@ -91,7 +95,7 @@ impl CommitList {
 
     /// The graph lanes: `graph().rows[i]` is the row of `commits()[i]`.
     pub fn graph(&self) -> &GraphLayout {
-        &self.graph
+        self.graph.layout()
     }
 
     /// See the field `graph_version`.
@@ -167,14 +171,20 @@ impl CommitList {
         if request.skip == 0 {
             let selected = self.selected_commit().map(|c| c.id);
             self.commits = commits;
+            self.rows.clear();
+            self.index_rows(0);
             self.selected = selected
                 .and_then(|id| self.position(id))
                 .or((!self.commits.is_empty()).then_some(0));
+            self.graph = GraphBuilder::default();
+            self.graph.extend_commits(&self.commits);
+            self.graph_version += 1;
         } else {
+            self.graph.extend_commits(&commits);
+            let from = self.commits.len();
             self.commits.extend(commits);
+            self.index_rows(from);
         }
-        self.graph = layout_graph(&self.commits);
-        self.graph_version += 1;
         self.has_more = has_more;
         true
     }
@@ -221,8 +231,9 @@ impl CommitList {
     /// Where to attach the changes row: row and column of commit `head`, if loaded.
     pub fn anchor(&self, head: Oid) -> Option<Anchor> {
         let index = self.position(head)?;
-        let column = self.graph.rows.get(index)?.column;
-        let free_above = self.graph.rows[..index].iter().all(|row| {
+        let rows = &self.graph().rows;
+        let column = rows.get(index)?.column;
+        let free_above = rows[..index].iter().all(|row| {
             row.column != column
                 && row
                     .segments
@@ -241,8 +252,21 @@ impl CommitList {
         self.position(id)
     }
 
+    /// The loaded commit `id`.
+    pub fn commit(&self, id: Oid) -> Option<&Commit> {
+        self.commits.get(self.position(id)?)
+    }
+
     fn position(&self, id: Oid) -> Option<usize> {
-        self.commits.iter().position(|c| c.id == id)
+        self.rows.get(&id).copied()
+    }
+
+    /// Records the rows of the commits from row `from` on.
+    fn index_rows(&mut self, from: usize) {
+        for (row, commit) in self.commits.iter().enumerate().skip(from) {
+            // A log lists a commit once; were it twice, the first row is the one shown.
+            self.rows.entry(commit.id).or_insert(row);
+        }
     }
 
     /// Selects row `index` (mouse click); outside the list it does nothing.
@@ -400,10 +424,17 @@ mod tests {
         let first = list.reset();
         assert!(list.receive(first, history[..PAGE].to_vec(), true));
         assert_eq!(list.graph().rows.len(), PAGE);
+        let version = list.graph_version();
         let second = list.next_page(PAGE).unwrap();
         assert!(list.receive(second, history[PAGE..].to_vec(), false));
 
-        assert_eq!(list.graph(), &layout_graph(&history));
+        assert_eq!(list.graph(), &project_domain::layout_graph(&history));
+        // The second page only added rows; a new first page starts the graph again.
+        assert_eq!(list.graph_version(), version);
+        let again = list.reload();
+        assert!(list.receive(again, history.clone(), false));
+        assert_eq!(list.graph_version(), version + 1);
+        assert_eq!(list.graph(), &project_domain::layout_graph(&history));
         assert_eq!(list.graph().rows.len(), list.commits().len());
         assert_eq!(list.graph().width, 2);
         // The branch converges into lane 0 on commit `merge` (row `merge + 1`, shifted by the

@@ -7,6 +7,7 @@
 //! network errors are explained in a window with git's text.
 
 use crate::running::Running;
+use crate::stash_retry::Retry;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::RefInfo;
@@ -47,7 +48,8 @@ pub struct Fetching {
     pub auto: bool,
 }
 
-/// A fetch that failed for a reason to explain: the window with git's text.
+/// An operation that failed for a reason to explain: what the failure dialog shows
+/// ([`crate::failure`]), with git's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     pub title: String,
@@ -55,8 +57,11 @@ pub struct Failure {
     pub explanation: String,
     /// git's text (stderr), if any.
     pub git: Option<String>,
-    /// Refused for uncommitted local changes: the window offers "Stash…".
+    /// Refused for uncommitted local changes: the dialog offers "Stash…".
     pub stash: bool,
+    /// The refused command, which the stash dialog opened from here can send again after the
+    /// stash ("Stash and …", U68). It lives and dies with this failure.
+    pub retry: Option<Box<Retry>>,
 }
 
 /// The fetch: the one in progress and the last error to explain.
@@ -217,6 +222,7 @@ impl FetchBox {
                     explanation: error.clone(),
                     git: detail,
                     stash: false,
+                    retry: None,
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
@@ -266,6 +272,7 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
         ),
         git: detail,
         stash: false,
+        retry: None,
     }
 }
 
@@ -280,10 +287,11 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
         ),
         git: detail,
         stash: false,
+        retry: None,
     }
 }
 
-/// The window of an operation (`title`) refused because of uncommitted changes to `files`:
+/// The dialog of an operation (`title`) refused because of uncommitted changes to `files`:
 /// the UI's text instead of the engine's (meant for CLI and MCP), with "Stash…".
 pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
     Failure {
@@ -294,6 +302,7 @@ pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
         },
         git: None,
         stash: true,
+        retry: None,
     }
 }
 
@@ -355,7 +364,7 @@ pub(crate) fn outcome(r: RemoteFetchResult) -> Outcome {
         tr!("fetch-pruned-backups", n = r.backups.len())
     };
     Outcome {
-        notice: summary + &backups + &warnings,
+        notice: crate::status::with_backups(summary + &backups + &warnings, &r.backups),
         changed: r.updated.as_ref().is_none_or(|u| !u.is_empty()),
         moved: r
             .updated
@@ -498,7 +507,7 @@ impl Tab {
                     repo.refs = refs;
                     repo.update_labels();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 if !refs_read {
                     self.submit("repo.refs", json!({}), Request::Refs(generation));
@@ -508,7 +517,7 @@ impl Tab {
                 }
             }
             Received::Cancelled { notice } => {
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error.clear();
                 // Some remote branch may already be updated.
                 self.submit("repo.refs", json!({}), Request::Refs(generation));
@@ -554,8 +563,8 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-            on_done(None);
+        fn pick_folder(&self, on_done: project_engine::OnPicked) {
+            on_done(Ok(None));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();

@@ -96,6 +96,7 @@ pub(crate) fn commit_list(
                     &style
                 };
                 changes_row(ui, rect, &response, repo, column, graph_w, style);
+                theme::focus_ring(ui, &response, rect);
                 header_rect = Some(rect);
                 if response.clicked() {
                     actions.push(Action::SelectWorktree);
@@ -131,6 +132,7 @@ pub(crate) fn commit_list(
                 let tint = theme::search_match(ui.visuals().dark_mode);
                 ui.painter().rect_filled(rect, 2.0, tint);
             }
+            theme::focus_ring(ui, &response, rect);
             if response.clicked() {
                 // Ctrl+click (Cmd on macOS): compares with the selected commit.
                 if ui.input(|i| i.modifiers.command) {
@@ -184,9 +186,10 @@ fn row_styles(ui: &Ui, dates: DateFormat) -> (RowStyle, RowStyle) {
         },
     };
     // On the selected row the text takes the selection's color: gray on blue is hard to read.
+    let (text, weak) = theme::on_selection(ui.visuals());
     let on_selection = RowStyle {
-        text: ui.visuals().selection.stroke.color,
-        weak: ui.visuals().selection.stroke.color.gamma_multiply(0.75),
+        text,
+        weak,
         ..style.clone()
     };
     (style, on_selection)
@@ -221,7 +224,7 @@ impl CommitMenu<'_> {
             .on_disabled_hover_text(wait());
         if button.clicked() {
             actions.push(Action::Branch(branch::Action::NewBranch(
-                Start::from_commit(id),
+                Start::of_commit(commit),
                 String::new(),
             )));
             ui.close();
@@ -231,8 +234,8 @@ impl CommitMenu<'_> {
             .on_hover_text(tr!("commit-new-tag-hint", id = id.short()))
             .on_disabled_hover_text(wait());
         if button.clicked() {
-            actions.push(Action::Branch(branch::Action::NewTag(Start::from_commit(
-                id,
+            actions.push(Action::Branch(branch::Action::NewTag(Start::of_commit(
+                commit,
             ))));
             ui.close();
         }
@@ -463,12 +466,10 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
 /// The toggles "Content", "Regex" and "Aa" (the last two only for content).
 fn search_options(ui: &mut Ui, options: search::Options, actions: &mut Vec<Action>) {
     let mut next = options;
-    ui.toggle_value(&mut next.content, tr!("search-content"))
-        .on_hover_text(tr!("search-content-tip"));
+    toggle(ui, &mut next.content, tr!("search-content")).on_hover_text(tr!("search-content-tip"));
     ui.add_enabled_ui(options.content, |ui| {
-        ui.toggle_value(&mut next.regex, tr!("search-regex"))
-            .on_hover_text(tr!("search-regex-tip"));
-        ui.toggle_value(&mut next.ignore_case, "Aa")
+        toggle(ui, &mut next.regex, tr!("search-regex")).on_hover_text(tr!("search-regex-tip"));
+        toggle(ui, &mut next.ignore_case, "Aa".to_owned())
             .on_hover_text(tr!("search-ignore-case-tip"));
     });
     if next != options {
@@ -477,6 +478,18 @@ fn search_options(ui: &mut Ui, options: search::Options, actions: &mut Vec<Actio
             ui.input(|i| i.time),
         )));
     }
+}
+
+/// A button that stays pressed: a button's frame when off, so it reads as something to press
+/// and not as a label, and when on the selection's fill of the unified/split buttons of the
+/// diff header.
+fn toggle(ui: &mut Ui, on: &mut bool, label: String) -> egui::Response {
+    let mut response = ui.add(egui::Button::new(label).selected(*on));
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response
 }
 
 /// The stroke from the changes ring down to HEAD's dot, if HEAD's column is
@@ -629,27 +642,35 @@ pub(super) fn paint_graph(
     }
 }
 
-/// The colors of the graph's lanes ([`graph::lane_colors`]), computed again only when the graph,
-/// the refs or the remotes change.
+/// The colors of the graph's lanes ([`graph::LaneColors`]): the rows of a page that arrived are
+/// added to the ones kept, all are computed again only when the graph starts again or the refs or
+/// the remotes change.
 fn lane_colors(ui: &Ui, repo: &RepoView) -> std::sync::Arc<graph::LaneColors> {
     type Key = (u64, u64, Vec<String>);
-    let remotes = repo.remotes.names();
-    let key: Key = (repo.list.graph_version(), repo.refs_version, remotes);
+    type Cached = (Key, std::sync::Arc<graph::LaneColors>);
+    let list = &repo.list;
+    let key: Key = (
+        list.graph_version(),
+        repo.refs_version,
+        repo.remotes.names(),
+    );
     let id = ui.make_persistent_id(("lane-colors", &repo.path));
-    if let Some((cached, colors)) =
-        ui.data(|d| d.get_temp::<(Key, std::sync::Arc<graph::LaneColors>)>(id))
-        && cached == key
-    {
-        return colors;
+    // Taken out, so the colors are extended in place: nobody else holds them between frames.
+    let mut colors = ui
+        .data_mut(|d| d.remove_temp::<Cached>(id))
+        .filter(|(cached, _)| *cached == key)
+        .map(|(_, colors)| colors)
+        .unwrap_or_default();
+    if colors.rows() != list.graph().rows.len() {
+        let commits = list.commits();
+        std::sync::Arc::make_mut(&mut colors).extend(
+            list.graph(),
+            |row| commits.get(row).map(|c| c.id),
+            &repo.labels,
+            &key.2,
+        );
     }
-    let ids: Vec<_> = repo.list.commits().iter().map(|c| c.id).collect();
-    let colors = std::sync::Arc::new(graph::lane_colors(
-        repo.list.graph(),
-        &ids,
-        &repo.labels,
-        &key.2,
-    ));
-    ui.data_mut(|d| d.insert_temp(id, (key, colors.clone())));
+    ui.data_mut(|d| d.insert_temp::<Cached>(id, (key, colors.clone())));
     colors
 }
 

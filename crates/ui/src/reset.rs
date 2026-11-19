@@ -319,27 +319,24 @@ fn outcome(r: ResetResult, dialog: &ResetDialog) -> Outcome {
         moving = dialog.moving(),
         id = r.after.short()
     );
+    let mut backups: Vec<&String> = Vec::new();
     if let Some(backup) = &r.backup {
         let stash = r.stash.map(|s| s.short()).unwrap_or_default();
-        notice.push_str(&tr!(
-            "reset-done-backup",
-            n = r.files.len(),
-            backup = backup,
-            stash = stash
-        ));
+        notice.push_str(&tr!("reset-done-backup", n = r.files.len(), stash = stash));
+        backups.push(backup);
     }
     if let Some(backup) = &r.index_backup {
-        notice.push_str(&tr!("reset-done-index-backup", backup = backup));
+        notice.push_str(&tr!("reset-done-index-backup"));
+        backups.push(backup);
     }
     if !r.backups.is_empty() {
-        notice.push_str(&tr!(
-            "reset-done-commit-backups",
-            refs = r.backups.join(", ")
-        ));
+        notice.push_str(&tr!("reset-done-commit-backups"));
+        backups.extend(&r.backups);
     }
     // The warnings (commits already published: the next push needs the lease) stay in the
     // notice: the error line is cleared by the reads that follow (log, refs).
     notice.push_str(&crate::messages_text(&r.warnings));
+    let notice = crate::status::with_backups(notice, &backups);
     let warning = reread_warning(&tr!("reset-done-short"), &[], r.status_error, r.refs_error);
     Outcome {
         notice,

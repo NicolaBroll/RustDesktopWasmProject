@@ -23,12 +23,12 @@ stash-pop-not-dropped-warning = { $name } applied, but not removed from the list
 stash-drop-not-allowed = Dropping { $name } not possible: { $error }
 stash-drop-failed = Dropping { $name } failed: { $error }
 stash-drop-done-what = Stash dropped
-stash-drop-done = { $name } (“{ $title }”) dropped; backup in { $backup }. “Undo” puts it back at the top of the list
+stash-drop-done = { $name } (“{ $title }”) dropped; a backup was saved. “Undo” puts it back at the top of the list
 stash-reread-stashes = the stashes can't be reread: { $error }
 stash-reread-status = the status can't be reread: { $error }
 stash-reread-but = { $what }, but { $problems }
 stash-pop-done = { $name } applied and dropped from the list
-stash-pop-done-backup = { $name } applied and dropped from the list; backup in { $backup }
+stash-pop-done-backup = { $name } applied and dropped from the list; a backup was saved
 stash-pop-not-dropped = { $name } applied, but not removed from the list: don't repeat the pop, remove it with Drop…
 stash-apply-done = { $name } applied; it stays in the list
 stash-apply-conflicts = { $n ->
@@ -55,8 +55,6 @@ stash-drop-button = Drop…
 stash-drop-help = Removes the stash from the list; asks for confirmation first. Its commit stays in a backup (refs/project/backup/stash-…) and “Undo” puts it back at the top of the list
 stash-field-stash = Stash
 stash-field-commit = Commit
-stash-copy = Copy
-stash-copy-help = Copy the full id
 stash-field-created-on = Created on
 stash-branch = (branch { $branch })
 stash-detached = (detached HEAD)
@@ -77,22 +75,35 @@ stash-include-untracked-help = Also stashes new files not yet added (and removes
 stash-keep-index = Keep the index
 stash-keep-index-help = What is staged stays staged (and in the files), but is also saved in the stash; the rest is set aside
 stash-submit = Stash
-stash-close = Close
 stash-sending = Stashing…
 stash-drop-title = Drop { $name }?
 stash-drop-body = The stash “{ $title }” leaves the list: the changes it contains can no longer be applied from here. The repo's files don't change.
 stash-drop-what-happens = What happens:
 stash-drop-undo = With “Undo” in the top bar the stash comes back at the top of the list (stash@{"{"}0{"}"}), as long as the app stays open: the operation log is in memory. After closing, the backup of its commit remains in refs/project/backup/stash-….
 stash-drop-confirm = Drop the stash
-stash-drop-keep = Don't drop
-stash-conflicts-title-pop = Pop of { $name }: conflicts
-stash-conflicts-title-apply = Apply of { $name }: conflicts
-stash-conflicts-body-apply = The stash was applied, but since the commit it was created on the same files have changed: the ones below are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: those files had no local changes and { $name } stays in the list.
-stash-conflicts-body-pop = The stash was applied, but since the commit it was created on the same files have changed: the ones below are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: those files had no local changes and { $name } stays in the list (the pop doesn't drop it).
-stash-conflicts-how = To resolve them: fix each file and stage it from the changes area. Then, if it's no longer needed, drop the stash. While conflicts remain, neither Stash nor Apply is possible.
-stash-conflicts-files = { $n ->
-    [one] Conflicted file:
-   *[other] { $n } conflicted files:
-}
-stash-go-to-changes = Go to changes
-stash-go-to-changes-help = Opens the staging area with the conflicted files
+# The notice in the tab: conflicted files and no operation in progress (U63).
+stash-notice-title = Conflicts from a stash
+stash-notice-title-applied = Conflicts from { $name }, which stays in the list
+stash-notice-help = These files are conflicted and git has no operation in progress: that is what a stash applied with conflicts leaves (also one applied before the app was started, or from the terminal). The stash's other files are applied and the stash is still in the list: nothing is lost.
+stash-notice-help-apply = { $name } was applied, but the same lines have changed since the commit it was created on: these files are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: { $name } stays in the list.
+stash-notice-help-pop = { $name } was applied, but the same lines have changed since the commit it was created on: these files are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: { $name } stays in the list (the pop doesn't drop it).
+stash-notice-how = To resolve the conflicts: click a file, choose in the conflict editor and “Mark as resolved” (or fix the file and stage it from the changes area). Then, if it's no longer needed, drop the stash. While conflicts remain, neither Stash nor Apply is possible.
+# "Stash and retry" (U68): the stash dialog opened from a command refused for local changes.
+# $label: the description of that command (sync-label-…, merge-start-label, branch-checkout-label…);
+# $name: the stash just made (stash@{0}); $reason: stash-retry-dropped-….
+stash-retry-pull = Stash and pull
+stash-retry-merge = Stash and merge
+stash-retry-squash = Stash and squash
+stash-retry-cherry-pick = Stash and cherry-pick
+stash-retry-revert = Stash and revert
+stash-retry-checkout = Stash and check out “{ $name }”
+stash-retry-body = The first button puts the changes into a stash, then runs the refused command again ({ $label }). They are not put back by themselves: bring them back with Apply or Pop from the Stashes section.
+stash-retry-help = Stashes the changes and, only if the stash succeeds, sends the refused command again as it was. The stash stays in the list
+stash-retry-plain-help = Only stashes the changes: the refused command is not sent again
+stash-retry-dropped = Changes stashed in { $name }. Not started again: { $label } ({ $reason }); start it again yourself
+stash-retry-dropped-head = the current branch or its commit is no longer the one it was refused on
+stash-retry-dropped-operation = an operation is in progress
+stash-retry-dropped-unknown = the state of the repository could not be checked
+stash-retry-dropped-busy = another operation or a dialog is in the way
+stash-retry-done = Changes stashed in { $name }. { $notice }
+stash-retry-kept = Did not complete: { $label }. The changes stay in { $name }: bring them back with Apply or Pop from the Stashes section.

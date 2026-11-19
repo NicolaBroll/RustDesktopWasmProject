@@ -1,7 +1,7 @@
 # Commit message and commit.create response (commit.rs), commit menu (view/commits.rs).
 
-commit-blocked-busy = Attendere la fine dell'operazione in corso
-commit-blocked-conflicts = Ci sono file in conflitto: risolverli e metterli in stage prima di committare
+commit-blocked-busy = Attendi la fine dell'operazione in corso
+commit-blocked-conflicts = Ci sono file in conflitto: risolvili e mettili in stage prima di committare
 commit-blocked-merge = Merge in corso: si conclude con «Continua il merge…» nel riquadro in alto (o si annulla con «Annulla il merge…»)
 commit-blocked-rebase = Rebase in corso: si conclude con i comandi del rebase, non con un commit
 commit-blocked-cherry-pick = Cherry-pick in corso: si conclude con i comandi del cherry-pick, non con un commit
@@ -15,8 +15,8 @@ commit-amend-label = Amend dell'ultimo commit
 commit-label = Commit
 commit-unchanged = Nessun cambiamento: l'ultimo commit { $id } è rimasto uguale
 commit-created = Commit { $id } creato
-commit-created-backup = Commit { $id } creato; backup del commit precedente in { $backup }
-commit-amended = Commit { $id } creato al posto di { $previous }; backup del commit precedente in { $backup }
+commit-created-backup = Commit { $id } creato; backup del commit precedente salvato
+commit-amended = Commit { $id } creato al posto di { $previous }; backup del commit precedente salvato
 commit-also-on = ; il commit precedente resta su { $refs }
 commit-git-failed = git commit non riuscito: un hook (pre-commit, commit-msg…), la firma o l'identità (user.name, user.email) hanno fermato il commit. Il messaggio scritto è conservato. Output di git:
 commit-no-output = (nessun output)

@@ -62,15 +62,34 @@ pub(crate) fn title_bar_panel(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec
     panel
         .frame(frame)
         .show(ui, |ui| title_bar(ui, bar, actions));
-    about_dialog(ui.ctx());
-    shortcuts_dialog(ui.ctx());
+}
+
+/// A window of the Help menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Help {
+    /// "Keyboard shortcuts".
+    Shortcuts,
+    /// "About".
+    About,
+}
+
+/// The window of the Help menu that is open, modal: closing it is an action like every other.
+pub(crate) fn help_dialog(ctx: &egui::Context, help: Help, actions: &mut Vec<Action>) {
+    let close = match help {
+        Help::Shortcuts => shortcuts_dialog(ctx),
+        Help::About => about_dialog(ctx),
+    };
+    if close {
+        actions.push(Action::Tabs(tabs::Action::Help(None)));
+    }
 }
 
 fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     let rect = ui.max_rect();
     if bar.frame != WindowFrame::Native {
         // First, so the menus and the buttons drawn afterwards are above it.
-        let drag = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
+        // Not a Tab stop: the keyboard moves the window with the system's own keys.
+        let drag = ui.interact(rect, ui.scope_id().with("drag"), Sense::CLICK | Sense::DRAG);
         if drag.double_clicked() {
             toggle_maximized(ui.ctx());
         } else if drag.drag_started_by(egui::PointerButton::Primary)
@@ -151,13 +170,23 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-file"), |ui| {
         // Room for the shortcut of "Settings…" after the longest item.
         ui.set_min_width(190.0);
+        let open = keys::shortcut_text(ui.ctx(), &keys::Command::OpenRepo.shortcut());
         if bar.can_pick
             && ui
-                .button(tr!("title-bar-open"))
+                .add(egui::Button::new(tr!("title-bar-open")).shortcut_text(open))
                 .on_hover_text(tr!("title-bar-open-hint"))
                 .clicked()
         {
             actions.push(Action::Tabs(tabs::Action::PickFolder));
+        }
+        // Without the system's folder dialog too: the path is typed.
+        if ui
+            .button(tr!("title-bar-open-path"))
+            .on_hover_text(tr!("title-bar-open-path-hint"))
+            .clicked()
+        {
+            actions.push(Action::Tabs(tabs::Action::OpenByPath));
+            ui.close();
         }
         create_buttons(ui, actions);
         recent_menu(ui, bar.recent, actions);
@@ -176,13 +205,15 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
         }
     });
     ui.menu_button(tr!("title-bar-help"), |ui| {
-        if ui.button(tr!("title-bar-shortcuts")).clicked() {
-            ui.ctx().data_mut(|d| d.insert_temp(shortcuts_id(), true));
-            ui.close();
-        }
-        if ui.button(tr!("title-bar-about")).clicked() {
-            ui.ctx().data_mut(|d| d.insert_temp(about_id(), true));
-            ui.close();
+        let items = [
+            (tr!("title-bar-shortcuts"), Help::Shortcuts),
+            (tr!("title-bar-about"), Help::About),
+        ];
+        for (label, help) in items {
+            if ui.button(label).clicked() {
+                actions.push(Action::Tabs(tabs::Action::Help(Some(help))));
+                ui.close();
+            }
         }
     });
 }
@@ -234,15 +265,8 @@ fn app_icon(ui: &mut Ui, png: &'static [u8], size: f32) {
     }
 }
 
-fn about_id() -> egui::Id {
-    egui::Id::unique("title-bar-about")
-}
-
-/// "About": icon, name, version, license and where the project lives.
-fn about_dialog(ctx: &egui::Context) {
-    if !ctx.data(|d| d.get_temp::<bool>(about_id()).unwrap_or(false)) {
-        return;
-    }
+/// "About": icon, name, version, license and where the project lives. True when it is closed.
+fn about_dialog(ctx: &egui::Context) -> bool {
     let modal = egui::Modal::new(egui::Id::unique("about-dialog")).show(ctx, |ui| {
         ui.set_width(300.0);
         let mut close = false;
@@ -267,44 +291,24 @@ fn about_dialog(ctx: &egui::Context) {
         });
         close
     });
-    if modal.inner || modal.should_close() {
-        ctx.data_mut(|d| d.remove_temp::<bool>(about_id()));
-    }
-}
-
-fn shortcuts_id() -> egui::Id {
-    egui::Id::unique("title-bar-shortcuts")
+    modal.inner || modal.should_close()
 }
 
 /// Help → "Keyboard shortcuts": every shortcut of [`SHORTCUTS`], those of one command on one row.
-fn shortcuts_dialog(ctx: &egui::Context) {
-    if !ctx.data(|d| d.get_temp::<bool>(shortcuts_id()).unwrap_or(false)) {
-        return;
-    }
+/// True when it is closed.
+fn shortcuts_dialog(ctx: &egui::Context) -> bool {
     let modal = egui::Modal::new(egui::Id::unique("shortcuts-dialog")).show(ctx, |ui| {
-        ui.set_width(460.0);
+        ui.set_width(520.0);
         ui.heading(tr!("keys-title"));
         ui.add_space(6.0);
-        egui::Grid::new("shortcuts-grid")
-            .num_columns(2)
-            .spacing(vec2(24.0, 6.0))
-            .striped(true)
+        // In a low window (or at a large scale) the list scrolls: the button stays in view.
+        let room = (ctx.content_rect().height() - 150.0).max(120.0);
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            // egui gives a scrolled area in a modal 64 px: the room computed above wins.
+            .min_scrolled_height(room)
             .show(ui, |ui| {
-                let mut shown = Vec::new();
-                for (command, _) in SHORTCUTS {
-                    if shown.contains(&command) {
-                        continue;
-                    }
-                    shown.push(command);
-                    let keys: Vec<String> = SHORTCUTS
-                        .iter()
-                        .filter(|(c, _)| *c == command)
-                        .map(|(_, s)| keys::shortcut_text(ctx, s))
-                        .collect();
-                    ui.label(RichText::new(keys.join(" · ")).monospace());
-                    ui.label(command.label());
-                    ui.end_row();
-                }
+                shortcuts_grid(ui);
             });
         ui.add_space(6.0);
         ui.weak(tr!("keys-list-hint"));
@@ -313,9 +317,38 @@ fn shortcuts_dialog(ctx: &egui::Context) {
             .show(ui, |_| {}, |ui| ui.button(tr!("keys-close")).clicked())
             .1
     });
-    if modal.inner || modal.should_close() {
-        ctx.data_mut(|d| d.remove_temp::<bool>(shortcuts_id()));
-    }
+    modal.inner || modal.should_close()
+}
+
+/// The rows of the shortcuts dialog: the table of [`SHORTCUTS`], then the keys of the lists.
+fn shortcuts_grid(ui: &mut Ui) {
+    egui::Grid::new("shortcuts-grid")
+        .num_columns(2)
+        .spacing(vec2(24.0, 6.0))
+        .striped(true)
+        .show(ui, |ui| {
+            let mut shown = Vec::new();
+            for (command, _) in SHORTCUTS {
+                if shown.contains(&command) {
+                    continue;
+                }
+                shown.push(command);
+                let keys: Vec<String> = SHORTCUTS
+                    .iter()
+                    .filter(|(c, _)| *c == command)
+                    .map(|(_, s)| keys::shortcut_text(ui.ctx(), s))
+                    .collect();
+                ui.label(RichText::new(keys.join(" · ")).monospace());
+                ui.label(command.label());
+                ui.end_row();
+            }
+            // The keys of the lists and of the focus: not shortcuts of a command.
+            for (keys, label) in keys::list_keys() {
+                ui.label(RichText::new(keys).monospace());
+                ui.add(egui::Label::new(label).wrap());
+                ui.end_row();
+            }
+        });
 }
 
 /// Set when the app hands the move or the resize of the window to the system: from then on the
@@ -444,6 +477,7 @@ fn window_button(ui: &mut Ui, kind: WindowButton) -> egui::Response {
             painter.line_segment([center + vec2(-d, d), center + vec2(d, -d)], stroke);
         }
     }
+    theme::focus_ring(ui, &response, rect.shrink(1.0));
     response
 }
 

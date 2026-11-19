@@ -12,7 +12,6 @@ sync-pull-cancelled = { $label } cancelled: the branch was not touched (remote-t
 sync-push-cancelled = { $label } cancelled: if the upload had already finished the remote may have been updated; Fetch to check
 sync-failed-auth = { $label } failed: authentication rejected or required
 sync-failed-unreachable = { $label } failed: remote unreachable
-sync-pull-conflict = { $label } aborted: the { $operation } has conflicts, the repo is as it was
 sync-rejected = { $label } rejected: { $reason }
 sync-not-possible-title = { $label } not possible
 sync-not-possible = { $label } not possible: { $error }
@@ -29,14 +28,14 @@ sync-rejection-short-hook = a pre-push hook stopped it
 sync-rejection-short-other = rejected by git
 sync-pull-stopped = { $what }: merge of { $upstream } stopped before the commit (a hook or signing?): finish it with “Continue merge…” in the top panel, or abort it
 sync-pull-stopped-conflicts = { $what }: merge of { $upstream } stopped: { $n ->
-    [one] 1 conflicted file
-   *[other] { $n } conflicted files
-}. Resolve them and mark them as resolved in the staging area, then “Continue merge…” in the top panel (or “Abort merge…”, which puts the branch back as it was)
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue merge…” in the top panel (or “Abort merge…”, which puts the branch back as it was)
 sync-pull-stopped-rebase = { $what }: rebase onto { $upstream } stopped before a commit (a hook or signing?): finish it with “Continue rebase…” in the top panel, or abort it
 sync-pull-stopped-conflicts-rebase = { $what }: rebase onto { $upstream } stopped: { $n ->
-    [one] 1 conflicted file
-   *[other] { $n } conflicted files
-}. Resolve them and mark them as resolved in the staging area, then “Continue rebase…” in the top panel (or “Abort rebase…”, which puts the branch back as it was)
+    [one] 1 conflicted file. Resolve it and mark it as resolved
+   *[other] { $n } conflicted files. Resolve them and mark them as resolved
+} in the staging area, then “Continue rebase…” in the top panel (or “Abort rebase…”, which puts the branch back as it was)
 sync-pull-up-to-date = { $what }: already up to date with { $upstream }
 sync-pull-up-to-date-ahead = { $what }: already up to date with { $upstream } ({ $n ->
     [one] 1 local commit
@@ -52,8 +51,8 @@ sync-pull-rebase = { $what }: rebase of { $n ->
    *[other] { $n } local commits
 } onto { $upstream } ({ $range })
 sync-pull-merge-default = ; merge because pull.rebase is not configured (git config pull.rebase true to rebase)
-sync-pull-backup-in-progress = ; the branch as it was is in { $backup }
-sync-pull-backup = ; backup in { $backup }, “Undo” reverts it
+sync-pull-backup-in-progress = ; the branch as it was is kept in a backup
+sync-pull-backup = ; a backup was saved, “Undo” reverts it
 sync-pull-status-not-reread = Pull done, but the status could not be reread: { $error }
 sync-pull-refs-not-reread = Pull done, but the refs could not be reread: { $error }
 # $summary: empty or “ (summary)” with the leading space.
@@ -66,24 +65,22 @@ sync-push-forced = Force push of “{ $branch }” to { $target }{ $summary }: {
 sync-push-up-to-date = Push of “{ $branch }”: { $target } is already up to date
 sync-push-to-push-remote = ; to “{ $remote }” (branch.{ $branch }.pushRemote)
 sync-push-to-push-default = ; to “{ $remote }” (remote.pushDefault)
-sync-push-backup = ; the remote as it was is saved in { $backup }
+sync-push-backup = ; the remote as it was is saved in a backup
 sync-push-set-upstream = ; upstream set to { $target }
 sync-push-status-not-reread = Push done, but the status could not be reread: { $error }
 sync-push-refs-not-reread = Push done, but the refs could not be reread: { $error }
 sync-close = Close
-sync-conflict-title = Pull aborted: conflicts
-sync-conflict-explanation = The { $operation } with the upstream stopped on a conflict and was aborted: the repo is as it was before the pull (branch, index and files didn't change). The fetch, however, is done: the remote-tracking branch shows the incoming commits.
-sync-conflict-hint = You can pull again with { $other } (or the same strategy): a pull that stops on a conflict now stays in progress and the files are resolved here, then “Continue…” or “Abort…” in the top panel; or keep working on the branch and integrate later, or resolve from a terminal.
-sync-conflict-no-files = Git didn't list the files.
-sync-conflict-files = { $n ->
-    [one] Conflicted file:
-   *[other] { $n } conflicted files:
-}
-sync-engine-message = Engine message
-sync-pull-with = Pull with { $other }
-sync-pull-with-hint = Retry the pull with { $other } instead of { $operation }, just this once (the configuration doesn't change)
-sync-rejected-title = Push rejected
-sync-rejected-branch = Branch: “{ $branch }”
+# The notice of a rejected push in the tab (U63); $label: sync-label-….
+sync-rejected-notice-title = { $label } rejected
+sync-rejection-notice-non-fast-forward = The remote has commits you don't have: Pull to integrate them, then push again.
+sync-rejection-notice-stale-lease = The remote has moved since the last fetch: Fetch and check the incoming commits before deciding again.
+sync-rejection-notice-remote = The remote rejected the update (a protected branch or a hook on the server): its reason is in the details.
+sync-rejection-notice-hook = A pre-push hook stopped it: its output is in the details.
+sync-rejection-notice-tag-exists = The remote already has this tag on another value: a tag is never overwritten.
+sync-rejection-notice-other = Git rejected it: its message is in the details.
+sync-details-button = Details…
+sync-details-button-hint = What happened in full, git's message and, when the remote has commits you don't have, the force push
+sync-rejected-dismiss-hint = Hides this notice: nothing changes in the repo
 sync-pull-button = Pull
 sync-pull-button-hint = Downloads and integrates the remote's commits, then the push can be retried
 sync-fetch-button = Fetch
@@ -98,7 +95,6 @@ sync-force-confirm-changed = The remote branch has changed since you saw this co
 sync-force-confirm-lost = What is lost on the remote:
 sync-force-confirm-button = Force push
 sync-force-confirm-gone = The remote-tracking branch no longer exists: close, Fetch and try again
-sync-force-confirm-cancel = Don't force
 sync-label-push-tag = Push of tag “{ $tag }” to “{ $remote }”
 sync-push-tag-new = Tag “{ $tag }” published on “{ $remote }” (at { $id })
 sync-push-tag-new-annotated = Annotated tag “{ $tag }” published on “{ $remote }” (at { $id })

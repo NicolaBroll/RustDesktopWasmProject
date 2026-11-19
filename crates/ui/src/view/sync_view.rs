@@ -1,222 +1,218 @@
 use super::*;
+use crate::failure::Source;
 use crate::{fetch, stash, sync};
 
-/// The window of a failed operation: what happened, what to do, git's text, and "Stash…"
-/// for a refusal because of local changes. It does not block the rest of the window;
-/// `dismiss` closes it.
-pub(crate) fn failure_window(
+/// The dialog of a failed or refused operation: what happened, what to do, git's text (with
+/// "Copy message") and "Stash…" for a refusal because of local changes. Modal like the
+/// confirmations: Esc closes it, the keyboard starts on "Stash…" or "Close" (Enter presses
+/// it). `source`: the area the failure comes from, which closes it; "Stash…" hands that area's
+/// refused command to the stash dialog ("Stash and …", U68).
+pub(crate) fn failure_dialog(
     ctx: &egui::Context,
-    id: &str,
     failure: &Failure,
-    dismiss: Action,
+    source: Source,
     actions: &mut Vec<Action>,
 ) {
-    let mut open = true;
-    egui::Window::new(&failure.title)
-        .id(egui::Id::unique(id))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(420.0)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.add(egui::Label::new(&failure.explanation).wrap());
-            git_text(ui, failure.git.as_deref());
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if failure.stash
-                    && ui
-                        .button(tr!("stage-stash-button"))
-                        .on_hover_text(tr!("common-stash-button-help"))
-                        .clicked()
-                {
-                    actions.push(dismiss.clone());
-                    actions.push(Action::Stash(stash::Action::Open));
-                }
-                if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(dismiss.clone());
-                }
+    let dismiss = source.dismiss();
+    let modal = egui::Modal::new(egui::Id::unique("failure")).show(ctx, |ui| {
+        ui.set_max_width(460.0);
+        ui.heading(&failure.title);
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(&failure.explanation).wrap());
+        let git = failure.git.as_deref().filter(|g| !g.trim().is_empty());
+        git_text(ui, git);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            // Enter presses the focused button: the stash when offered, otherwise "Close".
+            let stash = failure.stash.then(|| {
+                ui.button(tr!("stage-stash-button"))
+                    .on_hover_text(tr!("common-stash-button-help"))
             });
+            let close = ui.button(tr!("sync-close"));
+            if ui.memory(|m| m.focused().is_none()) {
+                stash.as_ref().unwrap_or(&close).request_focus();
+            }
+            if stash.is_some_and(|s| s.clicked()) {
+                actions.push(Action::Stash(stash::Action::OpenAfter(source)));
+            }
+            if close.clicked() {
+                actions.push(dismiss.clone());
+            }
+            if let Some(git) = git
+                && ui
+                    .button(tr!("common-copy-message"))
+                    .on_hover_text(tr!("common-copy-message-help"))
+                    .clicked()
+            {
+                ui.ctx().copy_text(format!(
+                    "{}\n{}\n\n{}",
+                    failure.title,
+                    failure.explanation,
+                    git.trim_end()
+                ));
+            }
         });
-    if !open {
+    });
+    if modal.should_close() {
         actions.push(dismiss);
     }
 }
 
-/// The pull and push window: error, conflict, rejection or force confirmation. `writing`:
-/// a write is in progress; `can_write`: no write and no dialog, the buttons that
-/// retry are enabled.
+/// The pull and push dialog: the details of a rejected push or the force confirmation (a
+/// failure is drawn by [`failure_dialog`], one at a time with those of the other areas).
+/// `writing`: a write is in progress.
 pub(crate) fn sync_window(
     ctx: &egui::Context,
     window: &Window,
     writing: bool,
-    can_write: bool,
     actions: &mut Vec<Action>,
 ) {
     match window {
-        Window::Failure(failure) => {
-            failure_window(
-                ctx,
-                "sync-error",
-                failure,
-                Action::Sync(sync::Action::Dismiss),
-                actions,
-            );
-        }
-        Window::Conflict(conflict) => conflict_window(ctx, conflict, can_write, actions),
-        Window::Rejected(rejected) => rejected_window(ctx, rejected, can_write, actions),
+        Window::Failure(_) => {}
+        Window::Details(rejected) => rejected_details(ctx, rejected, writing, actions),
         Window::ConfirmForce(confirm) => confirm_force(ctx, confirm, writing, actions),
     }
 }
 
-/// Maximum height of the conflicted file list; beyond it scrolls.
-pub(super) const CONFLICT_LIST_HEIGHT: f32 = 160.0;
-
-/// Pull stopped on a conflict and already aborted by the engine (today only the rebase: a stopped merge stays
-/// in progress and is resolved from the operation panel).
-pub(super) fn conflict_window(
-    ctx: &egui::Context,
-    conflict: &sync::Conflict,
-    can_write: bool,
-    actions: &mut Vec<Action>,
-) {
-    let mut open = true;
-    let operation = conflict.operation.to_string();
-    egui::Window::new(tr!("sync-conflict-title"))
-        .id(egui::Id::unique("pull-conflict"))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(460.0)
-        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.add(
-                egui::Label::new(tr!("sync-conflict-explanation", operation = &operation)).wrap(),
-            );
-            ui.add_space(4.0);
-            ui.add(
-                egui::Label::new(tr!("sync-conflict-hint", other = conflict.other().name())).wrap(),
-            );
-            ui.add_space(6.0);
-            let n = conflict.files.len();
-            ui.strong(match n {
-                0 => tr!("sync-conflict-no-files"),
-                n => tr!("sync-conflict-files", n = n),
-            });
-            let row = ui.text_style_height(&egui::TextStyle::Monospace);
-            egui::ScrollArea::vertical()
-                .id_salt("conflict-file")
-                .max_height(CONFLICT_LIST_HEIGHT)
-                .auto_shrink([false, true])
-                .show_rows(ui, row, n, |ui, range| {
-                    for path in &conflict.files[range] {
-                        ui.monospace(path);
-                    }
-                });
-            ui.add_space(6.0);
-            ui.collapsing(tr!("sync-engine-message"), |ui| {
-                ui.add(egui::Label::new(RichText::new(&conflict.message).monospace()).wrap());
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let other = conflict.other();
-                let button = ui
-                    .add_enabled(
-                        can_write,
-                        egui::Button::new(tr!("sync-pull-with", other = other.name())),
-                    )
-                    .on_hover_text(tr!(
-                        "sync-pull-with-hint",
-                        other = other.name(),
-                        operation = &operation
-                    ))
-                    .on_disabled_hover_text(wait());
-                if button.clicked() {
-                    actions.push(Action::Sync(sync::Action::Pull(
-                        conflict.branch.clone(),
-                        Some(other),
-                    )));
-                }
-                if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(Action::Sync(sync::Action::Dismiss));
-                }
-            });
-        });
-    if !open {
-        actions.push(Action::Sync(sync::Action::Dismiss));
-    }
-}
-
-/// Push rejected: what happened and what to do. Not fast-forward: "Pull" and, as a second
-/// choice, "Force (with lease)..."; stale lease: "Fetch".
-pub(super) fn rejected_window(
-    ctx: &egui::Context,
+/// The notice of a rejected push, under the bar like the panel of the operation in progress:
+/// what was rejected and what to do (wrapped, never cut), "Pull" for a non-fast-forward or
+/// "Fetch" for a stale lease, "Details…" (git's text, the force) and "×". It blocks nothing.
+/// `can_write`: no write and no dialog, "Pull" and "Fetch" are enabled.
+pub(crate) fn rejected_notice(
+    ui: &mut Ui,
     rejected: &sync::Rejected,
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
-    let mut open = true;
-    egui::Window::new(tr!("sync-rejected-title"))
-        .id(egui::Id::unique("push-rejected"))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(440.0)
-        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            if let Some(branch) = &rejected.branch {
-                ui.strong(tr!("sync-rejected-branch", branch = branch));
-                ui.add_space(4.0);
-            }
-            ui.add(egui::Label::new(&rejected.explanation).wrap());
-            git_text(ui, rejected.git.as_deref());
-            ui.add_space(10.0);
+    let warn = ui.visuals().warn_fg_color;
+    egui::Frame::new()
+        .fill(warn.gamma_multiply(0.12))
+        .stroke(egui::Stroke::new(1.0, warn.gamma_multiply(0.6)))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .outer_margin(egui::Margin::symmetric(0, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                if rejected.non_fast_forward() {
-                    let pull = ui
-                        .add_enabled(can_write, egui::Button::new(tr!("sync-pull-button")))
-                        .on_hover_text(tr!("sync-pull-button-hint"))
-                        .on_disabled_hover_text(wait());
-                    if pull.clicked() {
-                        actions.push(Action::Sync(sync::Action::Pull(
-                            rejected.branch.clone(),
-                            None,
-                        )));
-                    }
-                }
-                if rejected.stale() {
-                    let fetch = ui
-                        .add_enabled(can_write, egui::Button::new(tr!("sync-fetch-button")))
-                        .on_hover_text(tr!("sync-fetch-button-hint"))
-                        .on_disabled_hover_text(wait());
-                    if fetch.clicked() {
-                        actions.push(Action::Sync(sync::Action::Dismiss));
-                        actions.push(Action::Fetch(fetch::Action::Fetch(None)));
-                    }
-                }
-                if ui.button(tr!("sync-close")).clicked() {
-                    actions.push(Action::Sync(sync::Action::Dismiss));
-                }
-                if rejected.non_fast_forward() {
-                    ui.separator();
-                    let force = ui
-                        .add_enabled(
-                            can_write,
-                            egui::Button::new(
-                                RichText::new(tr!("sync-force-button"))
-                                    .color(ui.visuals().error_fg_color),
-                            )
-                            .frame(false),
-                        )
-                        .on_hover_text(tr!("sync-force-button-hint"))
-                        .on_disabled_hover_text(wait());
-                    if force.clicked() {
-                        actions.push(Action::Sync(sync::Action::ForcePush));
-                    }
-                }
+                // The buttons first, from the right: the text wraps in what is left.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    rejected_buttons(ui, rejected, can_write, actions);
+                    let wrapped =
+                        egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+                    ui.with_layout(wrapped, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(&rejected.title).strong().color(warn));
+                        ui.label(&rejected.summary);
+                    });
+                });
             });
         });
-    if !open {
+}
+
+/// The buttons of the notice, from the right: "×", "Details…" and what brings the branch up
+/// to date.
+fn rejected_buttons(
+    ui: &mut Ui,
+    rejected: &sync::Rejected,
+    can_write: bool,
+    actions: &mut Vec<Action>,
+) {
+    if ui
+        .button("×")
+        .on_hover_text(tr!("sync-rejected-dismiss-hint"))
+        .clicked()
+    {
+        actions.push(Action::Sync(sync::Action::DismissRejected));
+    }
+    if ui
+        .button(tr!("sync-details-button"))
+        .on_hover_text(tr!("sync-details-button-hint"))
+        .clicked()
+    {
+        actions.push(Action::Sync(sync::Action::RejectedDetails));
+    }
+    if rejected.non_fast_forward() && rejected.branch.is_some() {
+        let pull = ui
+            .add_enabled(can_write, egui::Button::new(tr!("sync-pull-button")))
+            .on_hover_text(tr!("sync-pull-button-hint"))
+            .on_disabled_hover_text(wait());
+        if pull.clicked() {
+            actions.push(Action::Sync(sync::Action::Pull(
+                rejected.branch.clone(),
+                None,
+            )));
+        }
+    }
+    if rejected.stale() {
+        let fetch = ui
+            .add_enabled(can_write, egui::Button::new(tr!("sync-fetch-button")))
+            .on_hover_text(tr!("sync-fetch-button-hint"))
+            .on_disabled_hover_text(wait());
+        if fetch.clicked() {
+            actions.push(Action::Sync(sync::Action::DismissRejected));
+            actions.push(Action::Fetch(fetch::Action::Fetch(None)));
+        }
+    }
+}
+
+/// "Details…" of a rejected push: the explanation in full, git's text (scrolls, never cut)
+/// with "Copy message" and, for a non-fast-forward, "Force (with lease)…", which leads to
+/// [`confirm_force`]. Modal: Esc closes it, the keyboard starts on "Close".
+fn rejected_details(
+    ctx: &egui::Context,
+    rejected: &sync::Rejected,
+    writing: bool,
+    actions: &mut Vec<Action>,
+) {
+    let modal = egui::Modal::new(egui::Id::unique("push-rejected")).show(ctx, |ui| {
+        ui.set_max_width(480.0);
+        ui.heading(&rejected.title);
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(&rejected.explanation).wrap());
+        let git = rejected.git.as_deref().filter(|g| !g.trim().is_empty());
+        git_text(ui, git);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let close = ui.button(tr!("sync-close"));
+            if ui.memory(|m| m.focused().is_none()) {
+                close.request_focus();
+            }
+            if close.clicked() {
+                actions.push(Action::Sync(sync::Action::Dismiss));
+            }
+            if let Some(git) = git
+                && ui
+                    .button(tr!("common-copy-message"))
+                    .on_hover_text(tr!("common-copy-message-help"))
+                    .clicked()
+            {
+                ui.ctx().copy_text(format!(
+                    "{}\n{}\n\n{}",
+                    rejected.title,
+                    rejected.explanation,
+                    git.trim_end()
+                ));
+            }
+            if rejected.can_force() {
+                ui.separator();
+                let force = ui
+                    .add_enabled(
+                        !writing,
+                        egui::Button::new(
+                            RichText::new(tr!("sync-force-button"))
+                                .color(ui.visuals().error_fg_color),
+                        )
+                        .frame(false),
+                    )
+                    .on_hover_text(tr!("sync-force-button-hint"))
+                    .on_disabled_hover_text(wait());
+                if force.clicked() {
+                    actions.push(Action::Sync(sync::Action::ForcePush));
+                }
+            }
+        });
+    });
+    if modal.should_close() {
         actions.push(Action::Sync(sync::Action::Dismiss));
     }
 }
@@ -262,11 +258,7 @@ pub(super) fn confirm_force(
             });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let button = egui::Button::new(
-                RichText::new(tr!("sync-force-confirm-button"))
-                    .color(ui.visuals().strong_text_color()),
-            )
-            .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, tr!("sync-force-confirm-button"));
             let response = ui
                 .add_enabled(!writing && confirm.can_confirm(), button)
                 .on_disabled_hover_text(if confirm.can_confirm() {
@@ -277,7 +269,7 @@ pub(super) fn confirm_force(
             if response.clicked() {
                 actions.push(Action::Sync(sync::Action::ConfirmForcePush));
             }
-            if ui.button(tr!("sync-force-confirm-cancel")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 actions.push(Action::Sync(sync::Action::Dismiss));
             }
         });

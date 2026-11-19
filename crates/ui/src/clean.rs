@@ -219,15 +219,11 @@ impl CleanBox {
 /// deleted.
 pub fn notice(result: &CleanResult) -> String {
     let mut text = match result.deleted.as_slice() {
-        [one] => tr!(
-            "clean-done-one",
-            path = one.to_string_lossy().into_owned(),
-            backup = &result.backup
-        ),
-        many => tr!("clean-done-many", n = many.len(), backup = &result.backup),
+        [one] => tr!("clean-done-one", path = one.to_string_lossy().into_owned()),
+        many => tr!("clean-done-many", n = many.len()),
     };
     text.push_str(&crate::messages_text(&result.warnings));
-    text
+    crate::status::with_backups(text, &[&result.backup])
 }
 
 impl Tab {
@@ -304,7 +300,7 @@ impl Tab {
                         self.submit("repo.status", json!({}), Request::Status(generation));
                     }
                 }
-                self.notice = notice;
+                self.notice.set(notice);
             }
             Received::Failed { message, reload } => {
                 log::warn!("{}: {message}", done.command);

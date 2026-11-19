@@ -4,7 +4,7 @@ confirm-resolve-title = { $n ->
     [one] Segnare il conflitto come risolto?
    *[other] Segnare i conflitti come risolti?
 }
-confirm-resolve-body = Mettere in stage un file in conflitto lo segna come risolto: nell'indice va il contenuto attuale del file nel worktree, così com'è, compresi eventuali marcatori di conflitto (<<<<<<<, =======, >>>>>>>) rimasti. Le versioni del conflitto (base, nostra e loro) escono dall'indice. Controllare prima che il file sia davvero risolto.
+confirm-resolve-body = Mettere in stage un file in conflitto lo segna come risolto: nell'indice va il contenuto attuale del file nel worktree, così com'è, compresi eventuali marcatori di conflitto (<<<<<<<, =======, >>>>>>>) rimasti. Le versioni del conflitto (base, nostra e loro) escono dall'indice. Controlla prima che il file sia davvero risolto.
 confirm-resolve-files = { $n ->
     [one] File in conflitto:
    *[other] { $n } file in conflitto:
@@ -18,7 +18,6 @@ confirm-resolve-button = { $n ->
     [one] Segna come risolto
    *[other] Segna come risolti
 }
-confirm-cancel = Annulla
 confirm-discard-title = Scartare le modifiche?
 confirm-discard-body = Le modifiche non in stage vengono tolte: ogni file torna alla versione in stage, o all'ultimo commit se non ha niente in stage. Le modifiche in stage e i file non tracciati non vengono toccati.
 confirm-discard-backup = «Annulla» nella barra in alto rimette i file come sono adesso, finché non vengono modificati di nuovo.
@@ -32,7 +31,6 @@ confirm-discard-button = { $n ->
     [one] Scarta le modifiche
    *[other] Scarta le modifiche di tutti
 }
-confirm-discard-keep = Non scartare
 confirm-discard-lines-title = Scartare { $n ->
     [one] 1 riga modificata
    *[other] { $n } righe modificate

@@ -719,6 +719,10 @@ impl MemoryBackend {
 }
 
 impl GitRead for MemoryBackend {
+    fn reader(&self) -> Box<dyn GitBackend> {
+        Box::new(self.clone())
+    }
+
     fn head(&self) -> Result<Head, EngineError> {
         Ok(match &self.head {
             HeadRef::Branch(name) => Head::Branch {

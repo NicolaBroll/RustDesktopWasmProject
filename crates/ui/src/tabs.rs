@@ -11,11 +11,11 @@ use crate::keys::{self, Command};
 use crate::settings::{self, Change, Scale, Settings, SettingsBox};
 use crate::{Tab, view};
 use project_domain::RepoPath;
-use project_engine::{Platform, Registry, RepoOpener, Session};
+use project_engine::{NoDialog, Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +26,13 @@ pub(crate) enum Action {
     PickFolder,
     /// Opens the repo in a tab: a new one, the empty one shown, or the one where it is already open.
     Open(String),
+    /// The "Open repository" dialog with the path to type, in place of the system's folder
+    /// dialog.
+    OpenByPath,
+    /// The path typed in that dialog.
+    PathText(String),
+    /// Closes that dialog.
+    ClosePath,
     /// Shows the tab at that index.
     SwitchTab(usize),
     /// Closes the tab at that index (not while it is writing).
@@ -48,6 +55,8 @@ pub(crate) enum Action {
     ShowWorktreeFolder(String),
     /// "Browse…" of the "New worktree" dialog of the tab shown: the folder goes in its field.
     PickWorktreeFolder,
+    /// Opens that window of the Help menu, or closes the one open.
+    Help(Option<view::Help>),
 }
 
 /// Key of the state in the eframe storage.
@@ -58,6 +67,9 @@ const MAX_RECENT: usize = 10;
 
 /// Seconds between two checks of which recent folders still exist.
 const CHECK_EVERY: f64 = 1.0;
+
+/// Seconds within which a second click makes a double click: the default of Windows.
+const DOUBLE_CLICK_DELAY: f64 = 0.5;
 
 /// What survives between one launch and the next.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -77,8 +89,11 @@ pub struct App {
     active: usize,
     /// Repos opened successfully, most recent first.
     recent: Vec<String>,
-    /// The recent repos whose folder no longer exists, as of `checked_at`.
+    /// The recent repos whose folder no longer exists, as of the last check that answered.
     missing: HashSet<String>,
+    /// The check of the recent folders in progress and its answer: it touches the disk (a folder
+    /// on a network drive that does not answer would freeze the window), so it runs as a job.
+    missing_check: MissingCheck,
     /// When `missing` was computed (egui time, seconds); `None`: to compute again.
     checked_at: Option<f64>,
     /// The id of the next tab created (see `Tab::id`).
@@ -88,7 +103,10 @@ pub struct App {
     wake: Wake,
     /// Folder chosen in the dialog, and what for: it arrives from a callback, on desktop from
     /// another thread when the dialog closes.
-    picked: Arc<Mutex<Option<(Pick, String)>>>,
+    picked: Arc<Mutex<Option<Picked>>>,
+    /// The "Open repository" dialog with the path to type: open from the File menu, or on its
+    /// own when the system's folder dialog cannot be shown.
+    path_dialog: Option<PathDialog>,
     /// A folder dialog is open: a second "Open…" does nothing until it closes.
     picking: Arc<AtomicBool>,
     /// The state last written to the storage: written again only when it changes.
@@ -112,6 +130,39 @@ pub struct App {
     settings_box: SettingsBox,
     /// The questions of git and ssh for the user (S52), one modal at a time.
     credentials: CredentialBox,
+    /// The window of the Help menu that is open.
+    help: Option<view::Help>,
+}
+
+/// What a folder dialog was for and how it ended: the folder, or the dialog that could not be
+/// shown (one closed without a choice leaves nothing).
+type Picked = (Pick, Result<String, NoDialog>);
+
+/// The in-app "Open repository" dialog: the path of the folder is typed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PathDialog {
+    pub path: String,
+    /// Why it opened on its own (the system's dialog did not), to show in it.
+    pub note: Option<String>,
+}
+
+impl PathDialog {
+    /// The path to open: what was typed without the spaces around it, if anything is left.
+    pub fn target(&self) -> Option<&str> {
+        Some(self.path.trim()).filter(|p| !p.is_empty())
+    }
+}
+
+/// What to tell the user when the system's folder dialog could not be shown.
+fn no_dialog_text(no_dialog: &NoDialog) -> String {
+    if no_dialog.needs.is_empty() {
+        tr!("tabs-folder-dialog-failed")
+    } else {
+        tr!(
+            "tabs-folder-dialog-failed-needs",
+            needs = no_dialog.needs.join(", ")
+        )
+    }
 }
 
 /// What the folder chosen in the dialog is for.
@@ -137,6 +188,10 @@ impl App {
     ) -> Self {
         crate::icons::install(&cc.egui_ctx);
         crate::theme::install_text_styles(&cc.egui_ctx);
+        // egui's 0.3 s is shorter than what the systems allow (500 ms by default on Windows):
+        // a calm double click was read as two clicks.
+        cc.egui_ctx
+            .options_mut(|o| o.input_options.max_double_click_delay = DOUBLE_CLICK_DELAY);
         let ctx = cc.egui_ctx.clone();
         let wake: Wake = Arc::new(move || ctx.request_repaint());
         let saved = cc
@@ -188,12 +243,14 @@ impl App {
             active: 0,
             recent: saved.recent.clone(),
             missing: HashSet::new(),
+            missing_check: MissingCheck::default(),
             checked_at: None,
             next_id: 0,
             platform,
             opener,
             wake,
             picked: Arc::default(),
+            path_dialog: None,
             picking: Arc::default(),
             saved: saved.clone(),
             focused: None,
@@ -204,6 +261,7 @@ impl App {
             settings_saved: Some(Settings::default()),
             settings_box: SettingsBox::default(),
             credentials: CredentialBox::default(),
+            help: None,
         };
         for path in &saved.tabs {
             let mut tab = app.new_tab();
@@ -288,9 +346,10 @@ impl App {
     fn receive(&mut self) {
         let folder = self.picked.lock().unwrap_or_else(|e| e.into_inner()).take();
         match folder {
-            Some((Pick::Open, folder)) => self.open(folder),
-            Some((Pick::Destination, folder)) => self.clone.set_folder(&folder),
-            Some((Pick::Worktree(id), folder)) => {
+            Some((what, Err(no_dialog))) => self.no_folder_dialog(what, &no_dialog),
+            Some((Pick::Open, Ok(folder))) => self.open(folder),
+            Some((Pick::Destination, Ok(folder))) => self.clone.set_folder(&folder),
+            Some((Pick::Worktree(id), Ok(folder))) => {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
                     tab.worktree_folder(&folder);
                 }
@@ -364,6 +423,19 @@ impl App {
         }
     }
 
+    /// The system's folder dialog could not be shown: the status bar says so and what it needs
+    /// (it used to do nothing at all). "Open…" goes on with the dialog where the path is typed;
+    /// the "Browse…" of a dialog has its own field for that.
+    fn no_folder_dialog(&mut self, what: Pick, no_dialog: &NoDialog) {
+        let text = no_dialog_text(no_dialog);
+        log::error!("{text}");
+        if what == Pick::Open {
+            let dialog = self.path_dialog.get_or_insert_with(PathDialog::default);
+            dialog.note = Some(text.clone());
+        }
+        self.tabs[self.active].error = text;
+    }
+
     /// The folder dialog, one at a time: the choice arrives in `picked` with `what`.
     fn pick_folder(&mut self, ctx: &egui::Context, what: Pick) {
         if self.picking.swap(true, Ordering::AcqRel) {
@@ -375,7 +447,8 @@ impl App {
         let picking = Picking(Arc::clone(&self.picking));
         let ctx = ctx.clone();
         self.platform.pick_folder(Box::new(move |folder| {
-            if let Some(folder) = folder {
+            // A dialog closed without a choice leaves nothing.
+            if let Some(folder) = folder.transpose() {
                 *picked.lock().unwrap_or_else(|e| e.into_inner()) = Some((what, folder));
             }
             drop(picking);
@@ -400,7 +473,19 @@ impl App {
     fn apply_tabs(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::PickFolder => self.pick_folder(ctx, Pick::Open),
-            Action::Open(path) => self.open(path),
+            Action::Open(path) => {
+                self.path_dialog = None;
+                self.open(path);
+            }
+            Action::OpenByPath => {
+                self.path_dialog.get_or_insert_with(PathDialog::default);
+            }
+            Action::PathText(path) => {
+                if let Some(dialog) = &mut self.path_dialog {
+                    dialog.path = path;
+                }
+            }
+            Action::ClosePath => self.path_dialog = None,
             Action::SwitchTab(index) => {
                 if index < self.tabs.len() {
                     self.active = index;
@@ -450,6 +535,7 @@ impl App {
                 let id = self.tabs[self.active].id;
                 self.pick_folder(ctx, Pick::Worktree(id));
             }
+            Action::Help(help) => self.help = help,
             Action::OpenSubmodule(path) => {
                 let tab = &mut self.tabs[self.active];
                 let Some(root) = tab.repo_path().map(Path::new) else {
@@ -493,7 +579,10 @@ impl App {
 
     fn apply_clone(&mut self, ctx: &egui::Context, action: clone::Action) {
         match action {
-            clone::Action::Open(kind) => self.clone.open(kind),
+            clone::Action::Open(kind) => {
+                let base = clone_base(&self.recent, self.platform.home_folder());
+                self.clone.open(kind, base);
+            }
             clone::Action::Fields(fields) => self.clone.set_fields(fields),
             clone::Action::Browse => self.pick_folder(ctx, Pick::Destination),
             clone::Action::Submit => {
@@ -578,17 +667,32 @@ impl App {
         }
     }
 
-    /// Recomputes which recent folders are missing, at most every [`CHECK_EVERY`] seconds: not
-    /// on every frame, each check touches the disk.
+    /// Asks again which recent folders are missing, at most every [`CHECK_EVERY`] seconds and
+    /// one check at a time: each one touches the disk, so it runs as a job and its answer is
+    /// collected here on a later frame (at once, where the platform runs jobs inside `spawn`).
     fn check_missing(&mut self, now: f64) {
-        if self
+        let due = self
             .checked_at
-            .is_some_and(|t| now - t < CHECK_EVERY && now >= t)
-        {
-            return;
+            .is_none_or(|t| now - t >= CHECK_EVERY || now < t);
+        if due && !self.missing_check.running.swap(true, Ordering::AcqRel) {
+            self.checked_at = Some(now);
+            let recent = self.recent.clone();
+            let found = Arc::clone(&self.missing_check.found);
+            // Cleared when the job ends or is dropped: a check that never ran does not stop the
+            // next ones.
+            let checking = Checking(Arc::clone(&self.missing_check.running));
+            let wake = Arc::clone(&self.wake);
+            self.platform.spawn(Box::new(move || {
+                let answer = missing(&recent, |p| Path::new(p).is_dir());
+                *found.lock().unwrap_or_else(|e| e.into_inner()) = Some(answer);
+                drop(checking);
+                wake();
+            }));
         }
-        self.checked_at = Some(now);
-        self.missing = missing(&self.recent, |p| Path::new(p).is_dir());
+        let found = &self.missing_check.found;
+        if let Some(found) = found.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            self.missing = found;
+        }
     }
 
     /// The recent list for the menus, with the missing folders marked.
@@ -633,8 +737,9 @@ impl App {
         let popup = egui::Popup::is_any_open(ctx);
         let modal = self.clone.dialog().is_some()
             || self.settings_box.open
+            || self.help.is_some()
+            || self.path_dialog.is_some()
             || self.credentials.open().is_some()
-            || ctx.memory(|m| m.top_modal_layer().is_some())
             || self.tabs[self.active]
                 .repo
                 .as_ref()
@@ -642,7 +747,7 @@ impl App {
         let commands = if popup || modal {
             Vec::new()
         } else {
-            keys::take(ctx, ctx.egui_wants_keyboard_input())
+            keys::take(ctx, keys::typing(ctx))
         };
         keys::Pressed { commands, popup }
     }
@@ -655,6 +760,14 @@ impl App {
             .iter()
             .filter_map(|command| match command {
                 Command::Settings => Some(crate::Action::Settings(settings::Action::Open)),
+                // As File → "Open repository…", which is not there without a folder dialog.
+                Command::OpenRepo => self
+                    .platform
+                    .capabilities()
+                    .open_folder
+                    .then_some(crate::Action::Tabs(Action::PickFolder)),
+                // As the "×" of the tab shown (which does not close while it writes).
+                Command::CloseTab => Some(crate::Action::Tabs(Action::CloseTab(self.active))),
                 Command::NextTab => Some(crate::Action::Tabs(Action::SwitchTab(
                     (self.active + 1) % len,
                 ))),
@@ -735,6 +848,16 @@ impl eframe::App for App {
                 .zip(self.cloning.as_ref())
                 .and_then(|(running, tab)| tab.executor.progress(running.ticket));
             view::clone_dialog(&ctx, dialog, progress.as_ref(), can_pick, &mut actions);
+        } else if let Some(help) = self.help {
+            // Modal as the other two.
+            actions.clear();
+            strip.clear();
+            view::help_dialog(&ctx, help, &mut actions);
+        } else if let Some(dialog) = &self.path_dialog {
+            // Modal as the others.
+            actions.clear();
+            strip.clear();
+            view::open_path_dialog(&ctx, dialog, &mut actions);
         }
         if let Some(prompt) = self.credentials.open_mut() {
             // Over everything, the tab's dialogs and clone included: what happened under it is
@@ -768,6 +891,17 @@ fn forget_field(ctx: &egui::Context) {
     ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(view::credential_field_id()));
 }
 
+/// The folder a new clone is proposed to go into: the one that holds the last repo opened or
+/// cloned (`recent`, most recent first), so the clones stay together; without one, `home`.
+fn clone_base(recent: &[String], home: Option<PathBuf>) -> Option<String> {
+    let beside = recent
+        .first()
+        .and_then(|repo| Path::new(repo).parent())
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf);
+    Some(beside.or(home)?.to_string_lossy().into_owned())
+}
+
 /// `path` at the top of the recent list, without duplicates and at most [`MAX_RECENT`].
 fn remember(recent: &mut Vec<String>, path: &str) {
     recent.retain(|p| p != path);
@@ -797,7 +931,7 @@ fn after_close(active: usize, closed: usize, len: usize) -> usize {
 
 /// The absolute path of `file` of the worktree at `root`; a non-UTF-8 path (the menus turn it
 /// off) is an error.
-fn absolute_file(root: &Path, file: &RepoPath) -> std::io::Result<std::path::PathBuf> {
+fn absolute_file(root: &Path, file: &RepoPath) -> std::io::Result<PathBuf> {
     let Some(relative) = file.to_str() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -816,11 +950,33 @@ impl Drop for Picking {
     }
 }
 
+/// The check of the recent folders (see [`App::check_missing`]).
+#[derive(Default)]
+struct MissingCheck {
+    /// A check is running: the next one waits for it.
+    running: Arc<AtomicBool>,
+    /// The answer of the last check, until the UI takes it.
+    found: Arc<Mutex<Option<HashSet<String>>>>,
+}
+
+/// Marks the check of the recent folders finished when dropped.
+struct Checking(Arc<AtomicBool>);
+
+impl Drop for Checking {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Another tab with the same repo as tab `index`.
 fn twin(paths: &[Option<&str>], index: usize) -> Option<usize> {
     let path = paths.get(index).copied().flatten()?;
     (0..paths.len()).find(|&other| other != index && paths[other] == Some(path))
 }
+
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod view_tests;
 
 #[cfg(test)]
 mod tests {
@@ -835,15 +991,15 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::default()
         }
-        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-            on_done(None);
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(Ok(None));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();
         }
     }
 
-    type OnPicked = Box<dyn FnOnce(Option<String>) + Send>;
+    use project_engine::OnPicked;
 
     /// Keeps the dialog "open": the callbacks wait in `pending` until the test calls them.
     #[derive(Default)]
@@ -884,12 +1040,137 @@ mod tests {
         let first = platform.pending.lock().unwrap().pop().unwrap();
         assert!(platform.pending.lock().unwrap().is_empty());
         // Cancelled: the next click opens a dialog again.
-        first(None);
+        first(Ok(None));
         app.apply(&ctx, crate::Action::Tabs(Action::PickFolder));
         let second = platform.pending.lock().unwrap().pop().unwrap();
-        second(Some("a".to_owned()));
+        second(Ok(Some("a".to_owned())));
         app.receive();
         assert_eq!(paths(&app), [Some("a")]);
+    }
+
+    /// U66: a system dialog that cannot be shown used to look like one closed by the user.
+    #[test]
+    fn a_folder_dialog_that_cannot_open_says_so_and_asks_for_the_path() {
+        let platform = Arc::new(Deferred::default());
+        let mut opener = MemoryOpener::new();
+        opener.insert("a", MemoryBackend::sample());
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            None,
+        );
+        let ctx = egui::Context::default();
+        let pick = |app: &mut App, action: crate::Action, answer: project_engine::Picked| {
+            app.apply(&ctx, action);
+            let on_done = platform.pending.lock().unwrap().pop().unwrap();
+            on_done(answer);
+            app.receive();
+        };
+        let open = || crate::Action::Tabs(Action::PickFolder);
+        // Closed by the user: nothing to say.
+        pick(&mut app, open(), Ok(None));
+        assert_eq!(app.path_dialog, None);
+        assert_eq!(app.tabs[0].error, "");
+        // Not shown: the status bar says what is missing, and the path can be typed.
+        let needs = vec!["xdg-desktop-portal".to_owned(), "zenity".to_owned()];
+        pick(&mut app, open(), Err(NoDialog { needs }));
+        let error = app.tabs[0].error.clone();
+        assert_eq!(
+            error,
+            "The system's folder dialog did not open: it needs one of xdg-desktop-portal, \
+             zenity. Type the path of the folder instead."
+        );
+        let dialog = app.path_dialog.as_ref().expect("the path dialog");
+        assert_eq!(dialog.note.as_deref(), Some(error.as_str()));
+        assert_eq!(dialog.target(), None);
+        app.apply(
+            &ctx,
+            crate::Action::Tabs(Action::PathText("  a ".to_owned())),
+        );
+        let target = app.path_dialog.as_ref().and_then(PathDialog::target);
+        assert_eq!(target, Some("a"));
+        app.apply(&ctx, crate::Action::Tabs(Action::Open("a".to_owned())));
+        // The repo opens and reads itself: every answer in.
+        for _ in 0..4 {
+            app.receive();
+        }
+        assert_eq!(app.path_dialog, None);
+        assert_eq!(paths(&app), [Some("a")]);
+        // "Browse…" of a dialog has its own field: only the message.
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Open(Kind::Clone)));
+        let browse = crate::Action::Clone(clone::Action::Browse);
+        pick(&mut app, browse, Err(NoDialog::default()));
+        assert_eq!(app.path_dialog, None);
+        assert_eq!(
+            app.tabs[app.active].error,
+            "The system's folder dialog did not open. Type the path of the folder instead."
+        );
+        // From the File menu the dialog opens without a note, and "Cancel" closes it.
+        app.apply(&ctx, crate::Action::Clone(clone::Action::Close));
+        app.apply(&ctx, crate::Action::Tabs(Action::OpenByPath));
+        assert_eq!(app.path_dialog, Some(PathDialog::default()));
+        app.apply(&ctx, crate::Action::Tabs(Action::ClosePath));
+        assert_eq!(app.path_dialog, None);
+    }
+
+    /// Keeps the jobs until the test runs or drops them.
+    #[derive(Default)]
+    struct Held {
+        jobs: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    }
+
+    impl Platform for Held {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(Ok(None));
+        }
+        fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+            self.jobs.lock().unwrap().push(job);
+        }
+    }
+
+    #[test]
+    fn the_recent_folders_are_checked_off_the_ui_thread_one_check_at_a_time() {
+        let platform = Arc::new(Held::default());
+        let saved = Saved {
+            recent: vec!["/no/such/folder".to_owned()],
+            ..Saved::default()
+        };
+        let mut app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(MemoryOpener::new()),
+            Arc::new(|| {}),
+            saved,
+            None,
+        );
+        let held = |platform: &Held| platform.jobs.lock().unwrap().len();
+        // The check waits in its job: the frame goes on without an answer.
+        app.check_missing(10.0);
+        assert_eq!(held(&platform), 1);
+        assert!(app.missing.is_empty());
+        // A folder that does not answer: no second check piles up behind the first.
+        app.check_missing(20.0);
+        assert_eq!(held(&platform), 1);
+        let job = platform.jobs.lock().unwrap().pop().unwrap();
+        job();
+        // The answer is taken on the next frame; the check was due long ago, so it starts again.
+        app.check_missing(20.1);
+        assert!(app.missing.contains("/no/such/folder"));
+        assert_eq!(held(&platform), 1);
+        let job = platform.jobs.lock().unwrap().pop().unwrap();
+        job();
+        app.check_missing(20.5);
+        assert_eq!(held(&platform), 0, "checked less than a second ago");
+        // A job the platform drops without running does not stop the next checks.
+        app.check_missing(30.0);
+        assert_eq!(held(&platform), 1);
+        platform.jobs.lock().unwrap().clear();
+        app.check_missing(40.0);
+        assert_eq!(held(&platform), 1);
     }
 
     /// An app with repos `a` and `b`, restored from `saved`, after the answers arrived.
@@ -910,6 +1191,70 @@ mod tests {
 
     fn paths(app: &App) -> Vec<Option<&str>> {
         app.tabs.iter().map(|t| t.path()).collect()
+    }
+
+    /// U67: a repo with uncommitted changes opens on them, a clean one on HEAD's commit; only
+    /// the first status of the tab chooses, a refresh leaves the selection where it is.
+    #[test]
+    fn the_first_selection_is_the_changes_when_there_are_some() {
+        let selection = |app: &App| {
+            let repo = app.tabs[app.active].repo.as_ref().expect("open repo");
+            let commit = repo.list.selected_commit().map(|c| c.id);
+            (repo.worktree_selected, commit)
+        };
+        let ctx = egui::Context::default();
+        let head = project_engine::GitRead::head(&MemoryBackend::sample())
+            .unwrap()
+            .target();
+        let mut app = app(Saved::default(), Some("a"));
+        // The repo is open: now the answers of what it asked on opening.
+        app.receive();
+        assert_eq!(
+            selection(&app),
+            (true, head),
+            "the changes, HEAD under them"
+        );
+        // A commit chosen by hand, then a refresh and a new status: it stays.
+        app.apply(&ctx, crate::Action::Select(2));
+        let chosen = selection(&app);
+        assert!(!chosen.0 && chosen.1.is_some() && chosen.1 != head);
+        app.apply(&ctx, crate::Action::Refresh);
+        app.receive();
+        assert_eq!(selection(&app), chosen, "not on refresh");
+
+        let mut clean = MemoryBackend::sample();
+        clean.set_entries(Vec::new());
+        let mut opener = MemoryOpener::new();
+        opener.insert("clean", clean);
+        let mut app = App::restore(
+            Arc::new(Inline),
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            Some("clean".to_owned()),
+        );
+        app.receive();
+        app.receive();
+        assert_eq!(selection(&app), (false, head), "nothing to commit: HEAD");
+    }
+
+    /// U67: a clone is proposed beside the last repo opened, or in the home folder.
+    #[test]
+    fn a_clone_is_proposed_beside_the_last_repo_or_at_home() {
+        let home = || Some(PathBuf::from("/home/me"));
+        let recent = ["/work/app".to_owned(), "/old/site".to_owned()];
+        assert_eq!(clone_base(&recent, home()).as_deref(), Some("/work"));
+        assert_eq!(clone_base(&[], home()).as_deref(), Some("/home/me"));
+        // A recent repo without a parent (a relative name, the root): home.
+        assert_eq!(
+            clone_base(&["repo".to_owned()], home()).as_deref(),
+            Some("/home/me")
+        );
+        assert_eq!(
+            clone_base(&["/".to_owned()], home()).as_deref(),
+            Some("/home/me")
+        );
+        assert_eq!(clone_base(&[], None), None);
     }
 
     #[test]
@@ -1163,6 +1508,35 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_w_closes_the_tab_shown_and_ctrl_o_asks_for_a_folder() {
+        let saved = Saved {
+            tabs: vec!["a".into(), "b".into()],
+            active: 1,
+            recent: Vec::new(),
+        };
+        let mut app = app(saved, None);
+        let ctx = egui::Context::default();
+        for action in app.app_shortcuts(&[Command::CloseTab]) {
+            app.apply(&ctx, action);
+        }
+        assert_eq!(paths(&app), [Some("a")]);
+        // Without a folder dialog (as File → "Open repository…", which is not there) nothing.
+        assert!(app.app_shortcuts(&[Command::OpenRepo]).is_empty());
+        let platform = Arc::new(Deferred::default());
+        let app = App::restore(
+            Arc::clone(&platform) as Arc<dyn Platform>,
+            Arc::new(MemoryOpener::new()),
+            Arc::new(|| {}),
+            Saved::default(),
+            None,
+        );
+        assert!(matches!(
+            app.app_shortcuts(&[Command::OpenRepo]).as_slice(),
+            [crate::Action::Tabs(Action::PickFolder)]
+        ));
+    }
+
+    #[test]
     fn ctrl_tab_goes_around_the_tabs() {
         let saved = Saved {
             tabs: vec!["a".into(), "b".into()],
@@ -1212,7 +1586,7 @@ mod tests {
             }
         }
         fn pick_folder(&self, on_done: OnPicked) {
-            on_done(Some("/work".to_owned()));
+            on_done(Ok(Some("/work".to_owned())));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             self.jobs.lock().unwrap().push(job);
@@ -1345,7 +1719,7 @@ mod tests {
     /// Records the programs the app asks to start; `fail`: they do not start.
     #[derive(Default)]
     struct Launcher {
-        calls: Mutex<Vec<(&'static str, std::path::PathBuf, String)>>,
+        calls: Mutex<Vec<(&'static str, PathBuf, String)>>,
         fail: AtomicBool,
     }
 
@@ -1369,8 +1743,8 @@ mod tests {
                 ..Capabilities::default()
             }
         }
-        fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>) {
-            on_done(None);
+        fn pick_folder(&self, on_done: OnPicked) {
+            on_done(Ok(None));
         }
         fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
             job();

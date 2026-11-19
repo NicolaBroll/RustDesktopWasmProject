@@ -211,11 +211,7 @@ pub(super) fn stash_actions(
     if menu {
         ui.separator();
     }
-    let color = if can_write {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), can_write);
     let button = ui
         .add_enabled(
             can_write,
@@ -253,17 +249,8 @@ pub(crate) fn stash_panel(
             ui.monospace(&stash.name);
             ui.end_row();
             ui.weak(tr!("stash-field-commit"));
-            ui.horizontal_wrapped(|ui| {
-                let id = stash.id.to_string();
-                ui.add(egui::Label::new(RichText::new(&id).monospace()).selectable(true));
-                if ui
-                    .small_button(tr!("stash-copy"))
-                    .on_hover_text(tr!("stash-copy-help"))
-                    .clicked()
-                {
-                    ui.ctx().copy_text(id);
-                }
-            });
+            // As the "Commit" row of a commit: a 40-character id wraps in a narrow panel.
+            oid_copy(ui, stash.id);
             ui.end_row();
             ui.weak(tr!("stash-field-created-on"));
             ui.horizontal_wrapped(|ui| {
@@ -368,8 +355,14 @@ pub(super) fn push_stash_dialog(
         .filter(|item| item.change == Change::Untracked)
         .count();
     ui.add(egui::Label::new(tr!("stash-dialog-body")).wrap());
+    // Opened from a refusal: what "Stash and …" does after the stash.
+    if let Some(retry) = &dialog.retry {
+        ui.add_space(4.0);
+        let text = tr!("stash-retry-body", label = retry.label());
+        ui.add(egui::Label::new(text).wrap());
+    }
     ui.add_space(8.0);
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let enter = default_enter(ui);
     let mut fields: PushFields = dialog.fields.clone();
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -413,23 +406,36 @@ pub(super) fn push_stash_dialog(
         ui.add(egui::Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
     }
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        let clicked = ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("stash-submit")),
-            )
-            .clicked();
-        if (clicked || enter) && dialog.running.is_none() {
-            actions.push(Action::Stash(stash::Action::Submit));
+    ui.horizontal_wrapped(|ui| {
+        let idle = dialog.running.is_none();
+        match &dialog.retry {
+            // Opened from a refusal: "Stash and …" is the default, the plain stash stays.
+            Some(retry) => {
+                let and_retry = ui
+                    .add_enabled(idle, primary_button(ui, retry.button(), idle))
+                    .on_hover_text(tr!("stash-retry-help"))
+                    .clicked();
+                let plain = ui
+                    .add_enabled(idle, egui::Button::new(tr!("stash-submit")))
+                    .on_hover_text(tr!("stash-retry-plain-help"))
+                    .clicked();
+                // One of the two, never both: the retry writes a second time.
+                if plain {
+                    actions.push(Action::Stash(stash::Action::Submit));
+                } else if (and_retry || enter) && idle {
+                    actions.push(Action::Stash(stash::Action::SubmitAndRetry));
+                }
+            }
+            None => {
+                let clicked = ui
+                    .add_enabled(idle, primary_button(ui, tr!("stash-submit"), idle))
+                    .clicked();
+                if (clicked || enter) && idle {
+                    actions.push(Action::Stash(stash::Action::Submit));
+                }
+            }
         }
-        if ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("stash-close")),
-            )
-            .clicked()
-        {
+        if ui.add_enabled(idle, cancel_button()).clicked() {
             actions.push(Action::Stash(stash::Action::CloseDialog));
         }
         if dialog.running.is_some() {
@@ -458,81 +464,54 @@ pub(super) fn drop_stash_dialog(
     ui.add(egui::Label::new(tr!("stash-drop-undo")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("stash-drop-confirm")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("stash-drop-confirm"));
         if ui.add(button).clicked() {
             actions.push(Action::Stash(stash::Action::ConfirmDrop));
         }
-        if ui.button(tr!("stash-drop-keep")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Stash(stash::Action::CloseDialog));
         }
     });
 }
 
-/// Apply or pop stopped on conflicts: the stash is partly applied and stays in the list; the
-/// conflicted files are resolved and staged from the changes area.
-pub(crate) fn stash_conflicts_window(
-    ctx: &egui::Context,
-    conflicts: &stash::Conflicts,
+/// The notice of the conflicts a stash left, under the bar like the panel of the operation in
+/// progress: git has no "stash in progress" state, so it is shown whenever the status has
+/// conflicted files and no operation. The files are links to the conflict editor; the long
+/// explanation is the hover text of the title and of the "?".
+pub(crate) fn stash_conflicts_notice(
+    ui: &mut Ui,
+    repo: &RepoView,
+    conflicts: stash::Conflicts<'_>,
     actions: &mut Vec<Action>,
 ) {
-    let mut open = true;
-    let pop = conflicts.op == stash::Op::Pop;
-    let name = &conflicts.stash;
-    let title = if pop {
-        tr!("stash-conflicts-title-pop", name = name)
-    } else {
-        tr!("stash-conflicts-title-apply", name = name)
+    let (title, help) = match conflicts.applied {
+        Some(applied) => {
+            let name = &applied.stash;
+            let title = tr!("stash-notice-title-applied", name = name);
+            let help = if applied.op == stash::Op::Pop {
+                tr!("stash-notice-help-pop", name = name)
+            } else {
+                tr!("stash-notice-help-apply", name = name)
+            };
+            (title, help)
+        }
+        None => (tr!("stash-notice-title"), tr!("stash-notice-help")),
     };
-    egui::Window::new(title)
-        .id(egui::Id::unique("stash-conflicts"))
-        .collapsible(false)
-        .resizable(false)
-        .default_width(460.0)
-        .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.add(
-                egui::Label::new(if pop {
-                    tr!("stash-conflicts-body-pop", name = name)
-                } else {
-                    tr!("stash-conflicts-body-apply", name = name)
-                })
-                .wrap(),
-            );
-            ui.add_space(4.0);
-            ui.add(egui::Label::new(tr!("stash-conflicts-how")).wrap());
-            ui.add_space(6.0);
-            let n = conflicts.files.len();
-            ui.strong(tr!("stash-conflicts-files", n = n));
-            let row = ui.text_style_height(&egui::TextStyle::Monospace);
-            egui::ScrollArea::vertical()
-                .id_salt("stash-conflicts-files")
-                .max_height(CONFLICT_LIST_HEIGHT)
-                .auto_shrink([false, true])
-                .show_rows(ui, row, n, |ui, range| {
-                    for path in &conflicts.files[range] {
-                        ui.monospace(path);
-                    }
-                });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .button(tr!("stash-go-to-changes"))
-                    .on_hover_text(tr!("stash-go-to-changes-help"))
-                    .clicked()
-                {
-                    actions.push(Action::SelectWorktree);
-                    actions.push(Action::Stash(stash::Action::DismissConflicts));
-                }
-                if ui.button(tr!("stash-close")).clicked() {
-                    actions.push(Action::Stash(stash::Action::DismissConflicts));
-                }
+    let help = format!("{help}\n\n{}", tr!("stash-notice-how"));
+    let warn = ui.visuals().warn_fg_color;
+    egui::Frame::new()
+        .fill(warn.gamma_multiply(0.12))
+        .stroke(egui::Stroke::new(1.0, warn.gamma_multiply(0.6)))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .outer_margin(egui::Margin::symmetric(0, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(title).strong().color(warn))
+                    .on_hover_text(&help);
+                crate::merge_view::conflict_links(ui, repo, conflicts.files, actions);
+                ui.weak("(?)").on_hover_text(&help);
             });
         });
-    if !open {
-        actions.push(Action::Stash(stash::Action::DismissConflicts));
-    }
 }

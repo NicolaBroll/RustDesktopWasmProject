@@ -325,6 +325,238 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   refused checkout leaves the branch created and opens the usual dialog); "Copy name" copies the
   short name of the ref.
 
+## Phase U6 — Third review: error windows, keyboard, contrast
+
+Fixes from the UI review of 2026-11-19 (desktop app on Xvfb, `target/demo-repo` plus local
+remotes under `target/`, 1200x760 and 760x520, English and Italian, dark and light; screenshots
+`target/ux-*.png`). Decided with the review: an error that answers a command is a modal dialog,
+a situation that lasts (rejected push, stash applied with conflicts) is a notice inside the tab,
+like the "Merge in progress" panel; no floating `egui::Window` for errors. Screen readers
+(`accesskit`) are not a goal of this phase.
+
+### U60 — The side panel keeps its width on undo and redo
+- [x] **Agent:** `egui-ui`
+- **Goal:** with "Uncommitted changes" selected and the right panel dragged narrower, Ctrl+Z or
+  Ctrl+Shift+Z jump it to the maximum (30% of the window) and the chosen width is lost (U10
+  regressed): `side_panel::next` takes every drawn width other than the asked one for a drag,
+  and during an undo one frame draws the panel wider. A width becomes the user's choice only
+  while the panel's edge is dragged.
+- **Done when:** unit test (a wider frame without a drag keeps the preferred width; a drag still
+  changes it); on Xvfb panel dragged to ~260 px, undo and redo of a stash and of an amend leave
+  it there; CI green.
+- **Done:** the row "<label> in progress…" of the stage area was the wide content (an undo is
+  labelled with the whole description of what it undoes, about 630 px): now one row cut with
+  "…", like the one beside the Commit button. `side_panel` keeps a `dragged` flag read from the
+  response of the panel's resize edge: a drawn width becomes the preferred one only in the frame
+  after a drag or its release, any other is asked again. Tests through egui: content wider than
+  the panel for a frame, a drag of the edge.
+
+### U61 — Status bar: one clipped line, no ref names, old messages fade
+- [x] **Agent:** `egui-ui`
+- **Goal:** a long message (undo of a commit with a long subject, pull stopped on conflicts)
+  runs over the repo path and overlaps the label at the right edge, at 1200 px too; the
+  messages print `refs/project/backup/…` and stay until the next one, even for hours. The
+  message is one line cut with "…" before the items on the right (whole text on hover), the
+  backup ref goes out of the message into its hover text, and a message that is not an error is
+  dimmed after a while (an error stays until the next command).
+- **Done when:** at 760x520 and 1200x760, in both languages, no status text overlaps the right
+  side after an undo of an amend and after a pull with conflicts; unit test of the expiry; CI
+  green.
+- **Done:** `status_bar` lays out the right side first (the path gives way down to 40% of the
+  bar) and cuts the message, one line, in the room left; an error in several lines is joined.
+  `status.rs`: `Notice` (the tab's message and when it was set, weak after 10 s with a repaint
+  asked for that moment) and `with_backups`, which every message builder calls last: the texts
+  say "a backup was saved" and the ref names follow on a line "Backup: …" that only the hover
+  text shows; "Copy message" in the message's context menu copies the whole text. Engine
+  warnings and errors that name a ref are shown as they are.
+
+### U62 — Error dialogs are modal; one dialog for "local changes"
+- [x] **Agent:** `egui-ui`
+- **Goal:** `failure_window` (fetch failed, remote error, merge or pull refused) is a floating
+  `egui::Window`: Esc does not close it, the keyboard stays under it, two of them (fetch and
+  merge) lie exactly on top of each other, it stays when the user fixed the cause elsewhere
+  (stash from the toolbar) and, while it is open, the automatic fetch waits. It becomes an
+  `egui::Modal` like the other dialogs (counted by `RepoView::modal_open`, Esc and Enter close
+  it, a "Copy message" button for git's text); one at a time. `conflict_window` (pull conflict
+  aborted by the engine, not produced since S32) is removed with its texts. A checkout refused
+  for local changes shows the same short text and "Stash…" button as merge and pull (U32)
+  instead of the long engine text with only "Close".
+- **Done when:** on Xvfb fetch from an unreachable remote: Esc closes the dialog, the arrows do
+  not move the selection under it; merge refused then fetch failed never show two windows;
+  checkout of `experiment` with `src/lib.rs` modified offers "Stash…"; smoke tests updated; CI
+  green.
+- **Done:** `view::failure_dialog` is an `egui::Modal` (Esc or Enter close it, the keyboard
+  starts on "Stash…" or "Close", "Copy message" when git said something). `failure.rs`: each
+  area keeps its failure, `RepoView::failure` shows the oldest one waiting and `modal_open`
+  counts it, so nothing starts under it; "Stash…" opens the stash dialog even with another
+  failure waiting. A refused checkout is `BranchBox::refusal`, the same dialog: when the status
+  does not show every file as a tracked change, the text adds that untracked files need
+  "Include untracked files". Removed: the pull conflict window, `ErrorKind::PullConflict` (the
+  engine error now gets the generic failure dialog), the UI's own pull `Strategy`.
+
+### U63 — Rejected push and stash conflicts are notices in the tab
+- [x] **Agent:** `egui-ui`
+- **Goal:** `rejected_window` and `stash_conflicts_window` are floating windows at the top of
+  the tab: they cover the toolbar (Pull, Push, Undo) and, at 760x520, the whole graph or the
+  conflict editor; Esc does not close them and they stay after the conflict is resolved. Both
+  become a notice in the place of the operation panel ("Merge in progress"): rejected push —
+  one line of explanation, "Pull" (or "Fetch" for a stale lease), "Details…" (git's text and
+  "Force (with lease)…", with the existing confirmation) and "×"; it goes away when a push
+  succeeds or the branch is no longer behind. Stash conflicts — derived from the status
+  (conflicted files and no merge, rebase, cherry-pick or revert in progress), with the files as
+  links to the conflict editor, as in the merge panel; it goes away with the last conflict and
+  is there after a restart too.
+- **Done when:** on Xvfb at 760x520 the toolbar and the graph stay visible in both cases; the
+  stash notice disappears when the file is marked as resolved; smoke tests; CI green.
+- **Done:** `view::rejected_notice` (state `SyncBox::rejected`, kept apart from the dialogs):
+  what was rejected and what to do on a wrapping line, "Pull" or "Fetch", "Details…" and "×".
+  "Details…" is the modal `sync::Window::Details` (explanation, git's text, "Copy message",
+  "Force (with lease)…" → `confirm_force`). The notice goes with a successful push of that
+  branch, a pull of it from the app (also one that stops on a conflict: the operation panel
+  takes over), "behind, then no longer behind" in the refs (`SyncBox::follow`, before every
+  frame), a change of the current branch, "×". `view::stash_conflicts_notice` comes from the
+  status (`StashBox::follow_status`: conflicted files and no operation in progress), names
+  the stash after an apply or pop of this session, lists the files with the links of the
+  merge panel (`merge_view::conflict_links`) and has the long explanation on hover; an apply
+  or pop with conflicts selects "Uncommitted changes". Neither counts in `modal_open` and the
+  automatic fetch does not wait for them. Removed: both floating windows, "Go to changes",
+  their texts.
+
+### U64 — Keyboard: visible focus, file lists, dialogs
+- [x] **Agent:** `egui-ui`
+- **Goal:** of 40 Tab stops only 13 show where the focus is (the widgets drawn by hand — tabs,
+  window buttons, tree rows, commit rows, file rows — draw none, and on the toolbar focus looks
+  like hover); the files of the stage area and of a commit cannot be walked with the arrows
+  (Space stages the selected file, but only the mouse selects another); Ctrl+Enter does not
+  confirm the dialogs with a multi-line field ("Finish the merge"); Help → "Keyboard shortcuts"
+  does not list Ctrl+Enter, and there is no shortcut to open a repository, close the tab or
+  start a new branch. One focus ring drawn by every hand-drawn widget; ↑/↓ move through the file
+  list while a file is selected (the commit list keeps them otherwise) and Enter opens the
+  diff; Ctrl+Enter confirms every dialog; Ctrl+O, Ctrl+W, Ctrl+B added to the table in
+  `keys.rs`.
+- **Done when:** unit tests of the key mapping and of the file-list movement; on Xvfb every Tab
+  stop changes the picture; CI green.
+- **Done:** `theme::focus_ring` (1.5 px, the selection's text colour) on every hand-drawn
+  widget, the toolbar buttons too; the title bar's drag area, the status message and the diff's
+  file name (context menu only) are no longer Tab stops, and the edges of the resizable panels
+  pass the focus on (`side_panel::pass_focus`): 40 of 40 Tab stops change the picture in both
+  themes (13 before), kept by the smoke test `every_tab_stop_changes_the_picture`. With a file
+  open ↑/↓ and Home/End walk its list (`file_nav`, "Staged" then "Unstaged", conflicts
+  skipped) and the list scrolls to it; Enter on the commit list opens the first file. Only a
+  text field stops the shortcuts now (`keys::typing`): with another widget focused they work,
+  the arrows move the focus, Enter/Space press it, and Space on a focused stage file stages or
+  unstages it. Ctrl+Enter (`keys::confirm`) confirms the merge dialogs, the rebase editor and
+  the branch/tag/rename/upstream dialogs (the ones on plain Enter already took it);
+  destructive confirmations still want a click. New in the table: Ctrl+O, Ctrl+W, Ctrl+B,
+  Ctrl+Enter; Help lists the list keys too.
+
+### U65 — Dark theme contrast
+- [x] **Agent:** `egui-ui`
+- **Goal:** in the dark theme (egui's defaults) weak text — commit ids, author, date, hints,
+  placeholders, the repo path — is 2.7:1 against the panel and disabled text 2.3:1; U51 fixed
+  only the light theme, where links (2.8:1) and the counters of the tree (2.8:1) are still
+  low. Dark: normal text at least 7:1, weak text at least 4.5:1, disabled at least 3:1; light:
+  links and counters at least 4.5:1.
+- **Done when:** theme tests for the dark theme like the light one's; screenshots of both
+  themes; CI green.
+- **Done:** `theme::dark` beside `theme::light`, both installed by `install_text_styles`. Dark:
+  text grey 190 (9.3:1 on the panel, was 5.1), weak alpha 0.72 (5.4:1, was 2.7; placeholders
+  5.9:1), disabled alpha 0.55 (3.7:1, was 2.3), red `#ff8a80` (4.5:1 also on a menu entry under
+  the mouse, was 2.6), white text on the selection (7.4:1, weak 4.9:1, were 5.3 and 3.7). Light:
+  text grey 60 like the buttons' (10.4:1), weak alpha 0.76 (5.2:1, was 3.8), links `#005fcc`
+  (5.6:1, was 2.8), orange `#9a4400` and red `#b4141e` (were 2.8 and 3.8), navy text on the
+  selection (9.2:1, weak 5.0:1), lane colors as text 4.5:1. Through the theme: `merge` (a
+  purple per theme), `on_selection`, `counter` (the tree's counters and ahead/behind: text
+  color on light, where a thin "1" gets four fifths of its color: 5.7:1, was 2.8),
+  `destructive` (a disabled red button was weak text faded again). Left under 4.5:1: weak text
+  on a row under the mouse (3.7:1 dark, 4.4:1 light), and weak text inside a disabled area
+  (2.5:1); both themes are checked by `text_levels_read` in `theme.rs`.
+
+### U66 — Layout bugs and wording
+- [x] **Agent:** `egui-ui`
+- **Goal:** the conflict editor's "Theirs (<40-character id>)" heading is letter-spaced and
+  wraps on three lines; the stash details show the whole id, which wraps over "Created on"; the
+  floating scrollbar of the left panel covers the "+" and "⋯" buttons (a thick black bar in the
+  light theme); a folder dialog that cannot open (no portal, no zenity) says nothing; at
+  760x520 with a notice or an operation banner on screen (seen in Italian while checking U63)
+  the buttons at the top of the conflict editor ("Start over", "Close", "All ours", "All
+  theirs") are drawn over its labels and the unstaged list of the stage area is left without
+  room, its separator crossing the buttons. Texts:
+  Italian "Unstage"/"Stage" beside "Togli tutto dallo stage", "Remote" (settings) beside
+  "Remoti", the infinitive in the unreachable-remote text; English "1 conflicted file. Resolve
+  them", "starts at commit c13e0f9 (c13e0f9)"; the clone dialog says credentials are never
+  asked for while the app has a credential dialog.
+- **Done when:** screenshots of the four layouts at 760x520; texts changed in both locales;
+  i18n tests green; CI green.
+- **Done:** conflict headings on one cut line (whole on hover), a whole id in a marker shown as
+  the incoming branch (`origin/main`) or short (`conflict::side_name`); the editor's buttons
+  are laid out first and the path and the count are cut before them. Stash details: short id
+  and copy icon (`view::oid_copy`, shared with the commit details). The rows of the left panel
+  end before the floating scrollbar (`scrollbar_gutter`, always reserved: no jump). A stage
+  panel too low for its headers, a row per list and one row of message scrolls as a whole
+  (`StageLayout::scrolls`), and the row button is as wide as its text. Folder dialog:
+  `Platform::pick_folder` now answers `Result<Option<String>, NoDialog>`; the app tells a
+  dialog `rfd` could not show from one closed by the error `rfd` logs when zenity cannot start
+  (`apps/project/src/dialog.rs`), the status bar says what is missing and the "Open repository"
+  dialog with a path field opens (also File → "Open by path…"). Texts: Italian "Metti in
+  stage"/"Togli dallo stage" for files, lines and hunks, "Remoti", imperatives in the UI areas
+  (the `engine-*` errors keep the infinitive); English singular/plural in the "stopped"
+  messages, the subject in "starts at commit … (…)"; the clone dialog says the app asks for the
+  credentials git's configuration does not give.
+
+### U67 — Finding things, dialogs, small polish
+- [x] **Agent:** `egui-ui`
+- **Goal:** a new branch or tag starts only from a context menu ("Remotes" and "Stashes" have a
+  "+", "Local branches" and "Tags" do not); ticking "Amend" pushes the fields up by four lines
+  of warning; the main button of the dialogs looks like "Close" (only "Commit" is primary), and
+  the settings dialog changes size and place between its pages; the automatic-fetch icon moves
+  the toolbar buttons when it appears; the search toggles show their state only by brightness;
+  blame closes with "Close" and the diff with "< Graph"; the clone dialog does not propose the
+  folder from the URL and a finished clone says nothing; the app opens on HEAD also when there
+  are uncommitted changes.
+- **Done when:** screenshots; unit tests of the proposed clone folder and of the first
+  selection; CI green.
+- **Done:** "+" on "Local branches" (new branch from HEAD, as Ctrl+B) and on "Tags" (new tag
+  on HEAD), disabled with the reason before the first commit. The amend warning is one cut
+  row in the hint row under "Commit" (whole on hover): the box no longer moves. Dialogs: one
+  `primary_button` / `danger_button` / `cancel_button` (`view.rs`); the default button has the
+  accent of "Commit", the other one says "Cancel" in every dialog that does something (also
+  where it said "Don't discard", "Don't delete", "Don't force"…; "Don't abort" and "Back to
+  the plan" stay), Italian "Chiudi" because "Annulla" is Undo and the confirmations name it;
+  a running clone or fetch is ended with "Stop"; the settings window is as tall as its
+  tallest page. The failed automatic fetch is a badge on "Fetch" and a line in its tooltip.
+  The search options are framed toggle buttons. Blame and file history go back with
+  "< Graph". The clone dialog proposes `<folder of the last repo, or home>/<name from the
+  URL>` until a folder is typed (`clone::proposed_folder`, `tabs::clone_base`; the home
+  folder is read with `std::env::home_dir`, there is no `Platform` call for it) and a
+  finished clone says "Cloned <name> into <folder>". A repo with uncommitted changes opens
+  on them (first status of the tab only). Light theme: the scrollbar handle under the mouse
+  is a mid grey (`theme::light_scroll`).
+
+### U68 — "Stash and retry", toolbar at large scale
+- [x] **Agent:** `egui-ui`, then `safety-reviewer`
+- **Goal:** after "Stash…" from a refusal for local changes the refused command (merge, pull,
+  checkout) must be started again by hand: the dialog gets "Stash and retry", which runs
+  `stash.push` and then the same command, and stops if the stash fails. At 150% in a 760x520
+  window the toolbar loses "Refresh" beyond the edge: the buttons that do not fit go into a
+  "»" menu.
+- **Done when:** unit test (the retry is sent only after a successful stash, with the same
+  parameters); on Xvfb at 150% every toolbar command is reachable; CI green.
+- **Done:** the failure of a merge, cherry-pick, revert, pull or checkout refused for local
+  changes carries the command as it was sent (`Failure::retry`, `crates/ui/src/stash_retry.rs`);
+  "Stash…" there opens the stash dialog with "Stash and pull / merge / check out “x”" as the
+  default button (plain "Stash" beside it). The handler of the `stash.push` answer sends the
+  command again, once and only after a successful stash, or drops it with a notice when HEAD is
+  not the one of the refusal or an operation is in progress; nothing is popped by itself, the
+  journal has two entries. A refusal that is not a `*-local-changes` key has no "Stash…" as
+  before (U32): so a fast-forward pull that git refuses as "would overwrite local changes or
+  untracked files" (`engine-pull-overwrite…`). From the safety review: Enter is a dialog's
+  default button only while the keyboard is in a text field or on nothing (`view::default_enter`,
+  used by the stash, clone, credential, open-by-path, remote and worktree dialogs): on a
+  focused "Stash", "Cancel" or checkbox it is that widget's click and nothing is retried. The
+  toolbar measures its buttons before drawing them: those without room go, from the right, into
+  a "»" menu with the same labels, shortcuts, states and counts.
+
 ### Left for later (they need new engine commands or `Platform` capabilities)
 
 Discard a hunk / selected lines (new write command with backup), "Add to .gitignore", git

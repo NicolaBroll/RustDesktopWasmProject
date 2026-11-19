@@ -1,0 +1,1968 @@
+//! Smoke tests of the drawing code: the whole [`App`] is drawn without a window, one state after
+//! the other, and the texts painted are read back. They catch what the tests of the state cannot:
+//! a view that panics, that is not drawn in the state it is for, or two widgets sharing an id.
+
+use super::*;
+use crate::Action as A;
+use crate::diff::{DiffSource, DiffTarget};
+use crate::test_util::oid;
+use egui::PointerButton::{Primary, Secondary};
+use project_domain::{Change, ChangedFile, Commit, Oid, Signature};
+use project_engine::{Capabilities, MemoryBackend, MemoryOpener};
+
+/// The job runs inside `spawn`, on the same thread: an action is answered before the next frame.
+struct Inline;
+
+impl Platform for Inline {
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            open_folder: true,
+            external_apps: true,
+        }
+    }
+    fn pick_folder(&self, on_done: project_engine::OnPicked) {
+        on_done(Ok(None));
+    }
+    fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
+        job();
+    }
+    fn home_folder(&self) -> Option<PathBuf> {
+        Some(HOME.into())
+    }
+}
+
+/// The home folder of the test platform.
+const HOME: &str = "/home/tester";
+
+/// A text painted in a frame and where.
+#[derive(Debug, Clone)]
+struct Painted {
+    text: String,
+    pos: egui::Pos2,
+    width: f32,
+    /// Cut with "…" (`text` is the whole one).
+    cut: bool,
+}
+
+/// The app on a screen that nobody sees.
+struct Screen {
+    ctx: egui::Context,
+    app: App,
+    size: egui::Vec2,
+    time: f64,
+    /// Everything the last frame painted: the picture, to tell whether a key changed it.
+    picture: Vec<egui::epaint::ClippedShape>,
+    /// The focus rings ([`crate::theme::focus_ring`]) of the last frame.
+    rings: Vec<egui::Rect>,
+}
+
+const PATH: &str = "repo";
+
+impl Screen {
+    /// The app with `repo` open in its tab.
+    fn open(repo: MemoryBackend) -> Self {
+        let mut opener = MemoryOpener::new();
+        opener.insert(PATH, repo);
+        let mut screen = Self::with(opener, Some(PATH));
+        screen.frames(3);
+        assert!(screen.tab().repo.is_some(), "{}", screen.tab().error);
+        screen
+    }
+
+    fn with(opener: MemoryOpener, repo: Option<&str>) -> Self {
+        let ctx = egui::Context::default();
+        crate::icons::install(&ctx);
+        crate::theme::install_text_styles(&ctx);
+        let app = App::restore(
+            Arc::new(Inline),
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            repo.map(str::to_owned),
+        );
+        Self {
+            ctx,
+            app,
+            size: egui::vec2(1280.0, 800.0),
+            time: 0.0,
+            picture: Vec::new(),
+            rings: Vec::new(),
+        }
+    }
+
+    fn tab(&self) -> &Tab {
+        &self.app.tabs[self.app.active]
+    }
+
+    fn repo(&self) -> &crate::RepoView {
+        self.tab().repo.as_ref().expect("open repo")
+    }
+
+    /// [`Screen::act`], and the texts that must be on screen afterwards.
+    #[track_caller]
+    fn shows(&mut self, action: crate::Action, wanted: &[&str]) -> Vec<Painted> {
+        let painted = self.act(action);
+        assert_shows(&painted, wanted);
+        painted
+    }
+
+    /// Two frames without input, and the texts that must be on screen.
+    #[track_caller]
+    fn shows_frames(&mut self, wanted: &[&str]) -> Vec<Painted> {
+        let painted = self.frames(2);
+        assert_shows(&painted, wanted);
+        painted
+    }
+
+    /// One frame with these input events: the texts it painted.
+    fn frame(&mut self, events: Vec<egui::Event>) -> Vec<Painted> {
+        self.time += 0.1;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
+            time: Some(self.time),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        let mut frame = eframe::Frame::_new_kittest();
+        let app = &mut self.app;
+        let mut output = self
+            .ctx
+            .run_ui(input, |ui| eframe::App::ui(app, ui, &mut frame));
+        // Nobody draws the textures (the font atlas).
+        output.textures_delta.clear();
+        let mut painted = Vec::new();
+        self.rings.clear();
+        let ring = crate::theme::focus_color(&self.ctx.global_style().visuals);
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut painted);
+            collect_rings(&clipped.shape, ring, &mut self.rings);
+        }
+        self.picture = output.shapes;
+        let clash = id_clash(&painted);
+        assert!(clash.is_none(), "two widgets share an id: {clash:?}");
+        painted
+    }
+
+    /// `n` frames without input: the last one's texts.
+    fn frames(&mut self, n: usize) -> Vec<Painted> {
+        let mut painted = Vec::new();
+        for _ in 0..n {
+            painted = self.frame(Vec::new());
+        }
+        painted
+    }
+
+    /// A click with `button` at `pos`: move, press, release, then the screen as it settles.
+    fn click(&mut self, pos: egui::Pos2, button: egui::PointerButton) -> Vec<Painted> {
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.frame(vec![egui::Event::PointerMoved(pos)]);
+        self.frame(vec![press(true)]);
+        self.frame(vec![press(false)]);
+        self.frames(2)
+    }
+
+    /// Clicks with `button` on the first text equal to `text` of `painted`.
+    #[track_caller]
+    fn click_on(
+        &mut self,
+        painted: &[Painted],
+        text: &str,
+        button: egui::PointerButton,
+    ) -> Vec<Painted> {
+        let Some(target) = painted.iter().find(|p| p.text == text) else {
+            panic!("{text:?} is not on screen");
+        };
+        self.click(target.pos + egui::vec2(4.0, 6.0), button)
+    }
+
+    /// `key` pressed with `modifiers` and released, then the screen as it settles.
+    fn key(&mut self, key: egui::Key, modifiers: egui::Modifiers) -> Vec<Painted> {
+        let event = |pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        self.frame(vec![event(true)]);
+        self.frame(vec![event(false)]);
+        self.frames(3)
+    }
+
+    /// Tab, and whether the picture changed: the widget that took the focus shows it.
+    fn tab_changes_the_picture(&mut self) -> bool {
+        let before = std::mem::take(&mut self.picture);
+        self.key(egui::Key::Tab, egui::Modifiers::NONE);
+        assert!(
+            self.ctx.memory(|m| m.focused().is_some()),
+            "Tab left the focus on nothing"
+        );
+        before != self.picture
+    }
+
+    /// Tab until the focus ring is around the text `text` (at most `limit` times).
+    #[track_caller]
+    fn tab_to(&mut self, text: &str, limit: usize) {
+        for _ in 0..limit {
+            let painted = self.key(egui::Key::Tab, egui::Modifiers::NONE);
+            let on_it = painted
+                .iter()
+                .any(|p| p.text == text && self.rings.iter().any(|ring| ring.contains(p.pos)));
+            if on_it {
+                return;
+            }
+        }
+        panic!("Tab never reached {text:?}");
+    }
+
+    /// What the user asked for, applied as at the end of a frame; then the screen as it settles.
+    fn act(&mut self, action: crate::Action) -> Vec<Painted> {
+        let ctx = self.ctx.clone();
+        self.app.apply(&ctx, action);
+        self.app.tabs[self.app.active].after_actions(&ctx);
+        self.frames(3)
+    }
+}
+
+/// A click far from everything: closes the menu that is open.
+const ELSEWHERE: egui::Pos2 = egui::pos2(640.0, 720.0);
+
+fn collect(shape: &egui::Shape, out: &mut Vec<Painted>) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+        egui::Shape::Text(text) => out.push(Painted {
+            text: text.galley.text().to_owned(),
+            pos: text.pos,
+            width: text.galley.size().x,
+            cut: text.galley.elided,
+        }),
+        _ => {}
+    }
+}
+
+/// The rectangles stroked as the focus ring in `shape`.
+fn collect_rings(shape: &egui::Shape, color: egui::Color32, out: &mut Vec<egui::Rect>) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_rings(s, color, out)),
+        egui::Shape::Rect(rect)
+            if rect.stroke.color == color && rect.stroke.width == crate::theme::FOCUS_WIDTH =>
+        {
+            out.push(rect.rect);
+        }
+        _ => {}
+    }
+}
+
+/// egui's warning for an id used by two widgets in one frame, if it painted one (debug builds).
+fn id_clash(painted: &[Painted]) -> Option<&Painted> {
+    painted.iter().find(|p| p.text.starts_with('🔥'))
+}
+
+/// Every one of `wanted` is in some text of `painted`.
+#[track_caller]
+fn assert_shows(painted: &[Painted], wanted: &[&str]) {
+    for want in wanted {
+        assert!(
+            painted.iter().any(|p| p.text.contains(want)),
+            "{want:?} is not on screen: {:#?}",
+            painted.iter().map(|p| &p.text).collect::<Vec<_>>()
+        );
+    }
+}
+
+fn sample() -> Screen {
+    Screen::open(MemoryBackend::sample())
+}
+
+fn sig(n: u64) -> Signature {
+    Signature {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+        time: 1_700_000_000 + i64::try_from(n).unwrap() * 60,
+        offset_min: 0,
+    }
+}
+
+/// Commit `n` with parent `parent` that takes `a.txt` from the parent's content to `text`.
+fn commit(repo: &mut MemoryBackend, n: u64, parent: Option<u64>, text: &str) {
+    let old = parent.map(|p| oid(100 + p));
+    repo.set_blob(oid(100 + n), text.to_owned());
+    repo.insert_commit(Commit {
+        id: oid(n),
+        parents: parent.map(oid).into_iter().collect(),
+        author: sig(n),
+        committer: sig(n),
+        summary: format!("c{n}"),
+        body: String::new(),
+    });
+    repo.set_changes(
+        oid(n),
+        vec![ChangedFile {
+            path: RepoPath::from("a.txt"),
+            change: if old.is_some() {
+                Change::Modified
+            } else {
+                Change::Added
+            },
+            original: None,
+            score: None,
+            old_mode: if old.is_some() { 0o100644 } else { 0 },
+            new_mode: 0o100644,
+            old_oid: old.unwrap_or(Oid::from_bytes([0; Oid::LEN])),
+            new_oid: oid(100 + n),
+        }],
+    );
+}
+
+/// `main` on `c2` and `other` on `c3`, both from `c1` and both changing `a.txt`.
+fn diverging() -> MemoryBackend {
+    let mut repo = MemoryBackend::new();
+    repo.set_identity("Ada", "ada@example.com");
+    commit(&mut repo, 1, None, "base\n");
+    commit(&mut repo, 2, Some(1), "ours\n");
+    commit(&mut repo, 3, Some(1), "theirs\n");
+    repo.set_branch("main", oid(2));
+    repo.set_branch("other", oid(3));
+    repo.set_head_branch("main");
+    repo
+}
+
+/// The sample without local changes, with `origin/main` on a commit (20) that `main` does not have.
+fn diverged() -> MemoryBackend {
+    let mut repo = remote_ahead();
+    repo.set_entries(Vec::new());
+    repo
+}
+
+/// The sample, with `origin/main` on a commit (20) that `main` does not have.
+fn remote_ahead() -> MemoryBackend {
+    let mut repo = MemoryBackend::sample();
+    repo.insert_remote_commit(
+        "origin",
+        Commit {
+            id: oid(20),
+            parents: vec![oid(11)],
+            author: sig(20),
+            committer: sig(20),
+            summary: "From the remote".into(),
+            body: String::new(),
+        },
+    );
+    repo.set_branch_on_remote("origin", "main", oid(20));
+    repo
+}
+
+/// The harness would see two widgets with one id: the check of every frame is not empty.
+#[test]
+fn an_id_used_twice_is_seen() {
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        for (text, y) in [("one", 20.0), ("two", 200.0)] {
+            ui.label(text);
+            let rect = egui::Rect::from_min_size(egui::pos2(20.0, y), egui::vec2(40.0, 20.0));
+            ui.ctx()
+                .check_for_id_clash(egui::Id::unique("same"), rect, "test");
+        }
+    });
+    output.textures_delta.clear();
+    let mut painted = Vec::new();
+    for clipped in &output.shapes {
+        collect(&clipped.shape, &mut painted);
+    }
+    assert_shows(&painted, &["one", "two"]);
+    assert!(id_clash(&painted).is_some(), "{painted:?}");
+}
+
+#[test]
+fn welcome_without_a_repo() {
+    let mut screen = Screen::with(MemoryOpener::sample(), None);
+    let painted = screen.frames(2);
+    assert_shows(
+        &painted,
+        &[
+            "No repository open",
+            "Open a repository…",
+            "Clone repository…",
+        ],
+    );
+}
+
+#[test]
+fn the_repo_with_its_panels_at_any_size() {
+    let mut screen = sample();
+    // A repo with uncommitted changes opens on them (U67): the stage area in front.
+    assert!(screen.repo().worktree_selected);
+    assert_shows(&screen.frames(1), &["Staged (2)", "Commit message"]);
+    let head = screen.repo().head.target().expect("a commit");
+    let painted = screen.act(A::SelectCommit(head));
+    assert_shows(
+        &painted,
+        &[
+            // Bar, refs, list, details, status bar.
+            "Fetch",
+            "Local branches (2)",
+            "Remotes (1)",
+            "Tags (1)",
+            "Stashes (0)",
+            "Uncommitted changes",
+            "Merge branch 'feature/graph'",
+            "origin/feature/graph",
+            "3 files changed",
+            "src/main.rs -> src/bin/app.rs",
+        ],
+    );
+    // Narrow and short, then tiny: the panels shrink, the list still shows.
+    for size in [egui::vec2(520.0, 300.0), egui::vec2(160.0, 90.0)] {
+        screen.size = size;
+        screen.frames(3);
+    }
+    screen.size = egui::vec2(520.0, 300.0);
+    assert_shows(&screen.frames(2), &["Commit panel", "Ref parser"]);
+}
+
+#[test]
+fn the_window_frame_drawn_by_the_app() {
+    let mut screen = sample();
+    screen.app.frame = view::WindowFrame::Custom;
+    assert_shows(&screen.frames(2), &["repo — BinariGit", "File", "Help"]);
+    // A merge commit in the details: both parents, compared with the first.
+    screen.shows(
+        A::Select(2),
+        &[
+            "Parents",
+            "(first parent)",
+            "Merge commit",
+            "tests/graph.rs",
+        ],
+    );
+    let mut screen = Screen::with(MemoryOpener::sample(), None);
+    screen.app.frame = view::WindowFrame::Custom;
+    assert_shows(&screen.frames(2), &["BinariGit", "No repository open"]);
+}
+
+#[test]
+fn the_stage_area_and_its_confirmations() {
+    use crate::{clean, commit, discard};
+    let mut screen = sample();
+    screen.shows(
+        A::SelectWorktree,
+        &[
+            "Staged (2)",
+            "Unstaged (3)",
+            "docs/guide.md",
+            "Commit message",
+            "Stage all",
+        ],
+    );
+    screen.shows(
+        A::Discard(discard::Action::Discard(vec!["README.md".into()])),
+        &["Discard changes?", "Cancel"],
+    );
+    screen.act(A::Discard(discard::Action::Cancel));
+    screen.shows(
+        A::Clean(clean::Action::Delete(vec!["note.txt".into()])),
+        &[
+            "Delete the untracked file?",
+            "1 file, 19 bytes:",
+            "Delete 1 file",
+        ],
+    );
+    screen.act(A::Clean(clean::Action::Cancel));
+    screen.shows(
+        A::Commit(commit::Action::SetAmend(true)),
+        &[
+            "Commit (amend)",
+            "will change: a new commit will replace it",
+        ],
+    );
+}
+
+#[test]
+fn a_published_amend_asks_first() {
+    use crate::commit::Action as C;
+    let mut repo = MemoryBackend::sample();
+    repo.set_remote_branch("origin/main", oid(12));
+    let mut screen = Screen::open(repo);
+    screen.act(A::SelectWorktree);
+    screen.act(A::Commit(C::SetAmend(true)));
+    screen.shows(
+        A::Commit(C::Commit),
+        &["Rewrite a commit that is already published?"],
+    );
+}
+
+#[test]
+fn diffs_unified_and_side_by_side() {
+    use crate::{diff, lines};
+    let mut screen = sample();
+    let worktree = DiffTarget {
+        source: DiffSource::Worktree,
+        path: "README.md".into(),
+    };
+    screen.act(A::SelectWorktree);
+    screen.shows(
+        A::Diff(diff::Action::Open(worktree)),
+        &[
+            "< Graph",
+            "unstaged",
+            "@@ -1,8 +1,9 @@",
+            "Stage hunk",
+            "last change: unstaged change",
+            "Click lines to select them",
+        ],
+    );
+    screen.shows(
+        A::Lines(lines::Action::Select {
+            row: 3,
+            shift: false,
+        }),
+        &["Stage selected lines (1)", "Discard lines… (1)"],
+    );
+    screen.shows(
+        A::Lines(lines::Action::DiscardSelected),
+        &["Discard 1 changed line of README.md?", "Discard 1 line"],
+    );
+    screen.act(A::Discard(crate::discard::Action::Cancel));
+    screen.app.settings.diff_split = true;
+    assert_shows(
+        &screen.frames(2),
+        &[
+            "To stage single lines, switch to the unified view",
+            " 2 -",
+            " 9 +",
+        ],
+    );
+    screen.size = egui::vec2(480.0, 320.0);
+    screen.frames(3);
+    screen.size = egui::vec2(1280.0, 800.0);
+    // A renamed file of a commit: its title says from where.
+    screen.act(A::Select(0));
+    let commit = DiffTarget::commit(oid(12), "src/bin/app.rs".into());
+    screen.shows(
+        A::Diff(diff::Action::Open(commit)),
+        &[
+            "in commit 943ff9f",
+            "renamed  92%  +2 -1",
+            "// last change: commit 12",
+        ],
+    );
+    screen.shows(A::Diff(diff::Action::Close), &["Uncommitted changes"]);
+}
+
+#[test]
+fn branch_and_tag_dialogs() {
+    use crate::branch::{Action as B, Start};
+    let mut repo = MemoryBackend::sample();
+    // Not merged anywhere: deleting it asks first.
+    repo.insert_commit(Commit {
+        id: oid(30),
+        parents: vec![oid(12)],
+        author: sig(30),
+        committer: sig(30),
+        summary: "On its own".into(),
+        body: String::new(),
+    });
+    repo.set_branch("topic", oid(30));
+    let mut screen = Screen::open(repo);
+    let start = || Start::from_commit(oid(9));
+    let steps: Vec<(B, &[&str])> = vec![
+        (
+            B::NewBranch(start(), String::new()),
+            &["New branch", "Switch to the new branch", "Create branch"],
+        ),
+        (B::NewTag(start()), &["New tag", "Create tag"]),
+        (
+            B::RenameBranch("main".to_owned()),
+            &["Rename branch", "Rename"],
+        ),
+        (
+            B::DeleteBranch("topic".to_owned(), oid(30)),
+            &[
+                "Delete “topic” (a8ee577)?",
+                "The branch is not merged",
+                "Delete branch",
+            ],
+        ),
+        (
+            B::DeleteTag("v0.1.0".to_owned()),
+            &["Delete tag “v0.1.0”?", "Cancel"],
+        ),
+        (
+            B::SetUpstream("main".to_owned()),
+            &[
+                "Upstream of “main”",
+                "origin/main (current)",
+                "Set upstream",
+            ],
+        ),
+        (
+            B::CheckoutCommit {
+                id: oid(9),
+                ask: true,
+            },
+            &["Check out commit aeaf52f?", "Don't ask again"],
+        ),
+    ];
+    for (action, wanted) in steps {
+        screen.shows(A::Branch(action), wanted);
+        screen.act(A::Branch(B::CloseDialog));
+    }
+}
+
+#[test]
+fn remote_dialogs() {
+    use crate::remotes::{Action as R, EditKind};
+    let mut screen = sample();
+    let origin = || "origin".to_owned();
+    let steps: Vec<(R, &[&str])> = vec![
+        (R::Add, &["Add remote", "Fetch right away"]),
+        (
+            R::Remove(origin()),
+            &["Remove remote “origin”?", "What happens:"],
+        ),
+        (
+            R::DeleteBranch(origin(), "main".to_owned()),
+            &["Delete “origin/main” from the remote?"],
+        ),
+        (
+            R::Edit(origin(), EditKind::Url),
+            &["Edit URL of “origin”", "Separate push URL", "Save URL"],
+        ),
+        (
+            R::Edit(origin(), EditKind::Rename),
+            &["Rename remote “origin”"],
+        ),
+    ];
+    for (action, wanted) in steps {
+        screen.shows(A::Remotes(action), wanted);
+        screen.act(A::Remotes(R::CloseDialog));
+    }
+}
+
+#[test]
+fn stash_dialog_panel_and_drop() {
+    use crate::stash::Action as S;
+    let mut screen = sample();
+    screen.shows(
+        A::Stash(S::Open),
+        &[
+            "Stash changes",
+            "Include untracked files (1)",
+            "Keep the index",
+        ],
+    );
+    screen.shows(A::Stash(S::Submit), &["Stashes (1)", "on main · 943ff9f"]);
+    let id = screen.repo().stash.list().unwrap_or_default()[0].id;
+    screen.shows(
+        A::Stash(S::Select(id)),
+        &[
+            "WIP on main: 943ff9f Commit panel",
+            "Pop",
+            "Restore the index too",
+            "Drop…",
+        ],
+    );
+    screen.shows(A::Stash(S::Drop(id)), &["Drop stash@{0}?", "What happens:"]);
+}
+
+#[test]
+fn conflicts_left_by_a_stash_are_a_notice() {
+    use crate::conflict::Action as C;
+    use crate::stash::Action as S;
+    let mut screen = Screen::open(crate::test_util::stash_in_conflict());
+    let id = screen.repo().stash.list().unwrap_or_default()[0].id;
+    // The pop stops on a conflict: the notice names the stash and the file, and the stage
+    // area opens. No dialog, nothing floating over the bar.
+    let painted = screen.shows(
+        A::Stash(S::Apply(id, true)),
+        &[
+            "Conflicts from stash@{0}, which stays in the list",
+            "1 conflicted file:",
+            "README.md",
+            "click one to open the editor and resolve it",
+            "Uncommitted changes",
+        ],
+    );
+    assert!(screen.repo().worktree_selected);
+    assert!(!screen.repo().modal_open(), "the notice blocks nothing");
+    assert!(!screen.repo().auto_fetch_blocked());
+    assert!(
+        !painted.iter().any(|p| p.text == "Go to changes"),
+        "the floating window is gone"
+    );
+    let top = |text: &str| {
+        let found = painted.iter().find(|p| p.text.contains(text));
+        found
+            .unwrap_or_else(|| panic!("{text:?} is not on screen"))
+            .pos
+            .y
+    };
+    assert!(top("Fetch") < top("Conflicts from stash@{0}"));
+    assert!(top("Conflicts from stash@{0}") < top("Uncommitted changes"));
+
+    // The file in the notice opens the conflict editor, with the notice still above it.
+    let painted = screen.click_on(&painted, "README.md", Primary);
+    assert_shows(
+        &painted,
+        &[
+            "Mark as resolved",
+            "Conflicts from stash@{0}",
+            "Base (common ancestor)",
+        ],
+    );
+    // Resolved: the last conflict is gone and the notice with it.
+    screen.act(A::Conflict(C::ChooseAll(project_domain::Choice::Ours)));
+    let painted = screen.act(A::Conflict(C::Resolve));
+    assert_eq!(
+        screen.repo().stash.conflicts(),
+        None,
+        "{}",
+        screen.tab().error
+    );
+    assert!(!painted.iter().any(|p| p.text.contains("Conflicts from")));
+
+    // After a restart nobody remembers the pop: the status alone brings the notice back.
+    let mut repo = crate::test_util::stash_in_conflict();
+    {
+        use project_engine::{GitStash, StashApply};
+        let stash = repo.stashes().unwrap().remove(0);
+        let applied = repo
+            .stash_apply(&StashApply {
+                command: "stash.apply",
+                id: stash.id,
+                restore_index: false,
+            })
+            .unwrap();
+        assert!(!applied.conflicts.is_empty());
+    }
+    let mut screen = Screen::open(repo);
+    let painted =
+        screen.shows_frames(&["Conflicts from a stash", "1 conflicted file:", "README.md"]);
+    assert!(!screen.repo().modal_open());
+    assert!(!painted.iter().any(|p| p.text.contains("stash@{0}, which")));
+}
+
+#[test]
+fn merge_pick_and_reset_dialogs() {
+    use crate::merge::{Action as M, Pick};
+    use crate::reset;
+    let mut screen = sample();
+    screen.shows(
+        A::Merge(M::OpenMerge {
+            rev: "feature/graph".to_owned(),
+            what: "feature/graph".to_owned(),
+        }),
+        &[
+            "Merge “feature/graph” into “main”",
+            "Squash into one commit",
+            "Fast-forward only",
+        ],
+    );
+    screen.act(A::Merge(M::CloseDialog));
+    // A merge commit has two parents: which one the cherry-pick compares with is asked.
+    screen.shows(
+        A::Merge(M::Pick {
+            pick: Pick::CherryPick,
+            rev: oid(10),
+            what: "Merge".to_owned(),
+            parents: vec![oid(8), oid(9)],
+        }),
+        &[
+            "Cherry-pick of a merge commit",
+            "1. 9e5651b — Status parser",
+        ],
+    );
+    screen.act(A::Merge(M::CloseDialog));
+    screen.shows(
+        A::Reset(reset::Action::Open {
+            target: oid(8),
+            what: "Status parser".to_owned(),
+        }),
+        &[
+            "Reset “main” to Status parser",
+            "“main” moves from 943ff9f to 9e5651b.",
+            "Reset (mixed)",
+        ],
+    );
+    screen.shows(
+        A::Reset(reset::Action::Mode(reset::Mode::Hard)),
+        &["Reset (hard)"],
+    );
+}
+
+#[test]
+fn the_interactive_rebase_editor() {
+    use crate::rebase::Action as R;
+    use project_domain::RebaseAction;
+    let mut repo = MemoryBackend::new();
+    repo.set_identity("Ada", "ada@example.com");
+    commit(&mut repo, 1, None, "one\n");
+    commit(&mut repo, 2, Some(1), "two\n");
+    commit(&mut repo, 4, Some(2), "four\n");
+    repo.set_branch("main", oid(4));
+    repo.set_head_branch("main");
+    let mut screen = Screen::open(repo);
+    screen.shows(
+        A::Rebase(R::Open {
+            base: oid(1),
+            what: "c1".to_owned(),
+        }),
+        &[
+            "Interactive rebase of “main”",
+            "Plan",
+            "pick",
+            "Result",
+            "2.",
+            "The plan changes nothing: change an action or the order first",
+        ],
+    );
+    screen.shows(A::Rebase(R::Choose(0, RebaseAction::Reword)), &["reword"]);
+    screen.act(A::Rebase(R::Select(0)));
+    screen.act(A::Rebase(R::Message(0, "c2, reworded".to_owned())));
+    screen.act(A::Rebase(R::Choose(0, RebaseAction::Pick)));
+    screen.shows(A::Rebase(R::Choose(1, RebaseAction::Fixup)), &["fixup"]);
+    screen.shows(
+        A::Rebase(R::Run),
+        &["Rebase of “main” done: 2 commits became 1"],
+    );
+}
+
+#[test]
+fn a_merge_in_conflict() {
+    use crate::conflict::Action as C;
+    use crate::merge::Action as M;
+    use crate::stage::{Action as S, StageOp};
+    let mut screen = Screen::open(diverging());
+    screen.shows(
+        A::Merge(M::Merge {
+            rev: "other".to_owned(),
+            what: "other".to_owned(),
+        }),
+        &[
+            "Merge in progress: merging “other” (c3)",
+            "Abort merge…",
+            "1 conflicted file:",
+        ],
+    );
+    screen.shows(
+        A::SelectWorktree,
+        &["There are conflicted files: resolve them and stage them before committing"],
+    );
+    screen.shows(
+        A::Stage(S::Write(StageOp::Stage, vec!["a.txt".into()])),
+        &["Mark the conflict as resolved?", "Conflicted file:"],
+    );
+    screen.act(A::Stage(S::Cancel));
+    screen.shows(
+        A::Conflict(C::Open("a.txt".into())),
+        &[
+            "Mark as resolved",
+            ">>>>>>> other",
+            "Base (common ancestor)",
+            "Theirs (other)",
+        ],
+    );
+    screen.shows(
+        A::Conflict(C::ChooseBlock(0, project_domain::Choice::Ours)),
+        &["no conflict blocks", "Start over"],
+    );
+    screen.act(A::Conflict(C::Close));
+    screen.shows(A::Merge(M::Abort), &["Abort the merge?"]);
+    screen.act(A::Merge(M::CloseDialog));
+    screen.shows(A::Merge(M::Continue), &["Finish the merge"]);
+    // In the message field Enter is a new line; Ctrl+Enter is the dialog's button (U64): here
+    // the conflict is still there, and the engine's refusal is shown in the dialog.
+    let idle = |screen: &Screen| match screen.repo().merge.dialog() {
+        Some(crate::merge::Dialog::Continue(d)) => d.running.is_none() && d.error.is_none(),
+        _ => false,
+    };
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(idle(&screen), "Enter alone sent the dialog");
+    screen.key(egui::Key::Enter, egui::Modifiers::COMMAND);
+    assert!(!idle(&screen), "Ctrl+Enter did not send the dialog");
+}
+
+#[test]
+fn a_rejected_push_and_failed_network_commands() {
+    use crate::fetch::Action as F;
+    use crate::sync::Action as S;
+    use project_engine::FetchFailure;
+    let mut screen = Screen::open(diverged());
+    // A rejected push is a notice in the tab: no dialog, git's text only in the details.
+    // (The status bar says "rejected" too: this is the text of the notice alone.)
+    const NOTICE: &str = "Pull to integrate them, then push again";
+    let painted = screen.shows(
+        A::Sync(S::Push(None)),
+        &[
+            "Push of “main” rejected",
+            "The remote has commits you don't have: Pull to integrate them",
+            "Details…",
+            "×",
+        ],
+    );
+    assert!(
+        painted.iter().any(|p| p.text == "Pull"),
+        "“Pull” is offered"
+    );
+    assert!(!screen.repo().modal_open(), "the notice blocks nothing");
+    assert!(!screen.repo().auto_fetch_blocked());
+    assert!(
+        !painted.iter().any(|p| p.text.contains("[rejected]")),
+        "git's text is in the details"
+    );
+    // The notice is under the bar, above the graph: it covers neither.
+    let top = |text: &str| {
+        let found = painted.iter().find(|p| p.text.contains(text));
+        found
+            .unwrap_or_else(|| panic!("{text:?} is not on screen"))
+            .pos
+            .y
+    };
+    assert!(top("Fetch") < top(NOTICE));
+    assert!(top(NOTICE) < top("Commit panel"));
+    // "Details…": a modal dialog with the whole explanation, git's text and the force.
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    screen.shows(
+        A::Sync(S::RejectedDetails),
+        &[
+            "Nothing changed, neither on the remote nor locally",
+            "Message from git:",
+            "[rejected] (fetch first)",
+            "Copy message",
+            "Force (with lease)…",
+            "Close",
+        ],
+    );
+    assert!(screen.repo().modal_open());
+    screen.frame(vec![key(egui::Key::Escape)]);
+    let painted = screen.shows_frames(&[NOTICE]);
+    assert!(!screen.repo().modal_open(), "Esc closes the details");
+    assert!(!painted.iter().any(|p| p.text.contains("[rejected]")));
+    // "×" hides the notice.
+    let painted = screen.act(A::Sync(S::DismissRejected));
+    assert!(!painted.iter().any(|p| p.text.contains(NOTICE)));
+
+    // After the fetch the force would remove a commit from the remote: it asks. The branch is
+    // behind, so the notice of the push rejected again stays.
+    screen.shows(A::Fetch(F::Fetch(None)), &["From the remote", "↑1 ↓1"]);
+    screen.shows(A::Sync(S::Push(None)), &[NOTICE]);
+    screen.act(A::Sync(S::RejectedDetails));
+    screen.shows(
+        A::Sync(S::ForcePush),
+        &["Force push of “main”: overwrite the branch on the remote?"],
+    );
+
+    // No local changes here: a commit can be checked out, and the bar says HEAD is detached.
+    // The current branch changed: the notice has nothing more to say.
+    screen.shows(A::Sync(S::Dismiss), &[NOTICE]);
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::CheckoutCommit {
+            id: oid(9),
+            ask: false,
+        }),
+        &["Detached at aeaf52f", "Create branch here…"],
+    );
+    assert!(!painted.iter().any(|p| p.text.contains(NOTICE)));
+
+    // "Pull" from the notice integrates the remote's commits: the notice goes away.
+    let mut screen = Screen::open(diverged());
+    let painted = screen.shows(A::Sync(S::Push(None)), &[NOTICE]);
+    let row = painted.iter().find(|p| p.text == "Details…").unwrap().pos.y;
+    let pull = painted.iter().find(|p| p.text == "Pull" && p.pos.y == row);
+    let pull = pull.expect("“Pull” in the notice").pos;
+    let painted = screen.click(pull + egui::vec2(4.0, 6.0), Primary);
+    assert!(!painted.iter().any(|p| p.text.contains(NOTICE)));
+    assert_eq!(screen.repo().sync.rejected(), None);
+
+    let mut repo = MemoryBackend::sample();
+    let git = "fatal: could not read Username for 'https://example.com'";
+    repo.fail_fetch("origin", Some(FetchFailure::Auth(git.into())));
+    let mut screen = Screen::open(repo);
+    screen.shows(
+        A::Fetch(F::Fetch(None)),
+        &[
+            "Authentication failed",
+            "Message from git:",
+            git,
+            "Close",
+            "Copy message",
+        ],
+    );
+    // The failure is a modal dialog: the arrows do not move the selection under it, and Esc
+    // closes it.
+    let selection = |screen: &Screen| {
+        let repo = screen.repo();
+        (repo.worktree_selected, repo.list.selected())
+    };
+    let selected = selection(&screen);
+    screen.frame(vec![key(egui::Key::ArrowDown)]);
+    screen.frames(2);
+    assert_eq!(selection(&screen), selected);
+    assert!(screen.repo().failure().is_some());
+    screen.frame(vec![key(egui::Key::Escape)]);
+    screen.frames(2);
+    assert!(screen.repo().failure().is_none(), "Esc closes it");
+    screen.frame(vec![key(egui::Key::ArrowDown)]);
+    screen.frames(2);
+    assert_ne!(selection(&screen), selected, "the keys are back");
+
+    // A failed pull is the same dialog; Enter presses "Close", which has the keyboard.
+    screen.shows(
+        A::Sync(S::Pull(None, None)),
+        &["Pull of “main” failed", "Authentication failed", "Close"],
+    );
+    screen.frame(vec![key(egui::Key::Enter)]);
+    screen.frames(2);
+    assert_eq!(screen.repo().sync.window(), None, "Enter closes it");
+    assert!(!screen.repo().modal_open());
+
+    // A checkout refused for the local changes: the short text of merge and pull, and
+    // "Stash…" with the keyboard, so Enter opens the stash dialog.
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::Checkout("feature/graph".into())),
+        &[
+            "Cannot check out “feature/graph”",
+            "You have uncommitted changes in README.md",
+            "Close",
+        ],
+    );
+    let dialog = painted
+        .iter()
+        .position(|p| p.text == "Cannot check out “feature/graph”")
+        .expect("the title");
+    assert!(
+        painted[dialog..].iter().any(|p| p.text == "Stash…"),
+        "“Stash…” is in the dialog"
+    );
+    assert!(
+        !painted.iter().any(|p| p.text.contains("would overwrite")),
+        "the long text of the engine is gone"
+    );
+    screen.frame(vec![key(egui::Key::Enter)]);
+    let painted = screen.shows_frames(&["Stash changes", "Include untracked files"]);
+    assert!(screen.repo().failure().is_none());
+    assert!(
+        !painted.iter().any(|p| p.text.contains("Cannot check out")),
+        "one dialog at a time"
+    );
+}
+
+#[test]
+fn blame_history_search_and_compare() {
+    use crate::file::{Action as F, Mode};
+    use crate::{compare, search};
+    let mut screen = sample();
+    screen.shows(
+        A::File(F::Open {
+            path: "README.md".into(),
+            rev: None,
+            mode: Mode::Blame,
+        }),
+        &[
+            "Blame",
+            "working tree",
+            "Not committed yet",
+            "Project documentation.",
+        ],
+    );
+    screen.shows(
+        A::File(F::Mode(Mode::History)),
+        &[
+            "Follow renames",
+            "Select a commit to see how it changed this file.",
+        ],
+    );
+    screen.shows(
+        A::File(F::Select(0)),
+        &["in commit bd64a5d", "@@ -1,6 +1,7 @@"],
+    );
+    screen.act(A::Diff(crate::diff::Action::Close));
+    screen.shows(A::File(F::Close), &["Uncommitted changes"]);
+
+    screen.act(A::Search(search::Action::Open));
+    screen.shows(
+        A::Search(search::Action::Text("parser".to_owned(), 0.0)),
+        &["1 of 3", "Regex"],
+    );
+    screen.act(A::Search(search::Action::Close));
+    screen.act(A::Select(0));
+    screen.shows(
+        A::Compare(compare::Action::With(3)),
+        &["Compare aeaf52f with 943ff9f", "Swap", "7 files changed"],
+    );
+    screen.shows(
+        A::Compare(compare::Action::Swap),
+        &["Compare 943ff9f with aeaf52f"],
+    );
+}
+
+#[test]
+fn clone_settings_and_worktree_dialogs() {
+    use crate::clone::{Action as C, Kind};
+    use crate::settings::{Action as S, Section};
+    use crate::worktree::Action as W;
+    let mut screen = sample();
+    screen.shows(
+        A::Clone(C::Open(Kind::Clone)),
+        &["Clone a repository", "With submodules", "Browse…"],
+    );
+    screen.act(A::Clone(C::Close));
+    screen.shows(A::Clone(C::Open(Kind::Init)), &["New repository", "Create"]);
+    screen.act(A::Clone(C::Close));
+    screen.shows(
+        A::Settings(S::Open),
+        &["Settings", "Theme", "Interface size", "External editor"],
+    );
+    screen.shows(
+        A::Settings(S::Section(Section::Remotes)),
+        &["Automatic fetch", "Every 15 minutes"],
+    );
+    screen.act(A::Settings(S::Close));
+    screen.shows(
+        A::Worktree(W::OpenAdd(None)),
+        &["New worktree", "Existing branch", "Detached commit"],
+    );
+}
+
+#[test]
+fn two_tabs_and_the_light_theme() {
+    let mut opener = MemoryOpener::new();
+    opener.insert("one", MemoryBackend::sample());
+    opener.insert("two", diverging());
+    let mut screen = Screen::with(opener, Some("one"));
+    screen.frames(2);
+    // The second tab shows its own repo.
+    screen.shows(
+        A::Tabs(Action::Open("two".to_owned())),
+        &["one", "two", "No remotes configured", "c3"],
+    );
+    screen.ctx.set_visuals(egui::Visuals::light());
+    screen.shows(A::Tabs(Action::SwitchTab(0)), &["Commit panel"]);
+    screen.act(A::SelectWorktree);
+    screen.shows(
+        A::Diff(crate::diff::Action::Open(DiffTarget {
+            source: DiffSource::Index,
+            path: "README.md".into(),
+        })),
+        &["staged", "Unstage hunk"],
+    );
+}
+
+#[test]
+fn menus_open_under_the_pointer() {
+    let mut screen = sample();
+    let painted = screen.frames(1);
+    let menu = screen.click_on(&painted, "Ref parser", Secondary);
+    assert_shows(
+        &menu,
+        &[
+            "Copy commit id",
+            "New branch from here…",
+            "Check out this commit…",
+            "Interactive rebase from here…",
+            "Reset “main” to here…",
+        ],
+    );
+    let painted = screen.click(ELSEWHERE, Primary);
+    let menu = screen.click_on(&painted, "graph", Secondary);
+    assert_shows(
+        &menu,
+        &[
+            "Checkout",
+            "Copy name",
+            "Merge into “main”",
+            "Set upstream…",
+            "Delete",
+        ],
+    );
+    let painted = screen.click(ELSEWHERE, Primary);
+    let menu = screen.click_on(&painted, "origin", Secondary);
+    assert_shows(&menu, &["Edit URL…", "Remove…"]);
+    screen.click(ELSEWHERE, Primary);
+    let painted = screen.act(A::SelectWorktree);
+    let menu = screen.click_on(&painted, "note.txt", Secondary);
+    assert_shows(
+        &menu,
+        &[
+            "Show diff",
+            "File history",
+            "Open in editor",
+            "Ignore",
+            "Delete…",
+        ],
+    );
+    let painted = screen.click(ELSEWHERE, Primary);
+    let menu = screen.click_on(&painted, "File", Primary);
+    assert_shows(&menu, &["Open recent", "Open terminal here", "Settings…"]);
+    let painted = screen.click(ELSEWHERE, Primary);
+    let menu = screen.click_on(&painted, "Help", Primary);
+    assert_shows(&menu, &["Keyboard shortcuts", "About BinariGit"]);
+    let painted = screen.click_on(&menu, "Keyboard shortcuts", Primary);
+    assert_shows(&painted, &["Ctrl+Shift+P", "Push the current branch"]);
+    assert_shows(
+        &painted,
+        &[
+            "Ctrl+O",
+            "Ctrl+W",
+            "New branch from HEAD…",
+            "Ctrl+Enter",
+            "Up · Down · Home · End",
+            "Tab · Shift+Tab",
+        ],
+    );
+    assert_eq!(screen.app.help, Some(view::Help::Shortcuts));
+    let painted = screen.click_on(&painted, "Close", Primary);
+    assert_eq!(screen.app.help, None);
+    let menu = screen.click_on(&painted, "Help", Primary);
+    let painted = screen.click_on(&menu, "About BinariGit", Primary);
+    assert_shows(
+        &painted,
+        &["A graphical git client", "License: MIT OR Apache-2.0"],
+    );
+
+    // The window is modal: the shortcuts of the tab under it do nothing, Esc closes it.
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    screen.frame(vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+    screen.frames(2);
+    assert!(!screen.repo().search.is_open(), "Ctrl+F reached the tab");
+    assert_eq!(screen.app.help, Some(view::Help::About));
+    screen.frame(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+    screen.frames(2);
+    assert_eq!(screen.app.help, None);
+    // Without the window the same keys are the tab's again.
+    screen.frame(vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+    screen.frames(2);
+    assert!(screen.repo().search.is_open());
+}
+
+#[test]
+fn submodules_worktrees_and_lfs() {
+    use project_engine::{
+        MemoryWorktree, SubmoduleInfo, SubmoduleState, WorktreeContents, WorktreeInfo,
+    };
+    let mut repo = MemoryBackend::sample();
+    // Recorded on commit 1, checked out on `head`.
+    let submodule = |head: u64, state| SubmoduleInfo {
+        path: "vendor/lib".into(),
+        name: Some("lib".to_owned()),
+        url: Some("../lib".to_owned()),
+        recorded: Some(oid(1)),
+        head: Some(oid(head)),
+        detached: true,
+        state,
+        changes: false,
+        untracked: false,
+        operation: None,
+        unreferenced: false,
+        ignored_overwritten: false,
+    };
+    repo.set_submodules(vec![submodule(2, SubmoduleState::DifferentCommit)]);
+    repo.add_linked_worktree(MemoryWorktree {
+        info: WorktreeInfo {
+            path: "/wt/graph".to_owned(),
+            main: false,
+            current: false,
+            bare: false,
+            head: Some(oid(9)),
+            branch: Some("refs/heads/feature/graph".to_owned()),
+            detached: false,
+            locked: false,
+            lock_reason: None,
+            prunable: false,
+        },
+        contents: Some(WorktreeContents::default()),
+        unreferenced: false,
+    });
+    repo.set_lfs([RepoPath::from("README.md")], false);
+    let with_lfs = {
+        let mut repo = remote_ahead();
+        repo.set_lfs([RepoPath::from("README.md")], true);
+        repo
+    };
+    let mut screen = Screen::open(repo);
+    let painted = screen.frames(1);
+    assert_shows(
+        &painted,
+        &[
+            "This repository uses Git LFS, which is not installed",
+            "Submodules (1)",
+            "vendor/lib",
+            "other commit",
+            "Worktrees (2)",
+        ],
+    );
+    let menu = screen.click_on(&painted, "vendor/lib", Secondary);
+    assert_shows(&menu, &["Update", "Open in a new tab"]);
+    screen.click(ELSEWHERE, Primary);
+    screen.shows(
+        A::Worktree(crate::worktree::Action::Remove("/wt/graph".to_owned())),
+        &["Remove this worktree?", "Remove worktree"],
+    );
+
+    // A checkout that leaves the submodule behind (here: the list from before the command had
+    // it on its recorded commit): the notice under the bar.
+    screen.act(A::Worktree(crate::worktree::Action::CancelRemove));
+    let tab = &mut screen.app.tabs[0];
+    tab.executor
+        .submit("branch.create", serde_json::json!({ "name": "side" }));
+    screen.frames(2);
+    let before = serde_json::json!({ "submodules": [submodule(1, SubmoduleState::InSync)] });
+    let repo = screen.app.tabs[0].repo.as_mut().unwrap();
+    repo.submodules.receive_list(Ok(before), false);
+    screen.shows(
+        A::Branch(crate::branch::Action::Checkout("side".to_owned())),
+        &[
+            "1 submodule is not at the recorded commit",
+            "Not now",
+            "Update",
+        ],
+    );
+
+    // git-lfs installed: the files stored in it carry a badge. With local changes, a pull that
+    // has something to bring is refused in its window.
+    let mut screen = Screen::open(with_lfs);
+    screen.shows(A::SelectWorktree, &["LFS", "Staged (2)"]);
+    screen.shows(
+        A::Sync(crate::sync::Action::Pull(None, None)),
+        &[
+            "Pull of “main” not possible",
+            "You have uncommitted changes in README.md",
+        ],
+    );
+}
+
+/// The status bar at the bottom: one line cut before the repo path, the backup ref and the rest
+/// of the text only on hover.
+#[test]
+fn a_long_status_message_is_one_cut_line() {
+    use std::time::{Duration, Instant};
+    let long = "Undone: Amend 83c3266 “Make the greeting configurable and document the new option \
+                in the README, with an example for every platform and a note about the default \
+                value” (was 77ef74e); a backup was saved";
+    let backup = "refs/project/backup/undo-1795097584-316326506";
+    let mut screen = sample();
+    for size in [egui::vec2(1200.0, 760.0), egui::vec2(760.0, 520.0)] {
+        screen.size = size;
+        let text = crate::status::with_backup(long.to_owned(), Some(backup));
+        screen.app.tabs[0].notice.set(text);
+        let painted = screen.frames(2);
+        let message = painted
+            .iter()
+            .find(|p| p.text.starts_with("Undone: Amend"))
+            .expect("the message is drawn");
+        assert!(message.cut && message.text == long, "{message:?}");
+        assert!(!painted.iter().any(|p| p.text.contains("refs/project")));
+        // The repo path is the last text equal to it, at the bottom right: the message ends
+        // before it and keeps most of the bar.
+        let path = painted.iter().rfind(|p| p.text == PATH).expect("the path");
+        assert!((path.pos.y - message.pos.y).abs() < 8.0, "{path:?}");
+        let end = message.pos.x + message.width;
+        assert!(end <= path.pos.x, "{end} over {path:?}");
+        assert!(message.width >= size.x * 0.5, "{message:?}");
+        // Hover: the whole message, then the backup ref on its own line.
+        let over = message.pos + egui::vec2(40.0, 6.0);
+        screen.frame(vec![egui::Event::PointerMoved(over)]);
+        let hover = screen.frames(12);
+        let whole = format!("{long}\nBackup: {backup}");
+        assert!(
+            hover.iter().any(|p| p.text == whole),
+            "{:#?}",
+            hover.iter().map(|p| &p.text).collect::<Vec<_>>()
+        );
+        screen.frame(vec![egui::Event::PointerMoved(ELSEWHERE)]);
+    }
+    // An old notice stays (drawn weak), and a short one is whole.
+    let tab = &mut screen.app.tabs[0];
+    let old = Instant::now() - Duration::from_secs(60);
+    tab.notice
+        .set_at("Fetch from “origin” done".to_owned(), old);
+    assert_eq!(tab.notice.fresh_for(Instant::now()), None);
+    let painted = screen.shows_frames(&["Fetch from “origin” done"]);
+    let notice = painted.iter().find(|p| p.text.starts_with("Fetch from"));
+    assert!(notice.is_some_and(|p| !p.cut), "{notice:?}");
+    // An error in several lines is one line too, and takes the place of the notice.
+    let rejected = "rejected ".repeat(40);
+    screen.app.tabs[0].error = format!("Push failed: {rejected}\nhint: fetch first");
+    let painted = screen.frames(2);
+    let error = painted
+        .iter()
+        .find(|p| p.text.starts_with("Push failed"))
+        .expect("the error is drawn");
+    assert!(error.cut && !error.text.contains('\n'), "{error:?}");
+    assert!(!painted.iter().any(|p| p.text.contains("Fetch from")));
+    let path = painted.iter().rfind(|p| p.text == PATH).expect("the path");
+    assert!(error.pos.x + error.width <= path.pos.x);
+}
+
+#[test]
+fn notices_under_the_bar() {
+    use project_engine::FetchFailure;
+    use std::time::{Duration, Instant};
+    let mut repo = MemoryBackend::sample();
+    let failure = FetchFailure::Auth("fatal: Authentication failed".into());
+    repo.fail_fetch("origin", Some(failure));
+    let mut screen = Screen::open(repo);
+    // The first page of the log was slow and the repo has no commit-graph.
+    let ticket = crate::Ticket::for_test(9_999);
+    let start = Instant::now();
+    let mut slow = crate::optimize::OptimizeBox::new(false);
+    slow.log_submitted(ticket, start);
+    slow.log_received(ticket, start + Duration::from_secs(30), true);
+    let tab = &mut screen.app.tabs[0];
+    tab.repo.as_mut().unwrap().optimize = slow;
+    // The automatic fetch gets an authentication error: suspended, with a notice.
+    let every = Some(Duration::from_secs(60));
+    let later = start + Duration::from_secs(600);
+    tab.tick_fetch(start, true, every, false);
+    tab.tick_fetch(later, true, every, false);
+    tab.receive();
+    tab.tick_fetch(later, true, every, false);
+    assert_shows(
+        &screen.frames(2),
+        &[
+            "The history took 30.0 s to load",
+            "Optimize",
+            "Automatic fetch paused",
+            "Retry",
+        ],
+    );
+}
+
+#[test]
+fn a_question_from_git() {
+    use project_engine::{CredentialPrompter, CredentialRequest};
+    use std::time::{Duration, Instant};
+    let mut screen = sample();
+    let dialog = Arc::new(crate::CredentialDialog::new());
+    screen.app.credentials = dialog.connect(&screen.ctx).unwrap();
+    let asker = std::thread::spawn(move || {
+        let prompt = "Password for 'https://ada@host': ";
+        dialog.ask(CredentialRequest::new(prompt, Some("origin".to_owned())))
+    });
+    let start = Instant::now();
+    while screen.app.credentials.open().is_none() {
+        assert!(start.elapsed() < Duration::from_secs(5), "no question");
+        screen.frames(1);
+    }
+    assert_shows(
+        &screen.frames(2),
+        &[
+            "Password for https://ada@host",
+            "Remote: origin",
+            "Show",
+            "OK",
+        ],
+    );
+    screen.act(A::Credentials(crate::credentials::Action::Cancel));
+    assert_eq!(asker.join().unwrap(), None);
+}
+
+/// U64: every Tab stop shows where the focus is. The widgets drawn by hand paint the focus
+/// ring, the edges of the side panels pass the focus on.
+#[test]
+fn every_tab_stop_changes_the_picture() {
+    let mut screen = sample();
+    screen.app.frame = view::WindowFrame::Custom;
+    screen.act(A::Select(2));
+    // Nothing moves by itself: a picture that changes is the focus.
+    let still = screen.picture.clone();
+    screen.frames(2);
+    assert!(still == screen.picture, "the screen is not still");
+    let mut rings = 0;
+    for stop in 1..=70 {
+        assert!(
+            screen.tab_changes_the_picture(),
+            "Tab stop {stop} shows no focus"
+        );
+        rings += screen.rings.len();
+    }
+    assert!(rings >= 20, "{rings} focus rings in 70 stops");
+
+    // The stage area with a diff open: file rows, the lines of the diff, the hunk buttons.
+    let mut screen = sample();
+    screen.act(A::SelectWorktree);
+    let file = screen.repo().shown_files().remove(0);
+    screen.act(A::Diff(crate::diff::Action::Open(file)));
+    for stop in 1..=70 {
+        assert!(
+            screen.tab_changes_the_picture(),
+            "Tab stop {stop} shows no focus (stage area)"
+        );
+    }
+}
+
+/// U64: on the stage file that has the keyboard Enter is the click (the diff opens) and Space
+/// the row's button (stage), one action each.
+#[test]
+fn enter_and_space_on_a_focused_stage_file() {
+    use crate::stage::Side;
+    let mut screen = sample();
+    screen.act(A::SelectWorktree);
+    let path: RepoPath = "src/lib.rs".into();
+    assert!(screen.repo().stage.contains(Side::Unstaged, &path));
+    assert!(!screen.repo().stage.contains(Side::Staged, &path));
+    screen.tab_to("src/lib.rs", 80);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let target = screen.repo().diff.target().cloned();
+    assert_eq!(
+        target,
+        Some(DiffTarget {
+            source: DiffSource::Worktree,
+            path: path.clone()
+        })
+    );
+    assert!(
+        !screen.repo().stage.contains(Side::Staged, &path),
+        "Enter staged it"
+    );
+    // The arrows move the focus, not the open file.
+    screen.key(egui::Key::ArrowDown, egui::Modifiers::NONE);
+    assert_eq!(screen.repo().diff.target().cloned(), target);
+    screen.key(egui::Key::ArrowUp, egui::Modifiers::NONE);
+    screen.key(egui::Key::Space, egui::Modifiers::NONE);
+    assert!(screen.repo().stage.contains(Side::Staged, &path));
+    assert!(!screen.repo().stage.contains(Side::Unstaged, &path));
+}
+
+/// U64: with a file open the arrows walk its list and the diff follows; Ctrl+B and Ctrl+W.
+#[test]
+fn the_keyboard_walks_the_files_and_opens_the_new_branch_dialog() {
+    let key = |screen: &mut Screen, key| screen.key(key, egui::Modifiers::NONE);
+    let mut screen = sample();
+    screen.act(A::Select(0));
+    let files = screen.repo().shown_files();
+    key(&mut screen, egui::Key::Enter);
+    assert_eq!(screen.repo().diff.target(), Some(&files[0]));
+    key(&mut screen, egui::Key::ArrowDown);
+    assert_eq!(screen.repo().diff.target(), Some(&files[1]));
+    assert_eq!(screen.repo().list.selected(), Some(0), "the commit stays");
+    key(&mut screen, egui::Key::Escape);
+    assert_eq!(screen.repo().diff.target(), None);
+    key(&mut screen, egui::Key::ArrowDown);
+    assert_eq!(screen.repo().list.selected(), Some(1));
+
+    let painted = screen.key(egui::Key::B, egui::Modifiers::COMMAND);
+    assert_shows(&painted, &["New branch", "The branch starts at main"]);
+    // In the name field Ctrl+W is the field's (delete a word): the tab stays.
+    screen.key(egui::Key::W, egui::Modifiers::COMMAND);
+    assert!(screen.tab().repo.is_some());
+    screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!screen.repo().modal_open());
+    screen.key(egui::Key::W, egui::Modifiers::COMMAND);
+    assert!(screen.tab().repo.is_none(), "Ctrl+W closes the tab");
+}
+
+/// U66: too low for its headers, a row per list and the commit box (a banner over a small
+/// window), the stage panel scrolls instead of drawing one part over another.
+#[test]
+fn a_low_stage_panel_keeps_a_row_per_list() {
+    let mut screen = sample();
+    screen.act(A::SelectWorktree);
+    for size in [egui::vec2(760.0, 520.0), egui::vec2(760.0, 300.0)] {
+        screen.size = size;
+        let painted = screen.frames(4);
+        let all = |text: &str| -> Vec<f32> {
+            let found = painted.iter().filter(|p| p.text == text);
+            found.map(|p| p.pos.y).collect()
+        };
+        let y = |text: &str| match all(text)[..] {
+            [y] => y,
+            ref found => panic!("{text:?} is on screen {} times at {size}", found.len()),
+        };
+        // README.md is the first file of both lists.
+        let [staged, unstaged] = all("README.md")[..] else {
+            panic!("no file row per list at {size}");
+        };
+        // Each header, its button and its first file: one under the other, none over the next.
+        let rows = [y("Staged (2)"), staged, y("Unstaged (3)"), unstaged];
+        for pair in rows.windows(2) {
+            assert!(pair[1] - pair[0] >= 14.0, "{rows:?} at {size}");
+        }
+        assert!(
+            (y("Unstage all") - rows[0]).abs() < 14.0,
+            "{rows:?} at {size}"
+        );
+        assert!(
+            (y("Stage all") - rows[2]).abs() < 14.0,
+            "{rows:?} at {size}"
+        );
+        // The commit box, when in view, starts under the last list.
+        if let Some(message) = painted.iter().find(|p| p.text == "Commit message") {
+            assert!(message.pos.y - rows[3] >= 14.0, "{rows:?} at {size}");
+        }
+    }
+}
+
+/// U66: the id of a stash is shown short, as a commit's: whole, it wrapped over the next row.
+#[test]
+fn the_id_of_a_stash_is_shown_short() {
+    use crate::stash::Action as S;
+    let mut screen = sample();
+    screen.act(A::Stash(S::Open));
+    screen.act(A::Stash(S::Submit));
+    let id = screen.repo().stash.list().unwrap_or_default()[0].id;
+    let painted = screen.act(A::Stash(S::Select(id)));
+    assert!(painted.iter().any(|p| p.text == id.short()), "short id");
+    assert!(!painted.iter().any(|p| p.text.contains(&id.to_string())));
+}
+
+/// U66: the "Open repository" dialog where the path is typed, from the File menu or when the
+/// system's folder dialog cannot be shown.
+#[test]
+fn the_open_by_path_dialog() {
+    use crate::tabs::Action as T;
+    let mut screen = sample();
+    let painted = screen.shows(
+        A::Tabs(T::OpenByPath),
+        &["Open repository", "Type or paste the path", "Cancel"],
+    );
+    // Nothing typed: Enter opens nothing and the dialog stays.
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(screen.app.path_dialog.is_some());
+    assert_eq!(screen.app.tabs.len(), 1);
+    // Typed: in the field, and Enter opens it as a folder chosen would be (here it is missing:
+    // the tab says so, the dialog is gone).
+    assert!(painted.iter().any(|p| p.text == "Open"));
+    screen.frame(vec![egui::Event::Text("/no/such/repo".to_owned())]);
+    screen.frames(2);
+    let dialog = screen.app.path_dialog.as_ref().expect("still open");
+    assert_eq!(dialog.path, "/no/such/repo");
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(screen.app.path_dialog.is_none());
+    assert_eq!(screen.app.tabs.len(), 2);
+    assert!(screen.tab().repo.is_none());
+    assert!(!screen.tab().error.is_empty());
+    // Esc closes it without opening anything.
+    screen.act(A::Tabs(T::OpenByPath));
+    screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(screen.app.path_dialog.is_none());
+    assert_eq!(screen.app.tabs.len(), 2);
+}
+
+/// U67: "Local branches" and "Tags" have the "+" of "Remotes" and "Stashes": the dialogs of
+/// "New branch from here…" and "New tag here…" at HEAD, with "Cancel" beside the default button.
+#[test]
+fn the_plus_of_local_branches_and_of_tags() {
+    use crate::branch::Action as B;
+    let plus = |painted: &[Painted], title: &str| {
+        let header = painted
+            .iter()
+            .find(|p| p.text.starts_with(title))
+            .unwrap_or_else(|| panic!("{title:?} is not on screen"));
+        painted
+            .iter()
+            .find(|p| p.text == crate::icons::PLUS && (p.pos.y - header.pos.y).abs() < 10.0)
+            .unwrap_or_else(|| panic!("no + beside {title:?}"))
+            .pos
+    };
+    let mut screen = sample();
+    let pos = plus(&screen.frames(2), "Local branches");
+    let painted = screen.click(pos + egui::vec2(4.0, 6.0), Primary);
+    assert_shows(
+        &painted,
+        &[
+            "New branch",
+            "The branch starts at main",
+            "Create branch",
+            "Cancel",
+        ],
+    );
+    let painted = screen.act(A::Branch(B::CloseDialog));
+    let pos = plus(&painted, "Tags");
+    let painted = screen.click(pos + egui::vec2(4.0, 6.0), Primary);
+    assert_shows(&painted, &["New tag", "Create tag", "Cancel"]);
+}
+
+/// U67: what "Amend" changes is one cut row where the hint of the button is, not four wrapped
+/// rows that push the fields up: the box is where it was, ticked or not.
+#[test]
+fn ticking_amend_does_not_move_the_commit_box() {
+    use crate::commit::Action as C;
+    let top = |painted: &[Painted]| {
+        let title = painted.iter().find(|p| p.text == "Commit message");
+        title.expect("the commit box").pos.y
+    };
+    let mut screen = sample();
+    let before = top(&screen.frames(2));
+    let painted = screen.act(A::Commit(C::SetAmend(true)));
+    let warning = painted
+        .iter()
+        .find(|p| p.text.starts_with("The last commit"))
+        .expect("the warning");
+    assert!(warning.cut, "one row, cut to the panel: {warning:?}");
+    assert!(warning.text.contains("The message is the current one"));
+    assert_eq!(top(&painted), before, "ticked");
+    let painted = screen.act(A::Commit(C::SetAmend(false)));
+    assert_eq!(top(&painted), before, "unticked");
+    assert!(
+        !painted
+            .iter()
+            .any(|p| p.text.starts_with("The last commit"))
+    );
+}
+
+/// U67: the settings window is as tall as its tallest page: title and "Close" stay where they
+/// are from one page to the other.
+#[test]
+fn the_settings_window_keeps_its_size_between_pages() {
+    use crate::settings::{Action as S, Section};
+    let corners = |painted: &[Painted]| {
+        let pos = |text: &str| {
+            let found = painted.iter().rfind(|p| p.text == text);
+            found
+                .unwrap_or_else(|| panic!("{text:?} is not on screen"))
+                .pos
+        };
+        (pos("Settings"), pos("Close"))
+    };
+    let mut screen = sample();
+    let general = corners(&screen.act(A::Settings(S::Open)));
+    let remotes = corners(&screen.shows(
+        A::Settings(S::Section(Section::Remotes)),
+        &["Automatic fetch"],
+    ));
+    assert_eq!(general, remotes);
+    let back = corners(&screen.act(A::Settings(S::Section(Section::General))));
+    assert_eq!(general, back);
+}
+
+/// U67: the automatic fetch that cannot reach the remote is a badge on "Fetch", painted over
+/// the button: no button of the bar moves when it appears.
+#[test]
+fn the_offline_badge_does_not_move_the_toolbar() {
+    let buttons = ["Undo", "Fetch", "Pull", "Push", "Refresh"];
+    let places = |painted: &[Painted]| {
+        let x = |text: &&str| painted.iter().find(|p| p.text == *text).map(|p| p.pos.x);
+        buttons.iter().map(x).collect::<Vec<_>>()
+    };
+    let clouds = |painted: &[Painted]| {
+        let cloud = |p: &&Painted| p.text == crate::icons::CLOUD;
+        painted.iter().filter(cloud).count()
+    };
+    let mut screen = sample();
+    let before = screen.frames(2);
+    let repo = screen.app.tabs[0].repo.as_mut().expect("open repo");
+    repo.auto_fetch
+        .unreachable("fatal: unable to access 'https://example.com/'".into());
+    let after = screen.frames(2);
+    assert_eq!(clouds(&after), clouds(&before) + 1, "the badge");
+    assert!(places(&before).iter().all(Option::is_some));
+    assert_eq!(places(&after), places(&before));
+}
+
+/// U67: blame and file history go back with the button of the diff header, and the clone
+/// dialog proposes the folder from the URL, beside the repo open.
+#[test]
+fn one_back_button_and_a_proposed_clone_folder() {
+    use crate::clone::{Action as C, Fields, Kind};
+    use crate::file::{Action as F, Mode};
+    let mut screen = sample();
+    let painted = screen.act(A::File(F::Open {
+        path: "README.md".into(),
+        rev: None,
+        mode: Mode::Blame,
+    }));
+    assert_shows(&painted, &["< Graph", "Blame"]);
+    assert!(!painted.iter().any(|p| p.text == "Close"));
+    screen.act(A::File(F::Close));
+
+    screen.act(A::Clone(C::Open(Kind::Clone)));
+    let painted = screen.act(A::Clone(C::Fields(Fields {
+        url: "git@example.com:owner/widgets.git".to_owned(),
+        ..Fields::default()
+    })));
+    assert_shows(&painted, &["Clone", "Cancel"]);
+    // The repo open has a relative path here, so no folder beside it: the home folder.
+    let url = "git@example.com:owner/widgets.git";
+    let folder = clone_base(&[PATH.to_owned()], Some(HOME.into()))
+        .and_then(|base| clone::proposed_folder(&base, url))
+        .expect("a folder is proposed");
+    assert!(folder.ends_with("widgets"), "{folder}");
+    assert!(painted.iter().any(|p| p.text == folder), "{folder}");
+}
+
+/// U68: the stash dialog opened from a refusal for local changes offers the refused command
+/// ("Stash and …", the default button, with the plain "Stash" beside it); opened from the
+/// toolbar it is the plain dialog.
+#[test]
+fn the_stash_dialog_offers_the_refused_command_only_from_its_refusal() {
+    use crate::stash::Action as S;
+    let offers = |painted: &[Painted]| painted.iter().any(|p| p.text.starts_with("Stash and "));
+    let mut screen = sample();
+    let painted = screen.shows(A::Stash(S::Open), &["Stash changes", "Cancel"]);
+    assert!(
+        !offers(&painted),
+        "a stash from the toolbar retries nothing"
+    );
+    assert!(painted.iter().any(|p| p.text == "Stash"));
+    screen.act(A::Stash(S::CloseDialog));
+
+    // "Stash…" in the dialog of a refused checkout (the last one painted: the toolbar has one).
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::Checkout("feature/graph".into())),
+        &["Cannot check out “feature/graph”"],
+    );
+    let stash = painted.iter().rev().find(|p| p.text == "Stash…");
+    let at = stash.expect("“Stash…” in the dialog").pos + egui::vec2(4.0, 6.0);
+    screen.click(at, Primary);
+    let painted = screen.shows_frames(&[
+        "Stash changes",
+        "Stash and check out “feature/graph”",
+        "then runs the refused command again (Checking out “feature/graph”)",
+        "They are not put back by themselves",
+        "Cancel",
+    ]);
+    assert!(screen.repo().failure().is_none(), "one dialog at a time");
+    assert!(
+        painted.iter().any(|p| p.text == "Stash"),
+        "the plain stash stays"
+    );
+
+    // Enter is the default button: the stash, then the checkout that was refused.
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let painted = screen.shows_frames(&["Stashes (1)", "Changes stashed in stash@{0}. "]);
+    assert!(!offers(&painted), "the dialog is closed");
+    assert!(screen.repo().stash.dialog().is_none());
+    let head = view::current_branch(&screen.repo().head);
+    assert_eq!(head, Some("feature/graph"));
+}
+
+/// The stash dialog of a refused checkout of "feature/graph", as "Stash…" in the refusal
+/// opens it: the keyboard is in the message field.
+#[cfg(test)]
+fn stash_dialog_after_a_refused_checkout() -> Screen {
+    let mut screen = sample();
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::Checkout("feature/graph".into())),
+        &["Cannot check out “feature/graph”"],
+    );
+    let stash = painted.iter().rev().find(|p| p.text == "Stash…");
+    let at = stash.expect("“Stash…” in the dialog").pos + egui::vec2(4.0, 6.0);
+    screen.click(at, Primary);
+    screen.shows_frames(&["Stash and check out “feature/graph”", "Cancel"]);
+    screen
+}
+
+/// U68, from the safety review: Enter is the default button ("Stash and …") only while the
+/// keyboard is in the message field. On the plain "Stash" it stashes and the refused checkout
+/// is NOT sent again; on "Cancel" nothing is written at all.
+#[test]
+fn enter_on_another_button_of_the_stash_dialog_never_retries() {
+    let tab = |screen: &mut Screen, times: usize| {
+        for _ in 0..times {
+            screen.key(egui::Key::Tab, egui::Modifiers::NONE);
+        }
+    };
+    // Message, the two checkboxes, "Stash and …", then the plain "Stash".
+    let mut screen = stash_dialog_after_a_refused_checkout();
+    let before = view::current_branch(&screen.repo().head).map(str::to_owned);
+    tab(&mut screen, 4);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    screen.shows_frames(&["Stashes (1)"]);
+    assert!(screen.repo().stash.dialog().is_none(), "the stash was made");
+    let after = view::current_branch(&screen.repo().head).map(str::to_owned);
+    assert_eq!(after, before, "the plain stash checks nothing out");
+
+    // One more Tab: "Cancel".
+    let mut screen = stash_dialog_after_a_refused_checkout();
+    tab(&mut screen, 5);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let painted = screen.frames(3);
+    assert!(
+        screen.repo().stash.dialog().is_none(),
+        "the dialog is closed"
+    );
+    assert!(
+        painted.iter().any(|p| p.text == "Stashes (0)"),
+        "nothing was stashed"
+    );
+    let after = view::current_branch(&screen.repo().head).map(str::to_owned);
+    assert_eq!(after, before, "and nothing was checked out");
+
+    // A checkbox: Enter ticks it, the dialog stays.
+    let mut screen = stash_dialog_after_a_refused_checkout();
+    tab(&mut screen, 1);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let Some(crate::stash::Dialog::Push(dialog)) = screen.repo().stash.dialog() else {
+        panic!("the dialog stays");
+    };
+    assert!(dialog.fields.include_untracked, "Enter ticked the checkbox");
+    let after = view::current_branch(&screen.repo().head).map(str::to_owned);
+    assert_eq!(after, before);
+}
+
+/// U68: a toolbar wider than its room (a narrow window, a large UI scale) draws the buttons
+/// that fit and puts the others, from the right, in the "»" menu: none is cut by the edge.
+#[test]
+fn a_toolbar_without_room_moves_its_last_buttons_into_a_menu() {
+    let buttons = ["Undo", "Redo", "Fetch", "Pull", "Push", "Stash…", "Refresh"];
+    // In the bar by its name; in the menu the count of Pull and Push follows it ("Push ↑1").
+    let drawn = |painted: &[Painted]| -> Vec<&str> {
+        let is = |name: &&&str| {
+            let counted = format!("{name} ");
+            let named = |p: &Painted| p.text == **name || p.text.starts_with(&counted);
+            painted.iter().any(named)
+        };
+        buttons.iter().filter(is).copied().collect()
+    };
+    let mut screen = sample();
+    let painted = screen.frames(2);
+    assert_eq!(drawn(&painted), buttons, "all of them when there is room");
+    assert!(!painted.iter().any(|p| p.text == "»"));
+
+    // 760x520 at 150%: about 507x347 points.
+    screen.size = egui::vec2(760.0 / 1.5, 520.0 / 1.5);
+    let painted = screen.frames(3);
+    let kept = drawn(&painted);
+    assert!(kept.len() < buttons.len(), "{kept:?}");
+    assert_eq!(kept, buttons[..kept.len()], "the first ones stay, in order");
+    assert!(kept.contains(&"Undo"), "{kept:?}");
+    let more = painted.iter().find(|p| p.text == "»").expect("the menu");
+    for p in painted
+        .iter()
+        .filter(|p| buttons.contains(&p.text.as_str()) || p.text == "»")
+    {
+        assert!(!p.cut, "{p:?}");
+        assert!(p.pos.x + p.width <= screen.size.x, "beyond the edge: {p:?}");
+    }
+
+    // The menu has the ones left out, with their shortcut; one of them works from there.
+    let at = more.pos + egui::vec2(2.0, 2.0);
+    let painted = screen.click(at, Primary);
+    let left_out = &buttons[kept.len()..];
+    assert_eq!(drawn(&painted)[kept.len()..], *left_out, "in the menu");
+    assert!(left_out.contains(&"Refresh"));
+    assert!(painted.iter().any(|p| p.text == "F5"), "the shortcut");
+    let painted = screen.click_on(&painted, "Stash…", Primary);
+    assert_shows(&painted, &["Stash changes"]);
+    assert!(drawn(&painted).len() == kept.len(), "the menu closed");
+
+    // Much narrower: hardly a button is left in the bar, and every command is still there.
+    screen.act(A::Stash(crate::stash::Action::CloseDialog));
+    screen.size = egui::vec2(170.0, 300.0);
+    let painted = screen.frames(3);
+    assert!(drawn(&painted).len() <= 1, "{:?}", drawn(&painted));
+    let more = painted.iter().find(|p| p.text == "»").expect("the menu");
+    let painted = screen.click(more.pos + egui::vec2(2.0, 2.0), Primary);
+    assert_eq!(drawn(&painted), buttons, "bar and menu together");
+    let push = painted.iter().find(|p| p.text.starts_with("Push "));
+    assert_eq!(push.map(|p| p.text.as_str()), Some("Push ↑1"), "the count");
+}

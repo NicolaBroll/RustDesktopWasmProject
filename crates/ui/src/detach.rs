@@ -2,11 +2,11 @@
 //! (`commit.checkout`), after a small confirmation that explains detached HEAD (skipped with
 //! "Don't ask again", a setting), and "Create branch here…" in the top bar (`branch.create`
 //! without `start`, then `branch.checkout`). Data only, no egui, in the same [`BranchBox`] as the
-//! other branch dialogs: one at a time. A checkout refused because of local changes opens the same
-//! dialog as `branch.checkout`; the commits a checkout leaves behind on a detached HEAD are saved
+//! other branch dialogs: one at a time. A checkout refused because of local changes is explained
+//! like the one of `branch.checkout`; the commits a checkout leaves behind on a detached HEAD are saved
 //! by the engine and named in the notice.
 
-use crate::branch::{Action, BranchBox, Dialog, NameKind, Op, Outcome};
+use crate::branch::{Action, BranchBox, Checkout, Dialog, NameKind, Op, Outcome};
 use crate::{Request, Tab, params, warnings_text};
 use project_domain::{Head, Oid};
 use project_engine::{CommitCheckoutParams, CommitCheckoutResult, HeadState, Message, MessageArg};
@@ -65,10 +65,14 @@ impl BranchBox {
         if self.busy() {
             return None;
         }
-        self.checkout = Some(commit_label(id));
-        Some(params(CommitCheckoutParams {
+        let params = params(CommitCheckoutParams {
             rev: id.to_string(),
-        }))
+        });
+        self.checkout = Some(Checkout {
+            name: commit_label(id),
+            params: params.clone(),
+        });
+        Some(params)
     }
 
     /// Opens the new-branch dialog at the detached HEAD, shown at `id`: the branch is created
@@ -78,25 +82,28 @@ impl BranchBox {
     }
 }
 
-/// The engine warnings as the text appended to a notice, with the commits saved when leaving a
-/// detached HEAD said plainly; `backup` named even if no warning does.
+/// The engine warnings as the text appended last to a notice, with the commits saved when
+/// leaving a detached HEAD said plainly; `backup` told even if no warning does. The names of the
+/// backup refs follow on their own line (the hover text of the status bar).
 pub(crate) fn backup_text(warnings: &[Message], backup: Option<&str>) -> String {
-    let mut saved = false;
+    let mut refs: Vec<String> = Vec::new();
     let texts: Vec<String> = warnings
         .iter()
         .map(|w| match saved_commits(w) {
             Some((n, name)) => {
-                saved = true;
-                tr!("detach-saved", n = n, backup = name)
+                refs.push(name);
+                tr!("detach-saved", n = n)
             }
             None => w.text(),
         })
         .collect();
     let mut text = warnings_text(&texts);
-    if let Some(backup) = backup.filter(|b| !saved && !texts.iter().any(|t| t.contains(b))) {
-        text += &warnings_text(&[tr!("detach-saved-unknown", backup = backup)]);
+    let untold = |b: &&str| refs.is_empty() && !texts.iter().any(|t| t.contains(*b));
+    if let Some(backup) = backup.filter(untold) {
+        text += &warnings_text(&[tr!("detach-saved-unknown")]);
+        refs.push(backup.to_owned());
     }
-    text
+    crate::status::with_backups(text, &refs)
 }
 
 /// The count and the backup of the "commits saved" warning.

@@ -15,14 +15,44 @@ pub(crate) fn stage_panel(
     actions: &mut Vec<Action>,
 ) {
     // The commit box takes what the part above leaves, measured in the previous frame: headers
-    // and one row per list stay visible, and in a low window the box's body loses rows.
+    // and one row per list stay visible, and in a low window the box's body loses rows. Lower
+    // than that (a banner over a small window, titles on two rows) the whole panel scrolls:
+    // nothing is drawn over something else.
     let layout_id = ui.make_persistent_id("stage-layout");
-    let mut layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
-    let room = ui.available_height() - layout.upper_min - layout.box_frame - layout.box_fixed;
+    let layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
     let row = ui.text_style_height(&egui::TextStyle::Body);
-    let body_rows = ((room - BODY_MARGIN) / row)
-        .floor()
-        .clamp(1.0, BODY_ROWS as f32) as usize;
+    let least = layout.least(row);
+    let low = layout.scrolls(ui.available_height(), row);
+    // Always inside the scroll area, which scrolls only when low: the ids of the fields do
+    // not change (and the focus stays) when a banner appears.
+    egui::ScrollArea::new([false, low])
+        .id_salt("stage-panel")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if low {
+                // The buttons at the right edge are never under the scrollbar.
+                let width = ui.available_width() - scrollbar_gutter(ui.spacing());
+                let (rect, _) = ui.allocate_exact_size(vec2(width, least), Sense::hover());
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                stage_content(&mut content, repo, draft, writing, layout_id, actions);
+            } else {
+                stage_content(ui, repo, draft, writing, layout_id, actions);
+            }
+        });
+}
+
+/// The stage area in the height of `ui`: the commit box at the bottom, the lists above.
+fn stage_content(
+    ui: &mut Ui,
+    repo: &RepoView,
+    draft: &mut CommitDraft,
+    writing: bool,
+    layout_id: egui::Id,
+    actions: &mut Vec<Action>,
+) {
+    let mut layout: StageLayout = ui.data(|d| d.get_temp(layout_id)).unwrap_or_default();
+    let row = ui.text_style_height(&egui::TextStyle::Body);
+    let body_rows = layout.body_rows(ui.available_height(), row);
     let panel = egui::Panel::bottom("commit-message")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
@@ -60,7 +90,10 @@ pub(crate) fn stage_panel(
                 .write_label
                 .clone()
                 .unwrap_or_else(|| tr!("stage-writing-fallback"));
-            ui.weak(tr!("stage-in-progress", label = label));
+            // One row cut to the panel: an undo is labelled with the whole description of what
+            // it undoes, and a row wider than the panel would widen it.
+            let text = RichText::new(tr!("stage-in-progress", label = label)).weak();
+            ui.add(egui::Label::new(text).truncate());
         });
     }
     if let Some(error) = &repo.write_error {
@@ -138,6 +171,27 @@ struct StageLayout {
 }
 
 impl StageLayout {
+    /// The height the panel needs to show its headers, one row per list and the commit box
+    /// with one row of body (`row`: the height of a row of text).
+    fn least(&self, row: f32) -> f32 {
+        self.upper_min + self.box_frame + self.box_fixed + BODY_MARGIN + row
+    }
+
+    /// The rows of the message body in a panel of that height: up to [`BODY_ROWS`], fewer when
+    /// the lists would be left without their row, never less than one.
+    fn body_rows(&self, height: f32, row: f32) -> usize {
+        let room = height - self.upper_min - self.box_frame - self.box_fixed;
+        ((room - BODY_MARGIN) / row)
+            .floor()
+            .clamp(1.0, BODY_ROWS as f32) as usize
+    }
+
+    /// Whether a panel of that height is too low even with one row of body: then it scrolls,
+    /// tall [`Self::least`]. Never before the first measure.
+    fn scrolls(&self, height: f32, row: f32) -> bool {
+        self.upper_min > 0.0 && height + 0.5 < self.least(row)
+    }
+
     /// More than half a point apart: below that a new pass would change nothing.
     fn differs(&self, other: &Self) -> bool {
         [
@@ -227,32 +281,6 @@ pub(super) fn commit_box(
     if toggle.changed() {
         actions.push(Action::Commit(commit::Action::SetAmend(amend)));
     }
-    if draft.amend() {
-        let mut text = match repo.head_commit() {
-            Some(c) => tr!(
-                "stage-amend-warning-summary",
-                id = c.id.short(),
-                summary = &c.summary
-            ),
-            None => match repo.head.target() {
-                Some(id) => tr!("stage-amend-warning-id", id = id.short()),
-                None => tr!("stage-amend-warning"),
-            },
-        };
-        if draft.is_proposed() {
-            text.push(' ');
-            text.push_str(&tr!("stage-amend-proposed"));
-        }
-        ui.add(
-            egui::Label::new(
-                RichText::new(text)
-                    .small()
-                    .color(ui.visuals().warn_fg_color),
-            )
-            .wrap(),
-        );
-    }
-
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         let label = if draft.amend() {
@@ -260,14 +288,7 @@ pub(super) fn commit_box(
         } else {
             tr!("stage-commit-button")
         };
-        // The primary action: the accent fill when it can go, egui's grey when it cannot.
-        let button = if gate.is_ok() {
-            let (fill, text) = theme::primary(ui.visuals());
-            egui::Button::new(RichText::new(label).color(text)).fill(fill)
-        } else {
-            egui::Button::new(label)
-        };
-        let button = ui.add_enabled(gate.is_ok(), button);
+        let button = ui.add_enabled(gate.is_ok(), primary_button(ui, label, gate.is_ok()));
         let button = match gate {
             Ok(()) => button.on_hover_text(tr!("stage-commit-help")),
             Err(blocked) => button.on_disabled_hover_text(blocked.hint()),
@@ -281,24 +302,54 @@ pub(super) fn commit_box(
                 .write_label
                 .clone()
                 .unwrap_or_else(|| tr!("stage-commit-button"));
-            ui.weak(tr!("stage-in-progress", label = label));
+            let text = RichText::new(tr!("stage-in-progress", label = label)).weak();
+            ui.add(egui::Label::new(text).truncate());
         } else {
             ui.weak(tr!("stage-commit-shortcut"));
         }
     });
-    // Why the button is disabled, without having to hover, on one row cut to the width (the
-    // whole text is in the button's tooltip). During work and when the commit can go the row
-    // stays empty: the box does not move while typing, after a commit or when a dialog opens.
+    // One row cut to the width, always there: the box does not move while typing, after a
+    // commit, when a dialog opens or when "Amend" is ticked. It says why the button is disabled,
+    // without having to hover (the whole text is in the button's tooltip); when the commit can
+    // go and "Amend" is ticked, what the amend changes (whole on hover: a cut label shows its
+    // text); otherwise it stays empty.
     let hint = match gate {
-        Err(commit::Blocked::Busy) | Ok(()) => " ".to_owned(),
-        Err(blocked) => blocked.hint(),
+        Err(commit::Blocked::Busy) | Ok(()) => amend_warning(repo, draft).map_or_else(
+            || RichText::new(" ").weak(),
+            |text| RichText::new(text).color(ui.visuals().warn_fg_color),
+        ),
+        Err(blocked) => RichText::new(blocked.hint()).weak(),
     };
-    ui.add(egui::Label::new(RichText::new(hint).small().weak()).truncate());
+    ui.add(egui::Label::new(hint.small()).truncate());
 
     if let Some(error) = repo.commit.error() {
         commit_error(ui, error, actions);
     }
     body_height
+}
+
+/// What "Amend" does to the last commit, named by id and subject, while it is ticked: one
+/// sentence, and that the message proposed is the current one until it is edited.
+fn amend_warning(repo: &RepoView, draft: &CommitDraft) -> Option<String> {
+    if !draft.amend() {
+        return None;
+    }
+    let mut text = match repo.head_commit() {
+        Some(c) => tr!(
+            "stage-amend-warning-summary",
+            id = c.id.short(),
+            summary = &c.summary
+        ),
+        None => match repo.head.target() {
+            Some(id) => tr!("stage-amend-warning-id", id = id.short()),
+            None => tr!("stage-amend-warning"),
+        },
+    };
+    if draft.is_proposed() {
+        text.push(' ');
+        text.push_str(&tr!("stage-amend-proposed"));
+    }
+    Some(text)
 }
 
 /// The error of the last commit, with "x" to hide it and git's output, if any, with "Copy".
@@ -451,6 +502,10 @@ impl StageSection<'_> {
             // egui keeps at least 64 px of a scrolled area: here the room computed above wins.
             .min_scrolled_height(height)
             .show_rows(ui, FILE_ROW_HEIGHT, items.len(), |ui, range| {
+                let open_row = open
+                    .filter(|t| t.source == source)
+                    .and_then(|t| items.iter().position(|i| i.path == t.path));
+                reveal_open_row(ui, range.start, open_row, FILE_ROW_HEIGHT);
                 for item in &items[range] {
                     let (rect, response) = ui.allocate_exact_size(
                         vec2(ui.available_width(), FILE_ROW_HEIGHT),
@@ -464,8 +519,7 @@ impl StageSection<'_> {
                     // Over the button the row's response is not hovered: the pointer decides.
                     let hovered = ui.rect_contains_pointer(rect);
                     let (text, weak) = if selected {
-                        let color = ui.visuals().selection.stroke.color;
-                        (color, color.gamma_multiply(0.75))
+                        theme::on_selection(ui.visuals())
                     } else {
                         (text, weak)
                     };
@@ -479,6 +533,7 @@ impl StageSection<'_> {
                             ui.visuals().widgets.hovered.weak_bg_fill,
                         );
                     }
+                    theme::focus_ring(ui, &response, rect);
                     let painter = ui.painter_at(rect);
                     let badge = egui::Rect::from_center_size(
                         egui::pos2(rect.left() + 11.0, rect.center().y),
@@ -498,21 +553,18 @@ impl StageSection<'_> {
                     let mut clicked = false;
                     let mut right = rect.right() - 4.0;
                     if hovered || selected {
-                        let button_w = 62.0;
-                        let button_rect = egui::Rect::from_min_max(
-                            egui::pos2(rect.right() - button_w, rect.top()),
-                            rect.right_bottom(),
-                        );
+                        // As wide as its text, which changes with the language: the path is
+                        // cut before it.
                         let mut cell = ui.new_child(
                             egui::UiBuilder::new()
-                                .max_rect(button_rect)
+                                .max_rect(rect)
                                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
                         );
-                        clicked = cell
+                        let button = cell
                             .add_enabled(enabled, egui::Button::new(button_label.as_str()).small())
-                            .on_hover_text(row_action_help(op, item))
-                            .clicked();
-                        right = button_rect.left() - 4.0;
+                            .on_hover_text(row_action_help(op, item));
+                        clicked = button.clicked();
+                        right = button.rect.left() - 4.0;
                     }
 
                     // Files stored in Git LFS: the badge before the button (S63).
@@ -520,18 +572,22 @@ impl StageSection<'_> {
                         right = paint_lfs_badge(&painter, right, rect.center().y) - 4.0;
                     }
                     let left = badge.right() + 6.0;
-                    let job = stage_path_job(item, &font, text, weak, right - left);
+                    let job = stage_path_job(item, &font, text, weak, (right - left).max(0.0));
                     let galley = painter.layout_job(job);
                     let top = rect.center().y - galley.size().y / 2.0;
                     painter.galley(egui::pos2(left, top), galley, text);
 
                     let response = response.on_hover_text(stage_tooltip(op, item));
-                    if (clicked || response.double_clicked()) && enabled {
+                    // On the row that has the keyboard Space is the row's button and Enter the
+                    // click: egui makes a click of both, here Space is never one.
+                    let space =
+                        response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space));
+                    if (clicked || response.double_clicked() || space) && enabled {
                         actions.push(Action::Stage(stage::Action::Write(
                             op,
                             vec![item.path.clone()],
                         )));
-                    } else if response.clicked() {
+                    } else if response.clicked() && !space {
                         actions.push(if item.is_conflict() && op == StageOp::Stage {
                             Action::Conflict(conflict::Action::Open(item.path.clone()))
                         } else {
@@ -612,11 +668,7 @@ fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut 
         .ui(ui, |ui| {
             let paths = discard::discardable_paths(items);
             let can = enabled && paths.is_some();
-            let color = if can {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().weak_text_color()
-            };
+            let color = theme::destructive(ui.visuals(), can);
             let label = RichText::new(tr!("stage-discard-all")).color(color);
             let button = ui
                 .add_enabled(can, egui::Button::new(label))
@@ -629,11 +681,7 @@ fn unstaged_menu(ui: &mut Ui, items: &[StageItem], enabled: bool, actions: &mut 
             }
             // Only when there are untracked files: deleting is not discarding.
             if let Some(paths) = clean::untracked_paths(items) {
-                let color = if enabled {
-                    ui.visuals().error_fg_color
-                } else {
-                    ui.visuals().weak_text_color()
-                };
+                let color = theme::destructive(ui.visuals(), enabled);
                 let label =
                     RichText::new(tr!("stage-delete-untracked", n = paths.len())).color(color);
                 let button = ui
@@ -698,11 +746,7 @@ pub(super) fn file_menu(
     }
     if op == StageOp::Stage && clean::deletable(item) {
         ui.separator();
-        let color = if enabled {
-            ui.visuals().error_fg_color
-        } else {
-            ui.visuals().weak_text_color()
-        };
+        let color = theme::destructive(ui.visuals(), enabled);
         let button = ui
             .add_enabled(
                 enabled,
@@ -723,11 +767,7 @@ pub(super) fn file_menu(
             .add_enabled(
                 enabled && reason.is_none(),
                 egui::Button::new(RichText::new(tr!("stage-discard-file")).color(
-                    if reason.is_none() && enabled {
-                        ui.visuals().error_fg_color
-                    } else {
-                        ui.visuals().weak_text_color()
-                    },
+                    theme::destructive(ui.visuals(), reason.is_none() && enabled),
                 )),
             )
             .on_hover_text(tr!("stage-discard-file-help"))
@@ -854,4 +894,41 @@ pub(super) fn stage_tooltip(op: StageOp, item: &StageItem) -> String {
         lines.push(tr!("stage-tooltip-right"));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row of text.
+    const ROW: f32 = 17.0;
+
+    fn layout() -> StageLayout {
+        StageLayout {
+            upper_min: 200.0,
+            box_fixed: 120.0,
+            box_frame: 13.0,
+        }
+    }
+
+    #[test]
+    fn the_commit_box_gives_up_rows_before_the_lists_do() {
+        let layout = layout();
+        // Headers and one row per list, the box with one row of body.
+        assert_eq!(layout.least(ROW), 354.0);
+        assert_eq!(layout.body_rows(600.0, ROW), BODY_ROWS);
+        assert_eq!(layout.body_rows(380.0, ROW), 2);
+        assert_eq!(layout.body_rows(354.0, ROW), 1);
+        // Lower still: one row stays, and the panel scrolls as tall as that.
+        assert_eq!(layout.body_rows(300.0, ROW), 1);
+        assert!(!layout.scrolls(600.0, ROW));
+        assert!(!layout.scrolls(354.0, ROW));
+        assert!(layout.scrolls(353.0, ROW));
+        assert!(layout.scrolls(300.0, ROW));
+    }
+
+    #[test]
+    fn nothing_scrolls_before_the_first_measure() {
+        assert!(!StageLayout::default().scrolls(10.0, ROW));
+    }
 }

@@ -511,15 +511,15 @@ impl Tab {
             Received::Done { notice, problems } => {
                 log::info!("{}: {notice} {problems}", done.command);
                 // The refused ones also stay in the section (the reads below clear the error).
-                self.notice = if problems.is_empty() {
+                self.notice.set(if problems.is_empty() {
                     notice
                 } else {
                     format!("{notice}; {problems}")
-                };
+                });
                 self.error.clear();
             }
             Received::Cancelled(notice) => {
-                self.notice = notice;
+                self.notice.set(notice);
                 self.error.clear();
             }
             Received::Failed(message) => {

@@ -6,6 +6,115 @@ All notable changes to BinariGit. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-19
+
+Errors, keyboard and readability. An error that answers a command is a dialog that takes the
+keyboard; a rejected push and the conflicts of a stash are notices inside the tab that leave the
+toolbar and the graph in view; the whole window can be used from the keyboard; the text of the
+dark theme is easier to read. Long histories and very large diffs no longer hold the window.
+
+### Added
+
+- "Stash and pull", "Stash and merge", "Stash and check out …": when a merge, cherry-pick,
+  revert, pull or checkout is refused for local changes, "Stash…" in the dialog offers to
+  stash (`stash.push`) and run the refused command again. It runs only after a successful
+  stash; the changes stay in the stash until Apply or Pop, and Undo twice goes back.
+- Keyboard: every element shows when it has the focus (tabs, window buttons, branches, commits,
+  files, toolbar). With a file open, the arrows and Home/End walk the files of the stage area or
+  of the commit and the diff follows; Enter on a commit opens its first file. Ctrl+Enter
+  confirms the dialogs. New shortcuts: Ctrl+O open a repository, Ctrl+W close the tab, Ctrl+B
+  new branch; Help → "Keyboard shortcuts" lists them all.
+- "+" beside "Local branches" and "Tags" starts a new branch or a new tag on the current commit.
+- File → "Open by path…" opens a repository by typing its folder. When the system's folder
+  dialog cannot open (a Linux without xdg-desktop-portal and without zenity) the app says so and
+  shows this dialog instead of doing nothing.
+- "Copy message" in the error dialogs and in the context menu of the status-bar message.
+- The clone dialog proposes the destination folder from the URL, beside the last repository
+  opened, and a finished clone says where it went.
+- A toolbar too wide for the window (a narrow window, a large interface size) moves the buttons
+  that do not fit into a "»" menu instead of cutting them.
+
+### Changed
+
+- Scrolling down a very long history stays smooth: the graph of the commits that load is added
+  to the one already drawn instead of being computed again from the top.
+- Opening a very large diff no longer freezes the window: it is prepared in the background, and
+  the changed words of a line are worked out when the line comes into view. A diff of thousands
+  of long changed lines used to block the app for seconds.
+- Commit details, diffs, history, blame and search no longer wait for a fetch, pull or push in
+  progress (or for a commit held by a slow hook): they are read beside it, and the view is read
+  again when the operation ends.
+- Errors (fetch failed, remote unreachable, pull or push failed, merge refused) are dialogs that
+  take the keyboard: Esc and Enter close them, and only one is shown at a time. They used to be
+  floating windows that stayed on screen after the cause was gone. A checkout refused for local
+  changes shows the same short text and "Stash…" button as merge and pull.
+- A rejected push is a notice under the toolbar with "Pull" (or "Fetch"), "Details…" and "×";
+  the details show git's whole text and "Force (with lease)…". It goes away when the push
+  succeeds or the branch is no longer behind.
+- The conflicts left by a stash are a notice under the toolbar that lists the files as links to
+  the conflict editor. It goes away with the last conflict and is there after a restart.
+- The status bar shows one line, cut with "…" when it is long (whole text on hover). The
+  messages say "a backup was saved" and name the backup ref only on hover. A message that is not
+  an error is dimmed after ten seconds.
+- Dark theme: text, commit ids, authors, dates, hints and disabled buttons have more contrast
+  (secondary text from 2.7:1 to 5.5:1 against the background). Light theme: darker text, links,
+  warnings and counters; grey scroll handles instead of black.
+- Dialogs: the main button is highlighted, the other one is "Cancel", and the settings keep one
+  size on both pages. Enter presses the main button only while the keyboard is in a text field:
+  on a focused "Cancel" it cancels.
+- A repository with uncommitted changes opens on "Uncommitted changes".
+- The warning of "Amend" is one line under the button: the message fields no longer move when
+  it is ticked. A failed automatic fetch is a badge on "Fetch" and no longer shifts the toolbar.
+  The search options look like switches. Blame and file history go back with "< Graph", as the
+  diff.
+- Shortcuts are held back only while typing in a text field: after a Tab, Ctrl+Z and the others
+  did nothing.
+- Italian: "Metti in stage" / "Togli dallo stage" for files, hunks and lines, "Remoti" in the
+  settings, instructions in the imperative.
+
+### Fixed
+
+- A recent repository on a network drive that does not answer no longer freezes the window: the
+  check of the recent folders runs in the background.
+- "Copy name", "Copy commit id", "Copy path" and the other copy buttons now fill the system
+  clipboard: until now the text stayed inside the app.
+- A double click (checkout of a branch, among others) is recognised up to half a second between
+  the two clicks, as on Windows, instead of 0.3 s: a calm double click did nothing.
+- The right panel no longer jumps to its largest width after an undo or a redo: the width chosen
+  by dragging its edge stays.
+- A long status message no longer runs over the repository path at the right of the bar.
+- In the clone, new remote and new worktree dialogs, Enter with the keyboard on "Cancel" started
+  the operation.
+- Conflict editor: the "Theirs" heading with a 40-character commit id was spread over three
+  lines; it names the incoming branch or the short id on one line. In a small window its buttons
+  no longer cover its labels.
+- The stash details show the short commit id with the copy button: the whole id wrapped over
+  the next row.
+- The scrollbar of the left panel no longer covers the "+" and "⋯" buttons.
+- In a small window with a notice or an operation in progress, the unstaged list of the stage
+  area had no visible row.
+- The clone dialog said that credentials are never asked for: the app asks for the ones git's
+  configuration does not provide.
+
+### Packages
+
+- Linux: `BinariGit-0.12.0-x86_64.AppImage` (Ubuntu 22.04 or newer, glibc 2.35) and
+  `BinariGit-0.12.0-x86_64.AppImage.zsync` for the updaters.
+- Windows: `BinariGit-0.12.0-x86_64.msi` and `BinariGit-0.12.0-x86_64-windows.zip` (Windows 10 or
+  newer, OpenGL 2).
+- `SHA256SUMS.txt` to verify the downloads (`packaging/README.md`).
+
+### Known limitations
+
+- The Windows MSI and zip are cross-compiled and have not been tested on a Windows PC yet; they
+  are not signed, so SmartScreen warns on first start.
+- The ssh passphrase and host-key prompts need OpenSSH 8.4 or newer.
+- The credential prompt of a Git LFS server has not been tested against a real server.
+- No macOS build.
+- "Stash and pull" is not offered when a fast-forward pull is refused because it would overwrite
+  local changes or untracked files: stash by hand, then pull.
+- Screen readers are not supported.
+
 ## [0.11.0] - 2026-11-18
 
 Everyday branch work: a new branch becomes the current one, and ref names can be copied.
@@ -498,7 +607,8 @@ system `git`, which must be installed (Git for Windows on Windows).
 - Edits to worktree files appear when the window regains focus (the refs and the index are
   watched).
 
-[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/NicolaBroll/RustDesktopWasmProject/compare/v0.9.0...v0.10.0

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::ErrorKind;
-use crate::branch::{Received, Refused};
+use crate::branch::Received;
 use crate::test_util::oid;
 use project_domain::{Commit, Signature};
 use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
@@ -89,14 +89,15 @@ fn conflicts_and_refusals_are_those_of_branch_checkout() {
         None,
     );
     assert!(matches!(r, Received::Refused));
+    assert!(b.dialog().is_none());
+    let failure = b.refusal().expect("refusal");
     assert_eq!(
-        b.dialog(),
-        Some(&Dialog::Refused(Refused {
-            name: format!("commit {}", oid(10).short()),
-            files: vec!["README.md".to_owned()],
-        }))
+        failure.title,
+        format!("Cannot check out “commit {}”", oid(10).short())
     );
-    b.close();
+    assert!(failure.explanation.contains("README.md"), "{failure:?}");
+    assert!(failure.stash);
+    b.dismiss_refusal();
 
     b.start_checkout_commit(oid(10)).unwrap();
     let r = b.receive(
@@ -124,7 +125,7 @@ fn checkout_a_commit_with_the_sample_repo() {
         send(&mut b, &r, &mut s, Op::CheckoutCommit, params),
         Received::Refused
     ));
-    b.close();
+    b.dismiss_refusal();
 
     let (r, mut s) = open(clean_sample());
     let params = b.start_checkout_commit(oid(10)).unwrap();
@@ -184,7 +185,8 @@ fn the_notice_names_the_commits_saved() {
     let out = done(send(&mut b, &r, &mut s, Op::CheckoutCommit, params));
     assert!(
         out.notice.ends_with(
-            "; warning: 1 commit not on any branch was saved as refs/project/backup/detached-1"
+            "; warning: 1 commit not on any branch was saved in a backup\n\
+             Backup: refs/project/backup/detached-1"
         ),
         "{}",
         out.notice
@@ -196,7 +198,7 @@ fn the_notice_names_the_commits_saved() {
     let out = done(send(&mut b, &r, &mut s, Op::Checkout, params));
     assert!(
         out.notice
-            .contains("1 commit not on any branch was saved as"),
+            .contains("1 commit not on any branch was saved in a backup\nBackup: refs/"),
         "{}",
         out.notice
     );
@@ -207,7 +209,8 @@ fn a_backup_without_its_warning_is_still_named() {
     let text = backup_text(&[], Some("refs/project/backup/detached-9"));
     assert_eq!(
         text,
-        "; warning: the commits not on any branch were saved as refs/project/backup/detached-9"
+        "; warning: the commits not on any branch were saved in a backup\n\
+         Backup: refs/project/backup/detached-9"
     );
     assert_eq!(backup_text(&[], None), "");
 }

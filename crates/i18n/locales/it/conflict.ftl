@@ -1,5 +1,5 @@
 # Conflict editor (conflict.rs, view/conflict_view.rs).
-# $command: command id; $path: file path; $backup: backup ref or path.
+# $command: command id; $path: file path.
 
 conflict-worktree-not-text = il file del worktree non è testo o non c'è
 conflict-no-blocks = il risultato non ha blocchi da scegliere
@@ -9,9 +9,9 @@ conflict-label-delete = Eliminazione di { $path } per risolvere il conflitto
 conflict-label-resolve = Risoluzione del conflitto di { $path }
 conflict-resolved-path = Conflitto di { $path } risolto e in stage
 conflict-resolved = Conflitto risolto e in stage
-conflict-resolved-backup = ; il file com'era è salvato in { $backup }
-conflict-resolved-index-backup = ; backup dell'indice in { $backup }
-conflict-stale = Il file è cambiato dopo la lettura: riletto, rifare le scelte
+conflict-resolved-backup = ; il file com'era è salvato in un backup
+conflict-resolved-index-backup = ; backup dell'indice salvato
+conflict-stale = Il file è cambiato dopo la lettura: riletto, rifai le scelte
 conflict-resolve-failed = Risoluzione non riuscita: { $error }
 conflict-title = Conflitto
 conflict-close = Chiudi
@@ -53,7 +53,7 @@ conflict-sides-unreadable = I marcatori di conflitto del file non si leggono. Si
 conflict-use-ours = Usa nostra
 conflict-use-theirs = Usa loro
 conflict-use-side-hint = Scrive quella versione nel file e la mette in stage
-conflict-wait = Aspettare l'operazione in corso
+conflict-wait = Aspetta l'operazione in corso
 conflict-side-unavailable = Quella versione manca o non è testo
 conflict-confirm-markers = { $n ->
     [one] Contiene ancora marcatori (1 blocco): risolvere comunque? Il file va in stage così com'è
@@ -65,7 +65,7 @@ conflict-confirm-delete-button = Elimina il file
 conflict-cancel = Annulla
 conflict-mark-resolved = Segna come risolto
 conflict-mark-resolved-hint = Scrive il risultato nel file e lo mette in stage. Il file com'era si salva prima in un backup
-conflict-wait-dialog = Aspettare l'operazione in corso (o chiudere il dialogo)
+conflict-wait-dialog = Aspetta l'operazione in corso (o chiudi il dialogo)
 conflict-delete = Elimina il file…
 conflict-delete-hint = Risolve il conflitto eliminando il file: chiede conferma
 conflict-resolving = Risoluzione…

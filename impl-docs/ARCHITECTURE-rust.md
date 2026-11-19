@@ -243,14 +243,20 @@ pub struct Capabilities { pub open_folder: bool }
 pub trait Platform: Send + Sync {
     fn capabilities(&self) -> Capabilities;
     /// Does not block: the result arrives via callback, possibly from another thread.
-    fn pick_folder(&self, on_done: Box<dyn FnOnce(Option<String>) + Send>);
+    /// `OnPicked = Box<dyn FnOnce(Result<Option<String>, NoDialog>) + Send>`: the folder,
+    /// `Ok(None)` if the user gave up, `Err` if the system's dialog could not be shown.
+    fn pick_folder(&self, on_done: OnPicked);
     /// Runs a slow job off the UI thread.
     fn spawn(&self, job: Box<dyn FnOnce() + Send>);
 }
 ```
 
 Native implementation in the desktop app: `rfd::AsyncFileDialog` parented to the window, awaited on a
-job thread, so the window keeps repainting while the dialog is open. The UI reads `capabilities()` and hides unavailable commands.
+job thread, so the window keeps repainting while the dialog is open. `rfd` answers `None` both for a
+dialog closed and for one it could not show (Linux without portal and zenity): the app tells them
+apart by the error `rfd` logs when it gives up (`apps/project/src/dialog.rs`), and the UI then
+says so and opens its own "Open repository" dialog with a path field (also File → "Open by
+path…"). The UI reads `capabilities()` and hides unavailable commands.
 
 ## 5. Interface and two targets
 

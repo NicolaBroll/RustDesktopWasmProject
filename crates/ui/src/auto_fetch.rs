@@ -11,7 +11,7 @@
 //!
 //! Errors never open a window: authentication suspends the timer of the tab and leaves a notice
 //! under the bar with "Retry"; an unreachable remote doubles the wait (up to [`MAX_WAIT`], back to
-//! the interval after a fetch that works) and shows only an icon in the bar.
+//! the interval after a fetch that works) and shows only a badge on "Fetch".
 
 use crate::fetch;
 use crate::{Done, ErrorKind, RepoView, Tab};
@@ -162,7 +162,7 @@ impl AutoFetch {
         self.suspended.as_ref().filter(|_| !self.off())
     }
 
-    /// git's text of the network error, for the icon in the bar (not while off).
+    /// git's text of the network error, for the badge on "Fetch" (not while off).
     pub fn offline(&self) -> Option<&str> {
         self.offline.as_deref().filter(|_| !self.off())
     }
@@ -230,15 +230,12 @@ pub fn news_text(moved: &[RefUpdate], commits: &[Commit]) -> String {
 }
 
 impl RepoView {
-    /// Something the automatic fetch waits for: a dialog or an error window open, an operation in
-    /// progress (merge, rebase, cherry-pick, revert), the status not read yet.
+    /// Something the automatic fetch waits for: a dialog open (the one of a failure too), the
+    /// conflict editor, an operation in progress (merge, rebase, cherry-pick, revert), the
+    /// status not read yet. The notices in the tab (a rejected push, the conflicts a stash
+    /// left) are not dialogs: it does not wait for them.
     pub(crate) fn auto_fetch_blocked(&self) -> bool {
         self.modal_open()
-            || self.fetch.failure().is_some()
-            || self.remotes.failure().is_some()
-            || self.merge.failure().is_some()
-            || self.sync.window().is_some()
-            || self.stash.conflicts().is_some()
             || self.conflict.editor().is_some()
             || self.status.as_ref().is_none_or(|s| s.operation.is_some())
     }
@@ -262,7 +259,7 @@ impl Tab {
         repo.auto_fetch.observe(now, interval, fetching);
         // Everything after the fetch has been read again (the log too): the new commits.
         if !busy && let Some(moved) = repo.auto_fetch.take_news() {
-            self.notice = news_text(&moved, repo.list.commits());
+            self.notice.set(news_text(&moved, repo.list.commits()));
         }
         if !shown
             || app_blocked
@@ -317,7 +314,7 @@ impl Tab {
                 if kind == Some(ErrorKind::AuthCancelled) {
                     repo.auto_fetch.suspend(None);
                 }
-                self.notice = notice;
+                self.notice.set(notice);
                 self.refresh_light();
             }
             fetch::Received::Failed { message, reload } => {

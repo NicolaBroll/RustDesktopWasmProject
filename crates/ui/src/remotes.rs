@@ -829,7 +829,7 @@ fn delete_branch_outcome(r: RemoteDeleteBranchResult) -> Outcome {
     if r.only_here > 0 {
         notice.push_str(&tr!("remotes-branch-deleted-only-here", n = r.only_here));
     }
-    notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &r.backup));
+    notice.push_str(&tr!("remotes-branch-deleted-backup"));
     if !r.upstream_of.is_empty() {
         notice.push_str(&tr!(
             "remotes-branch-deleted-upstreams",
@@ -838,7 +838,7 @@ fn delete_branch_outcome(r: RemoteDeleteBranchResult) -> Outcome {
     }
     notice.push_str(&messages_text(&r.warnings));
     Outcome {
-        notice,
+        notice: crate::status::with_backups(notice, &[&r.backup]),
         refs: r.refs,
         remotes: None,
         warning: reread_warning(&tr!("remotes-branch-deleted-short"), r.refs_error, None),
@@ -849,10 +849,10 @@ fn delete_branch_outcome(r: RemoteDeleteBranchResult) -> Outcome {
 /// The outcome of `remote.delete_tag`.
 fn delete_tag_outcome(r: RemoteDeleteTagResult) -> Outcome {
     let mut notice = tr!("remotes-tag-deleted", name = &r.name, remote = &r.remote);
-    notice.push_str(&tr!("remotes-branch-deleted-backup", backup = &r.backup));
+    notice.push_str(&tr!("remotes-branch-deleted-backup"));
     notice.push_str(&messages_text(&r.warnings));
     Outcome {
-        notice,
+        notice: crate::status::with_backups(notice, &[&r.backup]),
         refs: r.refs,
         remotes: None,
         warning: reread_warning(&tr!("remotes-tag-deleted-short"), r.refs_error, None),
@@ -935,6 +935,7 @@ fn add_outcome(r: RemoteAddResult) -> (Outcome, Option<Failure>) {
                     explanation: format!("{} {}", error.message, added_anyway()),
                     git: None,
                     stash: false,
+                    retry: None,
                 });
                 notice.push_str(&tr!("remotes-added-fetch-failed"));
             }
@@ -985,13 +986,13 @@ fn remove_outcome(r: RemoteRemoveResult) -> Outcome {
     }
     match r.backups.len() {
         0 => {}
-        1 => notice.push_str(&tr!("remotes-removed-backup", backup = &r.backups[0])),
+        1 => notice.push_str(&tr!("remotes-removed-backup")),
         n => notice.push_str(&tr!("remotes-removed-backups", n = n)),
     }
     notice.push_str(&tr!("remotes-removed-undo"));
     notice.push_str(&messages_text(&r.warnings));
     Outcome {
-        notice,
+        notice: crate::status::with_backups(notice, &r.backups),
         refs: r.refs,
         remotes: r.remotes,
         warning: reread_warning(&tr!("remotes-removed-short"), r.refs_error, r.remotes_error),
@@ -1247,7 +1248,7 @@ impl Tab {
                     repo.update_labels();
                 }
                 repo.write_label = Some(label);
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.submit(op.command(), params, Request::Remote(generation, op));
             }
@@ -1262,7 +1263,7 @@ impl Tab {
                     repo.update_labels();
                 }
                 let remotes_read = outcome.remotes.is_some();
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 if !refs_read {
                     self.submit("repo.refs", json!({}), Request::Refs(generation));
@@ -1379,7 +1380,7 @@ mod tests {
             outcome.notice
         );
         assert!(
-            outcome.notice.contains("push-delete-1"),
+            crate::status::hides(&outcome.notice, "push-delete-1"),
             "{}",
             outcome.notice
         );
@@ -1445,7 +1446,7 @@ mod tests {
         assert!(
             outcome
                 .notice
-                .starts_with("Tag “v9” deleted from “origin”; backup in "),
+                .starts_with("Tag “v9” deleted from “origin”; a backup was saved\nBackup: refs/"),
             "{}",
             outcome.notice
         );
@@ -1714,7 +1715,7 @@ mod tests {
         list(&registry, &mut session, &mut b);
         assert_eq!(b.names(), ["origin"]);
 
-        // "Don't remove" closes without sending anything.
+        // "Cancel" closes without sending anything.
         b.close();
         assert!(b.dialog().is_none());
         let params = b.start_remove("origin".into()).unwrap();

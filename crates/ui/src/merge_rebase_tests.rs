@@ -167,7 +167,7 @@ fn continue_without_message_stops_again_then_finishes() {
     assert!(outcome.moved);
     assert!(
         outcome.notice.starts_with("Rebase of “main” finished")
-            && outcome.notice.contains("refs/project/backup/rebase-"),
+            && crate::status::hides(&outcome.notice, "refs/project/backup/rebase-"),
         "{}",
         outcome.notice
     );
@@ -206,9 +206,11 @@ fn abort_in_two_steps_puts_the_branch_back() {
     assert_eq!(label, "Aborting the rebase");
     let outcome = done(run(&r, &mut s, &mut b, op, params));
     assert!(
-        outcome
+        outcome.notice.starts_with(
+            "Rebase aborted: index and working tree saved first in a backup (1 file); "
+        ) && outcome
             .notice
-            .starts_with("Rebase aborted: index and working tree saved first in refs/project/backup/rebase-abort-"),
+            .contains("\nBackup: refs/project/backup/rebase-abort-"),
         "{}",
         outcome.notice
     );

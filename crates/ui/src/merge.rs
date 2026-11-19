@@ -24,6 +24,7 @@
 use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure};
 use crate::running::Running;
+use crate::stash_retry::{Retry, Route};
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 pub use pick::{MainlineDialog, Pick};
@@ -374,6 +375,12 @@ impl ContinueDialog {
     pub fn is_blank(&self) -> bool {
         self.kind.has_message() && self.message.trim().is_empty()
     }
+
+    /// The dialog's button is enabled, and Ctrl+Enter presses it: nothing is being sent and
+    /// the message, where one is needed, is written.
+    pub fn can_submit(&self) -> bool {
+        self.running.is_none() && !self.is_blank()
+    }
 }
 
 /// The open dialog: one at a time.
@@ -390,13 +397,16 @@ pub enum Dialog {
 
 /// The merge, cherry-pick or revert started and not yet answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Starting {
+pub struct Starting {
     /// What is merged or applied, as shown (branch name or abbreviated id).
     what: String,
     /// The branch it is merged into or applied onto.
     into: String,
     /// A squash merge: its own texts.
     squash: bool,
+    /// The parameters as they were sent: a start refused for local changes is sent again with
+    /// these after a stash ("Stash and …", U68).
+    params: Value,
 }
 
 /// The UI state for merge and in-progress operation.
@@ -550,8 +560,25 @@ impl MergeBox {
         });
         let label = start_label(&what, &into, squash);
         self.failure = None;
-        self.starting = Some(Starting { what, into, squash });
+        self.starting = Some(Starting {
+            what,
+            into,
+            squash,
+            params: params.clone(),
+        });
         Some((params, label))
+    }
+
+    /// The start refused for local changes is sent again after a stash ("Stash and …", U68):
+    /// waits for its answer as when it was first sent.
+    pub(crate) fn restart(&mut self, starting: Starting) {
+        self.failure = None;
+        self.starting = Some(starting);
+    }
+
+    /// The refused start window, to note HEAD in its retry or to take it.
+    pub(crate) fn failure_mut(&mut self) -> Option<&mut Failure> {
+        self.failure.as_mut()
     }
 
     /// Opens the "Continue" dialog with the message prepared by git, for the operation that
@@ -697,7 +724,18 @@ impl MergeBox {
         let title = if starting.squash { "Squash" } else { "Merge" };
         match result {
             Err(_) if kind == Some(ErrorKind::LocalChanges) => {
-                local_changes(&mut self.failure, title, &what, detail.as_deref())
+                let button = if starting.squash {
+                    tr!("stash-retry-squash")
+                } else {
+                    tr!("stash-retry-merge")
+                };
+                let retry = Retry::new(
+                    starting.params.clone(),
+                    what.clone(),
+                    button,
+                    Route::Merge(Op::Start, starting),
+                );
+                local_changes(&mut self.failure, title, &what, detail.as_deref(), retry)
             }
             Err(e) => {
                 // Engine refusals (detached HEAD, operation in progress, rev that does not
@@ -723,6 +761,7 @@ impl MergeBox {
                     explanation: explanation.clone(),
                     git,
                     stash: false,
+                    retry: None,
                 });
                 Received::Failed {
                     message: explanation,
@@ -844,14 +883,17 @@ impl MergeBox {
 }
 
 /// A start (`title`: Merge, Cherry-pick, Revert; `what`: its description) refused for
-/// uncommitted local changes: the window with "Stash…"; nothing changed.
+/// uncommitted local changes: the window with "Stash…"; nothing changed. `retry`: the start as
+/// it was sent, which the stash dialog opened from that window can send again.
 fn local_changes(
     failure: &mut Option<Failure>,
     title: &str,
     what: &str,
     files: Option<&str>,
+    retry: Retry,
 ) -> Received {
-    let window = fetch::local_changes_failure(tr!("merge-refused-title", title = title), files);
+    let mut window = fetch::local_changes_failure(tr!("merge-refused-title", title = title), files);
+    window.retry = Some(Box::new(retry));
     let message = tr!("merge-refused", what = what, error = &window.explanation);
     *failure = Some(window);
     Received::Failed {
@@ -928,12 +970,7 @@ fn start_notice(r: &MergeStartResult, starting: &Starting) -> String {
     if r.in_progress {
         return match r.conflicts.len() {
             0 => tr!("merge-stopped-before-commit", name = name, branch = branch),
-            n => tr!(
-                "merge-stopped",
-                name = name,
-                branch = branch,
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("merge-stopped", name = name, branch = branch, n = n),
         };
     }
     let id = r.after.short();
@@ -967,12 +1004,7 @@ fn squash_notice(r: &MergeStartResult, name: &str, commits: &str) -> String {
                 name = name,
                 branch = branch
             ),
-            n => tr!(
-                "merge-squash-stopped",
-                name = name,
-                branch = branch,
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("merge-squash-stopped", name = name, branch = branch, n = n),
         };
     }
     if r.strategy == MergeApplied::UpToDate {
@@ -1045,12 +1077,8 @@ fn abort_outcome(r: MergeAbortResult, op: Kind) -> Outcome {
         r.status_error,
         r.refs_error,
     );
-    let notice = tr!(
-        "merge-aborted-notice",
-        title = title,
-        backup = &r.backup,
-        n = r.files.len()
-    );
+    let notice = tr!("merge-aborted-notice", title = title, n = r.files.len());
+    let notice = crate::status::with_backups(notice, &[&r.backup]);
     Outcome {
         notice,
         status: r.status,
@@ -1076,10 +1104,7 @@ fn rebase_continue_outcome(r: RebaseContinueResult) -> Outcome {
                 }
                 tr!("merge-rebase-stopped-before-commit")
             }
-            n => tr!(
-                "merge-rebase-stopped",
-                files = tr!("merge-conflict-files", n = n)
-            ),
+            n => tr!("merge-rebase-stopped", n = n),
         }
     } else {
         let mut notice = match &r.branch {
@@ -1090,10 +1115,10 @@ fn rebase_continue_outcome(r: RebaseContinueResult) -> Outcome {
             ),
             None => tr!("merge-rebase-finished", id = r.after.short()),
         };
-        if let Some(backup) = &r.backup {
-            notice.push_str(&tr!("merge-rebase-backup", backup = backup));
+        if r.backup.is_some() {
+            notice.push_str(&tr!("merge-rebase-backup"));
         }
-        notice
+        crate::status::with_backup(notice, r.backup.as_deref())
     };
     let what = if r.in_progress {
         tr!("merge-rebase-stopped-short")
@@ -1355,7 +1380,7 @@ impl Tab {
                 } else if outcome.moved && !repo.worktree_selected {
                     repo.select_after_load = repo.head.target();
                 }
-                self.notice = outcome.notice;
+                self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
                 self.follow_diff();
                 if !refs_read {
@@ -1502,6 +1527,28 @@ mod tests {
     }
 
     #[test]
+    fn the_finish_dialog_confirms_only_with_a_message_and_nothing_running() {
+        let dialog = |kind, message: &str, running| ContinueDialog {
+            kind,
+            message: message.to_owned(),
+            error: None,
+            git: None,
+            running,
+        };
+        let sending = Some(Running::new(Ticket::for_test(1)));
+        // The button, and Ctrl+Enter with it (U64).
+        assert!(dialog(Kind::Merge, "Merge branch 'other'", None).can_submit());
+        assert!(!dialog(Kind::Merge, " \n", None).can_submit(), "blank");
+        assert!(
+            !dialog(Kind::Merge, "Merge", sending).can_submit(),
+            "sending"
+        );
+        // A rebase goes on without a message.
+        assert!(dialog(Kind::Rebase, "", None).can_submit());
+        assert!(!dialog(Kind::Rebase, "", sending).can_submit());
+    }
+
+    #[test]
     fn conflict_banner_resolution_and_conclusion() {
         let (r, mut s) = opened();
         let mut b = MergeBox::default();
@@ -1614,7 +1661,7 @@ mod tests {
         assert_eq!(label, "Aborting the merge");
         let outcome = done(run(&r, &mut s, &mut b, Op::Abort(Kind::Merge), params));
         assert!(
-            outcome.notice.contains("refs/project/backup/merge-abort-"),
+            crate::status::hides(&outcome.notice, "refs/project/backup/merge-abort-"),
             "{}",
             outcome.notice
         );

@@ -7,6 +7,7 @@ use crate::Action;
 use crate::conflict::{self, BlockInfo, Column, Editor, Load, Loaded, Pending, Pick};
 use egui::{RichText, Ui};
 use project_domain::Choice;
+use project_engine::IncomingCommit;
 use project_i18n::tr;
 
 /// Height of a row of buttons of a block.
@@ -14,22 +15,19 @@ const BLOCK_ROW: f32 = 24.0;
 /// How many rows of blocks are visible at most; the others by scrolling.
 const BLOCK_ROWS: f32 = 4.0;
 
-/// The editor of the conflicted file, in place of the graph. `incoming`: the name of what is
-/// coming in (for the "theirs" header if the marker does not say it). `can_write`: no
-/// write or dialog in progress.
+/// The editor of the conflicted file, in place of the graph. `incoming`: the commits coming
+/// in (for the "theirs" header: the name in place of a whole id, or when the marker says
+/// nothing). `can_write`: no write or dialog in progress.
 pub(crate) fn conflict_editor(
     ui: &mut Ui,
     editor: &Editor,
-    incoming: Option<&str>,
+    incoming: &[IncomingCommit],
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
         ui.heading(tr!("conflict-title"));
-        ui.label(RichText::new(editor.path.to_string()).monospace().strong());
-        if let Some(loaded) = editor.loaded() {
-            ui.weak(conflict_name(loaded.shown.kind));
-        }
+        // The buttons first, from the right: the path and the kind take what is left, cut.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let close = ui
                 .add_enabled(
@@ -49,6 +47,19 @@ pub(crate) fn conflict_editor(
             if restart.clicked() {
                 actions.push(Action::Conflict(conflict::Action::Restart));
             }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let path = editor.path.to_string();
+                let kind = editor.loaded().map(|l| conflict_name(l.shown.kind));
+                let hint = match &kind {
+                    Some(kind) => format!("{path} {kind}"),
+                    None => path.clone(),
+                };
+                ui.add(egui::Label::new(RichText::new(&path).monospace().strong()).truncate())
+                    .on_hover_text(&hint);
+                if let Some(kind) = kind {
+                    whole_or_nothing(ui, RichText::new(kind).weak(), &hint);
+                }
+            });
         });
     });
     ui.separator();
@@ -79,16 +90,20 @@ fn loaded_editor(
     ui: &mut Ui,
     editor: &Editor,
     loaded: &Loaded,
-    incoming: Option<&str>,
+    incoming: &[IncomingCommit],
     can_write: bool,
     actions: &mut Vec<Action>,
 ) {
     let footer = 64.0;
     let top = ((ui.available_height() - footer) * 0.38).max(80.0);
-    let ours = loaded.ours_label.as_deref().unwrap_or("HEAD");
-    let theirs = match loaded.theirs_label.as_deref().or(incoming) {
-        Some(label) => label.to_owned(),
-        None => tr!("conflict-incoming"),
+    let ours = match loaded.ours_label.as_deref() {
+        Some(label) => conflict::side_name(label, incoming),
+        None => "HEAD".to_owned(),
+    };
+    let theirs = match (loaded.theirs_label.as_deref(), incoming.first()) {
+        (Some(label), _) => conflict::side_name(label, incoming),
+        (None, Some(commit)) => commit.label.clone(),
+        (None, None) => tr!("conflict-incoming"),
     };
     ui.columns(3, |cols| {
         column(
@@ -101,7 +116,7 @@ fn loaded_editor(
         column(
             &mut cols[1],
             "ours",
-            &tr!("conflict-column-ours", label = ours),
+            &tr!("conflict-column-ours", label = &ours),
             &loaded.ours,
             top,
         );
@@ -120,7 +135,7 @@ fn loaded_editor(
             let blocks = loaded.blocks();
             ui.horizontal(|ui| {
                 ui.strong(tr!("conflict-result"));
-                ui.weak(tr!("conflict-blocks", n = blocks.len()));
+                // As the header: the buttons first, the count in what is left.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let on = enabled && !blocks.is_empty();
                     if ui
@@ -139,6 +154,11 @@ fn loaded_editor(
                     {
                         actions.push(Action::Conflict(conflict::Action::ChooseAll(Choice::Ours)));
                     }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let count = tr!("conflict-blocks", n = blocks.len());
+                        ui.add(egui::Label::new(RichText::new(&count).weak()).truncate())
+                            .on_hover_text(&count);
+                    });
                 });
             });
             if let Some(error) = loaded.parse_error() {
@@ -176,9 +196,24 @@ fn loaded_editor(
     footer_row(ui, editor, loaded, can_write, actions);
 }
 
+/// A text beside others on a row, whole or not at all: a lone "…" says nothing.
+fn whole_or_nothing(ui: &mut Ui, text: RichText, hint: &str) {
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    if galley.size().x <= ui.available_width() {
+        ui.label(galley).on_hover_text(hint);
+    }
+}
+
 /// One of the three versions, read-only, virtualized rows.
 fn column(ui: &mut Ui, id: &str, title: &str, column: &Column, height: f32) {
-    ui.strong(title);
+    // One line, cut with "…": a wrapped heading pushes its pane below the other two.
+    ui.add(egui::Label::new(RichText::new(title).strong()).truncate())
+        .on_hover_text(title);
     let weak = |ui: &mut Ui, text: &str| {
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
             ui.weak(text);
@@ -350,11 +385,7 @@ fn footer_row(
             }
         }
         if loaded.can_delete() {
-            let color = if enabled {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().weak_text_color()
-            };
+            let color = crate::theme::destructive(ui.visuals(), enabled);
             let button = ui
                 .add_enabled(
                     enabled,

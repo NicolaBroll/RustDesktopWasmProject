@@ -37,6 +37,7 @@ mod credentials_view;
 mod details_view;
 mod file_view;
 mod lfs_view;
+mod open_path_view;
 mod optimize_view;
 mod rebase_view;
 mod refs;
@@ -53,7 +54,7 @@ mod top_bar;
 mod worktree_view;
 
 pub(crate) use auto_fetch_view::auto_fetch_notice;
-use auto_fetch_view::offline_icon;
+use auto_fetch_view::{offline_badge, offline_hint};
 pub(crate) use branches::branch_dialog;
 pub(crate) use clone_view::clone_dialog;
 use clone_view::create_buttons;
@@ -62,13 +63,14 @@ pub(crate) use compare_view::compare_panel;
 pub(crate) use confirm::{confirm_amend, confirm_clean, confirm_discard, confirm_write};
 pub(crate) use conflict_view::conflict_editor;
 pub(crate) use credentials_view::{credential_dialog, credential_field_id};
-pub(crate) use details_view::details_panel;
 use details_view::*;
+pub(crate) use details_view::{details_panel, set_reveal_file};
 use file_view::file_menu_entries;
 pub(crate) use file_view::file_view;
 pub(crate) use file_view::{launch_entries, set_can_launch};
 use lfs_view::paint_lfs_badge;
 pub(crate) use lfs_view::{lfs_badge, lfs_notice};
+pub(crate) use open_path_view::open_path_dialog;
 pub(crate) use optimize_view::optimize_notice;
 pub(crate) use rebase_view::rebase_editor;
 pub(crate) use refs::refs_panel;
@@ -80,14 +82,15 @@ use reset_view::reset_item;
 pub(crate) use settings_view::settings_window;
 pub(crate) use stage_view::stage_panel;
 use stash_view::*;
-pub(crate) use stash_view::{stash_conflicts_window, stash_dialog, stash_panel};
+pub(crate) use stash_view::{stash_conflicts_notice, stash_dialog, stash_panel};
 pub(crate) use submodule_view::outdated_notice;
 use submodule_view::submodule_section;
-use sync_view::*;
-pub(crate) use sync_view::{failure_window, sync_window};
+pub(crate) use sync_view::{failure_dialog, rejected_notice, sync_window};
 pub(crate) use tab_strip::{TabLabel, tab_strip_panel};
 pub use title_bar::WindowFrame;
-pub(crate) use title_bar::{TitleBar, end_window_move, title_bar_panel, window_edges};
+pub(crate) use title_bar::{
+    Help, TitleBar, end_window_move, help_dialog, title_bar_panel, window_edges,
+};
 use top_bar::*;
 pub(crate) use top_bar::{
     RecentRepo, current_branch, repo_name, status_bar, top_bar, undo_enabled, welcome,
@@ -123,6 +126,59 @@ pub(crate) fn git_text(ui: &mut Ui, git: Option<&str>) {
     }
 }
 
+/// The default button of a dialog or of a panel, the one that does what the dialog is for
+/// ("Create branch", "Stash", "Clone", "Commit"): the accent fill while it can be pressed, so
+/// it stands apart from "Cancel" beside it; egui's grey when it cannot (`enabled`, the same
+/// value given to `add_enabled`).
+pub(crate) fn primary_button(
+    ui: &Ui,
+    label: impl Into<String>,
+    enabled: bool,
+) -> egui::Button<'static> {
+    if enabled {
+        let (fill, text) = theme::primary(ui.visuals());
+        egui::Button::new(RichText::new(label).color(text)).fill(fill)
+    } else {
+        egui::Button::new(label.into())
+    }
+}
+
+/// The default button of a dialog that destroys something (discard, delete, drop, force): the
+/// red fill instead of the accent of [`primary_button`].
+pub(crate) fn danger_button(ui: &Ui, label: impl Into<String>) -> egui::Button<'static> {
+    let visuals = ui.visuals();
+    egui::Button::new(RichText::new(label).color(visuals.strong_text_color()))
+        .fill(visuals.error_fg_color.gamma_multiply(0.35))
+}
+
+/// The other button of a dialog whose default button does something: it closes the dialog and
+/// nothing happens. One wording for all of them; the dialogs that only inform (failure,
+/// details, shortcuts, about, settings) say "Close".
+pub(crate) fn cancel_button() -> egui::Button<'static> {
+    egui::Button::new(tr!("common-cancel"))
+}
+
+/// Enter as the press of a dialog's default button: true only while the keyboard is in a text
+/// field or on nothing. On a focused button or checkbox Enter is that widget's own click
+/// ("Cancel" focused and Enter cancels, it does not also confirm), and a key held down from the
+/// dialog before is not a press. Called before the dialog's widgets are drawn: a single-line
+/// field gives up the focus when it sees Enter.
+pub(crate) fn default_enter(ui: &Ui) -> bool {
+    let free = ui.ctx().text_edit_focused() || ui.memory(|m| m.focused().is_none());
+    let pressed = |event: &egui::Event| {
+        matches!(
+            event,
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                pressed: true,
+                repeat: false,
+                ..
+            }
+        )
+    };
+    free && ui.input(|i| i.events.iter().any(pressed))
+}
+
 /// When an entry that writes is disabled because it is waiting: the reason.
 fn wait() -> String {
     tr!("common-wait")
@@ -136,6 +192,24 @@ fn oid_link(ui: &mut Ui, id: Oid, actions: &mut Vec<Action>) {
     if response.clicked() {
         actions.push(Action::SelectCommit(id));
     }
+}
+
+/// The short id on one line and the icon that copies the full one (also shown on hover): the
+/// "Commit" row of the details of a commit and of a stash.
+fn oid_copy(ui: &mut Ui, id: Oid) {
+    ui.horizontal(|ui| {
+        let full = id.to_string();
+        ui.add(egui::Label::new(RichText::new(id.short()).monospace()))
+            .on_hover_text(&full);
+        let copy = egui::Button::new(icons::text(icons::COPY, 13.0)).frame(false);
+        if ui
+            .add(copy)
+            .on_hover_text(tr!("details-copy-hint"))
+            .clicked()
+        {
+            ui.ctx().copy_text(full);
+        }
+    });
 }
 
 /// Path on one line, cut with `…` if it does not fit in `width`. For renames and copies

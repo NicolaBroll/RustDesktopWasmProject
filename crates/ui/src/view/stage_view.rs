@@ -455,6 +455,10 @@ impl StageSection<'_> {
             // egui keeps at least 64 px of a scrolled area: here the room computed above wins.
             .min_scrolled_height(height)
             .show_rows(ui, FILE_ROW_HEIGHT, items.len(), |ui, range| {
+                let open_row = open
+                    .filter(|t| t.source == source)
+                    .and_then(|t| items.iter().position(|i| i.path == t.path));
+                reveal_open_row(ui, range.start, open_row, FILE_ROW_HEIGHT);
                 for item in &items[range] {
                     let (rect, response) = ui.allocate_exact_size(
                         vec2(ui.available_width(), FILE_ROW_HEIGHT),
@@ -483,6 +487,7 @@ impl StageSection<'_> {
                             ui.visuals().widgets.hovered.weak_bg_fill,
                         );
                     }
+                    theme::focus_ring(ui, &response, rect);
                     let painter = ui.painter_at(rect);
                     let badge = egui::Rect::from_center_size(
                         egui::pos2(rect.left() + 11.0, rect.center().y),
@@ -530,12 +535,16 @@ impl StageSection<'_> {
                     painter.galley(egui::pos2(left, top), galley, text);
 
                     let response = response.on_hover_text(stage_tooltip(op, item));
-                    if (clicked || response.double_clicked()) && enabled {
+                    // On the row that has the keyboard Space is the row's button and Enter the
+                    // click: egui makes a click of both, here Space is never one.
+                    let space =
+                        response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space));
+                    if (clicked || response.double_clicked() || space) && enabled {
                         actions.push(Action::Stage(stage::Action::Write(
                             op,
                             vec![item.path.clone()],
                         )));
-                    } else if response.clicked() {
+                    } else if response.clicked() && !space {
                         actions.push(if item.is_conflict() && op == StageOp::Stage {
                             Action::Conflict(conflict::Action::Open(item.path.clone()))
                         } else {

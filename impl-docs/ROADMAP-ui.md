@@ -423,7 +423,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   their texts.
 
 ### U64 — Keyboard: visible focus, file lists, dialogs
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** of 40 Tab stops only 13 show where the focus is (the widgets drawn by hand — tabs,
   window buttons, tree rows, commit rows, file rows — draw none, and on the toolbar focus looks
   like hover); the files of the stage area and of a commit cannot be walked with the arrows
@@ -436,6 +436,19 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   `keys.rs`.
 - **Done when:** unit tests of the key mapping and of the file-list movement; on Xvfb every Tab
   stop changes the picture; CI green.
+- **Done:** `theme::focus_ring` (1.5 px, the selection's text colour) on every hand-drawn
+  widget, the toolbar buttons too; the title bar's drag area, the status message and the diff's
+  file name (context menu only) are no longer Tab stops, and the edges of the resizable panels
+  pass the focus on (`side_panel::pass_focus`): 40 of 40 Tab stops change the picture in both
+  themes (13 before), kept by the smoke test `every_tab_stop_changes_the_picture`. With a file
+  open ↑/↓ and Home/End walk its list (`file_nav`, "Staged" then "Unstaged", conflicts
+  skipped) and the list scrolls to it; Enter on the commit list opens the first file. Only a
+  text field stops the shortcuts now (`keys::typing`): with another widget focused they work,
+  the arrows move the focus, Enter/Space press it, and Space on a focused stage file stages or
+  unstages it. Ctrl+Enter (`keys::confirm`) confirms the merge dialogs, the rebase editor and
+  the branch/tag/rename/upstream dialogs (the ones on plain Enter already took it);
+  destructive confirmations still want a click. New in the table: Ctrl+O, Ctrl+W, Ctrl+B,
+  Ctrl+Enter; Help lists the list keys too.
 
 ### U65 — Dark theme contrast
 - [ ] **Agent:** `egui-ui`
@@ -452,7 +465,11 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
 - **Goal:** the conflict editor's "Theirs (<40-character id>)" heading is letter-spaced and
   wraps on three lines; the stash details show the whole id, which wraps over "Created on"; the
   floating scrollbar of the left panel covers the "+" and "⋯" buttons (a thick black bar in the
-  light theme); a folder dialog that cannot open (no portal, no zenity) says nothing. Texts:
+  light theme); a folder dialog that cannot open (no portal, no zenity) says nothing; at
+  760x520 with a notice or an operation banner on screen (seen in Italian while checking U63)
+  the buttons at the top of the conflict editor ("Start over", "Close", "All ours", "All
+  theirs") are drawn over its labels and the unstaged list of the stage area is left without
+  room, its separator crossing the buttons. Texts:
   Italian "Unstage"/"Stage" beside "Togli tutto dallo stage", "Remote" (settings) beside
   "Remoti", the infinitive in the unreachable-remote text; English "1 conflicted file. Resolve
   them", "starts at commit c13e0f9 (c13e0f9)"; the clone dialog says credentials are never

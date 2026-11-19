@@ -6,8 +6,13 @@
 //!   the others, with the same gates as its buttons.
 //! - **When**: never with a popup or a menu open (the key belongs to it), nor with a modal
 //!   window open; only the [`Command::global`] ones while a text field has the keyboard.
-//! - The list selection keys (arrows, Page up/down, Home/End, Esc) stay in the tab's keyboard
-//!   handling: they depend on what the center shows.
+//! - **Focus** (U64): while a widget that is not a text field has the keyboard (Tab), the
+//!   shortcuts work, but Space and Enter are that widget's, as a click, and the arrows move the
+//!   focus.
+//! - Ctrl+Enter ([`Command::Confirm`]) is read by the commit box and by each dialog
+//!   ([`confirm`]), also from a text field and with the dialog open.
+//! - The list selection keys (arrows, Page up/down, Home/End, Enter, Esc) stay in the tab's
+//!   keyboard handling: they depend on what the center shows ([`list_keys`] for the Help list).
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use project_i18n::tr;
@@ -23,6 +28,15 @@ pub(crate) enum Command {
     Push,
     /// Stages or unstages the file of the stage panel whose diff is open.
     ToggleStage,
+    /// Commits from the commit box, or confirms the dialog shown: never taken by [`take`], the
+    /// box and the dialogs read it themselves ([`confirm`]).
+    Confirm,
+    /// The folder dialog of "Open repository…".
+    OpenRepo,
+    /// Closes the tab shown.
+    CloseTab,
+    /// The "New branch" dialog, from HEAD.
+    NewBranch,
     Find,
     Settings,
     NextTab,
@@ -50,7 +64,9 @@ const CTRL_SHIFT: Modifiers = Modifiers::COMMAND.plus(Modifiers::SHIFT);
 
 /// Every shortcut, in the order of the Help list; a command with two keys has the one shown
 /// first.
-pub(crate) const SHORTCUTS: [(Command, KeyboardShortcut); 16] = [
+pub(crate) const SHORTCUTS: [(Command, KeyboardShortcut); 20] = [
+    (Command::OpenRepo, key(CTRL, Key::O)),
+    (Command::CloseTab, key(CTRL, Key::W)),
     (Command::Undo, key(CTRL, Key::Z)),
     (Command::Redo, key(CTRL_SHIFT, Key::Z)),
     (Command::Redo, key(CTRL, Key::Y)),
@@ -58,7 +74,9 @@ pub(crate) const SHORTCUTS: [(Command, KeyboardShortcut); 16] = [
     (Command::Fetch, key(CTRL_SHIFT, Key::T)),
     (Command::Pull, key(CTRL_SHIFT, Key::L)),
     (Command::Push, key(CTRL_SHIFT, Key::P)),
+    (Command::NewBranch, key(CTRL, Key::B)),
     (Command::ToggleStage, key(Modifiers::NONE, Key::Space)),
+    (Command::Confirm, key(CTRL, Key::Enter)),
     (Command::Find, key(CTRL, Key::F)),
     (Command::Settings, crate::settings::SHORTCUT),
     (Command::NextTab, key(CTRL, Key::Tab)),
@@ -69,8 +87,20 @@ pub(crate) const SHORTCUTS: [(Command, KeyboardShortcut); 16] = [
     (Command::ZoomReset, key(CTRL, Key::Num0)),
 ];
 
+/// The keys of the lists, for the Help list: the keys and what they do. They are handled by
+/// the tab's keyboard ([`crate::Tab`]), not through [`SHORTCUTS`].
+pub(crate) fn list_keys() -> [(String, String); 4] {
+    [
+        (tr!("keys-list-arrows-keys"), tr!("keys-list-arrows")),
+        (tr!("keys-list-enter-keys"), tr!("keys-list-enter")),
+        (tr!("keys-list-escape-keys"), tr!("keys-list-escape")),
+        (tr!("keys-list-tab-keys"), tr!("keys-list-tab")),
+    ]
+}
+
 impl Command {
-    /// Also while a text field has the keyboard: none of them is a key a text field uses.
+    /// Also while a text field has the keyboard: none of them is a key a text field uses
+    /// (Ctrl+W deletes a word there, so closing the tab is not one of these).
     pub(crate) fn global(self) -> bool {
         matches!(
             self,
@@ -103,6 +133,10 @@ impl Command {
             Command::Pull => tr!("keys-pull"),
             Command::Push => tr!("keys-push"),
             Command::ToggleStage => tr!("keys-toggle-stage"),
+            Command::Confirm => tr!("keys-confirm"),
+            Command::OpenRepo => tr!("keys-open-repo"),
+            Command::CloseTab => tr!("keys-close-tab"),
+            Command::NewBranch => tr!("keys-new-branch"),
             Command::Find => tr!("keys-find"),
             Command::Settings => tr!("keys-settings"),
             Command::NextTab => tr!("keys-next-tab"),
@@ -132,10 +166,26 @@ pub(crate) fn command(key: Key, modifiers: Modifiers) -> Option<Command> {
         .map(|(c, _)| *c)
 }
 
+/// A text field has the keyboard: the keys are its own, but for the [`Command::global`] ones.
+/// Another focused widget (a button or a row reached with Tab) is not typing: the shortcuts
+/// work, and only Space, Enter and the arrows are that widget's.
+pub(crate) fn typing(ctx: &egui::Context) -> bool {
+    ctx.text_edit_focused()
+}
+
+/// Ctrl+Enter pressed in this frame, taken out of the input: the dialog shown confirms as with
+/// its default button (the caller checks that the button is enabled). Called before the
+/// dialog's text fields are drawn.
+pub(crate) fn confirm(ctx: &egui::Context) -> bool {
+    ctx.input_mut(|i| i.consume_shortcut(&Command::Confirm.shortcut()))
+}
+
 /// The commands pressed in this frame, taken out of the input so no widget sees them too.
-/// `text`: a text field has the keyboard, only the [`Command::global`] ones.
+/// `text`: a text field has the keyboard, only the [`Command::global`] ones. While another
+/// widget has it (Tab), Space is left to that widget: it is its click.
 pub(crate) fn take(ctx: &egui::Context, text: bool) -> Vec<Command> {
     let mut commands = Vec::new();
+    let focused = ctx.memory(|m| m.focused().is_some());
     ctx.input_mut(|i| {
         i.events.retain(|event| {
             let egui::Event::Key {
@@ -148,6 +198,8 @@ pub(crate) fn take(ctx: &egui::Context, text: bool) -> Vec<Command> {
                 return true;
             };
             match command(*key, *modifiers) {
+                Some(Command::Confirm) => true,
+                Some(Command::ToggleStage) if focused => true,
                 Some(command) if !text || command.global() => {
                     commands.push(command);
                     false
@@ -206,6 +258,10 @@ mod tests {
             (Key::Plus, CTRL_SHIFT, Command::ZoomIn),
             (Key::Minus, CTRL, Command::ZoomOut),
             (Key::Num0, CTRL, Command::ZoomReset),
+            (Key::O, CTRL, Command::OpenRepo),
+            (Key::W, CTRL, Command::CloseTab),
+            (Key::B, CTRL, Command::NewBranch),
+            (Key::Enter, CTRL, Command::Confirm),
         ];
         for (key, modifiers, expected) in cases {
             assert_eq!(
@@ -228,6 +284,27 @@ mod tests {
             "Tab moves the focus"
         );
         assert_eq!(command(Key::A, CTRL), None);
+        assert_eq!(command(Key::Enter, Modifiers::NONE), None, "Enter alone");
+        assert_eq!(command(Key::O, Modifiers::NONE), None);
+    }
+
+    #[test]
+    fn the_new_shortcuts_are_not_for_text_fields() {
+        // Ctrl+W deletes a word in a field, Ctrl+O and Ctrl+B are left alone there too.
+        for command in [Command::OpenRepo, Command::CloseTab, Command::NewBranch] {
+            assert!(!command.global(), "{command:?}");
+        }
+    }
+
+    #[test]
+    fn the_help_list_has_the_list_keys_too() {
+        for (keys, label) in list_keys() {
+            assert!(!keys.is_empty() && !label.is_empty());
+        }
+        assert_eq!(
+            shortcut_text(&egui::Context::default(), &Command::Confirm.shortcut()),
+            "Ctrl+Enter"
+        );
     }
 
     #[test]
@@ -244,7 +321,14 @@ mod tests {
 
     /// One frame with `events`: the commands taken and what is left to the widgets.
     fn frame(text: bool, events: Vec<egui::Event>) -> (Vec<Command>, usize) {
-        let ctx = egui::Context::default();
+        frame_in(&egui::Context::default(), text, events)
+    }
+
+    fn frame_in(
+        ctx: &egui::Context,
+        text: bool,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Command>, usize) {
         let mut taken = Vec::new();
         let mut left = 0;
         let input = egui::RawInput {
@@ -282,14 +366,54 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_enter_is_left_to_the_box_or_the_dialog_that_reads_it() {
+        let ctx = egui::Context::default();
+        let mut confirmed = (false, false);
+        let input = egui::RawInput {
+            events: vec![press(Key::Enter, CTRL)],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            assert!(take(ui.ctx(), false).is_empty());
+            // The first reader takes it: a second one in the same frame sees nothing.
+            confirmed = (confirm(ui.ctx()), confirm(ui.ctx()));
+        });
+        output.textures_delta.clear();
+        assert_eq!(confirmed, (true, false));
+        // Enter alone is not a confirmation.
+        let input = egui::RawInput {
+            events: vec![press(Key::Enter, Modifiers::NONE)],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| confirmed.0 = confirm(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(!confirmed.0);
+    }
+
+    #[test]
+    fn space_is_the_click_of_the_widget_that_has_the_keyboard() {
+        let ctx = egui::Context::default();
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("a focused row")));
+        let events = vec![
+            press(Key::Space, Modifiers::NONE),
+            press(Key::F5, Modifiers::NONE),
+        ];
+        let (taken, left) = frame_in(&ctx, false, events);
+        assert_eq!((taken, left), (vec![Command::Refresh], 1));
+    }
+
+    #[test]
     fn a_text_field_keeps_its_keys() {
         let events = vec![
             press(Key::Z, CTRL),
             press(Key::Space, Modifiers::NONE),
             press(Key::F, CTRL),
+            press(Key::W, CTRL),
+            press(Key::O, CTRL),
+            press(Key::B, CTRL),
         ];
         let (taken, left) = frame(true, events);
-        assert_eq!((taken, left), (vec![Command::Find], 2));
+        assert_eq!((taken, left), (vec![Command::Find], 5));
     }
 }
 

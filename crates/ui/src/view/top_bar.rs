@@ -170,6 +170,8 @@ impl egui::Widget for ToolButton<'_> {
                 ui.painter()
                     .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
             }
+            // The fill alone is the look of the mouse over the button.
+            theme::focus_ring(ui, &response, rect);
             let top = rect.top() + 5.0;
             let icon_pos = egui::pos2(rect.center().x - icon.size().x / 2.0, top);
             let label_pos = egui::pos2(
@@ -531,7 +533,9 @@ impl StatusText {
             egui::Label::new(text)
                 .truncate()
                 .show_tooltip_when_elided(false)
-                .sense(Sense::click()),
+                // The click is for the context menu, which the keyboard does not open: not a
+                // Tab stop.
+                .sense(Sense::CLICK),
         );
         // The hover text cannot be selected: the menu copies it whole, backup refs included.
         let whole = self.text.trim_end();

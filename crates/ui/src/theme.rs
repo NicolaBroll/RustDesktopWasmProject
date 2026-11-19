@@ -66,6 +66,32 @@ pub(crate) fn primary(visuals: &egui::Visuals) -> (Color32, Color32) {
     (visuals.selection.bg_fill, visuals.selection.stroke.color)
 }
 
+/// The color of the focus ring: the text color of the selection, light on the dark theme and
+/// dark on the light one, so it reads on the panel, on a row under the mouse and on a selected
+/// row.
+pub(crate) fn focus_color(visuals: &egui::Visuals) -> Color32 {
+    visuals.selection.stroke.color
+}
+
+/// Width of the focus ring, in points.
+pub(crate) const FOCUS_WIDTH: f32 = 1.5;
+
+/// The focus ring of a widget drawn by hand: a line inside `rect` while `response` has the
+/// keyboard (Tab). egui's own widgets show the focus themselves; every widget made with
+/// `allocate_exact_size` or `Ui::interact` calls this, or Tab stops on it without a sign.
+pub(crate) fn focus_ring(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
+    if response.has_focus() {
+        paint_focus_ring(ui, rect);
+    }
+}
+
+/// The ring of [`focus_ring`], for who knows by itself that the widget has the keyboard.
+pub(crate) fn paint_focus_ring(ui: &egui::Ui, rect: egui::Rect) {
+    let stroke = egui::Stroke::new(FOCUS_WIDTH, focus_color(ui.visuals()));
+    ui.painter()
+        .rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
+}
+
 /// Text on a colored badge (change letters, branch labels): dark on every badge color.
 pub(crate) const ON_BADGE: Color32 = Color32::from_gray(20);
 
@@ -163,6 +189,28 @@ mod tests {
             "disabled: {:.2}",
             contrast(disabled, panel)
         );
+    }
+
+    #[test]
+    fn the_focus_ring_reads_on_the_panel_and_on_a_selected_row() {
+        let mut light_theme = egui::Visuals::light();
+        light(&mut light_theme);
+        for visuals in [egui::Visuals::dark(), light_theme] {
+            let ring = focus_color(&visuals);
+            let hovered = visuals.widgets.hovered.weak_bg_fill;
+            for (name, background) in [
+                ("panel", visuals.panel_fill),
+                ("selection", visuals.selection.bg_fill),
+                ("hover", hovered),
+            ] {
+                assert!(
+                    contrast(ring, background) >= 3.0,
+                    "{name}, dark {}: {:.2}",
+                    visuals.dark_mode,
+                    contrast(ring, background)
+                );
+            }
+        }
     }
 
     #[test]

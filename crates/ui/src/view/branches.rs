@@ -65,8 +65,10 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     ui.add_space(6.0);
     let id = ui.make_persistent_id("branch-name");
     // Enter in the field sends the name: read before the field, which would otherwise take it.
-    let enter = ui.memory(|m| m.has_focus(id))
-        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    // Ctrl+Enter from anywhere in the dialog, the tag's message too.
+    let enter = crate::keys::confirm(ui.ctx())
+        || (ui.memory(|m| m.has_focus(id))
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)));
     let mut name = dialog.name.clone();
     let edit = egui::TextEdit::singleline(&mut name)
         .id(id)
@@ -267,8 +269,9 @@ pub(super) fn upstream_dialog(
     ui.add_space(6.0);
     let idle = dialog.running.is_none();
     let id = ui.make_persistent_id("upstream-filter");
-    let enter = ui.memory(|m| m.has_focus(id))
-        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let enter = crate::keys::confirm(ui.ctx())
+        || (ui.memory(|m| m.has_focus(id))
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)));
     let mut filter = dialog.filter.clone();
     let response = ui.add(
         egui::TextEdit::singleline(&mut filter)

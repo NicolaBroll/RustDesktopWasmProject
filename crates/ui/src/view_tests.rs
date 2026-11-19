@@ -44,6 +44,10 @@ struct Screen {
     app: App,
     size: egui::Vec2,
     time: f64,
+    /// Everything the last frame painted: the picture, to tell whether a key changed it.
+    picture: Vec<egui::epaint::ClippedShape>,
+    /// The focus rings ([`crate::theme::focus_ring`]) of the last frame.
+    rings: Vec<egui::Rect>,
 }
 
 const PATH: &str = "repo";
@@ -75,6 +79,8 @@ impl Screen {
             app,
             size: egui::vec2(1280.0, 800.0),
             time: 0.0,
+            picture: Vec::new(),
+            rings: Vec::new(),
         }
     }
 
@@ -120,9 +126,13 @@ impl Screen {
         // Nobody draws the textures (the font atlas).
         output.textures_delta.clear();
         let mut painted = Vec::new();
+        self.rings.clear();
+        let ring = crate::theme::focus_color(&self.ctx.global_style().visuals);
         for clipped in &output.shapes {
             collect(&clipped.shape, &mut painted);
+            collect_rings(&clipped.shape, ring, &mut self.rings);
         }
+        self.picture = output.shapes;
         let clash = id_clash(&painted);
         assert!(clash.is_none(), "two widgets share an id: {clash:?}");
         painted
@@ -165,6 +175,46 @@ impl Screen {
         self.click(target.pos + egui::vec2(4.0, 6.0), button)
     }
 
+    /// `key` pressed with `modifiers` and released, then the screen as it settles.
+    fn key(&mut self, key: egui::Key, modifiers: egui::Modifiers) -> Vec<Painted> {
+        let event = |pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        self.frame(vec![event(true)]);
+        self.frame(vec![event(false)]);
+        self.frames(3)
+    }
+
+    /// Tab, and whether the picture changed: the widget that took the focus shows it.
+    fn tab_changes_the_picture(&mut self) -> bool {
+        let before = std::mem::take(&mut self.picture);
+        self.key(egui::Key::Tab, egui::Modifiers::NONE);
+        assert!(
+            self.ctx.memory(|m| m.focused().is_some()),
+            "Tab left the focus on nothing"
+        );
+        before != self.picture
+    }
+
+    /// Tab until the focus ring is around the text `text` (at most `limit` times).
+    #[track_caller]
+    fn tab_to(&mut self, text: &str, limit: usize) {
+        for _ in 0..limit {
+            let painted = self.key(egui::Key::Tab, egui::Modifiers::NONE);
+            let on_it = painted
+                .iter()
+                .any(|p| p.text == text && self.rings.iter().any(|ring| ring.contains(p.pos)));
+            if on_it {
+                return;
+            }
+        }
+        panic!("Tab never reached {text:?}");
+    }
+
     /// What the user asked for, applied as at the end of a frame; then the screen as it settles.
     fn act(&mut self, action: crate::Action) -> Vec<Painted> {
         let ctx = self.ctx.clone();
@@ -186,6 +236,19 @@ fn collect(shape: &egui::Shape, out: &mut Vec<Painted>) {
             width: text.galley.size().x,
             cut: text.galley.elided,
         }),
+        _ => {}
+    }
+}
+
+/// The rectangles stroked as the focus ring in `shape`.
+fn collect_rings(shape: &egui::Shape, color: egui::Color32, out: &mut Vec<egui::Rect>) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_rings(s, color, out)),
+        egui::Shape::Rect(rect)
+            if rect.stroke.color == color && rect.stroke.width == crate::theme::FOCUS_WIDTH =>
+        {
+            out.push(rect.rect);
+        }
         _ => {}
     }
 }
@@ -803,6 +866,16 @@ fn a_merge_in_conflict() {
     screen.shows(A::Merge(M::Abort), &["Abort the merge?"]);
     screen.act(A::Merge(M::CloseDialog));
     screen.shows(A::Merge(M::Continue), &["Finish the merge"]);
+    // In the message field Enter is a new line; Ctrl+Enter is the dialog's button (U64): here
+    // the conflict is still there, and the engine's refusal is shown in the dialog.
+    let idle = |screen: &Screen| match screen.repo().merge.dialog() {
+        Some(crate::merge::Dialog::Continue(d)) => d.running.is_none() && d.error.is_none(),
+        _ => false,
+    };
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(idle(&screen), "Enter alone sent the dialog");
+    screen.key(egui::Key::Enter, egui::Modifiers::COMMAND);
+    assert!(!idle(&screen), "Ctrl+Enter did not send the dialog");
 }
 
 #[test]
@@ -1124,6 +1197,17 @@ fn menus_open_under_the_pointer() {
     assert_shows(&menu, &["Keyboard shortcuts", "About BinariGit"]);
     let painted = screen.click_on(&menu, "Keyboard shortcuts", Primary);
     assert_shows(&painted, &["Ctrl+Shift+P", "Push the current branch"]);
+    assert_shows(
+        &painted,
+        &[
+            "Ctrl+O",
+            "Ctrl+W",
+            "New branch from HEAD…",
+            "Ctrl+Enter",
+            "Up · Down · Home · End",
+            "Tab · Shift+Tab",
+        ],
+    );
     assert_eq!(screen.app.help, Some(view::Help::Shortcuts));
     let painted = screen.click_on(&painted, "Close", Primary);
     assert_eq!(screen.app.help, None);
@@ -1375,4 +1459,99 @@ fn a_question_from_git() {
     );
     screen.act(A::Credentials(crate::credentials::Action::Cancel));
     assert_eq!(asker.join().unwrap(), None);
+}
+
+/// U64: every Tab stop shows where the focus is. The widgets drawn by hand paint the focus
+/// ring, the edges of the side panels pass the focus on.
+#[test]
+fn every_tab_stop_changes_the_picture() {
+    let mut screen = sample();
+    screen.app.frame = view::WindowFrame::Custom;
+    screen.act(A::Select(2));
+    // Nothing moves by itself: a picture that changes is the focus.
+    let still = screen.picture.clone();
+    screen.frames(2);
+    assert!(still == screen.picture, "the screen is not still");
+    let mut rings = 0;
+    for stop in 1..=70 {
+        assert!(
+            screen.tab_changes_the_picture(),
+            "Tab stop {stop} shows no focus"
+        );
+        rings += screen.rings.len();
+    }
+    assert!(rings >= 20, "{rings} focus rings in 70 stops");
+
+    // The stage area with a diff open: file rows, the lines of the diff, the hunk buttons.
+    let mut screen = sample();
+    screen.act(A::SelectWorktree);
+    let file = screen.repo().shown_files().remove(0);
+    screen.act(A::Diff(crate::diff::Action::Open(file)));
+    for stop in 1..=70 {
+        assert!(
+            screen.tab_changes_the_picture(),
+            "Tab stop {stop} shows no focus (stage area)"
+        );
+    }
+}
+
+/// U64: on the stage file that has the keyboard Enter is the click (the diff opens) and Space
+/// the row's button (stage), one action each.
+#[test]
+fn enter_and_space_on_a_focused_stage_file() {
+    use crate::stage::Side;
+    let mut screen = sample();
+    screen.act(A::SelectWorktree);
+    let path: RepoPath = "src/lib.rs".into();
+    assert!(screen.repo().stage.contains(Side::Unstaged, &path));
+    assert!(!screen.repo().stage.contains(Side::Staged, &path));
+    screen.tab_to("src/lib.rs", 80);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let target = screen.repo().diff.target().cloned();
+    assert_eq!(
+        target,
+        Some(DiffTarget {
+            source: DiffSource::Worktree,
+            path: path.clone()
+        })
+    );
+    assert!(
+        !screen.repo().stage.contains(Side::Staged, &path),
+        "Enter staged it"
+    );
+    // The arrows move the focus, not the open file.
+    screen.key(egui::Key::ArrowDown, egui::Modifiers::NONE);
+    assert_eq!(screen.repo().diff.target().cloned(), target);
+    screen.key(egui::Key::ArrowUp, egui::Modifiers::NONE);
+    screen.key(egui::Key::Space, egui::Modifiers::NONE);
+    assert!(screen.repo().stage.contains(Side::Staged, &path));
+    assert!(!screen.repo().stage.contains(Side::Unstaged, &path));
+}
+
+/// U64: with a file open the arrows walk its list and the diff follows; Ctrl+B and Ctrl+W.
+#[test]
+fn the_keyboard_walks_the_files_and_opens_the_new_branch_dialog() {
+    let key = |screen: &mut Screen, key| screen.key(key, egui::Modifiers::NONE);
+    let mut screen = sample();
+    screen.act(A::Select(0));
+    let files = screen.repo().shown_files();
+    key(&mut screen, egui::Key::Enter);
+    assert_eq!(screen.repo().diff.target(), Some(&files[0]));
+    key(&mut screen, egui::Key::ArrowDown);
+    assert_eq!(screen.repo().diff.target(), Some(&files[1]));
+    assert_eq!(screen.repo().list.selected(), Some(0), "the commit stays");
+    key(&mut screen, egui::Key::Escape);
+    assert_eq!(screen.repo().diff.target(), None);
+    key(&mut screen, egui::Key::ArrowDown);
+    assert_eq!(screen.repo().list.selected(), Some(1));
+
+    let painted = screen.key(egui::Key::B, egui::Modifiers::COMMAND);
+    assert_shows(&painted, &["New branch", "The branch starts at main"]);
+    // In the name field Ctrl+W is the field's (delete a word): the tab stays.
+    screen.key(egui::Key::W, egui::Modifiers::COMMAND);
+    assert!(screen.tab().repo.is_some());
+    screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!screen.repo().modal_open());
+    screen.key(egui::Key::W, egui::Modifiers::COMMAND);
+    assert!(screen.tab().repo.is_none(), "Ctrl+W closes the tab");
 }

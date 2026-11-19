@@ -174,7 +174,8 @@ fn toolbar(
                 let path = target.path.to_string_lossy();
                 let label = egui::Label::new(egui::RichText::new(path.as_ref()).strong())
                     .truncate()
-                    .sense(Sense::click());
+                    // For the context menu, which the keyboard does not open: not a Tab stop.
+                    .sense(Sense::CLICK);
                 let deleted = matches!(pane, Pane::Loaded(_, doc)
                     if doc.diff.files.first().is_some_and(|f| f.change == Change::Deleted));
                 ui.add(label)
@@ -421,6 +422,10 @@ fn rows(ui: &mut Ui, doc: &DiffDoc, state: &LineState<'_>, actions: &mut Vec<Act
                     Mark::None
                 };
                 paint_row(ui, doc, row, rect, gutter, &style, mark);
+                if response.has_focus() {
+                    // The part in view: the row is as wide as the longest line.
+                    crate::theme::paint_focus_ring(ui, rect.intersect(ui.clip_rect()));
+                }
                 if selectable {
                     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if response.clicked() {

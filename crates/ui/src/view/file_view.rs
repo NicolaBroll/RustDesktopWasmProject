@@ -295,6 +295,7 @@ fn blame_rows(ui: &mut Ui, doc: &BlameDoc, actions: &mut Vec<Action>) {
                 if response.hovered() && commit.is_some() {
                     painter.rect_filled(info, 0.0, style.hover_bg);
                 }
+                theme::focus_ring(ui, &response, info);
                 // The commit on the first line of the run (and on the first visible one).
                 if index == run.start || index == range.start {
                     let job = info_job(commit, &style, INFO_W - 2.0 * PAD);
@@ -426,6 +427,7 @@ fn history(
         Pane::Loading(t) | Pane::Loaded(t, _) | Pane::Failed(t, _) => Some(t),
     };
     let max = (ui.available_width() * 0.7).max(240.0);
+    crate::side_panel::pass_focus(ui, "file-log-list");
     egui::Panel::left("file-log-list")
         .resizable(true)
         .default_size((ui.available_width() * 0.45).clamp(300.0, 560.0))
@@ -493,6 +495,7 @@ fn history_list(
                     ui.painter()
                         .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
                 }
+                theme::focus_ring(ui, &response, rect);
                 let painter = ui.painter_at(rect);
                 let badge = Rect::from_center_size(
                     pos2(rect.left() + 11.0, rect.top() + 11.0),

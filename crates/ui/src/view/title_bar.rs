@@ -88,7 +88,8 @@ fn title_bar(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     let rect = ui.max_rect();
     if bar.frame != WindowFrame::Native {
         // First, so the menus and the buttons drawn afterwards are above it.
-        let drag = ui.interact(rect, ui.scope_id().with("drag"), Sense::click_and_drag());
+        // Not a Tab stop: the keyboard moves the window with the system's own keys.
+        let drag = ui.interact(rect, ui.scope_id().with("drag"), Sense::CLICK | Sense::DRAG);
         if drag.double_clicked() {
             toggle_maximized(ui.ctx());
         } else if drag.drag_started_by(egui::PointerButton::Primary)
@@ -169,9 +170,10 @@ fn menus(ui: &mut Ui, bar: &TitleBar<'_>, actions: &mut Vec<Action>) {
     ui.menu_button(tr!("title-bar-file"), |ui| {
         // Room for the shortcut of "Settings…" after the longest item.
         ui.set_min_width(190.0);
+        let open = keys::shortcut_text(ui.ctx(), &keys::Command::OpenRepo.shortcut());
         if bar.can_pick
             && ui
-                .button(tr!("title-bar-open"))
+                .add(egui::Button::new(tr!("title-bar-open")).shortcut_text(open))
                 .on_hover_text(tr!("title-bar-open-hint"))
                 .clicked()
         {
@@ -287,29 +289,17 @@ fn about_dialog(ctx: &egui::Context) -> bool {
 /// True when it is closed.
 fn shortcuts_dialog(ctx: &egui::Context) -> bool {
     let modal = egui::Modal::new(egui::Id::unique("shortcuts-dialog")).show(ctx, |ui| {
-        ui.set_width(460.0);
+        ui.set_width(520.0);
         ui.heading(tr!("keys-title"));
         ui.add_space(6.0);
-        egui::Grid::new("shortcuts-grid")
-            .num_columns(2)
-            .spacing(vec2(24.0, 6.0))
-            .striped(true)
+        // In a low window (or at a large scale) the list scrolls: the button stays in view.
+        let room = (ctx.content_rect().height() - 150.0).max(120.0);
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            // egui gives a scrolled area in a modal 64 px: the room computed above wins.
+            .min_scrolled_height(room)
             .show(ui, |ui| {
-                let mut shown = Vec::new();
-                for (command, _) in SHORTCUTS {
-                    if shown.contains(&command) {
-                        continue;
-                    }
-                    shown.push(command);
-                    let keys: Vec<String> = SHORTCUTS
-                        .iter()
-                        .filter(|(c, _)| *c == command)
-                        .map(|(_, s)| keys::shortcut_text(ctx, s))
-                        .collect();
-                    ui.label(RichText::new(keys.join(" · ")).monospace());
-                    ui.label(command.label());
-                    ui.end_row();
-                }
+                shortcuts_grid(ui);
             });
         ui.add_space(6.0);
         ui.weak(tr!("keys-list-hint"));
@@ -319,6 +309,37 @@ fn shortcuts_dialog(ctx: &egui::Context) -> bool {
             .1
     });
     modal.inner || modal.should_close()
+}
+
+/// The rows of the shortcuts dialog: the table of [`SHORTCUTS`], then the keys of the lists.
+fn shortcuts_grid(ui: &mut Ui) {
+    egui::Grid::new("shortcuts-grid")
+        .num_columns(2)
+        .spacing(vec2(24.0, 6.0))
+        .striped(true)
+        .show(ui, |ui| {
+            let mut shown = Vec::new();
+            for (command, _) in SHORTCUTS {
+                if shown.contains(&command) {
+                    continue;
+                }
+                shown.push(command);
+                let keys: Vec<String> = SHORTCUTS
+                    .iter()
+                    .filter(|(c, _)| *c == command)
+                    .map(|(_, s)| keys::shortcut_text(ui.ctx(), s))
+                    .collect();
+                ui.label(RichText::new(keys.join(" · ")).monospace());
+                ui.label(command.label());
+                ui.end_row();
+            }
+            // The keys of the lists and of the focus: not shortcuts of a command.
+            for (keys, label) in keys::list_keys() {
+                ui.label(RichText::new(keys).monospace());
+                ui.add(egui::Label::new(label).wrap());
+                ui.end_row();
+            }
+        });
 }
 
 /// Set when the app hands the move or the resize of the window to the system: from then on the
@@ -447,6 +468,7 @@ fn window_button(ui: &mut Ui, kind: WindowButton) -> egui::Response {
             painter.line_segment([center + vec2(-d, d), center + vec2(d, -d)], stroke);
         }
     }
+    theme::focus_ring(ui, &response, rect.shrink(1.0));
     response
 }
 

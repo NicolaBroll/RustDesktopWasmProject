@@ -227,6 +227,7 @@ pub(super) fn section(
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
+    theme::focus_ring(ui, &response, rect);
     let caret = if state.is_open() {
         icons::CARET_DOWN
     } else {
@@ -479,6 +480,7 @@ pub(super) fn row_response(ui: &mut Ui, id: egui::Id) -> egui::Response {
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
+    theme::focus_ring(ui, &response, rect);
     response
 }
 

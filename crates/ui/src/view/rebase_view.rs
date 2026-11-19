@@ -62,6 +62,8 @@ pub(crate) fn rebase_editor(ctx: &egui::Context, editor: &Editor, actions: &mut 
 
 fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Action>) {
     let editing = editor.phase == Phase::Editing;
+    // Ctrl+Enter is the "run" button: read before the message field is drawn.
+    let confirm = crate::keys::confirm(ui.ctx());
     let check = editor.check();
     let bad_step = match &check {
         Check::Invalid { step, .. } => *step,
@@ -113,13 +115,14 @@ fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Actio
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
+        let ready = editing && check == Check::Ready;
         let run = ui
             .add_enabled(
-                editing && check == Check::Ready,
+                ready,
                 egui::Button::new(RichText::new(tr!("rebase-run")).strong()),
             )
             .on_hover_text(tr!("rebase-run-hint", branch = &editor.branch));
-        if run.clicked() {
+        if run.clicked() || (confirm && ready) {
             actions.push(Action::Rebase(rebase::Action::Run));
         }
         if ui
@@ -168,6 +171,7 @@ fn steps(
                     ui.painter()
                         .rect_filled(rect, 2.0, visuals.widgets.hovered.weak_bg_fill);
                 }
+                theme::focus_ring(ui, &response, rect);
                 if response.clicked() {
                     actions.push(Action::Rebase(rebase::Action::Select(i)));
                 }
@@ -420,5 +424,6 @@ fn arrow(ui: &mut Ui, up: bool, enabled: bool) -> egui::Response {
         color,
         egui::Stroke::NONE,
     ));
+    theme::focus_ring(ui, &response, rect);
     response
 }

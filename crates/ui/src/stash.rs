@@ -11,7 +11,12 @@
 //! - **Apply/pop**: always with `index` and `expected` (the id seen): if the list changed the
 //!   engine refuses and the list is reread. They do not enter the journal: the notice does not offer
 //!   "Undo" (which would concern the previous operation). With non-empty `conflicts` it is a
-//!   partial success: a window opens with the files, to be resolved from the stage area.
+//!   partial success: "Uncommitted changes" is selected and the notice of the conflicts names
+//!   the stash.
+//! - **Conflicts left by a stash**: git has no "stash in progress" state, so the notice in the
+//!   tab ([`StashBox::conflicts`]) is derived from the status: conflicted files and no
+//!   operation in progress. It is there after a restart too and goes away with the last
+//!   conflict.
 //! - **Drop**: in two steps like removing a remote: first without `confirm` (the engine
 //!   always answers with `ConfirmRequired` and what would be lost), then, only after the click in the
 //!   red dialog, `"confirm": true`.
@@ -21,7 +26,7 @@ use crate::messages_text;
 use crate::running::Running;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, format};
-use project_domain::{Oid, Signature, Status};
+use project_domain::{Oid, RepoPath, Signature, Status, StatusEntry};
 use project_engine::{
     Message, StashApplyParams, StashApplyResult, StashDropParams, StashDropResult, StashEntry,
     StashListResult, StashPush, StashPushResult,
@@ -52,8 +57,6 @@ pub(crate) enum Action {
     ConfirmDrop,
     /// Closes the open stash dialog without sending anything.
     CloseDialog,
-    /// Closes the apply or pop conflicts window.
-    DismissConflicts,
 }
 
 /// The id of the command that lists the stashes.
@@ -207,13 +210,23 @@ pub enum Dialog {
     Drop(DropDialog),
 }
 
-/// Apply or pop stopped on conflicts: the stash is partly applied, the files are to be resolved.
+/// An apply or pop of this session that stopped on conflicts: the stash is partly applied and
+/// stays in the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conflicts {
+pub struct Applied {
     pub op: Op,
     /// `stash@{n}` as it was when it was applied.
     pub stash: String,
-    pub files: Vec<String>,
+}
+
+/// The notice of the conflicts a stash left: the conflicted files of the status while no
+/// operation is in progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Conflicts<'a> {
+    /// The apply or pop that left them, if it was done in this session.
+    pub applied: Option<&'a Applied>,
+    /// The conflicted files, in the order of the status: never empty.
+    pub files: &'a [RepoPath],
 }
 
 /// The stash list, the selected stash and the dialogs: one dialog at a time.
@@ -231,8 +244,11 @@ pub struct StashBox {
     applying: Option<(Op, StashEntry)>,
     /// "Restore the index too" for apply and pop (`restore_index`).
     pub restore_index: bool,
-    /// The conflicts window after apply or pop.
-    conflicts: Option<Conflicts>,
+    /// The last apply or pop that stopped on conflicts, until the status has no more.
+    applied: Option<Applied>,
+    /// The conflicted files of the last status read, if no operation is in progress (an
+    /// operation shows them in its own panel).
+    conflicted: Vec<RepoPath>,
     /// The stashes already applied by a pop that then failed to remove them from the list: the
     /// changes are in the files, the pop must not be repeated (Drop stays).
     popped: Vec<Oid>,
@@ -263,6 +279,9 @@ pub struct Outcome {
     pub history: Option<History>,
     /// A problem after the successful operation (list or status not reread).
     pub warning: Option<String>,
+    /// Apply or pop stopped on conflicts: "Uncommitted changes" is selected, so the files to
+    /// resolve are in front of the user.
+    pub show_changes: bool,
     /// True if the log must be reread: the set of stash bases changed (push, drop, successful
     /// pop), and a base that no branch contains leaves the graph.
     pub reload_log: bool,
@@ -334,14 +353,27 @@ impl StashBox {
         self.dialog().is_some()
     }
 
-    /// The conflicts window of apply or pop, if it is open.
-    pub fn conflicts(&self) -> Option<&Conflicts> {
-        self.conflicts.as_ref()
+    /// The notice of the conflicts left by a stash, if the last status read has conflicted
+    /// files and no operation in progress.
+    pub fn conflicts(&self) -> Option<Conflicts<'_>> {
+        (!self.conflicted.is_empty()).then(|| Conflicts {
+            applied: self.applied.as_ref(),
+            files: &self.conflicted,
+        })
     }
 
-    /// Closes the conflicts window.
-    pub fn dismiss(&mut self) {
-        self.conflicts = None;
+    /// The status just read: the conflicted files that no operation in progress explains. With
+    /// the last conflict resolved the apply or pop that left them is forgotten.
+    pub fn follow_status(&mut self, status: &Status) {
+        self.conflicted.clear();
+        if status.operation.is_none() {
+            let conflicted = status.entries.iter().filter(|e| e.is_conflict());
+            self.conflicted
+                .extend(conflicted.map(|e: &StatusEntry| e.path.clone()));
+        }
+        if self.conflicted.is_empty() {
+            self.applied = None;
+        }
     }
 
     /// Opens the "Stash" dialog with empty fields.
@@ -405,7 +437,6 @@ impl StashBox {
             Op::Pop => tr!("stash-pop-label", name = &stash.name),
             _ => tr!("stash-apply-label", name = &stash.name),
         };
-        self.conflicts = None;
         self.applying = Some((op, stash));
         Some((params, label))
     }
@@ -524,6 +555,7 @@ impl StashBox {
                             status: result.status,
                             history: Some(result.journal.into()),
                             warning,
+                            show_changes: false,
                             reload_log: true,
                         }))
                     }
@@ -588,11 +620,13 @@ impl StashBox {
                     if let Some(list) = result.stashes.clone() {
                         self.set_list(list);
                     }
-                    if !result.conflicts.is_empty() {
-                        self.conflicts = Some(Conflicts {
+                    // The notice of the conflicts comes from the status (with the result, or
+                    // reread): here only which stash left them.
+                    let show_changes = !result.conflicts.is_empty();
+                    if show_changes {
+                        self.applied = Some(Applied {
                             op,
                             stash: stash.name.clone(),
-                            files: result.conflicts.clone(),
                         });
                     }
                     let notice = apply_notice(&result, op, &stash);
@@ -602,6 +636,7 @@ impl StashBox {
                         status: result.status,
                         history: None,
                         warning,
+                        show_changes,
                         reload_log: result.dropped,
                     }))
                 }
@@ -669,6 +704,7 @@ impl StashBox {
                         status: None,
                         history: Some(result.journal.into()),
                         warning,
+                        show_changes: false,
                         reload_log: true,
                     }))
                 }
@@ -714,7 +750,7 @@ fn apply_notice(r: &StashApplyResult, op: Op, stash: &StashEntry) -> String {
         (_, n, _) => tr!("stash-apply-conflicts", name = name, n = n),
     };
     notice.push_str(&tr!("stash-not-undoable"));
-    // The engine warning about a pop with conflicts repeats what the window explains.
+    // The engine warning about a pop with conflicts repeats what the notice explains.
     let warnings: Vec<Message> = r
         .warnings
         .iter()
@@ -831,17 +867,13 @@ impl Tab {
                     repo.stash.close();
                 }
             }
-            Action::DismissConflicts => {
-                if let Some(repo) = &mut self.repo {
-                    repo.stash.dismiss();
-                }
-            }
         }
     }
 
     /// Response of `stash.*`: list, status and journal from the response, the stash labels
     /// in the graph redone and, if the bases changed, the log reread. A refused push stays
-    /// in its dialog; the conflicts of apply and pop open their window.
+    /// in its dialog; after an apply or pop with conflicts "Uncommitted changes" is selected
+    /// (the notice of the conflicts comes from the status).
     pub(crate) fn receive_stash(&mut self, generation: u64, op: Op, done: Done) {
         let Some(repo) = self.current(generation) else {
             return;
@@ -864,6 +896,9 @@ impl Tab {
                 let status_read = outcome.status.is_some();
                 if let Some(status) = outcome.status {
                     repo.set_status(status);
+                }
+                if outcome.show_changes {
+                    repo.select_worktree(true);
                 }
                 self.notice.set(outcome.notice);
                 self.error = outcome.warning.unwrap_or_default();
@@ -899,10 +934,8 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_domain::{Change, ChangedFile, Commit, EntryKind, RepoPath};
-    use project_engine::{
-        GitRead, GitStash, MemoryBackend, MemoryOpener, Registry, Session, StashPush,
-    };
+    use project_domain::RepoPath;
+    use project_engine::{MemoryBackend, MemoryOpener, Registry, Session};
     use std::sync::Arc;
 
     fn opened(repo: MemoryBackend) -> (Registry, Session) {
@@ -1210,53 +1243,9 @@ mod tests {
         ));
     }
 
-    /// The sample repo with the stashed changes, then a commit that changes
-    /// `README.md` on `main`: the stash goes into conflict on that file.
-    fn moved_head() -> MemoryBackend {
-        let mut repo = MemoryBackend::sample();
-        let old = match &repo.status().unwrap().entries[0].kind {
-            EntryKind::Ordinary(info) => info.oid_head,
-            other => panic!("{other:?}"),
-        };
-        repo.stash_push(&StashPush::default()).unwrap();
-        let head = repo.head().unwrap().target().unwrap();
-        let new = MemoryBackend::fake_oid(4242);
-        repo.set_blob(new, "README changed on main\n");
-        let id = MemoryBackend::fake_oid(4243);
-        let who = Signature {
-            name: "Ada".to_owned(),
-            email: "ada@example.com".to_owned(),
-            time: 1_800_000_000,
-            offset_min: 0,
-        };
-        repo.insert_commit(Commit {
-            id,
-            parents: vec![head],
-            author: who.clone(),
-            committer: who,
-            summary: "README".to_owned(),
-            body: String::new(),
-        });
-        repo.set_changes(
-            id,
-            vec![ChangedFile {
-                path: RepoPath::from("README.md"),
-                change: Change::Modified,
-                original: None,
-                score: None,
-                old_mode: 0o100644,
-                new_mode: 0o100644,
-                old_oid: old,
-                new_oid: new,
-            }],
-        );
-        repo.set_branch("main", id);
-        repo
-    }
-
     #[test]
-    fn conflicts_open_the_window_and_pop_keeps_the_stash() {
-        let (registry, mut session) = opened(moved_head());
+    fn conflicts_are_a_notice_from_the_status_and_pop_keeps_the_stash() {
+        let (registry, mut session) = opened(crate::test_util::stash_in_conflict());
         let mut b = StashBox::default();
         list(&registry, &mut session, &mut b);
         let stash = b.list().unwrap()[0].clone();
@@ -1273,24 +1262,38 @@ mod tests {
             !outcome.reload_log,
             "the stash stays: the bases do not change"
         );
+        assert!(outcome.show_changes, "the files to resolve are shown");
         let status = outcome.status.unwrap();
-        assert!(
-            status
-                .entries
-                .iter()
-                .any(|e| matches!(e.kind, EntryKind::Unmerged(_)))
-        );
-        let conflicts = b.conflicts().unwrap();
-        assert_eq!(conflicts.op, Op::Pop);
-        assert_eq!(conflicts.stash, "stash@{0}");
-        assert_eq!(conflicts.files, ["README.md"]);
+        assert!(status.has_conflicts());
+        assert_eq!(status.operation, None);
         assert_eq!(
             b.list().unwrap().len(),
             1,
             "a pop with conflicts does not drop"
         );
-        b.dismiss();
-        assert!(b.conflicts().is_none());
+
+        // The notice comes from the status, not from the answer: until it is read, nothing.
+        assert_eq!(b.conflicts(), None);
+        b.follow_status(&status);
+        let conflicts = b.conflicts().expect("the notice");
+        let applied = conflicts.applied.expect("applied in this session");
+        assert_eq!((applied.op, applied.stash.as_str()), (Op::Pop, "stash@{0}"));
+        assert_eq!(conflicts.files, [RepoPath::from("README.md")]);
+        assert!(!b.modal_open(), "a notice is not a dialog");
+
+        // After a restart nobody remembers the pop: the status alone gives the notice.
+        let mut restarted = StashBox::default();
+        restarted.follow_status(&status);
+        let conflicts = restarted.conflicts().expect("the notice");
+        assert_eq!(conflicts.applied, None);
+        assert_eq!(conflicts.files, [RepoPath::from("README.md")]);
+        assert!(!restarted.modal_open());
+
+        // An operation in progress shows its conflicts in its own panel.
+        let mut merging = status.clone();
+        merging.operation = Some(project_domain::Operation::Merge);
+        restarted.follow_status(&merging);
+        assert_eq!(restarted.conflicts(), None);
 
         // With the conflict open another apply is refused: the reason in the status bar.
         let (params, _) = b.start_apply(stash.id, false).unwrap();
@@ -1301,6 +1304,16 @@ mod tests {
         };
         assert!(message.contains("conflicted files"), "{message}");
         assert!(!reload);
+        assert!(b.conflicts().is_some(), "the notice stays");
+
+        // The last conflict resolved: the notice goes away by itself and the pop is forgotten
+        // (a later conflict is not said to come from that stash).
+        let mut resolved = status.clone();
+        resolved.entries.retain(|e| !e.is_conflict());
+        b.follow_status(&resolved);
+        assert_eq!(b.conflicts(), None);
+        b.follow_status(&status);
+        assert_eq!(b.conflicts().expect("the notice").applied, None);
     }
 
     #[test]

@@ -421,6 +421,7 @@ impl RepoView {
         self.head = status.head.clone();
         self.stage = StageLists::new(&status);
         self.conflict.follow_status(&status);
+        self.stash.follow_status(&status);
         self.status_seq += 1;
         self.status = Some(status);
         if self.stage.is_empty() {
@@ -1461,6 +1462,7 @@ impl Tab {
         let mut actions = Vec::new();
         if let Some(repo) = &mut self.repo {
             repo.queue_failures();
+            repo.sync.follow(&repo.head, &repo.refs);
         }
         self.keyboard(&ctx, pressed, &mut actions);
         let focus_search = self.repo.as_mut().is_some_and(|r| r.search.take_focus());
@@ -1532,6 +1534,24 @@ impl Tab {
                 merge_view::banner(ui, repo, operation, can_write, actions);
             });
         }
+        // Conflicted files that no operation in progress explains: a stash applied with
+        // conflicts (U63). Never together with the operation panel.
+        if let Some(repo) = &self.repo
+            && let Some(conflicts) = repo.stash.conflicts()
+        {
+            egui::Panel::top("stash-conflicts").show(ui, |ui| {
+                view::stash_conflicts_notice(ui, repo, conflicts, actions);
+            });
+        }
+        // The last rejected push (U63), below the operation panel if both are there.
+        if let Some(repo) = &self.repo
+            && let Some(rejected) = repo.sync.rejected()
+        {
+            let can_write = !writing && !repo.modal_open();
+            egui::Panel::top("push-rejected").show(ui, |ui| {
+                view::rejected_notice(ui, rejected, can_write, actions);
+            });
+        }
         // The commit-graph notice (S36), under the bar too.
         if let Some(repo) = &self.repo
             && repo.optimize.shown()
@@ -1597,12 +1617,8 @@ impl Tab {
         if let Some(dialog) = repo.stash.dialog() {
             view::stash_dialog(ctx, repo, dialog, actions);
         }
-        if let Some(conflicts) = repo.stash.conflicts() {
-            view::stash_conflicts_window(ctx, conflicts, actions);
-        }
         if let Some(window) = repo.sync.window() {
-            let can_write = !writing && !repo.modal_open();
-            view::sync_window(ctx, window, writing, can_write, actions);
+            view::sync_window(ctx, window, writing, actions);
         }
         if let Some(dialog) = repo.branch.dialog() {
             view::branch_dialog(ctx, dialog, actions);

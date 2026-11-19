@@ -32,8 +32,8 @@ stash-pop-done-backup = { $name } applicato ed eliminato dall'elenco; backup sal
 stash-pop-not-dropped = { $name } applicato, ma non tolto dall'elenco: non ripetere il pop, eliminarlo con Elimina…
 stash-apply-done = { $name } applicato; resta nell'elenco
 stash-apply-conflicts = { $n ->
-    [one] { $name } applicato con 1 file in conflitto: risolverlo e metterlo in stage; lo stash resta nell'elenco
-   *[other] { $name } applicato con { $n } file in conflitto: risolverli e metterli in stage; lo stash resta nell'elenco
+    [one] { $name } applicato con 1 file in conflitto: risolvilo e mettilo in stage; lo stash resta nell'elenco
+   *[other] { $name } applicato con { $n } file in conflitto: risolvili e mettili in stage; lo stash resta nell'elenco
 }
 stash-not-undoable = . Non si annulla con «Annulla»
 stash-section-title = Stash ({ $n })
@@ -85,14 +85,10 @@ stash-drop-what-happens = Cosa succede:
 stash-drop-undo = Con «Annulla» nella barra in alto lo stash torna in cima all'elenco (stash@{"{"}0{"}"}), finché l'app resta aperta: il diario delle operazioni è in memoria. Dopo la chiusura resta il backup del suo commit in refs/project/backup/stash-….
 stash-drop-confirm = Elimina lo stash
 stash-drop-keep = Non eliminare
-stash-conflicts-title-pop = Pop di { $name }: conflitti
-stash-conflicts-title-apply = Applicazione di { $name }: conflitti
-stash-conflicts-body-apply = Lo stash è stato applicato, ma dall'ultimo commit su cui era stato creato gli stessi file sono cambiati: quelli qui sotto sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: quei file non avevano modifiche locali e { $name } resta nell'elenco.
-stash-conflicts-body-pop = Lo stash è stato applicato, ma dall'ultimo commit su cui era stato creato gli stessi file sono cambiati: quelli qui sotto sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: quei file non avevano modifiche locali e { $name } resta nell'elenco (il pop non lo elimina).
-stash-conflicts-how = Per risolverli: correggere ogni file e metterlo in stage dall'area delle modifiche. Poi, se non serve più, eliminare lo stash. Finché restano conflitti né Stash né Applica sono possibili.
-stash-conflicts-files = { $n ->
-    [one] File in conflitto:
-   *[other] { $n } file in conflitto:
-}
-stash-go-to-changes = Vai alle modifiche
-stash-go-to-changes-help = Apre l'area di stage con i file in conflitto
+# The notice in the tab: conflicted files and no operation in progress (U63).
+stash-notice-title = Conflitti da uno stash
+stash-notice-title-applied = Conflitti da { $name }, che resta nell'elenco
+stash-notice-help = Questi file sono in conflitto e git non ha operazioni in corso: è quello che lascia uno stash applicato con conflitti (anche applicato prima di avviare l'app, o dal terminale). Gli altri file dello stash sono applicati e lo stash è ancora nell'elenco: niente si è perso.
+stash-notice-help-apply = { $name } è stato applicato, ma dal commit su cui era stato creato le stesse righe sono cambiate: questi file sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: { $name } resta nell'elenco.
+stash-notice-help-pop = { $name } è stato applicato, ma dal commit su cui era stato creato le stesse righe sono cambiate: questi file sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: { $name } resta nell'elenco (il pop non lo elimina).
+stash-notice-how = Per risolverli: fai clic su un file, scegli nell'editor dei conflitti e poi «Segna come risolto» (oppure correggi il file e mettilo in stage dall'area delle modifiche). Poi, se non serve più, elimina lo stash. Finché restano conflitti né Stash né Applica sono possibili.

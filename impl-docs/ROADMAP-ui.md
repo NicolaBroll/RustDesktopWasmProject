@@ -325,6 +325,136 @@ Fixes from the second UI review of 2026-10-30 (same setup as above, screenshots
   refused checkout leaves the branch created and opens the usual dialog); "Copy name" copies the
   short name of the ref.
 
+## Phase U6 — Third review: error windows, keyboard, contrast
+
+Fixes from the UI review of 2026-11-19 (desktop app on Xvfb, `target/demo-repo` plus local
+remotes under `target/`, 1200x760 and 760x520, English and Italian, dark and light; screenshots
+`target/ux-*.png`). Decided with the review: an error that answers a command is a modal dialog,
+a situation that lasts (rejected push, stash applied with conflicts) is a notice inside the tab,
+like the "Merge in progress" panel; no floating `egui::Window` for errors. Screen readers
+(`accesskit`) are not a goal of this phase.
+
+### U60 — The side panel keeps its width on undo and redo
+- [x] **Agent:** `egui-ui`
+- **Goal:** with "Uncommitted changes" selected and the right panel dragged narrower, Ctrl+Z or
+  Ctrl+Shift+Z jump it to the maximum (30% of the window) and the chosen width is lost (U10
+  regressed): `side_panel::next` takes every drawn width other than the asked one for a drag,
+  and during an undo one frame draws the panel wider. A width becomes the user's choice only
+  while the panel's edge is dragged.
+- **Done when:** unit test (a wider frame without a drag keeps the preferred width; a drag still
+  changes it); on Xvfb panel dragged to ~260 px, undo and redo of a stash and of an amend leave
+  it there; CI green.
+- **Done:** the row "<label> in progress…" of the stage area was the wide content (an undo is
+  labelled with the whole description of what it undoes, about 630 px): now one row cut with
+  "…", like the one beside the Commit button. `side_panel` keeps a `dragged` flag read from the
+  response of the panel's resize edge: a drawn width becomes the preferred one only in the frame
+  after a drag or its release, any other is asked again. Tests through egui: content wider than
+  the panel for a frame, a drag of the edge.
+
+### U61 — Status bar: one clipped line, no ref names, old messages fade
+- [ ] **Agent:** `egui-ui`
+- **Goal:** a long message (undo of a commit with a long subject, pull stopped on conflicts)
+  runs over the repo path and overlaps the label at the right edge, at 1200 px too; the
+  messages print `refs/project/backup/…` and stay until the next one, even for hours. The
+  message is one line cut with "…" before the items on the right (whole text on hover), the
+  backup ref goes out of the message into its hover text, and a message that is not an error is
+  dimmed after a while (an error stays until the next command).
+- **Done when:** at 760x520 and 1200x760, in both languages, no status text overlaps the right
+  side after an undo of an amend and after a pull with conflicts; unit test of the expiry; CI
+  green.
+
+### U62 — Error dialogs are modal; one dialog for "local changes"
+- [ ] **Agent:** `egui-ui`
+- **Goal:** `failure_window` (fetch failed, remote error, merge or pull refused) is a floating
+  `egui::Window`: Esc does not close it, the keyboard stays under it, two of them (fetch and
+  merge) lie exactly on top of each other, it stays when the user fixed the cause elsewhere
+  (stash from the toolbar) and, while it is open, the automatic fetch waits. It becomes an
+  `egui::Modal` like the other dialogs (counted by `RepoView::modal_open`, Esc and Enter close
+  it, a "Copy message" button for git's text); one at a time. `conflict_window` (pull conflict
+  aborted by the engine, not produced since S32) is removed with its texts. A checkout refused
+  for local changes shows the same short text and "Stash…" button as merge and pull (U32)
+  instead of the long engine text with only "Close".
+- **Done when:** on Xvfb fetch from an unreachable remote: Esc closes the dialog, the arrows do
+  not move the selection under it; merge refused then fetch failed never show two windows;
+  checkout of `experiment` with `src/lib.rs` modified offers "Stash…"; smoke tests updated; CI
+  green.
+
+### U63 — Rejected push and stash conflicts are notices in the tab
+- [ ] **Agent:** `egui-ui`
+- **Goal:** `rejected_window` and `stash_conflicts_window` are floating windows at the top of
+  the tab: they cover the toolbar (Pull, Push, Undo) and, at 760x520, the whole graph or the
+  conflict editor; Esc does not close them and they stay after the conflict is resolved. Both
+  become a notice in the place of the operation panel ("Merge in progress"): rejected push —
+  one line of explanation, "Pull" (or "Fetch" for a stale lease), "Details…" (git's text and
+  "Force (with lease)…", with the existing confirmation) and "×"; it goes away when a push
+  succeeds or the branch is no longer behind. Stash conflicts — derived from the status
+  (conflicted files and no merge, rebase, cherry-pick or revert in progress), with the files as
+  links to the conflict editor, as in the merge panel; it goes away with the last conflict and
+  is there after a restart too.
+- **Done when:** on Xvfb at 760x520 the toolbar and the graph stay visible in both cases; the
+  stash notice disappears when the file is marked as resolved; smoke tests; CI green.
+
+### U64 — Keyboard: visible focus, file lists, dialogs
+- [ ] **Agent:** `egui-ui`
+- **Goal:** of 40 Tab stops only 13 show where the focus is (the widgets drawn by hand — tabs,
+  window buttons, tree rows, commit rows, file rows — draw none, and on the toolbar focus looks
+  like hover); the files of the stage area and of a commit cannot be walked with the arrows
+  (Space stages the selected file, but only the mouse selects another); Ctrl+Enter does not
+  confirm the dialogs with a multi-line field ("Finish the merge"); Help → "Keyboard shortcuts"
+  does not list Ctrl+Enter, and there is no shortcut to open a repository, close the tab or
+  start a new branch. One focus ring drawn by every hand-drawn widget; ↑/↓ move through the file
+  list while a file is selected (the commit list keeps them otherwise) and Enter opens the
+  diff; Ctrl+Enter confirms every dialog; Ctrl+O, Ctrl+W, Ctrl+B added to the table in
+  `keys.rs`.
+- **Done when:** unit tests of the key mapping and of the file-list movement; on Xvfb every Tab
+  stop changes the picture; CI green.
+
+### U65 — Dark theme contrast
+- [ ] **Agent:** `egui-ui`
+- **Goal:** in the dark theme (egui's defaults) weak text — commit ids, author, date, hints,
+  placeholders, the repo path — is 2.7:1 against the panel and disabled text 2.3:1; U51 fixed
+  only the light theme, where links (2.8:1) and the counters of the tree (2.8:1) are still
+  low. Dark: normal text at least 7:1, weak text at least 4.5:1, disabled at least 3:1; light:
+  links and counters at least 4.5:1.
+- **Done when:** theme tests for the dark theme like the light one's; screenshots of both
+  themes; CI green.
+
+### U66 — Layout bugs and wording
+- [ ] **Agent:** `egui-ui`
+- **Goal:** the conflict editor's "Theirs (<40-character id>)" heading is letter-spaced and
+  wraps on three lines; the stash details show the whole id, which wraps over "Created on"; the
+  floating scrollbar of the left panel covers the "+" and "⋯" buttons (a thick black bar in the
+  light theme); a folder dialog that cannot open (no portal, no zenity) says nothing. Texts:
+  Italian "Unstage"/"Stage" beside "Togli tutto dallo stage", "Remote" (settings) beside
+  "Remoti", the infinitive in the unreachable-remote text; English "1 conflicted file. Resolve
+  them", "starts at commit c13e0f9 (c13e0f9)"; the clone dialog says credentials are never
+  asked for while the app has a credential dialog.
+- **Done when:** screenshots of the four layouts at 760x520; texts changed in both locales;
+  i18n tests green; CI green.
+
+### U67 — Finding things, dialogs, small polish
+- [ ] **Agent:** `egui-ui`
+- **Goal:** a new branch or tag starts only from a context menu ("Remotes" and "Stashes" have a
+  "+", "Local branches" and "Tags" do not); ticking "Amend" pushes the fields up by four lines
+  of warning; the main button of the dialogs looks like "Close" (only "Commit" is primary), and
+  the settings dialog changes size and place between its pages; the automatic-fetch icon moves
+  the toolbar buttons when it appears; the search toggles show their state only by brightness;
+  blame closes with "Close" and the diff with "< Graph"; the clone dialog does not propose the
+  folder from the URL and a finished clone says nothing; the app opens on HEAD also when there
+  are uncommitted changes.
+- **Done when:** screenshots; unit tests of the proposed clone folder and of the first
+  selection; CI green.
+
+### U68 — "Stash and retry", toolbar at large scale
+- [ ] **Agent:** `egui-ui`, then `safety-reviewer`
+- **Goal:** after "Stash…" from a refusal for local changes the refused command (merge, pull,
+  checkout) must be started again by hand: the dialog gets "Stash and retry", which runs
+  `stash.push` and then the same command, and stops if the stash fails. At 150% in a 760x520
+  window the toolbar loses "Refresh" beyond the edge: the buttons that do not fit go into a
+  "»" menu.
+- **Done when:** unit test (the retry is sent only after a successful stash, with the same
+  parameters); on Xvfb at 150% every toolbar command is reachable; CI green.
+
 ### Left for later (they need new engine commands or `Platform` capabilities)
 
 Discard a hunk / selected lines (new write command with backup), "Add to .gitignore", git
